@@ -10,7 +10,7 @@
 - Solution review Issue: Not created — the operator approved the recorded final solution directly and waived further consultation (simplest path).
 - Blockers: None.
 - Accepted decision record: [accepted-decision.md](/.agents/tasks/completion-routing/adopt-completion-token-routing/accepted-decision.md) (backfilled 2026-09-01).
-- Next action: Open the verified repair PR to `next` and report the five changed source files; await operator review without merging.
+- Next action: Update PR #384 with the reviewed cleanup and await its CI. Merge requires separate operator authority.
 - Historical test replacement inventory (completed in PR #344; see verification): claude-code `rpc/runtime-activity/session/stream/transcript.test.ts`; codex `turn-manager.test.ts`; core `agent-runtime-provider`, `claude-code-live`, `claude-code-runtime`, `codex-completion`, `codex-live`, `core-event-owner-publishers`, `dispatcher-collaboration-space`, `entity-turn`, `external-runtime-parity`, `team-collection-read-path`, `team-scheduler`, `teammate-service`, `workflow-service` tests plus `helpers/fake-runtime`, `helpers/fake-team-runtime`, `helpers/runtime-turn`, `fixtures/external-runtime-provider`; types `fixtures.test.ts`, `root-exports.test.ts`, `fixtures/external-provider.ts`. Retained consumer suites (`team-dissolve-*`, `team-mcp-dissolve-boundary`, `collaboration-space-repo-close`, and all untouched files) compile again once the shared helpers are restored; the re-coverage stage must restore every deleted contract without weakening it.
 - Related tasks: None.
 
@@ -61,3 +61,32 @@
   another knowledge owner.
 - Independent review: completed; accepted findings corrected, rejected
   hypotheses and evidence limits recorded in [verification](verification.md).
+
+## Style and redundancy cleanup (2026-09-07)
+
+- PR #384 is open at `72af66e5`; its alpha was published and verified before the
+  independent Claude complexity review.
+- The review found lower complexity and no required correctness correction.
+  The operator then explicitly authorized cleaning style and redundant code
+  instead of leaving it as optional follow-up. Translation of the instruction:
+  "Pursue this more thoroughly; fix any code-style or redundant-code issues
+  along the way."
+- Development approval: granted for behavior-preserving cleanup of the affected
+  Claude source/test path and its task records. Use the existing writer and
+  update the existing PR. The repair requirement and completion-routing
+  behavior remain the baseline.
+- Verification: inspect removed state and all consumers, preserve compatibility
+  tests, run the four Rush gates, then obtain an independent review of the
+  cleanup. Await TeamMate completion notifications without result polling.
+- Outcome: all four full-workspace gates passed. Independent Claude review
+  found no behavior change or weakened assertion; both wording findings were
+  corrected and checked by the TeamLeader. The final wording-only pass changed
+  one fixture comment and five test titles, leaving executable test bodies and
+  assertions intact.
+- Complete PR scope: six Claude source files and seven test/fixture files.
+  runtime-session.ts is the sixth source file because adjacent result-text
+  handling repeated an error condition already handled by a throw.
+- Cleanup knowledge owners: task requirement, solution and verification updated.
+  Product/provider domain owners, neutral contracts, state/config maintenance,
+  glossary and root routing need no additional changes: this cleanup preserves
+  the repaired behavior and existing ownership, with no new concept or surface.

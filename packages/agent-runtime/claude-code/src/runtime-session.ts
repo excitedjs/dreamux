@@ -25,8 +25,6 @@ export function resultTextFromTurnOutcome(
       'claude-code returned a session id that differs from the pinned native session',
     );
   }
-  const resultText =
-    outcome.isError || outcome.text === '' ? null : outcome.text;
   if (outcome.isError) {
     const detail =
       outcome.errors.length > 0
@@ -40,5 +38,5 @@ export function resultTextFromTurnOutcome(
         '--json-schema session',
     );
   }
-  return resultText;
+  return outcome.text === '' ? null : outcome.text;
 }

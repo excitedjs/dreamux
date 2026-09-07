@@ -7,9 +7,7 @@ import type { DispatcherClaudeCodeConfig } from './config.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import { materializeClaudeSkillAddDir } from './skill-materializer.js';
-import {
-  type ClaudeCodeSession,
-} from './supervisor.js';
+import type { ClaudeCodeSession } from './supervisor.js';
 import type { ClaudeProtocolEvent } from './types.js';
 import { consoleFallbackLogger } from './logger.js';
 import { ClaudeSteerAdmissionError } from './rpc.js';
@@ -82,7 +80,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private stopTask: Promise<void> | null = null;
   private generation = 0;
   private activeTurn: ActiveTurn | null = null;
-  private queuedTurnCount = 0;
+
   constructor(
     identity: AgentRuntimeIdentity,
     private readonly deps: ClaudeCodeRuntimeDeps,
@@ -268,7 +266,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         return classifySteerFailure(error, this.stopped);
       }
     }
-    this.recordQueuedTurnStart();
     let resolveSession!: (session: ClaudeCodeSession) => void;
     let rejectSession!: (error: Error) => void;
     const sessionReady = new Promise<ClaudeCodeSession>((resolve, reject) => {
@@ -372,14 +369,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   private markTurnSucceeded(turn: ActiveTurn): void {
-    this.recordQueuedTurnEnd();
     this.stopUnsettled(turn);
     if (this.stopped) return;
     if (this.status !== 'ready') this.setStatus('ready');
   }
 
   private markTurnFailed(turn: ActiveTurn, err: unknown): void {
-    this.recordQueuedTurnEnd();
     this.log('error', 'claude-code turn failed', err);
     turn.rejectSession(asError(err));
     // The run died, which is claude's own terminal for whatever native turn it
@@ -415,14 +410,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     reason: string | null,
   ): void {
     endNativeTurn(status, reason, this.deps.activitySink);
-  }
-
-  private recordQueuedTurnStart(): void {
-    this.queuedTurnCount += 1;
-  }
-
-  private recordQueuedTurnEnd(): void {
-    this.queuedTurnCount = Math.max(0, this.queuedTurnCount - 1);
   }
 
   /** Ensure a live resident session exists, resuming after a child exit. */
@@ -547,6 +534,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       activitySink: this.deps.activitySink,
     });
   }
+
   private assertGeneration(generation: number): void {
     if (this.stopped || this.fence.isFenced || generation !== this.generation) {
       throw new Error('claude-code runtime is stopped');

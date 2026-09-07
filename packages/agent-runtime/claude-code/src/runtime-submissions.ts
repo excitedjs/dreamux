@@ -120,7 +120,7 @@ export function handleProtocolEvent(
     if (active !== null) completeSubmittedGroup(active, event.commandUuids, event.outcome, context);
     return;
   }
-  emitStreamActivity(context.activity, event.line, context);
+  emitStreamActivity(event.line, context);
 }
 
 /** claude's own words for why its turn failed. */
@@ -182,25 +182,24 @@ function completeSubmittedGroup(
  * displayed at all. Operator ruling, 2026-09-03: 「所有的 user 消息都隐藏即可」.
  */
 function emitStreamActivity(
-  active: NativeActivityState,
   line: ClaudeActivityLine,
-  context: ProtocolEventContext,
+  { activity: activityState, activitySink }: ProtocolEventContext,
 ): void {
   if (line.kind === 'compact_boundary') {
-    emitActivity(compactedActivity(active), context.activitySink);
+    emitActivity(compactedActivity(activityState), activitySink);
     return;
   }
   const message = recordValue(line.raw['message']) ?? line.raw;
-  const messageId = stringValue(message['id']) ?? `stream-${active.activitySequence++}`;
+  const messageId = stringValue(message['id']) ?? `stream-${activityState.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
   for (const [blockIndex, candidate] of content.entries()) {
     const block = recordValue(candidate);
     if (block === null) continue;
     const activity = line.kind === 'assistant'
-      ? assistantBlockActivity(active, messageId, blockIndex, block)
-      : toolResultActivity(active, messageId, block);
+      ? assistantBlockActivity(activityState, messageId, blockIndex, block)
+      : toolResultActivity(activityState, messageId, block);
     if (activity === null) continue;
-    emitActivity(activity, context.activitySink);
+    emitActivity(activity, activitySink);
   }
 }
 
@@ -214,18 +213,18 @@ function emitStreamActivity(
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 
-function compactedActivity(active: NativeActivityState): RuntimeActivity {
+function compactedActivity(activityState: NativeActivityState): RuntimeActivity {
   return {
     kind: 'assistant.message',
     occurredAt: Date.now(),
-    id: `stream-${active.activitySequence++}:compacted`,
+    id: `stream-${activityState.activitySequence++}:compacted`,
     text: COMPACTED_SESSION_MESSAGE,
   };
 }
 
 /** What the model said, or a tool it called. */
 function assistantBlockActivity(
-  active: NativeActivityState,
+  activityState: NativeActivityState,
   messageId: string,
   blockIndex: number,
   block: Record<string, unknown>,
@@ -243,7 +242,7 @@ function assistantBlockActivity(
   const name = stringValue(block['name']);
   if (callId === null || callId === '' || name === null) return null;
   const args = toJsonValue(block['input']);
-  active.tools.set(callId, { name, arguments: args });
+  activityState.tools.set(callId, { name, arguments: args });
   return {
     kind: 'tool.call',
     occurredAt: Date.now(),
@@ -260,14 +259,14 @@ function assistantBlockActivity(
 
 /** What a tool returned, correlated to the call the model made. */
 function toolResultActivity(
-  active: NativeActivityState,
+  activityState: NativeActivityState,
   messageId: string,
   block: Record<string, unknown>,
 ): RuntimeActivity | null {
   if (block['type'] !== 'tool_result') return null;
   const callId = stringValue(block['tool_use_id']);
   if (callId === null || callId === '') return null;
-  const known = active.tools.get(callId);
+  const known = activityState.tools.get(callId);
   const failed = block['is_error'] === true;
   const result = normalizeTextBlocks(block['content']);
   return {

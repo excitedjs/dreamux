@@ -232,8 +232,8 @@ export function parseLine(line: string): ParsedLine {
 
 /**
  * Parse a `command_lifecycle` envelope. The resident CLI emits it as a
- * top-level `type`; older streams (and the test fixture) emit it as a
- * `system` subtype. Both shapes carry the same `command_uuid`/`state` fields.
+ * top-level `type`; older streams emit it as a `system` subtype. Both shapes
+ * carry the same `command_uuid`/`state` fields.
  */
 function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
   const state = str(parsed['state']);
@@ -245,8 +245,8 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
       state === 'started' ||
       state === 'completed' ||
       state === 'cancelled' ||
-      state === 'discarded'
-      || state === 'refused'
+      state === 'discarded' ||
+      state === 'refused'
         ? state
         : null,
     raw: parsed,

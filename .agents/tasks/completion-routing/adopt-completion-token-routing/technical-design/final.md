@@ -120,3 +120,14 @@ a second started ledger. This callback type is exported through the Claude
 session extension seam, so custom session implementations need the new field.
 Record that compatibility impact explicitly in a Rush breaking minor note;
 RuntimeSubmission, AgentRuntime and Core routing contracts are unchanged.
+
+### Style and redundancy cleanup
+
+Delete the unused queuedTurnCount bookkeeping, its two update methods and their
+call sites. Simplify duplicate activity-state arguments and misleading private
+names using the existing owners, without introducing replacement wrappers or
+mirrored state. Review adjacent source and test code for equivalent low-cost
+cleanup. Default fixtures should emit observed started lifecycle events; keep
+missing-start plus matching-UUID cases as explicit compatibility tests. Preserve
+UUID-positive attribution and the public command_lifecycle observer callback.
+No origin filter, new attribution mechanism or timeout-policy change is needed.

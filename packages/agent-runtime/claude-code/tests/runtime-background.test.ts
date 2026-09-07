@@ -101,13 +101,13 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
     return settlement.completion;
   };
   const initial = await submit('initial');
+  lifecycle(writes[0]!.uuid, 'started');
   emit({ type: 'system', subtype: 'init', capabilities: ['msg_lifecycle_v1'] });
-  // Compatibility coverage: current native probes reported started before init.
   result('same', { user_message_uuid: writes[0]!.uuid });
   lifecycle(writes[0]!.uuid, 'completed');
   const initialCompletion = await completion(initial);
   await tick();
-  return { runtime, rpc, writes, activity, reap, createSession, emit, lifecycle, result, submit, completion, initialCompletion, exitSession: () => exitSession() };
+  return { runtime, writes, activity, reap, createSession, emit, lifecycle, result, submit, completion, initialCompletion, exitSession: () => exitSession() };
 }
 
 const assistant = (text: string): Record<string, unknown> => ({
@@ -137,7 +137,7 @@ describe('resident background turns and submitted commands', () => {
     expect(h.activity[4]).toMatchObject({ status: 'completed' });
 
     const next = await h.submit('next');
-    // The session advertised lifecycle, but this input has no lifecycle facts yet.
+    h.lifecycle(h.writes[1]!.uuid, 'started');
     h.result('next answer', { user_message_uuid: h.writes.at(-1)!.uuid });
     h.lifecycle(h.writes[1]!.uuid, 'completed');
     expect(await h.completion(next)).toEqual({ status: 'completed', resultText: 'next answer' });
@@ -194,6 +194,8 @@ describe('resident background turns and submitted commands', () => {
       h.result('background answer', extra);
       await tick();
       expect(settled).not.toHaveBeenCalled();
+      h.lifecycle(h.writes[1]!.uuid, 'queued');
+      h.lifecycle(h.writes[1]!.uuid, 'started');
       h.result('B answer', { user_message_uuid: h.writes[1]!.uuid });
       h.lifecycle(h.writes[1]!.uuid, 'completed');
       expect(await h.completion(b)).toMatchObject({ resultText: 'B answer' });
@@ -201,7 +203,7 @@ describe('resident background turns and submitted commands', () => {
     },
   );
 
-  it.each(['queued', 'refused', 'discarded'])('answers A without started when B is %s, without answering B early', async (state) => {
+  it.each(['queued', 'refused', 'discarded'])('supports no-start matching-UUID compatibility when B is %s, without answering B early', async (state) => {
     const h = await harness();
     const a = await h.submit('A');
     const b = await h.submit('B');
@@ -236,7 +238,7 @@ describe('resident background turns and submitted commands', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it('combines the matching input without started and all started steers into one completion', async () => {
+  it('supports no-start matching-UUID compatibility alongside all started fold members', async () => {
     const h = await harness();
     const a = await h.submit('A');
     const b = await h.submit('B');
@@ -270,6 +272,7 @@ describe('resident background turns and submitted commands', () => {
     expect(Object.isFrozen(bToken)).toBe(true);
     await tick();
     const next = await h.submit('next');
+    h.lifecycle(h.writes[3]!.uuid, 'started');
     h.result('next answer', { user_message_uuid: h.writes.at(-1)!.uuid });
     h.lifecycle(h.writes[3]!.uuid, 'completed');
     expect(await h.completion(next)).toMatchObject({ resultText: 'next answer' });
@@ -385,7 +388,10 @@ describe('resident background turns and submitted commands', () => {
       expect.objectContaining({ status: 'failed', reason: 'claude resident child exited' }),
     ]);
     expect(h.createSession).toHaveBeenCalledTimes(2);
+    h.lifecycle(h.writes[1]!.uuid, 'started');
+    h.emit({ type: 'system', subtype: 'init', capabilities: ['msg_lifecycle_v1'] });
     h.result('A answer', { user_message_uuid: h.writes[1]!.uuid });
+    h.lifecycle(h.writes[1]!.uuid, 'completed');
     expect(await h.completion(accepted.submission)).toMatchObject({ resultText: 'A answer' });
   });
 

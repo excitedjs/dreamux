@@ -6,11 +6,11 @@
  * OS pipes, with no real `claude` binary:
  *
  *  - reads NDJSON `user` messages on stdin and keeps stdin open (resident);
- *  - for each turn, emits a `system/init` (once) and an `assistant` snapshot;
+ *  - emits `started`, `system/init` (once), then an `assistant` snapshot;
  *  - answers a Remote Control `control_request` with a synthetic URL;
  *  - mode `echo`   → also emits a terminal `result` (a normal, completed turn);
- *  - mode `stall`  → never emits a `result` (the stuck-turn path the per-turn
- *    deadline must cover) while the child stays alive.
+ *  - mode `stall`  → omits `result` after `completed` to exercise the idle
+ *    deadline; this synthetic stall is not an observed native sequence.
  */
 
 import { createInterface } from 'node:readline';
@@ -46,6 +46,9 @@ rl.on('line', (line) => {
   if (msg?.type !== 'user') return;
   const text = msg?.message?.content?.[0]?.text ?? '';
 
+  if (typeof msg.uuid === 'string') {
+    emit({ type: 'command_lifecycle', command_uuid: msg.uuid, state: 'started' });
+  }
   if (!sentInit) {
     emit({
       type: 'system',
@@ -63,8 +66,7 @@ rl.on('line', (line) => {
   });
   if (typeof msg.uuid === 'string') {
     emit({
-      type: 'system',
-      subtype: 'command_lifecycle',
+      type: 'command_lifecycle',
       command_uuid: msg.uuid,
       state: 'completed',
     });
@@ -72,5 +74,4 @@ rl.on('line', (line) => {
   if (mode === 'echo') {
     emit({ type: 'result', subtype: 'success', result: `echo:${text}`, session_id: 'fake-sess-1', user_message_uuid: msg.uuid });
   }
-  // mode 'stall': deliberately no `result` — the turn never terminates.
 });

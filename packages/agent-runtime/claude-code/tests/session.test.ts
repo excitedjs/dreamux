@@ -4,15 +4,15 @@
  *
  * These drive the REAL `createDefaultClaudeCodeSession` supervisor over real OS
  * pipes against a tiny fake `claude` stream-json child (no real `claude` binary
- * needed — see `fixtures/fake-claude-stream.mjs`). The fake only ever replays
- * native stream-json envelopes; every expectation below is derived from those
- * envelopes, never from an instruction handed to the fake.
+ * needed — see `fixtures/fake-claude-stream.mjs`). The fake uses native wire
+ * shapes to exercise protocol handling, resident reuse and idle teardown;
+ * it does not establish which sequences a live CLI emits.
  *
  * The seam under test changed: `submitTurn` no longer *returns* the turn
  * result. A native `result` envelope is now pushed out of the live stream as an
- * `onProtocolEvent({ kind: 'result', outcome })` BEFORE the submission settles,
- * alongside the live `stream` / `command_lifecycle` activity of the same native
- * window. `submitTurn` only resolves once the resident command group drained.
+ * `onProtocolEvent({ kind: 'result', outcome, commandUuids })` BEFORE the
+ * submission settles, alongside the `stream` / `command_lifecycle` events of
+ * the same native window. `submitTurn` resolves once the command group drains.
  *
  * Still covered from the original suite: a child that stays alive but never
  * emits a terminal `result` must not pend forever — the per-turn idle deadline
@@ -130,10 +130,10 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
       (event): event is Extract<ClaudeProtocolEvent, { kind: 'command_lifecycle' }> =>
         event.kind === 'command_lifecycle',
     );
-    expect(lifecycle.map((event) => event.commandUuid)).toContain(firstUuid);
-    expect(
-      lifecycle.find((event) => event.commandUuid === firstUuid)!.state,
-    ).toBe('completed');
+    expect(lifecycle).toEqual([
+      { kind: 'command_lifecycle', commandUuid: firstUuid, state: 'started' },
+      { kind: 'command_lifecycle', commandUuid: firstUuid, state: 'completed' },
+    ]);
 
     // Second turn over the SAME resident child: a second native `user` message
     // produces a second native `result`, hence a second result event.
@@ -164,7 +164,7 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
     // as a fresh literal per envelope (src/stream.ts `outcome()`), so a
     // reference comparison could never fail and would prove nothing. Completion
     // TOKEN identity is the real contract and is proven one layer up, against
-    // src/runtime-submissions.ts, in tests/runtime-activity.test.ts.
+    // src/runtime-submissions.ts, in tests/runtime-submissions.test.ts.
     //
     // What IS falsifiable at this seam is that the two byte-identical answers
     // came from two SEPARATE native turns: each `result` must be preceded by

@@ -4,7 +4,7 @@
  * These are data contracts only: no IO, no process spawning, no timers.
  */
 
-/** A parsed JSON object, or `null` for anything that is not a JSON object. */
+/** A parsed JSON object. */
 export type JsonObject = Record<string, unknown>;
 
 /**
@@ -150,10 +150,9 @@ export interface ClaudeCodeSessionSpec {
   /** Where to append the child's stderr (its stdout is the in-process data plane). */
   stderrLogPath: string;
   /**
-   * Per-turn deadline (ms). If the still-alive child never emits a terminal
-   * `result` within this window, the turn is failed and the child is reaped so
-   * the serial turn queue (and TeamMate completion delivery behind it) cannot
-   * wedge forever. Must be > 0.
+   * Maximum idle interval (ms) while submitted commands await drainage. Every
+   * inbound stream line resets it; silence for the entire interval fails the
+   * pending commands and reaps the child. Must be > 0.
    */
   turnTimeoutMs: number;
   /**

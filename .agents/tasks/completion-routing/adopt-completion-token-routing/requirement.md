@@ -149,3 +149,14 @@ The operator then added the required mixed-input case:
 Together these require no automatic parent delivery for unbound native work and
 normal completion delivery for explicit requests that join it. They do not make
 background origin a permanent exclusion from settlement.
+
+### Authorized style and redundancy cleanup
+
+After the complexity review, the operator requested immediate cleanup of code
+style and redundancy in this repair. Remove dead internal bookkeeping and
+redundant argument passing, and make ordinary test fixtures reflect observed
+producer behavior while retaining clearly identified compatibility coverage.
+Apply the same criterion throughout the affected path, rather than stopping at
+the review's named examples. Preserve the repair's user-visible behavior and
+public protocol observation capabilities; removing a supported callback is a
+compatibility decision rather than a style-only edit.

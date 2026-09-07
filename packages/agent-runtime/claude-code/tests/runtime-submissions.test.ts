@@ -39,7 +39,6 @@ function outcome(overrides: Partial<TurnOutcome> = {}): TurnOutcome {
 
 interface Harness {
   active: ActiveTurn;
-  deferredByUuid: Map<string, SubmissionDeferred>;
   activityEvents: RuntimeActivity[];
   nativeEnds: NativeTurnEnd[];
   fire(event: ClaudeProtocolEvent): void;
@@ -51,12 +50,9 @@ function makeHarness(
   commandUuids: string[],
   options: { threadId?: string | null; outputSchemaEnabled?: boolean } = {},
 ): Harness {
-  const deferredByUuid = new Map<string, SubmissionDeferred>();
   const submissions = new Map<string, SubmissionDeferred>();
   for (const uuid of commandUuids) {
-    const deferred = createRuntimeSubmission();
-    deferredByUuid.set(uuid, deferred);
-    submissions.set(uuid, deferred);
+    submissions.set(uuid, createRuntimeSubmission());
   }
   const active: ActiveTurn = {
     initialCommandUuid: commandUuids[0]!,
@@ -77,7 +73,6 @@ function makeHarness(
   };
   return {
     active,
-    deferredByUuid,
     activityEvents,
     nativeEnds,
     fire(event) {
@@ -89,7 +84,7 @@ function makeHarness(
       });
     },
     settled(uuid) {
-      const deferred = deferredByUuid.get(uuid);
+      const deferred = submissions.get(uuid);
       if (deferred === undefined) throw new Error(`no deferred for ${uuid}`);
       return deferred.submission.settled;
     },
@@ -245,7 +240,6 @@ describe('handleProtocolEvent settlement', () => {
     expect(first.kind).toBe('completion');
     expect(second).toEqual(first);
   });
-
 });
 
 describe('handleProtocolEvent live activity', () => {
@@ -277,7 +271,7 @@ describe('handleProtocolEvent live activity', () => {
     ]);
   });
 
-  it('emits an assistant.message activity for streamed text, addressed to no submission at all', async () => {
+  it('emits an assistant.message activity for streamed text, addressed to no submission at all', () => {
     const h = makeHarness(['cmd-1']);
     h.fire(streamAssistantText('hello there'));
     expect(h.activityEvents).toHaveLength(1);
@@ -290,7 +284,7 @@ describe('handleProtocolEvent live activity', () => {
     expect(h.activityEvents[0]!).not.toHaveProperty('submission');
   });
 
-  it('emits a started tool.call, then correlates its result by tool_use_id into a completed tool.call', async () => {
+  it('emits a started tool.call, then correlates its result by tool_use_id into a completed tool.call', () => {
     const h = makeHarness(['cmd-1']);
     h.fire(streamToolUse('call-1', 'Read', { file_path: '/tmp/x' }));
     h.fire(streamToolResult('call-1', 'file contents', false));
@@ -311,7 +305,7 @@ describe('handleProtocolEvent live activity', () => {
     });
   });
 
-  it('carries the display facts derived from the tool input on both the started and the result activity', async () => {
+  it('carries the display facts derived from the tool input on both the started and the result activity', () => {
     const h = makeHarness(['cmd-1']);
     h.fire(streamToolUse('call-1', 'Bash', { command: 'git status --short', description: 'Show working tree status' }));
     h.fire(streamToolResult('call-1', 'M src/a.ts', false));
@@ -327,7 +321,7 @@ describe('handleProtocolEvent live activity', () => {
     }
   });
 
-  it('marks a tool_result carrying is_error as a failed tool.call and surfaces a display error', async () => {
+  it('marks a tool_result carrying is_error as a failed tool.call and surfaces a display error', () => {
     const h = makeHarness(['cmd-1']);
     h.fire(streamToolUse('call-1', 'Bash', { command: 'false' }));
     h.fire(streamToolResult('call-1', 'command failed', true));
@@ -340,7 +334,7 @@ describe('handleProtocolEvent live activity', () => {
     });
   });
 
-  it('emits live activity that no started command could have owned', async () => {
+  it('emits live activity that no started command could have owned', () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
     // Neither command has been reported started, so the old seam had no
     // submission to attribute this to and dropped it. The agent produced it,
@@ -353,7 +347,7 @@ describe('handleProtocolEvent live activity', () => {
     });
   });
 
-  it('shows nothing for text in a user envelope: a loaded skill body is neither the agent nor the operator', async () => {
+  it('shows nothing for text in a user envelope: a loaded skill body is neither the agent nor the operator', () => {
     const h = makeHarness(['cmd-1']);
     h.fire(streamToolUse('call-1', 'Skill', { skill: 'team-workflow' }));
     h.fire(streamToolResult('call-1', 'Launching skill: team-workflow', false));
@@ -377,7 +371,7 @@ describe('handleProtocolEvent live activity', () => {
     });
   });
 
-  it('still correlates a tool_result that shares its user envelope with injected text', async () => {
+  it('still correlates a tool_result that shares its user envelope with injected text', () => {
     const h = makeHarness(['cmd-1']);
     h.fire(streamToolUse('call-1', 'Read', { file_path: 'x' }));
     h.fire(streamUserEnvelope([

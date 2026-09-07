@@ -1,8 +1,9 @@
 /**
  * Unit tests for the claude-code stream-json turn RPC.
  *
- * Two contracts are exercised here, both driven purely by replayed NATIVE
- * protocol lines (no live `claude`, fake stdin, fake clock):
+ * Two contracts are exercised with synthetic protocol lines using native wire
+ * shapes (no live `claude`, fake stdin, fake clock). Missing-start and legacy
+ * cases are compatibility coverage, not evidence of current CLI ordering:
  *
  *  - **The idle/inactivity deadline (issue #156).** `turnTimeoutMs` is a
  *    *max-idle* window, not a total-turn cap: a turn that keeps emitting stream
@@ -12,10 +13,10 @@
  *  - **Native completion boundaries.** `submitTurn` no longer resolves *with* a
  *    result: it resolves `void` once the resident command group has drained.
  *    Every valid native `result` envelope is forwarded, as it arrives, through
- *    `onProtocolEvent` as its own `{ kind: 'result' }` boundary. Downstream that
- *    boundary is what mints exactly one completion token, so the assertions
- *    below are about *how many* boundaries a native line sequence produces, in
- *    what order, and whether two boundaries are the same object.
+ *    `onProtocolEvent` as its own `{ kind: 'result' }` boundary. Downstream it
+ *    produces one completion token if it answers a submitted group. Tests
+ *    check forwarded boundaries, their attributed command groups and
+ *    their ordering against lifecycle events.
  *
  * Fold vs. queue is expressed here only in native terms — which command uuids
  * are in the `started` set when a `result` lands — and never as an input that
@@ -29,7 +30,7 @@ import {
   ClaudeCodeStreamRpc,
   ClaudeSteerAdmissionError,
 } from '../src/rpc.js';
-import type { ClaudeProtocolEvent, TurnOutcome } from '../src/types.js';
+import type { ClaudeProtocolEvent, CommandLifecycleState, TurnOutcome } from '../src/types.js';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -140,7 +141,7 @@ function assistantLine(text: string): string {
 /**
  * A terminal `result` envelope. `userMessageUuid` is the CLI's
  * `result.user_message_uuid` — an optional attribution hint for the command
- * this result answers. Omitting it models a build that does not emit it.
+ * this result answers. Native background results may omit it.
  */
 function resultLine(text = 'final', userMessageUuid?: string): string {
   return `${JSON.stringify({
@@ -170,36 +171,13 @@ function initLine(capabilities: string[] = ['msg_lifecycle_v1']): string {
   })}\n`;
 }
 
-type LifecycleState =
-  | 'queued'
-  | 'started'
-  | 'completed'
-  | 'cancelled'
-  | 'discarded'
-  | 'refused';
-
-/** The legacy `system`-subtype lifecycle shape (older streams, the fixture). */
-function commandLifecycleLine(
-  commandUuid: string,
-  state: LifecycleState,
-): string {
-  return `${JSON.stringify({
-    type: 'system',
-    subtype: 'command_lifecycle',
-    command_uuid: commandUuid,
-    state,
-  })}\n`;
-}
-
 /**
- * The resident CLI's real lifecycle shape: a top-level `type`, one envelope
- * per state transition. Every submitted uuid walks `queued → started →
- * completed | cancelled`, folded commands included — which is why terminality
- * here, not result counting, is the drainage gate.
+ * The current CLI's lifecycle wire shape: one top-level envelope per state
+ * transition. Tests supply only the transitions relevant to their scenario.
  */
 function lifecycleChunk(
   commandUuid: string,
-  ...states: LifecycleState[]
+  ...states: CommandLifecycleState[]
 ): string {
   return states
     .map(
@@ -255,6 +233,8 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     const h = createHarness({ turnTimeoutMs: 1_000 });
     const turn = h.rpc.submitTurn('go');
     const commandUuid = writtenCommandUuid(h.stdin, 0);
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'started'));
+    h.rpc.onStdoutChunk(initLine());
 
     // Emit a stream line every 800ms — each under the 1000ms idle window — for
     // a total of 4000ms, far longer than the window. Continuous activity keeps
@@ -265,12 +245,12 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     }
     expect(h.reap).not.toHaveBeenCalled();
     // Live activity is pushed as it arrives, ahead of any terminal result.
-    expect(h.kinds()).toEqual(['stream', 'stream', 'stream', 'stream', 'stream']);
+    expect(h.kinds()).toEqual(['command_lifecycle', 'stream', 'stream', 'stream', 'stream', 'stream']);
     expect(h.results()).toEqual([]);
 
     // The terminal result is the single native completion boundary, and it is
     // forwarded strictly after the live stream lines.
-    h.rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'completed'));
     h.rpc.onStdoutChunk(resultLine('final', commandUuid));
     await turn;
     expect(h.kinds().at(-1)).toBe('result');
@@ -335,8 +315,8 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     // The command started, then the native protocol proved it cannot produce a
     // result. Cancellation must release the started-since-result gate itself.
     h.rpc.onStdoutChunk(initLine());
-    h.rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'started'));
-    h.rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'cancelled'));
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'started'));
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'cancelled'));
 
     // No clock advanced, so this rejection cannot have come from the deadline.
     await rejection;
@@ -396,7 +376,7 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     );
 
     // Losing one of two commands is survivable — the window waits on the other.
-    h.rpc.onStdoutChunk(commandLifecycleLine(initialUuid, 'cancelled'));
+    h.rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'cancelled'));
     let settled = false;
     const observed = turn.then(
       () => {
@@ -410,7 +390,7 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     expect(settled).toBe(false);
 
     // Losing the last one is terminal, and the message names that last cause.
-    h.rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'discarded'));
+    h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'discarded'));
     await rejection;
     await observed;
     expect(settled).toBe(true);
@@ -436,8 +416,8 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     // they belong to, so "every command terminal" alone must NOT be read as
     // "no result is coming" — that would fail a window whose answer is in the
     // next flush, and would drop a real native completion boundary.
-    h.rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'started'));
-    h.rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'started'));
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'completed'));
     let settled = false;
     void turn.finally(() => {
       settled = true;
@@ -662,13 +642,15 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     ]);
   });
 
-  it('settles a fold whose result lands before the folded commands complete', async () => {
+  it('settles a fold whose result lands before the last folded command completes', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
+    h.rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'started'));
     h.rpc.onStdoutChunk(initLine());
     await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
+    h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'queued', 'started'));
 
     const settlements: string[] = [];
     void turn.then(
@@ -695,13 +677,16 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     await macrotask();
     expect(settlements).toEqual(['drained']);
     expect(h.trace()).toEqual([
+      `${initialUuid}:started`,
+      `${steerUuid}:queued`,
+      `${steerUuid}:started`,
       `${initialUuid}:completed`,
       'result:folded answer',
       `${steerUuid}:completed`,
     ]);
   });
 
-  it('settles unfolded commands on the last one, not the first result', async () => {
+  it('waits for the last unfolded command (no-start matching-UUID compatibility)', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
@@ -747,7 +732,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     ]);
   });
 
-  it('does not hang or reject when a steered command is discarded', async () => {
+  it('does not hang or reject when a steer is discarded (no-start matching-UUID compatibility)', async () => {
     const log = vi.fn();
     const h = createHarness({ log });
     const turn = h.rpc.submitTurn('first');
@@ -777,7 +762,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it('settles as soon as the last outstanding command is discarded', async () => {
+  it('drains when the final outstanding steer is discarded (no-start matching-UUID compatibility)', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
@@ -825,7 +810,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it('drains normally when a steer is refused but the initial command answers', async () => {
+  it('answers normally alongside a refused steer (no-start matching-UUID compatibility)', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
@@ -851,6 +836,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     const h = createHarness();
     const first = h.rpc.submitTurn('a');
     const uuidA = writtenCommandUuid(h.stdin, 0);
+    h.rpc.onStdoutChunk(lifecycleChunk(uuidA, 'started'));
     h.rpc.onStdoutChunk(initLine());
     h.rpc.onStdoutChunk(resultLine('a result', uuidA));
     h.rpc.onStdoutChunk(lifecycleChunk(uuidA, 'completed'));
@@ -918,7 +904,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     expect(h.stdin.writes).toHaveLength(1);
 
     h.rpc.onStdoutChunk(
-      `${initLine()}${commandLifecycleLine(initialUuid, 'completed')}${resultLine('initial result', initialUuid)}`,
+      `${initLine()}${lifecycleChunk(initialUuid, 'started', 'completed')}${resultLine('initial result', initialUuid)}`,
     );
     // Synchronous flush: both steers hit stdin inside the init line handling,
     // before any await gives the caller a chance to run.
@@ -941,12 +927,14 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     await Promise.resolve();
     expect(turnSettled).toBe(false);
 
+    h.rpc.onStdoutChunk(lifecycleChunk(firstSteerUuid, 'queued', 'started'));
     h.rpc.onStdoutChunk(resultLine('first steer result', firstSteerUuid));
-    h.rpc.onStdoutChunk(commandLifecycleLine(firstSteerUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(firstSteerUuid, 'completed'));
     await Promise.resolve();
     expect(turnSettled).toBe(false);
+    h.rpc.onStdoutChunk(lifecycleChunk(secondSteerUuid, 'queued', 'started'));
     h.rpc.onStdoutChunk(resultLine('final steer result', secondSteerUuid));
-    h.rpc.onStdoutChunk(commandLifecycleLine(secondSteerUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(secondSteerUuid, 'completed'));
 
     await turn;
     // Three native results → three boundaries, in native order.
@@ -959,10 +947,15 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     // Each boundary is forwarded at the moment its native `result` lands,
     // interleaved with the lifecycle facts rather than batched at drainage.
     expect(h.trace()).toEqual([
+      `${initialUuid}:started`,
       `${initialUuid}:completed`,
       'result:initial result',
+      `${firstSteerUuid}:queued`,
+      `${firstSteerUuid}:started`,
       'result:first steer result',
       `${firstSteerUuid}:completed`,
+      `${secondSteerUuid}:queued`,
+      `${secondSteerUuid}:started`,
       'result:final steer result',
       `${secondSteerUuid}:completed`,
     ]);
@@ -972,8 +965,9 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     const h = createHarness();
     const firstTurn = h.rpc.submitTurn('first');
     const firstUuid = writtenCommandUuid(h.stdin, 0);
+    h.rpc.onStdoutChunk(lifecycleChunk(firstUuid, 'started'));
     h.rpc.onStdoutChunk(initLine());
-    h.rpc.onStdoutChunk(commandLifecycleLine(firstUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(firstUuid, 'completed'));
     h.rpc.onStdoutChunk(resultLine('first result', firstUuid));
     await firstTurn;
     expect(h.results().map((outcome) => outcome.text)).toEqual(['first result']);
@@ -987,10 +981,12 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     await steer;
     const steerUuid = writtenCommandUuid(h.stdin, 2);
 
+    h.rpc.onStdoutChunk(lifecycleChunk(secondUuid, 'started'));
     h.rpc.onStdoutChunk(resultLine('second result', secondUuid));
-    h.rpc.onStdoutChunk(commandLifecycleLine(secondUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(secondUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'queued', 'started'));
     h.rpc.onStdoutChunk(resultLine('third result', steerUuid));
-    h.rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'completed'));
     await secondTurn;
     expect(h.results().map((outcome) => outcome.text)).toEqual([
       'first result',
@@ -1039,7 +1035,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     expect(h.results()).toEqual([]);
   });
 
-  it("releases a queued pre-init steer when the initial command's native result lands before capability is decided", async () => {
+  it('releases the pre-init steer when capability remains undecided at the result (no-start matching-UUID compatibility)', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
@@ -1062,6 +1058,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
+    h.rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'started'));
     h.rpc.onStdoutChunk(initLine());
     await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
@@ -1077,9 +1074,10 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     });
 
     h.rpc.onStdoutChunk(resultLine('initial', initialUuid));
-    h.rpc.onStdoutChunk(commandLifecycleLine(initialUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'queued', 'started'));
     h.rpc.onStdoutChunk(resultLine('done', steerUuid));
-    h.rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'completed'));
+    h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'completed'));
     await turn;
     const [first, second] = h.results();
     expect(h.results()).toHaveLength(2);
@@ -1088,8 +1086,11 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     // Each boundary is forwarded when its own native result lands, before the
     // owning command's terminal lifecycle fact.
     expect(h.trace()).toEqual([
+      `${initialUuid}:started`,
       'result:initial',
       `${initialUuid}:completed`,
+      `${steerUuid}:queued`,
+      `${steerUuid}:started`,
       'result:done',
       `${steerUuid}:completed`,
     ]);
@@ -1125,6 +1126,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
+    h.rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'started'));
     h.rpc.onStdoutChunk(initLine());
     await h.rpc.steerTurn('interrupt');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
@@ -1145,6 +1147,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     expect(settlements).toEqual([]);
     expect(h.results()).toEqual([]);
 
+    h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'started'));
     h.rpc.onStdoutChunk(resultLine('interrupting answer', steerUuid));
     h.rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'completed'));
     await turn;
@@ -1189,25 +1192,26 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     expect(h.results()[0]).toMatchObject({ text: 'done', isError: false });
   });
 
-  it('settles on the native result when command_lifecycle arrives as a top-level type', async () => {
+  it('supports the legacy system-subtype lifecycle envelope (compatibility)', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('go');
     const commandUuid = writtenCommandUuid(h.stdin, 0);
 
-    // The resident CLI emits `command_lifecycle` as a top-level `type`
-    // ({"type":"command_lifecycle",...}), not as a `system` subtype. The window
-    // must still drain on the `result` envelope regardless of that shape.
+    // Ordinary tests use the observed top-level shape. Keep the older system
+    // subtype covered explicitly, including lifecycle-based result attribution.
     h.rpc.onStdoutChunk(
-      `${JSON.stringify({
-        type: 'command_lifecycle',
+      ['started', 'completed'].map((state) => `${JSON.stringify({
+        type: 'system',
+        subtype: 'command_lifecycle',
         command_uuid: commandUuid,
-        state: 'completed',
-      })}\n`,
+        state,
+      })}\n`).join(''),
     );
-    h.rpc.onStdoutChunk(resultLine('final', commandUuid));
+    h.rpc.onStdoutChunk(resultLine('final'));
 
     await turn;
-    expect(h.lifecycle()).toEqual([`${commandUuid}:completed`]);
+    expect(h.lifecycle()).toEqual([`${commandUuid}:started`, `${commandUuid}:completed`]);
+    expect(h.events.at(-1)).toMatchObject({ kind: 'result', commandUuids: [commandUuid] });
     expect(h.results()).toHaveLength(1);
     expect(h.results()[0]).toMatchObject({ text: 'final', isError: false });
   });

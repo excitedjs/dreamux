@@ -205,8 +205,8 @@ requirement/verification and dated historical COT annotations. The package
 README also now distinguishes immediate result settlement from request drainage
 and names Core as source-deduplication owner.
 
-The final repair changes five source files and six test/fixture files, all in
-the Claude package. The public lifecycle observation callback remains intact.
+The initial repair at `72af66e5` changed five source files and six test/fixture
+files, all in the Claude package. The public lifecycle observation callback remains intact.
 No existing host was upgraded and no raw native traces were committed. The
 three earlier repaired-provider/Core live probes remain evidence for native
 background/fold/queue behavior; the cancellation/exit corrections were verified
@@ -221,3 +221,84 @@ finding remains unresolved.
 Knowledge closeout passed: task-record check, KB links/reachability (167 files),
 git diff --check, and the internal-content tree scan. The task is done for PR
 handoff; merge and deployment require separate operator authority.
+
+### Alpha and complexity-review follow-up
+
+PR #384 at `72af66e5` passed all nine GitHub CI checks. The authorized alpha
+release succeeded in Actions run 34079076397. Registry metadata and packed
+artifacts confirmed Dreamux 0.24.1-alpha.g72af66e58ab3 depends on Claude provider
+0.7.0-alpha.g72af66e58ab3; the repaired code was present and a fixed-version CLI
+help invocation succeeded. No installed host was upgraded.
+
+An independent Claude complexity review judged the repair lower-entropy with
+no mandatory correction. TeamLeader verification confirmed queuedTurnCount has
+no consumer beyond its own updates, and that ordinary fixtures currently rely
+on missing-start compatibility rather than observed lifecycle ordering. The
+public RPC and session callbacks are exported, so deleting command_lifecycle
+observation is not proven behavior-neutral by a repository-only consumer search.
+The existing pending-request idle timeout remains outside this style cleanup.
+
+The operator subsequently authorized fixing style and redundancy directly.
+The task is reopened for that cleanup; its results will be recorded below.
+
+### Cleanup implementation and TeamLeader pre-review
+
+The cleanup removes the unused queued-turn counter, its two update methods and
+three calls; the duplicate activity-state argument; an unused private UUID
+default; and a result-text temporary whose error case is already handled by a
+throw. Private drainage flags now name completed-command and attributed-result
+facts. Imports, spacing and comments were aligned without changing policies.
+
+Test cleanup removes a duplicate submissions map, repeated lifecycle types and
+helpers, unused harness output and unnecessary async declarations. Ordinary
+fixtures emit the observed top-level started lifecycle before init. No-start
+plus matching-UUID, no-lifecycle and legacy-envelope cases remain explicit
+compatibility coverage; they are not claimed as new native evidence.
+
+The TeamLeader inspected the entire cleanup source and test diff against
+`72af66e5`, checked all removed-state/default callers, and reviewed changed test
+sequences against the repair contract. This pass found no behavior change or
+weakened settlement assertion. The public lifecycle callback, positive UUID
+attribution, cancellation/exit handling and existing idle timeout are retained.
+
+The developer's scoped Rush build, lint, test and typecheck:tests passed with
+12 test files and 199 cases. The TeamLeader full-workspace build was already up
+to date; lint, test and test typechecking passed. Full test took 2 minutes
+3.5 seconds with real Codex 0.153.4 enabled. Its warning summaries contain
+expected runtime stderr diagnostics.
+No additional live CLI probe was run for this behavior-preserving cleanup.
+
+Relative to `72af66e5`, the cleanup touches six source files and five test/fixture
+files. Across the complete repair PR, the totals are six source files and seven
+test/fixture files: runtime-session.ts adds the redundant-expression cleanup,
+and session.test.ts adds the ordinary lifecycle fixture assertion.
+
+### Independent cleanup review and adjudication
+
+The same independent Claude reviewer inspected the complete cleanup against
+`72af66e5` and the enclosing repair. It found no behavior change or weakened
+contract assertion, and reported two low-priority wording findings. The
+operator's explicit instruction to fix style and redundancy covers both.
+
+| Item | Decision | Reason and correction | Operator conflict |
+| --- | --- | --- | --- |
+| C1: stale stall-fixture comment | Accept | Remove the duplicate claim that the turn never terminates; the file header already explains that the idle deadline ends this synthetic window. | None; comment-only cleanup. |
+| C2: five test names describe only compatibility inputs | Accept | Restore each asserted behavior in its title and retain compatibility as a suffix. Keep all test bodies and assertions unchanged. | None; test-title cleanup. |
+
+The reviewer did not run gates or native probes. Its path review confirms the
+removed counter, mirrored map, duplicate argument and unused default had no
+independent consumers. Public lifecycle observation, UUID-positive attribution,
+idle timeout and Core completion-token routing retain their approved behavior.
+
+C1 and C2 are corrected. The TeamLeader checked that the final pass removed one
+stale comment and changed five test titles; test bodies and assertions remain
+unchanged, and no exact-title selector dependency was found. No accepted
+finding remains unresolved. Full suites were not repeated for these wording-only
+edits; git diff --check passed and the mandatory commit hook still checks the
+staged TypeScript and public-content boundary.
+
+Knowledge closeout retains the existing product/provider contracts and records
+the cleanup in this task's requirement, solution and verification. No new domain,
+configuration, persisted-state, maintenance or routing contract is introduced.
+The already published alpha remains tied to `72af66e5`; this cleanup updates the
+existing PR without republishing or upgrading an installed host.

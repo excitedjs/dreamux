@@ -68,9 +68,9 @@ interface PendingTurn {
   /** Commands started since the last result boundary, retained through terminal lifecycle. */
   startedSinceResult: Set<string>;
   /** Whether any command reached `completed` and may still produce its result. */
-  ranAnyCommand: boolean;
+  hasCompletedCommand: boolean;
   /** Whether a result has answered any submitted command in this window. */
-  sawResult: boolean;
+  hasAttributedResult: boolean;
   /**
    * Why the most recent command ended without an answer (Codex's
    * `lastSubmissionError`). Only read to name the cause when a turn ends with
@@ -147,8 +147,8 @@ export class ClaudeCodeStreamRpc {
         submitted: [commandUuid],
         terminal: new Set(),
         startedSinceResult: new Set(),
-        ranAnyCommand: false,
-        sawResult: false,
+        hasCompletedCommand: false,
+        hasAttributedResult: false,
         lastAbnormalReason: null,
         capabilityWaiters: [],
         writeWaiters: new Map(),
@@ -206,7 +206,7 @@ export class ClaudeCodeStreamRpc {
     pending: PendingTurn,
     prompt: string,
     options: TurnSubmitOptions,
-    commandUuid: string = randomUUID(),
+    commandUuid: string,
   ): Promise<void> {
     if (this.pending !== pending) {
       return Promise.reject(capabilityUndecidedTurnEndedError());
@@ -301,7 +301,7 @@ export class ClaudeCodeStreamRpc {
     if (!pending.terminal.has(commandUuid)) {
       pending.terminal.add(commandUuid);
       if (abnormalReason === null) {
-        pending.ranAnyCommand = true;
+        pending.hasCompletedCommand = true;
       } else {
         pending.lastAbnormalReason = abnormalReason;
         this.options.log?.(
@@ -338,7 +338,7 @@ export class ClaudeCodeStreamRpc {
    */
   private settleIfReady(pending: PendingTurn): void {
     if (this.pending !== pending) return;
-    if (pending.sawResult && this.lifecycleSupported !== true) {
+    if (pending.hasAttributedResult && this.lifecycleSupported !== true) {
       this.settlePending()?.resolve();
       return;
     }
@@ -346,11 +346,11 @@ export class ClaudeCodeStreamRpc {
     for (const commandUuid of pending.submitted) {
       if (!pending.terminal.has(commandUuid)) return;
     }
-    if (pending.sawResult) {
+    if (pending.hasAttributedResult) {
       this.settlePending()?.resolve();
       return;
     }
-    if (pending.ranAnyCommand) return;
+    if (pending.hasCompletedCommand) return;
     const error = new Error(
       'claude turn ended without running any of its commands ' +
         `(last: ${pending.lastAbnormalReason ?? 'no command reached the CLI'})`,
@@ -470,7 +470,7 @@ export class ClaudeCodeStreamRpc {
             commandUuids.add(pending.submitted[0]!);
           }
           pending.startedSinceResult.clear();
-          if (commandUuids.size > 0) pending.sawResult = true;
+          if (commandUuids.size > 0) pending.hasAttributedResult = true;
         }
         this.options.onProtocolEvent?.({
           kind: 'result',
