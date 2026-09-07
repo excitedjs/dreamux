@@ -45,14 +45,6 @@ import {
   type OutboundTarget,
   type TransportLogger,
 } from '@excitedjs/feishu-transport';
-import type {
-  FeishuInviteMembersInput,
-  FeishuInviteMembersResult,
-} from '@excitedjs/feishu-transport';
-export type {
-  FeishuInviteMembersInput,
-  FeishuInviteMembersResult,
-} from '@excitedjs/feishu-transport';
 
 /** The Feishu event_type carrying inbound chat messages. */
 const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
@@ -162,7 +154,6 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
     card: unknown,
     options?: Pick<FeishuSendOptions, 'signal'>,
   ): Promise<FeishuSendResult>;
-  inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>;
   /** Optional for externally supplied bots; absence disables topic projection. */
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
   addReaction(messageId: string, emoji: string): Promise<string>;
@@ -290,10 +281,6 @@ export function createFeishuBot(
     ): Promise<FeishuSendResult> {
       const { messageIds } = await transport.sendCard(target, card, options);
       return { messageIds };
-    },
-
-    inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
-      return transport.inviteMembers(input);
     },
 
     getChatMode(chatId: string): Promise<FeishuChatMode | undefined> {

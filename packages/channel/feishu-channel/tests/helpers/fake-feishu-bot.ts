@@ -3,8 +3,6 @@ import type {
   FeishuBotMemberAddedEvent,
   FeishuChatMode,
   FeishuCotClient,
-  FeishuInviteMembersInput,
-  FeishuInviteMembersResult,
   FeishuMessageResourceRequest,
   FeishuMessageResourceResponse,
   FeishuMessageReadMode,
@@ -152,9 +150,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       sentCards.push(entry);
       await waitForSendCardDelay(sendCardDelay, options?.signal);
       return { messageIds: [id] };
-    },
-    async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
-      return { addedOpenIds: input.userOpenIds };
     },
     async getChatMode(chatId: string): Promise<FeishuChatMode | undefined> {
       chatModeRequests.push(chatId);

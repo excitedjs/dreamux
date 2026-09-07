@@ -214,8 +214,11 @@ needed, and contain no `Rebuild:` instruction.
 While a package stays on the 0.x version line, its change files must never
 use type `major` — Rush bumps a 0.x package straight to 1.0.0 on a pending
 major. Record breaking changes for 0.x packages as type `minor` with the
-`BREAKING:` note leading. Packages already past 1.0.0 (for example
-`@excitedjs/feishu-channel`) use real semver majors. CI enforces the 0.x rule
+`BREAKING:` note leading. Packages already past 1.0.0 that are consumed outside
+Dreamux use real semver majors. Packages consumed only by Dreamux itself (for
+example `@excitedjs/feishu-channel`, whose `FeishuBot` contract is Dreamux-internal)
+record incompatible changes as type `minor` with a plain note instead.
+CI enforces the 0.x rule
 (`ci.yml`, "Forbid major change files on the 0.x line"); the operator decides
 when a package leaves 0.x.
 
