@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Drop the unused `inviteMembers` fake from the Feishu bot test helper.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Remove the dead `FeishuBot.inviteMembers` pass-through and its test fakes. The method was added for the dispatcher-only `team.create_group` flow and has had no caller since that flow was retired in the #182 PR-8 cleanup; `FeishuBot` is a Dreamux-internal contract. The Feishu transport `createGroup`/`inviteMembers` wrappers and their exported types are intentionally kept.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

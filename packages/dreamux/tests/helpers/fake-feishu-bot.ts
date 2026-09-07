@@ -31,8 +31,6 @@ import type { FeishuBot, FeishuInboundEvent } from '@excitedjs/feishu-channel';
 type FeishuInboundRoutes = Parameters<FeishuBot['start']>[0];
 type FeishuOutboundTarget = Parameters<FeishuBot['send']>[0];
 type FeishuSendResult = Awaited<ReturnType<FeishuBot['send']>>;
-type FeishuInviteMembersInput = Parameters<FeishuBot['inviteMembers']>[0];
-type FeishuInviteMembersResult = Awaited<ReturnType<FeishuBot['inviteMembers']>>;
 type FeishuMessageResourceRequest = Parameters<
   FeishuBot['fetchMessageResource']
 >[0];
@@ -107,12 +105,6 @@ export function createFakeFeishuBot(appId = 'fake-bot'): FakeFeishuBot {
       // assert on a card the user stopped seeing.
       const sent = sentCards.find((entry) => entry.messageIds.includes(messageId));
       if (sent !== undefined) sent.card = card;
-    },
-
-    async inviteMembers(
-      input: FeishuInviteMembersInput,
-    ): Promise<FeishuInviteMembersResult> {
-      return { addedOpenIds: input.userOpenIds };
     },
 
     async addReaction(messageId: string, emoji: string): Promise<string> {
