@@ -26,9 +26,11 @@ changes and scheduler fires.
 The namespace-cleanup slice landed and has since been superseded by a larger
 change. It replaced the pre-stable `mcp.*` admin RPC names with product names,
 removed the dispatcher mutation placeholders, and added admin-only custom skill
-roots to TeamMate and TeamLeader creation. The event surface, protocol baseline,
-introspection, inventory, and authentication work in this proposal remain future
-slices, and the sections below are still the live target.
+roots to TeamMate and TeamLeader creation. Configured-Channel inventory is now
+available through `channel.list`; see the [Channel inventory contract](../domains/channel.md#configured-channel-inventory).
+The event surface, protocol baseline, introspection, and authentication work
+in this proposal remain future slices, and the sections below are still the
+live target.
 
 The historical pre-cleanup surface this proposal opens against — the
 `admin/methods.ts` registry, the `mcp.*` method names, the five scoped MCP
@@ -74,10 +76,10 @@ These gaps matter if admin.sock is the external system integration surface:
 |---|---|
 | Method and schema introspection | No admin method lists its supported params/result shape through the socket. Consumers must know method names out of band or read source/docs. |
 | Adapter diagnostics | Admin can create runtime descriptors internally, but there is no diagnostic method to ask which MCP servers/tools a dispatcher or TeamLeader adapter would expose. This is not a domain control-plane capability unless an external consumer explicitly needs adapter diagnostics. |
-| Channel inventory | There is no first-class `channel.list` or `channel.status` Command. Bindings themselves are Channel-owned and are not a Core inventory to publish. |
+| Channel inventory | Implemented by `channel.list`; see the [Channel inventory contract](../domains/channel.md#configured-channel-inventory). There is no separate `channel.status` Command. Bindings remain Channel-owned. |
 | Dispatcher declaration mutation | This is not a control-plane capability. Config editing remains outside admin.sock, and the unsupported `dispatcher.add` / `dispatcher.remove` placeholders were removed. |
 | Dispatcher-root turn submission | Admin can send a TeamLeader turn and TeamMate turns; there is no direct dispatcher-agent submit method. |
-| Channel session lifecycle detail | `dispatcher.status` summarizes dispatcher runtime, not per-channel live session status. |
+| Channel session lifecycle detail | `channel.list` exposes each configured Channel's `live` flag. Detailed per-channel lifecycle diagnostics remain absent; `dispatcher.status` summarizes the dispatcher runtime. |
 | Outbound events | No admin event stream, subscription method, event cursor, or durable event replay exists. The in-process core event bus feeds Channel providers only; an external consumer must poll read Commands. |
 | Versioned protocol contract | Request/response envelopes have no `protocol_version`, max-frame rule, public error taxonomy, idempotency key, or streaming client contract. See "Protocol Baseline". |
 
@@ -348,7 +350,8 @@ transport that happens to carry it.
 - Adding HTTP or remote network control-plane transport.
 - Implementing dispatcher add/remove through admin.sock.
 - Adding full admin schema introspection.
-- Adding channel inventory APIs.
+- Adding detailed Channel status or provider-owned binding inventory APIs;
+  configured-Channel inventory is already available through `channel.list`.
 - Adding dispatcher-root turn submission.
 - Implementing the event stream in the namespace-cleanup slice. The first slice
   may land the event contract as design only, but it must not make choices that
@@ -368,8 +371,8 @@ Reviewers should check whether this keeps ownership clean:
 - Are model-facing filters and model wording isolated in the MCP delegates?
 - Are safety checks still enforceable when a non-MCP external system invokes the
   same Commands directly?
-- Does the Command catalog leave room for future introspection and channel
-  inventory without another rename?
+- Does the Command catalog leave room for future introspection and detailed
+  Channel status without renaming the existing inventory Command?
 - Does the event surface belong to the admin control plane rather than logs,
   MCP completion delivery, or provider-specific channel callbacks?
 - Is the event envelope redacted and typed enough for a larger system to

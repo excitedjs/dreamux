@@ -1,4 +1,5 @@
 import { createChangelogCommand } from './changelog.js';
+import { createChannelCommand } from './channel.js';
 import { createConfigCommand } from './config.js';
 import { createDaemonCommand } from './daemon.js';
 import { createDispatcherCommand } from './dispatcher.js';
@@ -21,6 +22,7 @@ export function createDreamuxCommands(deps: CliDeps): DreamuxCommand[] {
     createDoctorCommand(),
     createDaemonCommand(),
     createDispatcherCommand(deps),
+    createChannelCommand(deps),
     // One MCP subcommand for every Agent-facing server. Which server it is, and
     // for whom, lives entirely in the lease token it is launched with.
     createMcpCommand(),

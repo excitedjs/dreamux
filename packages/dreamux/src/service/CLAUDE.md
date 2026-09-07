@@ -62,7 +62,9 @@ Team's members are the same pair again, scoped to the Team.
   `DispatcherService.listChannels()`: configured id, provider ref, opaque
   identity (empty when absent), and live status, in configuration order. The
   command also works for stopped dispatchers without starting sessions; it never
-  returns provider configuration.
+  returns provider configuration. The public CLI wrapper is
+  `dreamux channel list --id <ID>`; the shared output DTO is `ChannelMetadata`
+  in `channel-service/types.ts`.
 - **`team-collection/`** — `TeamCollection` owns the Team store, worktrees,
   create/list/history, and the Team Commands and MCP delegate.
   `runtime-registry.ts` owns materialization: one construction per team id,

@@ -77,7 +77,6 @@ function resolveMethod(obj: string | undefined, verb: string | undefined): strin
   const o = obj ?? '';
   const v = verb ?? '';
   if (o === 'server' && v === 'status') return 'server.status';
-  if (o === 'channel' && v === 'list') return 'channel.list';
   if (o === 'dispatcher') {
     switch (v) {
       case 'list': return 'dispatcher.list';
@@ -85,6 +84,7 @@ function resolveMethod(obj: string | undefined, verb: string | undefined): strin
       case 'start': return 'dispatcher.start';
     }
   }
+  if (o === 'channel' && v === 'list') return 'channel.list';
   return null;
 }
 
