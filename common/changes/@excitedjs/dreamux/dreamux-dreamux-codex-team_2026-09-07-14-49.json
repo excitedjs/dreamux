@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Stop deliberate TeamMate teardown from pushing pending completion notifications to owners.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

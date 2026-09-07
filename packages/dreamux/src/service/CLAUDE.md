@@ -135,9 +135,12 @@ Team's members are the same pair again, scoped to the Team.
   that runs in that directory records a plain reuse-cwd workspace, so it can
   neither clean the Team's checkout nor hold a drifting copy of its state. The
   attempt that created a checkout is the only one that may discard it.
-- **Every settled turn is reported.** Completion delivery folds on the
-  provider's own completion token when there is one, delivers a failed or
-  stopped turn without inventing one, and keeps per-recipient FIFO order.
+- **A settled turn is reported while its delivery relationship remains
+  active.** Completion delivery folds on the provider's own completion token
+  when there is one, delivers an independently failed or stopped turn without
+  inventing one, and keeps per-recipient FIFO order. Deliberate TeamMate close,
+  Team dissolve, and host stop abandon only deliveries that have not started;
+  their Turns remain retained until runtime settlement converges.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** Role
   differentiation is the tool set and system prompt injected at launch;
   `dispatcher-service/mcp-delegates.ts` is the whole role→servers decision.

@@ -116,6 +116,12 @@ the same change that touches it.
   share one completion delivered once per recipient; the turn's original trigger
   does not override those relationships.
   (Requirement: [background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07).)
+- **Deliberate teardown ends pending completion obligations.** TeamMate close,
+  Team dissolve, and host stop abandon completion delivery that has not started,
+  while still waiting for each accepted turn to settle. Delivery already started
+  is not retracted, and an independently failed or stopped turn remains news for
+  its waiting Agent.
+  (Ruling: [lifecycle-stop completion pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md).)
 
 ## Observing agents
 
@@ -220,8 +226,9 @@ the same change that touches it.
 
 - **Tools return receipts, work runs behind them.** Any MCP operation that can
   outlast a runtime's tool timeout (dissolve, spawns, workflow runs) returns an
-  immediate acceptance receipt; completion arrives as a push, and one settled
-  turn produces exactly one push.
+  immediate acceptance receipt. While its lifecycle relationship remains
+  active, each deliverable settled turn produces exactly one completion push;
+  deliberate teardown abandons delivery that has not started.
 
 ## Local state and upgrades
 

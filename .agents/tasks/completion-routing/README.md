@@ -14,3 +14,4 @@
 
 ## Tasks
 - [Adopt provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — `done`: Replace Claude request windows with resident-session settlement and correct native failure reporting, retaining background work and Core completion-token routing. Original delivery: PR #344.
+- [Drop lifecycle-stop completion pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/README.md) — `review`: Retire pending delivery before deliberate TeamMate teardown so close, Team dissolve, and host restart do not push cleanup-induced results into an owner that is done or stopping.

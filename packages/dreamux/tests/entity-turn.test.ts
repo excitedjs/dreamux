@@ -5,6 +5,7 @@ import type { RuntimeCompletion, RuntimeSubmission } from '@excitedjs/dreamux-ty
 import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
 import type { TurnCompletionDelivery } from '../src/service/teammate-service/turn-recording.js';
 import { EntityTurn } from '../src/service/teammate-service/turn-recording.js';
+import { EntityTurnCoordinator } from '../src/service/teammate-service/turn-coordinator.js';
 import {
   completedCompletion,
   controllableRuntimeSubmission,
@@ -32,15 +33,16 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     });
   });
 
-  it('delivers a close-induced stopped settlement with no native token', async () => {
+  it('abandons a close-induced delivery without discarding its stopped settlement', async () => {
     const runtime = controllableRuntimeSubmission();
     const delivery = deliveryMock();
     const turn = makeTurn(runtime.submission, delivery);
 
     expect(turn.isSettled()).toBe(false);
+    turn.abandonPendingDelivery();
     expect(runtime.stop()).toBe(true);
     // A submission settles once: a result offered after the stop is a no-op and
-    // can never retroactively turn this turn into a push.
+    // cannot replace the stopped fact Core still uses for convergence.
     expect(
       runtime.settle({
         kind: 'completion',
@@ -51,8 +53,18 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
     await turn.delivery;
     expect(turn.isSettled()).toBe(true);
-    // The waiting Agent asked for the work; that it was stopped is news only
-    // this turn has. There is no native token to fold on, so none is invented.
+    expect(delivery).not.toHaveBeenCalled();
+  });
+
+  it('delivers an independently stopped settlement with no native token', async () => {
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const turn = makeTurn(runtime.submission, delivery);
+
+    expect(runtime.stop()).toBe(true);
+
+    await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
+    await turn.delivery;
     expect(delivery).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledWith(null, {
       kind: 'teammate',
@@ -60,6 +72,30 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
       status: 'stopped',
       result: null,
     });
+  });
+
+  it('does not retract a delivery that already started', async () => {
+    const runtime = controllableRuntimeSubmission();
+    let markStarted!: () => void;
+    let finishDelivery!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const delivery = vi.fn(
+      () => new Promise<void>((resolve) => {
+        finishDelivery = resolve;
+        markStarted();
+      }),
+    );
+    const turn = makeTurn(runtime.submission, delivery);
+
+    runtime.complete('done');
+    await started;
+    turn.abandonPendingDelivery();
+    finishDelivery();
+
+    await turn.delivery;
+    expect(delivery).toHaveBeenCalledTimes(1);
   });
 
   it('delivers an internal runtime failure with no native token', async () => {
@@ -203,6 +239,47 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     await turn.delivery;
 
     expect(delivery).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('EntityTurnCoordinator lifecycle delivery boundary', () => {
+  it('retains a late-attached Turn for settlement without giving it a delivery', async () => {
+    let acceptsCompletionDelivery = true;
+    let attach!: (admission: {
+      status: 'submitted';
+      submission: RuntimeSubmission;
+    }) => void;
+    const providerAdmission = new Promise<{
+      status: 'submitted';
+      submission: RuntimeSubmission;
+    }>((resolve) => {
+      attach = resolve;
+    });
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const coordinator = new EntityTurnCoordinator({
+      identity: () => ({ name: 'reviewer' }) as never,
+      isActive: () => true,
+      acceptsCompletionDelivery: () => acceptsCompletionDelivery,
+    });
+
+    const admission = coordinator.submitRuntimeTurn(
+      () => providerAdmission,
+      delivery,
+    );
+    acceptsCompletionDelivery = false;
+    coordinator.abandonPendingDeliveries();
+    attach({ status: 'submitted', submission: runtime.submission });
+
+    const result = await admission;
+    expect(result.status).toBe('submitted');
+    await expect(coordinator.convergeRetainedTurns()).rejects.toThrow(
+      /1 unsettled submission/u,
+    );
+
+    runtime.complete('late result');
+    await coordinator.convergeRetainedTurns();
+    expect(delivery).not.toHaveBeenCalled();
   });
 });
 

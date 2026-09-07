@@ -27,6 +27,10 @@ import type {
   PreparedCompletionFact,
 } from '../completion-router/index.js';
 import { deduplicate } from '../deduplicate.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../shutdown-errors.js';
 import { COMPLETION_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { AdmissionLedger, AgentEntityLedgerKey } from './admission-ledger.js';
@@ -109,6 +113,8 @@ export class TeammateService {
     this.turns = new EntityTurnCoordinator({
       identity: () => this.current(),
       isActive: () => this.phase === 'active',
+      acceptsCompletionDelivery: () =>
+        this.phase === 'active' && this.hostStop === null,
     });
     this.runtimeOwner = new TeammateRuntimeOwner(
       deps,
@@ -375,25 +381,14 @@ export class TeammateService {
   /**
    * Release the host's runtime authority over this entity, without closing it.
    *
-   * A process stop and a failed dispatcher start both have to give back what
-   * the run took — the native runtime, its MCP authority, its write generation
-   * — and nothing else. The entity keeps its durable identity, its status, and
-   * its worktree: nobody asked it to close, and a host that closed it on the
-   * way out would be deciding a product lifecycle no operator requested.
+   * A process stop gives back its native runtime, MCP authority, and write
+   * generation, but keeps the entity's durable identity, status, and worktree.
    *
-   * Accepted work converges first, in the order a close uses, so a turn that
-   * was already admitted settles and delivers its facts while the Channel
-   * subscriptions carrying them are still attached.
-   *
-   * Admission is fenced only while that convergence runs. The dispatcher owns
-   * the real fences, and the same process may start again without
-   * rematerializing this entity, so an entity left permanently refusing input
-   * would be fencing the wrong thing. Work admitted before those fences that
-   * revives a runtime is what the caller's second, idempotent sweep is for.
-   *
-   * An entity that is closing, held closed, or retired is already giving up
-   * the same authority through its own terminal path; joining it here would
-   * only race it.
+   * Pending completion delivery is abandoned before native stop because the
+   * lifecycle relationship no longer owes it; each Turn remains retained until
+   * settlement converges. The published host-stop promise fences admission only
+   * for that span, so a later process start can use this same entity normally.
+   * An entity already closing or closed converges through its terminal path.
    */
   stopForHost(): Promise<void> {
     if (this.phase !== 'active') return Promise.resolve();
@@ -404,6 +399,7 @@ export class TeammateService {
         this.hostStop = null;
       });
     this.hostStop = task;
+    this.turns.abandonPendingDeliveries();
     return task;
   }
 
@@ -411,10 +407,15 @@ export class TeammateService {
     // A lock is not consulted: an entity a Workflow still holds would
     // otherwise keep a live native runtime past process exit, and the
     // Workflow owner has already been stopped by the same sweep.
-    await this.runtimeOwner.stopRuntime();
+    const failures: unknown[] = [];
+    await collectShutdownFailure(failures, () => this.runtimeOwner.stopRuntime());
     await this.turns.drainAdmissions();
     await this.waitForOrdinaryMutations();
-    await this.turns.settleAndDeliverRetained();
+    await collectShutdownFailure(failures, () => this.turns.convergeRetainedTurns());
+    throwShutdownFailures(
+      failures,
+      `TeamMate ${JSON.stringify(this.name)} did not converge during host stop`,
+    );
   }
 
   close(input: { note: string }): Promise<AgentEntityCloseResult> {
@@ -561,10 +562,11 @@ export class TeammateService {
     closeNote: string,
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
+    this.turns.abandonPendingDeliveries();
     await this.runtimeOwner.stopRuntime();
     await this.turns.drainAdmissions();
     await this.waitForOrdinaryMutations();
-    await this.turns.settleAndDeliverRetained();
+    await this.turns.convergeRetainedTurns();
 
     const identity = this.current();
     const shouldCleanup =

@@ -339,14 +339,19 @@ a dispatcher-wide key. A delivery-initiating action (`spawn`, `send`, or
 team-create-with-prompt) resolves its initiator before runtime admission and
 attaches one closure to the entity-owned `Turn`. After the winning terminal
 outcome is selected, that Turn invokes the shared stateless
-`CompletionDeliveryPolicy`, which delivers at-most-once per producer, completion
-token, and recipient while preserving provider order — never keyed by native
-ids, completion text, or slot heuristics.
+`CompletionDeliveryPolicy` only while the source relationship still owes
+delivery. Deliberate TeamMate close, Team dissolve, and host stop permanently
+clear obligations that have not started, while retaining the Turn until
+settlement converges. The downstream policy delivers at-most-once per producer,
+completion token, and recipient while preserving provider order — never keyed
+by native ids, completion text, or slot heuristics.
 
 - the initiating action retains the target directly; there is no Turn id lookup
   map or terminal registry;
 - channel inbound and remote-control turns do not attach a completion closure,
   so they are not pushed;
+- deliberate teardown abandons a Turn's delivery closure only before its
+  delivery task starts; already-started delivery is not retracted;
 - one Turn starts at most one delivery task after outcome selection;
 - completion preparation and each submission attempt are deadline-bounded;
 - only an explicit provider-proven pre-admission failure may retry; a throw, a
@@ -447,9 +452,12 @@ Source:
   runs in that directory records a plain `reuse-cwd` workspace, so it can
   neither clean the Team's checkout nor hold a drifting copy of its state. The
   attempt that created a checkout is the only one that may discard it.
-- **Every settled turn is reported.** Completion delivery folds on the
-  provider's own completion token when there is one, delivers a failed or
-  stopped turn without inventing one, and keeps per-recipient FIFO order.
+- **A settled turn is reported while its delivery relationship remains
+  active.** Completion delivery folds on the provider's own completion token
+  when there is one, delivers an independently failed or stopped turn without
+  inventing one, and keeps per-recipient FIFO order. Deliberate TeamMate close,
+  Team dissolve, and host stop abandon only delivery that has not started; the
+  Turn remains retained until settlement converges.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** Role
   differentiation is the tool set and system prompt injected at launch.
 - **Commands are domain-owned.** Each owning module declares its canonical

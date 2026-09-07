@@ -11,6 +11,7 @@ import {
 interface EntityTurnCoordinatorOptions {
   identity: () => AgentEntityIdentity;
   isActive: () => boolean;
+  acceptsCompletionDelivery: () => boolean;
 }
 
 type ObservedRuntimeAdmission =
@@ -58,7 +59,7 @@ export class EntityTurnCoordinator {
       }
       const turn = this.attachSubmission(
         result.admission.submission,
-        deliverCompletion,
+        this.opts.acceptsCompletionDelivery() ? deliverCompletion : null,
       );
       return { status: 'submitted', turn };
     });
@@ -79,7 +80,11 @@ export class EntityTurnCoordinator {
     } while (this.admissionContinuationTail !== tail);
   }
 
-  async settleAndDeliverRetained(): Promise<void> {
+  abandonPendingDeliveries(): void {
+    for (const turn of this.retainedTurns) turn.abandonPendingDelivery();
+  }
+
+  async convergeRetainedTurns(): Promise<void> {
     await Promise.resolve();
     const unsettled = [...this.retainedTurns].filter((turn) => !turn.isSettled());
     if (unsettled.length > 0) {

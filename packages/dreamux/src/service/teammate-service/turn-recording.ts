@@ -101,7 +101,7 @@ export class EntityTurn implements Turn {
   constructor(
     readonly runtime: RuntimeSubmission,
     private readonly producerName: string,
-    private readonly deliveryClosure: TurnCompletionDelivery | null,
+    private deliveryClosure: TurnCompletionDelivery | null,
   ) {
     this.settled = runtime.settled.then((settlement): TurnOutcome => {
       if (settlement.kind === 'completion') {
@@ -129,13 +129,17 @@ export class EntityTurn implements Turn {
     return this.selectedOutcome !== null;
   }
 
+  public abandonPendingDelivery(): void {
+    if (this.deliveryTask === null) this.deliveryClosure = null;
+  }
+
   async ensureDelivery(): Promise<void> {
     await this.settled;
     this.startDeliveryIfReady();
     await (this.deliveryTask ?? Promise.resolve());
   }
 
-  /** Record the one outcome this turn ever has, then report it. */
+  /** Record the one outcome this turn ever has, then deliver it if still owed. */
   private settle(outcome: TurnOutcome): TurnOutcome {
     this.selectedOutcome = outcome;
     this.startDeliveryIfReady();
@@ -143,13 +147,14 @@ export class EntityTurn implements Turn {
   }
 
   /**
-   * Every settled turn is reported, whatever ended it.
+   * Report the selected outcome while its source relationship still owes it.
    *
    * The waiting Agent asked for the work, not for a native result: a turn that
    * failed or was stopped is exactly the news it cannot infer on its own, so it
-   * is delivered from the outcome this turn already selected. Only a provider
-   * completion carries a token, and that token is passed through solely as the
-   * settlement's identity for folding.
+   * is delivered from the outcome this turn already selected while that
+   * relationship remains active. Deliberate teardown may abandon a delivery
+   * that has not started. Only a provider completion carries a token, and that
+   * token is passed through solely as the settlement's identity for folding.
    */
   private startDeliveryIfReady(): void {
     if (

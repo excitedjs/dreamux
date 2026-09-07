@@ -32,9 +32,12 @@ runtime app-server readiness, and same-version restart cautions.
   An untyped provider rejection is ambiguous. Runtime stop fences new admission
   synchronously and waits for already-started admission calls to settle before
   it reports completion.
-- Every settled turn is reported to the Agent that was waiting for it,
-  including one that failed or was stopped without a native provider result. A
-  missing completion is therefore a delivery problem, not evidence that the
+- A settled turn is reported to the Agent that was waiting for it while their
+  lifecycle relationship remains active, including one that independently
+  failed or stopped without a native provider result. Deliberate TeamMate
+  close, Team dissolve, and host stop abandon completion delivery that has not
+  started, while still waiting for runtime settlement. Outside those teardown
+  boundaries, a missing completion is a delivery problem, not evidence that the
   turn ended badly.
 - Completion preparation and each prepared submission attempt have an internal
   deadline. Deadline expiry is admission-ambiguous and terminal: Dreamux logs
