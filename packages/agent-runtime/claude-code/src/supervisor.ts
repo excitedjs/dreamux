@@ -27,7 +27,7 @@ import type {
 class LiveClaudeCodeSession implements ClaudeCodeSession {
   private supervisor: SupervisedChild | null = null;
   private child: ChildProcess | null = null;
-  private exited = false;
+  private exitError: Error | null = null;
   private stopped = false;
   private stopRequested = false;
   private startTask: Promise<void> | null = null;
@@ -38,7 +38,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   constructor(private readonly spec: ClaudeCodeSessionSpec) {}
 
   isAlive(): boolean {
-    return this.child !== null && !this.exited;
+    return this.child !== null && !this.stopRequested && this.exitError === null;
   }
 
   start(): Promise<void> {
@@ -127,8 +127,9 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     options: TurnSubmitOptions = {},
     commandUuid?: string,
   ): Promise<RuntimeAdmission> {
+    if (this.exitError !== null) return Promise.resolve({ status: 'failed', error: this.exitError });
     if (this.stopRequested || this.stopped) return Promise.resolve({ status: 'stopped' });
-    if (this.child === null || this.exited || this.rpc === null) {
+    if (this.child === null || this.rpc === null) {
       return Promise.resolve({ status: 'failed', error: new Error('claude resident child is not running') });
     }
     return this.rpc.submit(prompt, options, commandUuid);
@@ -149,11 +150,8 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   }
 
   private async stopSession(): Promise<void> {
-    // Mark exited up front so the child's own `exit` event (fired by the kill
-    // below) is treated as a deliberate stop, never an unexpected exit that
-    // would fire `onExit` and degrade the runtime we are intentionally tearing
-    // down.
-    this.exited = true;
+    // stopRequested already suppresses the exit caused by this teardown.
+    // An earlier unexpected exit retains its failure cause through cleanup.
     this.rpc?.stop();
     const supervisorAtStop = this.supervisor;
     const supervisorStop = supervisorAtStop?.stop() ?? null;
@@ -162,7 +160,6 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     await (supervisor === supervisorAtStop && supervisorStop !== null
       ? supervisorStop
       : supervisor?.stop());
-    this.exited = true;
     this.rpc = null;
     this.child = null;
     this.supervisor = null;
@@ -180,8 +177,8 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   }
 
   private onChildExit(error: Error): void {
-    if (this.exited) return;
-    this.exited = true;
+    if (this.stopRequested || this.exitError !== null) return;
+    this.exitError = error;
     this.rpc?.fail(error);
     this.onExitHandler?.(error);
   }

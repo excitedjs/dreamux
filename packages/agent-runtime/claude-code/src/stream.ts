@@ -111,7 +111,8 @@ function parseResult(o: JsonObject): ResultEnvelope {
     : [];
   let isError: boolean;
   if (subtype !== null) {
-    isError = subtype !== 'success';
+    // The success arm also carries API failures, with error text in `result`.
+    isError = subtype !== 'success' || o['is_error'] === true;
   } else {
     isError = o['is_error'] === true || errors.length > 0;
   }
@@ -129,6 +130,7 @@ function parseResult(o: JsonObject): ResultEnvelope {
   return {
     subtype,
     isError,
+    terminalReason: str(o['terminal_reason']),
     text,
     sessionId: str(o['session_id']),
     // The client-supplied `uuid` of a user message associated with this result.
@@ -370,6 +372,7 @@ export class TurnAggregator {
       text,
       sessionId: r.sessionId ?? this.initSessionId,
       subtype: r.subtype,
+      terminalReason: r.terminalReason,
       errors: r.errors,
       hasStructuredOutput: r.hasStructuredOutput,
     };

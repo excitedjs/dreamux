@@ -45,5 +45,7 @@ export function completionFromTurnOutcome(
 
 /** Claude's own explanation for a failed native result. */
 export function turnFailureMessage(outcome: TurnOutcome): string {
-  return outcome.errors.join('; ') || outcome.subtype || 'claude turn failed';
+  return outcome.errors.join('; ') ||
+    (outcome.subtype === 'success' ? outcome.text : '') ||
+    outcome.terminalReason || outcome.subtype || 'claude turn failed';
 }

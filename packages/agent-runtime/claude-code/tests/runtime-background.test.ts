@@ -308,26 +308,28 @@ describe('resident background turns and submitted commands', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it.each(['later', 'queued', 'started'])('discards cancelled text when the next input is %s, without losing that input', async (nextState) => {
+  it.each(['later', 'queued', 'started'])('settles native failure for the consumed group with another input %s, then clears failed text', async (nextState) => {
     const h = await harness();
     const a = await h.submit('A');
     const aUuid = h.writes[1]!.uuid;
     h.lifecycle(aUuid, 'started');
-    h.emit(assistant('cancelled answer'));
-    const bBeforeCancel = nextState === 'later' ? null : await h.submit('B');
-    if (bBeforeCancel !== null) h.lifecycle(h.writes[2]!.uuid, nextState);
+    h.emit(assistant('failed partial answer'));
+    const b = nextState === 'later' ? null : await h.submit('B');
+    if (b !== null) h.lifecycle(h.writes[2]!.uuid, nextState);
+    if (nextState === 'started') h.lifecycle(h.writes[2]!.uuid, 'cancelled');
+    h.emit({ type: 'result', subtype: 'error_during_execution', is_error: true,
+      terminal_reason: 'model_error', errors: ['native model failure'] });
     h.lifecycle(aUuid, 'cancelled');
-    if (nextState === 'later') {
-      await expect(a.settled).resolves.toMatchObject({ kind: 'stopped' });
-      await tick();
-    }
-    const b = bBeforeCancel ?? await h.submit('B');
-    const bUuid = h.writes[2]!.uuid;
-    if (nextState !== 'started') h.lifecycle(bUuid, 'started');
+    const failed = await h.completion(a);
+    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message: 'native model failure' }) });
+    if (nextState === 'started') expect(await h.completion(b!)).toBe(failed);
+    const next = nextState === 'queued' ? b! : await h.submit('next input');
+    const nextUuid = h.writes.at(-1)!.uuid;
+    h.lifecycle(nextUuid, 'started');
     h.result('');
-    h.lifecycle(bUuid, 'completed');
-    expect(await h.completion(b)).toEqual({ status: 'completed', resultText: null });
-    if (nextState !== 'later') await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    h.lifecycle(nextUuid, 'completed');
+    expect(await h.completion(next)).toEqual({ status: 'completed', resultText: null });
+    expect(await h.completion(a)).toBe(failed);
     expect(h.reap).not.toHaveBeenCalled();
     expect(h.createSession).toHaveBeenCalledTimes(1);
   });
@@ -410,18 +412,53 @@ describe('resident background turns and submitted commands', () => {
     expect(h.activity).toEqual(beforeLate);
   });
 
-  it('ignores an interrupt artifact and preserves queued work through cancellation', async () => {
+  it('reports native success/is_error API failure before cancelled, then answers subsequent input', async () => {
     const h = await harness();
-    const artifact = { type: 'result', subtype: 'error_during_execution', is_error: true };
-    h.emit(artifact);
+    h.activity.length = 0;
+    const a = await h.submit('A');
+    const uuid = h.writes[1]!.uuid;
+    h.lifecycle(uuid, 'queued');
+    h.lifecycle(uuid, 'started');
+    // Real CLI 2.1.263 with a controlled HTTP 401 response; identifiers are synthetic.
+    const message = 'Failed to authenticate. API Error: 401 Controlled probe authentication failure';
+    h.result(message, {
+      is_error: true, terminal_reason: 'api_error',
+      user_message_uuid: uuid, user_message_uuids: [uuid],
+    });
+    h.lifecycle(uuid, 'cancelled');
+    const failed = await h.completion(a);
+    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message }) });
+    expect(h.activity.filter((event) => event.kind === 'turn.ended'))
+      .toEqual([expect.objectContaining({ status: 'failed', reason: message })]);
+
+    const b = await h.submit('B');
+    const bUuid = h.writes[2]!.uuid;
+    h.lifecycle(bUuid, 'queued');
+    h.lifecycle(bUuid, 'started');
+    h.result('B answer', { user_message_uuid: bUuid });
+    h.lifecycle(bUuid, 'completed');
+    expect(await h.completion(b)).toEqual({ status: 'completed', resultText: 'B answer' });
+    expect(await h.completion(a)).toBe(failed);
+    expect(h.activity.filter((event) => event.kind === 'turn.ended').map((event) => event.status))
+      .toEqual(['failed', 'completed']);
+    expect(h.reap).not.toHaveBeenCalled();
+    expect(h.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports UUID-less errors and preserves queued work through native failure', async () => {
+    const h = await harness();
+    h.activity.length = 0;
+    const nativeFailure = { type: 'result', subtype: 'error_during_execution', is_error: true,
+      terminal_reason: 'model_error', errors: ['native model failure'] };
+    h.emit(nativeFailure);
     expect(h.reap).not.toHaveBeenCalled();
     const a = await h.submit('A');
     h.lifecycle(h.writes[1]!.uuid, 'started');
     const b = await h.submit('B');
     h.lifecycle(h.writes[2]!.uuid, 'queued');
-    h.emit(assistant('interrupted text'));
+    h.emit(assistant('failed partial answer'));
     h.lifecycle(h.writes[1]!.uuid, 'cancelled');
-    h.emit(artifact);
+    h.emit(nativeFailure);
     const settled = vi.fn();
     void b.settled.then(settled);
     await tick();
@@ -430,7 +467,11 @@ describe('resident background turns and submitted commands', () => {
     h.result('B answer');
     h.lifecycle(h.writes[2]!.uuid, 'completed');
     expect(await h.completion(b)).toMatchObject({ resultText: 'B answer' });
-    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(await h.completion(a)).toMatchObject({
+      status: 'failed', error: expect.objectContaining({ message: 'native model failure' }),
+    });
+    expect(h.activity.filter((event) => event.kind === 'turn.ended').map((event) => event.status))
+      .toEqual(['failed', 'failed', 'completed']);
     expect(h.reap).not.toHaveBeenCalled();
   });
 });

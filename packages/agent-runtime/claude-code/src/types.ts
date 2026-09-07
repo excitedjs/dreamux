@@ -84,7 +84,9 @@ export interface ResultEnvelope {
   /** `success` or one of the `error_*` subtypes. Unknown subtypes pass through. */
   readonly subtype: string | null;
   readonly isError: boolean;
-  /** The success-path final text (`result`); `null` for error subtypes. */
+  /** Why native generation ended; abort and hard failure share cancelled lifecycle. */
+  readonly terminalReason: string | null;
+  /** The success-arm text (`result`), including API error text; null for error subtypes. */
   readonly text: string | null;
   readonly sessionId: string | null;
   /**
@@ -128,6 +130,7 @@ export interface TurnSubmitOptions {
 /** The reduced outcome of one assistant turn, terminated by a `result`. */
 export interface TurnOutcome {
   readonly isError: boolean;
+  readonly terminalReason: string | null;
   /** Final reply text: the `result.result`, falling back to the last assistant snapshot. */
   readonly text: string;
   readonly sessionId: string | null;
@@ -187,6 +190,7 @@ export type ClaudeActivityLine = Extract<
 export type ClaudeProtocolEvent =
   | { readonly kind: 'interrupted' }
   | {
+      /** Public native observation; lifecycle alone does not supply a completion. */
       readonly kind: 'command_lifecycle';
       readonly commandUuid: string;
       readonly state: CommandLifecycleState;

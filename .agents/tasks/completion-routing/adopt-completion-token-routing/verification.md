@@ -436,3 +436,77 @@ fixtures remain labeled as such; they are not claimed as current native traces.
 - Genuine outstanding-request idle failure still reaps the process at the
   configured deadline. Pure background work with no pending request has no timer.
 - PR CI is a separate delivery gate; local success does not claim remote CI.
+
+## PR failure-handling correction (2026-09-07)
+
+Baseline: `87763c2c`. The operator approved correcting accepted review findings
+and pushing the existing PR, then clarified that there is no user cancellation
+entry point. See [rulings R4/R5](rulings.md#r4-correct-the-accepted-pr-findings-and-push)
+and [the correction requirement](pr-review-fixes.md).
+
+### Evidence and adjudication
+
+- The original compiled-RPC replay confirmed that a UUID-less genuine failure
+  was swallowed, leaving consumed A to receive B's later answer. The full
+  wrong-answer sequence is a deterministic protocol replay, not a live capture.
+- A controlled real-child reproduction through the production provider and
+  default supervisor confirmed that unexpected exit during durable identity
+  publication returned stopped admission after failure cleanup, although no
+  runtime stop was requested.
+- A fresh installed Claude Code 2.1.263 run against a controlled local 401 API
+  captured queued, started, success/is_error: true/api_error result, cancelled.
+  No cancellation request was sent. This establishes the error shape and that
+  cancelled can follow failure; it is not a production provider/Core live probe.
+- The installed CLI setup-failure producer emits an unbound error and then a
+  named cancelled command before started. Preserve the error on the native
+  display line and fail the named request without guessing a result owner.
+- The claimed held-result inversion remains unestablished: the examined CLI
+  engine holds at input close and drains older held results first. No extra
+  ordering mechanism was added for that hypothesis.
+
+### Test-contract adjudication
+
+The old assertion that success overrides is_error is corrected against both
+official SDK documentation and the captured native API failure. It was a parser
+assumption, not an operator decision. Consumed cancelled commands now wait for
+their actual failure result so folded requests retain a shared completion.
+Unconsumed cancelled commands fail; explicit runtime teardown still stops.
+
+The prior synthetic cancelled-without-result case did not establish a supported
+user cancellation capability. It no longer authorizes an immediate stopped
+settlement or an invented interrupted display event. A consumed request without
+a result remains subject to real transport failure or the existing idle
+deadline. No extra timer, result ledger or external-client cancellation mechanism
+is introduced. The earlier replacement verification above describes its prior
+revision and is superseded on these failure interpretations.
+
+### Completed validation and closeout
+
+- Developer scoped Rush build, lint, test and typecheck:tests passed: 12 test
+  files, 212 cases. The TeamLeader then ran all four full-workspace Rush gates
+  sequentially; all passed, including the real Codex integration suites.
+  Failure-path stderr produced expected Rush warnings, not failed operations.
+- The TeamLeader repeated the original wrong-answer replay: A now fails with
+  its native error, B receives only B's answer, and the setup-failure request
+  fails with its named cancelled state. The captured native 401 sequence also
+  replays as failed with the complete authentication error text.
+- The production-provider/default-supervisor reproduction now returns failed
+  admission after unexpected child exit during identity publication. The new
+  real-pipe regressions separately confirm explicit runtime stop returns stopped.
+- Saved pure/fold/queue traces passed replay through the corrected RPC. Earlier
+  live provider/Core runs remain evidence for their recorded replacement
+  revision; this correction adds controlled native API failure evidence, not
+  a new full provider/Core live run.
+- Whole-diff TeamLeader review covered source, changed test contracts, the
+  caller's completion delivery, package README and breaking note. No accepted
+  blocking finding remains. No dynamic-workflow review was run, per R3/R4.
+- Task scaffold, knowledge reachability, change-file JSON/0.x minor policy and
+  whitespace checks passed. Source changes are five files: rpc, stream, types,
+  runtime-session and supervisor. Five test files, package README and the
+  existing Rush note also change. Complete PR source scope remains ten paths.
+- Removed: the broad swallowed-error guard, lifecycle-to-user-stop inference,
+  premature consumed-member deletion and overloaded exited boolean. Added:
+  terminalReason diagnostics and the actual retained exit cause; no second
+  request registry, execution window or cancellation mechanism.
+- Remote CI remains a separate delivery gate on the commit pushed after this
+  local closeout. No merge, release or deployment was performed.

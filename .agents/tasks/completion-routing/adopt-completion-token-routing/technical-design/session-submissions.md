@@ -123,3 +123,16 @@ new owner and validate the real provider/Core path for pure background, folded
 steers and queued input. Existing live captures remain evidence of the producer,
 not proof that the new implementation passes. Clearly separate replay, fake
 transport tests and any new live CLI measurements.
+
+## Since this was recorded: native failure correction (2026-09-07)
+
+The first replacement treated all cancelled commands as normal stops and
+discarded a broad class of UUID-less error results. Neither interpretation
+follows from native lifecycle. The operator subsequently clarified that the Claude provider
+has no user cancellation entry point; see [ruling R5](../rulings.md#r5-no-user-cancellation-entry-point).
+Consumed commands retain membership until their result even when cancelled
+arrives first. Unconsumed cancelled commands fail with their protocol state.
+Every genuine error result remains visible, including success/is_error: true
+API failures. Explicit runtime stop remains stopped, while child failure retains
+its cause through cleanup. The approved [review corrections](../pr-review-fixes.md)
+replace the incorrect interpretation without introducing another request owner.

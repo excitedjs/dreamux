@@ -4,6 +4,7 @@
 
 - Goal: Replace Claude request-window coordination with resident-session input and per-request settlement, preserving completion-token routing and background work.
 - State: `done`
+- PR correction requirement: [Accepted review corrections](pr-review-fixes.md)
 - Requirement: [Current requirement](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md)
 - Final solution: [Resident-session replacement](/.agents/tasks/completion-routing/adopt-completion-token-routing/technical-design/session-submissions.md)
 - Operator rulings: [Rulings](/.agents/tasks/completion-routing/adopt-completion-token-routing/rulings.md)
@@ -11,7 +12,7 @@
 - Solution review Issue: Not created — the operator approved the recorded final solution directly and waived further consultation (simplest path).
 - Blockers: None.
 - Accepted decision record: [accepted-decision.md](/.agents/tasks/completion-routing/adopt-completion-token-routing/accepted-decision.md) (backfilled 2026-09-01).
-- Next action: Push the completed replacement and update PR #384; wait for normal CI and send the link. Merge requires separate operator authority.
+- Next action: Push the verified PR review corrections to PR #384 and observe normal CI. Merge requires separate operator authority.
 - Historical test replacement inventory (completed in PR #344; see verification): claude-code `rpc/runtime-activity/session/stream/transcript.test.ts`; codex `turn-manager.test.ts`; core `agent-runtime-provider`, `claude-code-live`, `claude-code-runtime`, `codex-completion`, `codex-live`, `core-event-owner-publishers`, `dispatcher-collaboration-space`, `entity-turn`, `external-runtime-parity`, `team-collection-read-path`, `team-scheduler`, `teammate-service`, `workflow-service` tests plus `helpers/fake-runtime`, `helpers/fake-team-runtime`, `helpers/runtime-turn`, `fixtures/external-runtime-provider`; types `fixtures.test.ts`, `root-exports.test.ts`, `fixtures/external-provider.ts`. Retained consumer suites (`team-dissolve-*`, `team-mcp-dissolve-boundary`, `collaboration-space-repo-close`, and all untouched files) compile again once the shared helpers are restored; the re-coverage stage must restore every deleted contract without weakening it.
 - Related tasks: None.
 
@@ -125,3 +126,18 @@ replacement. Its acceptance and evidence will be recorded separately.
   provider owner remain authoritative, without a new shared mechanism.
 - Complete PR source scope: ten paths, all in the Claude package. Core and
   neutral runtime contracts are unchanged.
+
+### PR failure correction closeout
+
+- Accepted swallowed-error, failure/stop classification and public API note
+  findings are corrected under rulings R4/R5. The Claude provider has no user
+  cancellation entry point; native cancelled is not a user-stop signal.
+- Full Rush gates, targeted TeamLeader reproductions and knowledge checks pass;
+  see [correction verification](verification.md#pr-failure-handling-correction-2026-09-07).
+  Current test-contract changes are checked against SDK/native evidence.
+- Owning provider knowledge, requirement, design correction and rulings are
+  updated together. Product catalog, config/state maintenance, root routing and
+  glossary need no changes: this corrects failure reporting without adding a
+  product action, shared mechanism or persisted fact.
+- This correction changes five source and five test files, package README and
+  the existing breaking minor note. The complete PR retains ten source paths.

@@ -13,4 +13,4 @@
 ## Child Scopes
 
 ## Tasks
-- [Adopt provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — `done`: Replace Claude request-window coordination with resident-session input and per-request settlement, retaining the background-turn repair and Core completion-token contract. Original delivery: PR #344.
+- [Adopt provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — `done`: Replace Claude request windows with resident-session settlement and correct native failure reporting, retaining background work and Core completion-token routing. Original delivery: PR #344.

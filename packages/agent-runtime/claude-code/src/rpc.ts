@@ -203,34 +203,24 @@ export class ClaudeCodeStreamRpc {
         const request = this.requests.get(commandUuid);
         if (request?.write === null) {
           this.acceptRequest(request);
-          if (state === 'cancelled' || state === 'discarded' || state === 'refused') {
+          // Consumed commands can report cancelled before their failure result.
+          // Keep the result's members; lifecycle alone cannot supply its outcome.
+          if (state === 'discarded' || state === 'refused' ||
+              (state === 'cancelled' && !this.consumed.has(commandUuid))) {
             this.requests.delete(commandUuid);
-            request.settle(state === 'cancelled'
-              ? { kind: 'stopped' }
-              : { kind: 'failed', error: new Error(`claude command was ${state}`) });
+            request.settle({ kind: 'failed', error: new Error(`claude command was ${state}`) });
             this.clearIdleIfEmpty();
           }
         }
-        // A queued cancellation is not a boundary for the generating turn.
-        // Keep other consumed requests available for their next native result.
-        const cancelledTurn = state === 'cancelled' && this.consumed.delete(commandUuid);
-        if (cancelledTurn) this.aggregator.discard();
+        // An unconsumed command's cancellation cannot discard generating text.
+        if (state === 'cancelled' && this.consumed.has(commandUuid)) this.aggregator.discard();
         this.options.onProtocolEvent?.({ kind: 'command_lifecycle', commandUuid, state });
-        if (!this.closed && cancelledTurn && this.consumed.size === 0) {
-          this.options.onProtocolEvent?.({ kind: 'interrupted' });
-        }
         this.decideLifecycleSupport(true);
         break;
       }
       case 'result': {
         this.aggregator.accept(line);
         const outcome = this.aggregator.takeOutcome()!;
-        // Older interrupt artifacts carry no answer or input UUID. Cancellation
-        // lifecycle settles the aborted requests; this is not a completion.
-        if (
-          line.outcome.subtype === 'error_during_execution' &&
-          line.outcome.userMessageUuid === null && line.outcome.text === null
-        ) break;
         const commandUuids = new Set(this.consumed);
         this.consumed.clear();
         const uuid = line.outcome.userMessageUuid;

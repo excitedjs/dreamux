@@ -4,6 +4,9 @@ Current implementation requirement: [Resident-session replacement](#resident-ses
 Earlier deliveries below remain history except for the product behavior retained
 explicitly by that section.
 
+Current follow-up: [Accepted PR review corrections](pr-review-fixes.md), approved
+for implementation and push after the replacement.
+
 ## Resident-session replacement (2026-09-07)
 
 The operator approved [the replacement proposal](technical-design/session-submissions.md)

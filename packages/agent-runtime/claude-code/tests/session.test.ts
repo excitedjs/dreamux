@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDefaultClaudeCodeSession, type ClaudeCodeSession } from '../src/supervisor.js';
+import { createClaudeCodeAgentRuntimeProvider } from '../src/provider.js';
+import { defaultDispatcherClaudeCodeConfig } from '../src/config.js';
 import type { ClaudeProtocolEvent } from '../src/types.js';
 import type { RuntimeAdmission, RuntimeSubmission } from '@excitedjs/dreamux-types';
 
@@ -102,7 +104,84 @@ describe('resident session over real pipes', () => {
     await expect(request.settled).resolves.toMatchObject({ kind: 'failed', error: expect.objectContaining({ message: expect.stringContaining('no stream activity') }) });
     expect(failures).toHaveLength(1);
     expect(session.isAlive()).toBe(false);
-    await expect(session.submit('after timeout')).resolves.toMatchObject({ status: 'stopped' });
+    await expect(session.submit('after timeout')).resolves.toMatchObject({
+      status: 'failed', error: failures[0],
+    });
     expect(events.filter((event) => event.kind === 'result')).toEqual([]);
+  });
+
+  it.each(['exit', 'stop'] as const)('preserves %s intent while recovery admission awaits durable identity publication', async (action) => {
+    // Controlled Node children exercise the production provider and supervisor.
+    // The assistant envelope reports the test child's PID; this is not Claude evidence.
+    const childSource = `
+      process.stdin.resume();
+      process.stdout.write(JSON.stringify({type:'assistant',message:{content:[
+        {type:'text',text:String(process.pid)}
+      ]}})+'\\n');
+    `;
+    const pidResolvers: Array<(pid: number) => void> = [];
+    const pids = [0, 1].map(() => new Promise<number>((resolve) => pidResolvers.push(resolve)));
+    const nativeEnds: string[] = [];
+    let notifyEnd!: () => void;
+    let nextEnd = new Promise<void>((resolve) => { notifyEnd = resolve; });
+    let releasePublish!: () => void;
+    const publication = new Promise<void>((resolve) => { releasePublish = resolve; });
+    let notifyPublish!: () => void;
+    const publishing = new Promise<void>((resolve) => { notifyPublish = resolve; });
+    let holdIdentity = false;
+    const provider = createClaudeCodeAgentRuntimeProvider({
+      sessionFactory: (spec) => {
+        const session = createDefaultClaudeCodeSession({
+          ...spec, bin: process.execPath, args: ['-e', childSource], remoteControl: false,
+        });
+        sessions.push(session);
+        return session;
+      },
+    });
+    const runtime = await provider.createRuntime({
+      identity: { runtimeId: 'exit-admission-test', sessionId: null },
+      config: defaultDispatcherClaudeCodeConfig(), cwd: dir,
+      mcpServers: [], skillSources: [], disabledFeatures: [],
+      paths: { cacheDir: () => dir, logsDir: () => dir, runtimeSocketDirs: () => [dir] },
+      state: { publish: async (update) => {
+        if (update.kind === 'session' && holdIdentity) {
+          notifyPublish();
+          await publication;
+        }
+      } },
+      activity: (event) => {
+        if (event.kind === 'assistant.message') pidResolvers.shift()!(Number(event.text));
+        if (event.kind === 'turn.ended') {
+          nativeEnds.push(event.status);
+          notifyEnd();
+        }
+      },
+    });
+    try {
+      await runtime.start();
+      process.kill(await pids[0]!, 'SIGTERM');
+      await nextEnd;
+      nextEnd = new Promise<void>((resolve) => { notifyEnd = resolve; });
+      holdIdentity = true;
+      const admission = runtime.submit({ text: 'input during recovery' });
+      await publishing;
+      const secondPid = await pids[1]!;
+      const stopping = action === 'stop' ? runtime.stop() : null;
+      if (action === 'exit') process.kill(secondPid, 'SIGTERM');
+      await nextEnd;
+      releasePublish();
+      if (action === 'exit') {
+        await expect(admission).resolves.toMatchObject({
+          status: 'failed', error: expect.objectContaining({ message: 'claude resident child exited' }),
+        });
+      } else {
+        await stopping;
+        await expect(admission).resolves.toEqual({ status: 'stopped' });
+      }
+      expect(nativeEnds).toEqual(['failed', action === 'exit' ? 'failed' : 'interrupted']);
+    } finally {
+      releasePublish();
+      await runtime.stop();
+    }
   });
 });

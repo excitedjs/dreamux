@@ -63,3 +63,28 @@ The workflow review had not started. Omit that review for this replacement;
 retain TeamLeader whole-diff pre-review, the completed four Rush gates, native
 provider/Core verification and normal PR checks. No independent workflow pass
 is claimed for this revision.
+
+## R4: Correct the accepted PR findings and push
+
+2026-09-07 16:16, after the TeamLeader enumerated the swallowed-error defect,
+failed-versus-stopped defect and release-note omission:
+
+> 修一下然后 push 上去
+
+Development and push are approved for those three correction areas, their
+regressions and documentation. See [PR review corrections](pr-review-fixes.md).
+The instruction not to run dynamic-workflow remains in force. This grants no
+merge or deployment authority. The earlier dissolution request was withdrawn
+by the operator before any dissolution call was made.
+
+## R5: No user cancellation entry point
+
+2026-09-07 16:21:
+
+> 现在没有用户取消入口的。
+
+The TeamLeader had described native queued cancellation as a supported user
+action. That description is withdrawn. Native cancelled is a protocol state;
+its presence does not establish a Dreamux user cancellation capability.
+The correction addresses actual native failure and existing runtime stop,
+without adding mechanisms for hypothetical user or external-client cancellation.

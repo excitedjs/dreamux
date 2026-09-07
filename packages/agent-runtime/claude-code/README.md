@@ -50,8 +50,17 @@ Background native turns may run without a submission. Their activity and result
 boundaries remain observable, but they settle no unrelated request and do not
 terminate the resident process. Explicit inputs steered into a background turn
 settle normally once they join it. Concurrent input requires lifecycle evidence;
-sessions without it retain single-input compatibility. Native cancellation
-settles the affected request as stopped, and refusal/discard settles it as failed.
+sessions without it retain single-input compatibility. Native `cancelled` can
+describe a hard failure; it does not imply a user stop. Consumed commands retain
+their result membership through terminal lifecycle frames. An unconsumed command
+that is cancelled, refused or discarded settles as failed. Every native error
+result remains observable, including UUID-less errors and the `success` arm with
+`is_error: true` carrying API error text.
+
+A setup error can precede `started` and omit the input UUID. It reports a failed
+native end with its error details but cannot identify a queued request. A later
+named `cancelled` fails that request with its protocol state; the adapter does not
+guess that a preceding unbound error belongs to it.
 
 Core owns source deduplication, captured recipients and completion-token delivery.
 The provider owns native admission: `failed` means the command was proven not
@@ -83,10 +92,28 @@ the exit handler receives its failure cause.
 
 Session implementations own result validation and settlement. Their
 `onProtocolEvent` callback reports native activity independently: result events
-retain `commandUuids` for observation, and an `interrupted` event reports a
-native cancellation boundary. Emitting a callback alone no longer settles a
+retain `commandUuids` for observation, and the public `command_lifecycle` variant
+reports native command state without deciding settlement in runtime or Core.
+An `interrupted` event can report an independently known interruption boundary.
+Emitting a callback alone no longer settles a
 request. These are breaking changes to the Claude-specific extension seam;
 the neutral `AgentRuntime` and `RuntimeSubmission` contracts are unchanged.
+
+## Direct stream RPC consumers
+
+The exported `ClaudeCodeStreamRpc` has the same single `submit()` path, returning
+`Promise<RuntimeAdmission>` in place of `submitTurn()` and `steerTurn()`. Accepted
+handles own eventual settlement; callers no longer await an aggregate window.
+Replace `failPending(error)` with `fail(error)` for transport failure or `stop()`
+for deliberate teardown. A session retired after an unexpected exit retains
+that failure for subsequent admission, even after cleanup calls `stop()`.
+
+`ClaudeCodeStreamRpcOptions` now requires `sessionId` (a pinned native ID or
+`null`) and accepts optional `outputSchemaEnabled` for result validation.
+`reapOnTimeout(error)` receives the failure `Error`. Protocol callbacks are
+observation only, as described above. Parsed `ResultEnvelope` and `TurnOutcome`
+also expose `terminalReason`, a string or `null`, for native terminal diagnostics.
+These changes break direct RPC consumers as well as custom session factories.
 
 The default adapter uses consumption events because the observed background
 folds omit both result UUID echo fields. Claude Code 2.1.263 marks

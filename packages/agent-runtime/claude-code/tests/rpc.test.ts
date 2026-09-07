@@ -60,7 +60,10 @@ async function completion(submission: RuntimeSubmission): Promise<RuntimeComplet
   if (settlement.kind !== 'completion') throw new Error(`expected completion, received ${settlement.kind}`);
   return settlement.completion;
 }
-const artifact = { type: 'result', subtype: 'error_during_execution' };
+const nativeFailure = {
+  type: 'result', subtype: 'error_during_execution', is_error: true,
+  terminal_reason: 'model_error', errors: ['native model failure'],
+};
 
 describe('resident request admission and settlement', () => {
   it('acknowledges input before its answer, then accepts another input before late completed', async () => {
@@ -354,8 +357,8 @@ describe('supported compatibility inputs', () => {
   });
 });
 
-describe('cancellation and transport lifetime', () => {
-  it('cancels only the queued request and retains the generating answer', async () => {
+describe('native failure and transport lifetime', () => {
+  it('fails an unconsumed cancelled request without discarding the generating answer', async () => {
     const h = harness();
     h.init();
     const a = await h.send('A');
@@ -363,55 +366,113 @@ describe('cancellation and transport lifetime', () => {
     h.assistant('running answer');
     const b = await h.send('B');
     h.lifecycle('B', 'queued', 'cancelled');
-    await expect(b.settled).resolves.toEqual({ kind: 'stopped' });
+    await expect(b.settled).resolves.toMatchObject({
+      kind: 'failed', error: expect.objectContaining({ message: 'claude command was cancelled' }),
+    });
     expect(h.events.some((event) => event.kind === 'interrupted')).toBe(false);
     h.result('', 'A');
     expect(await completion(a)).toMatchObject({ resultText: 'running answer' });
   });
 
-  it.each(['before', 'after', 'absent'])('discards cancelled native text with interrupt artifact %s cancellation, preserving queued work', async (order) => {
+  it.each(['before', 'after'] as const)('settles a consumed failure with cancelled %s result and preserves the queued request', async (order) => {
     const h = harness();
     h.init();
     const a = await h.send('A');
     h.lifecycle('A', 'started');
-    h.assistant('cancelled text');
+    h.assistant('failed partial answer');
     const b = await h.send('B');
     h.lifecycle('B', 'queued');
-    if (order === 'before') h.emit(artifact);
-    h.lifecycle('A', 'cancelled');
-    if (order === 'after') h.emit(artifact);
-    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    if (order === 'before') h.lifecycle('A', 'cancelled');
+    h.emit(nativeFailure);
+    if (order === 'after') h.lifecycle('A', 'cancelled');
+    const failed = await completion(a);
+    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message: 'native model failure' }) });
     h.lifecycle('B', 'started');
     h.result('');
     expect(await completion(b)).toEqual({ status: 'completed', resultText: null });
-    expect(h.events.filter((event) => event.kind === 'interrupted')).toHaveLength(1);
-    expect(h.results()).toHaveLength(1);
+    expect(await completion(a)).toBe(failed);
+    expect(h.results().map((event) => event.commandUuids)).toEqual([['A'], ['B']]);
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it('retains other consumed fold members when one request is cancelled', async () => {
+  it('shares the actual failure across initial and folded commands despite their different cancelled order', async () => {
     const h = harness();
     h.init();
     const a = await h.send('A');
     const b = await h.send('B');
     h.lifecycle('A', 'started');
     h.lifecycle('B', 'started');
-    h.assistant('cancelled text');
+    h.assistant('partial answer');
+    // Native folds terminalize inside the query; the initial command follows its result.
+    h.lifecycle('B', 'cancelled');
+    const settled = vi.fn();
+    void b.settled.then(settled);
+    await tick();
+    expect(settled).not.toHaveBeenCalled();
+    h.emit(nativeFailure);
     h.lifecycle('A', 'cancelled');
-    h.result('B answer');
-    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
-    expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
+    const failed = await completion(a);
+    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message: 'native model failure' }) });
+    expect(await completion(b)).toBe(failed);
   });
 
-  it('discards cancelled internal native text without maintaining an explicit request for it', async () => {
+  it('reports an unbound internal failure and clears its text before later input', async () => {
     const h = harness();
     h.lifecycle('internal', 'started');
-    h.assistant('cancelled');
+    h.assistant('failed internal answer');
+    h.emit(nativeFailure);
     h.lifecycle('internal', 'cancelled');
+    expect(h.results()[0]).toMatchObject({ commandUuids: [], outcome: { isError: true, errors: ['native model failure'] } });
     const a = await h.send('A');
     h.lifecycle('A', 'started');
     h.result('');
     expect(await completion(a)).toEqual({ status: 'completed', resultText: null });
+  });
+
+  it('reports setup failure without guessing a queued owner, then fails the named cancelled request', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    const b = await h.send('B');
+    h.lifecycle('A', 'queued');
+    h.lifecycle('B', 'queued');
+    h.emit({ ...nativeFailure, terminal_reason: 'turn_setup_failed', errors: ['queryParams builder failed'] });
+    expect(h.results()[0]).toMatchObject({
+      commandUuids: [], outcome: { isError: true, terminalReason: 'turn_setup_failed', errors: ['queryParams builder failed'] },
+    });
+    h.lifecycle('A', 'cancelled');
+    await expect(a.settled).resolves.toMatchObject({
+      kind: 'failed', error: expect.objectContaining({ message: 'claude command was cancelled' }),
+    });
+    const settled = vi.fn();
+    void b.settled.then(settled);
+    await tick();
+    expect(settled).not.toHaveBeenCalled();
+    h.lifecycle('B', 'started');
+    h.result('B answer');
+    expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ type: 'result', subtype: 'error_during_execution' }, 'error_during_execution'],
+    [nativeFailure, 'native model failure'],
+    [{ ...nativeFailure, errors: [] }, 'model_error'],
+    [{ type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', result: 'Authentication failed' }, 'Authentication failed'],
+  ] as const)('never retains a consumed request past an error boundary %j', async (failure, message) => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.emit(failure);
+    const failed = await completion(a);
+    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message }) });
+    const b = await h.send('B');
+    h.lifecycle('B', 'started');
+    h.result('B answer');
+    expect(await completion(b)).toEqual({ status: 'completed', resultText: 'B answer' });
+    expect(await completion(a)).toBe(failed);
+    expect(h.results().map((event) => event.commandUuids)).toEqual([['A'], ['B']]);
   });
 
   it('fails every outstanding request on child loss and settles no completion', async () => {

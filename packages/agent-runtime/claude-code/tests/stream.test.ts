@@ -201,19 +201,21 @@ describe('parseLine', () => {
     }
   });
 
-  it('trusts a success subtype even if is_error is true', () => {
+  it('preserves API failure on the native success arm when is_error is true', () => {
     const line = parseLine(
       JSON.stringify({
         type: 'result',
         subtype: 'success',
         is_error: true,
+        terminal_reason: 'api_error',
         session_id: 's1',
-        result: 'hello',
+        result: 'Authentication failed',
       }),
     );
     if (line.kind === 'result') {
-      expect(line.outcome.isError).toBe(false);
-      expect(line.outcome.text).toBe('hello');
+      expect(line.outcome.isError).toBe(true);
+      expect(line.outcome.terminalReason).toBe('api_error');
+      expect(line.outcome.text).toBe('Authentication failed');
     } else {
       throw new Error('expected result');
     }
@@ -367,6 +369,7 @@ describe('TurnAggregator', () => {
     expect(agg.done).toBe(true);
     expect(agg.outcome()).toEqual({
       isError: false,
+      terminalReason: null,
       text: 'final',
       sessionId: 's1',
       subtype: 'success',

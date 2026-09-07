@@ -6,7 +6,7 @@ import type { RuntimeActivity } from '@excitedjs/dreamux-types';
 
 type NativeTurnEnd = Extract<RuntimeActivity, { kind: 'turn.ended' }>;
 function outcome(overrides: Partial<TurnOutcome> = {}): TurnOutcome {
-  return { isError: false, text: 'answer', sessionId: 'session', subtype: 'success', errors: [], hasStructuredOutput: false, ...overrides };
+  return { isError: false, terminalReason: null, text: 'answer', sessionId: 'session', subtype: 'success', errors: [], hasStructuredOutput: false, ...overrides };
 }
 function makeHarness() {
   const activityEvents: RuntimeActivity[] = [];

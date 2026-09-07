@@ -355,6 +355,14 @@ Source: `/packages/agent-runtime/claude-code/src/rpc.ts`,
 `/packages/agent-runtime/claude-code/src/runtime.ts`,
 `/packages/dreamux/src/service/completion-router/index.ts`.
 
+### Regression Trap: a native state is not a user capability
+
+Claude reports cancelled after native API and setup failures. Treating that
+word as an operator cancellation hid errors, even though the Claude provider has
+no user cancellation entry point. Do not invent a product action or its compatibility
+machinery from a protocol label. The current failure and settlement rules are
+defined in [Claude Code settlement](#claude-code-stream-json-settlement).
+
 ### Logical Turn And Admission
 
 The runtime object is the provider-owned authority for native submission and
@@ -438,19 +446,25 @@ with the same object. Core retains captured recipients and completion-object
 identity deduplication. A result with no related request still reports activity
 and its native end, creates no request completion, and leaves the process alive.
 
-Cancellation settles only the affected request as stopped; refusal/discard
-settles it as failed. There is no all-commands-terminal or all-results-seen
-window drainage. A started request remains unanswered until its result or a
-real cancellation/failure. Explicit stop settles outstanding requests, fences
-late activity and converges pending admissions; actual transport loss fails
-outstanding requests and reports the native failure.
+Native cancelled is not proof of a user stop; it also follows hard failures.
+The Claude provider has no user cancellation entry point. Consumed commands retain
+their result membership through cancelled so that either native ordering preserves
+the actual result. An unconsumed cancelled request fails with its named protocol
+state, as do refusal/discard. There is no aggregate window drainage. Explicit
+runtime stop settles outstanding requests, fences late activity and converges
+pending admissions. Actual transport loss fails outstanding requests and
+retains its cause through cleanup, including admission racing with that cleanup.
 
 Text aggregation belongs to the resident stream. Each result consumes its text.
 Cancelling consumed work clears canceled text so a later empty answer cannot
 inherit it; cancelling an unconsumed queued request does not clear current text.
-When cancellation removes the last consumed member, RPC reports an interrupted
-native boundary. The older error_during_execution artifact with neither result
-text nor user UUID consumes aggregation but creates no completion.
+Every native error result reports a failed end, even when text and input UUID
+are absent. No broad interrupt-artifact guard may discard it: an error subtype
+or is_error: true establishes failure, including API errors carried in the
+success arm. Native errors, API error text and terminal_reason supply diagnostic
+details. A setup error can omit both started and UUID evidence; its failed end
+retains the details, but a later named cancelled request fails with its protocol
+state. The adapter does not guess that an unbound result belongs to that request.
 
 The configured max-idle timer exists while requests await settlement and resets
 on native stream activity. It clears as soon as no request remains; a late
@@ -460,18 +474,24 @@ fails and triggers process teardown. Pure background work arms no such timer.
 Custom ClaudeCodeSession factories implement submit returning RuntimeAdmission,
 with settlement owned by the session. The spec supplies sessionId and optional
 outputSchemaEnabled; the exit callback carries its Error. Protocol result
-callbacks retain commandUuids for observation, and interrupted reports native
-cancellation. Protocol callbacks alone do not settle requests. This is a breaking
-Claude extension-seam change; the neutral runtime ABI is unchanged.
+callbacks retain commandUuids and command_lifecycle for observation. The public
+interrupted variant remains available for independently established interruption;
+cancelled alone no longer emits that boundary. Direct ClaudeCodeStreamRpc
+consumers also use submit, fail and stop; its options require sessionId and its
+timeout callback receives the failure Error. Protocol callbacks alone do not
+settle requests. This is a breaking Claude extension-seam change; the neutral
+runtime ABI is unchanged.
 
 Evidence boundary: live CLI 2.1.231/2.1.263 captures show fold/queue and both
 completed/result orders. Observed task-notification folds omit both result UUID
 echo fields despite answering explicit requests. The installed 2.1.263 schema
 marks command_lifecycle as internal; the public SDK reference does not define
 that contract. No-start fixtures are compatibility coverage, not an observation
-of that build. External queued cancellation and exceptional tool-result ordering
-have incomplete live evidence; deterministic coverage is not a universal native
-ordering guarantee.
+of that build. A fresh real 2.1.263 CLI probe against a controlled local API
+confirmed success/is_error: true/api_error followed by cancelled, with no cancel
+request sent. External queued cancellation is not a current Dreamux user
+capability. Exceptional tool-result ordering and cancellation interleavings
+retain evidence gaps; deterministic coverage is not a universal ordering guarantee.
 
 Source:
 
@@ -650,8 +670,8 @@ arguments and results.
 
 A normal native turn ends at its provider-native terminal: Claude Code `result`
 or Codex `turn/completed`. A resident Claude session can answer several inputs
-in sequence and reports one end per result; consumed-command cancellation also
-reports its interrupted native boundary. Where a
+in sequence and reports one end per result. Native cancelled alone supplies no
+separate display terminal; it may precede or follow the failure result. Where a
 turn ends with no native terminal at all — a stop, a protocol loss, a rejected
 run — the provider reports one end from that teardown without asking whether a
 turn was open: codex from `TurnManager.stop()` and from the first protocol
