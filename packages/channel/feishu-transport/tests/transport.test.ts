@@ -575,6 +575,17 @@ describe('createFeishuTransport — reactions', () => {
 })
 
 describe('createFeishuTransport — group chats', () => {
+  test('reads the current chat name without caching it', async () => {
+    const stub = stubClient()
+    stub.chatGet.mockResolvedValue({ data: { chat_mode: 'group', name: 'Current name' } })
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveChatName?.('oc_chat')).resolves.toBe('Current name')
+    await expect(transport.resolveChatName?.('oc_chat')).resolves.toBe('Current name')
+    expect(stub.chatGet).toHaveBeenCalledTimes(2)
+    expect(stub.chatGet).toHaveBeenCalledWith({ path: { chat_id: 'oc_chat' } })
+  })
+
   test.each(['p2p', 'group', 'topic'] as const)(
     'reads the %s chat mode from the group information API',
     async (chatMode) => {

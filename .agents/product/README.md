@@ -47,6 +47,42 @@ the same change that touches it.
   answers closes itself before Feishu stops accepting clicks and tells the agent
   to stand still rather than wait forever.
   (Domain: [channel](/.agents/domains/channel.md).)
+- **A message that starts with a known slash command is executed, not
+  delivered.** In the built-in Feishu channel a human message whose leading
+  text is `/stop`, `/teams`, or `/dissolve` is carried out by the Channel
+  itself and answered as a receipt: no agent sees it, and no agent is asked to
+  render the reply. Only the leading token counts — trailing words after it are
+  ignored, and the same token mid-message is ordinary text — and in a group the
+  bot must be @-mentioned. Nothing gates a command beyond the ordinary
+  authorization to deliver a message here; there is no separate command
+  permission. When there is no object to act on, the answer is one line saying
+  why. `/stop` interrupts the agent this conversation talks to directly — the
+  bound Team's TeamLeader, or the Dispatcher Agent in a DM — and never its
+  TeamMates. It reaches whatever that agent is doing, including work it started
+  for itself rather than in answer to a message here. An agent that is not
+  running is reported idle rather than started in order to be interrupted. `/teams` posts a card of
+  every running Team on the dispatcher — not only the ones this conversation
+  can reach — grouped by repository, each with its TeamLeader runtime, its
+  intent, and links to the chats bound to it; listing them all is an operator
+  ruling by code size, not an oversight. `/dissolve` dissolves the Team bound
+  to this conversation with a generated note and never forces; when it is
+  accepted the conversation gets no receipt, because the Team's close already
+  announces itself there. A refusal, and a conversation with no bound Team,
+  still answer in words.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
+- **An interrupted turn says so on its card.** When a turn is interrupted, the
+  card gains the line `[Request interrupted by user]` where the agent's next
+  words would have gone, and the card's status reads 任务中断 rather than
+  任务已完成. Both runtimes do both halves; the operator ruled after testing that
+  they must agree. What a stopped turn delivers still differs — Claude Code
+  delivers nothing, Codex delivers what it produced before the stop.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
+- **The Feishu channel writes its slash-command and introduce text in
+  English.** Command receipts, the running-Teams card, and the `/introduce`
+  acknowledgement are English by operator ruling. This says nothing about
+  agent-authored replies, or about the pairing-approval card, which keeps its
+  Simplified Chinese default copy.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
 - **A collaboration space is a Channel product flow.** The Channel provisions a
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
@@ -86,6 +122,12 @@ the same change that touches it.
   `delete-on-close` (operator ruling R31 in the refine-model-facing-surfaces
   record, 2026-09-06: kept worktrees piled up); pass `cleanup: keep` to retain
   one.
+- **A dissolve that cannot reclaim its worktree is refused before it is
+  accepted.** A non-forced dissolve assesses the managed worktree first: if it
+  is dirty or unmerged the caller gets the refusal and its reason, rather than
+  an `accepted` receipt for a dissolve that then quietly stops. `force` remains
+  the authorization to discard that work.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
 - **A failed dissolve leaves a Team that still exists.** Whatever committed
   before the failure stays committed (closed members stay closed, deleted cron
   stores stay deleted); the next ordinary use rebuilds from disk, and the next
@@ -107,8 +149,8 @@ the same change that touches it.
   stable TeamLeader and workspace facts, nullable current leader state, and the
   number of occupied Team-member names excluding the leader. Each `team.list`
   item is a compact scan row that uses the same field names and meanings
-  (name, lifecycle status, intent, repo, leader name and state, member count,
-  timestamps, worktree cleanup) and carries no machine-local path.
+  (name, lifecycle status, intent, repo, leader name, runtime, and state,
+  member count, timestamps, worktree cleanup) and carries no machine-local path.
   `team.history` remains the compact paginated recovery view.
   (Decision: [unify Team command projections](/.agents/tasks/architecture/unify-team-command-projections/README.md).)
 - **Closed entities are records.** A closed Team or TeamMate is never

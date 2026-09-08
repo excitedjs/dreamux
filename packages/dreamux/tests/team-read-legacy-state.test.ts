@@ -153,6 +153,9 @@ describe('Team read projections and old leader state', () => {
   it('projects a leader carrying a leftover `role` field normally', async () => {
     const reads = await plantLeader(ROLE_FIELD_LEADER);
 
+    const [row] = await reads.list();
+    expect(row?.leader_agent_runtime).toBe('codex');
+    expect(row?.leader_state).toBe('running');
     expect((await reads.summary(record)).leader_state).toBe('running');
   });
 

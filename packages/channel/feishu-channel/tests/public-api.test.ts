@@ -3,8 +3,7 @@ import { describe, expect, it } from 'vitest';
 import * as feishuChannel from '../src/index.js';
 
 // @ts-expect-error -- test doubles must not return to the published package API.
-export type RemovedFakeFeishuBotMustStayUnexported =
-  import('../src/index.js').FakeFeishuBot;
+export type RemovedFakeFeishuBotMustStayUnexported = import('../src/index.js').FakeFeishuBot;
 
 /**
  * Every runtime binding `src/index.ts` currently exports, sorted. This is the

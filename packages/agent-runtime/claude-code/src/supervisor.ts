@@ -135,6 +135,20 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     return this.rpc.submit(prompt, options, commandUuid);
   }
 
+  /**
+   * A dead child has nothing to interrupt, so this answers false rather than
+   * writing to its stdin. The liveness half matters on its own: a child that
+   * exited between the last stream line and this call still has an `rpc`, and
+   * writing to it surfaces an EPIPE as `Command /stop failed: write EPIPE`
+   * instead of the honest `No turn is running.`
+   */
+  interrupt(reason: string): Promise<boolean> {
+    if (!this.isAlive() || this.stopped || this.rpc === null) {
+      return Promise.resolve(false);
+    }
+    return this.rpc.interrupt(reason);
+  }
+
   async stop(): Promise<void> {
     if (this.stopped) return;
     if (this.stopTask !== null) return this.stopTask;

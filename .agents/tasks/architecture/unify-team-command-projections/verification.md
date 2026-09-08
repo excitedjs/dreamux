@@ -121,6 +121,24 @@ are in the requirement; the findings and their outcomes:
   `rush change --verify --target-branch origin/next --no-fetch` was run on
   the committed branch.
 
+## Merge with `next` (2026-09-09)
+
+`next` moved by three merges (#393, #392, #379) after the branch was cut, and
+GitHub ran no `pull_request` workflow for the review-fix pushes because the
+PR was conflicting. `origin/next` was merged into the branch (no rebase, no
+force-push). Three files conflicted: the architecture task index (both new
+entries kept), `team-collection/commands.ts` (the `team.interrupt` command
+from #379 kept beside the compact-typed `team.list`), and the legacy-state
+test (the #379 list-row assertions kept, the summary assertion on
+`leader_state`). #379 had added `leader_agent_runtime` to the compact list row
+for the Feishu `/teams` card; the row keeps it. Two test-only follow-ups: the
+dissolve contract test's `view()` call became `status()`, and the held-live
+fake runtime gained the `interrupt` method #379 added to the runtime contract.
+The Feishu binding test now converts the Core summary to port JSON at its fake
+invoke boundary; #379's stricter test tsconfig surfaced that an interface is
+not a `JsonValue`. All four Rush gates, task validation, the KB check, and
+`git diff --check` passed on the merge result.
+
 ## Residual review coverage
 
 The independent workflow's line-scan, cross-file, and requirement-fidelity

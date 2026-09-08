@@ -7,17 +7,26 @@ import type { ClaudeProtocolEvent, CommandLifecycleState } from '../src/types.js
 import type { RuntimeAdmission, RuntimeCompletion, RuntimeSubmission } from '@excitedjs/dreamux-types';
 
 interface Input { uuid: string; message: { content: Array<{ text: string }> } }
+interface ControlFrame { type: string; request_id: string; request: Record<string, unknown> }
 type WriteCallback = (error?: Error | null) => void;
 
 function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
   const writes: Input[] = [];
+  const controls: ControlFrame[] = [];
   const events: ClaudeProtocolEvent[] = [];
   const reap = vi.fn();
   const stdin = {
     writable: true,
     onWrite: (_input: Input, callback: WriteCallback) => callback(),
     write(chunk: string, callback: WriteCallback = () => undefined) {
-      const input = JSON.parse(chunk) as Input;
+      const frame = JSON.parse(chunk) as Record<string, unknown>;
+      // `writes` is the user-input ledger; control traffic has its own.
+      if (String(frame['type']).startsWith('control_')) {
+        controls.push(frame as unknown as ControlFrame);
+        callback();
+        return true;
+      }
+      const input = frame as unknown as Input;
       writes.push(input);
       this.onWrite(input, callback);
       return true;
@@ -41,7 +50,10 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
   const assistant = (text: string) => emit({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
   const send = (uuid: string) => accepted(rpc.submit(uuid, {}, uuid));
   const results = () => events.filter((event) => event.kind === 'result');
-  return { rpc, stdin, writes, events, reap, emit, lifecycle, init, result, assistant, send, results };
+  const controlOk = (requestId: string) => {
+    emit({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: {} } });
+  };
+  return { rpc, stdin, writes, controls, events, reap, emit, lifecycle, init, result, assistant, send, results, controlOk };
 }
 
 const rpcs: ClaudeCodeStreamRpc[] = [];
@@ -64,6 +76,20 @@ const nativeFailure = {
   type: 'result', subtype: 'error_during_execution', is_error: true,
   terminal_reason: 'model_error', errors: ['native model failure'],
 };
+/**
+ * What an accepted interrupt leaves behind, captured verbatim from claude
+ * 2.1.263 (fields no reader here consults are elided). Nothing in its shape
+ * marks it as an interrupt: it carries the interrupted command's own uuid and
+ * `is_error: true`, exactly like a genuine execution failure would.
+ */
+function interruptArtifact(commandUuid: string): Record<string, unknown> {
+  return {
+    type: 'result', subtype: 'error_during_execution', is_error: true,
+    stop_reason: 'tool_use', terminal_reason: 'aborted_tools',
+    errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    user_message_uuid: commandUuid,
+  };
+}
 
 describe('resident request admission and settlement', () => {
   it('acknowledges input before its answer, then accepts another input before late completed', async () => {
@@ -357,6 +383,129 @@ describe('supported compatibility inputs', () => {
   });
 });
 
+describe('interrupting outstanding work', () => {
+  it('asks claude even with no request outstanding, and stops asking once closed', async () => {
+    const h = harness();
+    h.init();
+
+    // A resident session runs turns this host never submitted. `/stop` reaches
+    // those too, so the ask goes out on the strength of the session alone.
+    const asked = h.rpc.interrupt('Stopped from Feishu.');
+    expect(h.controls).toHaveLength(1);
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(asked).resolves.toBe(true);
+
+    h.rpc.stop();
+    await expect(h.rpc.interrupt('Stopped from Feishu.')).resolves.toBe(false);
+    expect(h.controls).toHaveLength(1);
+  });
+
+  it('settles an accepted interrupt as stopped, on the artifact and not as a result', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+    expect(h.controls).toEqual([{
+      type: 'control_request',
+      request_id: h.controls[0]!.request_id,
+      request: { subtype: 'interrupt', reason: 'Stopped from Feishu.' },
+    }]);
+    // Queued input behind the interrupt is claude's to keep: the request names
+    // no cancellation of it.
+    expect(h.controls[0]!.request).not.toHaveProperty('cancel_queued');
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(interrupted).resolves.toBe(true);
+
+    // The measured order, claude 2.1.263: the artifact answers the request and
+    // the command's `cancelled` arrives after it, against nothing outstanding.
+    h.emit(interruptArtifact('A'));
+    h.lifecycle('A', 'cancelled');
+    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.events.map((event) => event.kind)).toContain('interrupted');
+    expect(h.results()).toEqual([]);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it('reads the artifact as the answer even when no control response arrives', async () => {
+    const h = harness();
+    h.init(false);
+    const a = await h.send('A');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+
+    // The artifact is the only native fact proving the requested interrupt
+    // ended this work; the control channel may never answer at all.
+    h.emit(interruptArtifact('A'));
+    await expect(interrupted).resolves.toBe(true);
+    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.results()).toEqual([]);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it('keeps a turn that died of its own error a failure, ask outstanding or not', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(interrupted).resolves.toBe(true);
+
+    // The same `error_during_execution` envelope, and an accepted interrupt
+    // behind it — but the turn names a model error as what ended it. Having
+    // asked does not make the next failure ours.
+    h.emit(nativeFailure);
+    h.lifecycle('A', 'completed');
+    expect(await completion(a)).toMatchObject({ status: 'failed' });
+    expect(h.events.some((event) => event.kind === 'interrupted')).toBe(false);
+    expect(h.results()).toHaveLength(1);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { how: 'stop', settlement: { kind: 'stopped' } },
+    { how: 'fail', settlement: { kind: 'failed' } },
+  ])('answers an outstanding interrupt when the session ends by $how', async ({ how, settlement }) => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+
+    // Claude never answers the control request; the session ends first. The ask
+    // is answered here or `/stop` waits on a session that is already gone.
+    const failure = new Error('claude stdout closed');
+    if (how === 'stop') h.rpc.stop();
+    else h.rpc.fail(failure);
+
+    if (how === 'stop') await expect(interrupted).resolves.toBe(true);
+    else await expect(interrupted).rejects.toBe(failure);
+    await expect(a.settled).resolves.toMatchObject(settlement);
+  });
+
+  it('reads an aborted turn as interrupted even after the ask was already spent', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(interrupted).resolves.toBe(true);
+
+    // A answers normally first, which spends the session's ask.
+    h.result('finished anyway', 'A');
+    expect(await completion(a)).toMatchObject({ resultText: 'finished anyway' });
+
+    // B is aborted afterwards. A session-level mark would have been gone by
+    // now and reported this as a failure; the turn's own reason is not.
+    const b = await h.send('B');
+    h.lifecycle('B', 'started');
+    h.emit(interruptArtifact('B'));
+    await expect(b.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.events.map((event) => event.kind)).toContain('interrupted');
+  });
+});
+
 describe('native failure and transport lifetime', () => {
   it('fails an unconsumed cancelled request without discarding the generating answer', async () => {
     const h = harness();
@@ -605,11 +754,11 @@ describe('idle policy and result contract', () => {
     const urls: string[] = [];
     const h = harness({ onRemoteControlUrl: (url) => urls.push(url) });
     h.rpc.enableRemoteControl();
-    const request = h.writes[0] as unknown as { request_id: string };
-    h.emit({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id, response: { session_url: 'https://example.invalid/session' } } });
+    h.emit({ type: 'control_response', response: { subtype: 'success', request_id: h.controls[0]!.request_id, response: { session_url: 'https://example.invalid/session' } } });
     h.emit({ type: 'control_request', request_id: 'permission', request: { subtype: 'can_use_tool', input: { command: 'pwd' } } });
     expect(urls).toEqual(['https://example.invalid/session']);
-    expect(h.writes[1]).toMatchObject({ type: 'control_response', response: { request_id: 'permission', response: { behavior: 'allow', updatedInput: { command: 'pwd' } } } });
+    expect(h.controls[1]).toMatchObject({ type: 'control_response', response: { request_id: 'permission', response: { behavior: 'allow', updatedInput: { command: 'pwd' } } } });
+    expect(h.writes).toEqual([]);
     expect(h.results()).toEqual([]);
   });
 });

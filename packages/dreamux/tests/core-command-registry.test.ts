@@ -42,6 +42,7 @@ const FROZEN_NAMESPACE_TABLE = [
   'channel.list',
   'team.create',
   'team.submit',
+  'team.interrupt',
   'team.list',
   'team.status',
   'team.history',

@@ -51,6 +51,7 @@ export class ControlledRuntime {
   readonly runtime: AgentRuntime = {
     start: async () => ({ continuity: 'fresh' }),
     submit: (input) => this.submit(input),
+    interrupt: async () => ({ status: 'idle' }),
     stop: () => this.stop(),
   };
 

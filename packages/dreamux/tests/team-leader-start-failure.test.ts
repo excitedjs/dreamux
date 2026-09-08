@@ -71,6 +71,8 @@ async function bootTeam(options: {
   seen: string[];
   inputs: ConversationInput[];
   activities: RuntimeActivity[];
+  runtimeCreates: () => number;
+  runtimeStarts: () => number;
 }> {
   const teamRoot = await mkdtemp(join(tmpdir(), 'dreamux-team-'));
   roots.push(teamRoot);
@@ -119,12 +121,16 @@ async function bootTeam(options: {
     status: 'running',
   });
 
+  let runtimeCreateCount = 0;
+  let runtimeStartCount = 0;
   const provider = {
     getCapabilities: () => ({ tags: [], publicConfig: null }),
     readRecentActivity: async () => ({ records: [], truncated: false }),
     async createRuntime() {
+      runtimeCreateCount += 1;
       return {
         async start() {
+          runtimeStartCount += 1;
           if (options.startError !== undefined) throw options.startError;
           return { continuity: 'fresh' as const };
         },
@@ -133,6 +139,7 @@ async function bootTeam(options: {
           pending.complete(null);
           return { status: 'submitted' as const, submission: pending.submission };
         },
+        async interrupt() { return { status: 'idle' as const }; },
         async stop() {},
       };
     },
@@ -190,10 +197,25 @@ async function bootTeam(options: {
   } as unknown as TeamServiceDeps;
 
   const { service } = await TeamService.rebuild(deps, record);
-  return { service, seen, inputs, activities };
+  return {
+    service,
+    seen,
+    inputs,
+    activities,
+    runtimeCreates: () => runtimeCreateCount,
+    runtimeStarts: () => runtimeStartCount,
+  };
 }
 
 describe('TeamService.submitToLeader: the leader starts inside the submission', () => {
+  it('reports idle without creating or starting a dormant leader runtime', async () => {
+    const team = await bootTeam({ status: 'running' });
+
+    await expect(team.service.interruptLeader()).resolves.toEqual({ status: 'idle' });
+    expect(team.runtimeCreates()).toBe(0);
+    expect(team.runtimeStarts()).toBe(0);
+  });
+
   it('announces the input, then ends it with the provider\'s start error', async () => {
     const team = await bootTeam({
       status: 'starting',

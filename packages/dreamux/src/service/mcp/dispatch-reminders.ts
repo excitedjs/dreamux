@@ -7,10 +7,8 @@
  * holding only the receipt otherwise reports or predicts an outcome nobody has
  * yet, or polls a read tool until one appears.
  *
- * The wording is the operator's specific choice, recorded as ruling R7 in
- * `.agents/tasks/mcp/refine-model-facing-surfaces/requirement.md`: Claude
- * Code's own phrasing for its dispatch results, its "do not edit the files it
- * is working on" sentence included.
+ * The wording matches Claude Code's own phrasing for its dispatch results,
+ * including its "do not edit the files it is working on" sentence.
  *
  * They are not read on every engine. Claude Code drops an MCP result's
  * `content` text when `structuredContent` is present, and every hand-off tool

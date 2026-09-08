@@ -64,6 +64,7 @@ export function harnessTeamListRow(
     intent: 'test Team',
     source_repo: null,
     leader_name: 'harness-leader',
+    leader_agent_runtime: 'fake-runtime',
     leader_state: 'running',
     member_count: 0,
     created_at: 1,
@@ -131,6 +132,7 @@ export interface FakeDispatcherOverrides {
   createTeam?: (input: unknown) => Promise<unknown>;
   submitToTeamLeader?: (input: unknown) => Promise<unknown>;
   submitToAgent?: (input: unknown) => Promise<unknown>;
+  interrupt?: (teamId: string | null) => Promise<unknown>;
   listTeams?: () => Promise<unknown[]>;
   listChannels?: DispatcherService['listChannels'];
   getTeamStatus?: (teamId: string) => Promise<unknown>;
@@ -183,6 +185,7 @@ export function createFakeDispatcher(
     submitToAgent:
       overrides.submitToAgent ??
       (async () => ({ status: 'submitted', turn: { id: 'harness-turn-1' } })),
+    interrupt: overrides.interrupt ?? (async () => ({ status: 'idle' })),
     listTeams: overrides.listTeams ?? (async () => []),
     listChannels: overrides.listChannels ?? (() => []),
     getTeamStatus:

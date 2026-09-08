@@ -47,6 +47,10 @@ function capturingDelivery(): {
         submissions.push(input.submission);
         return { status: 'submitted', turnId: 'turn-1' };
       },
+      // This suite is about the submission envelope; a command never builds one.
+      async command() {
+        throw new Error('this suite delivers messages, not commands');
+      },
     },
   };
 }

@@ -200,7 +200,7 @@ describe('Provisioning snapshot immutability', () => {
       submitter: {
         submit: async (): Promise<FeishuSubmitOutcome> => ({ status: 'submitted', turnId: 't2' }),
       },
-      invoke: async (command, payload) => {
+      invoke: async (_command, payload) => {
         invokeCalls.push(payload);
         return teamSummary('new-snapshot-team') as unknown as JsonValue;
       },
@@ -248,7 +248,7 @@ describe('unbindSpace — stops future provisioning only', () => {
       submitter: {
         submit: async (): Promise<FeishuSubmitOutcome> => ({ status: 'submitted', turnId: 't3' }),
       },
-      invoke: async (command, payload) => {
+      invoke: async () => {
         return new Promise<JsonValue>((resolve) => {
           resolveCreate = resolve;
         });

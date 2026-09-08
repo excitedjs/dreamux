@@ -56,6 +56,7 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
       return {
         start: async () => { alive = true; },
         submit: (prompt, options, uuid) => sessionRpc.submit(prompt, options, uuid),
+        interrupt: (reason) => sessionRpc.interrupt(reason),
         isAlive: () => alive,
         setOnExit: (handler) => { onExit = handler; },
         stop: async () => {

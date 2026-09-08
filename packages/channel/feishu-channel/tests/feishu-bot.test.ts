@@ -32,6 +32,7 @@ class FakeTransport implements FeishuTransport {
   routes: InboundRoutes | null = null;
   readonly sent: Array<{ target: OutboundTarget; text: string }> = [];
   readonly sentCards: Array<{ target: OutboundTarget; card: unknown }> = [];
+  readonly editedCards: Array<{ messageId: string; card: unknown }> = [];
   closed = false;
 
   async start(routes: InboundRoutes): Promise<void> {
@@ -51,6 +52,10 @@ class FakeTransport implements FeishuTransport {
   async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
     this.sentCards.push({ target, card });
     return { messageIds: ['message-card-sent'] };
+  }
+
+  async editCard(messageId: string, card: unknown): Promise<void> {
+    this.editedCards.push({ messageId, card });
   }
 
   async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
@@ -215,7 +220,10 @@ describe('createFeishuBot inbound channel', () => {
       createTime: '1710000000000',
     });
     expect(received[0]?.mentions).toHaveLength(1);
-    await expect(bot.getChatMode('chat-id-1')).resolves.toBe('topic');
+    // `getChatMode` is optional on the bot contract; a bot that cannot answer
+    // it is a different assertion than one that answers wrongly.
+    expect(bot.getChatMode).toBeDefined();
+    await expect(bot.getChatMode?.('chat-id-1')).resolves.toBe('topic');
   });
 
   it('uses best-effort sender display name fields when present', async () => {

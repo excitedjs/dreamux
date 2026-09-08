@@ -1,5 +1,6 @@
 import {
   extractAssistantText,
+  interruptTurn,
   subscribeTurnCollection,
   submitTurnStart,
   type CollectedTurn,
@@ -11,6 +12,7 @@ import { toolDisplay } from './tool-display.js';
 import type { ThreadItem } from './types.js';
 import type {
   AgentRuntimeActivitySink,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeSubmissionInput,
   JsonValue,
   RuntimeActivity,
@@ -79,6 +81,19 @@ export class TurnManager {
     return this.trackAdmission(
       this.enqueueDecision(() => this.submit(input.text, 'submission')),
     );
+  }
+
+  interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    return this.enqueueDecision(async () => {
+      if (this.stopped) return { status: 'idle' };
+      const active = [...this.nativeTurns].reverse().find(
+        ([, record]) => record.terminal === null && record.completion === null,
+      );
+      const threadId = this.opts.getThreadId();
+      if (active === undefined || threadId === null) return { status: 'idle' };
+      await interruptTurn(this.opts.client, threadId, active[0]);
+      return { status: 'interrupted' };
+    });
   }
 
   async stop(): Promise<void> {
@@ -185,13 +200,25 @@ export class TurnManager {
   }
 
   private observeTerminal(turnId: string, terminal: CollectedTurn | Error): void {
+    // An accepted interrupt is not a terminal of its own: codex answers it with
+    // an ordinary `turn/completed` whose only mark is `status: "interrupted"`
+    // (measured against codex-cli 0.153.4; see `TurnStatus`). Both the marker
+    // and the end below read that status, so an interrupted codex turn carries
+    // the same line and the same end an interrupted Claude Code turn does.
+    const interrupted =
+      !(terminal instanceof Error) && terminal.status === 'interrupted';
+    if (interrupted) this.emitActivity(interruptedActivity(turnId));
     // The display line ends here, on codex's own terminal. The collector
     // reports each turn's terminal once, so this is the one end the turn gets
     // from its stream: nothing below it — the record's own bookkeeping, the
     // terminal queue, the admissions gate, the completion the push-back line
     // builds out of this terminal — may change it, delay it, or withhold it.
     this.endNativeTurn(
-      terminal instanceof Error ? 'failed' : 'completed',
+      terminal instanceof Error
+        ? 'failed'
+        : interrupted
+          ? 'interrupted'
+          : 'completed',
       terminal instanceof Error ? terminal.message : null,
     );
     this.unboundObservedTurnIds.delete(turnId);
@@ -377,12 +404,37 @@ function createRuntimeSubmission(): SubmissionDeferred {
 /**
  * The one line the card shows for a compaction, in the words Claude Code's
  * UI uses for the same fact. codex's `contextCompaction` item carries only
- * its id, and the summary codex wrote never leaves codex-core. Operator
- * ruling, 2026-09-04: 「只显示压缩发生了即可 … 我只需要这一行字即可」 — and on the
- * shape, 「没必要给他单独加一个新的 activity 类型，你直接在provider 里，多推一个
- * assistant message，内容就这一行。」
+ * its id, and the summary codex wrote never leaves codex-core: the card only
+ * needs to say a compaction happened, so the shape here is a provider-pushed
+ * assistant message rather than a new activity kind.
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+
+/**
+ * The one line the card shows for an interrupted turn, in the words Claude
+ * Code's own UI uses for the same fact. codex reports an interrupt only as a
+ * terminal status on `turn/completed`, and a status is not a card fact, so
+ * without this push the card shows an ordinary end and nothing says the turn
+ * was stopped rather than answered. codex carries an interrupt marker too,
+ * aligned with Claude Code, in the `Compacted session` shape: an assistant
+ * message from the provider, not a new activity kind.
+ *
+ * The end matches the marker: a stopped codex turn must read as interrupted
+ * on the card, exactly as Claude Code's does. A card's terminal is
+ * `turn.ended.status` verbatim: the Feishu channel maps `completed` to
+ * `RUN_FINISHED status: done` and `interrupted` to `status: interrupted`, so
+ * the end has to read the same status the marker does.
+ */
+const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
+
+function interruptedActivity(turnId: string): RuntimeActivity {
+  return {
+    kind: 'assistant.message',
+    occurredAt: Date.now(),
+    id: `${turnId}:interrupted`,
+    text: INTERRUPTED_MESSAGE,
+  };
+}
 
 function itemActivity(
   turnId: string,

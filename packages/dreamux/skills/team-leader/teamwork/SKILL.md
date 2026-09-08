@@ -20,7 +20,8 @@ Three ways to get a piece of work done:
   long it lives, what it returns — and that description is the one to read.
 - **A TeamMate.** A member of this Team that continues independently: its own
   runtime and context, its own history, a conversation you can continue across
-  turns, and visible to the user.
+  turns, visible to the user — and a judgment of its own, the one thing a
+  subagent does not have.
 
 Choose by asking about the work, not about the size of the request:
 
@@ -30,9 +31,13 @@ Choose by asking about the work, not about the size of the request:
 - May the user want to inspect it or continue it?
 - Does it need a standing role — someone who writes, someone who reviews — held
   across several turns?
+- Does it need a judgment that is not yours — a reading of the problem that can
+  contradict your framing, not only complete it?
 
 Any yes points past a subagent to a TeamMate. A member is a seat, not a single
-errand: spawn one for a role you will keep sending work to.
+errand: spawn one for a role you will keep sending work to. A member briefed
+like a subagent — your answer, its confirmation — costs what a member costs and
+returns what a subagent returns.
 
 The members of this Team need not all run the same engine. `get_capabilities`
 lists the runtimes this Team can spawn; read it before you choose, and staff the
@@ -60,7 +65,13 @@ Carry into the brief:
 - **The user's own constraints, verbatim.** Their words, not your paraphrase. A
   paraphrased constraint is a constraint you have already started deciding.
 - **Your guesses, marked as guesses.** Say which parts you inferred, so a member
-  that finds the inference wrong knows it is allowed to say so.
+  that finds the inference wrong knows it is allowed to say so. Your design is
+  a guess too: the owner you chose and the mechanism you prefer.
+- **The question the work turns on, before your answer to it.** Which fact is
+  being decided and who could own it, then your current answer as one
+  candidate. A design handed down as settled makes every later member a
+  subagent of it: reviewers find ever more precise holes inside your premise,
+  and none of them is asked whether the premise holds.
 - **What "done" means, and what you need to read back.** The evidence that would
   show it, and the shape of the report you will carry outward: what changed, the
   evidence for it, and the questions left open.
@@ -85,7 +96,9 @@ report a conflict with the code, or a blocker, is the correct result of the
 turn, not a failure to deliver.
 
 `identity` holds what stands for every turn of the member's life: its role, its
-boundaries, and the posture of stopping to report rather than pushing through.
+boundaries, the posture of stopping to report rather than pushing through, and
+its standing to contradict your framing — what you hand down is evidence, not a
+verdict.
 `prompt` holds this turn's task. `send` carries the next turn's task the same
 way; the standing role is already in place and does not need restating.
 
@@ -126,6 +139,21 @@ has been working in the shared workspace while you were elsewhere.
 
 An unexplained override teaches nothing and repeats itself on the next task.
 
+## When Every Round Finds Another Hole
+
+A second review round that still adds state, special cases, or call sites to
+the same area is not a design getting robust; it is a design failing slowly.
+Each finding is real, each patch is correct, and the sum is a mechanism nobody
+asked for.
+
+- **Stop sending patches.** The model is wrong, not the details. Write the
+  one-sentence premise the rounds have been refining — which owner, which fact
+  — and make that sentence the next question.
+- **Put it to members that have not seen the current design.** Give them the
+  user's story and the baseline code, not the draft; a member that starts from
+  the draft inherits its owner. Agreement among members that share your brief
+  proves they share your premise, not that it holds.
+
 ## Keeping the Thread
 
 A conversation with one member accumulates context that a new one does not have,
@@ -138,6 +166,6 @@ and every member you keep open is another writer in the shared workspace.
   conclusions.
 - Independence is worth paying for when you want a real check. Two members that
   share a brief also share its blind spots; give the reviewer the question, not
-  the developer's answer.
+  the developer's answer, nor yours.
 - Close a member when its role is finished, so the members still open are the
   ones actually working and the writer of any given path stays unambiguous.

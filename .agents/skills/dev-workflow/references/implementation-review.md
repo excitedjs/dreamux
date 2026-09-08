@@ -44,7 +44,11 @@ verdicts, grouping, report assembly, gear parameters, and failure semantics appl
 unchanged, and picking the gear above selects one of those parameters rather than
 adding a third delta. Both deltas close one gap: the scope stage resolves the diff
 and never learns what the operator approved, so no shared angle can check the
-implementation against it.
+implementation against it. The common challenger identity reaches this review
+through the requirement-fidelity finder below, not through the shared angles. The
+shared method already owns architecture challenge through the cleanup finder's
+simplification and Altitude angles; composing the Dreamux identity into those
+finders would give the same responsibility two owners.
 
 **The review inputs ride in the scope block.** Pass the three paths above and the
 checks-passed note into the run, and add them to the shared scope block every later

@@ -21,6 +21,7 @@ import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
   AgentRuntimeIdentity,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
   AgentRuntimeSubmissionInput,
@@ -239,6 +240,22 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    */
   submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
     return this.trackAdmission(this.acceptInput(input.text));
+  }
+
+  /**
+   * Interrupt the resident session's outstanding work.
+   *
+   * The session is only asked when one is already up: an interrupt must not
+   * wait for, or inherit the failure of, a spawn it did not initiate. A session
+   * with nothing outstanding answers false and this answers `idle`, so the
+   * caller can say no turn is running rather than claim it stopped one.
+   */
+  async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    const session = this.session;
+    if (this.stopped || session === null || !session.isAlive()) return { status: 'idle' };
+    return await session.interrupt('Interrupted by Dreamux user command.')
+      ? { status: 'interrupted' }
+      : { status: 'idle' };
   }
 
   private async acceptInput(text: string): Promise<RuntimeAdmission> {

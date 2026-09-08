@@ -64,7 +64,7 @@ export interface ClosingHarness {
   closing: TeamClosing;
   /** Every collaborator call, in the order `TeamClosing` actually made it. */
   order: string[];
-  /** How many times the worktree was assessed (pre-check + post-stop recheck). */
+  /** How many worktree assessments this closing sequence performed. */
   assessCalls: () => number;
   commit: ReturnType<typeof vi.fn>;
   workflowStart: ReturnType<typeof vi.fn>;
@@ -75,9 +75,8 @@ export interface ClosingHarness {
 /**
  * A `TeamClosing` wired to fakes for every collaborator it holds, recording
  * the order every fake was actually invoked in. `assessSequence` is consumed
- * FIFO (repeating its last entry once exhausted), so a test can make the first
- * assessment pass and a later one fail — the exact shape of the "a race
- * dirtied the worktree after the preflight passed" scenario.
+ * FIFO (repeating its last entry once exhausted), so a test can make the
+ * TeamLeader check pass and the final post-stop assessment fail.
  */
 export function closingHarness(overrides: {
   record?: TeamRecord;

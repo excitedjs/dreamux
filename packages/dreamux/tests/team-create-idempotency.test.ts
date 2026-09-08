@@ -138,6 +138,7 @@ describe('team.create idempotency', () => {
             pending.complete(null);
             return { status: 'submitted' as const, submission: pending.submission };
           },
+          async interrupt() { return { status: 'idle' as const }; },
           async stop() {},
         };
       },
@@ -178,6 +179,7 @@ describe('team.create idempotency', () => {
       intent: created.intent,
       source_repo: created.source_repo,
       leader_name: created.leader_name,
+      leader_agent_runtime: created.leader_agent_runtime,
       leader_state: created.leader_state,
       member_count: created.member_count,
       created_at: created.created_at,

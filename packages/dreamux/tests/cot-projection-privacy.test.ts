@@ -4,8 +4,8 @@
  * The frozen post-COT baseline: `channel/conversation-projection.ts`'s
  * workspace/secret redaction rules for `teammate.input` and
  * `teammate.activity`. Core redacts and never truncates (operator ruling,
- * 2026-09-04: 「core那边只做脱敏，不做截断」): a surface cuts what it cannot send,
- * where it sends it. Everything else about the catalog (the four-kind union,
+ * 2026-09-04): a surface cuts what it cannot send, where it sends it.
+ * Everything else about the catalog (the four-kind union,
  * live delivery, team.state/teammate.state) lives in
  * `tests/core-event-catalog.test.ts`.
  *

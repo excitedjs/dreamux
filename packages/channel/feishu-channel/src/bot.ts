@@ -168,6 +168,8 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   ): Promise<FeishuMessageReadResponse>;
   /** Optional contact lookup for an accepted human sender. */
   resolveUserName?(openId: string): Promise<string | undefined>;
+  /** Optional lookup of a chat's current Feishu name. */
+  resolveChatName?(chatId: string): Promise<string | undefined>;
   /**
    * Optional Feishu COT surface. A fake or externally supplied bot that omits
    * it simply presents no chain-of-thought card; nothing else changes.
@@ -222,6 +224,7 @@ export function createFeishuBot(
       // object is safe and keeps the real wiring path explicit.
       { logger: opts.logger },
     );
+  const resolveChatName = transport.resolveChatName;
 
   return {
     get appId(): string {
@@ -316,6 +319,14 @@ export function createFeishuBot(
           resolveUserName(openId: string): Promise<string | undefined> {
             return transport.resolveUserName?.(openId) ??
               Promise.resolve(undefined);
+          },
+        }
+      : {}),
+
+    ...(resolveChatName !== undefined
+      ? {
+          resolveChatName(chatId: string): Promise<string | undefined> {
+            return resolveChatName(chatId);
           },
         }
       : {}),

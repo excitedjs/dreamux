@@ -56,23 +56,31 @@ export class IdempotencyConflictError extends StatedFailure {
 }
 
 /**
- * Why a submitted dissolve stopped short, for the operator log.
+ * Why a dissolve stopped short.
  *
- * A dissolve is answered with a receipt before any of this is known, so these
- * two never reach a caller: they exist to say in the log whether the Team is
- * still open because its checkout holds work somebody wants, or because the
- * dissolve itself went wrong. Neither states a next step, because neither is
- * answering anybody.
+ * A non-forced dissolve asks about the checkout before it accepts anything, so
+ * this one *is* an answer: a caller asked, nothing was touched, and the reply
+ * has to say what to do about it. The same error is also raised once more from
+ * behind the receipt, when work appeared in the window between the two reads;
+ * there it only reaches the operator log, and the Team stays open.
  */
 export class TeamDissolveBlockedError extends DreamuxError {
   constructor(reason: WorktreeCleanupBlockedReason) {
     super(
       'TEAM_DISSOLVE_BLOCKED',
-      `Team dissolve is blocked because the managed worktree is ${reason}`,
+      `Team dissolve is blocked because the managed worktree is ${reason}. ` +
+        'Commit or move that work, or dissolve with force to discard the checkout.',
     );
   }
 }
 
+/**
+ * Why a submitted dissolve failed, for the operator log.
+ *
+ * This one is never an answer: it is raised behind the receipt, so it exists
+ * to say in the log that the Team is still open because the dissolve itself
+ * went wrong. It states no next step, because it is answering nobody.
+ */
 export class TeamDissolveFailedError extends DreamuxError {
   constructor(message: string) {
     super('TEAM_DISSOLVE_FAILED', message);

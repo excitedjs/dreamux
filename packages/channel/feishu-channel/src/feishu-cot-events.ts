@@ -135,8 +135,7 @@ export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventI
       },
     }),
     // No row sends `TOOL_CALL_ARGS`: beside a title the client shows the
-    // delta nowhere (probe, 2026-09-03), and a row nothing could title hides
-    // its arguments by ruling (「mcp 工具隐藏掉参数吧」, 2026-09-04).
+    // delta nowhere, and a row nothing could title hides its arguments.
     checkedEvent({
       eventType: 'TOOL_CALL_END',
       content: { toolCallId },
@@ -153,9 +152,9 @@ export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEvent
   let content: unknown;
   if (presentation.items !== null && event.status !== 'failed') {
     // A read or edit that succeeded shows its items and nothing else: the
-    // operator ruled the diff and the output redundant beside the pills, and
-    // the client cannot fold a code segment away. A failed one keeps them,
-    // because the output is the only place the failure's reason appears.
+    // diff and the output are redundant beside the pills, and the client
+    // cannot fold a code segment away. A failed one keeps them, because the
+    // output is the only place the failure's reason appears.
     content = assembleToolResultContent({
       failed: false,
       argumentsText: null,
@@ -260,9 +259,9 @@ export interface ToolResultParts {
 
 /**
  * What came back, as the card shows it: a structured value pretty-printed as
- * a `json` code segment, anything else as plain text (operator ruling,
- * 2026-09-04: 「文本的输出，就按文本输出。能解析成JSON的再放进代码段」). The whole
- * text is parsed first and cut last, so a cut never decides what a value was.
+ * a `json` code segment, anything else as plain text — text output stays
+ * text, and only what parses as JSON goes into a code segment. The whole text
+ * is parsed first and cut last, so a cut never decides what a value was.
  * Plain text keeps ten content lines, then preserves its spacing the way the
  * client keeps it (`preserveSpacing`) before byte fitting. JSON keeps its lines
  * and spaces until byte fitting.

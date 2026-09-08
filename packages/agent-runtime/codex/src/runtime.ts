@@ -21,6 +21,7 @@ import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
   AgentRuntimeIdentity,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimePathContext,
   AgentRuntimeStartOutcome,
   AgentRuntimeStateSink,
@@ -379,6 +380,10 @@ export class CodexRuntime implements AgentRuntime {
     // The text is already the complete model-facing message: this runtime
     // renders no envelope and never branches on where the turn came from.
     return turnManager.submitInput(input);
+  }
+
+  interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    return this.turnManager?.interrupt() ?? Promise.resolve({ status: 'idle' });
   }
 
   stop(): Promise<void> {

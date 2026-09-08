@@ -16,6 +16,7 @@ import type {
   TurnCompletedNotification,
   TurnErrorNotification,
   TurnStartResponse,
+  TurnStatus,
   UserInput,
 } from './types.js';
 
@@ -23,6 +24,8 @@ export interface CollectedTurn {
   threadId: string;
   turnId: string;
   items: ThreadItem[];
+  /** codex's own terminal for this turn; see {@link TurnStatus}. */
+  status: TurnStatus;
 }
 
 export interface TurnCollector {
@@ -193,7 +196,12 @@ export function subscribeTurnCollection(
         return;
       }
       const items = itemsByTurn.get(params.turn.id) ?? params.turn.items ?? [];
-      const completed = { threadId, turnId: params.turn.id, items };
+      const completed = {
+        threadId,
+        turnId: params.turn.id,
+        items,
+        status: params.turn.status,
+      };
       const terminalState = rememberTerminal(
         terminalFingerprints,
         params.turn.id,
@@ -363,6 +371,18 @@ export async function submitTurnStart(
   if (cwd !== null) params.cwd = cwd;
   if (outputSchema !== undefined) params.outputSchema = outputSchema;
   return client.request<TurnStartResponse>('turn/start', params);
+}
+
+/** Interrupt one running turn and resolve once Codex accepts the request. */
+export async function interruptTurn(
+  client: CodexWsClient,
+  threadId: string,
+  turnId: string,
+): Promise<void> {
+  await client.request<Record<string, never>>('turn/interrupt', {
+    threadId,
+    turnId,
+  });
 }
 
 /**

@@ -338,6 +338,110 @@ Source:
 - `/packages/dreamux/src/service/channel-submission.ts`
 - `/packages/dreamux/src/service/submission-sources.ts`
 
+### Slash commands
+
+The Feishu Channel answers `/stop`, `/teams`, and `/dissolve` itself. They are
+one command table, not three special cases, and nothing about them reaches a
+model: a recognized command is consumed, so no submission is built, no turn is
+created, and no COT anchor is opened for it.
+
+Recognition, which reuses `/introduce`'s decoder rather than adding a second
+one:
+
+- text messages only; a command inside a rich-text post is not one;
+- leading Feishu mention placeholders are stripped first, longest key first, so
+  an `@`-prefixed command still matches;
+- the remaining text must *start* with the token, followed by whitespace or end
+  of message, so a command quoted mid-sentence never fires;
+- matching is case-insensitive, and everything after the token is ignored
+  entirely — no command takes an argument;
+- in a group or topic the bot must be @-mentioned, even where ordinary delivery
+  needs no mention. A direct message has no mention to require;
+- only a human sender's message is a command. The gate admits a trusted peer bot
+  that mentions us, and the operator's authorization ruling was about ordinary
+  human inbound, so a bot message that happens to start with a command token
+  goes down the ordinary delivery path instead of dissolving a Team.
+
+Authorization is the ordinary inbound gate and nothing more. `/dissolve` gets no
+sender allowlist and no confirmation step; the operator ruled that explicitly.
+
+Dispatch happens after the route is projected and before anything is submitted,
+so each command reads the same `bound` / `provision` / `dispatcher` plan the
+delivery path would have used:
+
+- **`/stop`** invokes `team.interrupt`, naming the bound Team or omitting the
+  name to reach the Dispatcher Agent, exactly as `team.submit` addresses. It
+  interrupts only the agent this conversation talks to, never the TeamMates that
+  agent started. A `provision` plan has no Team yet, so it answers that the
+  conversation has no bound Team rather than interrupting the Dispatcher Agent's
+  unrelated work.
+- **`/teams`** invokes `team.list`, keeps the `running` rows, and renders the
+  Running Team locator card in TypeScript. It is the one command that ignores
+  the projected plan: every running Team on the dispatcher is listed to any
+  conversation that may reach the bot, because scoping the answer to what this
+  conversation can reach is strictly more code than rendering the Command's own
+  answer, and the operator decided the question by code size. Teams are grouped
+  by repository basename into collapsible panels, always collapsed, each holding
+  a two-column grid of Team tiles dealt left-to-right. Panel and runtime-tag
+  colours come from fixed palettes indexed by a stable hash of the name, so the
+  same repository and the same agent runtime always render the same colour
+  without a name-to-colour table; a repository's colour is also its tiles' border,
+  which is why that palette holds only colours with a `-100` border token. A tile
+  carries the runtime tag and name, the intent, and every bound chat as its own
+  link, and is free to be as tall as that makes it: Feishu lays a two-column
+  `column_set` out as a waterfall, so a tall tile lengthens its own column and
+  never stretches the one beside it. Only this Channel's own bindings appear —
+  bindings are Channel-owned and Core holds no cross-channel registry to read.
+- **`/dissolve`** invokes `team.dissolve` on the bound Team with a generated
+  note and never sends `force`. It is the one command that answers an accepted
+  request with nothing. The Team's close comes back to this Channel as a
+  `team.state` closed event, which removes the routes and announces that to the
+  conversation, so a receipt would be the second message about one event. The
+  two outcomes the conversation cannot learn any other way — no bound Team, and
+  refused by Core — are still reported in words.
+
+A command answers for the one Command it ran and touches no routing state. Only
+two proofs remove a route, and they meet in one capability,
+`FeishuRouteReconciliation`, because they commit the same durable rows: Core's
+final `team.state` closed event, and a delivery this Channel already routed
+coming back rejected. A rejected command is not a third proof — `TEAM_CLOSED` is
+raised for a dissolve that is still pending, and a dissolve that then fails
+lowers the fence again and leaves the Team open with its binding correct.
+
+What the conversation hears is the only difference between the two, and it is
+the caller's to state rather than derived from the removal, because the first
+caller to empty the rows is also the only one left with anything to announce. A
+closed event announces the dissolution. A rejected delivery announces only that
+this route ended, because a pending dissolve can still fail and the final
+`team.state` is what proves the Team closed; `rejectedDeliveryNotice` reads that
+distinction in one place. Any other rejected delivery is silent, this Channel
+correcting its own document about nothing the group did. An earlier design had
+commands reconcile too, so a stale binding could not outlive a command that hit
+it; that was reversed because a command has no proof worth committing, and
+because the removal stole the closed event's announcement. A binding a command
+found broken is removed by the next message through it.
+
+Every command answers with one line, including on failure; a Core rejection is
+reported rather than swallowed. All user-facing text these commands produce is
+English, and so is `/introduce`'s acknowledgement, by operator ruling — they
+deliberately do not follow the Chinese and bilingual text elsewhere in this
+Channel.
+
+Binding entries on the `/teams` card show each chat's current name, resolved
+live through the transport's chat lookup. The stored `display` on a binding row
+cannot serve this: it is an optional label whoever called `bind_channel` chose to
+pass, and automatic per-topic provisioning passes `null`, so the Teams most
+likely to be running have none. A failed lookup degrades to the chat id for that
+one chat and never fails the card.
+
+Source:
+
+- `/packages/channel/feishu-channel/src/feishu-slash-commands.ts`
+- `/packages/channel/feishu-channel/src/feishu-route-reconciliation.ts`
+- `/packages/channel/feishu-channel/src/feishu-running-teams-card.ts`
+- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
+- `/packages/channel/feishu-channel/src/introduce.ts`
+
 ### Inbound content fidelity
 
 Before any content work, the Feishu session classifies raw chat/sender identity

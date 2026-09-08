@@ -56,6 +56,7 @@ export function handleProtocolEvent(
 ): void {
   if (event.kind === 'command_lifecycle') return;
   if (event.kind === 'interrupted') {
+    emitActivity(interruptedActivity(context.activity), context.activitySink);
     endNativeTurn('interrupted', null, context.activitySink);
     context.activity.tools.clear();
     return;
@@ -88,7 +89,7 @@ export function handleProtocolEvent(
  * context the CLI injected into its own conversation: the body of a skill it
  * just loaded, hook output, reminders. None of that text is the agent's, and
  * none of it is the operator's (stdin is never echoed back), so it is not
- * displayed at all. Operator ruling, 2026-09-03: 「所有的 user 消息都隐藏即可」.
+ * displayed at all: every `user` envelope is hidden.
  */
 function emitStreamActivity(
   line: ClaudeActivityLine,
@@ -114,11 +115,10 @@ function emitStreamActivity(
 
 /**
  * The one line the card shows for a compaction, in the words Claude Code's
- * own UI uses. The summary the CLI wrote is not shown. Operator ruling,
- * 2026-09-04: 「我不要正文，正文太长了，只显示压缩发生了即可。claude code 的网页上只
- * 显示了 Compacted session，我只需要这一行字即可。」 — and on the shape, 「没必要给他
- * 单独加一个新的 activity 类型，你直接在provider 里，多推一个 assistant message，
- * 内容就这一行。」
+ * own UI uses. The summary the CLI wrote is not shown: the body is too long
+ * for a card, which only needs to say a compaction happened — the single
+ * line the Claude Code web UI shows. Hence the shape here: no new activity
+ * kind, just one more assistant message carrying that line.
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 
@@ -128,6 +128,27 @@ function compactedActivity(activityState: NativeActivityState): RuntimeActivity 
     occurredAt: Date.now(),
     id: `stream-${activityState.activitySequence++}:compacted`,
     text: COMPACTED_SESSION_MESSAGE,
+  };
+}
+
+/**
+ * The one line the card shows for an interrupted turn, in Claude Code's own
+ * words. The CLI writes this sentence itself, but as a text block on a `user`
+ * envelope, and those blocks are not displayed (see the `user` note above) —
+ * an interrupted tool call otherwise leaves only a red tool row saying claude
+ * was told not to proceed. So the provider pushes the marker as an assistant
+ * message, the same shape used for `Compacted session`: no new activity kind,
+ * one more assistant message carrying the line. This line reaching the COT is
+ * what an interrupt owes the card; the card's terminal status matters less.
+ */
+const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
+
+function interruptedActivity(activityState: NativeActivityState): RuntimeActivity {
+  return {
+    kind: 'assistant.message',
+    occurredAt: Date.now(),
+    id: `stream-${activityState.activitySequence++}:interrupted`,
+    text: INTERRUPTED_MESSAGE,
   };
 }
 

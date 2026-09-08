@@ -330,6 +330,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'AgentRuntimeDiagnosticResult',
         'AgentRuntimeDiagnosticRunner',
         'AgentRuntimeIdentity',
+        'AgentRuntimeInterruptOutcome',
         'AgentRuntimeLogger',
         'AgentRuntimeMcpServer',
         'AgentRuntimeOnboardCapability',

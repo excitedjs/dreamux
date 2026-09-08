@@ -289,6 +289,22 @@ export function buildRemoteControlEnable(requestId: string): string {
 }
 
 /**
+ * Interrupt the running turn, leaving commands queued behind it to run.
+ *
+ * Cancelling them is available — the CLI honours `cancel_queued` under the
+ * `interrupt_cancel_queued_v1` capability — and deliberately not used: a
+ * `/stop` ends the turn the conversation is watching, and the messages someone
+ * already sent are not that turn.
+ */
+export function buildInterruptRequest(requestId: string, reason: string): string {
+  return JSON.stringify({
+    type: 'control_request',
+    request_id: requestId,
+    request: { subtype: 'interrupt', reason },
+  });
+}
+
+/**
  * Answer a `can_use_tool` control request with `allow`. A Dreamux dispatcher
  * runs unattended, so the answer for a runtime that has no human to consult is
  * "allow"; `updatedInput` echoes the tool's original input back unchanged.

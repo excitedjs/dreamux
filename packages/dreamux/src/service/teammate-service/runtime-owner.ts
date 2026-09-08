@@ -2,6 +2,7 @@ import type {
   AgentRuntime,
   AgentRuntimeActivitySink,
   AgentRuntimeCreateContext,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStartOutcome,
@@ -87,6 +88,19 @@ export class TeammateRuntimeOwner {
   async existingRuntimeAfterStart(): Promise<AgentRuntime | null> {
     await this.starting;
     return this.runtime;
+  }
+
+  /**
+   * Interrupt only a runtime this process already owns; never start one.
+   *
+   * A start that failed leaves nothing to interrupt, so it reads as no runtime
+   * the way every other caller of `existingRuntimeAfterStart` reads it. Raising
+   * it here would answer a `/stop` with the spawn's error instead of saying
+   * that nothing is running.
+   */
+  async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    const runtime = await this.existingRuntimeAfterStart().catch(() => null);
+    return runtime === null ? { status: 'idle' } : runtime.interrupt();
   }
 
   hasNoRuntimeAuthority(): boolean {
