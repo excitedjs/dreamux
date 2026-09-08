@@ -85,7 +85,7 @@ const COMMANDS: Readonly<Record<FeishuSlashCommand, CommandDefinition>> = {
       }),
     };
   }),
-  dissolve: defineCommand('Team dissolve refused', async (context) => {
+  dissolve: defineCommand('Command /dissolve failed', async (context) => {
     if (context.plan.kind !== 'bound') {
       return { kind: 'text', text: 'This conversation has no bound Team.' };
     }

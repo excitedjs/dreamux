@@ -8,8 +8,8 @@ import type { SchedulerService } from '../scheduler/service.js';
 import type { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { AgentEntityWorktreeIdentity } from '../agent-entity/types.js';
+import { errorMessage } from '../../platform/error-info.js';
 import {
-  teamErrorInfo,
   TeamDissolveBlockedError,
   TeamDissolveFailedError,
 } from '../team-collection/errors.js';
@@ -174,15 +174,12 @@ export class TeamClosing {
         worktree: record.worktree,
       });
     } catch (error) {
-      this.deps.log.warn(
-        {
-          dispatcher_id: this.deps.dispatcherId,
-          team_id: this.deps.teamId,
-          err: teamErrorInfo(error),
-        },
-        'Team dissolve worktree assessment failed',
+      // The caller waits on this read now, so it is an answer rather than a
+      // log line: a moved source checkout or an unregistered worktree has to
+      // reach whoever asked, or `/dissolve` reports a wall with no reason.
+      throw new TeamDissolveFailedError(
+        `Team worktree assessment failed: ${errorMessage(error)}`,
       );
-      throw new TeamDissolveFailedError('Team worktree assessment failed');
     }
   }
 
@@ -191,18 +188,6 @@ export class TeamClosing {
     if (assessment.status === 'blocked') {
       throw new TeamDissolveBlockedError(assessment.reason);
     }
-  }
-
-  /** Report a failure from this Team's submitted dissolve operation. */
-  reportDissolveFailure(message: string, error: unknown): void {
-    this.deps.log.error(
-      {
-        dispatcher_id: this.deps.dispatcherId,
-        team_id: this.deps.teamId,
-        err: teamErrorInfo(error),
-      },
-      message,
-    );
   }
 
   /**

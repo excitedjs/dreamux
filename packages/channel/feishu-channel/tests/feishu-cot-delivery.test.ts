@@ -333,7 +333,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       command,
       payload,
       emit,
-    ) => {
+    ): Promise<JsonValue> => {
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
       invocation += 1;
       if (invocation === 2) return { status: 'duplicate' };
@@ -445,7 +445,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     async (failure) => {
       const { session, cot, port } = await harness(
         `chan-cot-${failure}`,
-        async () => {
+        async (): Promise<JsonValue> => {
           if (failure === 'rejected') throw teamClosedError();
           if (failure === 'stopped') return { status: 'stopped' };
           return {

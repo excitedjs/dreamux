@@ -50,16 +50,17 @@ writes one and `onControlResponse` reads the answer — so this is the same shap
 not a new mechanism.
 
 - Send `subtype: "interrupt"` with a short `reason`.
-- Do **not** send `cancel_queued`. It also cancels queued main-thread commands;
-  the requirement is to end the running turn only.
+- Do **not** send `cancel_queued`. The CLI honours it under the
+  `interrupt_cancel_queued_v1` capability and would cancel the queued commands
+  too; the requirement is to end the running turn only.
 - The artifact the interrupt leaves behind settles the turn, and nothing else
   does. `rpc.ts` had a branch that ignored an `error_during_execution` with no
   result and no uuid; the real artifact carries the interrupted command's own
   uuid, so that test never matched it — see the probe table in
-  [`../verification.md`](../verification.md). The condition is now the
-  runtime's own accepted interrupt request plus the subtype, and the settlement
-  on `command_lifecycle: cancelled` was removed so the artifact cannot arrive
-  against an already-settled turn.
+  [`../verification.md`](../verification.md). The condition is the artifact's
+  own `terminal_reason` (`aborted_streaming` or `aborted_tools`), and the
+  settlement on `command_lifecycle: cancelled` was removed so the artifact
+  cannot arrive against an already-settled turn.
 - The turn ends through the existing `turn.ended` / `interrupted` path, and the
   provider pushes one `assistant.message` reading
   `[Request interrupted by user]` ahead of it. The CLI writes that sentence
@@ -99,9 +100,11 @@ that we asked matters: `interrupt()` picks a turn with no terminal yet and then
 sends the request, so a turn codex finished in that window would be marked
 interrupted by a request-flag discriminator, and is not by this one.
 
-The end status and the submission settlement are left as codex reports them.
-The operator's ruling names the text — 「codex 也加一个打断text ，对齐claude code」 —
-and his earlier ruling already said the card's end state does not matter.
+The submission settlement is left as codex reports it: an interrupted codex turn
+still delivers codex's completion, where Claude Code settles its requests
+`stopped`. The end status is not — a later ruling, recorded in
+[`../requirement.md`](../requirement.md), superseded the earlier one and both
+runtimes now end an interrupted turn `interrupted`.
 
 ### Core Command
 

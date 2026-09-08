@@ -348,7 +348,7 @@ describe('ask-user registry', () => {
       timers,
       onExpire: (expiry) => expired.push(expiry),
     });
-    const requestId = openRound(registry, 'om_sent');
+    openRound(registry, 'om_sent');
 
     timers.fire();
     // No click means no event to read the card id from — only what the send
@@ -364,7 +364,7 @@ describe('ask-user registry', () => {
       timers,
       onExpire: (expiry) => expired.push(expiry),
     });
-    const requestId = openRound(registry, 'om_card');
+    openRound(registry, 'om_card');
 
     timers.fire();
 

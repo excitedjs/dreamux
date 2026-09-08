@@ -45,6 +45,7 @@ export interface FakeFeishuBot extends FeishuBot {
     reactionId: string;
   }>;
   readonly chatModeRequests: string[];
+  readonly editedCards: Array<{ messageId: string; card: unknown }>;
   readonly chatNameRequests: string[];
   readonly messageReadRequests: FeishuMessageReadRequest[];
   readonly messageResourceRequests: FeishuMessageResourceRequest[];
@@ -109,12 +110,17 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const chatNameRequests: string[] = [];
   const openId: string | undefined = `fake-open-id-${appId}`;
   const displayName = `Fake ${appId}`;
+  const editedCards: FakeFeishuBot['editedCards'] = [];
   const reactions: FakeFeishuBot['reactions'] = [];
   const reactionOps: FakeFeishuBot['reactionOps'] = [];
   let cotClient: FeishuCotClient | undefined;
 
   return {
     appId,
+    editedCards,
+    async editCard(messageId: string, card: unknown): Promise<void> {
+      editedCards.push({ messageId, card });
+    },
     get botOpenId(): string | undefined {
       return openId;
     },

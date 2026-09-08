@@ -514,13 +514,17 @@ export class DispatcherService {
     return this.admitOperation(() => this.mustAgent().submitInput(input));
   }
 
-  interruptAgent() {
-    return this.admitOperation(() => this.mustAgent().interrupt());
-  }
-
-  interruptTeamLeader(teamId: string) {
+  /**
+   * Interrupt the agent a caller names: a Team's leader, or this dispatcher's
+   * own agent when it names none. The same optional addressing `team.submit`
+   * and `team.interrupt` already publish, so the Command forwards its argument
+   * rather than branching on it.
+   */
+  interrupt(teamId: string | null) {
     return this.admitOperation(async () =>
-      (await this.teams.open(teamId)).interruptLeader(),
+      teamId === null
+        ? this.mustAgent().interrupt()
+        : (await this.teams.open(teamId)).interruptLeader(),
     );
   }
 

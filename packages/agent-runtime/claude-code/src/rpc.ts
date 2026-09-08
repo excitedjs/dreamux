@@ -42,6 +42,16 @@ export interface ClaudeCodeStreamRpcOptions {
  * for terminal lifecycle frames. The consumed set also includes native internal
  * commands so cancellation is scoped to work that actually entered a turn.
  */
+/**
+ * The two `terminal_reason` values that mean the turn was aborted rather than
+ * answered, from the Agent SDK's documented set. The other reasons all name a
+ * failure or a limit, so this is the whole of what an interrupt looks like on
+ * the wire. Under this dispatcher's unattended posture the only cause is our
+ * own `interrupt` control request: the other documented cause, a permission
+ * callback denying with `interrupt`, cannot happen where every callback allows.
+ */
+const INTERRUPT_TERMINAL_REASONS = new Set(['aborted_streaming', 'aborted_tools']);
+
 export class ClaudeCodeStreamRpc {
   private readonly lineBuf = new LineBuffer();
   private readonly aggregator = new TurnAggregator();
@@ -52,12 +62,12 @@ export class ClaudeCodeStreamRpc {
   private closed = false;
   private readonly control: ClaudeCodeControlRpc;
   /**
-   * An interrupt this session asked for is still unanswered.
+   * An interrupt this session asked for has not been answered yet.
    *
    * It is the session's fact, not a request's: claude interrupts whatever it is
    * doing, and the artifact it leaves behind names the command it was in the
-   * middle of. Nothing in that artifact's shape separates it from a genuine
-   * execution error, so our own outstanding ask is the only discriminator.
+   * middle of. This only decides who is still waiting for an answer — what
+   * ended the work is read from the result itself.
    */
   private interruptRequested = false;
 
@@ -275,17 +285,18 @@ export class ClaudeCodeStreamRpc {
           submittedUuids.push(id);
         }
         this.clearIdleIfEmpty();
-        // The artifact an accepted interrupt leaves behind, measured against
-        // claude 2.1.263 for both an interrupted stream and an interrupted tool
-        // call: a `result` with subtype `error_during_execution`, `is_error`,
-        // no result text, and the interrupted command's own
-        // `user_message_uuid`. It answers the requests it names, but with
-        // nothing said rather than a completion, so they settle `stopped`.
-        // The mark is spent on the first result either way: an accepted
-        // interrupt that found nothing to stop still ends in an ordinary
-        // result, and a later genuine failure is nobody's interrupt.
-        const interrupted = this.interruptRequested &&
-          line.outcome.subtype === 'error_during_execution';
+        // What ended this turn is the turn's own fact. An aborted turn reports
+        // one of the two `terminal_reason` values the Agent SDK documents for
+        // it, distinct from every failure reason, so an interrupt is read here
+        // rather than inferred from whether we happened to ask for one. The
+        // artifact answers the requests it names, but with nothing said rather
+        // than a completion, so they settle `stopped`.
+        const interrupted = INTERRUPT_TERMINAL_REASONS.has(
+          line.outcome.terminalReason ?? '',
+        );
+        // Our own ask is answered by the first result after it, whatever that
+        // result turned out to be. The receipt normally comes back on the
+        // control channel first; this covers a session that never answers it.
         if (this.interruptRequested) {
           this.interruptRequested = false;
           this.control.settleInterrupt(undefined, interrupted);

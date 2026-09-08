@@ -435,21 +435,38 @@ Each provider maps the neutral call to its own protocol:
 
 - **Claude Code** writes a stream-json `control_request` with
   `subtype: "interrupt"`, the same outbound control channel Remote Control
-  already uses, and resolves on the matching `control_response`. Queued commands
-  are deliberately not cancelled. The ask is the resident session's fact, not
-  any one request's: claude interrupts whatever it is doing, and a session with
-  nothing outstanding answers `idle` rather than interrupting the agent's own
-  background work.
+  already uses, and resolves on the matching `control_response`. The ask is the
+  resident session's fact, not any one request's: claude interrupts whatever it
+  is doing, and a session with nothing outstanding answers `idle` rather than
+  interrupting the agent's own background work.
 
-  What ends the interrupted work is the artifact the CLI leaves behind, and
-  only that. Measured against 2.1.263, an accepted interrupt emits a `result`
-  with `subtype: "error_during_execution"`, `is_error: true`, no result text,
-  and the interrupted command's own `user_message_uuid`; nothing in it says
-  "interrupt", so the discriminator is the session's own outstanding request.
-  That request is spent on the first `result` either way — an accepted
-  interrupt that found nothing to stop still ends in an ordinary result, and a
-  later genuine failure is nobody's interrupt. The requests the artifact names
-  settle `stopped`: they were answered, but with nothing said.
+  The interrupt applies to whatever is in the CLI's pipeline when it is
+  processed. A running command is interrupted and the commands queued behind it
+  still run; with nothing running, the interrupt waits and aborts the next
+  command to start; with an empty pipeline it evaporates. Cancelling the queue
+  as well is available — the CLI honours `cancel_queued` under the
+  `interrupt_cancel_queued_v1` capability — and deliberately not used, because a
+  `/stop` ends the turn the conversation is watching and the messages someone
+  already sent are not that turn.
+
+  What ends the interrupted work is the artifact the CLI leaves behind: a
+  `result` with `subtype: "error_during_execution"`, `is_error: true`, no result
+  text, and the interrupted command's own `user_message_uuid`. It is told apart
+  from a genuine failure by its own `terminal_reason` — `aborted_streaming` or
+  `aborted_tools`, the two abort reasons in the Agent SDK's documented set,
+  distinct from `model_error` and every other failure reason. The provider reads
+  that rather than remembering it asked, so one request's result can never
+  consume another's attribution. Under this dispatcher's unattended posture the
+  only cause is our own request: the other documented cause, a permission
+  callback denying with `interrupt`, cannot arise where every callback allows.
+  The requests the artifact names settle `stopped`: they were answered, but with
+  nothing said.
+
+  The `control_response` is a receipt, not an outcome. It reports that the
+  request was accepted and, under `interrupt_receipt_v1`, snapshots what was
+  pending; it arrives before the interrupted turn's result and says nothing
+  about whether anything stopped. The outcome the caller is told comes from that
+  receipt, so a turn that finishes in the gap is still reported `interrupted`.
 
   The CLI also writes `[Request interrupted by user]` itself, as a text block
   on a `user` envelope. Those blocks are not displayed, so the provider pushes

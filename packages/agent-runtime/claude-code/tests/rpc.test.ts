@@ -433,16 +433,19 @@ describe('interrupting outstanding work', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it('keeps an error_during_execution nobody asked for as a real failure', async () => {
+  it('keeps a turn that died of its own error a failure, ask outstanding or not', async () => {
     const h = harness();
     h.init();
     const a = await h.send('A');
     h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(interrupted).resolves.toBe(true);
 
-    // Same envelope, no interrupt behind it. Our own outstanding request is
-    // the only thing that separates the two, so without one this stays the
-    // answer and reports the failure claude named.
-    h.emit(interruptArtifact('A'));
+    // The same `error_during_execution` envelope, and an accepted interrupt
+    // behind it — but the turn names a model error as what ended it. Having
+    // asked does not make the next failure ours.
+    h.emit(nativeFailure);
     h.lifecycle('A', 'completed');
     expect(await completion(a)).toMatchObject({ status: 'failed' });
     expect(h.events.some((event) => event.kind === 'interrupted')).toBe(false);
@@ -471,7 +474,7 @@ describe('interrupting outstanding work', () => {
     await expect(a.settled).resolves.toMatchObject(settlement);
   });
 
-  it('spends the request on the first result, so a later failure is nobody\'s interrupt', async () => {
+  it('reads an aborted turn as interrupted even after the ask was already spent', async () => {
     const h = harness();
     h.init();
     const a = await h.send('A');
@@ -480,15 +483,17 @@ describe('interrupting outstanding work', () => {
     h.controlOk(h.controls[0]!.request_id);
     await expect(interrupted).resolves.toBe(true);
 
-    // Accepted, but claude found nothing to stop and answered normally.
+    // A answers normally first, which spends the session's ask.
     h.result('finished anyway', 'A');
     expect(await completion(a)).toMatchObject({ resultText: 'finished anyway' });
 
+    // B is aborted afterwards. A session-level mark would have been gone by
+    // now and reported this as a failure; the turn's own reason is not.
     const b = await h.send('B');
     h.lifecycle('B', 'started');
     h.emit(interruptArtifact('B'));
-    expect(await completion(b)).toMatchObject({ status: 'failed' });
-    expect(h.events.some((event) => event.kind === 'interrupted')).toBe(false);
+    await expect(b.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.events.map((event) => event.kind)).toContain('interrupted');
   });
 });
 

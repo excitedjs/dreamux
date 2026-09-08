@@ -88,10 +88,27 @@ describe('Feishu slash command recognition', () => {
   });
 });
 
+/**
+ * Dispatch with the parts a command may not use filled in. Every command is
+ * handed the same context, so a test that only exercises `/stop` still has to
+ * supply what `/teams` reads.
+ */
+type DispatchContext = Parameters<typeof dispatchFeishuSlashCommand>[1];
+function dispatch(
+  command: Parameters<typeof dispatchFeishuSlashCommand>[0],
+  context: Omit<DispatchContext, 'resolveChatName'> &
+    Partial<Pick<DispatchContext, 'resolveChatName'>>,
+) {
+  return dispatchFeishuSlashCommand(command, {
+    resolveChatName: async () => undefined,
+    ...context,
+  });
+}
+
 describe('Feishu slash command dispatch', () => {
   it('targets a bound Team for stop and renders idle distinctly', async () => {
     const calls: Array<{ command: string; payload: JsonValue }> = [];
-    const reply = await dispatchFeishuSlashCommand('stop', {
+    const reply = await dispatch('stop', {
       plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
       bindings: [],
       invoke: async (command, payload) => {
@@ -108,7 +125,7 @@ describe('Feishu slash command dispatch', () => {
 
   it('omits the Team name for an unbound stop', async () => {
     const calls: JsonValue[] = [];
-    await dispatchFeishuSlashCommand('stop', {
+    await dispatch('stop', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
       bindings: [],
       invoke: async (_command, payload) => {
@@ -124,21 +141,21 @@ describe('Feishu slash command dispatch', () => {
       const plan = command === 'dissolve'
         ? { kind: 'bound' as const, teamName: 'alpha', matched: chatTarget('oc_a', 'group') }
         : { kind: 'dispatcher' as const, reason: 'no_binding' as const };
-      await expect(dispatchFeishuSlashCommand(command, {
+      await expect(dispatch(command, {
         plan,
         bindings: [],
         invoke: async () => { throw new Error('Core unavailable'); },
+      // Every command reports a failure the same way, including `/dissolve`:
+      // a Core it never reached did not refuse anything.
       })).resolves.toEqual({
         kind: 'text',
-        text: command === 'dissolve'
-          ? 'Team dissolve refused: Core unavailable'
-          : `Command /${command} failed: Core unavailable`,
+        text: `Command /${command} failed: Core unavailable`,
       });
     }
   });
 
   it('answers an accepted dissolve with nothing, and every other outcome with words', async () => {
-    await expect(dispatchFeishuSlashCommand('dissolve', {
+    await expect(dispatch('dissolve', {
       plan: { kind: 'dispatcher', reason: 'not_bindable' },
       bindings: [],
       invoke: async () => ({}),
@@ -146,7 +163,7 @@ describe('Feishu slash command dispatch', () => {
       kind: 'text',
       text: 'This conversation has no bound Team.',
     });
-    await expect(dispatchFeishuSlashCommand('dissolve', {
+    await expect(dispatch('dissolve', {
       plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
       bindings: [],
       invoke: async () => ({
@@ -158,13 +175,13 @@ describe('Feishu slash command dispatch', () => {
     // which removes the routes and announces that to the conversation. A
     // receipt here would be a second message about the one event.
     })).resolves.toEqual({ kind: 'silent' });
-    await expect(dispatchFeishuSlashCommand('dissolve', {
+    await expect(dispatch('dissolve', {
       plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
       bindings: [],
       invoke: async () => { throw new Error('worktree is dirty'); },
     })).resolves.toEqual({
       kind: 'text',
-      text: 'Team dissolve refused: worktree is dirty',
+      text: 'Command /dissolve failed: worktree is dirty',
     });
   });
 
@@ -196,8 +213,8 @@ describe('Feishu slash command dispatch', () => {
         ],
       }),
     };
-    const first = await dispatchFeishuSlashCommand('teams', input);
-    const second = await dispatchFeishuSlashCommand('teams', input);
+    const first = await dispatch('teams', input);
+    const second = await dispatch('teams', input);
     expect(first).toEqual(second);
     const rendered = JSON.stringify(first);
     expect(rendered).toContain('alpha');
@@ -206,7 +223,7 @@ describe('Feishu slash command dispatch', () => {
   });
 
   it('falls back to the chat id when one current-name lookup fails', async () => {
-    const reply = await dispatchFeishuSlashCommand('teams', {
+    const reply = await dispatch('teams', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
       bindings: [{
         target_kind: 'group',
@@ -231,7 +248,7 @@ describe('Feishu slash command dispatch', () => {
   });
 
   it('escapes operator text that would otherwise break card markdown tags', async () => {
-    const reply = await dispatchFeishuSlashCommand('teams', {
+    const reply = await dispatch('teams', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
       bindings: [],
       invoke: async () => ({

@@ -102,12 +102,11 @@ describe('adapter equivalence — one representative Command per namespace', () 
   });
 
   it('team.interrupt: both adapters preserve optional Team addressing', async () => {
-    const interruptAgent = vi.fn(async () => ({ status: 'idle' as const }));
-    const interruptTeamLeader = vi.fn(async (_teamId: string) => ({
-      status: 'interrupted' as const,
+    const interrupt = vi.fn(async (teamId: string | null) => ({
+      status: teamId === null ? ('idle' as const) : ('interrupted' as const),
     }));
     const harness = createCommandHarness({
-      dispatcherOverrides: { interruptAgent, interruptTeamLeader },
+      dispatcherOverrides: { interrupt },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
@@ -121,8 +120,9 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
     expect(dispatcherResult).toMatchObject({ ok: true, result: { status: 'idle' } });
     expect(leaderResult).toEqual({ status: 'interrupted' });
-    expect(interruptAgent).toHaveBeenCalledOnce();
-    expect(interruptTeamLeader).toHaveBeenCalledWith('alpha');
+    // The Team name each adapter carried is the whole contract: an omitted
+    // name reaches the one method as `null`, a given one reaches it verbatim.
+    expect(interrupt.mock.calls).toEqual([[null], ['alpha']]);
   });
 
   it('teammate.list: identical result via both adapters', async () => {

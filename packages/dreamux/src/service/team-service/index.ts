@@ -48,6 +48,7 @@ import {
   teamLeaderAgentBase,
   type TeamLeaderCreationInput,
 } from './leader-agent.js';
+import { errorInfo } from '../../platform/error-info.js';
 import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
 import { TeamClosing } from './closing.js';
 import { TeamWorktreeCleanup } from '../team-collection/worktree-cleanup.js';
@@ -455,15 +456,10 @@ export class TeamService {
     if (this.dissolveTask !== null) return this.dissolveReceipt();
     if (!input.force) await this.closing.requireReclaimableWorktree();
     if (this.dissolveTask !== null) return this.dissolveReceipt();
-    // `Promise.resolve().then(...)` would queue `runDissolve` before this async
-    // method's resolution wakes its caller. The macrotask boundary makes the
-    // receipt observable first, while publishing `dissolveTask` here still
-    // raises the admission fence before anything else can enter the Team.
-    const task = new Promise<void>((resolve, reject) => {
-      setImmediate(() => {
-        void this.runDissolve({ ...input, note }).then(resolve, reject);
-      });
-    });
+    // Published before it runs, so the fence is up from this moment and no
+    // caller sees a Team that still looks open. Observed, never awaited: the
+    // operation belongs to this Team, so its failure is this Team's to report.
+    const task = Promise.resolve().then(() => this.runDissolve({ ...input, note }));
     this.dissolveTask = task;
     void task.catch(() => {});
     return this.dissolveReceipt();
@@ -487,7 +483,10 @@ export class TeamService {
       await this.closing.dissolve(input);
     } catch (error) {
       this.dissolveTask = null;
-      this.closing.reportDissolveFailure('Team dissolve failed', error);
+      this.deps.log.error(
+        { dispatcher_id: this.deps.dispatcherId, team_id: this.id, err: errorInfo(error) },
+        'Team dissolve failed',
+      );
       throw error;
     }
     // This Team is over and already dropped by its owner; what is left is
@@ -497,9 +496,9 @@ export class TeamService {
     try {
       await this.cleanup.settle(this.id);
     } catch (error) {
-      this.closing.reportDissolveFailure(
+      this.deps.log.error(
+        { dispatcher_id: this.deps.dispatcherId, team_id: this.id, err: errorInfo(error) },
         'Team managed worktree cleanup failed',
-        error,
       );
     }
   }

@@ -169,13 +169,10 @@ What the port changed, and what it did not:
 - The interrupt mark moved from the turn record to the session. #384 has no
   single active turn, so `ClaudeCodeStreamRpc.interrupt()` marks the session and
   answers `false` when no request is outstanding — the same `idle` the runtime
-  reported before, from the fact that replaced "a turn is open".
-- The mark is now spent on the first `result` either way. An accepted interrupt
-  that found nothing to stop still ends in an ordinary result, so leaving the
-  mark set would let a later genuine `error_during_execution` be misread as an
-  interrupt.
-- The artifact is still the only settlement, and the discriminator is still our
-  own outstanding request. The requests the artifact names settle `stopped`.
+  reported before, from the fact that replaced "a turn is open". The mark now
+  only decides who is still waiting for an answer.
+- The artifact is still the only settlement, and the requests it names settle
+  `stopped`. What it is *read as* changed: see the next section.
 - The lifecycle-terminal hazard the review found is gone with the mechanism that
   had it: #384 settles requests by uuid on the `result` itself, so there is no
   window for a `cancelled` to settle anything early.
@@ -191,3 +188,42 @@ two reasons to three (`team_closed` | `route_ended` | `stale_route`, with
 `announceRoutesRemoved` deciding what the conversation hears). That behavior
 won; `feishu-route-reconciliation.ts` carries it, and `unavailableTeamReason`
 now maps a `TEAM_CLOSED` rejection to `route_ended` rather than `team_closed`.
+
+## Reading the protocol instead of probing it
+
+Review round 4 asked what may serve as the discriminator between an interrupt
+artifact and a genuine failure. Three rounds of live probes went into answering
+it before the operator pointed out that the Agent SDK documents all of it:
+「明明claude 有 claude agent sdk 的文档可以看。非得自己写探针」. He was right, and
+every probe conclusion below is now cited to the documentation rather than to a
+capture. Probe first only where the documentation is silent, and say so.
+
+Read from `code.claude.com/docs/en/agent-sdk/typescript.md` and `python.md`
+(fetch the `.md` source and search it; the rendered summary drops sections):
+
+- **`terminal_reason` is the discriminator.** Its documented set has exactly two
+  abort values, `aborted_streaming` and `aborted_tools`, against `model_error`,
+  `api_error`, `max_turns` and the rest. The two documented causes of an abort
+  are `interrupt()` and a permission callback denying with `interrupt`; a
+  dispatcher that allows every callback has only the first. The field was
+  already parsed (`stream.ts`), already on `ClaudeTurnOutcome`, and already
+  recorded in the probe table above — the branch simply had not used it.
+- **The `control_response` is a receipt, not an outcome.** Under
+  `interrupt_receipt_v1` (CLI 2.1.205+) it carries `still_queued`, a snapshot
+  taken when the interrupt was processed, and "on a clean interrupt it arrives
+  before the interrupted turn's `SDKResultMessage`". So the outcome `/stop`
+  reports is the receipt's, and a turn that finishes in that gap is still
+  reported `interrupted`. It cannot be made honest from the receipt alone.
+- **What an interrupt applies to.** "If you interrupt before the first turn
+  starts, Claude Code aborts that turn as soon as it starts, and the listed
+  messages in that turn get no response." With a command running, that command
+  is aborted and the queue survives; with an empty pipeline the interrupt
+  evaporates. The probes agreed with all three, which is how they were retired.
+- **`cancel_queued` exists.** `interrupt_cancel_queued_v1` (CLI 2.1.219+) lets
+  one interrupt cancel the queued messages too. Not sending it is a choice
+  between two supported behaviours, not an omission, and the comment says so.
+
+What no source settles, and is therefore recorded rather than claimed: whether
+the millisecond window between the receipt and the turn's own completion is
+reachable often enough to matter. The false receipt it would produce is one line
+of text; the card and the settlement stay honest either way.

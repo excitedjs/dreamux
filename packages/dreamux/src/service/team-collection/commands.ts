@@ -329,10 +329,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       };
     },
     async execute(context, input) {
-      const dispatcher = mustDispatcher(host, context);
-      return input.teamName === null
-        ? dispatcher.interruptAgent()
-        : dispatcher.interruptTeamLeader(input.teamName);
+      return mustDispatcher(host, context).interrupt(input.teamName);
     },
   };
 
