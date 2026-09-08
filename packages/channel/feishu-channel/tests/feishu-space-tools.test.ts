@@ -46,6 +46,7 @@ function fakeSession(
   overrides: Partial<FeishuToolSession> = {},
 ): FeishuToolSession {
   return {
+    askUserQuestion: async () => ({ request_id: 'ask-1' }),
     logger: {
       error: () => undefined,
       warn: () => undefined,
@@ -212,7 +213,7 @@ describe('get_collaboration_space', () => {
 describe('list_collaboration_spaces', () => {
   it('lists every registered space, projected to the wire shape', async () => {
     const session = fakeSession({ listSpaces: () => [space(), space({ space_name: 'space-b' })] });
-    const result = await listSpacesDef.handle(ctx(dispatcher, session));
+    const result = await listSpacesDef.handle(ctx(dispatcher, session), {});
     expect((result['spaces'] as unknown[]).map((s) => (s as { space_name: string }).space_name)).toEqual([
       'space-a',
       'space-b',

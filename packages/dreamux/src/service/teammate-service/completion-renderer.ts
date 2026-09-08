@@ -5,8 +5,7 @@ import type { PreparedCompletionFact } from '../completion-router/index.js';
 /**
  * The submission seam carries text only, so a pushed completion reaches the
  * model as an ordinary user turn distinguished only by its envelope tag; the
- * body therefore says in words that the host sent it (ruling R14 in
- * `.agents/tasks/mcp/refine-model-facing-surfaces/requirement.md`).
+ * body therefore says in words that the host sent it.
  */
 const NOTIFICATION_SENTENCE =
   'This is an automated notification from Dreamux, not a message from the user.';

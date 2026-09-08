@@ -82,7 +82,7 @@ describe('subscribeTurnCollection (issue #126 PR8)', () => {
 
     emit({
       method: 'turn/completed',
-      params: { threadId: 'thread-OTHER', turn: { id: 't1', items: [] } },
+      params: { threadId: 'thread-OTHER', turn: { id: 't1', items: [], status: 'completed' } },
     });
     await new Promise((r) => setImmediate(r));
     expect(resolved).toBe(false);
@@ -107,7 +107,7 @@ describe('subscribeTurnCollection (issue #126 PR8)', () => {
     });
     emit({
       method: 'turn/completed',
-      params: { threadId: null, turn: { id: 't1', items: [] } },
+      params: { threadId: null, turn: { id: 't1', items: [], status: 'completed' } },
     });
 
     const turn = await collector.awaitTurn();

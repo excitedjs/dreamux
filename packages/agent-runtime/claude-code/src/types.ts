@@ -216,6 +216,8 @@ export interface ClaudeCodeSession {
     options?: TurnSubmitOptions,
     commandUuid?: string,
   ): Promise<RuntimeAdmission>;
+  /** Interrupt whatever claude is doing; false when it is doing nothing. */
+  interrupt(reason: string): Promise<boolean>;
   /** Whether the child is currently alive. */
   isAlive(): boolean;
   /**

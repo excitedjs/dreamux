@@ -302,8 +302,8 @@ describe('renderMarkdownToCards — PR #73 review regressions', () => {
   })
 
   test('P1-2 50 KB cell also rejects with the same atomic-fail semantic', () => {
-    // The reviewer's "50KB 单 cell 不会出 partial" boundary — the renderer
-    // must throw with no attempt to ship anything that would later 400.
+    // The reviewer's boundary: a 50 KB single cell must never ship a partial
+    // result — the renderer throws rather than send anything that would 400.
     const md = ['| A | B |', '|---|---|', `| x | ${'y'.repeat(50_000)} |`].join('\n')
 
     expect(() => renderMarkdownToCards(md)).toThrow(/50000 bytes/)

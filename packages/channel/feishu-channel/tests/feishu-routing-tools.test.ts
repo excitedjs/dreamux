@@ -52,6 +52,7 @@ function fakeSession(): FeishuToolSession & {
   const binds: RecordedBind[] = [];
   const unbinds: RecordedUnbind[] = [];
   return {
+    askUserQuestion: async () => ({ request_id: 'ask-1' }),
     logger: {
       error: () => undefined,
       warn: () => undefined,

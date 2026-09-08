@@ -201,6 +201,7 @@ export class FakeCodexWsClient {
       }
       return { turn: { id: turnId } } as R;
     }
+    if (method === 'turn/interrupt') return {} as R;
     throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
   }
 
@@ -216,14 +217,30 @@ export class FakeCodexWsClient {
     });
     this.emit({
       method: 'turn/completed',
-      params: { threadId, turn: { id: turnId, items: [] } },
+      params: { threadId, turn: { id: turnId, items: [], status: 'completed' } },
+    });
+  }
+
+  /**
+   * What codex sends after it accepts a `turn/interrupt`, captured from
+   * codex-cli 0.153.4: an ordinary `turn/completed` whose only mark is its
+   * status. `items` is empty and `itemsView` is `notLoaded` on that
+   * notification, so the collector answers from the items it already saw.
+   */
+  emitTurnInterrupted(threadId: string, turnId: string): void {
+    this.emit({
+      method: 'turn/completed',
+      params: {
+        threadId,
+        turn: { id: turnId, items: [], status: 'interrupted', error: null },
+      },
     });
   }
 
   emitTurnFailed(threadId: string, turnId: string, message: string): void {
     this.emit({
       method: 'turn/completed',
-      params: { threadId, turn: { id: turnId, error: { message } } },
+      params: { threadId, turn: { id: turnId, status: 'failed', error: { message } } },
     });
   }
 

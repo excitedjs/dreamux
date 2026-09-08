@@ -291,7 +291,7 @@ describe.each([LEADER, DISPATCHER])(
       for (const [index, anchor] of targets.entries()) {
         submitInbound(adapter, recipient, `turn-${index}`, anchor);
         adapter.onActivity(
-          message(recipient, `turn-${index}`, 'assistant', `reply ${index}`),
+          message(recipient, `reply ${index}`),
         );
         await settle();
       }

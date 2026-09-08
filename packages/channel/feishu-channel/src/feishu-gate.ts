@@ -298,10 +298,10 @@ interface FinalizeOpts {
   logs: GateResult['logs'];
 }
 
-// NOTE: groupPairPath was removed as part of the C3 semantic rewrite (review
-// comment of 2026-06-27 on PR #255). group.allow_chats is operator-maintained;
-// there is no pairing mechanism to add a chat to it. All untrusted-chat pairing
-// triggers route through dmPairPath and end up as dm-kind entries on allow_users.
+// NOTE: groupPairPath was removed as part of the C3 semantic rewrite.
+// group.allow_chats is operator-maintained; there is no pairing mechanism to
+// add a chat to it. All untrusted-chat pairing triggers route through
+// dmPairPath and end up as dm-kind entries on allow_users.
 
 function dmPairPath(opts: FinalizeOpts): GateResult {
   const { state, input, now, logs } = opts;

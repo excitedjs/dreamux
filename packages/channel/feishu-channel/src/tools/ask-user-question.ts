@@ -7,10 +7,8 @@
  * required and `message_id` is offered, because a card has to be addressed at
  * a conversation and, when the question came out of something someone said, at
  * the message it came out of. AskUserQuestion, answered inside the client that
- * called it, needs neither. The other two are gone: `multiSelect`, because the
- * operator ruled multi-select out of this channel, and `preview`, which the
- * operator dropped after seeing what it cost the card —
- * "这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". Rendering it meant
+ * called it, needs neither. The other two are gone: `multiSelect`, which this
+ * channel does not support, and `preview`, dropped because rendering it meant
  * a second column beside the options, which reshaped every question that used
  * it.
  *

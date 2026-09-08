@@ -7,9 +7,8 @@
  *
  * What came back is shown by what it is, not by how long it is: a value that
  * parses as JSON is pretty-printed in a `json` code segment, anything else is
- * plain text (operator ruling, 2026-09-04: 「文本的输出，就按文本输出。能解析成JSON
- * 的再放进代码段」). Plain text keeps ten content lines; every result remains
- * bounded by Feishu's per-event content limit.
+ * plain text (operator ruling, 2026-09-04). Plain text keeps ten content
+ * lines; every result remains bounded by Feishu's per-event content limit.
  */
 
 import { describe, expect, it } from 'vitest';

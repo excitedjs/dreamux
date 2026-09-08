@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeInterruptOutcome,
   TeamStateTeammateSummary,
 } from '@excitedjs/dreamux-types';
 
@@ -38,10 +39,7 @@ import type {
   TeamSummary,
   TeamView,
 } from '../team-collection/types.js';
-import {
-  teamErrorInfo,
-  TeamClosedError,
-} from '../team-collection/errors.js';
+import { TeamClosedError } from '../team-collection/errors.js';
 import {
   alignedWithLeader,
   createTeamLeaderAgentForTeam,
@@ -50,6 +48,7 @@ import {
   teamLeaderAgentBase,
   type TeamLeaderCreationInput,
 } from './leader-agent.js';
+import { errorInfo } from '../../platform/error-info.js';
 import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
 import { TeamClosing } from './closing.js';
 import { TeamWorktreeCleanup } from '../team-collection/worktree-cleanup.js';
@@ -442,45 +441,52 @@ export class TeamService {
   /**
    * Submit this Team's dissolve.
    *
-   * The answer is the submission, not the outcome: once this Team owns the one
-   * background operation that will stop it, close it, and reclaim its checkout,
-   * the caller is done. Nothing about assessing a workspace, terminating
-   * runtimes, or removing a checkout is worth holding a tool call open for, and
-   * no persisted phase survives the process that ran it — a run that ends
+   * The answer is the submission, not the outcome. For a non-forced dissolve,
+   * the one read that can refuse the whole operation runs before that answer;
+   * once it passes, this Team owns the background stop, close, and reclaim.
+   * No persisted phase survives the process that ran it — a run that ends
    * mid-dissolve simply leaves an open Team whose children reopen lazily.
    *
    * Whoever asks, it is one operation: a second submission joins the first
    * rather than dismantling the same Team twice, and a dissolve that was
    * refused can be asked again.
    */
-  dissolve(input: TeamDissolveCommand): TeamDissolveReceipt {
+  async dissolve(input: TeamDissolveCommand): Promise<TeamDissolveReceipt> {
     const note = requireLifecycleText(input.note, 'Team dissolve note');
-    if (this.dissolveTask === null) {
-      // Published before it runs, so nothing it does — including failing at
-      // once — can happen while this Team still looks open. Observed, never
-      // awaited: the operation belongs to this Team, so its failure is this
-      // Team's to report rather than an unhandled rejection.
-      const task = Promise.resolve().then(() => this.runDissolve({ ...input, note }));
-      this.dissolveTask = task;
-      void task.catch(() => {});
-    }
+    if (this.dissolveTask !== null) return this.dissolveReceipt();
+    if (!input.force) await this.closing.requireReclaimableWorktree();
+    if (this.dissolveTask !== null) return this.dissolveReceipt();
+    // Published before it runs, so the fence is up from this moment and no
+    // caller sees a Team that still looks open. Observed, never awaited: the
+    // operation belongs to this Team, so its failure is this Team's to report.
+    const task = Promise.resolve().then(() => this.runDissolve({ ...input, note }));
+    this.dissolveTask = task;
+    void task.catch(() => {});
+    return this.dissolveReceipt();
+  }
+
+  private dissolveReceipt(): TeamDissolveReceipt {
     return { accepted: true, team_name: this.id, status: 'submitted' };
   }
 
   /**
    * Stop, close, and reclaim — the whole dissolve, behind the receipt.
    *
-   * The fence goes up before the first await, so from the moment a dissolve is
-   * submitted the Team takes no new work. A failure lowers it again and is
-   * stated here, where it happens: the receipt was already given and cannot be
-   * revised, so the Team simply stays open and can be asked again.
+   * `dissolve` publishes `dissolveTask` before handing back the receipt, so
+   * from that moment the Team takes no new work, and every refusal that can
+   * still be answered has already happened. A failure lowers the fence again
+   * and is stated here: the receipt cannot be revised, so the Team stays open
+   * and can be asked again.
    */
   private async runDissolve(input: TeamDissolveCommand): Promise<void> {
     try {
       await this.closing.dissolve(input);
     } catch (error) {
       this.dissolveTask = null;
-      this.logDissolveFailure('Team dissolve failed', error);
+      this.deps.log.error(
+        { dispatcher_id: this.deps.dispatcherId, team_id: this.id, err: errorInfo(error) },
+        'Team dissolve failed',
+      );
       throw error;
     }
     // This Team is over and already dropped by its owner; what is left is
@@ -490,19 +496,11 @@ export class TeamService {
     try {
       await this.cleanup.settle(this.id);
     } catch (error) {
-      this.logDissolveFailure('Team managed worktree cleanup failed', error);
+      this.deps.log.error(
+        { dispatcher_id: this.deps.dispatcherId, team_id: this.id, err: errorInfo(error) },
+        'Team managed worktree cleanup failed',
+      );
     }
-  }
-
-  private logDissolveFailure(message: string, error: unknown): void {
-    this.deps.log.error(
-      {
-        dispatcher_id: this.dispatcherId,
-        team_id: this.id,
-        err: teamErrorInfo(error),
-      },
-      message,
-    );
   }
 
   /** Give back the runtime authority this Team holds, without closing it. */
@@ -527,7 +525,7 @@ export class TeamService {
    * for a start that happens inside its admitted-input span. Starting the
    * leader here first put a codex start failure before the announcement, so
    * nothing was announced and nothing ended, and the Channel's receipt card
-   * stayed on its opening label with no error (found live, 2026-09-03).
+   * stayed on its opening label with no error.
    *
    * A persisted `starting` Team with a valid leader identity is the
    * recoverable tail of Team creation; it becomes `running` once its leader
@@ -559,6 +557,11 @@ export class TeamService {
       }
       return admission;
     });
+  }
+
+  /** Interrupt the TeamLeader's owned runtime without starting a dormant one. */
+  interruptLeader(): Promise<AgentRuntimeInterruptOutcome> {
+    return this.admit(async () => (await this.leaderService()).interrupt());
   }
 
   /**
