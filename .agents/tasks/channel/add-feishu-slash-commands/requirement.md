@@ -233,8 +233,8 @@ Verified against current source, not inherited from any document.
   I am improving that area — the Feishu channel will listen for team closed or
   some such event and send a nicer unbind or dissolve card. Right now /dissolve
   sends two cards"). Verified: `team.state` with `status: closed` reaches
-  `FeishuRouteReconciliation`, which removes the routes and calls
-  `announceTeamClosed`. The ruling names the successful case only, so a refusal
+  `FeishuRouteReconciliation`, which removes the routes and announces the close.
+  The ruling names the successful case only, so a refusal
   and a conversation with no bound Team still answer in words — neither is
   announced by anything else.
 - The `/teams` card is a grid of tiles under collapsible per-repository panels.

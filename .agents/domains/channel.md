@@ -404,8 +404,12 @@ A command whose Team is gone reconciles the route rather than repeating an error
 forever: `TEAM_NOT_FOUND` and `TEAM_CLOSED` remove the stale binding, exactly as
 the delivery path does. Both that reaction and the `team.state` closed event are
 one capability, `FeishuRouteReconciliation`, because they remove the same durable
-rows; only a real close is announced to its conversations, and which rejection
-counts as a real close is read in one place, `unavailableTeamReason`.
+rows; what the conversation hears is the only difference, and which reason a
+rejection is evidence of is read in one place, `unavailableTeamReason`. A closed
+event announces the dissolution. A `TEAM_CLOSED` rejection announces only that
+this route ended, because a pending dissolve can still be refused and the final
+`team.state` is what proves the Team closed. Every other rejection is silent:
+that is this Channel correcting its own document about nothing the group did.
 
 Every command answers with one line, including on failure; a Core rejection is
 reported rather than swallowed. All user-facing text these commands produce is
