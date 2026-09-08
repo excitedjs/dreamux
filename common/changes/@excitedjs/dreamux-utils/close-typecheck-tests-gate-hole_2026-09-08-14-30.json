@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Let `rush typecheck:tests` see this package's tests: its tsconfig.tests.json inherited an `exclude` that skipped the very directory it exists to check.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
