@@ -155,3 +155,39 @@ Collaboration Space topic, inaccurate change-file comments, and unrelated churn.
 All were fixed or answered with a named scenario. One finding — that user-facing
 text should follow the Channel's Chinese convention — was withdrawn after the
 operator ruled the opposite.
+
+## Rebase onto the resident-session model
+
+The branch was rebased onto `next` after #384 replaced Claude Code's execution
+window with a resident request table. The sections above describe the code as it
+was reviewed; the Claude Code half of the interrupt was ported, not merged, and
+these names no longer exist: `PendingTurn`, `submitTurn`, `steerTurn`,
+`interruptTurn`, `ranAnyCommand`.
+
+What the port changed, and what it did not:
+
+- The interrupt mark moved from the turn record to the session. #384 has no
+  single active turn, so `ClaudeCodeStreamRpc.interrupt()` marks the session and
+  answers `false` when no request is outstanding — the same `idle` the runtime
+  reported before, from the fact that replaced "a turn is open".
+- The mark is now spent on the first `result` either way. An accepted interrupt
+  that found nothing to stop still ends in an ordinary result, so leaving the
+  mark set would let a later genuine `error_during_execution` be misread as an
+  interrupt.
+- The artifact is still the only settlement, and the discriminator is still our
+  own outstanding request. The requests the artifact names settle `stopped`.
+- The lifecycle-terminal hazard the review found is gone with the mechanism that
+  had it: #384 settles requests by uuid on the `result` itself, so there is no
+  window for a `cancelled` to settle anything early.
+- #384 had already added `{ kind: 'interrupted' }` to `ClaudeProtocolEvent` and
+  the `endNativeTurn('interrupted', …)` handler that consumes it. This branch
+  supplies the emitter and the `[Request interrupted by user]` marker pushed
+  ahead of it.
+- The nine original commits were squashed into one for the rebase; they are
+  preserved on `backup/pre-rebase-94e31828`.
+
+Route reconciliation was ported the other way. #386 widened route removal from
+two reasons to three (`team_closed` | `route_ended` | `stale_route`, with
+`announceRoutesRemoved` deciding what the conversation hears). That behavior
+won; `feishu-route-reconciliation.ts` carries it, and `unavailableTeamReason`
+now maps a `TEAM_CLOSED` rejection to `route_ended` rather than `team_closed`.
