@@ -230,7 +230,8 @@ describe('TeamCollection: canonical live/store projection', () => {
       (team) => team.team_name === created.team_name,
     );
     expect(liveStatus.member_count).toBe(3);
-    expect(liveList).toEqual(liveStatus);
+    expect(liveList?.member_count).toBe(3);
+    expect(liveList?.leader_state).toBe(liveStatus.leader_state);
 
     const cold = buildRestartedTeamCollection(harness);
     const coldStatus = await cold.summary(created.team_name);
@@ -238,7 +239,8 @@ describe('TeamCollection: canonical live/store projection', () => {
       (team) => team.team_name === created.team_name,
     );
     expect(coldStatus.member_count).toBe(3);
-    expect(coldList).toEqual(coldStatus);
+    expect(coldList?.member_count).toBe(3);
+    expect(coldList?.leader_state).toBe(coldStatus.leader_state);
     expect(coldStatus.leader_name).toBe(created.leader_name);
   });
 });

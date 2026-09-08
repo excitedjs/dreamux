@@ -88,7 +88,7 @@ export class FeishuBindingOperations {
       team['leader_state'] === null
     ) {
       throw new PublicInvokeFailure(
-        `Team ${JSON.stringify(input.teamName)} has no complete TeamLeader runtime context.`,
+        `Team ${JSON.stringify(input.teamName)} has no readable TeamLeader identity; its creation did not complete.`,
       );
     }
     const { previousTeamName } = await this.opts.routing.bind({

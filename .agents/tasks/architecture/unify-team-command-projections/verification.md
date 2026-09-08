@@ -3,11 +3,12 @@
 ## Implementation review
 
 The complete workspace diff was checked against the approved requirement and
-final technical solution. The implementation now has one public `TeamSummary`,
-one pure projector, one TeamCollection live/store source-selection rule, and one
-closed schema reused by create, list, and status on both Command and MCP
-surfaces. The old create/list/view DTOs, conversions, and exact-name collection
-creation entry point are absent. Persisted Team and Agent records and
+final technical solution. As first pushed (9e66edd), the implementation had one
+public `TeamSummary`, one pure projector, one TeamCollection live/store
+source-selection rule, and one closed schema reused by create, list, and status
+on both Command and MCP surfaces. The old create/list/view DTOs, conversions,
+and exact-name collection creation entry point were absent. The operator's PR
+review (below) reversed the closed schemas and the full-summary list rows. Persisted Team and Agent records and
 `team.history` remain unchanged.
 
 The Feishu consumers use the flat summary directly. Automatic provisioning
@@ -84,12 +85,40 @@ accepted finding remains unresolved.
   packages, including Dreamux and Feishu Channel, passed in the same run.
 - `.agents/scripts/check.sh`: passed in the final TeamLeader rerun (`187` files
   reachable from `root.md`).
-- `rush change --verify --target-branch origin/next --no-fetch`: exited zero,
-  but reported no relevant changes because Rush compares committed branch
-  history and this approved implementation remains uncommitted. The three
-  required change files are present for `@excitedjs/dreamux-types`,
-  `@excitedjs/dreamux`, and `@excitedjs/feishu-channel`.
+- `rush change --verify --target-branch origin/next --no-fetch`: exited zero
+  on the committed branch; the three required change files are present for
+  `@excitedjs/dreamux-types`, `@excitedjs/dreamux`, and
+  `@excitedjs/feishu-channel`.
 - `git diff --check`: passed in the final TeamLeader rerun.
+
+## PR #390 review adjudication (2026-09-09)
+
+The operator reviewed the open PR with a Claude reviewer. The operator's words
+are in the requirement; the findings and their outcomes:
+
+| Finding | Verdict | Reason | Operator-ruling conflict |
+| --- | --- | --- | --- |
+| The three output schemas were closed (`additionalProperties: false`) with hand-listed enums, reversing the recorded `OPEN_OBJECT` rationale without naming it. | Accept | Operator ruling "改回开放的". Schemas are open again; `summary-schema.ts` and its test are deleted. | Resolved by the ruling. |
+| Every `team.list` row returned the full 22-field summary, so a model calling list and status receives the same object twice. | Accept | Operator ruling on context redundancy; the 2026-09-06 "list stays compact" decision was stretched, not overturned. `TeamListRow` is back as an explicit interface with the summary's names and meanings. | Resolved by the ruling. |
+| `TeamService.status(record)` let a caller substitute a foreign record for the service's own. | Accept | Its one caller was replay against a record closed behind the cached service's back. `TeamCollection` now answers a closed record from the read model before consulting the cache; the parameter is gone. | None |
+| The `member_count` meaning changed on the live path (readable identities to directory occupancy) without a `Review:` clause. | Accept | Named in the Dreamux change note. | None |
+| `Closes #383` linked the PR to an issue this change does not close. | Accept | Now `Refs #383`. | None |
+| The manual bind failure text ("no complete TeamLeader runtime context") did not name what the guard checks. | Accept | Message names the unreadable TeamLeader identity; condition unchanged. | None |
+| `TeamStateEvent.status` restated the lifecycle literal instead of `TeamStatus`. | Accept | Uses `TeamStatus`. | None |
+| Task records said "implemented" / "uncommitted" / "supersedes the compact list decision" while the PR was open and the ruling stood. | Accept | Records corrected; the operator's original `Omit` challenge is recorded as unrecoverable rather than reconstructed. | None |
+| The Card 2.0 layout correction is bundled with the projection change. | Note | Approved for the same PR in the development-approval boundary; left in place. | None |
+
+## Post-review gates
+
+- Focused Dreamux suites (Team read path, create idempotency, legacy state,
+  MCP public failures, Command adapters) and the Feishu session-binding suite
+  passed after the fix.
+- `rush build`, `rush lint`, `rush typecheck:tests`, and `rush test` with
+  `DREAMUX_SKIP_LIVE_CODEX=1` passed on the fix commit; live Codex is not
+  claimed by that run. Task validation, `.agents/scripts/check.sh` (`190`
+  files reachable from `root.md`), and `git diff --check` passed.
+  `rush change --verify --target-branch origin/next --no-fetch` was run on
+  the committed branch.
 
 ## Residual review coverage
 

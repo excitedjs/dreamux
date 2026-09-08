@@ -121,7 +121,7 @@ describe('team.create idempotency', () => {
     });
   });
 
-  it('returns one current held-live runtime status from create, status, list, and same-process replay without resubmitting', async () => {
+  it('returns one current held-live runtime status from create, status, and same-process replay, and the matching list row, without resubmitting', async () => {
     let submissions = 0;
     const provider = {
       getCapabilities: () => ({ tags: [] }),
@@ -169,8 +169,22 @@ describe('team.create idempotency', () => {
     const replayed = await harness.collection.createFromRequest(request);
 
     expect(status).toEqual(created);
-    expect(listed).toEqual(created);
     expect(replayed).toEqual(created);
+    // The list row is the record's compact view: same names and meanings as
+    // the summary, no runtime status.
+    expect(listed).toEqual({
+      team_name: created.team_name,
+      status: created.status,
+      intent: created.intent,
+      source_repo: created.source_repo,
+      leader_name: created.leader_name,
+      leader_state: created.leader_state,
+      member_count: created.member_count,
+      created_at: created.created_at,
+      updated_at: created.updated_at,
+      closed_at: created.closed_at,
+      worktree_cleanup: created.worktree_cleanup,
+    });
     expect(submissions).toBe(1);
   });
 

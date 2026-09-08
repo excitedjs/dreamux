@@ -219,6 +219,26 @@ export interface TeamDissolveCommand {
 }
 
 /**
+ * Compact scan row for `team.list`: the same names and meanings as the
+ * matching `TeamSummary` fields, and nothing a list does not need — no leader
+ * runtime state, no machine-local `runtime_cwd`, no full `close_note`. Read
+ * from records alone; `team.status` is where a single Team's detail lives.
+ */
+export interface TeamListRow {
+  team_name: string;
+  status: TeamStatus;
+  intent: string | null;
+  source_repo: string | null;
+  leader_name: string;
+  leader_state: AgentEntityIdentityStatus | null;
+  member_count: number;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+}
+
+/**
  * Filterable recovery search over Teams (issue #182 PR-7), the Team-side mirror
  * of the TeamMate `history` surface: it finds Teams (including closed ones) by
  * name / status / repo / intent text / time range, rather than reading one

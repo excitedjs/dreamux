@@ -239,17 +239,22 @@ fabricates no synthetic default prompt. A `running` Team record means creation
 completed, never that a process is alive. Team-owned members share the Team
 workspace.
 
-`team.create`, each `team.list` item, and `team.status` expose the same flat,
-closed `TeamSummary`. `status` is always the Team record lifecycle; creation
-replay is represented only by the accepted request identity on input, not by a
-created/existing output wrapper. `TeamCollection` selects the projection source
-once: a service already held by the runtime registry contributes its current
-runtime status, otherwise the read model uses the Team record plus the aligned
-leader identity without materializing anything. List and accepted-request
-replay use the record they already found. `member_count` is the occupancy of the
-Team's `teammate/` directory, excluding the leader and including closed or
-unreadable member identities. `team.history` remains its separate compact
-recovery projection.
+`team.create` and `team.status` expose the same flat `TeamSummary`; each
+`team.list` item is the compact `TeamListRow`, a same-named, same-meaning
+subset with no leader runtime state and no machine-local path. `status` is
+always the Team record lifecycle; creation replay is represented only by the
+accepted request identity on input, not by a created/existing output wrapper.
+`TeamCollection` selects the projection source once for status and
+accepted-request replay: a record read as `closed` answers from that record
+(a closed Team is a record, whatever the cache still holds); otherwise a
+service already held by the runtime registry contributes its current runtime
+status; otherwise the read model uses the Team record plus the aligned leader
+identity without materializing anything. `team.list` reads records only.
+`member_count` is the occupancy of the Team's `teammate/` directory on every
+path, excluding the leader and including closed or unreadable member
+identities. Both DTOs are open objects on the Command and MCP catalogs, like
+every other entity DTO. `team.history` remains its separate compact recovery
+projection.
 
 Binding a conversation to a Team is not a Team capability at all: routing is the
 Channel's own decision, made with that Channel's tools, so Team MCP has no

@@ -406,9 +406,9 @@ export class TeamService {
     return this.mustRecord().dispatcher_id;
   }
 
-  async status(record = this.mustRecord()): Promise<TeamSummary> {
+  async status(): Promise<TeamSummary> {
     return teamSummary(
-      record,
+      this.mustRecord(),
       (await this.leaderService()).status(),
       await this.memberCount(),
     );

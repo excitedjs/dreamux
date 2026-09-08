@@ -74,9 +74,9 @@ import {
   type TeamDissolveReceipt,
   type TeamHistoryQuery,
   type TeamHistoryResult,
+  type TeamListRow,
 } from './types.js';
 import { teamSubmitResult } from '../team-service/types.js';
-import { TEAM_SUMMARY_SCHEMA } from './summary-schema.js';
 
 /**
  * The maximum length of a caller-chosen `source_id`. Core deduplicates with it
@@ -132,7 +132,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       },
       ['request_id', 'name_prefix', 'intent', 'leader'],
     ),
-    output: TEAM_SUMMARY_SCHEMA,
+    output: OBJECT,
     parse(payload) {
       const params = commandPayload(payload);
       const leader = mustRecord(params, 'leader');
@@ -287,11 +287,11 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const list: CoreCommandDefinition<'team.list', void, { teams: TeamSummary[] }> = {
+  const list: CoreCommandDefinition<'team.list', void, { teams: TeamListRow[] }> = {
     name: 'team.list',
     version: 1,
     input: objectSchema({}),
-    output: objectSchema({ teams: arrayOf(TEAM_SUMMARY_SCHEMA) }, ['teams']),
+    output: objectSchema({ teams: arrayOf(OBJECT) }, ['teams']),
     parse(payload) {
       commandPayload(payload);
     },
@@ -308,7 +308,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       { team_name: NON_EMPTY_STRING },
       ['team_name'],
     ),
-    output: TEAM_SUMMARY_SCHEMA,
+    output: OBJECT,
     parse(payload) {
       return { teamName: teamNameParam(commandPayload(payload), 'team_name') };
     },

@@ -161,7 +161,7 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
       leader_state: null,
     }));
     await expect(h.ops.bindChannel({ target: { chatId: 'chat-a' }, teamName: 'team-a', display: null }))
-      .rejects.toThrow('no complete TeamLeader runtime context');
+      .rejects.toThrow('no readable TeamLeader identity');
     expect(h.routing.bindingFor(chatTarget('chat-a', 'group'))).toBeUndefined();
     expect(h.notifications).toEqual([]);
     expect(h.cotCalls).toEqual([]);

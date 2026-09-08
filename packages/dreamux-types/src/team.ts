@@ -65,7 +65,7 @@ export interface TeamCreateCommand {
 
 export type TeamStatus = 'starting' | 'running' | 'closed';
 
-/** The current Team facts shared by create, list, and status. */
+/** The current Team facts shared by create and status; `team.list` is a compact row. */
 export interface TeamSummary {
   readonly team_name: string;
   readonly status: TeamStatus;
@@ -185,6 +185,6 @@ export interface TeamStateEvent {
   readonly occurred_at: number;
   readonly team_name: string;
   readonly leader_name: string;
-  readonly status: 'starting' | 'running' | 'closed';
+  readonly status: TeamStatus;
   readonly teammates: readonly TeamStateTeammateSummary[];
 }

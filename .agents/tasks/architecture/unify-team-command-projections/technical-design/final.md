@@ -3,11 +3,18 @@
 ## Outcome and boundary
 
 Make `TeamSummary` the single flat Team read projection returned by
-`team.create`, each item of `team.list`, and `team.status`. `status` always means
-the Team lifecycle (`starting | running | closed`). Remove the public and
-internal `TeamCreateResult`, `TeamListRow`, `TeamView`, their conversion paths,
-and the uncalled exact-name `TeamCollection.create()` entry point.
+`team.create` and `team.status`. `status` always means the Team lifecycle
+(`starting | running | closed`) on every Team read. Remove the public and
+internal `TeamCreateResult`, `TeamView`, their conversion paths, and the
+uncalled exact-name `TeamCollection.create()` entry point.
 
+Keep `team.list` as the compact `TeamListRow`: an explicit interface, not an
+`Omit`/`Pick` of the summary, whose fields are a same-named, same-meaning
+subset (name, lifecycle status, intent, repo, leader name and durable state,
+member count, timestamps, worktree cleanup) with no leader runtime state and
+no machine-local path. This section, §2, §5, §7, and §8 were rewritten after
+the operator's 2026-09-09 review of PR #390 (quoted in the requirement); the
+first push had made every list row the full summary behind closed schemas.
 Keep `team.history` as its purpose-built paginated recovery row. Do not change
 persisted Team or Agent state, creation idempotency, Team lifecycle, routing,
 dissolution, or the manual bind's existing requirement that the TeamLeader
@@ -66,11 +73,16 @@ already owns both the runtime registry and the store read model:
 3. never materialize a Team, start a runtime, invoke the public `team.status`
    command, or add a second conversion to answer create/list/status.
 
-Apply that same selection to status, every list item, and accepted-request
-replay. List and replay pass the Team record they already found into the
-selection rather than looking it up again. Thus a running leader already held by
-this process does not appear runtime-less merely because the caller used list or
-replayed create.
+Before either step, the record just read from the store decides whether there
+is an entity to ask at all: a record whose status is `closed` answers from the
+read model even if a service for it is still cached, because a closed Team is a
+record (the idempotency tests close the record directly, behind the cached
+service's back, and the collection must not need `TeamService.status()` to
+accept a foreign record to answer that). Apply the selection to status and to
+accepted-request replay; replay passes the record it already found rather than
+looking it up again. Thus a running leader already held by this process does
+not appear runtime-less merely because the caller replayed create. `team.list`
+does not enter the selection: its rows are read from records only, as before.
 
 An accepted replay performs one aligned leader-identity read and one bounded
 member-directory scan when no live service exists. This is the necessary owner
@@ -109,10 +121,15 @@ succeeded; its reminder depends on the input prompt rather than a returned
 
 ## 5. Command and Channel consumers
 
-Define one closed `TeamSummary` output schema and reuse it for `team.create`,
-`team.status`, and every `team.list.teams` item in both canonical commands and
-the model-facing MCP catalog. The model should see the same named fields rather
-than open object blobs. `team.list` no longer describes its rows as compact.
+`team.create` and `team.status` declare the open object output (`OBJECT` on
+the Command catalog, `OPEN_OBJECT` on the MCP catalog), and `team.list` declares
+an array of open objects, the same convention as every other entity DTO
+(TeamMate, Workflow, Scheduler): an additive domain field must not break MCP
+output validation, which is the recorded reason `OPEN_OBJECT` exists. This is
+looser than the closed five-field create receipt that existed before PR #390,
+by design: create now returns the deep DTO, and deep DTOs are open here. The
+first push closed all three schemas with hand-listed enums; the operator
+reversed that ("改回开放的"). `team.list` keeps describing its rows as compact.
 
 Feishu automatic provisioning consumes top-level lifecycle status and the
 stable Team, leader, runtime-ID, and cwd fields returned by `team.create`. It
@@ -150,10 +167,12 @@ No unrelated surface changes are included.
 ## 7. Compatibility, knowledge, and change records
 
 This intentionally changes the model/admin/Channel command response shape but
-does not change persisted state. It supersedes the earlier decision that
-`team.list` remain compact and workspace mode appear only on `team.status`,
-because the operator has now explicitly required create/list/status to share one
-interface. `team.history` remains compact because it is outside that ruling.
+does not change persisted state. It keeps the earlier decision that `team.list`
+remain compact and that workspace detail appear only on `team.status`; what the
+2026-09-07 ruling changes is the vocabulary — one `status` meaning and one set
+of field names across create, list, and status — and the third create shape,
+which is gone. `team.history` remains compact because it is outside that
+ruling.
 
 Update the product behavior catalog, Dispatcher orchestration domain, and
 Channel domain to describe the canonical response and the unchanged automatic
@@ -165,13 +184,15 @@ Feishu Channel package. No rebuild or state migration is required.
 
 - Projection tests cover fresh create, accepted replay, live and store-only
   Teams, promptless Teams, missing leader identity, closed Teams, and unknown
-  Team failure. A held-open leader proves create/status/list/replay expose the
-  same available runtime status without resubmission.
+  Team failure. A held-open leader proves create/status/replay expose the same
+  available runtime status without resubmission, and that the list row for the
+  same Team carries the matching field values.
 - Member-count tests keep the same member directories across live/store reads,
   including a closed identity and a missing or malformed identity, and assert
   equal occupancy counts with the leader excluded.
-- Command and MCP tests pin the same closed `TeamSummary` schema and field
-  meanings for create/list/status, plus unchanged compact history.
+- Command and MCP tests pin that create and status return the summary and
+  that list returns the compact row, through both adapters and the MCP
+  delegate, plus unchanged compact history.
 - Remove the obsolete `TeamCreateResult['status']` type assertion; update the
   package boundary export-name guard for `TeamStatus` and `TeamSummary`. Review
   those test changes against this contract rather than treating a green run as
@@ -179,8 +200,6 @@ Feishu Channel package. No rebuild or state migration is required.
 - Feishu tests use one canonical summary fixture for automatic provisioning and
   manual binding, prove no status call follows create, preserve one status call
   for manual binding, and pin the `leader_state !== null` pre-bind guard.
-- Probe the three model-facing tool definitions to confirm the advertised output
-  schemas are closed and identical at the Team item level.
 - Run Rush build, lint, test, and `typecheck:tests`; run task validation,
   `.agents/scripts/check.sh`, Rush change verification, and `git diff --check`.
 
@@ -199,6 +218,17 @@ this change: the operator requested projection unification, not a change from
 refusing an interrupted-creation Team to binding it. Re-anchoring the same guard
 to `leader_state` preserves current user-visible behavior without compatibility
 machinery.
+
+PR #390 review (2026-09-09, the operator with a Claude reviewer): the Seed
+finding that closed all three output schemas is reversed on the operator's
+ruling; the reason is recorded in §5. The Codex source-selection blocker keeps
+its status/replay branch; its list branch is moot because the compact row has
+no runtime-status field to select a source for. The `TeamService.status(record)`
+parameter the first push added so that replay could combine the store's closed
+record with a cached service is removed; the closed-record rule in §2 answers
+that case from the read model instead. The manual bind guard's message now
+names what it checks (a readable TeamLeader identity), and
+`TeamStateEvent.status` uses `TeamStatus` instead of restating the literal.
 
 The Trae-Claude review independently confirmed the live/store runtime-status,
 member-count, manual-bind, audit-accuracy, and dead-create-path findings; those

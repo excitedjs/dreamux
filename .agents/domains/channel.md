@@ -503,8 +503,8 @@ conversation is told. A nonexistent Team throws Core's `TEAM_NOT_FOUND`
 unchanged; a closed Team is a successful status response whose `team.status` is
 `closed`, which the Channel rejects. A Team that dissolves afterwards converges
 through the `team.state` event instead.
-The same response is the flat canonical Team summary returned by create and
-list. Manual bind makes exactly this one status call and also rejects a summary
+The same response is the flat canonical Team summary returned by create.
+Manual bind makes exactly this one status call and also rejects a summary
 whose `leader_state` is null, preserving the existing interrupted-creation
 guard before route persistence.
 

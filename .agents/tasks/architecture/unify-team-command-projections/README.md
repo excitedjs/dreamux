@@ -2,8 +2,9 @@
 
 ## Current state
 
-- Goal: Expose one canonical Team projection through create, list, and status
-- State: `done`
+- Goal: One Team vocabulary across create, list, and status: one `status`
+  meaning, one set of field names, no third create shape
+- State: `review`
 - Requirement: [Current requirement](/.agents/tasks/architecture/unify-team-command-projections/requirement.md)
 - Draft solution:
   [technical-design/draft.md](/.agents/tasks/architecture/unify-team-command-projections/technical-design/draft.md).
@@ -19,11 +20,11 @@
   [Seed review](/.agents/tasks/architecture/unify-team-command-projections/technical-design/reviews/review-seed.md), and
   [Trae-Claude review](/.agents/tasks/architecture/unify-team-command-projections/technical-design/reviews/review-trae-claude.md).
 - Blockers: None.
-- Next action: Deliver the reviewed implementation through a pull request to
-  `next`.
-- Related tasks: Supersedes the separate list/status projection decision in
+- Next action: Operator re-review of the fix commit on PR #390, then merge.
+- Related tasks: Keeps the compact `team.list` decision recorded in
   [Refine the model-facing surfaces of the TeamLeader](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md)
-  and builds on the create receipt added by
+  (its final solution: "`list` and `history` stay compact") and builds on the
+  create receipt added by
   [Refine Feishu COT and binding cards](/.agents/tasks/channel/refine-feishu-cot-and-binding-cards/README.md).
 
 ## Development approval
@@ -45,9 +46,12 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Pull request preparation is next; CI and merge are
-  pending.
-- Implementation: Complete in the approved follow-up workspace.
+- Pull request / CI / merge: [PR #390](https://github.com/excitedjs/dreamux/pull/390)
+  to `next`, refs issue #383. CI was green on the first push (9e66edd). The
+  operator's review on 2026-09-09 reversed two choices of that push — closed
+  output schemas and the full summary as every list row — and a second commit
+  on the same branch applies the reversal; merge is pending.
+- Implementation: Complete on the PR branch.
 - Verification: [verification.md](/.agents/tasks/architecture/unify-team-command-projections/verification.md).
 - Knowledge closeout: Completed 2026-09-07; product behavior, Dispatcher
   orchestration, service topology, package-local service guidance, and Channel

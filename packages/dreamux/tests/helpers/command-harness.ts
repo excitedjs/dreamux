@@ -30,6 +30,7 @@ import type {
 
 import { createCoreCommandRegistry } from '../../src/command/catalog.js';
 import type { CoreCommandHost } from '../../src/command/host.js';
+import type { TeamListRow } from '../../src/service/team-collection/types.js';
 import { CoreCommandPort } from '../../src/command/port.js';
 import { CoreCommands } from '../../src/command/registry.js';
 import { createAdminSocketServer, type AdminSocketServer } from '../../src/admin/socket.js';
@@ -53,6 +54,25 @@ import type { Server } from '../../src/server.js';
 /** The one dispatcher id every harness configures by default. */
 export const HARNESS_DISPATCHER_ID = 'harness-d1';
 export const HARNESS_CHANNEL_ID = 'harness-channel';
+
+export function harnessTeamListRow(
+  overrides: Partial<TeamListRow> = {},
+): TeamListRow {
+  return {
+    team_name: 'harness-team',
+    status: 'running',
+    intent: 'test Team',
+    source_repo: null,
+    leader_name: 'harness-leader',
+    leader_state: 'running',
+    member_count: 0,
+    created_at: 1,
+    updated_at: 1,
+    closed_at: null,
+    worktree_cleanup: 'not-managed',
+    ...overrides,
+  };
+}
 
 export function harnessTeamSummary(
   overrides: Partial<TeamSummary> = {},

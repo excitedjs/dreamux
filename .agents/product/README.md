@@ -100,13 +100,16 @@ the same change that touches it.
   creation. With a `prompt`, the runtime starts inside that first turn. A
   TeamMate's runtime has always started with its spawn prompt.
   (Ruling: [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
-- **Create, list, and status show the same Team facts.** `team.create`, each
-  `team.list` item, and `team.status` return one flat current Team summary. Its
+- **Create and status show the same Team facts; list stays compact.**
+  `team.create` and `team.status` return one flat current Team summary. Its
   `status` is only the Team lifecycle (`starting`, `running`, or `closed`); a
   replay carries no separate created/existing outcome. The summary includes
   stable TeamLeader and workspace facts, nullable current leader state, and the
-  number of occupied Team-member names excluding the leader. `team.history`
-  remains the compact paginated recovery view.
+  number of occupied Team-member names excluding the leader. Each `team.list`
+  item is a compact scan row that uses the same field names and meanings
+  (name, lifecycle status, intent, repo, leader name and state, member count,
+  timestamps, worktree cleanup) and carries no machine-local path.
+  `team.history` remains the compact paginated recovery view.
   (Decision: [unify Team command projections](/.agents/tasks/architecture/unify-team-command-projections/README.md).)
 - **Closed entities are records.** A closed Team or TeamMate is never
   materialized into a live object by startup, queries, or cleanup; the one door

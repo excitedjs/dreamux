@@ -9,6 +9,7 @@ import type {
   TeamCreateAtNameInput,
   TeamHistoryQuery,
   TeamHistoryResult,
+  TeamListRow,
   TeamRecord,
   TeamCollectionOptions,
 } from './types.js';
@@ -198,12 +199,9 @@ export class TeamCollection {
     return this.runtimes.create(input, validateTeamId(input.name));
   }
 
-  async list(): Promise<TeamSummary[]> {
-    const summaries: TeamSummary[] = [];
-    for (const record of await this.store.list()) {
-      summaries.push(await this.summaryFromRecord(record));
-    }
-    return summaries;
+  /** Compact rows from records alone; a list never consults a live runtime. */
+  async list(): Promise<TeamListRow[]> {
+    return this.reads.list();
   }
 
   async history(
@@ -262,10 +260,19 @@ export class TeamCollection {
     return this.summaryFromRecord(record);
   }
 
-  /** One source selection for status, list, and accepted-request replay. */
+  /**
+   * One source selection for status and accepted-request replay.
+   *
+   * The record just read from the store decides whether there is an entity to
+   * ask at all: a closed Team is a record, so it answers from that record even
+   * if a service for it is still cached (a replay in the idempotency tests
+   * closes the record directly, behind the cached service's back). Only an
+   * open Team this process holds answers for itself.
+   */
   private async summaryFromRecord(record: TeamRecord): Promise<TeamSummary> {
+    if (record.status === 'closed') return this.reads.summary(record);
     const live = this.runtimes.live(record.team_id);
-    return live === null ? this.reads.summary(record) : live.status(record);
+    return live === null ? this.reads.summary(record) : live.status();
   }
 
   /**

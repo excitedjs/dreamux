@@ -60,7 +60,6 @@ import type { DispatcherService } from '../dispatcher-service/index.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import { teamHistoryQuery, teamNameParam } from './types.js';
 import { teamSubmitResult } from '../team-service/types.js';
-import { TEAM_SUMMARY_SCHEMA } from './summary-schema.js';
 
 /** Who this delegate serves. Bound once, at runtime construction. */
 export type TeamMcpCaller =
@@ -332,7 +331,7 @@ function teamToolDescriptors(
       ['name_prefix', 'leader_agent_runtime', 'intent'],
       {
         title: 'Create a Team',
-        output: TEAM_SUMMARY_SCHEMA,
+        output: OPEN_OBJECT,
         annotations: MUTATING_ANNOTATIONS,
       },
     ),
@@ -378,18 +377,18 @@ function teamToolDescriptors(
     ),
     tool(
       'list',
-      'List Teams owned by this dispatcher using the same current Team summary returned by create and status. Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
+      'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, and member count). Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
       {},
       [],
       {
         title: 'List Teams',
-        output: closedObjectSchema({ teams: arrayOf(TEAM_SUMMARY_SCHEMA) }, ['teams']),
+        output: closedObjectSchema({ teams: arrayOf(OPEN_OBJECT) }, ['teams']),
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),
     tool(
       'status',
-      'Read one Team\'s current summary by its team_name, using the same fields returned by create and list.',
+      'Read one Team\'s current summary by its team_name, using the same fields returned by create.',
       {
         team_name: {
           type: 'string',
@@ -401,7 +400,7 @@ function teamToolDescriptors(
       ['team_name'],
       {
         title: 'Read Team status',
-        output: TEAM_SUMMARY_SCHEMA,
+        output: OPEN_OBJECT,
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),
