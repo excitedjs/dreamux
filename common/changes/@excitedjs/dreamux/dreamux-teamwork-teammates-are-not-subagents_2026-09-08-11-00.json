@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The bundled `teamwork` skill now tells a TeamLeader what a member has that a subagent does not, a judgment of its own, and how to use it: the brief carries the question the work turns on before the leader's answer, the leader's design is marked as a guess, a member's identity includes standing to contradict the leader's framing, and when review rounds keep adding mechanism to one area the leader stops patching, writes the premise, and puts it to members that have not seen the draft. No skill name, description, or load trigger changes.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
