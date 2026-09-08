@@ -190,7 +190,7 @@ describe('a Team whose dissolve never committed a closed record', () => {
     // A different object over the same durable identity: same name, same
     // provider session, same creation, never rewritten or restamped.
     expect(restored).not.toBe(original);
-    expect(status.leader?.name).toBe(LEADER);
+    expect(status.leader_name).toBe(LEADER);
     expect(restored?.current().session_id).toBe('provider-session-1');
     expect(restored?.current().created_at).toBe(original?.current().created_at);
   });
@@ -212,8 +212,8 @@ describe('a Team whose dissolve never committed a closed record', () => {
         team.service.status(),
         team.service.status(),
       ]);
-      expect(first.leader?.name).toBe(LEADER);
-      expect(second.leader?.name).toBe(LEADER);
+      expect(first.leader_name).toBe(LEADER);
+      expect(second.leader_name).toBe(LEADER);
       reads = read.mock.calls.length;
     } finally {
       read.mockRestore();
@@ -264,6 +264,6 @@ describe('a Team whose dissolve never committed a closed record', () => {
     team.service.dissolve(dissolveInput);
     await closed;
 
-    expect(team.service.view().status).toBe('closed');
+    expect((await team.service.status()).status).toBe('closed');
   });
 });

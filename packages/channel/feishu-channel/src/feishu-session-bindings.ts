@@ -72,24 +72,23 @@ export class FeishuBindingOperations {
       );
     }
     const answer = await this.opts.invoke('team.status', { team_name: input.teamName });
-    const team = isPlainObject(answer) ? answer['team'] : null;
-    if (isPlainObject(team) && team['status'] === 'closed') {
+    const team = isPlainObject(answer) ? answer : null;
+    if (team?.['status'] === 'closed') {
       throw new PublicInvokeFailure(
         `Team ${JSON.stringify(input.teamName)} is closed and can no longer ` +
           'answer here. Bind an open Team instead.',
       );
     }
-    const leader = isPlainObject(answer) ? answer['leader'] : null;
-    const repo = isPlainObject(leader) ? leader['repo'] : null;
     if (
-      !isPlainObject(team) ||
+      team === null ||
       typeof team['team_name'] !== 'string' || team['team_name'] === '' ||
       typeof team['leader_name'] !== 'string' || team['leader_name'] === '' ||
       typeof team['leader_agent_runtime'] !== 'string' || team['leader_agent_runtime'] === '' ||
-      !isPlainObject(repo) || typeof repo['path'] !== 'string' || repo['path'] === ''
+      typeof team['runtime_cwd'] !== 'string' || team['runtime_cwd'] === '' ||
+      team['leader_state'] === null
     ) {
       throw new PublicInvokeFailure(
-        `Team ${JSON.stringify(input.teamName)} has no complete TeamLeader runtime context.`,
+        `Team ${JSON.stringify(input.teamName)} has no readable TeamLeader identity; its creation did not complete.`,
       );
     }
     const { previousTeamName } = await this.opts.routing.bind({
@@ -114,7 +113,7 @@ export class FeishuBindingOperations {
         teamName: team['team_name'],
         leaderName: team['leader_name'],
         agentRuntime: team['leader_agent_runtime'],
-        runtimeCwd: repo['path'],
+        runtimeCwd: team['runtime_cwd'],
       }),
       input.teamName,
     );

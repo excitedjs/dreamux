@@ -6,7 +6,7 @@
  * Channel use; every other canonical Team Command keeps its current domain
  * behavior and is defined by its own domain-owned Command module in Core.
  */
-import type { AgentRuntimeSkillSource } from './agent-runtime.js';
+import type { AgentRuntimeSkillSource, AgentRuntimeStatus } from './agent-runtime.js';
 import type { ChannelCommandError } from './command.js';
 import type { TeamContainedRole, TeammateStatus } from './teammate.js';
 
@@ -40,12 +40,12 @@ export type TeamCreateRepoRequest =
 /**
  * Create a Team with restart-durable request identity.
  *
- * Core canonicalizes the validated payload and persists
- * `request_id -> {payload_hash, reserved_team_name, status}` before creating any
- * resource, so the same id and hash always return the same never-reused name —
- * including after a Core restart or Team closure. Reusing an id with a different
- * hash fails with `IDEMPOTENCY_CONFLICT`; a new provisioning generation must use
- * a new request id.
+ * Core canonicalizes the validated payload and stores its request id and hash
+ * on the exclusively published Team record. That record is the acceptance and
+ * concrete-name claim, so the same id and hash always return the same
+ * never-reused name — including after a Core restart or Team closure. Reusing
+ * an id with a different hash fails with `IDEMPOTENCY_CONFLICT`; a new
+ * provisioning generation must use a new request id.
  *
  * Core still injects the mandatory TeamLeader instructions and skill sources:
  * supplied values extend those requirements rather than removing them.
@@ -63,13 +63,43 @@ export interface TeamCreateCommand {
   readonly repo?: TeamCreateRepoRequest;
 }
 
-export interface TeamCreateResult {
-  /** `closed` is the replay of an accepted id whose Team has since closed. */
-  readonly status: 'created' | 'existing' | 'closed';
+export type TeamStatus = 'starting' | 'running' | 'closed';
+
+/** The current Team facts shared by create and status; `team.list` is a compact row. */
+export interface TeamSummary {
   readonly team_name: string;
+  readonly status: TeamStatus;
+  readonly intent: string | null;
+  readonly created_at: number;
+  readonly updated_at: number;
+  readonly closed_at: number | null;
+  readonly close_note: string | null;
   readonly leader_name: string;
   readonly leader_agent_runtime: string;
   readonly runtime_cwd: string;
+  /** Null when the accepted Team has no readable, aligned leader identity. */
+  readonly leader_state: TeammateStatus | null;
+  readonly leader_session_id: string | null;
+  readonly leader_runtime_status: AgentRuntimeStatus | null;
+  readonly leader_intent: string | null;
+  readonly leader_last_error: string | null;
+  readonly leader_closed_at: number | null;
+  readonly leader_close_note: string | null;
+  /** Member-directory occupancy, including closed/unreadable identities; leader excluded. */
+  readonly member_count: number;
+  readonly source_repo: string | null;
+  readonly worktree_mode: 'reuse-cwd' | 'managed';
+  readonly worktree_cleanup_mode: 'keep' | 'delete-on-close';
+  readonly worktree_cleanup:
+    | 'not-managed'
+    | 'managed-active'
+    | 'cleanup-pending'
+    | 'kept'
+    | 'deleted'
+    | 'retained-dirty'
+    | 'retained-unmerged'
+    | 'retained-unique-commits'
+    | 'retained-error';
 }
 
 /**
@@ -155,6 +185,6 @@ export interface TeamStateEvent {
   readonly occurred_at: number;
   readonly team_name: string;
   readonly leader_name: string;
-  readonly status: 'starting' | 'running' | 'closed';
+  readonly status: TeamStatus;
   readonly teammates: readonly TeamStateTeammateSummary[];
 }

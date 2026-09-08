@@ -6,8 +6,8 @@
  * and the result of that turn arrives later as a separate message — the exact
  * fact the reminder states, and the one a caller holding only the receipt
  * cannot see. Without a `prompt` nothing was submitted and no completion is
- * pending, so there is nothing to say; the same is true of a replay that
- * answered `existing` or `closed` rather than creating anything.
+ * pending, so there is nothing to say. This MCP entry mints a fresh request id,
+ * so every successful prompt-bearing call is a fresh accepted create.
  *
  * The reminder's wording is owned by `dispatch-reminders.ts` and imported here:
  * what this file proves is the attachment, not the text.
@@ -57,19 +57,4 @@ describe('team.create dispatch reminder', () => {
     expect(result).not.toHaveProperty('text');
   });
 
-  it('says nothing when a replay returned an existing Team', async () => {
-    const result = await create(
-      { prompt: 'start on the design' },
-      {
-        createTeam: async () => ({
-          status: 'existing',
-          team_name: 'harness-team',
-          leader_name: 'harness-leader',
-        }),
-      },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(result).not.toHaveProperty('text');
-  });
 });

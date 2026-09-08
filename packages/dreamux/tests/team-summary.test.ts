@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { teamView } from '../src/service/team-service/team-view.js';
+import { teamSummary } from '../src/service/team-service/team-summary.js';
 import type { TeamRecord } from '../src/service/team-collection/types.js';
 import { minimalTeamRecordInput } from './helpers/team-harness.js';
 
@@ -16,9 +16,9 @@ function record(worktree?: TeamRecord['worktree']): TeamRecord {
   };
 }
 
-describe('team.status projection of the workspace', () => {
+describe('canonical Team summary projection', () => {
   it('names a managed delete-on-close worktree by its mode and cleanup mode, not only its lifecycle state', () => {
-    const view = teamView(record({
+    const summary = teamSummary(record({
       mode: 'managed',
       slug: 'team-view',
       path: '/tmp/team-view',
@@ -27,8 +27,8 @@ describe('team.status projection of the workspace', () => {
       cleanup: 'delete-on-close',
       cleanup_state: 'managed-active',
       cleanup_error: null,
-    }));
-    expect(view).toMatchObject({
+    }), null, 0);
+    expect(summary).toMatchObject({
       worktree_cleanup: 'managed-active',
       worktree_mode: 'managed',
       worktree_cleanup_mode: 'delete-on-close',
@@ -36,7 +36,7 @@ describe('team.status projection of the workspace', () => {
   });
 
   it('names a reused directory as kept', () => {
-    expect(teamView(record())).toMatchObject({
+    expect(teamSummary(record(), null, 0)).toMatchObject({
       worktree_cleanup: 'not-managed',
       worktree_mode: 'reuse-cwd',
       worktree_cleanup_mode: 'keep',

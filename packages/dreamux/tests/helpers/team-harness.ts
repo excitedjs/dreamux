@@ -27,7 +27,12 @@ import { join } from 'node:path';
 
 import { vi } from 'vitest';
 
-import type { DreamuxConfig } from '../../src/config/config.js';
+import type { AgentRuntimeProvider } from '@excitedjs/dreamux-types';
+
+import type {
+  DreamuxConfig,
+  ResolvedAgentConfig,
+} from '../../src/config/config.js';
 import { AgentNameRegistry } from '../../src/service/agent-entity/identity-store.js';
 import { AdmissionLedger } from '../../src/service/teammate-service/admission-ledger.js';
 import { CompletionDeliveryPolicy } from '../../src/service/completion-router/index.js';
@@ -90,6 +95,11 @@ export interface TeamCollectionHarness {
  */
 export async function buildTeamCollectionHarness(input?: {
   dispatcherId?: string;
+  /** A real provider seam for tests that exercise the live runtime owner. */
+  agentRuntime?: {
+    id: string;
+    provider: AgentRuntimeProvider<unknown>;
+  };
   /**
    * A deterministic name-suffix sequence, for tests that need to force a
    * specific candidate name or a specific candidate-collision sequence
@@ -107,7 +117,14 @@ export async function buildTeamCollectionHarness(input?: {
   process.env['DREAMUX_ROOT'] = dreamuxRoot;
 
   const config: DreamuxConfig = {
-    agents: {},
+    agents: input?.agentRuntime === undefined
+      ? {}
+      : {
+          [input.agentRuntime.id]: {
+            provider: 'harness-provider',
+            config: {},
+          } as unknown as ResolvedAgentConfig,
+        },
     dispatchers: [{
       id: dispatcherId,
       cwd: workspaceCwd,
@@ -137,10 +154,11 @@ export async function buildTeamCollectionHarness(input?: {
   const collection = new TeamCollection({
     dispatcherId,
     config,
-    // Never resolved in these tests: every leader submission is mocked via
-    // `mockLeaderSubmission`, so nothing here ever asks the catalog for a real
-    // provider implementation.
-    agentRuntimeProviders: {} as unknown as TeamCollectionOptions['agentRuntimeProviders'],
+    agentRuntimeProviders: (input?.agentRuntime === undefined
+      ? {}
+      : {
+          resolve: () => ({ implementation: input.agentRuntime?.provider }),
+        }) as unknown as TeamCollectionOptions['agentRuntimeProviders'],
     worktrees,
     root: teamCollectionRoot,
     names,
@@ -174,6 +192,32 @@ export async function buildTeamCollectionHarness(input?: {
       ]);
     },
   };
+}
+
+/** A cold collection over the same durable Team root, as after a restart. */
+export function buildRestartedTeamCollection(
+  harness: TeamCollectionHarness,
+): TeamCollection {
+  return new TeamCollection({
+    dispatcherId: harness.dispatcherId,
+    config: { agents: {}, dispatchers: [] },
+    agentRuntimeProviders: {} as unknown as TeamCollectionOptions['agentRuntimeProviders'],
+    worktrees: {} as unknown as TeamCollectionOptions['worktrees'],
+    root: harness.teamCollectionRoot,
+    names: {
+      allocate: async () => `restarted-leader-${Math.random().toString(36).slice(2)}`,
+    } as unknown as TeamCollectionOptions['names'],
+    admissions: {} as unknown as TeamCollectionOptions['admissions'],
+    completionDelivery: {} as unknown as TeamCollectionOptions['completionDelivery'],
+    dispatcherCompletionInitiator: async () => null,
+    leaderMcp: () => ({
+      leases: {},
+      delegates: [],
+      adminSocketPath: '',
+    }) as unknown as ReturnType<TeamCollectionOptions['leaderMcp']>,
+    log: silentLog,
+    workflowLog: silentLog,
+  });
 }
 
 export interface LeaderSubmissionGate {

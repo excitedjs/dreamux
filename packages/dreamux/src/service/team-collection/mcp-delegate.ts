@@ -161,11 +161,10 @@ async function create(
     structured: result,
     // A create that carried a prompt handed work down: the TeamLeader's first
     // turn was submitted behind this receipt, and its result arrives later.
-    // Without a prompt no turn starts, and an `existing` or `closed` replay
-    // submitted nothing — neither has a completion to wait for.
-    ...(prompt !== null && result.status === 'created'
-      ? { text: TEAM_DISPATCH_SUCCESS_REMINDER }
-      : {}),
+    // This delegate mints a fresh request id for every call. A successful
+    // prompt-bearing create therefore submitted the first turn; replays belong
+    // to callers that supply their own durable request identity.
+    ...(prompt !== null ? { text: TEAM_DISPATCH_SUCCESS_REMINDER } : {}),
   };
 }
 
@@ -332,7 +331,7 @@ function teamToolDescriptors(
       ['name_prefix', 'leader_agent_runtime', 'intent'],
       {
         title: 'Create a Team',
-        output: teamCreateSchema(),
+        output: OPEN_OBJECT,
         annotations: MUTATING_ANNOTATIONS,
       },
     ),
@@ -389,7 +388,7 @@ function teamToolDescriptors(
     ),
     tool(
       'status',
-      'Read one Team\'s detailed current status by its team_name (record with its workspace kind and cleanup mode, TeamLeader status, and member count).',
+      'Read one Team\'s current summary by its team_name, using the same fields returned by create.',
       {
         team_name: {
           type: 'string',
@@ -401,14 +400,7 @@ function teamToolDescriptors(
       ['team_name'],
       {
         title: 'Read Team status',
-        output: closedObjectSchema(
-          {
-            team: OPEN_OBJECT,
-            leader: { type: ['object', 'null'] },
-            member_count: { type: 'integer' },
-          },
-          ['team', 'leader', 'member_count'],
-        ),
+        output: OPEN_OBJECT,
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),
@@ -521,25 +513,6 @@ function dissolveReceiptSchema(): Record<string, unknown> {
       status: { type: 'string' },
     },
     ['accepted', 'team_name', 'status'],
-  );
-}
-
-function teamCreateSchema(): Record<string, unknown> {
-  return closedObjectSchema(
-    {
-      status: { type: 'string', enum: ['created', 'existing', 'closed'] },
-      team_name: { type: 'string' },
-      leader_name: { type: 'string' },
-      leader_agent_runtime: { type: 'string' },
-      runtime_cwd: { type: 'string' },
-    },
-    [
-      'status',
-      'team_name',
-      'leader_name',
-      'leader_agent_runtime',
-      'runtime_cwd',
-    ],
   );
 }
 

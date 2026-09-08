@@ -29,7 +29,8 @@ import {
   isTeamCreatePayloadHash,
   isTeamCreateRequestId,
 } from './create-request.js';
-import type { TeamRecord, TeamStatus } from './types.js';
+import type { TeamStatus } from '@excitedjs/dreamux-types';
+import type { TeamRecord } from './types.js';
 import { validateTeamId } from './types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';

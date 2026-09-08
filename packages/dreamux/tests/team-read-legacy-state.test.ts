@@ -3,12 +3,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { LegacyStateError } from '../src/service/legacy-state.js';
 import { TeamCollectionReadModel } from '../src/service/team-collection/read-model.js';
 import type { TeamStore } from '../src/service/team-collection/store.js';
 import type { TeamRecord } from '../src/service/team-collection/types.js';
+import {
+  buildTeamCollectionHarness,
+  minimalTeamRecordInput,
+  type TeamCollectionHarness,
+} from './helpers/team-harness.js';
+
+let harness: TeamCollectionHarness | null = null;
+
+afterEach(async () => {
+  await harness?.cleanup();
+  harness = null;
+});
 
 const log = {
   error: () => undefined,
@@ -115,8 +127,19 @@ const ROLE_FIELD_LEADER = JSON.stringify({
 describe('Team read projections and old leader state', () => {
   it('raises a legacy leader record through list, history, and status', async () => {
     const reads = await plantLeader(LEGACY_LEADER);
+    harness = await buildTeamCollectionHarness();
+    const publicRecord = minimalTeamRecordInput({
+      dispatcherId: harness.dispatcherId,
+      teamId: 'legacy-list-team',
+      leaderName: 'lead-1',
+    });
+    await harness.seedStore.create(publicRecord);
+    await writeFile(
+      join(harness.teamCollectionRoot, 'legacy-list-team', 'identity.json'),
+      LEGACY_LEADER,
+    );
 
-    await expect(reads.list()).rejects.toBeInstanceOf(LegacyStateError);
+    await expect(harness.collection.list()).rejects.toBeInstanceOf(LegacyStateError);
     await expect(reads.history({})).rejects.toBeInstanceOf(LegacyStateError);
     await expect(reads.summary(record)).rejects.toBeInstanceOf(LegacyStateError);
   });
@@ -124,7 +147,6 @@ describe('Team read projections and old leader state', () => {
   it('raises a leader record carrying a removed field the same way', async () => {
     const reads = await plantLeader(REMOVED_FIELD_LEADER);
 
-    await expect(reads.list()).rejects.toBeInstanceOf(LegacyStateError);
     await expect(reads.summary(record)).rejects.toBeInstanceOf(LegacyStateError);
   });
 
@@ -134,22 +156,18 @@ describe('Team read projections and old leader state', () => {
     const [row] = await reads.list();
     expect(row?.leader_agent_runtime).toBe('codex');
     expect(row?.leader_state).toBe('running');
-    expect((await reads.summary(record)).leader?.status).toBe('running');
+    expect((await reads.summary(record)).leader_state).toBe('running');
   });
 
   it('still reports an ordinary unreadable leader as no leader state', async () => {
     const reads = await plantLeader('{ not json');
 
-    const [row] = await reads.list();
-    expect(row?.leader_state).toBeNull();
-    expect((await reads.summary(record)).leader).toBeNull();
+    expect((await reads.summary(record)).leader_state).toBeNull();
   });
 
   it('keeps the response shape of a valid leader record', async () => {
     const reads = await plantLeader(CURRENT_LEADER);
 
-    const [row] = await reads.list();
-    expect(row?.leader_state).toBe('running');
-    expect((await reads.summary(record)).leader?.status).toBe('running');
+    expect((await reads.summary(record)).leader_state).toBe('running');
   });
 });

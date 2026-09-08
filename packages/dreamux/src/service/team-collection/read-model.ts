@@ -1,4 +1,4 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, TeamSummary } from '@excitedjs/dreamux-types';
 
 import {
   AgentEntityCollectionStore,
@@ -6,7 +6,7 @@ import {
 } from '../agent-entity/identity-store.js';
 import { teamMateCollectionDir } from '../../platform/paths.js';
 import { toStatus } from '../agent-entity/read-helpers.js';
-import { teamView } from '../team-service/team-view.js';
+import { teamSummary } from '../team-service/team-summary.js';
 import type {
   AgentEntityIdentity,
   AgentEntityIdentityStatus,
@@ -25,10 +25,9 @@ import type {
   TeamHistoryRow,
   TeamListRow,
   TeamRecord,
-  TeamSummary,
 } from './types.js';
 
-/** Store-only Team list/history projection; never materializes a runtime. */
+/** Store-only Team list/summary/history projection; never materializes a runtime. */
 export class TeamCollectionReadModel {
   constructor(private readonly opts: {
     dispatcherId: string;
@@ -76,11 +75,11 @@ export class TeamCollectionReadModel {
    */
   async summary(team: TeamRecord): Promise<TeamSummary> {
     const leader = await this.leaderIdentity(team);
-    return {
-      team: teamView(team),
-      leader: leader === null ? null : toStatus(leader, null),
-      member_count: await this.memberCount(team),
-    };
+    return teamSummary(
+      team,
+      leader === null ? null : toStatus(leader, null),
+      await this.memberCount(team),
+    );
   }
 
   private async listRow(team: TeamRecord): Promise<TeamListRow> {

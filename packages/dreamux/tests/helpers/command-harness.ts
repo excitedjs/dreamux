@@ -25,10 +25,12 @@ import type {
   ChannelEventSource,
   CoreCommandContext,
   JsonValue,
+  TeamSummary,
 } from '@excitedjs/dreamux-types';
 
 import { createCoreCommandRegistry } from '../../src/command/catalog.js';
 import type { CoreCommandHost } from '../../src/command/host.js';
+import type { TeamListRow } from '../../src/service/team-collection/types.js';
 import { CoreCommandPort } from '../../src/command/port.js';
 import { CoreCommands } from '../../src/command/registry.js';
 import { createAdminSocketServer, type AdminSocketServer } from '../../src/admin/socket.js';
@@ -52,6 +54,56 @@ import type { Server } from '../../src/server.js';
 /** The one dispatcher id every harness configures by default. */
 export const HARNESS_DISPATCHER_ID = 'harness-d1';
 export const HARNESS_CHANNEL_ID = 'harness-channel';
+
+export function harnessTeamListRow(
+  overrides: Partial<TeamListRow> = {},
+): TeamListRow {
+  return {
+    team_name: 'harness-team',
+    status: 'running',
+    intent: 'test Team',
+    source_repo: null,
+    leader_name: 'harness-leader',
+    leader_agent_runtime: 'fake-runtime',
+    leader_state: 'running',
+    member_count: 0,
+    created_at: 1,
+    updated_at: 1,
+    closed_at: null,
+    worktree_cleanup: 'not-managed',
+    ...overrides,
+  };
+}
+
+export function harnessTeamSummary(
+  overrides: Partial<TeamSummary> = {},
+): TeamSummary {
+  return {
+    team_name: 'harness-team',
+    status: 'running',
+    intent: 'test Team',
+    created_at: 1,
+    updated_at: 1,
+    closed_at: null,
+    close_note: null,
+    leader_name: 'harness-leader',
+    leader_agent_runtime: 'fake-runtime',
+    runtime_cwd: '/tmp/harness-workspace',
+    leader_state: 'running',
+    leader_session_id: null,
+    leader_runtime_status: null,
+    leader_intent: 'lead test Team',
+    leader_last_error: null,
+    leader_closed_at: null,
+    leader_close_note: null,
+    member_count: 0,
+    source_repo: null,
+    worktree_mode: 'reuse-cwd',
+    worktree_cleanup_mode: 'keep',
+    worktree_cleanup: 'not-managed',
+    ...overrides,
+  };
+}
 
 /** A minimal, always-valid `DispatcherRow` for the harness dispatcher. */
 export function harnessDispatcherRow(
@@ -126,13 +178,7 @@ export function createFakeDispatcher(
     workspace: overrides.workspace ?? (async () => '/tmp/harness-workspace'),
     createTeam:
       overrides.createTeam ??
-      (async () => ({
-        status: 'created',
-        team_name: 'harness-team',
-        leader_name: 'harness-leader',
-        leader_agent_runtime: 'fake-runtime',
-        runtime_cwd: '/tmp/harness-workspace',
-      })),
+      (async () => harnessTeamSummary()),
     submitToTeamLeader:
       overrides.submitToTeamLeader ??
       (async () => ({ status: 'submitted', turn: { id: 'harness-turn-1' } })),
@@ -144,7 +190,7 @@ export function createFakeDispatcher(
     listChannels: overrides.listChannels ?? (() => []),
     getTeamStatus:
       overrides.getTeamStatus ??
-      (async () => ({ team: {}, leader: null, member_count: 0 })),
+      (async () => harnessTeamSummary()),
     getTeamHistory:
       overrides.getTeamHistory ?? (async () => ({ items: [], next_cursor: null })),
     dissolveTeam:

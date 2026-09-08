@@ -22,7 +22,7 @@ import type {
   AgentRuntimeSkillSource,
   CoreCommandDefinition,
   TeamCreateCommand,
-  TeamCreateResult,
+  TeamSummary,
   TeamSubmitCommand,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
@@ -53,7 +53,6 @@ import {
   BOOLEAN,
   INTEGER,
   NON_EMPTY_STRING,
-  NULLABLE_OBJECT,
   NULLABLE_STRING,
   OBJECT,
   STRING,
@@ -76,7 +75,7 @@ import {
   type TeamDissolveReceipt,
   type TeamHistoryQuery,
   type TeamHistoryResult,
-  type TeamSummary,
+  type TeamListRow,
 } from './types.js';
 import { teamSubmitResult } from '../team-service/types.js';
 
@@ -117,7 +116,7 @@ interface TeamDissolveInput {
 }
 
 export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
-  const create: CoreCommandDefinition<'team.create', TeamCreateInput, TeamCreateResult> = {
+  const create: CoreCommandDefinition<'team.create', TeamCreateInput, TeamSummary> = {
     name: 'team.create',
     version: 1,
     input: objectSchema(
@@ -138,22 +137,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       },
       ['request_id', 'name_prefix', 'intent', 'leader'],
     ),
-    output: objectSchema(
-      {
-        status: enumOf(['created', 'existing', 'closed']),
-        team_name: STRING,
-        leader_name: STRING,
-        leader_agent_runtime: STRING,
-        runtime_cwd: STRING,
-      },
-      [
-        'status',
-        'team_name',
-        'leader_name',
-        'leader_agent_runtime',
-        'runtime_cwd',
-      ],
-    ),
+    output: OBJECT,
     parse(payload) {
       const params = commandPayload(payload);
       const leader = mustRecord(params, 'leader');
@@ -333,7 +317,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const list: CoreCommandDefinition<'team.list', void, { teams: unknown[] }> = {
+  const list: CoreCommandDefinition<'team.list', void, { teams: TeamListRow[] }> = {
     name: 'team.list',
     version: 1,
     input: objectSchema({}),
@@ -354,14 +338,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       { team_name: NON_EMPTY_STRING },
       ['team_name'],
     ),
-    output: objectSchema(
-      {
-        team: OBJECT,
-        leader: NULLABLE_OBJECT,
-        member_count: INTEGER,
-      },
-      ['team', 'leader', 'member_count'],
-    ),
+    output: OBJECT,
     parse(payload) {
       return { teamName: teamNameParam(commandPayload(payload), 'team_name') };
     },

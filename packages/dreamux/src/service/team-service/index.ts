@@ -1,6 +1,7 @@
 import type {
   AgentRuntimeInterruptOutcome,
   TeamStateTeammateSummary,
+  TeamSummary,
 } from '@excitedjs/dreamux-types';
 
 import type { CompletionInitiator } from '../completion-router/index.js';
@@ -24,7 +25,6 @@ import {
   optionalLifecycleText,
   requireLifecycleText,
   type AgentEntityRuntimeStatus,
-  type AgentEntitySubmissionResult,
 } from '../agent-entity/types.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import {
@@ -36,8 +36,6 @@ import type {
   TeamDissolveCommand,
   TeamDissolveReceipt,
   TeamRecord,
-  TeamSummary,
-  TeamView,
 } from '../team-collection/types.js';
 import { TeamClosedError } from '../team-collection/errors.js';
 import {
@@ -62,15 +60,15 @@ import {
   buildTeamWorkflows,
 } from './collaborators.js';
 import { TeamRosterProjection } from './roster-projection.js';
-import { teamView } from './team-view.js';
+import { teamSummary } from './team-summary.js';
 import {
   teamClosedFact,
   type TeamClosedFact,
   type TeamClosedListener,
   type TeamSchedulerLifecycle,
-  TeamServiceCreateOutput,
-  TeamServiceCreateInput,
-  TeamServiceDeps,
+  type TeamServiceCreateInput,
+  type TeamServiceCreateOutput,
+  type TeamServiceDeps,
 } from './types.js';
 import type { WorkflowService, WorkflowOps } from '../workflow-service/index.js';
 
@@ -274,13 +272,12 @@ export class TeamService {
           : {}),
       });
       service.leader_ = leader;
-      let submission: AgentEntitySubmissionResult | null = null;
       if (input.prompt !== undefined) {
         const delivery = await resolveTeamLeaderCompletionDelivery({
           initiator: deps.leaderCompletionInitiator,
           completionDelivery: deps.completionDelivery,
         });
-        submission = toSubmissionResult(
+        const submission = toSubmissionResult(
           await leader.submitInput({
             source: AGENT_TASK_SOURCE,
             text: input.prompt,
@@ -306,7 +303,6 @@ export class TeamService {
       return {
         service,
         schedulerLifecycle: TeamService.schedulerLifecycleFor(service),
-        leaderResult: { teammate: leader.status(), submission },
       };
     } catch (error) {
       return await service.closing.abandonCreation({
@@ -409,16 +405,12 @@ export class TeamService {
     return this.mustRecord().dispatcher_id;
   }
 
-  view(): TeamView {
-    return teamView(this.mustRecord());
-  }
-
   async status(): Promise<TeamSummary> {
-    return {
-      team: this.view(),
-      leader: (await this.leaderService()).status(),
-      member_count: await this.memberCount(),
-    };
+    return teamSummary(
+      this.mustRecord(),
+      (await this.leaderService()).status(),
+      await this.memberCount(),
+    );
   }
 
   /**
@@ -617,7 +609,7 @@ export class TeamService {
   }
 
   async memberCount(): Promise<number> {
-    return (await this.members()).length;
+    return this.teammateCollection.count();
   }
 
   private async members(): Promise<AgentEntityRuntimeStatus[]> {

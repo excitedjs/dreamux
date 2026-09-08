@@ -258,6 +258,11 @@ export class TeammateCollection implements TeammateOps {
       : { teammate: toStatus(resolved, null) };
   }
 
+  /** Occupied member directories include closed and unreadable identities. */
+  async count(): Promise<number> {
+    return (await this.store.names()).length;
+  }
+
   async list(): Promise<AgentEntityRuntimeStatus[]> {
     return (await this.rosterList()).map((identity) => {
       const entity = this.liveEntity(identity.name);

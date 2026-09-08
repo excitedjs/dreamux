@@ -320,7 +320,7 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
           note: 'blocked dissolve',
         })).rejects.toThrow(/dirty/u);
 
-        expect(team.service.view().status).toBe('running');
+        expect((await team.service.status()).status).toBe('running');
         await expect(team.service.admit(async () => 'open')).resolves.toBe('open');
       } finally {
         await team.cleanup();
@@ -562,7 +562,7 @@ describe('DURABLE-FACT RECOVERY: the cron store deletion is not rolled back by a
 
       // The Team's own lifecycle fact says it is still open — the one thing
       // this failure actually left true.
-      expect(team.service.view().status).not.toBe('closed');
+      expect((await team.service.status()).status).not.toBe('closed');
 
       // The cron store file itself is gone from disk: `deleteStoreFile` ran
       // and committed before the failed final write, and nothing restored it.
@@ -589,7 +589,7 @@ describe('DURABLE-FACT RECOVERY: the cron store deletion is not rolled back by a
         status: 'submitted',
       });
       await team.waitClosed();
-      expect(team.service.view().status).toBe('closed');
+      expect((await team.service.status()).status).toBe('closed');
     } finally {
       await team.cleanup();
     }

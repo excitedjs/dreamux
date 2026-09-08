@@ -1,12 +1,12 @@
 import {
   assertNotReservedAgentName,
   type AgentEntityIdentityStatus,
-  type AgentEntityRuntimeStatus,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import type {
   AgentRuntimeSkillSource,
   DreamuxLogger,
+  TeamStatus,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
@@ -83,8 +83,6 @@ export interface TeamCollectionOptions {
 }
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-
-export type TeamStatus = 'starting' | 'running' | 'closed';
 
 export type TeamDissolveRequesterKind =
   | 'dispatcher'
@@ -221,46 +219,10 @@ export interface TeamDissolveCommand {
 }
 
 /**
- * Public Team record view (issue #199 Slice 2). The status surface speaks the
- * concrete `team_name`; the duplicate `name` / `team_id`, the machine-local
- * `repo_cwd` / `runtime_cwd` / flattened `worktree`, and the persisted `version`
- * are projected away. The persisted {@link TeamRecord} keeps them for internal
- * orchestration and storage (the storage rewrite is Slice 3).
- */
-export interface TeamView {
-  team_name: string;
-  status: TeamStatus;
-  intent: string | null;
-  source_repo: string | null;
-  leader_name: string;
-  leader_agent_runtime: string;
-  created_at: number;
-  updated_at: number;
-  closed_at: number | null;
-  close_note: string | null;
-  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
-  /**
-   * The workspace kind and its cleanup mode, from the record's worktree
-   * identity. `worktree_cleanup` above is the lifecycle state and reads
-   * `managed-active` for every open managed worktree, so only these two say
-   * whether a dissolve removes the worktree (`managed` + `delete-on-close`).
-   * The TeamLeader is told the same two facts in its prompt; the Dispatcher,
-   * which can dissolve a Team it did not create, reads them here.
-   */
-  worktree_mode: AgentEntityWorktreeIdentity['mode'];
-  worktree_cleanup_mode: AgentEntityWorktreeIdentity['cleanup'];
-}
-
-export interface TeamSummary {
-  team: TeamView;
-  leader: AgentEntityRuntimeStatus | null;
-  member_count: number;
-}
-
-/**
- * Compact scan row for `team.list` (issue #199 Slice 1/2). Keyed by the concrete
- * `team_name`; the duplicate `team_id` and the machine-local `repo_cwd` /
- * `worktree_mode` are no longer projected — reach for `team.status` for detail.
+ * Compact scan row for `team.list`: the same names and meanings as the
+ * matching `TeamSummary` fields, and nothing a list does not need — no leader
+ * runtime state, no machine-local `runtime_cwd`, no full `close_note`. Read
+ * from records alone; `team.status` is where a single Team's detail lives.
  */
 export interface TeamListRow {
   team_name: string;
@@ -323,14 +285,6 @@ export interface TeamHistoryRow {
 export interface TeamHistoryResult {
   items: TeamHistoryRow[];
   next_cursor: string | null;
-}
-
-/** Facts produced by the internal Team creation operation. */
-export interface TeamCreateResult {
-  team_name: string;
-  leader_name: string;
-  leader_agent_runtime: string;
-  runtime_cwd: string;
 }
 
 /** Read an optional Team status filter, in this domain's own vocabulary. */
