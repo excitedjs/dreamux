@@ -224,18 +224,6 @@ describe('a dissolve whose record never closed leaves the Team on disk', () => {
 });
 
 describe('a refusal before anything closes costs the Team nothing', () => {
-  it('keeps the cron store when the dispatcher check refuses', async () => {
-    const h = harness({
-      assess: async () => blocked('dirty'),
-    });
-
-    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow(/is dirty/);
-
-    expect(h.deleteStoreFile).not.toHaveBeenCalled();
-    expect(h.order).toEqual([]);
-    expect(h.held()).not.toBeNull();
-  });
-
   it('keeps the cron store when the post-stop assessment refuses', async () => {
     const h = harness({
       assess: async () => blocked('unmerged'),

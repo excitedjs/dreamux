@@ -35,9 +35,10 @@ helpers, provider loaders, or runtime implementations.
 
 Agent Runtime providers implement `AgentRuntimeProvider` and return one
 `AgentRuntime` instance per launched agent. The runtime interface is
-single-instance and has exactly three methods: `start`, `submit`, and `stop`.
-Nothing is pulled from the handle — every runtime fact flows out through the
-leased state and activity sinks Core supplied when it created the instance — so
+single-instance and has exactly four methods: `start`, `submit`, `interrupt`,
+and `stop`. Nothing is pulled from the handle — every runtime fact flows out
+through the leased state and activity sinks Core supplied when it created the
+instance — so
 there is no status, checkpoint, capability, or liveness method to call on it.
 Everything that is a read rather than a live handle hangs off the provider
 instead: config reading, onboarding, bin checks,
@@ -411,6 +412,80 @@ Source:
 - `/packages/agent-runtime/claude-code/src/runtime-activity.ts`
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
+
+### Turn Interruption
+
+`AgentRuntime.interrupt()` ends the turn a runtime is running right now and
+leaves the runtime alive. It is not a stop: the native session, its model
+context, and the process all survive, so the agent answers the next submission
+without a restart.
+
+The outcome is `interrupted` or `idle`, and the provider decides which — it is
+the only party that knows whether a native turn is open, so Core never
+re-derives that from turn records. `idle` means there was nothing to interrupt.
+A provider that cannot reach its runtime rejects rather than reporting `idle`,
+because "nothing was running" and "the request failed" are different answers to
+the caller.
+
+Interrupting never starts a dormant runtime. Core's runtime owner interrupts
+only a runtime this process already holds and answers `idle` otherwise, so a
+`/stop` cannot resurrect an agent that had already gone quiet.
+
+Each provider maps the neutral call to its own protocol:
+
+- **Claude Code** writes a stream-json `control_request` with
+  `subtype: "interrupt"`, the same outbound control channel Remote Control
+  already uses, and resolves on the matching `control_response`. Queued commands
+  are deliberately not cancelled. The ask is the resident session's fact, not
+  any one request's: claude interrupts whatever it is doing, and a session with
+  nothing outstanding answers `idle` rather than interrupting the agent's own
+  background work.
+
+  What ends the interrupted work is the artifact the CLI leaves behind, and
+  only that. Measured against 2.1.263, an accepted interrupt emits a `result`
+  with `subtype: "error_during_execution"`, `is_error: true`, no result text,
+  and the interrupted command's own `user_message_uuid`; nothing in it says
+  "interrupt", so the discriminator is the session's own outstanding request.
+  That request is spent on the first `result` either way — an accepted
+  interrupt that found nothing to stop still ends in an ordinary result, and a
+  later genuine failure is nobody's interrupt. The requests the artifact names
+  settle `stopped`: they were answered, but with nothing said.
+
+  The CLI also writes `[Request interrupted by user]` itself, as a text block
+  on a `user` envelope. Those blocks are not displayed, so the provider pushes
+  the same sentence as an `assistant.message` — the shape ruled for
+  `Compacted session` — and that line, not the card's end status, is what an
+  interrupt owes the operator.
+- **Codex** sends `turn/interrupt` with `{ threadId, turnId }` and gets an empty
+  response. The method is part of the app-server v2 surface at the declared
+  minimum `0.137.0`, so this added no version requirement. An accepted interrupt
+  is not a terminal of its own: codex answers it with an ordinary
+  `turn/completed` whose only mark is `turn.status: "interrupted"`, with
+  `error: null` and no items (measured against codex-cli 0.153.4; `status` is
+  required on the wire from `0.137.0`). The provider therefore reads that status
+  rather than inferring the interrupt from having asked for one, and pushes the
+  same `[Request interrupted by user]` assistant message ahead of the end it
+  reports.
+
+  The end reads the same status. An interrupted turn ends `interrupted` on both
+  runtimes, which is what the card shows: a Feishu COT renders `turn.ended`
+  verbatim, mapping `completed` to `RUN_FINISHED status: done` and `interrupted`
+  to `status: interrupted`. The operator first ruled the end status did not
+  matter and codex kept its own `completed`; after testing an alpha he ruled
+  that both runtimes must read interrupted, and they now match.
+
+  What still differs is the submission settlement, and it is not a card fact: an
+  interrupted Claude Code request settles `stopped`, delivering nothing, while a
+  codex turn settles with the completion codex reports over the items it
+  produced before the interrupt. Nobody has asked for those to agree.
+
+Source:
+
+- `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/agent-runtime/claude-code/src/rpc.ts`
+- `/packages/agent-runtime/claude-code/src/control-rpc.ts`
+- `/packages/agent-runtime/codex/src/turn-manager.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 
 ### Claude Code Stream-Json Settlement
 

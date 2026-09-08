@@ -28,6 +28,14 @@ depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`, and
   injected `invoke` port first: a missing or closed Team is refused with a
   public failure and mutates no routing state. A dissolved Team's routes are
   invalidated from the `team.closed` event.
+- Own the Feishu slash-command surface. A human message whose leading text
+  (after mentions) starts with a known `/command` token is executed here as one
+  Command against Core and answered as a receipt; it is never delivered to any
+  agent runtime, and no agent is asked to render the reply. Commands live in one
+  table in `feishu-slash-commands.ts`; adding one must not add a dispatch site.
+  A group message must @-mention the bot to count as a command, and only the
+  ordinary delivery authorization gates it — there is no separate command
+  permission.
 - Normalize inbound Feishu content into agent-facing channel results.
 - Download inbound attachments after the host access gate allows delivery.
 - Own attachment cache layout, path sanitization, permissions, retention, and

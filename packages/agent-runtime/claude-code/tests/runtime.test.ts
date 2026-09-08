@@ -67,6 +67,9 @@ class FakeSession implements ClaudeCodeSession {
   stopCalls = 0;
   onExitHandler: ((error: Error) => void) | null = null;
   readonly submits: Array<{ prompt: string; commandUuid: string }> = [];
+  /** Every control request written to stdin, in order (interrupt included). */
+  readonly controlRequests: Array<{ request_id: string }> = [];
+  interruptCalls = 0;
   private readonly rpc: ClaudeCodeStreamRpc;
 
   constructor(
@@ -75,7 +78,13 @@ class FakeSession implements ClaudeCodeSession {
   ) {
     this.rpc = new ClaudeCodeStreamRpc(new Writable({
       write: (chunk: Buffer, _encoding, callback) => {
-        const message = JSON.parse(chunk.toString()) as {
+        const frame = JSON.parse(chunk.toString()) as Record<string, unknown>;
+        if (frame['type'] === 'control_request') {
+          this.controlRequests.push(frame as { request_id: string });
+          callback();
+          return;
+        }
+        const message = frame as unknown as {
           uuid: string; message: { content: Array<{ text: string }> };
         };
         const prompt = message.message.content[0]!.text;
@@ -103,6 +112,11 @@ class FakeSession implements ClaudeCodeSession {
 
   submit(prompt: string, options?: TurnSubmitOptions, commandUuid?: string): Promise<RuntimeAdmission> {
     return this.rpc.submit(prompt, options, commandUuid);
+  }
+
+  interrupt(reason: string): Promise<boolean> {
+    this.interruptCalls += 1;
+    return this.rpc.interrupt(reason);
   }
 
   emit(event: Record<string, unknown>): void {
@@ -393,6 +407,53 @@ describe('ClaudeCodeRuntime structured output', () => {
 // ─── submit(): prepared text only, no native rendering ──────────────────────
 
 describe('ClaudeCodeRuntime submit contract', () => {
+  it('answers idle when no resident session has reached a live child', async () => {
+    const h = new Harness();
+    h.behavior.failStart = () => new Error('spawn failed');
+    const runtime = await tracked(h.createRuntime());
+    const startFailure = expect(runtime.start()).rejects.toThrow('spawn failed');
+    const admissionPromise = runtime.submit({ text: 'racing spawn' });
+
+    // Interrupt must neither await the spawn it did not initiate nor inherit
+    // its failure: with no live session there is nothing to interrupt.
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+
+    await admissionPromise;
+    await startFailure;
+  });
+
+  it('interrupts only outstanding work and starts no session to do it', async () => {
+    const h = new Harness();
+    h.behavior.holdResult = true;
+    const runtime = await tracked(h.createRuntime());
+
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+    expect(h.sessions).toHaveLength(0);
+
+    await runtime.start();
+    // A live session with nothing outstanding is still idle: `/stop` says no
+    // turn is running rather than interrupting the agent's background work.
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+
+    const admission = await runtime.submit({ text: 'keep working' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    const session = h.sessions[0]!;
+    const interrupted = runtime.interrupt();
+    await drain();
+    session.emit({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: session.controlRequests.at(-1)!.request_id,
+      },
+    });
+    await expect(interrupted).resolves.toEqual({ status: 'interrupted' });
+    expect(session.interruptCalls).toBe(2);
+
+    await runtime.stop();
+    await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+  });
+
   it('forwards submitted text to the native turn verbatim, with no wrapping or native syntax injected', async () => {
     const h = new Harness();
     let capturedPrompt: string | null = null;

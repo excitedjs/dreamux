@@ -4,7 +4,8 @@
  * The complete, neutral Agent Runtime provider contract a runtime package
  * implements while importing only `@excitedjs/dreamux-types`. The seam is
  * deliberately minimal: a provider facade for selection, creation, and neutral
- * recent Activity reads; a live handle with only `start`, `submit`, and `stop`;
+ * recent Activity reads; a live handle with `start`, `submit`, `interrupt`, and
+ * `stop`;
  * and a Core-owned leased state sink runtime facts are pushed into. It never
  * exposes Dreamux host-private types (`DispatcherRow`, `DispatcherStore`,
  * `DispatcherConfig`, config/state stores, or host path-helper
@@ -394,6 +395,11 @@ export interface AgentRuntimeStartOutcome {
   readonly continuity: 'fresh' | 'resumed';
 }
 
+/** What happened when a caller asked a live runtime to interrupt its turn. */
+export interface AgentRuntimeInterruptOutcome {
+  readonly status: 'interrupted' | 'idle';
+}
+
 /**
  * The live runtime handle. Nothing is pulled from it: every runtime fact flows
  * out through the leased state and activity sinks.
@@ -407,6 +413,8 @@ export interface AgentRuntime {
    */
   start(): Promise<AgentRuntimeStartOutcome>;
   submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission>;
+  /** Interrupt the running native turn without starting or stopping the runtime. */
+  interrupt(): Promise<AgentRuntimeInterruptOutcome>;
   /**
    * Fence new input synchronously, terminate the owned runtime, and converge
    * every `submit` call that started before the fence. This promise MUST NOT

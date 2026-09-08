@@ -253,6 +253,21 @@ describe('handleProtocolEvent live activity', () => {
  * name.
  */
 describe('handleProtocolEvent native turn end', () => {
+  it('marks an interrupted turn on the card before ending it interrupted', () => {
+    const h = makeHarness();
+    h.fire({ kind: 'interrupted' });
+
+    // The CLI writes this sentence itself, on a `user` envelope whose text
+    // blocks are never displayed, so the provider is what puts it on the card.
+    expect(h.activityEvents).toEqual([
+      expect.objectContaining({
+        kind: 'assistant.message',
+        text: '[Request interrupted by user]',
+      }),
+    ]);
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
+  });
+
   it('emits exactly one ended fact for a turn that folded three commands into one result', () => {
     const h = makeHarness();
     h.fire(resultEvent(outcome({ text: 'one answer for all three' }), ['cmd-1', 'cmd-2', 'cmd-3']));

@@ -497,12 +497,12 @@ describe('introduceAckText', () => {
         { openId: 'peer-a', name: 'Peer A' },
         { openId: 'peer-b', name: 'Peer B' },
       ]),
-    ).toBe('✅ 已认识本群 2 个伙伴：@Peer A @Peer B');
+    ).toBe('✅ Met 2 peers in this group: @Peer A @Peer B');
   });
 
   it('uses a stable non-id fallback when Feishu omits a display name', () => {
     expect(introduceAckText([{ openId: 'peer-a' }])).toBe(
-      '✅ 已认识本群 1 个伙伴：@伙伴',
+      '✅ Met 1 peer in this group: @peer',
     );
   });
 

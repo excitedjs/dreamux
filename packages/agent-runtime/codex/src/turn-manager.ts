@@ -1,5 +1,6 @@
 import {
   extractAssistantText,
+  interruptTurn,
   subscribeTurnCollection,
   submitTurnStart,
   type CollectedTurn,
@@ -11,6 +12,7 @@ import { toolDisplay } from './tool-display.js';
 import type { ThreadItem } from './types.js';
 import type {
   AgentRuntimeActivitySink,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeSubmissionInput,
   JsonValue,
   RuntimeActivity,
@@ -79,6 +81,19 @@ export class TurnManager {
     return this.trackAdmission(
       this.enqueueDecision(() => this.submit(input.text, 'submission')),
     );
+  }
+
+  interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    return this.enqueueDecision(async () => {
+      if (this.stopped) return { status: 'idle' };
+      const active = [...this.nativeTurns].reverse().find(
+        ([, record]) => record.terminal === null && record.completion === null,
+      );
+      const threadId = this.opts.getThreadId();
+      if (active === undefined || threadId === null) return { status: 'idle' };
+      await interruptTurn(this.opts.client, threadId, active[0]);
+      return { status: 'interrupted' };
+    });
   }
 
   async stop(): Promise<void> {
@@ -185,13 +200,25 @@ export class TurnManager {
   }
 
   private observeTerminal(turnId: string, terminal: CollectedTurn | Error): void {
+    // An accepted interrupt is not a terminal of its own: codex answers it with
+    // an ordinary `turn/completed` whose only mark is `status: "interrupted"`
+    // (measured against codex-cli 0.153.4; see `TurnStatus`). Both the marker
+    // and the end below read that status, so an interrupted codex turn carries
+    // the same line and the same end an interrupted Claude Code turn does.
+    const interrupted =
+      !(terminal instanceof Error) && terminal.status === 'interrupted';
+    if (interrupted) this.emitActivity(interruptedActivity(turnId));
     // The display line ends here, on codex's own terminal. The collector
     // reports each turn's terminal once, so this is the one end the turn gets
     // from its stream: nothing below it — the record's own bookkeeping, the
     // terminal queue, the admissions gate, the completion the push-back line
     // builds out of this terminal — may change it, delay it, or withhold it.
     this.endNativeTurn(
-      terminal instanceof Error ? 'failed' : 'completed',
+      terminal instanceof Error
+        ? 'failed'
+        : interrupted
+          ? 'interrupted'
+          : 'completed',
       terminal instanceof Error ? terminal.message : null,
     );
     this.unboundObservedTurnIds.delete(turnId);
@@ -383,6 +410,35 @@ function createRuntimeSubmission(): SubmissionDeferred {
  * assistant message，内容就这一行。」
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+
+/**
+ * The one line the card shows for an interrupted turn, in the words Claude
+ * Code's own UI uses for the same fact. codex reports an interrupt only as a
+ * terminal status on `turn/completed`, and a status is not a card fact, so
+ * without this push the card shows an ordinary end and nothing says the turn
+ * was stopped rather than answered. Operator ruling, 2026-09-07: 「codex 也加一个
+ * 打断text ，对齐claude code」. The shape is the one he ruled for `Compacted
+ * session`: an assistant message from the provider, not a new activity kind.
+ *
+ * The end matches the marker. The operator first ruled the end status did not
+ * matter — 「最后卡片是什么状态其实没那么重要」 — and codex's own `completed` was
+ * kept. He then ran the alpha and ruled otherwise, 2026-09-07: 「codex 发送 stop，
+ * COT 显示状态是任务已完成，Claude code 展示的是任务中断 … 应该都是任务中断才对」.
+ * A card's terminal is `turn.ended.status` verbatim: the Feishu channel maps
+ * `completed` to `RUN_FINISHED status: done` (任务已完成) and `interrupted` to
+ * `status: interrupted` (任务中断), so the end has to read the same status the
+ * marker does.
+ */
+const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
+
+function interruptedActivity(turnId: string): RuntimeActivity {
+  return {
+    kind: 'assistant.message',
+    occurredAt: Date.now(),
+    id: `${turnId}:interrupted`,
+    text: INTERRUPTED_MESSAGE,
+  };
+}
 
 function itemActivity(
   turnId: string,

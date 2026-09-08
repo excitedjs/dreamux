@@ -56,6 +56,7 @@ export function handleProtocolEvent(
 ): void {
   if (event.kind === 'command_lifecycle') return;
   if (event.kind === 'interrupted') {
+    emitActivity(interruptedActivity(context.activity), context.activitySink);
     endNativeTurn('interrupted', null, context.activitySink);
     context.activity.tools.clear();
     return;
@@ -128,6 +129,28 @@ function compactedActivity(activityState: NativeActivityState): RuntimeActivity 
     occurredAt: Date.now(),
     id: `stream-${activityState.activitySequence++}:compacted`,
     text: COMPACTED_SESSION_MESSAGE,
+  };
+}
+
+/**
+ * The one line the card shows for an interrupted turn, in Claude Code's own
+ * words. The CLI writes this sentence itself, but as a text block on a `user`
+ * envelope, and those blocks are not displayed (see the `user` note above) —
+ * an interrupted tool call otherwise leaves only a red tool row saying claude
+ * was told not to proceed. So the provider pushes the marker as an assistant
+ * message, the same shape ruled for `Compacted session`: no new activity kind,
+ * one more assistant message carrying the line. The operator ruled on
+ * 2026-09-07 that this line reaching the COT is what an interrupt owes the
+ * card, and that the card's terminal status matters less.
+ */
+const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
+
+function interruptedActivity(activityState: NativeActivityState): RuntimeActivity {
+  return {
+    kind: 'assistant.message',
+    occurredAt: Date.now(),
+    id: `stream-${activityState.activitySequence++}:interrupted`,
+    text: INTERRUPTED_MESSAGE,
   };
 }
 

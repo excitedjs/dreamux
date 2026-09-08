@@ -77,23 +77,23 @@ export class TeamClosing {
   /**
    * Decide, then stop, then close.
    *
-   * What "decide" means depends on who asked. A Dispatcher checks the workspace
-   * before anything stops: a refusal must leave the Team exactly as it found
-   * it, so a dirty checkout abandons the dissolve rather than half-dismantling a
-   * working Team. A TeamLeader cannot ask that question about itself — it is a
-   * writer, and so is every TeamMate it started — so it stops its children,
-   * then asks while it is still alive to be told the answer. `force` replaces
-   * the question rather than answering it.
+   * Every non-forced request already passed one read-only worktree assessment
+   * before admission, so a refusal there leaves the Team exactly as it found
+   * it. A TeamLeader cannot rely on that first answer about itself: it is a
+   * writer, and so is every TeamMate it started. Its path therefore stops its
+   * children and checks again while the TeamLeader is still alive, so a
+   * self-dissolve learns the answer before ending its own runtime. `force`
+   * replaces these questions rather than answering them.
    *
-   * Nobody is waiting on the answer: the Team already gave its caller a receipt
-   * and runs this behind it. Returning means the closed record is durable.
+   * The final assessment still runs after every runtime stops. It is the
+   * authority that permits close, so a writer cannot invalidate the admission
+   * answer between that early-out and reclamation.
+   *
+   * The Team already gave its caller a receipt after admission and runs this
+   * behind it. Returning means the closed record is durable.
    */
   async dissolve(input: TeamDissolveCommand): Promise<void> {
     let worktree: AgentEntityWorktreeIdentity;
-    if (!input.force && input.requester === 'dispatcher') {
-      // Nothing has stopped yet, so a refusal here costs the Team nothing.
-      await this.requireReclaimableWorktree();
-    }
     try {
       worktree = await this.stopForDissolve(input);
     } catch (error) {
@@ -186,11 +186,23 @@ export class TeamClosing {
     }
   }
 
-  private async requireReclaimableWorktree(): Promise<void> {
+  async requireReclaimableWorktree(): Promise<void> {
     const assessment = await this.assessWorktree();
     if (assessment.status === 'blocked') {
       throw new TeamDissolveBlockedError(assessment.reason);
     }
+  }
+
+  /** Report a failure from this Team's submitted dissolve operation. */
+  reportDissolveFailure(message: string, error: unknown): void {
+    this.deps.log.error(
+      {
+        dispatcher_id: this.deps.dispatcherId,
+        team_id: this.deps.teamId,
+        err: teamErrorInfo(error),
+      },
+      message,
+    );
   }
 
   /**

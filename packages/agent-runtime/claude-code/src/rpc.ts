@@ -3,14 +3,12 @@ import type { Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 
 import {
-  buildCanUseToolAllow,
-  buildControlAck,
-  buildRemoteControlEnable,
   buildUserMessage,
   LineBuffer,
   parseLine,
   TurnAggregator,
 } from './stream.js';
+import { ClaudeCodeControlRpc } from './control-rpc.js';
 import { completionFromTurnOutcome } from './runtime-session.js';
 import type { ParsedLine, TurnSubmitOptions } from './types.js';
 import type {
@@ -52,12 +50,23 @@ export class ClaudeCodeStreamRpc {
   private lifecycleSupported: boolean | null = null;
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
-  private remoteControlRequestId: string | null = null;
+  private readonly control: ClaudeCodeControlRpc;
+  /**
+   * An interrupt this session asked for is still unanswered.
+   *
+   * It is the session's fact, not a request's: claude interrupts whatever it is
+   * doing, and the artifact it leaves behind names the command it was in the
+   * middle of. Nothing in that artifact's shape separates it from a genuine
+   * execution error, so our own outstanding ask is the only discriminator.
+   */
+  private interruptRequested = false;
 
   constructor(
     private readonly stdin: Writable,
     private readonly options: ClaudeCodeStreamRpcOptions,
-  ) {}
+  ) {
+    this.control = new ClaudeCodeControlRpc(stdin, options);
+  }
 
   submit(
     prompt: string,
@@ -152,12 +161,38 @@ export class ClaudeCodeStreamRpc {
     this.consumed.clear();
     this.aggregator.discard();
     this.clearIdleIfEmpty();
+    // The session ended before claude answered the ask, so the ask is answered
+    // here instead: teardown interrupted the work, a transport loss did not.
+    if (this.interruptRequested) {
+      this.interruptRequested = false;
+      this.control.settleInterrupt(
+        settlement.kind === 'failed' ? settlement.error : undefined,
+        settlement.kind === 'stopped',
+      );
+    }
+  }
+
+  /**
+   * Ask claude to interrupt whatever it is doing.
+   *
+   * Answers false when no request is outstanding: there is then nothing this
+   * session was asked to do, and `/stop` says so rather than interrupting the
+   * agent's own background work.
+   */
+  async interrupt(reason: string): Promise<boolean> {
+    if (this.closed || this.requests.size === 0) return false;
+    this.interruptRequested = true;
+    try {
+      return await this.control.requestInterrupt(reason);
+    } catch (error) {
+      this.interruptRequested = false;
+      throw error;
+    }
   }
 
   enableRemoteControl(): void {
     if (this.closed || !this.stdin.writable) return;
-    this.remoteControlRequestId = randomUUID();
-    this.stdin.write(`${buildRemoteControlEnable(this.remoteControlRequestId)}\n`);
+    this.control.enableRemoteControl();
   }
 
   private clearIdleIfEmpty(): void {
@@ -240,24 +275,41 @@ export class ClaudeCodeStreamRpc {
           submittedUuids.push(id);
         }
         this.clearIdleIfEmpty();
-        const completion = answered.length === 0 ? null : completionFromTurnOutcome(
+        // The artifact an accepted interrupt leaves behind, measured against
+        // claude 2.1.263 for both an interrupted stream and an interrupted tool
+        // call: a `result` with subtype `error_during_execution`, `is_error`,
+        // no result text, and the interrupted command's own
+        // `user_message_uuid`. It answers the requests it names, but with
+        // nothing said rather than a completion, so they settle `stopped`.
+        // The mark is spent on the first result either way: an accepted
+        // interrupt that found nothing to stop still ends in an ordinary
+        // result, and a later genuine failure is nobody's interrupt.
+        const interrupted = this.interruptRequested &&
+          line.outcome.subtype === 'error_during_execution';
+        if (this.interruptRequested) {
+          this.interruptRequested = false;
+          this.control.settleInterrupt(undefined, interrupted);
+        }
+        const completion = interrupted || answered.length === 0 ? null : completionFromTurnOutcome(
           outcome, this.options.sessionId, this.options.outputSchemaEnabled === true,
         );
         // Remove the answered requests before callbacks can admit or stop work.
         // Native end is still delivered before these submissions settle.
-        this.options.onProtocolEvent?.({ kind: 'result', outcome, commandUuids: submittedUuids });
+        this.options.onProtocolEvent?.(interrupted
+          ? { kind: 'interrupted' }
+          : { kind: 'result', outcome, commandUuids: submittedUuids });
         for (const request of answered) {
           this.acceptRequest(request);
-          request.settle({ kind: 'completion', completion: completion! });
+          request.settle(interrupted ? { kind: 'stopped' } : { kind: 'completion', completion: completion! });
         }
         if (this.lifecycleSupported !== true) this.rejectWaitingRequests();
         break;
       }
       case 'control_request':
-        this.onControlRequest(line.requestId, line.subtype, line.request);
+        this.control.onControlRequest(line.requestId, line.subtype, line.request);
         break;
       case 'control_response':
-        this.onControlResponse(line.requestId, line.ok, line.response, line.error);
+        this.control.onControlResponse(line.requestId, line.ok, line.response, line.error);
         break;
       case 'parse_error':
         this.options.log?.('warn', `claude stream-json parse error: ${line.raw}`);
@@ -289,56 +341,6 @@ export class ClaudeCodeStreamRpc {
       request.settle({ kind: 'failed', error });
     }
     this.clearIdleIfEmpty();
-  }
-
-  private onControlRequest(
-    requestId: string | null,
-    subtype: string | null,
-    request: Record<string, unknown>,
-  ): void {
-    if (requestId === null || !this.stdin.writable) return;
-    // Unattended posture: answer permission callbacks so a turn never wedges
-    // waiting on a human.
-    let reply: string;
-    if (subtype === 'can_use_tool') {
-      const rawInput = request['input'];
-      const input =
-        typeof rawInput === 'object' &&
-        rawInput !== null &&
-        !Array.isArray(rawInput)
-          ? (rawInput as Record<string, unknown>)
-          : {};
-      reply = buildCanUseToolAllow(requestId, input);
-    } else {
-      reply = buildControlAck(requestId);
-    }
-    this.stdin.write(`${reply}\n`);
-  }
-
-  private onControlResponse(
-    requestId: string | null,
-    ok: boolean,
-    response: Record<string, unknown> | null,
-    error: string | null,
-  ): void {
-    if (requestId === null || requestId !== this.remoteControlRequestId) return;
-    this.remoteControlRequestId = null;
-    if (ok && response !== null) {
-      const url = response['session_url'] ?? response['connect_url'];
-      if (typeof url === 'string') {
-        this.options.onRemoteControlUrl?.(url);
-      } else {
-        this.options.log?.(
-          'warn',
-          'claude remote control enable succeeded without a URL',
-        );
-      }
-      return;
-    }
-    this.options.log?.(
-      'warn',
-      `claude remote control enable failed${error !== null ? `: ${error}` : ''}`,
-    );
   }
 }
 

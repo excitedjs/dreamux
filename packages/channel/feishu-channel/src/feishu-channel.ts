@@ -15,7 +15,6 @@
  * Channel's own commit queue, and releases the bot.
  */
 import type {
-  ChannelCoreEvent,
   ChannelCorePort,
   ChannelEventSubscription,
   ChannelMcpCaller,
@@ -47,10 +46,20 @@ import {
 import { createAskUserRegistry } from './feishu-ask-user.js';
 import { FeishuCotSessionSeam } from './feishu-cot-session.js';
 import { FeishuProvisioning } from './feishu-provisioning.js';
+import {
+  FeishuRouteReconciliation,
+  unavailableTeamReason,
+} from './feishu-route-reconciliation.js';
 import { FeishuBindingOperations } from './feishu-session-bindings.js';
+import {
+  dispatchFeishuSlashCommand,
+  type FeishuSlashCommand,
+  type FeishuSlashCommandReply,
+} from './feishu-slash-commands.js';
 import {
   commandErrorCode,
   errorMessage,
+  submissionProvesNoAdmission,
   submitOutcome,
   type FeishuSubmission,
   type FeishuSubmitOutcome,
@@ -124,6 +133,7 @@ export class FeishuChannelSession {
   private readonly targetRouter: FeishuTargetRouter;
   private readonly cot: FeishuCotSessionSeam;
   private readonly bindings: FeishuBindingOperations;
+  private readonly routeReconciliation: FeishuRouteReconciliation;
   private readonly provisioning: FeishuProvisioning;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
@@ -171,6 +181,13 @@ export class FeishuChannelSession {
       notify: (target, card, anchorTeamName) =>
         this.notify(target, card, anchorTeamName),
     });
+    this.routeReconciliation = new FeishuRouteReconciliation({
+      dispatcherId: opts.dispatcherId,
+      channelId: opts.channelId,
+      log: opts.log,
+      routing: this.routing,
+      announceRoutesRemoved: (input) => this.bindings.announceRoutesRemoved(input),
+    });
     this.provisioning = new FeishuProvisioning({
       dispatcherId: opts.dispatcherId,
       channelId: opts.channelId,
@@ -202,8 +219,32 @@ export class FeishuChannelSession {
     };
     this.lifecycle = lifecycle;
     this.cot.start(() => lifecycle.fence.isCurrent());
+    // The single subscription, demultiplexed here because this session owns
+    // both consumers. Nothing awaits: the COT seam projects synchronously, and
+    // a closed Team's routes are removed through the store's ordinary commit,
+    // queued rather than waited on, because the event stream must not stall
+    // behind a disk write. Until that commit lands one more message can still
+    // route to the closed Team — Core rejects it before admission, and the
+    // fallback removes the route again on its way to the Dispatcher Agent.
     this.subscription = port.events.subscribe((event) => {
-      this.onCoreEvent(event);
+      try {
+        this.cot.handle(event);
+        if (event.kind !== 'team.state' || event.status !== 'closed') return;
+        void this.routeReconciliation.forgetTeamRoutes(
+          event.team_name,
+          'team_closed',
+        );
+      } catch (error) {
+        this.opts.log.warn(
+          {
+            dispatcher_id: this.opts.dispatcherId,
+            channel_id: this.opts.channelId,
+            event_kind: event.kind,
+            err: { message: errorMessage(error) },
+          },
+          'Feishu core-event listener failed',
+        );
+      }
     });
   }
 
@@ -271,78 +312,6 @@ export class FeishuChannelSession {
     if (this.lifecycle === lifecycle) this.lifecycle = undefined;
   }
 
-  // ── Core facts ─────────────────────────────────────────────────────────
-
-  /**
-   * The single subscription, demultiplexed.
-   *
-   * Nothing here awaits. The COT seam projects synchronously, and a closed
-   * Team's routes are removed through the store's ordinary commit, queued
-   * rather than waited on, because the event stream must not stall behind a
-   * disk write. Until that commit lands one more message can still route to
-   * the closed Team — Core rejects it before admission, and the fallback
-   * removes the route again on its way to the Dispatcher Agent.
-   */
-  private onCoreEvent(event: ChannelCoreEvent): void {
-    try {
-      this.cot.handle(event);
-      if (event.kind !== 'team.state') return;
-      if (event.status !== 'closed') return;
-      void this.forgetTeamRoutes(event.team_name, 'team_closed');
-    } catch (err) {
-      this.opts.log.warn(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          channel_id: this.opts.channelId,
-          event_kind: event.kind,
-          err: { message: errorMessage(err) },
-        },
-        'Feishu core-event listener failed',
-      );
-    }
-  }
-
-  /**
-   * Commit the removal of every route to a Team, and say what it removed.
-   *
-   * All reasons reach the same durable change, so they share the one commit
-   * path the store owns rather than growing a second authority beside it. A
-   * commit that fails is logged and nothing more: the route is still live, and
-   * the next message to it earns the same rejection and the same attempt.
-   *
-   * A final closed event announces dissolution; an admission rejection only
-   * announces that the route ended. A missing Team stays silent.
-   */
-  private async forgetTeamRoutes(
-    teamName: string,
-    reason: 'team_closed' | 'route_ended' | 'stale_route',
-  ): Promise<void> {
-    const scope = {
-      dispatcher_id: this.opts.dispatcherId,
-      channel_id: this.opts.channelId,
-      team_name: teamName,
-      reason,
-    };
-    try {
-      const { removed } = await this.routing.forgetTeam(teamName);
-      if (removed.length === 0) return;
-      this.opts.log.info(
-        { ...scope, targets: removed.map((row) => describeTarget(row.target)) },
-        'removed Feishu bindings for a Team that can no longer answer',
-      );
-      // Past the commit: the rows are gone from disk, and what follows is
-      // presentation over what they said.
-      if (reason !== 'stale_route') {
-        this.bindings.announceRoutesRemoved({ teamName, removed, reason });
-      }
-    } catch (err) {
-      this.opts.log.warn(
-        { ...scope, err: { message: errorMessage(err) } },
-        'could not commit the removal of Feishu bindings',
-      );
-    }
-  }
-
   private invoke(command: string, payload: JsonValue): Promise<JsonValue> {
     const invoker = this.invoker;
     if (invoker === undefined) {
@@ -404,6 +373,40 @@ export class FeishuChannelSession {
     }
   }
 
+  /** Execute a recognized command after route projection, without submission. */
+  command(input: {
+    command: FeishuSlashCommand;
+    target: FeishuTarget;
+    containerChatId: string | null;
+  }): Promise<FeishuSlashCommandReply> {
+    const plan = this.routing.plan(input.target, input.containerChatId);
+    return dispatchFeishuSlashCommand(input.command, {
+      plan,
+      bindings: this.routing.listBindings(),
+      invoke: async (command, payload) => {
+        try {
+          return await this.invoke(command, payload);
+        } catch (error) {
+          const code = commandErrorCode(error);
+          if (
+            plan.kind === 'bound' &&
+            (code === 'TEAM_NOT_FOUND' || code === 'TEAM_CLOSED')
+          ) {
+            await this.routeReconciliation.forgetTeamRoutes(
+              plan.teamName,
+              unavailableTeamReason(code),
+            );
+          }
+          throw error;
+        }
+      },
+      // The only place that knows a bot may not offer the lookup at all. Below
+      // this line a chat name is simply something you ask for and may not get.
+      resolveChatName: (chatId) =>
+        this.bot.resolveChatName?.(chatId) ?? Promise.resolve(undefined),
+    });
+  }
+
   /** Deliver one accepted message wherever this Channel routes it. */
   async deliver(input: {
     target: FeishuTarget;
@@ -439,11 +442,11 @@ export class FeishuChannelSession {
       // TEAM_CLOSED also covers a pending dissolve that may still be refused.
       // Announce only route removal until the final Team state proves closure.
       // TEAM_NOT_FOUND is silent correction of a row pointing at nothing.
-      await this.forgetTeamRoutes(
+      await this.routeReconciliation.forgetTeamRoutes(
         plan.teamName,
-        outcome.status === 'rejected' && outcome.code === 'TEAM_CLOSED'
-          ? 'route_ended'
-          : 'stale_route',
+        unavailableTeamReason(
+          outcome.status === 'rejected' ? outcome.code : null,
+        ),
       );
     }
     return this.submit(null, submission);
@@ -668,12 +671,6 @@ export class FeishuChannelSession {
       lifecycle.inFlight.delete(task);
     }
   }
-}
-
-function submissionProvesNoAdmission(outcome: FeishuSubmitOutcome): boolean {
-  return outcome.status === 'rejected' ||
-    outcome.status === 'failed' ||
-    outcome.status === 'stopped';
 }
 
 /** Map a peer bot to the `list_chat_bots` wire shape. */

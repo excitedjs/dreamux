@@ -9,7 +9,7 @@
  * possible.
  *
  * Why this file exists: the minimize-provider-boundaries refactor deliberately
- * shrank the live `AgentRuntime` handle to `start`/`submit`/`stop` and deleted
+ * shrank the live `AgentRuntime` handle to its four neutral runtime actions and deleted
  * every pull-style member (`resume`, `waitIdle`, `getStatus`, `getCheckpoint`,
  * `wasCheckpointResumed`, `getContext`, handle-level `getCapabilities`/
  * `providerRef`). A provider author who accidentally widens the interface, or
@@ -53,17 +53,17 @@ function assertNever(value: never): never {
   throw new Error(`unreachable union member: ${JSON.stringify(value)}`);
 }
 
-describe('AgentRuntime live handle exposes exactly start, submit, stop', () => {
-  it('the interface has no member beyond start/submit/stop', () => {
+describe('AgentRuntime live handle exposes exactly start, submit, interrupt, stop', () => {
+  it('the interface has no member beyond start/submit/interrupt/stop', () => {
     // Proves absence-by-construction: `keyof` on a plain (non-extending)
     // interface is exactly its declared member set. If `resume`, `waitIdle`,
     // `getStatus`, `getCheckpoint`, `wasCheckpointResumed`, `getContext`, or a
     // handle-level `getCapabilities`/`providerRef` were reintroduced, this
     // equality would fail to compile.
-    assertType<Equal<keyof AgentRuntime, 'start' | 'submit' | 'stop'>>();
+    assertType<Equal<keyof AgentRuntime, 'start' | 'submit' | 'interrupt' | 'stop'>>();
   });
 
-  it('a fake object with only start/submit/stop satisfies AgentRuntime end-to-end', async () => {
+  it('a fake object with the four actions satisfies AgentRuntime end-to-end', async () => {
     let seenInput: AgentRuntimeSubmissionInput | undefined;
     let stopped = false;
 
@@ -85,6 +85,9 @@ describe('AgentRuntime live handle exposes exactly start, submit, stop', () => {
         seenInput = input;
         return { status: 'submitted', submission };
       },
+      async interrupt() {
+        return { status: 'idle' as const };
+      },
       async stop(): Promise<void> {
         stopped = true;
       },
@@ -96,6 +99,7 @@ describe('AgentRuntime live handle exposes exactly start, submit, stop', () => {
     const admission = await handle.submit({ text: 'hello agent' });
     expect(seenInput).toEqual({ text: 'hello agent' });
     expect(admission.status).toBe('submitted');
+    await expect(handle.interrupt()).resolves.toEqual({ status: 'idle' });
 
     await handle.stop();
     expect(stopped).toBe(true);

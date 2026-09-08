@@ -135,7 +135,7 @@ function renderSingleCard(text: string): RenderedCard {
 function feishuChatClient(client: lark.Client): {
   chat?: {
     create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
-    get?: (input: unknown) => Promise<{ data?: { chat_mode?: string } }>
+    get?: (input: unknown) => Promise<{ data?: { chat_mode?: string; name?: string } }>
     members?: { create?: (input: unknown) => Promise<unknown> }
   }
 } {
@@ -143,7 +143,7 @@ function feishuChatClient(client: lark.Client): {
     im?: {
       chat?: {
         create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
-        get?: (input: unknown) => Promise<{ data?: { chat_mode?: string } }>
+        get?: (input: unknown) => Promise<{ data?: { chat_mode?: string; name?: string } }>
         members?: { create?: (input: unknown) => Promise<unknown> }
       }
     }
@@ -289,6 +289,8 @@ export interface FeishuTransport {
     inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>
     /** Optional capability for custom transports; callers must fail safe when absent. */
     getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>
+    /** Optional best-effort lookup of a chat's current Feishu name. */
+    resolveChatName?(chatId: string): Promise<string | undefined>
     addReaction(messageId: string, emoji: string): Promise<string>
     editText(messageId: string, text: string): Promise<void>
     /** Repaint an already-sent card in place, by message id. */
@@ -505,6 +507,14 @@ export function createFeishuTransport(
       return mode === 'p2p' || mode === 'group' || mode === 'topic'
         ? mode
         : undefined
+    },
+
+    async resolveChatName(chatId: string): Promise<string | undefined> {
+      const chatClient = feishuChatClient(client)
+      if (chatClient.chat?.get === undefined) return undefined
+      const res = await chatClient.chat.get({ path: { chat_id: chatId } })
+      const name = res.data?.name
+      return typeof name === 'string' && name !== '' ? name : undefined
     },
 
     async addReaction(messageId: string, emoji: string): Promise<string> {

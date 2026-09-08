@@ -375,10 +375,10 @@ describe('neutral contract shapes stay minimal (structural, not bare-token — s
     throw new Error(`unterminated interface ${name}`);
   }
 
-  it('AgentRuntime (the live handle) exposes exactly start/submit/stop — no waitIdle, resume, getStatus, getCheckpoint, getContext, getCapabilities, or providerRef', () => {
+  it('AgentRuntime (the live handle) exposes exactly start/submit/interrupt/stop — no waitIdle, resume, getStatus, getCheckpoint, getContext, getCapabilities, or providerRef', () => {
     const body = stripComments(interfaceBody(agentRuntimeSrc, 'AgentRuntime'));
     const methodNames = [...body.matchAll(/^\s*([a-zA-Z]+)\(/gm)].map((m) => m[1]);
-    expect(methodNames.sort()).toEqual(['start', 'stop', 'submit']);
+    expect(methodNames.sort()).toEqual(['interrupt', 'start', 'stop', 'submit']);
     expect(body).not.toMatch(/\bproviderRef\b/);
   });
 

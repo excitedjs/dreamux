@@ -90,9 +90,24 @@ export interface ThreadItem {
   [k: string]: unknown;
 }
 
+/**
+ * How a turn ended, in codex's own words. Required on the wire since 0.137
+ * (`Turn.status: TurnStatus`, camelCase-serialized); measured against
+ * codex-cli 0.153.4, where an accepted `turn/interrupt` is answered with an
+ * ordinary `turn/completed` carrying `status: "interrupted"` and `error: null`.
+ * Nothing else on that notification distinguishes it from a turn codex
+ * answered, which is why the status is read rather than inferred.
+ */
+export type TurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
+
 export interface TurnCompletedNotification {
   threadId: string;
-  turn: { id: string; items?: ThreadItem[]; error?: { message: string } };
+  turn: {
+    id: string;
+    status: TurnStatus;
+    items?: ThreadItem[];
+    error?: { message: string };
+  };
 }
 
 /**

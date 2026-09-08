@@ -365,6 +365,107 @@ describe('CodexRuntime stop() semantics', () => {
 });
 
 describe('CodexRuntime submit() and settlement', () => {
+  it('interrupts the tracked native turn and reports idle when none is running', async () => {
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({ client });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+    await runtime.start();
+
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+    expect(client.requests.find((request) => request.method === 'turn/interrupt'))
+      .toMatchObject({
+        params: { threadId: 'fresh-thread-1', turnId: 'turn-1' },
+      });
+
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+    await runtime.stop();
+  });
+
+  it('marks an interrupted turn on the card and ends it interrupted', async () => {
+    // codex answers an accepted `turn/interrupt` with an ordinary
+    // `turn/completed` — `status: "interrupted"`, `error: null`, no items
+    // (measured, codex-cli 0.153.4). Both facts the card shows come off that
+    // status: without the marker the turn would look answered, and without the
+    // end status the Feishu COT would render 任务已完成 rather than 任务中断.
+    const activity: RuntimeActivity[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+    client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
+    await submission.settled;
+
+    expect(activity.map((fact) => fact.kind)).toEqual([
+      'assistant.message',
+      'turn.ended',
+    ]);
+    expect(activity[0]).toMatchObject({ text: '[Request interrupted by user]' });
+    expect(activity[1]).toMatchObject({ status: 'interrupted', reason: null });
+    await runtime.stop();
+  });
+
+  it('leaves a turn codex answered unmarked and completed', async () => {
+    // The status is the whole discriminator, so the ordinary terminal must not
+    // reach either branch: nothing but `interrupted` puts the marker on the
+    // card or changes the end codex reports.
+    const activity: RuntimeActivity[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+
+    expect(activity.map((fact) => fact.kind)).toEqual([
+      'assistant.message',
+      'turn.ended',
+    ]);
+    expect(activity[0]).toMatchObject({ text: 'done' });
+    expect(activity[1]).toMatchObject({ status: 'completed', reason: null });
+    await runtime.stop();
+  });
+
+  it('interrupts the most recently started turn when two native turns are open', async () => {
+    const client = new FakeCodexWsClient({
+      autoComplete: false,
+      scriptedTurnIds: ['turn-older', 'turn-newer'],
+    });
+    const { deps } = makeDeps({ client });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    requireSubmitted(await runtime.submit({ text: 'first' }));
+    requireSubmitted(await runtime.submit({ text: 'second' }));
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+
+    expect(client.requests.filter((request) => request.method === 'turn/interrupt'))
+      .toEqual([expect.objectContaining({
+        params: { threadId: 'fresh-thread-1', turnId: 'turn-newer' },
+      })]);
+    client.emitCompleted('fresh-thread-1', 'turn-older', 'first done');
+    client.emitCompleted('fresh-thread-1', 'turn-newer', 'second done');
+    await runtime.stop();
+  });
+
   it('admits a second submit during an active turn without waiting for the first (non-blocking mid-turn submit)', async () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({ client });
