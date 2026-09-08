@@ -2,8 +2,7 @@
  * What a COT card shows for a tool call. Core redacts; this module owns display
  * text, deriving it from one tool call; `feishu-cot-events.ts`, its only
  * caller, builds the events and fits them to Feishu's per-event limit — the
- * one bound a card string has, and the one the operator ruled on 2026-09-04
- * that truncation must follow.
+ * one bound a card string has, and the one truncation must follow.
  */
 import type {
   RuntimeToolAction,
@@ -49,9 +48,8 @@ export interface CotItemList {
  * invocation the expanded row shows in the caller's notation instead of as
  * JSON, and the items the call was about as the pills of a `list` segment.
  * Nothing here comes from the tool's identity: a Channel-owned tool and a
- * foreign MCP tool are presented by the same rule — the operator ruled on
- * 2026-09-04 that the Channel's hand-made titles for its own `reply`, `react`
- * and `list_chat_bots` all come back out.
+ * foreign MCP tool are presented by the same rule, so the Channel's hand-made
+ * titles for its own `reply`, `react` and `list_chat_bots` all come back out.
  */
 interface ToolPresentation {
   readonly toolCallName: string;
@@ -67,9 +65,8 @@ interface ToolPresentation {
  * enum (`search`, `bash`, `read`, `write`, `doc`, `calendar`, `task`,
  * `meeting`, `default`) or a token from the card icon library. This Channel
  * uses the built-ins a runtime's tool actions map onto, and the library's
- * `app-default_outlined` for a call nothing could label — the icon the
- * operator picked on 2026-09-04, when he also ruled an MCP tool row hides its
- * arguments.
+ * `app-default_outlined` for a call nothing could label; an MCP tool row also
+ * hides its arguments.
  */
 export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'app-default_outlined';
 
@@ -128,8 +125,7 @@ export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
  * within `TOOL_ITEMS_SOFT_MAX_BYTES` so a patch over many files leaves room
  * for its diff: the pills that fit, then one `+N` pill for the rest. A first
  * item longer than the whole budget is truncated into one pill instead of
- * being folded into a count no pill explains — the operator ruled on
- * 2026-09-04 that truncation happens per item.
+ * being folded into a count no pill explains; truncation happens per item.
  */
 function itemList(event: CotToolCallActivity): CotItemList | null {
   if (event.items.length === 0) return null;
@@ -172,12 +168,12 @@ const NO_BREAK_SPACE = '\u00a0';
  * A `text` segment as the Feishu client keeps its spacing. The client
  * collapses a run of ordinary spaces to one and drops the run that begins a
  * line, so a text output lost its indentation and its column alignment; a
- * no-break space stays where it was (probe card, 2026-09-04: raw spaces
- * collapsed, U+00A0 and the `&nbsp;` entity both kept the indentation, a
- * `<pre>` wrapper was shown as literal text). Each space that begins a line,
- * or sits in a run of two or more, becomes U+00A0; a single space between
- * words stays a space, so a long line still wraps there. The character, not
- * the entity: two bytes of the event budget instead of six.
+ * no-break space stays where it was: raw spaces collapse, while both U+00A0
+ * and the `&nbsp;` entity keep the indentation, and a `<pre>` wrapper renders
+ * as literal text instead of preserving whitespace. Each space that begins a
+ * line, or sits in a run of two or more, becomes U+00A0; a single space
+ * between words stays a space, so a long line still wraps there. The
+ * character, not the entity: two bytes of the event budget instead of six.
  */
 export function preserveSpacing(text: string): string {
   return text.replace(/^ +| {2,}/gmu, (run) => NO_BREAK_SPACE.repeat(run.length));

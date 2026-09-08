@@ -525,7 +525,7 @@ export class TeamService {
    * for a start that happens inside its admitted-input span. Starting the
    * leader here first put a codex start failure before the announcement, so
    * nothing was announced and nothing ended, and the Channel's receipt card
-   * stayed on its opening label with no error (found live, 2026-09-03).
+   * stayed on its opening label with no error.
    *
    * A persisted `starting` Team with a valid leader identity is the
    * recoverable tail of Team creation; it becomes `running` once its leader

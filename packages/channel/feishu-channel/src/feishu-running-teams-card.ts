@@ -64,8 +64,8 @@ function escapeMarkdown(value: string): string {
  * tall as its data: Feishu lays a two-column `column_set` out as a waterfall, so
  * a tall tile lengthens its own column and never stretches the one beside it.
  * A draft truncated the intent and counted all but the first binding to keep
- * tiles the same height; the operator rejected that on 2026-09-07 because the
- * waterfall layout makes those truncations pointless.
+ * tiles the same height; that was rejected because the waterfall layout makes
+ * those truncations pointless.
  */
 function teamItem(input: {
   team: RunningTeamRow;

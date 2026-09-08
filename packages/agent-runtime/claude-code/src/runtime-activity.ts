@@ -89,8 +89,7 @@ export function handleProtocolEvent(
  * context the CLI injected into its own conversation: the body of a skill it
  * just loaded, hook output, reminders. None of that text is the agent's, and
  * none of it is the operator's (stdin is never echoed back), so it is not
- * displayed at all: every `user` envelope is hidden, by operator ruling on
- * 2026-09-03.
+ * displayed at all: every `user` envelope is hidden.
  */
 function emitStreamActivity(
   line: ClaudeActivityLine,
@@ -116,11 +115,10 @@ function emitStreamActivity(
 
 /**
  * The one line the card shows for a compaction, in the words Claude Code's
- * own UI uses. The summary the CLI wrote is not shown — the operator ruled on
- * 2026-09-04 that the body is too long and that the card only needs to say a
- * compaction happened, the single line the Claude Code web UI shows. He also
- * ruled the shape: no new activity kind, the provider just pushes one more
- * assistant message carrying that line.
+ * own UI uses. The summary the CLI wrote is not shown: the body is too long
+ * for a card, which only needs to say a compaction happened — the single
+ * line the Claude Code web UI shows. Hence the shape here: no new activity
+ * kind, just one more assistant message carrying that line.
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 
@@ -139,10 +137,9 @@ function compactedActivity(activityState: NativeActivityState): RuntimeActivity 
  * envelope, and those blocks are not displayed (see the `user` note above) —
  * an interrupted tool call otherwise leaves only a red tool row saying claude
  * was told not to proceed. So the provider pushes the marker as an assistant
- * message, the same shape ruled for `Compacted session`: no new activity kind,
- * one more assistant message carrying the line. The operator ruled on
- * 2026-09-07 that this line reaching the COT is what an interrupt owes the
- * card, and that the card's terminal status matters less.
+ * message, the same shape used for `Compacted session`: no new activity kind,
+ * one more assistant message carrying the line. This line reaching the COT is
+ * what an interrupt owes the card; the card's terminal status matters less.
  */
 const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
 

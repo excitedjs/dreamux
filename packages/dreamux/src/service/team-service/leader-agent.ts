@@ -242,7 +242,7 @@ function teamLeaderSystemPrompt(
  * The one workspace fact the leader cannot see from inside the directory: its
  * kind and its cleanup mode. What a cleanup mode means when the Team dissolves
  * is stated only by the `dissolve` description, so a leader that never
- * dissolves never reads about dissolving (operator ruling R34).
+ * dissolves never reads about dissolving.
  */
 function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
   const kind = workspace.mode === 'managed' ? 'a managed git worktree' : 'a reused directory';

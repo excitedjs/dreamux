@@ -399,9 +399,9 @@ async function deliverAskUserSettlement(
           ...(settlement.cardMessageId !== undefined
             ? { message_id: settlement.cardMessageId }
             : {}),
-          // Anyone in the chat may answer the card — an operator ruling, not a
-          // gap — so there is no check on who clicked. Carrying the clicker
-          // keeps the fact the model would otherwise lose.
+          // Anyone in the chat may answer the card; this is deliberate, so
+          // there is no check on who clicked. Carrying the clicker keeps the
+          // fact the model would otherwise lose.
           ...(settlement.operatorOpenId !== undefined
             ? { sender_id: settlement.operatorOpenId }
             : {}),

@@ -404,10 +404,9 @@ function createRuntimeSubmission(): SubmissionDeferred {
 /**
  * The one line the card shows for a compaction, in the words Claude Code's
  * UI uses for the same fact. codex's `contextCompaction` item carries only
- * its id, and the summary codex wrote never leaves codex-core. The operator
- * ruled on 2026-09-04 that the card only needs to say a compaction happened,
- * and that the shape is a provider-pushed assistant message rather than a new
- * activity kind.
+ * its id, and the summary codex wrote never leaves codex-core: the card only
+ * needs to say a compaction happened, so the shape here is a provider-pushed
+ * assistant message rather than a new activity kind.
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 
@@ -416,15 +415,12 @@ const COMPACTED_SESSION_MESSAGE = 'Compacted session';
  * Code's own UI uses for the same fact. codex reports an interrupt only as a
  * terminal status on `turn/completed`, and a status is not a card fact, so
  * without this push the card shows an ordinary end and nothing says the turn
- * was stopped rather than answered. The operator ruled on 2026-09-07 that
- * codex must carry an interrupt marker too, aligned with Claude Code, in the
- * `Compacted session` shape: an assistant message from the provider, not a new
- * activity kind.
+ * was stopped rather than answered. codex carries an interrupt marker too,
+ * aligned with Claude Code, in the `Compacted session` shape: an assistant
+ * message from the provider, not a new activity kind.
  *
- * The end matches the marker. The first ruling was that the terminal status
- * did not matter, so codex's own `completed` was kept; after testing the alpha
- * the operator ruled that a stopped codex turn must read as interrupted on the
- * card, exactly as Claude Code's does. A card's terminal is
+ * The end matches the marker: a stopped codex turn must read as interrupted
+ * on the card, exactly as Claude Code's does. A card's terminal is
  * `turn.ended.status` verbatim: the Feishu channel maps `completed` to
  * `RUN_FINISHED status: done` and `interrupted` to `status: interrupted`, so
  * the end has to read the same status the marker does.
