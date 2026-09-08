@@ -127,6 +127,12 @@ pushes, PR actions, and the final merge outcome. Technical consultation may
 delegate only each seat's disjoint proposal or solution-review task file. TeamMate
 agreement and vote count never replace TeamLeader judgment or an operator decision.
 
+Every technical-solution consultant and implementation-review TeamMate carries the
+common challenger identity from
+[solution-identities.md](references/solution-identities.md) or
+[reviewer-identities.md](references/reviewer-identities.md). Those blocks own the
+posture: pass them, do not paraphrase them into a work prompt.
+
 If the requirement, approved solution, or implementation scope changes materially,
 stop implementation, update the task state, and return to the earliest affected
 workflow step.
