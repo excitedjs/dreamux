@@ -755,8 +755,13 @@ invocation; file tools are their path; searches their pattern or query;
 `Agent` its description with the prompt as invocation; `Skill` its name.
 Codex follows the TUI's own exec, patch and web-search cells: a uniformly
 parsed command is the files it read, the paths it listed, or `query in
-path`, otherwise the command's first line, always with the command as
-invocation; a patch is its paths with the diffs codex prepared as invocation;
+path`, otherwise the display command's first line.
+`/packages/agent-runtime/codex/src/tool-display.ts` decodes shell-word quoting
+and unwraps recognized Bash/Zsh/Sh and PowerShell launchers for display.
+Unrecognized or undecodable commands, including Windows drive-path text that
+fails Codex's quoting round-trip check, keep their original spelling. The full
+display command is the invocation; raw arguments stay unchanged.
+A patch is its paths with the diffs codex prepared as invocation;
 a `webSearch` item, which carries no tool name and was dropped before, is a
 `web_search` row. Anything outside those tables — every MCP tool — reports
 `null` and displays as its name. Core sanitizes both facts exactly as it does

@@ -61,6 +61,24 @@ describe('runtime-labelled tool rows', () => {
     });
   });
 
+  it('uses decoded display facts rather than raw wrapped arguments for the title and invocation', () => {
+    const call = toolCall({
+      tool_name: 'exec_command',
+      summary: 'node --check script.mjs',
+      invocation: 'node --check script.mjs\necho done',
+      arguments_json: JSON.stringify("/usr/bin/zsh -lc 'node --check script.mjs\necho done'"),
+    });
+    const [start] = toolCallStartEvents(call);
+    expect(start!.content).toMatchObject({ icon: 'bash', title: 'node --check script.mjs' });
+    const [result] = toolCallResultEvents({ ...call, status: 'completed', result_json: 'done' });
+    expect(result!.content).toMatchObject({
+      content: [
+        { type: 'code', language: 'bash', code: 'node --check script.mjs\necho done' },
+        { type: 'text', text: 'done' },
+      ],
+    });
+  });
+
   it('leads a read row with a verb and the read icon', () => {
     const [start] = toolCallStartEvents(toolCall({
       tool_name: 'Read',
