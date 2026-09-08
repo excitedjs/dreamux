@@ -66,10 +66,11 @@ another only for an additional genuinely independent technical domain.
 
 Assign each reviewer a disjoint file such as
 `technical-design/reviews/<concrete-teammate-name>.md`. Pass only the task path,
-requirement paths, draft path, assigned review path, and write boundaries. Require
-reviewers to challenge ownership, end-to-end behavior, change boundaries, contracts,
-verification, risks, and simpler alternatives. They must not edit the draft or
-another reviewer's file.
+requirement paths, draft path, assigned review path, write boundaries, and the
+turn-specific report contract. The common and solution-reviewer identities own the
+reviewer's posture and reasoning order; pass them through `identity` and do not
+paraphrase them into the work prompt. Reviewers must not edit the draft or another
+reviewer's file.
 
 Have the TeamLeader adjudicate every finding against code and the clarified
 requirement, revise the solution, and write `technical-design/final.md`. Do not use
@@ -86,9 +87,12 @@ contains an additional genuinely independent technical domain that the first thr
 do not cover.
 
 Keep the first proposal round independent: do not let a TeamMate read another
-proposal before submitting its own. Assign disjoint files such as
-`technical-design/proposals/<concrete-teammate-name>.md`; each TeamMate may edit only
-its own file. Parallel writes are allowed because the paths are explicitly
+proposal before submitting its own. The common and solution-author identities own
+the seat's posture; keep the work prompt to the task inputs, assigned output,
+write boundary, and report contract rather than supplying a TeamLeader-preferred
+owner or answer. Assign disjoint files such as
+`technical-design/proposals/<concrete-teammate-name>.md`; each TeamMate may edit
+only its own file. Parallel writes are allowed because the paths are explicitly
 independent.
 
 Require each proposal to ground itself in current code and cover, in proportion to
