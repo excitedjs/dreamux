@@ -112,9 +112,11 @@ state/<dispatcher-id>/
     workflow/<run-id>/
       record.json
       journal.jsonl
+      output.json
   workflow/<run-id>/
     record.json
     journal.jsonl
+    output.json
 ```
 
 `teammate/` and `team/` hold only entity directories, because listing a
@@ -271,6 +273,19 @@ transition writes `completed`, `failed`, or `stopped`; startup first adopts an
 already-committed terminal journal fact when present and otherwise converts a
 leftover `running` record to `stopped`. Journals are server-written JSONL and
 are not replayed by the current runtime.
+
+The record carries the `name` and `description` the submitted script declared,
+read before the record exists so a run can report itself in its own words. Both
+are nullable for a record written before runs carried them; a run created by
+the current build always has both.
+
+Every terminal also writes `output.json` beside those two: the run's status,
+result, error, and Agent names, as one document. A run converged to a terminal
+by the startup recovery above writes it too, so the file exists for every
+finished run and not only for one whose caller was notified. The completion
+notification names this path instead of carrying the result, so it is state
+with the same lifetime as the run, not a cache — a sweep between the notification and the
+caller's read would otherwise hand the caller a dangling path.
 
 Source:
 

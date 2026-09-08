@@ -26,6 +26,8 @@ import { validateWorkflowArgs } from './json-args.js';
 import { WorkflowJournal } from './journal.js';
 import { parseWorkflowMaxConcurrency } from './limits.js';
 import { WorkflowRun } from './run.js';
+import { publishWorkflowRunOutput } from './run-support.js';
+import { readWorkflowMeta } from './script-compiler.js';
 import {
   ForkedWorkflowRunner,
   type WorkflowRunnerFactory,
@@ -119,6 +121,10 @@ export class WorkflowService implements WorkflowOps {
     if (script.trim() === '') {
       throw new Error('workflow script must be non-empty');
     }
+    // Read here, not in the runner child: the record is created before the
+    // child exists, and a run reports itself in the words its own script
+    // declared. A script that declares none is rejected at submission.
+    const meta = readWorkflowMeta(script);
 
     const runId = validateWorkflowRunId(
       this.opts.generateRunId?.() ?? `run-${randomUUID()}`,
@@ -132,6 +138,8 @@ export class WorkflowService implements WorkflowOps {
       team_id: this.scope.teamId,
       caller_kind: this.opts.callerKind,
       script_hash: createHash('sha256').update(script).digest('hex'),
+      name: meta.name,
+      description: meta.description,
       status: 'running',
       max_concurrency: maxConcurrency,
       phase: null,
@@ -317,6 +325,7 @@ export class WorkflowService implements WorkflowOps {
         record.updated_at = committedTerminal.ended_at;
       }
       await this.store.write(record);
+      await publishWorkflowRunOutput(record);
       this.opts.log.warn(
         { run_id: record.run_id, status: record.status },
         committedTerminal === null

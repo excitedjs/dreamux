@@ -475,6 +475,10 @@ function workflowRunSchema(): Record<string, unknown> {
       team_id: { type: ['string', 'null'] },
       caller_kind: { type: 'string', enum: ['dispatcher', 'team_leader'] },
       script_hash: { type: 'string' },
+      // The words the script declared about itself. Null only on a record
+      // written before a run carried them.
+      name: { type: ['string', 'null'] },
+      description: { type: ['string', 'null'] },
       status: {
         type: 'string',
         enum: ['running', 'completed', 'failed', 'stopped'],
@@ -497,6 +501,8 @@ function workflowRunSchema(): Record<string, unknown> {
       'team_id',
       'caller_kind',
       'script_hash',
+      'name',
+      'description',
       'status',
       'max_concurrency',
       'phase',

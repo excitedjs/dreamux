@@ -37,6 +37,8 @@ import type {
 import {
   nonEmpty,
   normalizeAgentOptions,
+  publishWorkflowRunOutput,
+  tallyWorkflowAgents,
   WorkflowPersistenceError,
   WorkflowSemaphore,
 } from './run-support.js';
@@ -631,26 +633,19 @@ export class WorkflowRun {
       this.unlockedHandles.add(handle);
     }
 
+    const outputPath = await publishWorkflowRunOutput(candidate);
     const deliverTerminal = this.deliverTerminal;
     if (deliverTerminal !== null) {
       await deliverTerminal({
         kind: 'workflow',
         source: 'workflow',
-        runId: this.record.run_id,
+        runId: candidate.run_id,
         status: candidate.status as WorkflowTerminalStatus,
-        result: JSON.stringify(
-          {
-            run_id: candidate.run_id,
-            status: candidate.status,
-            result: candidate.result,
-            error: candidate.error,
-            agents: candidate.agents
-              .filter((agent) => agent.name !== null)
-              .map((agent) => ({ index: agent.index, name: agent.name })),
-          },
-          null,
-          2,
-        ),
+        description: candidate.description,
+        error: candidate.error,
+        agents: tallyWorkflowAgents(candidate.agents),
+        outputPath,
+        journalPath: this.deps.journal.path,
       });
       this.deliverTerminal = null;
     }

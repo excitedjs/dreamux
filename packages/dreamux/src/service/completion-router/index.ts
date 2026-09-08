@@ -4,18 +4,38 @@ import { errorInfo } from '../../platform/error-info.js';
 
 interface CompletionFactBase {
   status: 'completed' | 'failed' | 'stopped';
-  result: string | null;
 }
 
 export interface TeammateCompletionFact extends CompletionFactBase {
   kind: 'teammate';
   source: string;
+  result: string | null;
 }
 
+/** How many of a run's Agents reached each outcome, counted at its terminal. */
+export interface WorkflowAgentTally {
+  total: number;
+  succeeded: number;
+  failed: number;
+}
+
+/**
+ * A finished Workflow run, as its caller is told about it.
+ *
+ * The result itself is not carried: it is written where the run's other durable
+ * facts live, and the caller is given the path. What travels here is only what
+ * the notification states without a read — the run's own words, how its Agents
+ * came out, and where to look next.
+ */
 export interface WorkflowCompletionFact extends CompletionFactBase {
   kind: 'workflow';
   source: 'workflow';
   runId: string;
+  description: string | null;
+  error: string | null;
+  agents: WorkflowAgentTally;
+  outputPath: string;
+  journalPath: string;
 }
 
 export type PreparedCompletionFact =
