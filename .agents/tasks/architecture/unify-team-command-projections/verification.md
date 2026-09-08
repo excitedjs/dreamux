@@ -25,7 +25,7 @@ finders are recorded as residual coverage rather than represented as completed.
 
 | Finding | Verdict | Reason | Operator-ruling conflict |
 | --- | --- | --- | --- |
-| A cached Team can lose its leader identity and make `team.list` fail through the live projection. | Reject | A Team enters the cache only after create/rebuild has installed `leader_`; creation is hidden behind the construction join until then. Host stop preserves that object, and dissolve clears it only while a readable, aligned closed identity remains until the Team publishes `closed` and is synchronously evicted. The proposed failure cannot be reached through the current owners. | None |
+| A cached Team can lose its leader identity and make `team.list` fail through the live projection (as first pushed; list no longer consults a live service). | Reject | A Team enters the cache only after create/rebuild has installed `leader_`; creation is hidden behind the construction join until then. Host stop preserves that object, and dissolve clears it only while a readable, aligned closed identity remains until the Team publishes `closed` and is synchronously evicted. The proposed failure cannot be reached through the current owners. | None |
 | The legacy-leader fail-loud assertion for the list surface was deleted with `TeamCollectionReadModel.list()` and not migrated to `TeamCollection.list()`. | Accept | The production behavior still fails loudly today, but the public list-path regression pin was removed while its test title still claims list coverage. | None |
 | Current service guidance still names the deleted `team-view.ts`. | Accept | `packages/dreamux/src/service/CLAUDE.md` and `.agents/domains/service-topology.md` are current-state owners and must point at `team-summary.ts`. | None |
 | The Dreamux and Dreamux Types Rush notes describe breaking command/type shape changes as ordinary minors. | Accept | Both packages are on the 0.x line and the root release rule requires a `BREAKING:` note with a `Review:` action and an explicit no-rebuild statement for this same-state-shape contract change. | None |
@@ -44,7 +44,8 @@ files inherited from the merged predecessor PR are byte-identical to
 `origin/next`, and a real fake `AgentRuntimeProvider` now publishes `ready`
 through the leased runtime state sink. That test observes the same non-null
 runtime status through create, status, list, and same-process replay, while the
-provider submit count remains one.
+provider submit count remains one (as first pushed; after the operator's
+review the list assertion compares the compact row's fields instead).
 
 The pre-review also confirmed that the new public summary removes the old
 create/list/view DTO family rather than wrapping it, live and store-only reads

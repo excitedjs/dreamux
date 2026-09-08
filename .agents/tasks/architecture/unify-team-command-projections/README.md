@@ -53,6 +53,8 @@
   on the same branch applies the reversal; merge is pending.
 - Implementation: Complete on the PR branch.
 - Verification: [verification.md](/.agents/tasks/architecture/unify-team-command-projections/verification.md).
-- Knowledge closeout: Completed 2026-09-07; product behavior, Dispatcher
+- Knowledge closeout: Completed 2026-09-07 and redone 2026-09-09 after the
+  operator's review (create/status share the summary, list stays compact,
+  schemas open); product behavior, Dispatcher
   orchestration, service topology, package-local service guidance, and Channel
   projection/call-count facts now describe the canonical summary.

@@ -249,11 +249,11 @@ export class TeamCollection {
   /**
    * One Team's status.
    *
-   * A Team this process already holds answers for itself, because its live
-   * state is the more current version of the same shape. Any other Team is read
-   * from its records: whether it is closed or simply not materialized here, a
-   * read must not build an entity — and a Team with no runtime in this process
-   * has no runtime state for a projection to be missing.
+   * An open Team this process already holds answers for itself, because its
+   * live state is the more current version of the same shape. Any other Team is
+   * read from its records: whether it is closed or simply not materialized
+   * here, a read must not build an entity — and a Team with no runtime in this
+   * process has no runtime state for a projection to be missing.
    */
   async summary(teamId: string): Promise<TeamSummary> {
     const record = await this.mustTeam(validateTeamId(teamId));
@@ -263,11 +263,10 @@ export class TeamCollection {
   /**
    * One source selection for status and accepted-request replay.
    *
-   * The record just read from the store decides whether there is an entity to
-   * ask at all: a closed Team is a record, so it answers from that record even
-   * if a service for it is still cached (a replay in the idempotency tests
-   * closes the record directly, behind the cached service's back). Only an
-   * open Team this process holds answers for itself.
+   * The record just read from the store is authoritative for lifecycle, and it
+   * decides whether there is an entity to ask at all: a closed Team is a
+   * record, so it answers from that record and never from a cached service.
+   * Only an open Team this process holds answers for itself.
    */
   private async summaryFromRecord(record: TeamRecord): Promise<TeamSummary> {
     if (record.status === 'closed') return this.reads.summary(record);
