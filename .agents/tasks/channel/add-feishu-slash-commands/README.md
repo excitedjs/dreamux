@@ -54,7 +54,7 @@
 | --- | --- |
 | `.agents/tasks/**` | This record, `requirement.md`, `technical-design/final.md`, `verification.md`. |
 | `.agents/product/README.md` | Four entries added: the slash-command surface (including the ruling that `/teams` is unscoped), English channel-authored command/introduce text, an interrupted turn's `[Request interrupted by user]` card line on both runtimes, and a non-forced dissolve refused before it is accepted. |
-| `.agents/domains/channel.md` | Slash-command section: recognition, human-sender-only, single dispatch site, per-command behavior, stale-route reconciliation, chat-name resolution. |
+| `.agents/domains/channel.md` | Slash-command section: recognition, human-sender-only, single dispatch site, per-command behavior, why a command reconciles no routes, chat-name resolution. |
 | `.agents/domains/provider-runtime.md` | `AgentRuntime` is four methods, not three; turn-interruption semantics, the measured shape and ordering of Claude Code's interrupt artifact, why only that artifact settles an interrupted turn, and the measured codex terminal both runtimes now mark alike. |
 | `.agents/glossary.md` | `Slash command` and `Turn interrupt (interrupt)` rows added — both collide with an existing term (`Command`, `stop`). |
 | `packages/channel/feishu-channel/CLAUDE.md` | Slash-command ownership added to Responsibilities. |

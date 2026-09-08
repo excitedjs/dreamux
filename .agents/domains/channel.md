@@ -400,16 +400,26 @@ delivery path would have used:
   two outcomes the conversation cannot learn any other way — no bound Team, and
   refused by Core — are still reported in words.
 
-A command whose Team is gone reconciles the route rather than repeating an error
-forever: `TEAM_NOT_FOUND` and `TEAM_CLOSED` remove the stale binding, exactly as
-the delivery path does. Both that reaction and the `team.state` closed event are
-one capability, `FeishuRouteReconciliation`, because they remove the same durable
-rows; what the conversation hears is the only difference, and which reason a
-rejection is evidence of is read in one place, `unavailableTeamReason`. A closed
-event announces the dissolution. A `TEAM_CLOSED` rejection announces only that
-this route ended, because a pending dissolve can still be refused and the final
-`team.state` is what proves the Team closed. Every other rejection is silent:
-that is this Channel correcting its own document about nothing the group did.
+A command answers for the one Command it ran and touches no routing state. Only
+two proofs remove a route, and they meet in one capability,
+`FeishuRouteReconciliation`, because they commit the same durable rows: Core's
+final `team.state` closed event, and a delivery this Channel already routed
+coming back rejected. A rejected command is not a third proof — `TEAM_CLOSED` is
+raised for a dissolve that is still pending, and a dissolve that then fails
+lowers the fence again and leaves the Team open with its binding correct.
+
+What the conversation hears is the only difference between the two, and it is
+the caller's to state rather than derived from the removal, because the first
+caller to empty the rows is also the only one left with anything to announce. A
+closed event announces the dissolution. A rejected delivery announces only that
+this route ended, because a pending dissolve can still fail and the final
+`team.state` is what proves the Team closed; `rejectedDeliveryNotice` reads that
+distinction in one place. Any other rejected delivery is silent, this Channel
+correcting its own document about nothing the group did. An earlier design had
+commands reconcile too, so a stale binding could not outlive a command that hit
+it; that was reversed because a command has no proof worth committing, and
+because the removal stole the closed event's announcement. A binding a command
+found broken is removed by the next message through it.
 
 Every command answers with one line, including on failure; a Core rejection is
 reported rather than swallowed. All user-facing text these commands produce is

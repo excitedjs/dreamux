@@ -142,8 +142,8 @@ One finding corrected the TeamLeader's own earlier instruction: the module
 extracted to stay under the `max-lines` cap was a pure forwarder, which adds a
 cross-file hop and removes nothing. It was replaced by two cohesive units —
 `feishu-route-reconciliation.ts`, which owns route removal for both the closed
-Team event and a Command's stale-route rejection, and `control-rpc.ts`, which
-owns the Claude Code control-request channel and its one pending reply.
+Team event and a rejected delivery, and `control-rpc.ts`, which owns the Claude
+Code control-request channel and its one pending reply.
 
 ## TeamLeader pre-review
 
@@ -186,8 +186,36 @@ What the port changed, and what it did not:
 Route reconciliation was ported the other way. #386 widened route removal from
 two reasons to three (`team_closed` | `route_ended` | `stale_route`, with
 `announceRoutesRemoved` deciding what the conversation hears). That behavior
-won; `feishu-route-reconciliation.ts` carries it, and `unavailableTeamReason`
-now maps a `TEAM_CLOSED` rejection to `route_ended` rather than `team_closed`.
+won; `feishu-route-reconciliation.ts` carries it.
+
+Then this task removed one of its three callers. Adding commands had added a
+third reconciliation site — a rejected command forgot the route the same way a
+rejected delivery does — and it produced two messages for one action: the route
+card from the removal, then the command's own failure line. The first fix
+considered was a per-caller notice so the command path could remove silently.
+Tracing it disproved that fix: `forgetTeamRoutes` returns early when
+`forgetTeam` removes no rows, so the first caller to empty the rows is the only
+one that can announce anything. A `/stop` during a pending dissolve would have
+emptied them, and the `team.state` closed event that follows would then have
+announced no dissolution at all. Worse, `admit()`
+(`packages/dreamux/src/service/team-service/index.ts:433`) raises `TEAM_CLOSED`
+for a dissolve that is only *pending*, and `runDissolve` sets `dissolveTask`
+back to `null` when the dissolve fails, so a failed dissolve would have left an
+open Team with no binding. Refusal is not the case here: the one read that can
+refuse a non-forced dissolve, `requireReclaimableWorktree`, runs *before*
+`dissolveTask` is set, so a refused dissolve never raises the fence and never
+produces this rejection at all.
+
+So the command path reconciles nothing. It runs one Command and answers for it;
+a rejection is not proof a route is finished. `unavailableTeamReason` became
+`rejectedDeliveryNotice` with its single legitimate caller, `stale_route`
+became `silent`, and the notice is now documented as the caller's statement
+rather than a fact derived from the rejection. The cost, stated plainly: a
+binding whose Team is missing survives a command that hit it, until the next
+ordinary message through that chat removes it on the delivery path. The KB
+paragraph in `.agents/domains/channel.md` that recorded the old design was
+rewritten in the same change, and `feishu-slash-commands.test.ts` now asserts
+the binding survives instead of asserting it is gone.
 
 ## Reading the protocol instead of probing it
 

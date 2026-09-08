@@ -294,11 +294,11 @@ const silentLog: DreamuxLogger = {
   trace: () => undefined,
 };
 
-describe('Feishu slash command stale-route reconciliation', () => {
+describe('Feishu slash command routing side effects', () => {
   it.each([
     { command: 'stop' as const, code: 'TEAM_NOT_FOUND' },
     { command: 'dissolve' as const, code: 'TEAM_CLOSED' },
-  ])('forgets a bound Team after /$command receives $code', async ({ command, code }) => {
+  ])('answers /$command for $code and leaves the binding to the paths that own it', async ({ command, code }) => {
     const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-command-state-'));
     const attachmentCacheDir = mkdtempSync(join(tmpdir(), 'dreamux-command-cache-'));
     tempDirs.push(stateDir, attachmentCacheDir);
@@ -341,7 +341,11 @@ describe('Feishu slash command stale-route reconciliation', () => {
     });
 
     expect(reply).toMatchObject({ kind: 'text', text: expect.stringContaining('Team unavailable') });
-    expect(session.routing.bindingFor(target)).toBeUndefined();
+    // A rejected command proves nothing durable: TEAM_CLOSED is also raised for
+    // a dissolve that is still pending and may yet fail. The binding survives
+    // for the final team.state event or the next rejected delivery to remove,
+    // so whichever of them empties the rows still has its announcement to make.
+    expect(session.routing.bindingFor(target)).toMatchObject({ team_name: 'alpha' });
     await session.close();
   });
 

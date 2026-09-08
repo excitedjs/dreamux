@@ -48,7 +48,7 @@ import { FeishuCotSessionSeam } from './feishu-cot-session.js';
 import { FeishuProvisioning } from './feishu-provisioning.js';
 import {
   FeishuRouteReconciliation,
-  unavailableTeamReason,
+  rejectedDeliveryNotice,
 } from './feishu-route-reconciliation.js';
 import { FeishuBindingOperations } from './feishu-session-bindings.js';
 import {
@@ -383,23 +383,17 @@ export class FeishuChannelSession {
     return dispatchFeishuSlashCommand(input.command, {
       plan,
       bindings: this.routing.listBindings(),
-      invoke: async (command, payload) => {
-        try {
-          return await this.invoke(command, payload);
-        } catch (error) {
-          const code = commandErrorCode(error);
-          if (
-            plan.kind === 'bound' &&
-            (code === 'TEAM_NOT_FOUND' || code === 'TEAM_CLOSED')
-          ) {
-            await this.routeReconciliation.forgetTeamRoutes(
-              plan.teamName,
-              unavailableTeamReason(code),
-            );
-          }
-          throw error;
-        }
-      },
+      // A command runs one Command and answers for it; it does not also
+      // correct this Channel's routing document. A rejected command is not
+      // proof the route is finished — `TEAM_CLOSED` is raised for a dissolve
+      // that is still only pending, and a dissolve that then fails lowers the
+      // fence and leaves the Team open again (`TeamService.runDissolve`). The
+      // two paths that do reconcile hold the proof this one lacks: the final
+      // `team.state` for closure, a rejected delivery for a row pointing at
+      // nothing. Removing rows here would take the announcement away from
+      // both, because the first remover is the only one with anything to
+      // announce.
+      invoke: (command, payload) => this.invoke(command, payload),
       // The only place that knows a bot may not offer the lookup at all. Below
       // this line a chat name is simply something you ask for and may not get.
       resolveChatName: (chatId) =>
@@ -439,12 +433,9 @@ export class FeishuChannelSession {
     // proves nothing about whether a turn exists, and nothing is sent twice on
     // a guess.
     if (plan.kind === 'bound') {
-      // TEAM_CLOSED also covers a pending dissolve that may still be refused.
-      // Announce only route removal until the final Team state proves closure.
-      // TEAM_NOT_FOUND is silent correction of a row pointing at nothing.
       await this.routeReconciliation.forgetTeamRoutes(
         plan.teamName,
-        unavailableTeamReason(
+        rejectedDeliveryNotice(
           outcome.status === 'rejected' ? outcome.code : null,
         ),
       );

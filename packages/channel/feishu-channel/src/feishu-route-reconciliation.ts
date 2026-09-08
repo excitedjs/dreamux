@@ -1,9 +1,11 @@
 /**
  * Remove routes whose Team can no longer answer.
  *
- * Two authoritative signals converge here: Core publishes a closed Team, or a
- * Command rejects a still-installed route as missing or closed. Both remove the
- * same durable rows; only what the conversation is told differs.
+ * Two proofs reach here, and only these two: Core publishes a Team's final
+ * closed state, or a delivery this Channel already routed comes back rejected.
+ * Both remove the same durable rows; only what the conversation is told
+ * differs. A rejected slash command is not a third proof — see the note on the
+ * command path in `feishu-channel.ts`.
  */
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
@@ -11,20 +13,20 @@ import { errorMessage } from './feishu-submit.js';
 import type { FeishuRemovedRoute, FeishuRouting } from './routing/index.js';
 import { describeTarget } from './routing/target.js';
 
-export type UnavailableTeamReason = 'team_closed' | 'route_ended' | 'stale_route';
+export type RouteRemovalNotice = 'team_closed' | 'route_ended' | 'silent';
 
 /**
- * Which reason a rejected Command is evidence of.
+ * What a rejected delivery tells the conversation.
  *
- * `TEAM_CLOSED` also covers a pending dissolve that may still be refused, so it
- * is only proof that this route ended — the final `team.state` is what proves
- * the Team closed. Every other proof that a route cannot answer is this Channel
- * correcting its own document, and says nothing to the group.
+ * The message itself is already on its way to the Dispatcher Agent, and that
+ * answer says nothing about routing, so this is the only chance to say the
+ * route is gone. `TEAM_CLOSED` also covers a dissolve that is still pending and
+ * may yet fail, so it proves only that this route ended — the final
+ * `team.state` is what proves the Team closed. Any other rejection is this Channel correcting
+ * its own document, which the group did not do and does not need told.
  */
-export function unavailableTeamReason(
-  code: string | null,
-): UnavailableTeamReason {
-  return code === 'TEAM_CLOSED' ? 'route_ended' : 'stale_route';
+export function rejectedDeliveryNotice(code: string | null): RouteRemovalNotice {
+  return code === 'TEAM_CLOSED' ? 'route_ended' : 'silent';
 }
 
 export class FeishuRouteReconciliation {
@@ -48,20 +50,21 @@ export class FeishuRouteReconciliation {
    * commit that fails is logged and nothing more: the route is still live, and
    * the next message to it earns the same rejection and the same attempt.
    *
-   * A final closed event announces dissolution; an admission rejection only
-   * announces that the route ended. A missing Team stays silent: that is this
-   * Channel correcting its own document on the way to delivering a message,
-   * and telling a group about it would be noise about nothing the group did.
+   * The first caller to empty the rows is also the only one with anything to
+   * announce, so the notice is the caller's to state and never derived from
+   * the removal. A final closed event announces dissolution; a rejected
+   * delivery announces only that the route ended. Silent is a full removal
+   * whose conversation has nothing to be told.
    */
   async forgetTeamRoutes(
     teamName: string,
-    reason: UnavailableTeamReason,
+    notice: RouteRemovalNotice,
   ): Promise<void> {
     const scope = {
       dispatcher_id: this.opts.dispatcherId,
       channel_id: this.opts.channelId,
       team_name: teamName,
-      reason,
+      reason: notice,
     };
     try {
       const { removed } = await this.opts.routing.forgetTeam(teamName);
@@ -72,8 +75,8 @@ export class FeishuRouteReconciliation {
       );
       // Past the commit: the rows are gone from disk, and what follows is
       // presentation over what they said.
-      if (reason !== 'stale_route') {
-        this.opts.announceRoutesRemoved({ teamName, removed, reason });
+      if (notice !== 'silent') {
+        this.opts.announceRoutesRemoved({ teamName, removed, reason: notice });
       }
     } catch (error) {
       this.opts.log.warn(
