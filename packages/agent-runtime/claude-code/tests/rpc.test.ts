@@ -450,6 +450,27 @@ describe('interrupting outstanding work', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { how: 'stop', settlement: { kind: 'stopped' } },
+    { how: 'fail', settlement: { kind: 'failed' } },
+  ])('answers an outstanding interrupt when the session ends by $how', async ({ how, settlement }) => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+
+    // Claude never answers the control request; the session ends first. The ask
+    // is answered here or `/stop` waits on a session that is already gone.
+    const failure = new Error('claude stdout closed');
+    if (how === 'stop') h.rpc.stop();
+    else h.rpc.fail(failure);
+
+    if (how === 'stop') await expect(interrupted).resolves.toBe(true);
+    else await expect(interrupted).rejects.toBe(failure);
+    await expect(a.settled).resolves.toMatchObject(settlement);
+  });
+
   it('spends the request on the first result, so a later failure is nobody\'s interrupt', async () => {
     const h = harness();
     h.init();
