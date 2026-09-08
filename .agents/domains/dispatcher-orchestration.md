@@ -340,11 +340,17 @@ team-create-with-prompt) resolves its initiator before runtime admission and
 attaches one closure to the entity-owned `Turn`. After the winning terminal
 outcome is selected, that Turn invokes the shared stateless
 `CompletionDeliveryPolicy` only while the source relationship still owes
-delivery. Deliberate TeamMate close, Team dissolve, and host stop permanently
-clear obligations that have not started, while retaining the Turn until
-settlement converges. The downstream policy delivers at-most-once per producer,
-completion token, and recipient while preserving provider order — never keyed
-by native ids, completion text, or slot heuristics.
+delivery. TeamMate close, Team dissolve, host stop, and failed-start rollback
+permanently clear obligations that have not started, while retaining the Turn
+until settlement converges. Team dissolve and host stop publish retirement
+synchronously at their aggregate outer fence, before contained resources
+converge. Population-scoped construction makes a TeamMate or TeamLeader whose
+asynchronous construction crosses that fence inherit the retirement before it
+can publish or submit. Explicit close uses the entity boundary; failed-start
+rollback publishes an aggregate retirement before releasing resources. The downstream
+policy delivers at-most-once per producer, completion token, and recipient
+while preserving provider order — never keyed by native ids, completion text,
+or slot heuristics.
 
 - the initiating action retains the target directly; there is no Turn id lookup
   map or terminal registry;
@@ -364,6 +370,20 @@ Source:
 - `/packages/dreamux/src/service/completion-router/index.ts`
 - `/packages/dreamux/src/service/teammate-service/turn-recording.ts`
 - `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+
+Workflow terminal delivery is a second source-owned obligation, not a special
+case in the downstream policy. `WorkflowRun` captures its initiating Agent and
+owns the one terminal finalization. When explicit `workflow_stop` or a scoped
+`stopAll()` wins the run's existing first-terminal-intent race, the run abandons
+its not-yet-started terminal closure while still converging runner, locked
+TeamMates, journal, and record. A completed or failed intent selected first keeps
+delivery. TeamMate Turn and Workflow Run obligations stay separate because their
+owners and temporal shapes differ; no shared cancellation wrapper is added.
+
+Source:
+
+- `/packages/dreamux/src/service/workflow-service/run.ts`
+- `/packages/dreamux/src/service/workflow-service/run-terminal.ts`
 
 ### Workspaces
 
@@ -452,12 +472,18 @@ Source:
   runs in that directory records a plain `reuse-cwd` workspace, so it can
   neither clean the Team's checkout nor hold a drifting copy of its state. The
   attempt that created a checkout is the only one that may discard it.
-- **A settled turn is reported while its delivery relationship remains
+- **A source reports completion while its delivery relationship remains
   active.** Completion delivery folds on the provider's own completion token
-  when there is one, delivers an independently failed or stopped turn without
-  inventing one, and keeps per-recipient FIFO order. Deliberate TeamMate close,
-  Team dissolve, and host stop abandon only delivery that has not started; the
-  Turn remains retained until settlement converges.
+  when there is one, delivers independently failed or stopped Turns without
+  inventing one, and keeps per-recipient FIFO order. TeamMate close and
+  aggregate teardown retire every pending TeamMate obligation at the source
+  fence; explicit Workflow stop and aggregate teardown retire Workflow delivery
+  only when stop wins its first-terminal-intent race. Team dissolve and host stop
+  are aggregate teardown fences; failed-start rollback intentionally publishes
+  an aggregate retirement before resource release. Aggregate re-arm occurs only
+  after a later successful start or completed rollback, never from each entity's
+  `stopForHost()`. Turn settlement and
+  Workflow terminal persistence still converge, with no recovery or replay.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** Role
   differentiation is the tool set and system prompt injected at launch.
 - **Commands are domain-owned.** Each owning module declares its canonical

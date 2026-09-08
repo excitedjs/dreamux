@@ -260,6 +260,7 @@ export class DispatcherInputSourceLifecycle {
    */
   private async doStart(): Promise<void> {
     this.assertAvailable();
+    this.rearmCompletionDelivery();
     await this.prepareChannels();
     this.assertAvailable();
     const sessions = this.preparedChannels ?? new Map<string, ChannelInstance>();
@@ -286,6 +287,7 @@ export class DispatcherInputSourceLifecycle {
       this.opts.workflows.closeAdmission();
       this.closeChannelPortAdmission();
       this.opts.admittedTasks.closeAdmission();
+      this.abandonPendingCompletionDelivery();
       const rollbackFailures: unknown[] = [];
       await collectShutdownFailure(rollbackFailures, () =>
         this.opts.workflows.rollbackStart());
@@ -306,6 +308,7 @@ export class DispatcherInputSourceLifecycle {
       this.channelPorts.length = 0;
       this.started = false;
       if (rollbackFailures.length === 0 && !this.opts.isUnavailable()) {
+        this.rearmCompletionDelivery();
         this.opts.admittedTasks.openAdmission();
       }
       if (rollbackFailures.length > 0) {
@@ -327,6 +330,18 @@ export class DispatcherInputSourceLifecycle {
       },
       'dispatcher ready',
     );
+  }
+
+  private abandonPendingCompletionDelivery(): void {
+    this.opts.teammates.abandonPendingCompletionDelivery();
+    this.opts.teams.abandonPendingCompletionDelivery();
+    this.agent_?.abandonPendingCompletionDelivery();
+  }
+
+  private rearmCompletionDelivery(): void {
+    this.opts.teammates.rearmCompletionDelivery();
+    this.opts.teams.rearmCompletionDelivery();
+    this.agent_?.rearmCompletionDelivery();
   }
 
   /**

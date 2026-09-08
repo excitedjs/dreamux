@@ -6,6 +6,7 @@ import type { PreparedCompletionFact } from '../src/service/completion-router/in
 import type { TurnCompletionDelivery } from '../src/service/teammate-service/turn-recording.js';
 import { EntityTurn } from '../src/service/teammate-service/turn-recording.js';
 import { EntityTurnCoordinator } from '../src/service/teammate-service/turn-coordinator.js';
+import { CompletionDeliveryScope } from '../src/service/teammate-service/completion-delivery-scope.js';
 import {
   completedCompletion,
   controllableRuntimeSubmission,
@@ -244,7 +245,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
 
 describe('EntityTurnCoordinator lifecycle delivery boundary', () => {
   it('retains a late-attached Turn for settlement without giving it a delivery', async () => {
-    let acceptsCompletionDelivery = true;
+    const completionDeliveryScope = new CompletionDeliveryScope();
     let attach!: (admission: {
       status: 'submitted';
       submission: RuntimeSubmission;
@@ -260,14 +261,14 @@ describe('EntityTurnCoordinator lifecycle delivery boundary', () => {
     const coordinator = new EntityTurnCoordinator({
       identity: () => ({ name: 'reviewer' }) as never,
       isActive: () => true,
-      acceptsCompletionDelivery: () => acceptsCompletionDelivery,
+      completionDeliveryScope,
     });
 
     const admission = coordinator.submitRuntimeTurn(
       () => providerAdmission,
       delivery,
     );
-    acceptsCompletionDelivery = false;
+    completionDeliveryScope.abandon();
     coordinator.abandonPendingDeliveries();
     attach({ status: 'submitted', submission: runtime.submission });
 

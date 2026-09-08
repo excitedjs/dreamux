@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Stop deliberate TeamMate teardown from pushing pending completion notifications to owners.",
+      "comment": "Retire pending TeamMate completion at aggregate teardown fences and stop-winning Workflow completion at its source, including failed-start rollback.",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

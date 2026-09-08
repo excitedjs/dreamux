@@ -28,8 +28,8 @@ interface TerminalIntent {
 /** One retryable, truthful terminal task shared by every stop source. */
 export class WorkflowRunTerminal {
   /**
-   * Resolves once this run is durably over: terminal record written, terminal
-   * completion delivered, nothing left to retry.
+   * Resolves once this run is durably over: terminal record written, any
+   * still-owed terminal completion delivered, nothing left to retry.
    *
    * It is a fact the run states about itself, not an instruction. The owner
    * that holds the run decides what being over means for its own bookkeeping;
@@ -61,11 +61,12 @@ export class WorkflowRunTerminal {
     return this.intent !== null;
   }
 
-  reserveStop(): void {
-    if (this.intent !== null || this.deps.status() !== 'running') return;
+  reserveStop(): boolean {
+    if (this.intent !== null || this.deps.status() !== 'running') return false;
     this.intent = { status: 'stopped', result: null, error: null };
     this.deps.closeAdmission('stopped');
     this.signalStop();
+    return true;
   }
 
   async failAfterNotification(

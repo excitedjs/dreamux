@@ -68,7 +68,6 @@ interface AgentCall {
 }
 /** One live Workflow entity with direct locked TeamMate and Turn ownership. */
 export class WorkflowRun {
-  private readonly record: WorkflowRunRecord;
   private readonly runner: WorkflowRunnerHandle;
   private readonly semaphore: WorkflowSemaphore;
   private readonly terminal: WorkflowRunTerminal;
@@ -82,18 +81,20 @@ export class WorkflowRun {
   private runnerTerminalMessageSeen = false;
   private terminalCandidate: WorkflowRunRecord | null = null;
   private terminalJournalCommitted = false;
-  private terminalDeliveryCommitted = false;
+  private deliverTerminal: WorkflowRunDeps['deliverTerminal'] | null;
   private terminalLogged = false;
+  private readonly deps: Omit<WorkflowRunDeps, 'deliverTerminal'>;
 
-  constructor(private readonly deps: WorkflowRunDeps) {
-    this.record = deps.record;
+  constructor({ deliverTerminal, ...deps }: WorkflowRunDeps) {
+    this.deps = deps;
+    this.deliverTerminal = deliverTerminal;
     this.semaphore = new WorkflowSemaphore(deps.record.max_concurrency);
     this.runner = deps.createRunner({
       onMessage: (message) => this.receiveRunnerMessage(message),
       onExit: (exit) => {
         deps.log.info(
           {
-            run_id: this.record.run_id,
+            run_id: this.deps.record.run_id,
             code: exit.code,
             signal: exit.signal,
           },
@@ -112,7 +113,7 @@ export class WorkflowRun {
       },
       onError: (error) => {
         deps.log.error(
-          { run_id: this.record.run_id, err: errorInfo(error) },
+          { run_id: this.deps.record.run_id, err: errorInfo(error) },
           'workflow runner error',
         );
         if (this.terminal.requested === null) {
@@ -121,8 +122,8 @@ export class WorkflowRun {
       },
     });
     this.terminal = new WorkflowRunTerminal({
-      runId: this.record.run_id,
-      status: () => this.record.status,
+      runId: this.deps.record.run_id,
+      status: () => this.deps.record.status,
       abortRunner: () => this.runner.send({ type: 'abort' }),
       closeAdmission: (status) =>
         this.semaphore.close(new Error(`workflow ${status}`)),
@@ -135,21 +136,21 @@ export class WorkflowRun {
   get settled(): Promise<void> { return this.terminal.settled; }
 
   snapshot(): WorkflowRunRecord {
-    return structuredClone(this.record);
+    return structuredClone(this.deps.record);
   }
 
   async initialize(): Promise<void> {
     await this.deps.journal.create({
       kind: 'run',
       version: 1,
-      run_id: this.record.run_id,
-      script_hash: this.record.script_hash,
-      caller: { kind: this.record.caller_kind },
-      dispatcher_id: this.record.dispatcher_id,
-      team_id: this.record.team_id,
-      created_at: this.record.created_at,
+      run_id: this.deps.record.run_id,
+      script_hash: this.deps.record.script_hash,
+      caller: { kind: this.deps.record.caller_kind },
+      dispatcher_id: this.deps.record.dispatcher_id,
+      team_id: this.deps.record.team_id,
+      created_at: this.deps.record.created_at,
     });
-    await this.deps.store.create(this.record);
+    await this.deps.store.create(this.deps.record);
   }
 
   async start(script: string, args: unknown): Promise<void> {
@@ -170,17 +171,18 @@ export class WorkflowRun {
   }
 
   async stop(): Promise<WorkflowTerminalStatus> {
+    if (this.terminal.reserveStop()) this.deliverTerminal = null;
     return this.terminal.stop();
   }
 
   closeAdmission(): void {
-    this.terminal.reserveStop();
+    if (this.terminal.reserveStop()) this.deliverTerminal = null;
   }
 
   private receiveRunnerMessage(message: unknown): void {
     if (!isWorkflowRunnerChildMessage(message)) {
       this.deps.log.warn(
-        { run_id: this.record.run_id },
+        { run_id: this.deps.record.run_id },
         'ignoring malformed workflow runner message',
       );
       return;
@@ -211,19 +213,19 @@ export class WorkflowRun {
         return;
       case 'emit':
         if (
-          this.record.status !== 'running' ||
+          this.deps.record.status !== 'running' ||
           this.terminal.requested !== null
         ) return;
         await this.mutate(async () => {
-          if (message.kind === 'phase') this.record.phase = message.message;
-          else this.record.last_log = message.message;
-          this.record.updated_at = this.now();
+          if (message.kind === 'phase') this.deps.record.phase = message.message;
+          else this.deps.record.last_log = message.message;
+          this.deps.record.updated_at = this.now();
           await this.deps.journal.append({
             kind: message.kind,
             message: message.message,
-            created_at: this.record.updated_at,
+            created_at: this.deps.record.updated_at,
           });
-          await this.deps.store.write(this.record);
+          await this.deps.store.write(this.deps.record);
         });
         return;
       case 'run_result':
@@ -238,11 +240,7 @@ export class WorkflowRun {
   }
 
   private async handleAgentStart(message: WorkflowAgentStartMessage): Promise<void> {
-    if (
-      !this.terminal.accepting ||
-      this.record.status !== 'running' ||
-      this.terminal.requested !== null
-    ) {
+    if (!this.terminal.accepting) {
       await this.sendAgentError(message.index, 'workflow is no longer running');
       return;
     }
@@ -270,7 +268,7 @@ export class WorkflowRun {
       index: message.index,
       name: null,
       label: options.label ?? null,
-      phase: options.phase ?? this.record.phase,
+      phase: options.phase ?? this.deps.record.phase,
       status: 'queued',
       result: null,
       error: null,
@@ -288,13 +286,13 @@ export class WorkflowRun {
       completed: false,
     };
     this.calls.set(message.index, call);
-    this.record.agents.push(record);
-    this.record.updated_at = createdAt;
-    await this.mutate(() => this.deps.store.write(this.record));
+    this.deps.record.agents.push(record);
+    this.deps.record.updated_at = createdAt;
+    await this.mutate(() => this.deps.store.write(this.deps.record));
 
     this.deps.log.info(
       {
-        run_id: this.record.run_id,
+        run_id: this.deps.record.run_id,
         index: message.index,
         phase: record.phase,
       },
@@ -302,7 +300,7 @@ export class WorkflowRun {
     );
     if (this.semaphore.isFull()) {
       this.deps.log.info(
-        { run_id: this.record.run_id, index: message.index },
+        { run_id: this.deps.record.run_id, index: message.index },
         'workflow agent queued by concurrency limit',
       );
     }
@@ -320,9 +318,9 @@ export class WorkflowRun {
         return;
       }
       call.record.status = 'running';
-      call.record.phase = call.options.phase ?? this.record.phase;
-      this.record.updated_at = this.now();
-      await this.mutate(() => this.deps.store.write(this.record));
+      call.record.phase = call.options.phase ?? this.deps.record.phase;
+      this.deps.record.updated_at = this.now();
+      await this.mutate(() => this.deps.store.write(this.deps.record));
       if (this.terminal.requested !== null) {
         await this.completeAgent(call, 'stopped', null, null);
         return;
@@ -331,11 +329,11 @@ export class WorkflowRun {
       const materialization = this.deps.createLocked(
         {
           name: nonEmpty(call.options.label) ??
-            `workflow-${this.record.run_id}-${call.record.index + 1}`,
+            `workflow-${this.deps.record.run_id}-${call.record.index + 1}`,
           prompt,
           intent:
             call.options.intent ??
-            `Workflow ${this.record.run_id} agent ${call.record.index + 1}`,
+            `Workflow ${this.deps.record.run_id} agent ${call.record.index + 1}`,
           ...(call.options.agentType !== undefined
             ? { agentRuntime: call.options.agentType }
             : {}),
@@ -358,7 +356,7 @@ export class WorkflowRun {
 
       call.record.name = handle.name;
       const submittedAt = this.now();
-      this.record.updated_at = submittedAt;
+      this.deps.record.updated_at = submittedAt;
       await this.mutate(async () => {
         await this.deps.journal.append({
           kind: 'submit',
@@ -366,7 +364,7 @@ export class WorkflowRun {
           name: handle.name,
           created_at: submittedAt,
         });
-        await this.deps.store.write(this.record);
+        await this.deps.store.write(this.deps.record);
       });
       if (this.terminal.requested !== null) {
         await this.completeAgent(call, 'stopped', null, null);
@@ -384,7 +382,7 @@ export class WorkflowRun {
       });
       this.deps.log.info(
         {
-          run_id: this.record.run_id,
+          run_id: this.deps.record.run_id,
           index: call.record.index,
           producer: handle.name,
           status: admission.status,
@@ -516,18 +514,18 @@ export class WorkflowRun {
     call.record.result = candidate.result;
     call.record.error = candidate.error;
     call.record.settled_at = candidate.settled_at;
-    this.record.updated_at = candidate.settled_at;
+    this.deps.record.updated_at = candidate.settled_at;
     await this.mutate(async () => {
       if (!call.resultJournalCommitted) {
         await this.deps.journal.ensureAgentResult(candidate);
         call.resultJournalCommitted = true;
       }
-      await this.deps.store.write(this.record);
+      await this.deps.store.write(this.deps.record);
     });
     call.completed = true;
     this.deps.log.info(
       {
-        run_id: this.record.run_id,
+        run_id: this.deps.record.run_id,
         index: call.record.index,
         producer: call.record.name,
         status: candidate.status,
@@ -571,13 +569,13 @@ export class WorkflowRun {
     const closeResults = await Promise.allSettled(
       handles.map(async (handle) =>
         handle.close({
-          note: `Workflow ${this.record.run_id} ${requestedStatus}`,
+          note: `Workflow ${this.deps.record.run_id} ${requestedStatus}`,
         })),
     );
     if (closeResults.some((close) => close.status === 'rejected')) {
       throwSettledFailures(
         [...runnerStopResults, ...closeResults],
-        `workflow ${JSON.stringify(this.record.run_id)} runner or TeamMates failed to stop`,
+        `workflow ${JSON.stringify(this.deps.record.run_id)} runner or TeamMates failed to stop`,
       );
     }
 
@@ -592,13 +590,13 @@ export class WorkflowRun {
     await this.mutationTail;
     throwSettledFailures(
       runnerStopResults,
-      `workflow ${JSON.stringify(this.record.run_id)} runner failed to stop`,
+      `workflow ${JSON.stringify(this.deps.record.run_id)} runner failed to stop`,
     );
 
     if (this.terminalCandidate === null) {
       const endedAt = this.now();
       this.terminalCandidate = {
-        ...structuredClone(this.record),
+        ...structuredClone(this.deps.record),
         status: requestedStatus,
         result: requestedStatus === 'completed' ? result : null,
         error: requestedError,
@@ -618,7 +616,7 @@ export class WorkflowRun {
       this.terminalJournalCommitted = true;
     }
     await this.deps.store.write(candidate);
-    Object.assign(this.record, structuredClone(candidate));
+    Object.assign(this.deps.record, structuredClone(candidate));
 
     for (const handle of handles) {
       if (this.unlockedHandles.has(handle)) continue;
@@ -626,11 +624,12 @@ export class WorkflowRun {
       this.unlockedHandles.add(handle);
     }
 
-    if (!this.terminalDeliveryCommitted) {
-      await this.deps.deliverTerminal({
+    const deliverTerminal = this.deliverTerminal;
+    if (deliverTerminal !== null) {
+      await deliverTerminal({
         kind: 'workflow',
         source: 'workflow',
-        runId: this.record.run_id,
+        runId: this.deps.record.run_id,
         status: candidate.status as WorkflowTerminalStatus,
         result: JSON.stringify(
           {
@@ -646,13 +645,13 @@ export class WorkflowRun {
           2,
         ),
       });
-      this.terminalDeliveryCommitted = true;
+      this.deliverTerminal = null;
     }
     if (!this.terminalLogged) {
       this.terminalLogged = true;
       this.deps.log.info(
         {
-          run_id: this.record.run_id,
+          run_id: this.deps.record.run_id,
           status: candidate.status,
           agent_count: candidate.agents.length,
           err: candidate.error === null

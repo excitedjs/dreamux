@@ -74,6 +74,27 @@ export interface TeamClosingDeps {
 export class TeamClosing {
   constructor(private readonly deps: TeamClosingDeps) {}
 
+  abandonPendingCompletionDelivery(): void {
+    this.deps.members.abandonPendingCompletionDelivery();
+    this.deps.leader()?.abandonPendingCompletionDelivery();
+  }
+
+  rearmCompletionDelivery(): void {
+    this.deps.members.rearmCompletionDelivery();
+    this.deps.leader()?.rearmCompletionDelivery();
+  }
+
+  reportDissolveFailure(message: string, error: unknown): void {
+    this.deps.log.error(
+      {
+        dispatcher_id: this.deps.dispatcherId,
+        team_id: this.deps.teamId,
+        err: teamErrorInfo(error),
+      },
+      message,
+    );
+  }
+
   /**
    * Decide, then stop, then close.
    *

@@ -157,3 +157,108 @@ plan and to the final implementation handoff.
 After F1-F3 are addressed, the design has a minimal Core-only boundary and can
 proceed to implementation approval without a provider- or Channel-specific
 mechanism.
+
+## 2026-09-08 Workflow-stop amendment review
+
+**Verdict: NEEDS REVISION.** `WorkflowRun` is the correct source owner and one
+mutable, in-memory delivery obligation is the minimal mechanism. However, the
+draft abandons that obligation before it knows that stop won the terminal race.
+That can suppress a naturally completed or failed Workflow, contrary to the
+amendment's retained-natural-delivery contract. Its verification plan also
+leaves the named lifecycle paths and create/admission race without the required
+observable coverage.
+
+### Review basis
+
+- Requirement reviewed: `../requirement.md`, SHA-256
+  `0f34ff8be04b6a42c363db28246c7c9763918a63ff4650af46f9be81068d6ea9`.
+- Draft reviewed: `../draft.md`, SHA-256
+  `9b732820d647c5ef4ae8b9d0d92c5fdd7253bfb37f36e43f6598459dc4c10d44`.
+- Source reviewed at PR #389 head `3974df3e621b1adbcdc75fc7b8437e666ec27732`
+  against `origin/next` `fffc3bd337f8ce28070fb8658fc30893e71730bb`.
+- This amendment review is source- and whitepaper-based only. No source, test,
+  Git, GitHub, or task-record change was made, and no test command was run.
+
+### W1 — P1: Stop may discard a natural terminal outcome it did not cause
+
+**Draft:** both `WorkflowRun.stop()` and `WorkflowRun.closeAdmission()` abandon
+the closure *before* “reserving or joining” the stopped transition
+(`draft.md:249-261`).
+
+**Current-source evidence:** a runner's `run_result` selects `completed` or
+`failed` through `WorkflowRunTerminal.request()` (`run.ts:229-235`), which sets
+the first terminal intent and begins the single finalization task
+(`run-terminal.ts:95-104,120-140`). A later `WorkflowRun.stop()` currently only
+delegates to `terminal.stop()` (`run.ts:172-177`); `reserveStop()` deliberately
+does nothing once any intent already exists (`run-terminal.ts:64-69`), and
+`stop()` then returns that selected status (`run-terminal.ts:86-93`). Terminal
+owner delivery occurs later, after runner/agent convergence and durable journal
+and record writes (`run.ts:558-650`). There is therefore a real asynchronous
+window after a natural intent wins and before `deliverTerminal` begins.
+
+**Trigger and consequence:** the runner selects `completed` or `failed`; its
+finalization is awaiting ordinary teardown or durable I/O; then an explicit
+`workflow_stop`, or `stopAll()` through a Team dissolve/host stop, reaches the
+run. The draft's proposed pre-reservation clear removes the natural outcome's
+pending closure even though `reserveStop()` will decline to change the terminal
+intent. Finalization then records the natural terminal fact but sends no
+completion. This conflicts with the requirement that a naturally completed or
+failed Workflow while its scope is active delivers exactly once and that the
+2026-09-08 ruling does not alter natural Workflow delivery
+(`requirement.md:112-115,192-194,214-218`).
+
+**Required correction:** make abandonment conditional on atomically winning the
+`stopped` intent. The existing terminal already owns the only fact needed:
+`reserveStop()` can report whether it reserved `stopped` (or expose an equivalent
+single operation), and `WorkflowRun` abandons only on that result. A natural
+intent already selected means no abandonment; a selected delivery task remains
+untouched. This stays one source-owned closure, adds neither a mode nor durable
+state, and preserves the existing failure convergence in which a rejected
+terminal task can be retried (`run-terminal.ts:135-137`).
+
+**Required observable test:** hold finalization after a natural `completed` and,
+separately, `failed` intent is selected but before owner delivery starts; issue
+explicit `stop` and `stopAll()` in that window; then release it. Assert the
+receipt/status remains natural and the owner observes exactly one natural
+completion. Keep the complementary gated test in which delivery has already
+started, then stop, to prove no retraction.
+
+### W2 — P2: The plan does not test the named Team-dissolve and host-stop call chains at the owner boundary
+
+The draft proposes a `WorkflowService.stopAll()` no-delivery assertion
+(`draft.md:268-277`), but that is only the shared mechanism. Team dissolve calls
+`workflows.closeAdmission()` then `workflows.stopAll()` in `TeamClosing`
+(`team-service/closing.ts:251-265`); Team host stop calls `stopAll()` through a
+separate failure-collecting path (`:344-360`); Dispatcher host stop fences its
+own Workflow scope, stops Team runtimes, then makes a second sweep
+(`dispatcher-service/index.ts:326-379`). The current Workflow tests only assert
+that direct `stopAll()` reaches terminal records (`workflow-service.test.ts:596-624`),
+and the new real-host lifecycle test contains no Workflow scenario.
+
+The requirement specifically demands no stopped Workflow completion for Team
+dissolve and host stop, and requires observed owner submissions rather than
+private implementation state (`requirement.md:188-197`). Add real-Core tests
+with controllable runtime recipients: one starts a Team-scoped Workflow then
+dissolves the Team, and one stops the host with an active Workflow scope. Each
+must retain the stopped record/receipt where applicable and assert no Workflow
+terminal input reaches its TeamLeader or Dispatcher. This verifies the two
+actual lifecycle paths without adding a new production mechanism.
+
+### W3 — P2: Create-versus-close-admission coverage is required, not conditional
+
+The draft says to cover this race only “if existing composition coverage does
+not observe” it (`draft.md:275-277`). Current coverage does not: there is no
+`closeAdmission`, `runCreations`, or admission-race case in
+`workflow-service.test.ts`. The source has a material race: `createRun()` checks
+`accepting`, awaits script resolution, constructs and initializes a run, then
+only after inserting it into `runs` notices a scope that closed meanwhile and
+calls `run.closeAdmission()` (`workflow-service/index.ts:117-174`). `stopAll()`
+waits for those tracked creations before stopping its live snapshot
+(`:228-235`).
+
+Add a deterministic composition test that closes admission after the initial
+check but before the new run is visible, then lets creation finish. It must show
+one stopped journal/record and no owner completion. This is the concrete
+creation race the amendment invokes to justify the second entry point; without
+the test, a future ordering change can restore the exact cleanup pushback while
+the ordinary explicit-stop and natural-result tests remain green.

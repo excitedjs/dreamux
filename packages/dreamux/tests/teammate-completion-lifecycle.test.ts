@@ -1,14 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  AgentRuntime,
-  AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  AgentRuntimeSubmissionInput,
   DreamuxLogger,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
@@ -16,25 +13,41 @@ import type {
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import type { DreamuxConfig } from '../src/config/config.js';
-import { getRuntimeConfig, setRuntimeConfig } from '../src/platform/paths.js';
+import {
+  getRuntimeConfig,
+  setRuntimeConfig,
+  workflowRunRecordPath,
+} from '../src/platform/paths.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
 import { Server } from '../src/server.js';
 import type { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { teamCreatePayloadHash } from '../src/service/team-collection/create-request.js';
 import { createTeamMateMcpDelegate } from '../src/service/teammate-collection/mcp-delegate.js';
+import type { TeamService } from '../src/service/team-service/index.js';
 import type { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import type { TeammateService } from '../src/service/teammate-service/index.js';
 import { CHANNEL_SOURCE } from '../src/service/submission-sources.js';
 import { adminContext } from './helpers/command-harness.js';
 import {
   controllableRuntimeSubmission,
-  type ControllableRuntimeSubmission,
 } from './helpers/runtime-submission.js';
+import {
+  ControlledRuntime,
+  ControlledRuntimeProvider,
+  deferred,
+} from './helpers/controlled-runtime-provider.js';
 
 const DISPATCHER_ID = 'completion-lifecycle';
 const AGENT_RUNTIME_ID = 'controlled';
 const PROVIDER_REF = 'npm:@example/completion-lifecycle-runtime';
+const ACTIVE_WORKFLOW_SCRIPT = `
+export const meta = {
+  name: 'lifecycle-stop',
+  description: 'Stay active until the owning scope stops',
+};
+return await agent('wait for owner teardown');
+`;
 
 const silentLogger = {
   error: () => {},
@@ -163,6 +176,54 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     expect(completionInputs(dispatcherRuntime)).toEqual([]);
   });
 
+  it('dissolves a Team with an active Workflow without submitting its stopped terminal fact', async () => {
+    const host = await createHost();
+    const provider = new ControlledRuntimeProvider();
+    const { dispatcher } = await host.start(provider);
+    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const team = await createTeam(dispatcher, 'workflow-dissolve');
+    const leaderRuntime = await startTeamLeaderRecipient(
+      dispatcher,
+      provider,
+      team.team_name,
+    );
+    const leader = await dispatcher.team(team.team_name);
+    const agentIndex = provider.runtimes.length;
+    const accepted = await leader.workflows.run({
+      script: ACTIVE_WORKFLOW_SCRIPT,
+    });
+    const workflowAgent = await runtimeAt(provider, agentIndex);
+    await workflowAgent.submitStarted.promise;
+
+    await expect(
+      dispatcher.dissolveTeam({
+        teamId: team.team_name,
+        note: 'stop active Team Workflow',
+        force: true,
+      }),
+    ).resolves.toMatchObject({ accepted: true, status: 'submitted' });
+    await vi.waitFor(async () => {
+      const row = (await dispatcher.listTeams()).find(
+        (candidate) => candidate.team_name === team.team_name,
+      );
+      expect(row?.status).toBe('closed');
+    });
+
+    const record = JSON.parse(
+      await readFile(
+        workflowRunRecordPath({
+          dispatcherId: DISPATCHER_ID,
+          teamId: team.team_name,
+          runId: accepted.run_id,
+        }),
+        'utf8',
+      ),
+    ) as { status: string };
+    expect(record.status).toBe('stopped');
+    expect(completionInputs(leaderRuntime)).toEqual([]);
+    expect(completionInputs(dispatcherRuntime)).toEqual([]);
+  });
+
   it('keeps a failed host stop published through late admission settlement without owner input', async () => {
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
@@ -255,96 +316,132 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
       expect(completionInputs(secondDispatcherRuntime)).toHaveLength(1);
     });
   });
-});
 
-interface Deferred<T> {
-  readonly promise: Promise<T>;
-  resolve(value: T): void;
-}
+  it('retires aggregate completion before waiting for Workflow teardown', async () => {
+    const host = await createHost();
+    const provider = new ControlledRuntimeProvider();
+    const { server, dispatcher } = await host.start(provider);
+    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const direct = await spawnDispatcherTeammate(
+      dispatcher,
+      provider,
+      'fenced-direct',
+    );
+    const leaderIndex = provider.runtimes.length;
+    const creating = dispatcher.createTeam({
+      requestId: 'fenced-team-request',
+      payloadHash: teamCreatePayloadHash({ scenario: 'aggregate-fence' }),
+      options: {
+        namePrefix: 'fenced-team',
+        leaderAgentRuntime: AGENT_RUNTIME_ID,
+        intent: 'exercise the aggregate fence',
+        prompt: 'pending leader work',
+      },
+    });
+    const leaderRuntime = await runtimeAt(provider, leaderIndex);
+    const team = await creating;
+    const member = await spawnTeamMember(
+      dispatcher,
+      provider,
+      team.team_name,
+      'fenced-member',
+    );
 
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((accept) => {
-    resolve = accept;
+    const allowWorkflowStop = deferred<void>();
+    provider.planNext({ stopBarrier: allowWorkflowStop.promise });
+    const workflowAgentIndex = provider.runtimes.length;
+    await dispatcher.workflows.run({ script: ACTIVE_WORKFLOW_SCRIPT });
+    const workflowAgent = await runtimeAt(provider, workflowAgentIndex);
+    await workflowAgent.submitStarted.promise;
+
+    const stopping = host.stop(server);
+    await workflowAgent.stopStarted.promise;
+    direct.runtime.submissions[0]!.complete('direct completed after fence');
+    member.runtime.submissions[0]!.complete('member completed after fence');
+    leaderRuntime.submissions[0]!.complete('leader completed after fence');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(completionInputs(leaderRuntime)).toEqual([]);
+    expect(completionInputs(dispatcherRuntime)).toEqual([]);
+
+    allowWorkflowStop.resolve();
+    await stopping;
   });
-  return { promise, resolve };
-}
 
-interface RuntimePlan {
-  readonly delayedAdmission?: Promise<RuntimeAdmission>;
-  readonly stopFailures?: readonly Error[];
-}
+  it('keeps the aggregate fence raised while an admitted task restarts a released TeamLeader', async () => {
+    const host = await createHost();
+    const provider = new ControlledRuntimeProvider();
+    const { server, dispatcher } = await host.start(provider);
+    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const team = await createTeam(dispatcher, 'restart-under-fence');
+    await startTeamLeaderRecipient(dispatcher, provider, team.team_name);
 
-class ControlledRuntime {
-  readonly inputs: string[] = [];
-  readonly submissions: ControllableRuntimeSubmission[] = [];
-  readonly submitStarted = deferred<void>();
-  readonly stopStarted = deferred<void>();
-  private delayedAdmission: Promise<RuntimeAdmission> | null;
-  private readonly stopFailures: Error[];
+    const releaseDirectStop = deferred<void>();
+    provider.planNext({ stopBarrier: releaseDirectStop.promise });
+    const direct = await spawnDispatcherTeammate(
+      dispatcher,
+      provider,
+      'block-direct-sweep',
+    );
+    const dispatcherAgent = materializedDispatcherAgent(dispatcher);
+    const service = await materializedTeamService(dispatcher, team.team_name);
+    const releaseAdmittedTask = deferred<void>();
+    const admittedTaskStarted = deferred<void>();
+    const admitted = dispatcher.admitOperation(async () => {
+      admittedTaskStarted.resolve();
+      await releaseAdmittedTask.promise;
+      return service.submitToLeader({
+        source: CHANNEL_SOURCE,
+        text: 'work admitted before the aggregate fence',
+        initiator: dispatcherAgent,
+      });
+    });
+    await admittedTaskStarted.promise;
 
-  constructor(
-    readonly context: AgentRuntimeCreateContext<unknown>,
-    plan: RuntimePlan,
-  ) {
-    this.delayedAdmission = plan.delayedAdmission ?? null;
-    this.stopFailures = [...(plan.stopFailures ?? [])];
-  }
-
-  readonly runtime: AgentRuntime = {
-    start: async () => ({ continuity: 'fresh' }),
-    submit: (input) => this.submit(input),
-    stop: () => this.stop(),
-  };
-
-  private async submit(
-    input: AgentRuntimeSubmissionInput,
-  ): Promise<RuntimeAdmission> {
-    this.inputs.push(input.text);
-    this.submitStarted.resolve();
-    const delayed = this.delayedAdmission;
-    if (delayed !== null) {
-      this.delayedAdmission = null;
-      return delayed;
+    const restartedLeaderIndex = provider.runtimes.length;
+    const stopping = host.stop(server);
+    await direct.runtime.stopStarted.promise;
+    try {
+      releaseAdmittedTask.resolve();
+      const restartedLeader = await runtimeAt(provider, restartedLeaderIndex);
+      await expect(admitted).resolves.toMatchObject({ status: 'submitted' });
+      restartedLeader.submissions[0]!.complete('completed after release sweep');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(completionInputs(dispatcherRuntime)).toEqual([]);
+    } finally {
+      releaseDirectStop.resolve();
     }
-    const submission = controllableRuntimeSubmission();
-    this.submissions.push(submission);
-    if (isCompletionInput(input.text)) submission.complete(null);
-    return { status: 'submitted', submission: submission.submission };
-  }
+    await stopping;
+  });
 
-  private async stop(): Promise<void> {
-    this.stopStarted.resolve();
-    const failure = this.stopFailures.shift();
-    if (failure !== undefined) throw failure;
-    for (const submission of this.submissions) submission.stop();
-  }
-}
+  it('stops an active Dispatcher Workflow without submitting its terminal fact during host shutdown', async () => {
+    const host = await createHost();
+    const provider = new ControlledRuntimeProvider();
+    const { server, dispatcher } = await host.start(provider);
+    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const agentIndex = provider.runtimes.length;
+    const accepted = await dispatcher.workflows.run({
+      script: ACTIVE_WORKFLOW_SCRIPT,
+    });
+    const workflowAgent = await runtimeAt(provider, agentIndex);
+    await workflowAgent.submitStarted.promise;
 
-class ControlledRuntimeProvider implements AgentRuntimeProvider<unknown> {
-  readonly runtimes: ControlledRuntime[] = [];
-  private readonly plans: RuntimePlan[] = [];
+    await host.stop(server);
 
-  getCapabilities() {
-    return { tags: [] };
-  }
-
-  async readRecentActivity() {
-    return { records: [], truncated: false };
-  }
-
-  async createRuntime(
-    context: AgentRuntimeCreateContext<unknown>,
-  ): Promise<AgentRuntime> {
-    const runtime = new ControlledRuntime(context, this.plans.shift() ?? {});
-    this.runtimes.push(runtime);
-    return runtime.runtime;
-  }
-
-  planNext(plan: RuntimePlan): void {
-    this.plans.push(plan);
-  }
-}
+    const record = JSON.parse(
+      await readFile(
+        workflowRunRecordPath({
+          dispatcherId: DISPATCHER_ID,
+          teamId: null,
+          runId: accepted.run_id,
+        }),
+        'utf8',
+      ),
+    ) as { status: string };
+    expect(record.status).toBe('stopped');
+    expect(completionInputs(dispatcherRuntime)).toEqual([]);
+  });
+});
 
 interface StartedServer {
   readonly server: Server;
@@ -538,6 +635,30 @@ function materializedDispatcherTeammate(
   const entities = collection.materializedEntities();
   expect(entities).toHaveLength(1);
   return entities[0]!;
+}
+
+function materializedDispatcherAgent(
+  dispatcher: DispatcherService,
+): TeammateService {
+  const inputSources = (
+    dispatcher as unknown as {
+      readonly inputSources: { readonly agent: TeammateService | null };
+    }
+  ).inputSources;
+  expect(inputSources.agent).not.toBeNull();
+  return inputSources.agent!;
+}
+
+function materializedTeamService(
+  dispatcher: DispatcherService,
+  teamId: string,
+): Promise<TeamService> {
+  const teams = (
+    dispatcher as unknown as {
+      readonly teams: { open(id: string): Promise<TeamService> };
+    }
+  ).teams;
+  return teams.open(teamId);
 }
 
 async function hasSettled(promise: Promise<unknown>): Promise<boolean> {

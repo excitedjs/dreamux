@@ -261,3 +261,239 @@ Recording these so a later round does not re-litigate them:
 F1 and F2 are design/requirement decisions and should be resolved by the
 TeamLeader (F2 possibly with the operator). F3–F5 are mechanical completions of
 the draft's own sections.
+
+## 2026-09-08 Workflow-stop amendment review
+
+Independent re-review of the amendment only, against current source. Inputs
+verified by hash: `requirement.md` =
+`0f34ff8be04b6a42c363db28246c7c9763918a63ff4650af46f9be81068d6ea9`,
+`technical-design/draft.md` =
+`9b732820d647c5ef4ae8b9d0d92c5fdd7253bfb37f36e43f6598459dc4c10d44`. Both match
+the authoritative values. Branch state: `HEAD` = `3974df3`, two commits ahead of
+`fffc3bd`; `git diff fffc3bd..HEAD -- packages/dreamux/src/service/workflow-service/`
+is **empty** — the amendment is design-only, no Workflow source exists to review
+yet, so every source claim below is checked against the unchanged baseline.
+
+Note on the frozen-input header: `draft.md` §Inputs still cites requirement
+SHA-256 `d2b40d9b…`, which is the pre-amendment hash. The requirement has since
+gained the Workflow clauses and now hashes to `0f34ff8b…`. Per
+`engineering-whitepaper` §4, a design that cites a stale freeze of the document
+it implements should update the citation in the same change.
+
+### Verdict
+
+The amendment's **owner choice is correct and its mechanism is minimal** — the
+core claims survive source verification, and the two-entry-point design is
+justified by a real race I confirmed rather than a hypothetical one. Three
+findings: one requirement conflict the amendment introduces against its own
+non-goal (W1), one missing observable test the verification amendment does not
+cover (W2), and one scope-boundary contradiction between the amendment and the
+already-committed `final.md` (W3). W1 is a blocker for the operator, not for the
+design.
+
+### Confirmed against source
+
+- **The defect is real and stated accurately.** `WorkflowRun.finalize()` calls
+  `this.deps.deliverTerminal({...})` at `workflow-service/run.ts:629-650`,
+  guarded only by `terminalDeliveryCommitted`, with no consultation of *why*
+  finalization ran. `WorkflowRun.stop()` → `terminal.stop()`
+  (`run.ts:172-174`) and `WorkflowService.stopAll()` →
+  `run.stop()` (`index.ts:228-236`) both reach it. Both explicit stop and
+  aggregate cleanup do push a stopped Workflow completion. Confirmed by test:
+  `workflow-service.test.ts:425-426` asserts exactly that
+  (`delivery.delivered[0]` matches `{kind:'workflow', status:'stopped'}`).
+- **The `suppressDelivery` disclaimer is correct.**
+  `WorkflowRunTerminal.suppressDelivery` (`run-terminal.ts:60-62`) is read only
+  at `run.ts:537` and `run.ts:554`, both of which gate
+  `runner.send({type:'agent_result'})` — child results into the aborting runner.
+  It never touches `deliverTerminal`. The amendment is right that this is an
+  unrelated mechanism, and right not to overload it.
+- **The owner choice is right.** The captured closure is created at
+  `WorkflowService.createRun` (`index.ts:164-165`) and handed to the run; the run
+  is the only holder and `finalize()` the only invoker. This mirrors the TeamMate
+  boundary exactly — obligation retired at the source that owes it, not at
+  `CompletionDeliveryPolicy`, which stays a stateless downstream policy. No new
+  entity, mode, or role branch. Consistent with `engineering-whitepaper` §3.
+- **The create-vs-`closeAdmission` race is real, and `closeAdmission()` is the
+  right second entry point.** `stopAll()` calls `closeAdmission()` *first*
+  (`index.ts:229`), which fans out to `run.closeAdmission()` for every live run
+  (`index.ts:105`) → `terminal.reserveStop()` (`run.ts:176-178`). Separately,
+  `createRun` calls `if (!this.accepting) run.closeAdmission()`
+  (`index.ts:174`) for a run that finished construction after the service
+  fence dropped. A run in that window is *never* in `this.runs` when
+  `closeAdmission()` fans out, so hooking only `stop()` would miss it. Both
+  aggregate paths reach the fence before the sweep:
+  `DispatcherService.beginShutdown()`/`stop()` call
+  `workflowOwner.closeAdmission()` (`dispatcher-service/index.ts:307`, `:331`)
+  ahead of `stopAll()` (`:337`), and `TeamClosing` calls
+  `workflows.closeAdmission()` (`team-service/closing.ts:253`, `:364`) ahead of
+  `stopAll()`. Two entry points here are **not** the F1 duplication I flagged for
+  TeamMates: they cover two structurally disjoint populations (runs in the map
+  vs. a run not yet in it), which is the same justification the TeamLeader
+  accepted for the sweep+predicate pair.
+- **Natural completed/failed delivery is genuinely untouched.** Those paths
+  reach `terminal.request('completed'|'failed', …)` from
+  `handleRunnerMessage` (`run.ts:230-232`) and `terminal.observe('failed', …)`
+  (`run.ts:106`, `:119`, `:196`, `:397`, `:412`) — none of which is `stop()` or
+  `closeAdmission()`. The amendment's "do not abandon on natural terminal paths"
+  is satisfiable without a discriminant. Correct.
+- **"Snapshot and invoke only when still owed" is the right shape.** Read the
+  closure into a local before `await`, mirroring the existing
+  `terminalDeliveryCommitted` idiom at `run.ts:629-650`. No second boolean is
+  needed: a nullable closure field *is* the state, per
+  `service/CLAUDE.md` "The operation is the fence" and whitepaper §7 ("a nullable
+  promise field is itself the state — do not put a boolean or phase enum beside
+  it"). The final design should say so explicitly, because
+  `terminalDeliveryCommitted` already sits adjacent and invites a copycat flag.
+
+### W1 — The amendment contradicts the requirement's own Workflow non-goal (requirement conflict)
+
+Requirement §Non-goals: *"No change to naturally completed or failed Workflow
+delivery, child-Agent result delivery inside a running Workflow, …"*.
+
+Source shows this cannot hold as written under a `closeAdmission()`-triggered
+abandonment. `closeAdmission()` → `reserveStop()` sets
+`intent = {status:'stopped'}` **only if** `this.deps.status() === 'running'`
+(`run-terminal.ts:64-68`). So far consistent. But the fence is published by
+`beginShutdown()` (`dispatcher-service/index.ts:327-333`) and by
+`input-source-lifecycle.ts:286` — points at which a run may be *milliseconds
+from its natural terminal*. Concretely: a runner emits `run_result: completed`;
+`handleRunnerMessage` is queued behind `runnerMessageTail` (`run.ts:191-195`);
+`beginShutdown()` fires; `closeAdmission()` abandons the closure; the queued
+`terminal.request('completed', …)` then finalizes with status **completed** —
+and delivers nothing.
+
+That is a naturally completed Workflow whose delivery was abandoned. It is
+defensible under the operator's 「全部丢弃」 boundary ruling, and it is the same
+trade the TeamMate side already accepted. What is *not* defensible is the
+requirement simultaneously listing it as a non-goal and the acceptance criteria
+promising *"A Workflow that naturally completes or fails while its scope remains
+active keeps exactly one terminal completion delivery."* The escape hatch is
+"while its scope remains active" — but `closeAdmission()` is precisely the moment
+the scope stops being active, so the two clauses only reconcile if the
+requirement says so.
+
+Per whitepaper §5 ("Know what you are touching" — enumerate the user-visible
+behaviors a change alters) and §1 (a design must name the concrete scenario, not
+leave it implicit), the final design must state this window explicitly: *a
+Workflow whose natural terminal is queued behind the shutdown fence loses its
+delivery.* Then either the operator confirms it, or the non-goal is narrowed to
+"natural terminal reached before any stop or admission-close boundary". I
+recommend stating and confirming rather than adding a mechanism to close the
+window — a check that distinguishes "already-decided natural terminal" from
+"stop-induced terminal" is exactly the causal discriminant the requirement's own
+constraints forbid.
+
+### W2 — One missing observable test, and one listed test that cannot observe what it claims
+
+The verification amendment's five bullets are otherwise right; two problems:
+
+**Missing: `stopAll()` currently has no delivery assertion at all.** The
+amendment says "prove `WorkflowService.stopAll()` also produces no terminal
+completion". `workflow-service.test.ts:596-624` is the only `stopAll()` test and
+it asserts record status and `runner.stopped` — it never inspects
+`delivery.delivered`, even though it already constructs a
+`fakeCompletionDelivery()` at `:600`. Today that test would pass both before and
+after the amendment. The new assertion must be added there (or in a sibling),
+and it should assert `delivery.delivered` is **empty**, not merely "not stopped".
+
+**Weak: the create-vs-`closeAdmission` race bullet is hedged.** The amendment
+says "cover the create-versus-close-admission race *if existing composition
+coverage does not observe its delivery consequence*". I checked: it does not.
+`grep` for `closeAdmission` across `workflow-service.test.ts` returns nothing,
+and no test drives `service.run()` after admission closes. Since `index.ts:174`
+is the entire reason the amendment needs a second entry point, an untested branch
+there means the second mechanism is unverified — and per whitepaper §1, an
+unverifiable branch is a candidate for deletion rather than a candidate for
+trust. Make this bullet unconditional: create a run while `accepting === false`,
+let it finalize, assert no delivery. If that test proves awkward to write, that
+is evidence the second entry point should be reconsidered, not waived.
+
+Also worth one line, mirroring what the TeamMate side got right: the amendment
+should name `workflow-service.test.ts:425-426` as the load-bearing assertion
+being **inverted** and cite the operator's 「继续」 as its superseding authority.
+Root `CLAUDE.md` treats a green run produced by a rewritten assertion as circular
+evidence; the TeamMate half handled this explicitly (`final.md` review
+adjudication), and the Workflow half currently does not.
+
+### W3 — The amendment contradicts committed text in `final.md` and the merged docs (scope boundary)
+
+`final.md:58-60` — already committed in `6615908` — states:
+
+> Workflow-run terminal delivery is separate: `WorkflowService` calls
+> `CompletionDeliveryPolicy` directly, so this change does not suppress or alter
+> Workflow completion semantics.
+
+and `final.md:258` records, as an accepted review outcome, "Workflow-run terminal
+delivery remains outside this path." The amendment reverses both. Likewise the
+already-merged docs enumerate exactly three boundaries and exclude Workflow:
+`.agents/product/README.md:119-124` ("TeamMate close, Team dissolve, and host
+stop"), `.agents/domains/dispatcher-orchestration.md:455-460`,
+`packages/dreamux/src/service/CLAUDE.md` ("A settled turn is reported while its
+delivery relationship remains active"), and
+`dreamux-maintenance/references/service-lifecycle.md:35-40`.
+
+The amendment's own verification bullet does list "update product, architecture,
+service-local, maintenance, task, Issue, and Rush change-note text", so the
+intent is right — but it must also **supersede `final.md`'s explicit exclusion in
+the same change**, per whitepaper §5 ("Know why it was the way it was … update
+its record in the same change"). Leaving a committed design document asserting
+the opposite of the shipped behavior is precisely the stale-record failure §4
+warns about.
+
+Two concrete items the amendment's doc list under-specifies:
+
+- The Rush change file `common/changes/@excitedjs/dreamux/dreamux-dreamux-codex-team_2026-09-07-14-49.json`
+  currently reads "Stop deliberate **TeamMate** teardown from pushing pending
+  completion notifications to owners." It must be widened to both source-owned
+  obligations. `type: "patch"` remains correct — no persisted shape, config, or
+  path changes, so no `BREAKING:`/`Rebuild:` is owed.
+- Every doc sentence above enumerates the three TeamMate boundaries as a closed
+  list. Widening them to "two source-owned obligations" is a rewrite of four
+  separate sentences, not an append. Name them individually so none is missed —
+  the maintenance reference is again the costliest to leave stale, since it is
+  operator-facing troubleshooting guidance that would misdiagnose an abandoned
+  Workflow delivery as a delivery bug.
+
+### Entropy assessment
+
+Net favorable, and for the right reason. The amendment **removes** an asymmetry:
+before it, Core had two source-owned delivery obligations governed by two
+different rules, so explaining teardown required "TeamMate deliveries are
+abandoned, Workflow terminals are not, and there is no principle distinguishing
+them." After it, one sentence covers both. That is a genuine reduction in what a
+maintainer must hold, not a dedup-by-indirection: no shared layer is introduced,
+each owner keeps its own field, and the two implementations stay independent.
+
+**Additions**, counted honestly (the amendment does not tally them, and the
+TeamMate half was previously under-counted — see F1): one mutable closure field
+on `WorkflowRun`, abandonment at two call sites, and one snapshot-and-check at
+the finalize invocation. Three, against one removed cross-cutting exception. The
+final design should state this count rather than leave it implicit.
+
+One boundary to keep watch on, not a finding: this is now the **second**
+implementation of "source-owned obligation, abandoned at teardown, not retracted
+once started" in the same module tree. A third would be the whitepaper §6 signal
+("a second implementation of a mechanism that already exists once") firing for
+real. Two independent owners each holding their own nullable closure is the
+correct shape today — a shared `PendingObligation` helper would be exactly the
+dedup-by-indirection §0 bans. Worth one sentence in the final design so a future
+round does not "unify" them.
+
+### Amendment findings summary
+
+1. **W1 (blocker for the operator, not the design)** — state the
+   natural-terminal-behind-the-fence window explicitly and reconcile it with the
+   requirement's Workflow non-goal and acceptance criterion.
+2. **W2** — add a `delivery.delivered` assertion to the existing `stopAll()`
+   test; make the create-vs-`closeAdmission` race test unconditional; name the
+   inverted assertion at `workflow-service.test.ts:425-426` and its superseding
+   ruling.
+3. **W3** — supersede `final.md:58-60` and `:258` in the same change; widen the
+   four enumerated doc sentences and the Rush change note.
+4. Housekeeping — update the draft's stale requirement hash citation, state the
+   three-addition entropy count, and record why the two obligations stay
+   independent rather than being unified.
+
+Ownership, mechanism minimality, and the two-entry-point justification are
+**accepted**. No finding requires a different owner or a new entity.

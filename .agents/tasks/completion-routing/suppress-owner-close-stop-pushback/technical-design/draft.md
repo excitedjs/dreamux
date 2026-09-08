@@ -4,11 +4,15 @@
 
 - Requirement:
   [`../requirement.md`](../requirement.md), frozen at SHA-256
-  `d2b40d9b10451621d9c04463df29b8f0ad701f3163bb8f9276f1e7a2221e3961`.
+  `286ec6ccc55b25753a24ce0eee7696323d8b281166da0b0990ef5241f1f7d264`.
 - Source baseline: `origin/next` at
   `fffc3bd337f8ce28070fb8658fc30893e71730bb`.
 - Selected workflow: TeamLeader-authored direct design with three independent
   reviewers.
+
+This draft preserves the pre-implementation proposal and review amendments.
+The operator-ratified aggregate-fence correction and Workflow bookkeeping
+cleanup are authoritative only in [`final.md`](final.md).
 
 ## Decision
 
@@ -226,3 +230,64 @@ resulting need for renderer, role, aggregate, or provider exceptions.
 The final model remains one lifecycle decision at the TeamMate entity, one
 settlement owner at the Turn coordinator, and one downstream delivery policy for
 only the completions the source still owes.
+
+## Workflow-stop amendment — 2026-09-08
+
+PR #389 review exposed a second source-owned delivery obligation. The operator
+asked “你这个回推处理Workflow的Stop逻辑了吗？” and, after the TeamLeader explained
+the current path and recommended extending the uniform stop rule, replied “继续”.
+
+### Current path and defect
+
+`WorkflowService.stop()` and `WorkflowService.stopAll()` both reach
+`WorkflowRun.stop()`. The run converges its runner, locked TeamMates, agent
+results, journal, and durable terminal record, then unconditionally calls the
+captured `deliverTerminal` closure. Consequently both explicit `workflow_stop`
+and aggregate cleanup deliver a stopped Workflow completion to the initiating
+Agent. `WorkflowRunTerminal.suppressDelivery` is unrelated: it stops per-agent
+results from being sent back into an aborting runner, not terminal delivery to
+the Workflow owner.
+
+### Proposed owner and mechanism
+
+Keep the decision at `WorkflowRun`, which already owns the captured terminal
+delivery closure and the one terminal finalization. Store that closure as a
+mutable pending obligation. Make `WorkflowRunTerminal.reserveStop()` report
+whether it won the existing first-intent race. Both `WorkflowRun.stop()` and
+`WorkflowRun.closeAdmission()` synchronously abandon the closure only when that
+reservation succeeds, then join or continue the same terminal task. The second
+entry point covers existing runs and the create-versus-scope-stop race, because
+`WorkflowService` calls `closeAdmission()` before `stopAll()` and also calls it
+on a run created after service admission closes.
+
+During finalization, snapshot and invoke the closure only when it is still owed.
+Once invocation begins, a later stop cannot retract its promise. A completed or
+failed intent selected before stop makes `reserveStop()` return false, so its
+delivery remains owed through the multi-await finalization window. A runner
+terminal message only queued behind the scope fence has not selected an intent;
+the stop intent wins under the existing ordering and its delivery is abandoned.
+No second queue-inspection or causal state is added.
+
+This adds no stop mode, caller-role branch, downstream queue cancellation, or
+persisted fact. Explicit stop and aggregate cleanup intentionally share the same
+rule, matching the operator-approved TeamMate boundary and avoiding a causal
+discriminant that no consumer needs.
+
+### Verification amendment
+
+- invert the existing `workflow.stop` delivery assertion: stop still waits for
+  accepted work and persists `stopped`, but the owner records no terminal
+  completion;
+- prove `WorkflowService.stopAll()` also produces no terminal completion;
+- prove a natural completed and failed intent selected before stop still deliver
+  exactly once even when finalization has not reached owner delivery;
+- prove a delivery already invoked before stop is not retracted;
+- unconditionally cover the create-versus-close-admission race and assert one
+  stopped durable record with no owner completion;
+- add real-owner observation for Team dissolve and host stop with active
+  Workflows;
+- explicitly invert `workflow-service.test.ts`'s two stopped-delivery assertions
+  and keep its natural-failure delivery test unchanged;
+- update product, architecture, service-local, maintenance, task, Issue, and Rush
+  change-note text from TeamMate-only teardown to the two source-owned
+  obligations.

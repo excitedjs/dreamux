@@ -138,9 +138,17 @@ Team's members are the same pair again, scoped to the Team.
 - **A settled turn is reported while its delivery relationship remains
   active.** Completion delivery folds on the provider's own completion token
   when there is one, delivers an independently failed or stopped turn without
-  inventing one, and keeps per-recipient FIFO order. Deliberate TeamMate close,
-  Team dissolve, and host stop abandon only deliveries that have not started;
-  their Turns remain retained until runtime settlement converges.
+  inventing one, and keeps per-recipient FIFO order. TeamMate close or an
+  aggregate teardown fence abandons every pending TeamMate delivery; Workflow
+  stop abandons pending owner delivery only when it wins the run's first-
+  terminal-intent race. Team dissolve and host stop publish the aggregate
+  TeamMate fence before contained resources converge, and population-scoped
+  construction makes late-built Agents inherit it before publication or
+  submission. Failed-start rollback publishes the same discard before resource
+  release. Only successful startup or rollback completion re-arms future work;
+  individual host release does not. TeamMate Turns remain
+  retained until runtime settlement converges, Workflow terminal records still
+  commit, and stopped work is not recovered or replayed.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** Role
   differentiation is the tool set and system prompt injected at launch;
   `dispatcher-service/mcp-delegates.ts` is the whole role→servers decision.

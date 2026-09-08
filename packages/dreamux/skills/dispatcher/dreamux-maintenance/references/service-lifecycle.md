@@ -34,11 +34,18 @@ runtime app-server readiness, and same-version restart cautions.
   it reports completion.
 - A settled turn is reported to the Agent that was waiting for it while their
   lifecycle relationship remains active, including one that independently
-  failed or stopped without a native provider result. Deliberate TeamMate
-  close, Team dissolve, and host stop abandon completion delivery that has not
-  started, while still waiting for runtime settlement. Outside those teardown
-  boundaries, a missing completion is a delivery problem, not evidence that the
-  turn ended badly.
+  failed or stopped without a native provider result. Deliberate TeamMate close
+  abandons completion delivery that has not started while still waiting for
+  runtime settlement. Workflow stop abandons its pending owner completion only
+  when stop wins the run's first-terminal-intent race; a completed or failed
+  intent selected first still delivers exactly once. Team dissolve, host stop,
+  and failed-start rollback apply both rules. Team dissolve and host stop
+  publish pending TeamMate retirement before waiting for contained resources,
+  including Agents whose construction crosses that fence; failed-start rollback
+  publishes the same retirement before resource release. Future delivery is
+  re-armed only after a successful start or completed rollback. Stopped work is not
+  recovered or replayed. Outside those teardown boundaries, a missing
+  completion is a delivery problem, not evidence that the turn ended badly.
 - Completion preparation and each prepared submission attempt have an internal
   deadline. Deadline expiry is admission-ambiguous and terminal: Dreamux logs
   and drops that delivery instead of retrying or blocking entity, Workflow,
@@ -93,6 +100,11 @@ runtime app-server readiness, and same-version restart cautions.
   compilation, metadata validation, runtime execution, completion delivery,
   or visible Channel delivery succeeded. Inspect the run's terminal state and
   then the delivery boundary separately.
+- A successful `workflow_stop` receipt, Team dissolve, host stop, or failed-start
+  rollback leaves a stop-winning Workflow durably `stopped` without sending its
+  terminal completion to the stopping owner. A completed or failed intent
+  selected before that stop boundary still sends exactly one completion, and
+  delivery that already started is not retracted.
 - Startup completes a `running` Workflow record from its already-committed
   terminal journal fact when present; otherwise it marks the interrupted run
   `stopped`. Workflow execution and completion delivery do not resume; journal

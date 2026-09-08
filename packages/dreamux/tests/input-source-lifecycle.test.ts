@@ -189,6 +189,8 @@ async function buildHarness(options: {
   };
 
   const teams = {
+    abandonPendingCompletionDelivery() {},
+    rearmCompletionDelivery() {},
     async recoverWorktreeCleanup() {
       record('teams.recoverWorktreeCleanup');
     },
@@ -205,6 +207,8 @@ async function buildHarness(options: {
 
   const materialized: TeammateService[] = [];
   const teammates = {
+    abandonPendingCompletionDelivery() {},
+    rearmCompletionDelivery() {},
     materializedEntities: () => materialized,
   } as unknown as TeammateCollection;
 

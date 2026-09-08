@@ -55,6 +55,7 @@ import {
   throwShutdownFailures,
 } from '../shutdown-errors.js';
 import { createTeammateService } from '../teammate-service/factory.js';
+import { CompletionDeliveryScope } from '../teammate-service/completion-delivery-scope.js';
 import { TeammateService } from '../teammate-service/index.js';
 import type {
   LockedTeammate,
@@ -139,6 +140,7 @@ export class TeammateCollection implements TeammateOps {
   private readonly entities = new Map<string, TeammateService>();
   private readonly subscriptions = new Map<string, TeammateClosedSubscription>();
   private readonly materializations = new Map<string, Promise<ResolvedTeamMate>>();
+  private readonly completionDeliveryScope = new CompletionDeliveryScope();
   /**
    * TeamMates built for a `send` that has not reopened them yet.
    *
@@ -164,6 +166,7 @@ export class TeammateCollection implements TeammateOps {
         text: input.prompt,
         ...(delivery !== null ? { deliverCompletion: delivery } : {}),
       });
+      this.completionDeliveryScope.rearmAfterStaleOperation(entity);
       return {
         teammate: entity.status(),
         ...toSubmissionResult(submission),
@@ -199,10 +202,11 @@ export class TeammateCollection implements TeammateOps {
    * terminal one.
    */
   send(input: SendTeamMateInput): Promise<AgentEntitySendResult> {
+    const deliveryScope = this.completionDeliveryScope.capture();
     const resolved = this.resolveEntity(input.name);
-    return resolved instanceof Promise
-      ? resolved.then((it) => this.sendResolved(this.reopenFrom(it), input))
-      : this.sendResolved(this.reopenFrom(resolved), input);
+    const send = (it: ResolvedTeamMate) =>
+      this.sendResolved(this.reopenFrom(it), input, deliveryScope);
+    return resolved instanceof Promise ? resolved.then(send) : send(resolved);
   }
 
   /**
@@ -222,7 +226,9 @@ export class TeammateCollection implements TeammateOps {
   private async sendResolved(
     entity: TeammateService,
     input: SendTeamMateInput,
+    deliveryScope: object | null,
   ): Promise<AgentEntitySendResult> {
+    this.completionDeliveryScope.retireIfStale(entity, deliveryScope);
     try {
       const result = await entity.send({
         source: AGENT_TASK_SOURCE,
@@ -230,6 +236,7 @@ export class TeammateCollection implements TeammateOps {
         ...(input.intent !== undefined ? { intent: input.intent } : {}),
         resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
       });
+      this.completionDeliveryScope.rearmAfterStaleOperation(entity);
       // Cached only now: a reopen that failed leaves nothing behind, so a
       // closed TeamMate never occupies the live collection as the closed thing
       // it was.
@@ -349,6 +356,9 @@ export class TeammateCollection implements TeammateOps {
     return [...this.entities.values()].filter((entity) => !entity.isRetired());
   }
 
+  abandonPendingCompletionDelivery(): void { this.completionDeliveryScope.abandon(this.entities.values(), this.reopening.values()); }
+  rearmCompletionDelivery(): void { this.completionDeliveryScope.rearm(this.entities.values(), this.reopening.values()); }
+
   /** Stop every member runtime this dissolving Team holds. Team-scoped only. */
   async stopAllForDissolve(): Promise<void> {
     const failures: unknown[] = [];
@@ -407,6 +417,7 @@ export class TeammateCollection implements TeammateOps {
     options: CreateLockedTeammateOptions = {},
     beforePublish?: (entity: TeammateService) => void,
   ): Promise<TeammateService> {
+    const deliveryScope = this.completionDeliveryScope.capture();
     requireLifecycleText(input.name, 'TeamMate spawn name');
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
     const identityPrompt = optionalLifecycleText(
@@ -442,6 +453,7 @@ export class TeammateCollection implements TeammateOps {
     return this.trackMaterialization(name, async () => {
       const identity = await this.createIdentity(input, allocation);
       const entity = this.buildEntity(identity, options);
+      this.completionDeliveryScope.retireIfStale(entity, deliveryScope);
       const subscription = this.subscribeEntity(entity);
       try {
         beforePublish?.(entity);

@@ -378,6 +378,16 @@ export class TeamCollection {
     this.runtimes.closeWorkflowAdmissions();
   }
 
+  /** Retire pending completion inside every materialized Team. */
+  abandonPendingCompletionDelivery(): void {
+    this.runtimes.abandonPendingCompletionDelivery();
+  }
+
+  /** Give future Team work a fresh completion-delivery scope. */
+  rearmCompletionDelivery(): void {
+    this.runtimes.rearmCompletionDelivery();
+  }
+
   stopSchedulers(): void {
     this.runtimes.stopSchedulers();
   }

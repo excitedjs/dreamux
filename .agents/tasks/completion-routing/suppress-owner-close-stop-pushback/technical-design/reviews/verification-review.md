@@ -208,3 +208,158 @@ TeamLeader should fold in F1 (name the test inversion and the locked contract)
 and F2 (pin the close-abandonment site to `transitionToClosed`); F3 (public
 method, non-optional rename) is small but should be resolved in the same edit.
 No change to the chosen boundary or to the two-fact predicate is warranted.
+
+---
+
+# 2026-09-08 Workflow-stop amendment review
+
+Seat: `tm-verification-review-i5j9` · Reviewed the Workflow-stop amendment at the
+end of `technical-design/draft.md` (SHA-256
+`9b732820d647c5ef4ae8b9d0d92c5fdd7253bfb37f36e43f6598459dc4c10d44`) against the
+amended requirement (SHA-256
+`0f34ff8be04b6a42c363db28246c7c9763918a63ff4650af46f9be81068d6ea9`) and current
+source on the `dreamux/dreamux-codex-team` branch.
+
+## Verdict
+
+The amendment's **scope and owner are correct**: extend the same source-obligation
+rule to `WorkflowRun`, whose captured `deliverTerminal` closure is the exact
+Workflow analog of `EntityTurn`'s delivery closure, and abandon it at deliberate
+stop. Explicit `workflow_stop`, `stopAll()`, and the create-versus-closeAdmission
+race are all correctly identified, and the `suppressDelivery`/terminal-delivery
+distinction is accurate.
+
+The mechanism as worded, however, **over-abandons**: it nulls the closure at the
+`stop()`/`closeAdmission()` entry point, before `WorkflowRunTerminal.reserveStop()`
+checks whether the run has already selected a natural terminal. This drops a
+naturally-completed or failed run's delivery when a stop races it — a direct
+violation of acceptance criterion "A Workflow that naturally completes or fails
+while its scope remains active keeps exactly one terminal completion delivery."
+That is the one finding the TeamLeader must resolve before the amendment is
+authoritative; the rest are verification-plan tightening.
+
+## Verified source claims (accurate)
+
+- **`WorkflowRun.finalize()` always delivers.** `run.ts:629-650` invokes
+  `deps.deliverTerminal` unconditionally, guarded only by the idempotency flag
+  `terminalDeliveryCommitted` (not by suppression). ✓
+- **Both stop entry points reach `finalize` with `'stopped'`.** `WorkflowRun.stop()`
+  → `terminal.stop()` (`run.ts:172-174`); `WorkflowRun.closeAdmission()` →
+  `terminal.reserveStop()` (`run.ts:176-178`). `WorkflowService.stop()` →
+  `active.stop()` (`index.ts:203-212`); `stopAll()` → `closeAdmission()` then
+  `run.stop()` per run (`index.ts:228-236`). `workflow_stop` MCP → `WorkflowService.stop()`
+  (`teammate-collection/mcp-delegate.ts:306-309`). ✓
+- **`suppressDelivery` is unrelated.** `run-terminal.ts:60-62` returns `intent !== null`
+  and gates only `runner.send({type:'agent_result'})` in `completeAgent`/`sendAgentError`
+  (`run.ts:537, 554`) — it never touches terminal delivery. ✓
+- **The create-versus-closeAdmission race is real and already wired.** `createRun`
+  sets `if (!this.accepting) run.closeAdmission()` at `index.ts:174`, after the run
+  is materialized but before `run.start()` (`index.ts:185`); `start()` then sees
+  `terminal.requested !== null` and returns without starting (`run.ts:157-160`).
+  `stopAll()` calls `closeAdmission()` before draining `runCreations` (`index.ts:229-232`).
+  ✓
+- **Natural completed/failed paths do not go through the stop entry points.**
+  They enter via `terminal.request()`/`observe()` (`run.ts:231-235`, `run-terminal.ts:95-118`),
+  so "natural paths do not abandon" is true **only in the absence of a racing stop** —
+  which is exactly the gap below. ✓
+
+## Findings
+
+### W1 — High: abandonment fires too early; it drops natural completed/failed delivery that races a stop
+
+**Evidence.** `WorkflowRunTerminal.reserveStop()` guards on the run still being
+undecided: `if (this.intent !== null || this.deps.status() !== 'running') return;`
+(`run-terminal.ts:65`). A run that has already selected `'completed'`/`'failed'`
+has `intent !== null`, so `reserveStop()` is a no-op and `terminal.stop()` merely
+joins the in-flight `finalize`. The amendment, however, nulls the delivery closure
+at the **method entry** — "synchronously abandon it before reserving **or joining**"
+— which executes even when the run is already committed to a natural terminal.
+
+**Failure scenario (single-threaded, no torn read):**
+1. Runner emits `run_result: completed` → `terminal.request('completed')` sets
+   `intent = {status:'completed'}` and starts `finalize('completed')`.
+2. `finalize` is awaiting its early steps — `runner.stop()`, `joinMaterializations`,
+   handle closes, `drainRunnerMessageTasks`, `drainAgentTasks`
+   (`run.ts:563-592`) — **before** the `deliverTerminal` line at `run.ts:629`.
+3. `workflow_stop` (or `stopAll`'s `run.stop()`) arrives → amendment nulls the
+   closure → `terminal.stop()` joins (does not override `intent`).
+4. `finalize` reaches `deliverTerminal`, snapshots `null`, and submits nothing.
+
+Result: the run is durably `completed`, the `workflow_stop` receipt returns
+`completed`, and the owner receives **no** terminal completion — a real news loss,
+not a cleanup suppression. This conflicts with acceptance criterion 3 and with the
+operator's "already completed submission is not retracted" principle, which the
+EntityTurn design honors via its `deliveryTask !== null` guard.
+
+**Why the EntityTurn guard does not transfer directly.** In `EntityTurn`, settlement
+and delivery-start are synchronous in one call — `settle()` sets `selectedOutcome`
+then `startDeliveryIfReady()` sets `deliveryTask` immediately (`turn-recording.ts:139-173`),
+so "settled" ⇔ "delivery started" and the `deliveryTask !== null` check protects
+every settled outcome. Workflow `finalize` has a multi-await gap between intent
+selection and delivery invocation, so "settled" ⇏ "started". The Workflow analog
+must therefore gate abandonment on *undecided-ness* (`intent === null`), not on the
+closure still being non-null.
+
+**Required action.** Gate the abandonment on the run's terminal still being
+undecided, matching `reserveStop()`'s own guard. Concretely, abandon inside
+`reserveStop()` after its `intent === null && status === 'running'` guard (threading
+an abandon callback into `WorkflowRunTerminal`), or, equivalently, keep the
+abandonment in `WorkflowRun` but condition it on `this.terminal.requested === null`
+at `stop()`/`closeAdmission()`. Either way the invariant becomes: *abandon only when
+the deliberate stop actually transitions the run to `'stopped'`; never when the run
+already committed to a natural terminal.*
+
+### W2 — Medium: name both stop-delivery assertions that invert, and the one that must stay
+
+The amendment says "invert the existing `workflow.stop` delivery assertion" without
+naming it. Two independent assertions assert the removed behavior, both in
+`packages/dreamux/tests/workflow-service.test.ts`:
+
+- `:300` `expect(delivery.delivered).toHaveLength(1)` inside *"ignores a runner
+  message that arrives after the run is already durably terminal"* (stop path).
+- `:425-426` `toHaveLength(1)` + `toMatchObject({ kind:'workflow', status:'stopped' })`
+  inside *"stop() converges already-accepted work…"*.
+
+Both must become `0` (or assert no delivery). The requirement's amended evidence
+section already names `workflow-service.test.ts` generally; the draft should carry
+the two line anchors so the inversion is reviewed as requirement-driven, not as a
+weakened contract.
+
+The natural-failure test *"a failed run delivers its failure through the
+null-completion-token entry point"* (`:430-454`) must **stay green unchanged** — it
+is the Workflow analog of the `completion-delivery.test.ts` locked contract and
+must not be folded into the inversion.
+
+### W3 — Medium: `stopAll()` delivery absence and the create-versus-closeAdmission race are untested
+
+- The existing `stopAll()` test (`:596-624`) asserts only `status === 'stopped'` and
+  `runner.stopped`; it never reads `delivery.delivered`. The amendment's "prove
+  `stopAll()` also produces no terminal completion" is therefore an **add**, not an
+  invert — and it must assert the observable (owner records no submission), not a
+  private flag.
+- There is **no** test exercising a run created after `WorkflowService.closeAdmission()`
+  begins. The amendment hedges "if existing composition coverage does not observe its
+  delivery consequence" — it does not. The `index.ts:174` `run.closeAdmission()`
+  branch (create-versus-scope-stop) is load-bearing for the race and currently has
+  zero delivery-level coverage; the test is required, not optional.
+
+### W4 — Low: make the "already-started" wording precise, and affirm minimalism
+
+- The snapshot-then-invoke mechanics in `finalize` are sound in the narrow sense:
+  the snapshot read and the nulling are both synchronous, so once `finalize` reads a
+  non-null closure and begins `await delivery(...)`, a later stop cannot retract it.
+  State this explicitly as the "already-started" guarantee, distinct from the
+  W1 "selected-but-not-yet-started" hole.
+- Otherwise the mechanism is minimal and correctly owned: one mutable pending
+  obligation on `WorkflowRun` (the existing `deps.deliverTerminal` owner), no stop
+  mode, no caller-role branch, no router/queue cancellation, no persisted fact. The
+  requirement invariant "reuse the same source-obligation concept at `WorkflowRun`"
+  is honored.
+
+## Bottom line
+
+Approve the amendment's scope and owner. Resolve **W1** (gate abandonment on
+`intent === null`, matching `reserveStop()`'s guard) before it is authoritative, or
+the fix will regress natural completion delivery under a stop race. Fold **W2**/**W3**
+into the verification plan with the concrete test anchors. No change to the chosen
+owner or to the shared rule between explicit stop and aggregate cleanup is warranted.

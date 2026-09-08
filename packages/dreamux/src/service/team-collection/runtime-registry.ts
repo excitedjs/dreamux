@@ -5,6 +5,7 @@ import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 import { TeamService } from '../team-service/index.js';
+import { CompletionDeliveryScope } from '../teammate-service/completion-delivery-scope.js';
 import type {
   TeamClosedSubscription,
   TeamSchedulerLifecycle,
@@ -44,6 +45,8 @@ export class TeamRuntimeRegistry {
     TeamClosedSubscription
   >();
   private readonly constructing = new Map<string, Promise<TeamService | null>>();
+  private readonly constructingServices = new Set<TeamService>();
+  private readonly completionDeliveryScope = new CompletionDeliveryScope();
 
   constructor(private readonly opts: TeamRuntimeRegistryOptions) {}
 
@@ -58,6 +61,7 @@ export class TeamRuntimeRegistry {
     input: TeamCreateAtNameInput,
     teamId: string,
   ): Promise<TeamCreateResult | null> {
+    const deliveryScope = this.completionDeliveryScope.capture();
     requireLifecycleText(input.intent, 'Team create intent');
     // A cheap early-out before the expensive workspace preparation. The
     // authoritative answer is the exclusive record publication below, which
@@ -66,7 +70,7 @@ export class TeamRuntimeRegistry {
     // Synchronous from here: whoever registers first owns this id, so a second
     // create at the same candidate steps aside rather than racing it.
     if (this.constructing.has(teamId)) return null;
-    const construction = this.createTeam(input, teamId);
+    const construction = this.createTeam(input, teamId, deliveryScope);
     this.publishConstruction(
       teamId,
       construction.then((created) => created?.service ?? null),
@@ -95,9 +99,11 @@ export class TeamRuntimeRegistry {
   private async createTeam(
     input: TeamCreateAtNameInput,
     teamId: string,
+    deliveryScope: object | null,
   ): Promise<TeamServiceCreateOutput<TeamService> | null> {
     const workspace = await this.prepareWorkspace(input, teamId);
     let created: TeamServiceCreateOutput<TeamService> | null;
+    let constructing: TeamService | null = null;
     try {
       created = await TeamService.createNew(this.depsBase(teamId), {
         teamId,
@@ -113,10 +119,15 @@ export class TeamRuntimeRegistry {
           ? { skillSources: input.skillSources }
           : {}),
         workspace,
+      }, (service) => {
+        constructing = service;
+        this.observeConstruction(service, deliveryScope);
       });
     } catch (error) {
       await this.discardUnclaimedCheckout(teamId, workspace);
       throw error;
+    } finally {
+      if (constructing !== null) this.constructingServices.delete(constructing);
     }
     if (created === null) {
       await this.discardUnclaimedCheckout(teamId, workspace);
@@ -281,6 +292,20 @@ export class TeamRuntimeRegistry {
     for (const service of this.materialized) service.closeWorkflowAdmission();
   }
 
+  abandonPendingCompletionDelivery(): void {
+    this.completionDeliveryScope.abandon(
+      this.materialized,
+      this.constructingServices,
+    );
+  }
+
+  rearmCompletionDelivery(): void {
+    this.completionDeliveryScope.rearm(
+      this.materialized,
+      this.constructingServices,
+    );
+  }
+
   stopSchedulers(): void {
     for (const scheduler of this.schedulers.values()) scheduler.lifecycle.stop();
   }
@@ -352,16 +377,28 @@ export class TeamRuntimeRegistry {
    * existed.
    */
   private async rebuild(teamId: string): Promise<TeamService> {
+    const deliveryScope = this.completionDeliveryScope.capture();
     const record = await this.opts.mustTeam(teamId);
     if (record.status === 'closed') {
       throw new TeamClosedError(
         `Team ${JSON.stringify(record.team_id)} is closed`,
       );
     }
-    const { service, schedulerLifecycle } = await TeamService.rebuild(
-      this.depsBase(record.team_id),
-      record,
-    );
+    let constructing: TeamService | null = null;
+    let rebuilt: Awaited<ReturnType<typeof TeamService.rebuild>>;
+    try {
+      rebuilt = await TeamService.rebuild(
+        this.depsBase(record.team_id),
+        record,
+        (service) => {
+          constructing = service;
+          this.observeConstruction(service, deliveryScope);
+        },
+      );
+    } finally {
+      if (constructing !== null) this.constructingServices.delete(constructing);
+    }
+    const { service, schedulerLifecycle } = rebuilt;
     this.track(service);
     this.publish(service, schedulerLifecycle);
     return service;
@@ -410,6 +447,14 @@ export class TeamRuntimeRegistry {
       // rebuilt at the same id afterwards is a different object and stays.
       service.onClosed(() => this.evict(service.id, service)),
     );
+  }
+
+  private observeConstruction(
+    service: TeamService,
+    deliveryScope: object | null,
+  ): void {
+    this.constructingServices.add(service);
+    this.completionDeliveryScope.retireIfStale(service, deliveryScope);
   }
 
   private evict(teamId: string, expectedService: TeamService): void {

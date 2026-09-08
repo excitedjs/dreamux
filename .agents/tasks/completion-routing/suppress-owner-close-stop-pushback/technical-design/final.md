@@ -2,11 +2,15 @@
 
 ## Outcome
 
-When deliberate teardown begins for a `TeammateService`, permanently abandon
-every completion delivery that has not started, while retaining the Turn until
-runtime settlement has converged. This applies uniformly to explicit TeamMate
-close, Team dissolve, and host shutdown or restart, for both TeamLeader and
-Dispatcher recipients.
+When deliberate teardown begins, permanently abandon each source-owned
+completion obligation that has not started: an `EntityTurn` delivery on
+TeamMate close or host stop, and a `WorkflowRun` terminal delivery when stop
+wins that run's first-terminal-intent race. Turn settlement and Workflow
+terminal persistence still converge. This applies uniformly to explicit
+TeamMate close, explicit `workflow_stop`, Team dissolve, and host shutdown or
+restart, plus failed-start rollback, for both TeamLeader and Dispatcher
+recipients. Team dissolve and Dispatcher shutdown publish the retirement at
+their outer synchronous fence, before any contained resource convergence.
 
 The implementation stays in Core. It does not filter a rendered `stopped`
 message, cancel a recipient queue, branch on owner role, or change an Agent
@@ -14,7 +18,7 @@ Runtime or Channel provider contract.
 
 The frozen requirement is
 [`../requirement.md`](../requirement.md), SHA-256
-`d2b40d9b10451621d9c04463df29b8f0ad701f3163bb8f9276f1e7a2221e3961`.
+`286ec6ccc55b25753a24ce0eee7696323d8b281166da0b0990ef5241f1f7d264`.
 The source baseline and current `origin/next` are
 `fffc3bd337f8ce28070fb8658fc30893e71730bb`.
 
@@ -35,6 +39,13 @@ The repair therefore changes the source obligation established by PR #350 at a
 known lifecycle boundary. It does not weaken PR #149's ordinary failed/stopped
 delivery or infer teardown from terminal status.
 
+Workflow terminal delivery has separate history. PR #313 introduced the
+Workflow completion producer, PR #338 put the current unconditional
+`WorkflowRun.finalize()` delivery in place, and PR #350 later added the explicit
+test that `workflow.stop()` delivers `stopped`. PR #350 is therefore the direct
+origin of the TeamMate regression, but not the original source of Workflow
+terminal pushback.
+
 ## Product behavior
 
 | Scenario | Completion delivery after this change |
@@ -42,8 +53,12 @@ delivery or infer teardown from terminal status.
 | A Dispatcher closes its direct TeamMate | Pending delivery to the Dispatcher is abandoned. |
 | A TeamLeader closes a Team member | Pending delivery to the TeamLeader is abandoned. |
 | A Team dissolves | Pending member-to-leader and leader-to-Dispatcher delivery is abandoned. |
-| The Dispatcher host shuts down or restarts | Pending delivery from every materialized TeamMate or TeamLeader is abandoned. |
+| The Dispatcher host shuts down or restarts | Pending delivery from every existing or concurrently constructing TeamMate or TeamLeader is abandoned. |
+| An Agent invokes `workflow_stop` while the run has no terminal intent | The run converges to `stopped`, the normal receipt returns, and pending Workflow terminal delivery is abandoned. |
+| Team dissolve or host stop calls `WorkflowService.stopAll()` | A stop intent that wins abandons the Workflow terminal delivery to the stopping TeamLeader or Dispatcher. |
+| A partially opened Dispatcher or Team start fails and rolls back | Pending TeamMate delivery and stop-winning Workflow terminal delivery are abandoned; stopped work is not recovered or replayed. |
 | A turn independently completes, fails, or stops while its lifecycle relationship remains active | Delivery remains exactly once, with the existing completion token or `null` token semantics. |
+| A Workflow completed or failed intent wins before stop | Its natural terminal delivery remains exactly once, even if finalization has not reached delivery yet. |
 | Delivery already started before teardown | It is not retracted and keeps the existing folding and recipient FIFO behavior. |
 
 The third row is an explicit complexity decision. A TeamLeader that self-dissolves
@@ -55,9 +70,11 @@ initiated dissolve and threading that distinction through `TeamClosing` and
 solution chooses the lower-entropy uniform teardown rule and requires no caller
 mode or role exception.
 
-Workflow-run terminal delivery is separate: `WorkflowService` calls
-`CompletionDeliveryPolicy` directly, so this change does not suppress or alter
-Workflow completion semantics.
+A runner terminal message still queued when the scope fence reserves `stopped`
+has not selected a natural intent. Stop wins through the existing first-intent
+rule and the resulting stopped run has no delivery. Preserving an unprocessed
+message would require a second causal ordering mechanism, contrary to the
+uniform boundary the operator approved.
 
 ## Owning boundary
 
@@ -71,6 +88,12 @@ still exists. `CompletionDeliveryPolicy` is downstream: it owns token folding an
 per-recipient FIFO only after a Turn has chosen to deliver. Clearing that queue
 would be too late and could remove unrelated valid completions. Clearing
 `retainedTurns` would discard the settlement proof needed after runtime stop.
+
+`WorkflowService` separately captures the initiating Agent and supplies a
+terminal delivery closure to `WorkflowRun`. The run already owns its terminal
+intent, persistence, and one finalization, so it also owns whether that pending
+closure remains owed. `CompletionDeliveryPolicy` remains downstream and sees
+only terminal facts whose source chose to deliver.
 
 ## Source changes
 
@@ -96,9 +119,11 @@ In `packages/dreamux/src/service/teammate-service/turn-coordinator.ts`:
 
 - add `abandonPendingDeliveries()`, which iterates retained Turns and calls
   `abandonPendingDelivery()` without removing them;
-- add the semantic option `acceptsCompletionDelivery: () => boolean`;
-- when a provider admission resolves and attaches after teardown began, retain
-  the Turn with a `null` delivery closure when the predicate is false;
+- add a semantic completion-delivery-scope option supplied by the owning
+  `TeammateService`;
+- capture that opaque scope before starting provider admission, then retain a
+  late-attached Turn with a `null` delivery closure unless the captured scope is
+  still the current non-null scope;
 - rename `settleAndDeliverRetained()` to `convergeRetainedTurns()` and keep its
   real promise: prove retained Turns settled, then await only delivery that was
   already started or remained eligible.
@@ -107,26 +132,28 @@ The sweep and the attach-time predicate cover different populations of the same
 obligation:
 
 1. the sweep permanently abandons Turns already retained at the boundary;
-2. the predicate prevents an admission started before the boundary but attached
-   afterwards from acquiring a new obligation.
+2. the captured-scope check prevents an admission started before the boundary
+   but attached afterwards from acquiring a new obligation.
 
-A predicate read only at settlement is not equivalent. If native stop fails,
-`hostStop` can eventually clear while an abandoned Turn remains unsettled; a
-later settlement would then observe an active service and leak the completion.
-An epoch or generation could make that decision permanent, but would add a new
-lifecycle state solely to replace the direct Turn operation. The two temporal
-applications above use only facts and objects the service already owns.
+A predicate read only at settlement is not equivalent. If native stop fails or
+an aggregate dissolve is refused and future work is re-enabled, an abandoned
+Turn may remain unsettled after the live eligibility flag changes back. The
+opaque scope identity makes the admission-time decision permanent across that
+re-arm without becoming a persisted lifecycle phase. It exists only because the
+operator selected aggregate fence semantics together with future reuse after a
+failed boundary; a Boolean would allow a pre-fence admission to attach after the
+Boolean is reset. Retained Turns still use the direct operation rather than
+consulting the scope again at settlement.
 
-### 3. Publish and exercise the lifecycle boundary before native stop
+### 3. Publish aggregate and entity lifecycle fences synchronously
 
-In `packages/dreamux/src/service/teammate-service/index.ts`, construct the
-coordinator predicate from the existing facts:
-
-```ts
-this.phase === 'active' && this.hostStop === null
-```
-
-No persisted marker or new lifecycle phase is introduced.
+In `packages/dreamux/src/service/teammate-service/index.ts`, own one opaque,
+process-local completion-delivery scope. A non-null identity means new
+admissions may acquire an obligation. `abandonPendingCompletionDelivery()`
+sets it to `null` and sweeps retained Turns synchronously. Re-arming installs a
+fresh identity rather than restoring the old one, so an admission captured
+before the fence remains ineligible even if it attaches after future work is
+enabled. This is neither persisted state nor a new entity phase.
 
 For business close, make `turns.abandonPendingDeliveries()` the first synchronous
 operation inside the deduplicated `transitionToClosed()`, before
@@ -135,10 +162,9 @@ operation inside the deduplicated `transitionToClosed()`, before
 model-facing and admin close paths and the close phase remains a fence if native
 stop fails.
 
-For host release, assign the existing `hostStop` promise first, synchronously
-abandon retained deliveries, and only then run `releaseHostRuntime()`. Keep
-`hostStop` published through admission and Turn convergence even if native stop
-rejects:
+For host release, assign the existing `hostStop` promise first, invoke the same
+abandon operation, and only then run `releaseHostRuntime()`. Keep `hostStop`
+published through admission and Turn convergence even if native stop rejects:
 
 1. collect a `runtimeOwner.stopRuntime()` failure rather than returning early;
 2. still drain admission continuations;
@@ -146,16 +172,85 @@ rejects:
 4. still run `convergeRetainedTurns()`;
 5. throw the original failure, or the existing aggregate shape when convergence
    adds another failure;
-6. clear `hostStop` only in the existing outer `finally` after those steps.
+6. clear `hostStop` in the existing outer `finally` after those steps, without
+   re-arming delivery while the owning aggregate fence remains raised.
 
 This failure path is required by a reachable race: a provider submission may be
 started before host stop but attach only after `runtime.stop()` rejects. Draining
-while `hostStop` remains published makes that attachment receive a `null`
-delivery closure. Once the transient host stop clears, only future admissions can
-receive delivery; each abandoned Turn remains permanently detached.
+while the abandoned scope remains published makes that attachment receive a
+`null` delivery closure. The owning Dispatcher startup or failed-start rollback
+success later installs a fresh scope for future work; each old Turn remains
+permanently detached.
+
+The current per-entity stop is too late for an aggregate. Therefore:
+
+- `TeamService.dissolve()` publishes retirement for its current and concurrently
+  constructing members and leader synchronously with the existing
+  `dissolveTask` fence, before the asynchronous workspace assessment, Workflow
+  stop, scheduler stop, or runtime convergence begins;
+- `DispatcherService.stop()` and `beginShutdown()` synchronously retire direct
+  TeamMate delivery and delivery from every current or concurrently constructing
+  Team's members and leader beside their existing admission fences, before
+  `doStop()` awaits Workflows or Teams; and
+- each owning collection captures an opaque population scope before asynchronous
+  materialization, retires a service built from a stale scope before publishing
+  or submitting it, and sweeps current, reopening, and already-constructed
+  in-flight services at the fence. Collection and Team wrappers do not infer
+  owner role or manipulate Turn state themselves.
+
+If a Team dissolve fails and its admission fence is lowered, it asks each
+surviving source to install a fresh scope. A nested aggregate-fence fact prevents
+that local re-arm from overriding a concurrent Dispatcher teardown. Old retained
+Turns stay abandoned and old provider admissions carry the superseded scope;
+only later work becomes eligible. Dispatcher startup and successful failed-start
+rollback re-arm future work explicitly, after resource release has converged.
+Failed-start rollback deliberately retains the same abandonment behavior: the
+operator chose the lower-complexity rule that work accepted during a partially
+opened start is stopped without recovery, replay, or terminal completion
+pushback.
 
 If a provider admission never resolves, host release continues to wait as it does
 today. This change adds no timeout, retry, or recovery controller.
+
+### 4. Abandon Workflow delivery only when stop wins the terminal intent
+
+In `packages/dreamux/src/service/workflow-service/run-terminal.ts`, make
+`reserveStop()` return whether it installed the existing `stopped` intent. Its
+current synchronous guard — no prior intent and durable status still `running`
+— remains the sole arbiter. No new phase or causality flag is introduced.
+
+In `packages/dreamux/src/service/workflow-service/run.ts`:
+
+- destructure the constructor-supplied `deliverTerminal` closure out of the
+  retained dependency object and store it only once, as the run's mutable,
+  nullable pending obligation;
+- have both `stop()` and `closeAdmission()` ask `reserveStop()` first and clear
+  that closure only when the reservation succeeds;
+- still join the existing retryable terminal task, so stop receipts, runner and
+  TeamMate cleanup, journal writes, record writes, and unlock ordering are
+  unchanged;
+- remove `terminalDeliveryCommitted`; in `finalize()`, synchronously snapshot
+  the closure, invoke it only when non-null, and clear the stored closure only
+  after that invocation succeeds. A rejected invocation leaves the same closure
+  pending for the terminal task's existing retry. Once invocation starts, the
+  local snapshot is the no-retraction fact;
+- keep natural completed and failed delivery on the existing
+  `CompletionDeliveryPolicy.deliver()` null-token path.
+
+Both entry points are load-bearing. `WorkflowService.closeAdmission()` reaches
+runs already in its map before `stopAll()`, while `createRun()` calls
+`run.closeAdmission()` when construction crosses a scope fence before the run
+was visible. Explicit `WorkflowService.stop()` reaches `run.stop()` directly.
+The two populations are disjoint; a caller mode would add entropy without
+changing their shared stop semantics.
+
+The stop-winner condition closes the reviewed natural-result race. If a
+completed or failed intent is already selected while `finalize()` awaits earlier
+steps, `reserveStop()` returns false and the closure remains. If only a runner
+message is queued, the stop fence can reserve first exactly as it does today.
+The nullable closure is now the single stored obligation: non-null means still
+owed, while null means either deliberately abandoned or successfully delivered,
+which no later behavior needs to distinguish.
 
 ## Unchanged boundaries
 
@@ -168,7 +263,7 @@ today. This change adds no timeout, retry, or recovery controller.
 - No config, persisted state, version, migration, rebuild, or compatibility
   mechanism is added.
 - Notification text remains available for independently deliverable stopped
-  turns.
+  turns and naturally deliverable Workflow terminal facts.
 
 ## Verification
 
@@ -200,6 +295,34 @@ private flag.
    successful transient host stop delivers normally.
 8. Preserve the completion-token folding, per-recipient FIFO, completed, failed,
    and independent stopped-delivery tests unchanged.
+9. Invert both existing stopped-Workflow delivery assertions in
+   `packages/dreamux/tests/workflow-service.test.ts` (the durably-terminal late
+   runner-message case and the accepted-turn convergence case). Stop still
+   converges and returns `stopped`, but records no terminal delivery. Keep the
+   natural-failure delivery test unchanged.
+10. Add `WorkflowService.stopAll()` delivery-absence coverage and a deterministic
+    create-versus-`closeAdmission()` race proving a stopped record and no owner
+    completion.
+11. Hold natural completed and failed intents inside finalization, invoke
+    explicit stop and `stopAll()`, then prove the natural status and exactly-one
+    owner delivery remain. Separately prove delivery already invoked is not
+    retracted.
+12. Exercise real owner submissions for an active Team-scoped Workflow during
+    Team dissolve and an active Dispatcher-scoped Workflow during host stop.
+    Both terminal records converge without a Workflow completion input reaching
+    the stopping TeamLeader or Dispatcher.
+13. Add correction-specific aggregate-fence main-path coverage: hold an earlier
+    teardown stage open and settle a pending TeamMate after the outer fence but
+    before its `stopForHost()` turn; separately let an already-admitted task
+    restart a TeamLeader after its first host-release sweep. Neither path may
+    start an owner completion submission.
+
+The operator selected “只测主路径” during implementation-review ratification.
+The correction therefore does not add the three extra review-suggested matrices
+for retained completed/failed settlement, a runner terminal message already
+queued behind a blocked tail, or same-Service re-arm. Existing coverage for
+natural Workflow intent, delayed admission, no retraction, and future delivery
+remains; only the aggregate-fence main-path coverage above is newly required.
 
 Run the repository gates:
 
@@ -225,7 +348,7 @@ Update every live blanket invariant rather than leaving competing authorities:
   `.agents/domains/dispatcher-orchestration.md`;
 - `packages/dreamux/src/service/CLAUDE.md`;
 - `packages/dreamux/skills/dispatcher/dreamux-maintenance/references/service-lifecycle.md`;
-- the `EntityTurn` source comment; and
+- the `EntityTurn` and Workflow terminal source comments; and
 - this task's current-state record.
 
 Add a patch Rush change file for `@excitedjs/dreamux`. This is a user-visible bug
@@ -255,9 +378,8 @@ requirement and source baseline.
   native stop, make `abandonPendingDelivery()` public, and make the convergence
   rename mandatory.
 - **Accepted as documented behavior:** a locked submission that attaches while
-  host stop is active receives no source completion delivery; Workflow-run
-  terminal delivery remains outside this path. New work after host stop is
-  eligible again.
+  host stop is active receives no source completion delivery. New work after
+  host stop is eligible again.
 
 ### Boundary review
 
@@ -274,19 +396,90 @@ requirement and source baseline.
 - **Accepted:** add `typecheck:tests` and explicitly justify the load-bearing
   test inversion.
 
+### Workflow-stop amendment review
+
+- **Accepted from lifecycle and verification reviews:** abandonment must be
+  conditional on stop winning the existing first-terminal-intent race. A
+  previously selected completed or failed intent keeps delivery throughout the
+  multi-await finalization window.
+- **Adjudicated from the boundary review:** a runner terminal message only
+  queued when `closeAdmission()` reserves stop has not selected an intent. The
+  existing stop intent wins and delivery is abandoned. This is the current
+  ordering fact, not a new mode; the amended requirement states the visible
+  consequence explicitly.
+- **Accepted from all reviews:** invert both load-bearing stopped-Workflow
+  assertions, retain the natural-failure assertion, and require delivery-level
+  coverage for `stopAll()`, create-versus-close-admission, Team dissolve, and
+  host stop.
+- **Accepted:** supersede every earlier Workflow exclusion in the final design,
+  product/architecture/package/maintenance knowledge, public Issue, and Rush
+  change note.
+- **Accepted:** keep the TeamMate and Workflow nullable obligations independent.
+  They have different owners and temporal shapes; introducing a shared helper
+  would add indirection without removing either mechanism.
+
+### Implementation-review ratification
+
+- **Accepted and operator-ratified:** publish Team dissolve and Dispatcher
+  shutdown retirement at the outer synchronous fence. The operator selected
+  “采用栅栏语义 (Recommended)”.
+- **Superseded as blockers by an explicit product decision:** failed-start
+  rollback continues to abandon pending TeamMate and Workflow completion. After
+  the scenario and relative implementation cost were explained, the operator
+  selected “确认丢弃 (Recommended)”. This is now a named teardown boundary rather
+  than an accidental expansion of `stopForHost()` or `closeAdmission()`.
+- **Accepted with narrowed verification:** the operator selected “只测主路径”.
+  Add the aggregate-fence regression, but not the three additional edge-case
+  matrices proposed by implementation review.
+- **Accepted:** synchronize requirement, product, final design, artifact hashes,
+  and task state. The operator selected “同步更正 (Recommended)”.
+- **Accepted as in-scope cleanup:** remove the duplicate Workflow terminal-
+  delivery storage and committed Boolean while preserving first-intent,
+  delivery-failure retry, and no-retraction semantics. After the bookkeeping was
+  explained, the operator selected “本次重构”.
+- **Rejected:** do not replace explicit stop causality with a predicate on a
+  late `stopped` status. Fable withdrew that proposal after the recovery path
+  proved `stopped` has another producer.
+
 No unresolved ownership, architecture, behavior, migration, or verification
 choice remains.
 
+### Final architecture re-review correction
+
+- **Accepted:** per-entity `stopForHost()` must not re-arm completion delivery.
+  It cannot know whether release is transient or one step inside an aggregate
+  teardown. Re-arm moved to successful Dispatcher startup or failed-start
+  rollback completion; failed Team dissolve retains its local re-arm only while
+  no outer Dispatcher fence is active.
+- **Accepted:** an aggregate snapshot of materialized services is insufficient.
+  A `spawn`, `send`, Team construction, member construction, or lazy leader
+  construction that crosses the fence must inherit the retired population
+  scope before it can publish or submit work.
+- **Accepted as verification:** deterministic main-path tests exercise both a
+  settlement delayed behind an earlier teardown stage and an already-admitted
+  task that restarts a released TeamLeader while the aggregate fence remains
+  raised.
+
 ## Entropy delta and residual risk
 
-Added: one public-on-class Turn operation, one coordinator sweep, and one
-attach-time semantic predicate. The sweep and predicate are the two necessary
-temporal applications of one abandonment rule; no new entity, phase, generation,
-persisted fact, caller mode, provider branch, or downstream cancellation exists.
+Added for TeamMate: one public-on-class Turn operation, one coordinator sweep,
+opaque process-local entity and population scope identities, and narrow
+aggregate pass-throughs that publish them at the true teardown fence. The
+population scope removes the false assumption that an aggregate snapshot sees
+every construction already admitted before the fence. Re-arm is owned by the
+aggregate that can distinguish restart from teardown, with one nested Team fact
+preventing a failed dissolve from overriding an outer Dispatcher fence. Added for Workflow:
+one mutable nullable closure, two stop-boundary calls sharing `reserveStop()`'s
+Boolean result, and one finalize snapshot/check. The Workflow cleanup removes
+the duplicate closure reference and committed Boolean, leaving the nullable
+closure as the single stored obligation. These are two source owners applying
+one product rule without a shared indirection. No new entity, persisted fact,
+caller mode, provider branch, recovery controller, or downstream cancellation
+exists.
 
-Removed: the blanket concept that every settled Turn must become a model input
-even after its delivery relationship was deliberately destroyed, plus the need
-for role, renderer, router, or provider exceptions.
+Removed: the blanket concept that every settled Turn or terminal Workflow must
+become a model input even after its delivery relationship was deliberately
+destroyed, plus the need for role, renderer, router, or provider exceptions.
 
 An already-started delivery may still fail if its recipient stops immediately
 after the boundary. This is the accepted no-retraction limit, not a guarantee

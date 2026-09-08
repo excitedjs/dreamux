@@ -116,11 +116,21 @@ the same change that touches it.
   share one completion delivered once per recipient; the turn's original trigger
   does not override those relationships.
   (Requirement: [background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07).)
-- **Deliberate teardown ends pending completion obligations.** TeamMate close,
-  Team dissolve, and host stop abandon completion delivery that has not started,
-  while still waiting for each accepted turn to settle. Delivery already started
-  is not retracted, and an independently failed or stopped turn remains news for
-  its waiting Agent.
+- **Teardown ends pending completion obligations.** TeamMate close, explicit
+  `workflow_stop`, Team dissolve, host stop, and failed-start rollback abandon
+  source-owned completion delivery that has not started, while still waiting
+  for accepted Turns and Workflow records to converge. Team dissolve and host
+  stop retire TeamMate obligations synchronously at their aggregate teardown
+  fence, including work crossing asynchronous entity construction; explicit
+  close retires at the owning entity's close boundary, and failed-start rollback
+  publishes its own aggregate retirement before releasing resources. Either way,
+  every still-pending TeamMate outcome is
+  retired regardless of how it later settles. Workflow retirement still
+  requires stop to win the existing first-terminal-intent race. A natural
+  Workflow terminal intent selected first keeps its delivery, delivery already
+  started is not retracted, and an independently failed or stopped Turn remains
+  news while no teardown boundary has retired it. Work stopped by failed-start
+  rollback is not recovered or replayed.
   (Ruling: [lifecycle-stop completion pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md).)
 
 ## Observing agents

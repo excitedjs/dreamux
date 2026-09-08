@@ -35,6 +35,8 @@ import { COMPLETION_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { AdmissionLedger, AgentEntityLedgerKey } from './admission-ledger.js';
 import { buildCompletionTurnText } from './completion-renderer.js';
+import { TeammateClosedPublisher } from './closed-fact.js';
+import { CompletionDeliveryScope } from './completion-delivery-scope.js';
 import { TeammateRuntimeOwner } from './runtime-owner.js';
 import { renderSubmission, type TeammateSubmitInput } from './submission.js';
 import {
@@ -88,9 +90,15 @@ export class TeammateService {
    * second release.
    */
   private hostStop: Promise<void> | null = null;
-  private readonly closedListeners = new Set<
-    (fact: TeammateClosedFact) => void | Promise<void>
-  >();
+  /**
+   * The process-local relationship under which a new Turn may owe completion.
+   *
+   * Identity, rather than a Boolean, makes retirement permanent for an
+   * admission that started before a fence and attached after future work was
+   * enabled again.
+   */
+  private readonly completionDeliveryScope = new CompletionDeliveryScope();
+  private readonly closed: TeammateClosedPublisher;
   private readonly ownsWorktreeOnClose: boolean;
   /** The runtime role this entity's owner derived; the display fact carries it. */
   private readonly role: TeammateRole;
@@ -109,12 +117,12 @@ export class TeammateService {
       name: identity.name,
     };
     this.state = new AgentRuntimeStateStore(deps.identities, identity);
+    this.closed = new TeammateClosedPublisher(deps.log);
     this.role = options.role;
     this.turns = new EntityTurnCoordinator({
       identity: () => this.current(),
       isActive: () => this.phase === 'active',
-      acceptsCompletionDelivery: () =>
-        this.phase === 'active' && this.hostStop === null,
+      completionDeliveryScope: this.completionDeliveryScope,
     });
     this.runtimeOwner = new TeammateRuntimeOwner(
       deps,
@@ -152,15 +160,7 @@ export class TeammateService {
   onClosed(
     listener: (fact: TeammateClosedFact) => void | Promise<void>,
   ): TeammateClosedSubscription {
-    this.closedListeners.add(listener);
-    let subscribed = true;
-    return {
-      unsubscribe: () => {
-        if (!subscribed) return;
-        subscribed = false;
-        this.closedListeners.delete(listener);
-      },
-    };
+    return this.closed.subscribe(listener);
   }
 
   lock(): LockedTeammate {
@@ -386,9 +386,10 @@ export class TeammateService {
    *
    * Pending completion delivery is abandoned before native stop because the
    * lifecycle relationship no longer owes it; each Turn remains retained until
-   * settlement converges. The published host-stop promise fences admission only
-   * for that span, so a later process start can use this same entity normally.
-   * An entity already closing or closed converges through its terminal path.
+   * settlement converges. The published host-stop promise fences admission for
+   * that span; the owning aggregate explicitly re-arms future completion after
+   * release. An entity already closing or closed converges through its terminal
+   * path.
    */
   stopForHost(): Promise<void> {
     if (this.phase !== 'active') return Promise.resolve();
@@ -399,8 +400,20 @@ export class TeammateService {
         this.hostStop = null;
       });
     this.hostStop = task;
-    this.turns.abandonPendingDeliveries();
+    this.abandonPendingCompletionDelivery();
     return task;
+  }
+
+  /** Retire every completion obligation that has not started. */
+  abandonPendingCompletionDelivery(): void {
+    this.completionDeliveryScope.abandon();
+    this.turns.abandonPendingDeliveries();
+  }
+
+  /** Give only future admissions a fresh completion-delivery relationship. */
+  rearmCompletionDelivery(): void {
+    if (this.phase !== 'active' || this.hostStop !== null) return;
+    this.completionDeliveryScope.rearm();
   }
 
   private async releaseHostRuntime(): Promise<void> {
@@ -550,7 +563,7 @@ export class TeammateService {
         );
       }
       this.phase = 'closed';
-      if (token === null) this.queueClosedFact(closedAt);
+      if (token === null) this.closed.publish(this.current(), closedAt);
       return Promise.resolve({ teammate: this.status() });
     }
     if (this.phase === 'active') this.phase = 'closing';
@@ -562,7 +575,7 @@ export class TeammateService {
     closeNote: string,
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
-    this.turns.abandonPendingDeliveries();
+    this.abandonPendingCompletionDelivery();
     await this.runtimeOwner.stopRuntime();
     await this.turns.drainAdmissions();
     await this.waitForOrdinaryMutations();
@@ -588,7 +601,7 @@ export class TeammateService {
     // that evicted it now would materialize a second live instance for the
     // same name while the holder still has this one.
     if (token === null) {
-      this.queueClosedFact(closedAt);
+      this.closed.publish(this.current(), closedAt);
     } else {
       this.assertLockToken(token);
     }
@@ -608,38 +621,8 @@ export class TeammateService {
       if (closedAt === null) {
         throw new Error('closed-held TeamMate has no durable closed_at');
       }
-      this.queueClosedFact(closedAt);
+      this.closed.publish(this.current(), closedAt);
     }
-  }
-
-  private queueClosedFact(closedAt: number): void {
-    const identity = this.current();
-    const fact: TeammateClosedFact = Object.freeze({
-      schema_version: 1,
-      kind: 'teammate.closed',
-      dispatcher_id: identity.dispatcher_id,
-      team_id: identity.team_id,
-      name: identity.name,
-      closed_at: closedAt,
-    });
-    const listeners = [...this.closedListeners];
-    queueMicrotask(() => {
-      for (const listener of listeners) {
-        try {
-          void Promise.resolve(listener(fact)).catch((error) => {
-            this.deps.log.warn(
-              { teammate: identity.name, error },
-              'TeamMate retirement listener failed',
-            );
-          });
-        } catch (error) {
-          this.deps.log.warn(
-            { teammate: identity.name, error },
-            'TeamMate retirement listener failed',
-          );
-        }
-      }
-    });
   }
 
   private enterOrdinaryMutation(label: string): () => void {

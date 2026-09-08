@@ -305,6 +305,7 @@ export class DispatcherService {
     this.inputSources.closeChannelPortAdmission();
     this.admittedTasks.closeAdmission();
     this.workflowOwner.closeAdmission();
+    this.abandonPendingCompletionDelivery();
     this.scheduler_.stop();
     this.teams.stopSchedulers();
     // The fence is published before the work behind it starts: stopping reaches
@@ -329,6 +330,7 @@ export class DispatcherService {
     this.inputSources.closeChannelPortAdmission();
     this.admittedTasks.closeAdmission();
     this.workflowOwner.closeAdmission();
+    this.abandonPendingCompletionDelivery();
     this.scheduler_.stop();
     this.teams.stopSchedulers();
   }
@@ -431,6 +433,13 @@ export class DispatcherService {
     if (this.shuttingDown || this.stoppingTask !== null) {
       throw new Error(`dispatcher '${this.id}' is shutting down`);
     }
+  }
+
+  /** Retire every materialized Agent completion before teardown awaits. */
+  private abandonPendingCompletionDelivery(): void {
+    this._teammates.abandonPendingCompletionDelivery();
+    this.teams.abandonPendingCompletionDelivery();
+    this.inputSources.agent?.abandonPendingCompletionDelivery();
   }
 
   /**

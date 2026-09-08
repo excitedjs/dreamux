@@ -1,6 +1,7 @@
 import type { RuntimeAdmission, RuntimeSubmission } from '@excitedjs/dreamux-types';
 
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
+import type { CompletionDeliveryScope } from './completion-delivery-scope.js';
 import {
   admissionWithoutTurn,
   EntityTurn,
@@ -11,7 +12,7 @@ import {
 interface EntityTurnCoordinatorOptions {
   identity: () => AgentEntityIdentity;
   isActive: () => boolean;
-  acceptsCompletionDelivery: () => boolean;
+  completionDeliveryScope: CompletionDeliveryScope;
 }
 
 type ObservedRuntimeAdmission =
@@ -42,6 +43,9 @@ export class EntityTurnCoordinator {
     deliverCompletion: TurnCompletionDelivery | null,
   ): Promise<TurnAdmission> {
     if (!this.opts.isActive()) return Promise.resolve({ status: 'stopped' });
+    // Capture before provider admission: a later fresh scope must not restore
+    // an obligation whose original relationship crossed a teardown fence.
+    const deliveryScope = this.opts.completionDeliveryScope.capture();
     let admission: Promise<RuntimeAdmission>;
     try {
       admission = operation();
@@ -59,7 +63,9 @@ export class EntityTurnCoordinator {
       }
       const turn = this.attachSubmission(
         result.admission.submission,
-        this.opts.acceptsCompletionDelivery() ? deliverCompletion : null,
+        this.opts.completionDeliveryScope.owns(deliveryScope)
+          ? deliverCompletion
+          : null,
       );
       return { status: 'submitted', turn };
     });
