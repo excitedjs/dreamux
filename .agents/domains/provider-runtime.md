@@ -436,9 +436,11 @@ Each provider maps the neutral call to its own protocol:
 - **Claude Code** writes a stream-json `control_request` with
   `subtype: "interrupt"`, the same outbound control channel Remote Control
   already uses, and resolves on the matching `control_response`. The ask is the
-  resident session's fact, not any one request's: claude interrupts whatever it
-  is doing, and a session with nothing outstanding answers `idle` rather than
-  interrupting the agent's own background work.
+  resident session's fact, not any one request's, and it reaches whatever the
+  session is doing — including a turn this host never submitted, which #384's
+  resident model makes ordinary. A live session is therefore never answered
+  `idle`; `idle` means no session, which is the only form of "nothing is
+  running" the wire actually reports.
 
   The interrupt applies to whatever is in the CLI's pipeline when it is
   processed. A running command is interrupted and the commands queued behind it

@@ -74,6 +74,13 @@ Verified against current source, not inherited from any document.
   the bound Team's TeamLeader in a group or topic, the Dispatcher Agent in a
   direct message.
 - It does not touch TeamMates that agent started.
+- It does reach that agent's own background work. Asked whether `/stop` should
+  interrupt a native turn with no submission of ours behind it — the resident
+  session model makes those ordinary — the operator answered on 2026-09-08 that
+  it should. The earlier ruling scoped `/stop` away from TeamMates, not away
+  from the agent's own turns. The cost, stated before the change: the CLI's
+  interrupt receipt reports acceptance rather than effect, so `/stop` against a
+  live but genuinely idle session answers `interrupted`.
 - This needs a new Core capability that interrupts a running turn and reaches the
   runtime through `AgentRuntimeProvider`. It is the only one of the three that
   adds a Core capability.

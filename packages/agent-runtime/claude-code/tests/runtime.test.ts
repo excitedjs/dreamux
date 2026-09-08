@@ -422,18 +422,29 @@ describe('ClaudeCodeRuntime submit contract', () => {
     await startFailure;
   });
 
-  it('interrupts only outstanding work and starts no session to do it', async () => {
+  it('interrupts a live session without starting one to do it', async () => {
     const h = new Harness();
     h.behavior.holdResult = true;
     const runtime = await tracked(h.createRuntime());
 
+    // No session yet, and `/stop` does not create one to have something to stop.
     await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
     expect(h.sessions).toHaveLength(0);
 
     await runtime.start();
-    // A live session with nothing outstanding is still idle: `/stop` says no
-    // turn is running rather than interrupting the agent's background work.
-    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+    // A live session is reachable whether or not this host submitted the work
+    // it is doing: a resident session runs turns of its own.
+    await drain();
+    const background = runtime.interrupt();
+    await drain();
+    h.sessions[0]!.emit({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: h.sessions[0]!.controlRequests.at(-1)!.request_id,
+      },
+    });
+    await expect(background).resolves.toEqual({ status: 'interrupted' });
 
     const admission = await runtime.submit({ text: 'keep working' });
     if (admission.status !== 'submitted') throw new Error('expected submitted');
@@ -449,6 +460,7 @@ describe('ClaudeCodeRuntime submit contract', () => {
     });
     await expect(interrupted).resolves.toEqual({ status: 'interrupted' });
     expect(session.interruptCalls).toBe(2);
+    expect(h.sessions).toHaveLength(1);
 
     await runtime.stop();
     await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });

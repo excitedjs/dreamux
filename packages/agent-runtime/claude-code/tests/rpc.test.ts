@@ -384,11 +384,20 @@ describe('supported compatibility inputs', () => {
 });
 
 describe('interrupting outstanding work', () => {
-  it('answers false, and asks claude nothing, when no request is outstanding', async () => {
+  it('asks claude even with no request outstanding, and stops asking once closed', async () => {
     const h = harness();
     h.init();
+
+    // A resident session runs turns this host never submitted. `/stop` reaches
+    // those too, so the ask goes out on the strength of the session alone.
+    const asked = h.rpc.interrupt('Stopped from Feishu.');
+    expect(h.controls).toHaveLength(1);
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(asked).resolves.toBe(true);
+
+    h.rpc.stop();
     await expect(h.rpc.interrupt('Stopped from Feishu.')).resolves.toBe(false);
-    expect(h.controls).toEqual([]);
+    expect(h.controls).toHaveLength(1);
   });
 
   it('settles an accepted interrupt as stopped, on the artifact and not as a result', async () => {

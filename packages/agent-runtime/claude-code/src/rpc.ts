@@ -185,12 +185,13 @@ export class ClaudeCodeStreamRpc {
   /**
    * Ask claude to interrupt whatever it is doing.
    *
-   * Answers false when no request is outstanding: there is then nothing this
-   * session was asked to do, and `/stop` says so rather than interrupting the
-   * agent's own background work.
+   * Whatever it is doing, not only what this host asked for: a resident session
+   * runs turns of its own, and a `/stop` that skipped those would leave the
+   * conversation watching work it cannot stop. Answers false only when there is
+   * no session left to ask.
    */
   async interrupt(reason: string): Promise<boolean> {
-    if (this.closed || this.requests.size === 0) return false;
+    if (this.closed) return false;
     this.interruptRequested = true;
     try {
       return await this.control.requestInterrupt(reason);

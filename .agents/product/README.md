@@ -56,10 +56,11 @@ the same change that touches it.
   bot must be @-mentioned. Nothing gates a command beyond the ordinary
   authorization to deliver a message here; there is no separate command
   permission. When there is no object to act on, the answer is one line saying
-  why. `/stop` interrupts the current turn of the agent this conversation talks
-  to directly — the bound Team's TeamLeader, or the Dispatcher Agent in a DM —
-  and never its TeamMates; an agent that is not mid-turn is reported idle
-  rather than started in order to be interrupted. `/teams` posts a card of
+  why. `/stop` interrupts the agent this conversation talks to directly — the
+  bound Team's TeamLeader, or the Dispatcher Agent in a DM — and never its
+  TeamMates. It reaches whatever that agent is doing, including work it started
+  for itself rather than in answer to a message here. An agent that is not
+  running is reported idle rather than started in order to be interrupted. `/teams` posts a card of
   every running Team on the dispatcher — not only the ones this conversation
   can reach — grouped by repository, each with its TeamLeader runtime, its
   intent, and links to the chats bound to it; listing them all is an operator
