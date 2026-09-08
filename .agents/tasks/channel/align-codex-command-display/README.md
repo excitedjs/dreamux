@@ -10,7 +10,7 @@
 - Workflow: TeamLeader implementation after approval, followed by one independent read-only review.
 - Verification: [Checks and display evidence](/.agents/tasks/channel/align-codex-command-display/verification.md).
 - Blockers: No functional or architecture blocker; both review findings are approved and applied. All four repository gates also passed on the isolated delivery branch based on `next`, excluding the unrelated baseline commit.
-- Next action: Commit and push the isolated task patch, open the authorized PR to `next`, and wait for CI. Feishu client visual verification remains unperformed.
+- Next action: Await the required GitHub approving review and separate operator merge authorization. Current-head CI is tracked on the PR; Feishu client visual verification remains unperformed.
 - Related tasks: Builds on [Feishu conversation-of-thought cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); dedicated task creation confirmed by the operator on 2026-09-09.
 
 ## Development approval
@@ -36,7 +36,14 @@
   in response to the explicit commit, push, and PR question. This authorizes
   delivery to a PR targeting `next` and waiting for CI, not merge, deployment,
   or service restart.
-- Pull request / CI / merge: Not started.
+- Pull request: [#396](https://github.com/excitedjs/dreamux/pull/396),
+  `fix/codex-command-display` into `next`.
+- CI: All 9 checks passed for `1305d36d` in
+  [run 34288628691](https://github.com/excitedjs/dreamux/actions/runs/34288628691),
+  including Linux and macOS Rush gates. This delivery-record update will trigger
+  the ordinary CI checks again; the PR owns the current-head result.
+- Merge: Not performed or authorized; GitHub still requires an approving review.
+  No deployment or service restart was performed.
 - Knowledge closeout: Complete; owner updates and final local checks passed.
 
 ## Knowledge closeout

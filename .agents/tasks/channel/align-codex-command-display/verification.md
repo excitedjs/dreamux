@@ -48,8 +48,8 @@ Rush generated the Codex package patch note through `rush change --bulk`.
 Its `ChangeFiles.validate` accepted that file before commit. The first committed
 branch verification also required a description for the Feishu test-only change;
 `rush change` generated a `none` note for that package, retaining the existing
-Codex patch note. The committed-branch check runs before push with
-`--verify --target-branch origin/next --no-fetch`; no package version is edited.
+Codex patch note. The committed-branch check passed before push with
+`--verify --target-branch origin/next --no-fetch`; no package version was edited.
 
 ## Delivery baseline
 
@@ -68,6 +68,15 @@ The test total includes coverage added by the newer trunk; the Codex display
 suite remains 62 cases. The task validator, KB check (206 reachable files),
 and diff whitespace checks also passed. No inherited commit is discarded or
 published as part of this task.
+
+PR [#396](https://github.com/excitedjs/dreamux/pull/396) targets `next` from the
+isolated branch. All 9 checks in
+[CI run 34288628691](https://github.com/excitedjs/dreamux/actions/runs/34288628691)
+passed for head `1305d36d`, including Linux/macOS Rush and shellcheck, Rush change
+coverage, author metadata, KB, full-history gitleaks, and internal-content scan.
+The working tree was clean after push. GitHub reports `REVIEW_REQUIRED`; no
+merge, deployment, or service restart was performed. Later documentation-only
+head checks remain visible on the PR instead of being restated in a commit.
 
 ## Display-chain evidence and visual limitation
 
