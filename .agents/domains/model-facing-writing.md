@@ -185,6 +185,13 @@ MCP descriptions are model-facing. Keep them short and operational:
 - important non-obvious cautions, such as shared-workspace write coordination;
 - every input property carries a one-sentence description.
 
+The creation tools' closed `repo` schema rejects undeclared properties before
+execution. Canonical Command repository requests and persisted worktree records
+are separate contracts. Source:
+`/packages/dreamux/src/service/mcp/tool-metadata.ts`,
+`/packages/dreamux/src/mcp/server.ts`, and
+`/packages/dreamux/src/service/worktree/repo-request.ts`.
+
 Avoid internal architecture adjectives and implementation layouts in tool
 descriptions: "core-owned", "hidden tool", `.workspace/work/<name>`, and
 package/release milestone language are not useful operating instructions.

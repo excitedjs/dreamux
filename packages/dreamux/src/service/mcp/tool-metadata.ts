@@ -139,12 +139,7 @@ export const SUBMISSION_ERROR_SCHEMA: Record<string, unknown> = {
   type: 'string',
 };
 
-/**
- * The `repo` argument shape shared by the Team and TeamMate spawn surfaces. It
- * is the complete canonical `reuse-cwd | managed` union, forwarded verbatim to
- * the domain: a surface that wants a narrower policy narrows it on its own side
- * rather than reshaping this.
- */
+/** The repo input shared by the Team and TeamMate MCP creation tools. */
 export function repoInputSchema(): Record<string, unknown> {
   return {
     type: 'object',
@@ -178,17 +173,9 @@ export function repoInputSchema(): Record<string, unknown> {
         minLength: 1,
         maxLength: 256,
         description:
-          'managed: the branch to create or check out; default ' +
-          'dreamux/<slug>.',
-      },
-      slug: {
-        type: 'string',
-        minLength: 1,
-        maxLength: 64,
-        description:
-          'managed: label for the worktree directory and the default branch ' +
-          'name; defaults to the TeamMate\'s name, or team-<team_name> for a ' +
-          'Team.',
+          'managed: the branch to create or check out; defaults to ' +
+          'dreamux/<teammate_name> for a TeamMate or dreamux/team-<team_name> ' +
+          'for a Team, using the concrete allocated name.',
       },
       cleanup: {
         type: 'string',

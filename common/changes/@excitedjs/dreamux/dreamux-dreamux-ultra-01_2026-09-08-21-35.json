@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: The teammate.spawn and team.create MCP tools no longer accept repo.slug. Rebuild: Regenerate saved creation-tool requests without repo.slug. Existing worktrees and persisted state need no rebuild; automatic directory naming and repo.branch remain available.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
