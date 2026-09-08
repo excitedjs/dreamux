@@ -55,5 +55,6 @@
   N/A; no package boundary, term, entry point, CLI, config/state, protocol,
   lifecycle, or cross-process invariant changed. The provider's existing
   display owner remains responsible for its own command vocabulary.
-- Release note: Rush-generated Codex package patch change; no upgrade blocker
-  or rebuild action. Committed-branch verification runs before the authorized push.
+- Release notes: Rush-generated Codex `patch` and Feishu test-only `none`
+  changes; no upgrade blocker or rebuild action. Committed-branch verification
+  runs before the authorized push.

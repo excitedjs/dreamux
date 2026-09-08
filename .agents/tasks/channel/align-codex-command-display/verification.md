@@ -44,11 +44,12 @@ processes did not have them. The rerun supplies the same existing proxy without
 changing repository or persistent runtime configuration. No live-test skip,
 assertion change, or timeout increase was used.
 
-Rush generated the package patch note through `rush change --bulk`. Its own
-`ChangeFiles.validate` accepted the new uncommitted change file and Codex package
-coverage. `rush change --verify` discovers change files through a committed
-three-dot diff, so final branch verification remains a post-commit gate; no
-commit was created to make that check pass.
+Rush generated the Codex package patch note through `rush change --bulk`.
+Its `ChangeFiles.validate` accepted that file before commit. The first committed
+branch verification also required a description for the Feishu test-only change;
+`rush change` generated a `none` note for that package, retaining the existing
+Codex patch note. The committed-branch check runs before push with
+`--verify --target-branch origin/next --no-fetch`; no package version is edited.
 
 ## Delivery baseline
 
