@@ -11,6 +11,12 @@ import {
 interface EntityTurnCoordinatorOptions {
   identity: () => AgentEntityIdentity;
   isActive: () => boolean;
+  /**
+   * Whether a turn that settles now is news the entity still owes its owner.
+   * False while the entity is closing or being released by its host: the
+   * party that ended the turn is the one that would read the report.
+   */
+  owesCompletion: () => boolean;
 }
 
 type ObservedRuntimeAdmission =
@@ -79,7 +85,12 @@ export class EntityTurnCoordinator {
     } while (this.admissionContinuationTail !== tail);
   }
 
-  async settleAndDeliverRetained(): Promise<void> {
+  /**
+   * Prove every retained turn settled, then wait for whatever each one still
+   * delivers. Whether a turn delivers at all is the turn's own decision, made
+   * from `owesCompletion` when it settled.
+   */
+  async convergeRetainedTurns(): Promise<void> {
     await Promise.resolve();
     const unsettled = [...this.retainedTurns].filter((turn) => !turn.isSettled());
     if (unsettled.length > 0) {
@@ -108,6 +119,7 @@ export class EntityTurnCoordinator {
       submission,
       this.opts.identity().name,
       deliverCompletion,
+      this.opts.owesCompletion,
     );
     this.retainedTurns.add(turn);
     void turn.ensureDelivery().finally(() => {

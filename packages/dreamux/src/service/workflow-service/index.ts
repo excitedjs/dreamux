@@ -8,6 +8,7 @@ import {
   type CompletionInitiator,
 } from '../completion-router/index.js';
 import { deduplicate } from '../deduplicate.js';
+import { InFlightWork } from '../in-flight-work.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 import type {
   CreateLockedTeammateOptions,
@@ -74,7 +75,7 @@ export class WorkflowService implements WorkflowOps {
   private readonly scope: WorkflowScopePathInput;
   private readonly store: WorkflowRunStore;
   private readonly runs = new Map<string, WorkflowRun>();
-  private readonly runCreations = new Set<Promise<WorkflowRunAccepted>>();
+  private readonly runCreations = new InFlightWork();
   private accepting = false;
 
   constructor(private readonly opts: WorkflowServiceOptions) {
@@ -106,12 +107,7 @@ export class WorkflowService implements WorkflowOps {
   }
 
   run(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
-    const creation = this.createRun(input);
-    this.runCreations.add(creation);
-    void creation
-      .finally(() => this.runCreations.delete(creation))
-      .catch(() => {});
-    return creation;
+    return this.runCreations.track(this.createRun(input));
   }
 
   private async createRun(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
@@ -228,7 +224,7 @@ export class WorkflowService implements WorkflowOps {
   async stopAll(): Promise<void> {
     this.closeAdmission();
     await this.recover();
-    await Promise.allSettled([...this.runCreations]);
+    await this.runCreations.drain();
     const results = await Promise.allSettled(
       [...this.runs.values()].map((run) => run.stop()),
     );

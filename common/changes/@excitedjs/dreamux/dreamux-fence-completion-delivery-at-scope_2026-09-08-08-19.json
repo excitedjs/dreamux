@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Stop pushing a stopped completion into the owner whose own close, Workflow stop, Team dissolve, or service stop ended the work. A stopping dispatcher delivers nothing that settles behind its fence; an independently failed or stopped turn is still reported once.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

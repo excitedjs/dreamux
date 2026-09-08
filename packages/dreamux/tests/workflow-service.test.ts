@@ -8,7 +8,7 @@
  */
 import { readFile, rm } from 'node:fs/promises';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import {
@@ -18,6 +18,7 @@ import {
 } from '../src/platform/paths.js';
 import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/agent-policy.js';
 import { WorkflowService } from '../src/service/workflow-service/index.js';
+import { WorkflowRun } from '../src/service/workflow-service/run.js';
 import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js';
 import type { LockedTeammate } from '../src/service/teammate-service/types.js';
 import {
@@ -29,6 +30,7 @@ import {
   fakeTeammateFactory,
   fakeWorkflowRunnerFactory,
   fixedRunIds,
+  gate,
   onlyCreateLockedSurface,
   silentLog,
   waitUntil,
@@ -297,7 +299,7 @@ describe('journal + terminal settlement: exactly one terminal outcome', () => {
     const terminalRows = journalLines.filter((line) => line.kind === 'end');
     expect(terminalRows).toHaveLength(1);
     expect(terminalRows[0]?.status).toBe('stopped');
-    expect(delivery.delivered).toHaveLength(1);
+    expect(delivery.delivered).toEqual([]);
   });
 });
 
@@ -385,7 +387,7 @@ describe('owner-side exact-instance eviction', () => {
   });
 });
 
-describe('workflow.stop and failure delivery use the null-completion-token entry point', () => {
+describe('Workflow terminal delivery across stop races', () => {
   it('stop() converges already-accepted work: it waits for a submitted turn to settle before finalizing', async () => {
     const runnerFactory = fakeWorkflowRunnerFactory();
     const delivery = fakeCompletionDelivery();
@@ -422,9 +424,8 @@ describe('workflow.stop and failure delivery use the null-completion-token entry
     const stopResult = await stopPromise;
     expect(stopResult.status).toBe('stopped');
 
-    expect(delivery.delivered).toHaveLength(1);
-    expect(delivery.delivered[0]).toMatchObject({ kind: 'workflow', status: 'stopped' });
-    expect(delivery.deliverRuntimeCalls).toBe(0); // null-token entry point only
+    expect(delivery.delivered).toEqual([]);
+    expect(delivery.deliverRuntimeCalls).toBe(0);
   });
 
   it('a failed run delivers its failure through the null-completion-token entry point', async () => {
@@ -452,6 +453,144 @@ describe('workflow.stop and failure delivery use the null-completion-token entry
     expect(delivery.delivered[0]).toMatchObject({ kind: 'workflow', status: 'failed' });
     expect(String(delivery.delivered[0]?.result)).toContain('boom');
     expect(delivery.deliverRuntimeCalls).toBe(0);
+  });
+
+  it('keeps completed delivery when its intent wins before explicit stop', async () => {
+    const runnerFactory = fakeWorkflowRunnerFactory();
+    const delivery = fakeCompletionDelivery();
+    const service = new WorkflowService({
+      ...SCOPE,
+      callerKind: 'dispatcher',
+      teammates: fakeTeammateFactory(() => {
+        throw new Error('no agents in this script');
+      }),
+      completionDelivery: delivery.policy,
+      completionInitiator: () => fakeCompletionInitiator(),
+      log: silentLog(),
+      createRunner: runnerFactory.factory,
+      generateRunId: fixedRunIds('run-a'),
+    });
+    await service.start();
+    await service.run({ script: 'noop' });
+
+    const runner = runnerFactory.runners[0]!;
+    const stopEntered = gate();
+    const allowRunnerStop = gate();
+    const originalStop = runner.stop.bind(runner);
+    runner.stop = async () => {
+      stopEntered.release();
+      await allowRunnerStop.promise;
+      await originalStop();
+    };
+    runner.emit({
+      type: 'run_result',
+      status: 'completed',
+      result: { answer: 42 },
+    });
+    await stopEntered.promise;
+
+    const stopping = service.stop({ run_id: 'run-a' });
+    allowRunnerStop.release();
+
+    await expect(stopping).resolves.toEqual({
+      run_id: 'run-a',
+      status: 'completed',
+    });
+    expect(delivery.delivered).toHaveLength(1);
+    expect(delivery.delivered[0]).toMatchObject({
+      kind: 'workflow',
+      status: 'completed',
+    });
+  });
+
+  it('keeps failed delivery when its intent wins before stopAll', async () => {
+    const runnerFactory = fakeWorkflowRunnerFactory();
+    const delivery = fakeCompletionDelivery();
+    const service = new WorkflowService({
+      ...SCOPE,
+      callerKind: 'dispatcher',
+      teammates: fakeTeammateFactory(() => {
+        throw new Error('no agents in this script');
+      }),
+      completionDelivery: delivery.policy,
+      completionInitiator: () => fakeCompletionInitiator(),
+      log: silentLog(),
+      createRunner: runnerFactory.factory,
+      generateRunId: fixedRunIds('run-a'),
+    });
+    await service.start();
+    await service.run({ script: 'noop' });
+
+    const runner = runnerFactory.runners[0]!;
+    const stopEntered = gate();
+    const allowRunnerStop = gate();
+    const originalStop = runner.stop.bind(runner);
+    runner.stop = async () => {
+      stopEntered.release();
+      await allowRunnerStop.promise;
+      await originalStop();
+    };
+    runner.emit({ type: 'run_result', status: 'failed', error: 'natural failure' });
+    await stopEntered.promise;
+
+    const stopping = service.stopAll();
+    allowRunnerStop.release();
+    await stopping;
+
+    await expect(service.status({ run_id: 'run-a' })).resolves.toMatchObject({
+      status: 'failed',
+      error: 'natural failure',
+    });
+    expect(delivery.delivered).toHaveLength(1);
+    expect(delivery.delivered[0]).toMatchObject({
+      kind: 'workflow',
+      status: 'failed',
+    });
+  });
+
+  it('does not retract terminal delivery that already started before stop', async () => {
+    const runnerFactory = fakeWorkflowRunnerFactory();
+    const deliveryStarted = gate();
+    const allowDelivery = gate();
+    let deliveryCalls = 0;
+    const completionDelivery = {
+      async deliver() {
+        deliveryCalls += 1;
+        deliveryStarted.release();
+        await allowDelivery.promise;
+      },
+    } as unknown as CompletionDeliveryPolicy;
+    const service = new WorkflowService({
+      ...SCOPE,
+      callerKind: 'dispatcher',
+      teammates: fakeTeammateFactory(() => {
+        throw new Error('no agents in this script');
+      }),
+      completionDelivery,
+      completionInitiator: () => fakeCompletionInitiator(),
+      log: silentLog(),
+      createRunner: runnerFactory.factory,
+      generateRunId: fixedRunIds('run-a'),
+    });
+    await service.start();
+    await service.run({ script: 'noop' });
+
+    runnerFactory.runners[0]!.emit({
+      type: 'run_result',
+      status: 'completed',
+      result: 'done',
+    });
+    await deliveryStarted.promise;
+
+    const stopping = service.stop({ run_id: 'run-a' });
+    expect(deliveryCalls).toBe(1);
+    allowDelivery.release();
+
+    await expect(stopping).resolves.toEqual({
+      run_id: 'run-a',
+      status: 'completed',
+    });
+    expect(deliveryCalls).toBe(1);
   });
 });
 
@@ -620,6 +759,53 @@ describe('WorkflowService.stopAll() owns shutdown convergence', () => {
     expect(listed.runs.map((run) => run.status).sort()).toEqual(['stopped', 'stopped']);
     for (const runner of runnerFactory.runners) {
       expect(runner.stopped).toBe(true);
+    }
+    expect(delivery.delivered).toEqual([]);
+  });
+
+  it('stops a run whose creation crosses the closeAdmission fence without owner delivery', async () => {
+    const runnerFactory = fakeWorkflowRunnerFactory();
+    const delivery = fakeCompletionDelivery();
+    const service = new WorkflowService({
+      ...SCOPE,
+      callerKind: 'dispatcher',
+      teammates: fakeTeammateFactory(() => {
+        throw new Error('no agents in this script');
+      }),
+      completionDelivery: delivery.policy,
+      completionInitiator: () => fakeCompletionInitiator(),
+      log: silentLog(),
+      createRunner: runnerFactory.factory,
+      generateRunId: fixedRunIds('run-a'),
+    });
+    await service.start();
+
+    const initializeEntered = gate();
+    const allowInitialize = gate();
+    const originalInitialize = WorkflowRun.prototype.initialize;
+    const initializeSpy = vi
+      .spyOn(WorkflowRun.prototype, 'initialize')
+      .mockImplementationOnce(async function (this: WorkflowRun) {
+        initializeEntered.release();
+        await allowInitialize.promise;
+        await originalInitialize.call(this);
+      });
+    try {
+      const creating = service.run({ script: 'noop' });
+      await initializeEntered.promise;
+
+      service.closeAdmission();
+      allowInitialize.release();
+
+      await expect(creating).resolves.toEqual({ run_id: 'run-a' });
+      await expect(service.status({ run_id: 'run-a' })).resolves.toMatchObject({
+        status: 'stopped',
+      });
+      expect(runnerFactory.runners[0]?.stopped).toBe(true);
+      expect(delivery.delivered).toEqual([]);
+    } finally {
+      allowInitialize.release();
+      initializeSpy.mockRestore();
     }
   });
 });

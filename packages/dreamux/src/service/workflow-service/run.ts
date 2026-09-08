@@ -3,6 +3,7 @@ import { isUnsupportedFeatureError } from '@excitedjs/dreamux-utils';
 
 import { errorInfo, errorMessage } from '../../platform/error-info.js';
 import type { WorkflowCompletionFact } from '../completion-router/index.js';
+import { InFlightWork } from '../in-flight-work.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
@@ -73,20 +74,26 @@ export class WorkflowRun {
   private readonly semaphore: WorkflowSemaphore;
   private readonly terminal: WorkflowRunTerminal;
   private readonly calls = new Map<number, AgentCall>();
-  private readonly materializations = new Set<Promise<LockedTeammate>>();
-  private readonly runnerMessageTasks = new Set<Promise<void>>();
-  private readonly agentTasks = new Set<Promise<void>>();
+  private readonly materializations = new InFlightWork();
+  private readonly runnerMessageTasks = new InFlightWork();
+  private readonly agentTasks = new InFlightWork();
   private readonly unlockedHandles = new Set<LockedTeammate>();
   private mutationTail: Promise<void> = Promise.resolve();
   private runnerMessageTail: Promise<void> = Promise.resolve();
   private runnerTerminalMessageSeen = false;
   private terminalCandidate: WorkflowRunRecord | null = null;
   private terminalJournalCommitted = false;
-  private terminalDeliveryCommitted = false;
+  /**
+   * The terminal report this run still owes its initiator; `null` once it is
+   * delivered, or once a stop made it not news: the initiator or its own scope
+   * fence asked for the stop, so the party that ended the run would read it.
+   */
+  private deliverTerminal: WorkflowRunDeps['deliverTerminal'] | null;
   private terminalLogged = false;
 
   constructor(private readonly deps: WorkflowRunDeps) {
     this.record = deps.record;
+    this.deliverTerminal = deps.deliverTerminal;
     this.semaphore = new WorkflowSemaphore(deps.record.max_concurrency);
     this.runner = deps.createRunner({
       onMessage: (message) => this.receiveRunnerMessage(message),
@@ -124,8 +131,14 @@ export class WorkflowRun {
       runId: this.record.run_id,
       status: () => this.record.status,
       abortRunner: () => this.runner.send({ type: 'abort' }),
-      closeAdmission: (status) =>
-        this.semaphore.close(new Error(`workflow ${status}`)),
+      closeAdmission: (status) => {
+        this.semaphore.close(new Error(`workflow ${status}`));
+        // Reached once, when the first terminal intent is reserved. Only a
+        // stop reserves `stopped`; a completed or failed intent that won first
+        // keeps its report, and a delivery already under way is never behind
+        // this call.
+        if (status === 'stopped') this.deliverTerminal = null;
+      },
       finalize: (status, result, error) => this.finalize(status, result, error),
       log: deps.log,
     });
@@ -196,10 +209,7 @@ export class WorkflowRun {
         this.terminal.observe('failed', null, errorMessage(error));
       });
     this.runnerMessageTail = task;
-    if (message.type !== 'run_result') {
-      this.runnerMessageTasks.add(task);
-      void task.finally(() => this.runnerMessageTasks.delete(task));
-    }
+    if (message.type !== 'run_result') this.runnerMessageTasks.track(task);
   }
 
   private async handleRunnerMessage(
@@ -306,9 +316,7 @@ export class WorkflowRun {
         'workflow agent queued by concurrency limit',
       );
     }
-    const task = this.executeAgent(call, message.prompt);
-    this.agentTasks.add(task);
-    void task.finally(() => this.agentTasks.delete(task)).catch(() => {});
+    this.agentTasks.track(this.executeAgent(call, message.prompt));
   }
 
   private async executeAgent(call: AgentCall, prompt: string): Promise<void> {
@@ -349,10 +357,7 @@ export class WorkflowRun {
         },
       );
       call.materialization = materialization;
-      this.materializations.add(materialization);
-      void materialization
-        .finally(() => this.materializations.delete(materialization))
-        .catch(() => {});
+      this.materializations.track(materialization);
       const handle = await materialization;
       call.handle = handle;
 
@@ -561,7 +566,7 @@ export class WorkflowRun {
     requestedError: string | null,
   ): Promise<void> {
     const runnerStopResults = await Promise.allSettled([this.runner.stop()]);
-    await this.joinMaterializations();
+    await this.materializations.drain();
 
     const handles = [...new Set(
       [...this.calls.values()]
@@ -581,8 +586,8 @@ export class WorkflowRun {
       );
     }
 
-    await this.drainRunnerMessageTasks();
-    await this.drainAgentTasks();
+    await this.runnerMessageTasks.drain();
+    await this.agentTasks.drain();
     await this.mutationTail;
     for (const call of this.calls.values()) {
       if (!call.completed) {
@@ -626,8 +631,9 @@ export class WorkflowRun {
       this.unlockedHandles.add(handle);
     }
 
-    if (!this.terminalDeliveryCommitted) {
-      await this.deps.deliverTerminal({
+    const deliverTerminal = this.deliverTerminal;
+    if (deliverTerminal !== null) {
+      await deliverTerminal({
         kind: 'workflow',
         source: 'workflow',
         runId: this.record.run_id,
@@ -646,7 +652,7 @@ export class WorkflowRun {
           2,
         ),
       });
-      this.terminalDeliveryCommitted = true;
+      this.deliverTerminal = null;
     }
     if (!this.terminalLogged) {
       this.terminalLogged = true;
@@ -661,25 +667,6 @@ export class WorkflowRun {
         },
         'workflow run terminal',
       );
-    }
-  }
-
-  private async joinMaterializations(): Promise<void> {
-    while (this.materializations.size > 0) {
-      await Promise.allSettled([...this.materializations]);
-    }
-    await Promise.resolve();
-  }
-
-  private async drainRunnerMessageTasks(): Promise<void> {
-    while (this.runnerMessageTasks.size > 0) {
-      await Promise.allSettled([...this.runnerMessageTasks]);
-    }
-  }
-
-  private async drainAgentTasks(): Promise<void> {
-    while (this.agentTasks.size > 0) {
-      await Promise.allSettled([...this.agentTasks]);
     }
   }
 

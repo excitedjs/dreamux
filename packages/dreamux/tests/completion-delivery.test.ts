@@ -192,7 +192,11 @@ class RecordingInitiator implements CompletionInitiator {
 }
 
 function policy(): CompletionDeliveryPolicy {
-  return new CompletionDeliveryPolicy({ dispatcherId: 'flow', log: noopLog() });
+  return new CompletionDeliveryPolicy({
+    dispatcherId: 'flow',
+    log: noopLog(),
+    accepting: () => true,
+  });
 }
 
 function failedFact(source = 'worker'): PreparedCompletionFact {
@@ -304,6 +308,7 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
       const router = new CompletionDeliveryPolicy({
         dispatcherId: 'flow',
         log: noopLog(warn),
+        accepting: () => true,
         attemptTimeoutMs: 50,
       });
 

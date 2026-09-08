@@ -116,6 +116,13 @@ the same change that touches it.
   share one completion delivered once per recipient; the turn's original trigger
   does not override those relationships.
   (Requirement: [background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07).)
+- **An owner is not told about the stop it asked for.** Closing a TeamMate,
+  stopping a Workflow, dissolving a Team, and stopping or restarting the
+  service end work that owner already decided to end; none of them push a
+  stopped completion into it, and a service that is stopping delivers nothing
+  that settles behind its fence. A turn that fails or is stopped on its own is
+  still reported once.
+  (Requirement: [lifecycle-stop pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md).)
 
 ## Observing agents
 
@@ -221,7 +228,8 @@ the same change that touches it.
 - **Tools return receipts, work runs behind them.** Any MCP operation that can
   outlast a runtime's tool timeout (dissolve, spawns, workflow runs) returns an
   immediate acceptance receipt; completion arrives as a push, and one settled
-  turn produces exactly one push.
+  turn produces at most one push: exactly one while its owner still waits for
+  it, none once that owner ended it.
 
 ## Local state and upgrades
 

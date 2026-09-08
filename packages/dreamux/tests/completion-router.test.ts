@@ -41,10 +41,14 @@ class ScriptedInitiator implements CompletionInitiator {
   }
 }
 
-function policy(attemptTimeoutMs?: number): CompletionDeliveryPolicy {
+function policy(
+  attemptTimeoutMs?: number,
+  accepting: () => boolean = () => true,
+): CompletionDeliveryPolicy {
   return new CompletionDeliveryPolicy({
     dispatcherId: 'flow',
     log: noopLog(),
+    accepting,
     attemptTimeoutMs,
   });
 }
@@ -52,6 +56,36 @@ function policy(attemptTimeoutMs?: number): CompletionDeliveryPolicy {
 describe('CompletionDeliveryPolicy', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('drops a delivery requested behind the dispatcher fence, and only that one', async () => {
+    let accepting = true;
+    const router = policy(undefined, () => accepting);
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const gated: CompletionInitiator = {
+      prepareCompletion: async () => ({
+        submit: async () => {
+          await firstStarted;
+          return { status: 'accepted' as const };
+        },
+      }),
+    };
+    const late = new ScriptedInitiator([{ status: 'accepted' }]);
+
+    // Queued while the dispatcher still accepted work: the fence going up
+    // afterwards does not retract it.
+    const queued = router.deliver(gated, completion);
+    accepting = false;
+    const dropped = router.deliver(late, completion);
+    releaseFirst();
+
+    await expect(dropped).resolves.toBeUndefined();
+    await queued;
+    expect(late.prepareCalls).toBe(0);
+    expect(late.submitCalls).toBe(0);
   });
 
   it('prepares once and submits an accepted immutable payload once', async () => {

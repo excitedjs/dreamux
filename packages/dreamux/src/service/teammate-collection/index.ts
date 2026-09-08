@@ -56,10 +56,8 @@ import {
 } from '../shutdown-errors.js';
 import { createTeammateService } from '../teammate-service/factory.js';
 import { TeammateService } from '../teammate-service/index.js';
-import type {
-  LockedTeammate,
-  TeammateClosedSubscription,
-} from '../teammate-service/types.js';
+import type { ClosedSubscription } from '../closed-fact.js';
+import type { LockedTeammate } from '../teammate-service/types.js';
 import {
   toSubmissionResult,
   type TurnCompletionDelivery,
@@ -137,7 +135,7 @@ export class TeammateCollection implements TeammateOps {
   private readonly store: AgentEntityCollectionStore;
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
-  private readonly subscriptions = new Map<string, TeammateClosedSubscription>();
+  private readonly subscriptions = new Map<string, ClosedSubscription>();
   private readonly materializations = new Map<string, Promise<ResolvedTeamMate>>();
   /**
    * TeamMates built for a `send` that has not reopened them yet.
@@ -547,7 +545,7 @@ export class TeammateCollection implements TeammateOps {
     });
   }
 
-  private subscribeEntity(entity: TeammateService): TeammateClosedSubscription {
+  private subscribeEntity(entity: TeammateService): ClosedSubscription {
     const source = entity;
     return entity.onClosed((fact) => {
       if (

@@ -78,7 +78,7 @@ Team's members are the same pair again, scoped to the Team.
   dissolve it submits and then runs behind the receipt. `closing.ts` owns the
   stop-and-close sequence and the host sweep; `collaborators.ts`,
   `completion-targets.ts`, `leader-agent.ts`, `roster-projection.ts`,
-  `team-view.ts`, `closed-fact.ts`, and `delivery-result.ts` are its parts.
+  `team-view.ts`, and `delivery-result.ts` are its parts.
   `DispatcherService.team()` returns a `TeamLeaderHandle` to admin/MCP
   team-leader callers, never the concrete `TeamService`.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
@@ -87,8 +87,11 @@ Team's members are the same pair again, scoped to the Team.
   (`dissolve-members.ts`); it does not own an entity's close state machine.
   `TeammateService` owns one identity, its process-local Workflow lock, its
   runtime, its canonical Turn objects, terminal outcome/delivery convergence,
-  and idempotent logical close. `completion-router/` is the stateless
-  per-dispatcher delivery policy; it keeps no Turn registry or terminal cache.
+  and idempotent logical close; its retirement broadcast is the shared
+  `ClosedFactPublisher`.
+  `completion-router/` is the stateless per-dispatcher delivery policy; it
+  keeps no Turn registry or terminal cache, and reads the dispatcher admission
+  gate before it queues a delivery.
 - **`agent-entity/`** — neutral identity/activity/runtime-state stores, agent
   config, read helpers, and the history-query reader. Never under a Collection.
 - **`worktree/`** — `WorktreeManager` (default work dir, reuse-cwd, and managed
@@ -98,6 +101,11 @@ Team's members are the same pair again, scoped to the Team.
   cron, Workflow runs, the Core event publisher, and the shared MCP
   descriptor/lease/projection helpers each delegate builds on.
 - **Root helpers** — `deduplicate.ts`, `serial-queue.ts`, `shutdown-errors.ts`,
+  `closed-fact.ts` (the one closed-fact broadcast a Team and a TeamMate each
+  publish their own fact through), `in-flight-work.ts` (the work a scope has
+  admitted and must join before it stops, counted the same way by the
+  dispatcher gate, a Workflow run, the Workflow service, and a TeamMate's
+  ordinary mutations),
   `dispatcher-workspace.ts` (the dispatcher-cwd policy shared by startup, the
   dispatcher service, `dreamux doctor`, and `worktree/`), `legacy-state.ts`,
   `name-allocator.ts`, `submission-sources.ts`, `channel-submission.ts`, and
@@ -135,9 +143,14 @@ Team's members are the same pair again, scoped to the Team.
   that runs in that directory records a plain reuse-cwd workspace, so it can
   neither clean the Team's checkout nor hold a drifting copy of its state. The
   attempt that created a checkout is the only one that may discard it.
-- **Every settled turn is reported.** Completion delivery folds on the
-  provider's own completion token when there is one, delivers a failed or
-  stopped turn without inventing one, and keeps per-recipient FIFO order.
+- **A settled turn is reported unless its owner ended it.** Completion
+  delivery folds on the provider's own completion token when there is one,
+  delivers an independently failed or stopped turn without inventing one, and
+  keeps per-recipient FIFO order. Whether to report at all is the recipient
+  scope's fence, read when delivery would start: an entity's own close or host
+  release, a Workflow's stop, a dissolving Team, and a dispatcher whose
+  admission is closed produce no push. A delivery already started is never
+  retracted.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** Role
   differentiation is the tool set and system prompt injected at launch;
   `dispatcher-service/mcp-delegates.ts` is the whole role→servers decision.

@@ -120,6 +120,7 @@ export class DispatcherService {
     const completionDelivery = new CompletionDeliveryPolicy({
       dispatcherId: opts.id,
       log: opts.log,
+      accepting: () => this.admittedTasks.accepting,
     });
     const workflowLog = opts.workflowLoggerFactory?.(opts.id) ?? opts.log;
     const configuredChannelCount =

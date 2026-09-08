@@ -21,12 +21,18 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
 } from '../agent-entity/types.js';
+import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
 import type {
   CompletionDeliveryResult,
   PreparedCompletionDelivery,
   PreparedCompletionFact,
 } from '../completion-router/index.js';
 import { deduplicate } from '../deduplicate.js';
+import { InFlightWork } from '../in-flight-work.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../shutdown-errors.js';
 import { COMPLETION_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { AdmissionLedger, AgentEntityLedgerKey } from './admission-ledger.js';
@@ -41,14 +47,14 @@ import {
   type TurnCompletionDelivery,
 } from './turn-recording.js';
 import { EntityTurnCoordinator } from './turn-coordinator.js';
-import type {
-  EntityPhase,
-  LockedTeammate,
-  TeammateClosedFact,
-  TeammateClosedSubscription,
-  TeammateServiceDeps,
-  TeammateServiceOptions,
-  WorkflowTeammateSubmitInput,
+import {
+  teammateClosedFact,
+  type EntityPhase,
+  type LockedTeammate,
+  type TeammateClosedFact,
+  type TeammateServiceDeps,
+  type TeammateServiceOptions,
+  type WorkflowTeammateSubmitInput,
 } from './types.js';
 
 /** One canonical TeamMate entity and the sole owner of its live lifecycle. */
@@ -69,8 +75,7 @@ export class TeammateService {
   /** The entity half of every ledger key this service reserves. */
   private readonly ledgerKey: AgentEntityLedgerKey;
   private phase: EntityPhase = 'active';
-  private ordinaryMutations = 0;
-  private readonly ordinaryIdleWaiters = new Set<() => void>();
+  private readonly ordinaryMutations = new InFlightWork();
   private lockToken: object | null = null;
   /**
    * The host stop converging what this entity already accepted.
@@ -84,9 +89,7 @@ export class TeammateService {
    * second release.
    */
   private hostStop: Promise<void> | null = null;
-  private readonly closedListeners = new Set<
-    (fact: TeammateClosedFact) => void | Promise<void>
-  >();
+  private readonly closed: ClosedFactPublisher<TeammateClosedFact>;
   private readonly ownsWorktreeOnClose: boolean;
   /** The runtime role this entity's owner derived; the display fact carries it. */
   private readonly role: TeammateRole;
@@ -106,9 +109,11 @@ export class TeammateService {
     };
     this.state = new AgentRuntimeStateStore(deps.identities, identity);
     this.role = options.role;
+    this.closed = new ClosedFactPublisher<TeammateClosedFact>(deps.log);
     this.turns = new EntityTurnCoordinator({
       identity: () => this.current(),
       isActive: () => this.phase === 'active',
+      owesCompletion: () => this.phase === 'active' && this.hostStop === null,
     });
     this.runtimeOwner = new TeammateRuntimeOwner(
       deps,
@@ -145,16 +150,8 @@ export class TeammateService {
 
   onClosed(
     listener: (fact: TeammateClosedFact) => void | Promise<void>,
-  ): TeammateClosedSubscription {
-    this.closedListeners.add(listener);
-    let subscribed = true;
-    return {
-      unsubscribe: () => {
-        if (!subscribed) return;
-        subscribed = false;
-        this.closedListeners.delete(listener);
-      },
-    };
+  ): ClosedSubscription {
+    return this.closed.subscribe(listener);
   }
 
   lock(): LockedTeammate {
@@ -164,7 +161,7 @@ export class TeammateService {
     if (this.lockToken !== null) {
       throw new Error(`TeamMate ${JSON.stringify(this.name)} is already locked`);
     }
-    if (this.ordinaryMutations !== 0) {
+    if (!this.ordinaryMutations.idle) {
       throw new Error(`TeamMate ${JSON.stringify(this.name)} is being mutated`);
     }
     if (this.turns.hasUnsettledCurrent()) {
@@ -381,9 +378,12 @@ export class TeammateService {
    * its worktree: nobody asked it to close, and a host that closed it on the
    * way out would be deciding a product lifecycle no operator requested.
    *
-   * Accepted work converges first, in the order a close uses, so a turn that
-   * was already admitted settles and delivers its facts while the Channel
-   * subscriptions carrying them are still attached.
+   * Accepted work converges first, in the order a close uses. A turn this
+   * stop ends is not reported: the host that asked for the stop is the party
+   * that would read the report, and a stopped-by-shutdown card is not news to
+   * anyone. The fence is published before the native stop, so a turn admitted
+   * ahead of it reads the fence when it settles, and one admitted behind it
+   * finds the runtime already stopped.
    *
    * Admission is fenced only while that convergence runs. The dispatcher owns
    * the real fences, and the same process may start again without
@@ -411,10 +411,20 @@ export class TeammateService {
     // A lock is not consulted: an entity a Workflow still holds would
     // otherwise keep a live native runtime past process exit, and the
     // Workflow owner has already been stopped by the same sweep.
-    await this.runtimeOwner.stopRuntime();
+    //
+    // A native stop that fails does not skip the convergence behind it: an
+    // admission that was in flight when the fence went up must still attach
+    // while `hostStop` is set, or its turn would settle later with the fence
+    // gone and report a stop nobody is left to read.
+    const failures: unknown[] = [];
+    await collectShutdownFailure(failures, () => this.runtimeOwner.stopRuntime());
     await this.turns.drainAdmissions();
-    await this.waitForOrdinaryMutations();
-    await this.turns.settleAndDeliverRetained();
+    await this.ordinaryMutations.drain();
+    await collectShutdownFailure(failures, () => this.turns.convergeRetainedTurns());
+    throwShutdownFailures(
+      failures,
+      `TeamMate ${JSON.stringify(this.name)} did not converge during host stop`,
+    );
   }
 
   close(input: { note: string }): Promise<AgentEntityCloseResult> {
@@ -549,7 +559,7 @@ export class TeammateService {
         );
       }
       this.phase = 'closed';
-      if (token === null) this.queueClosedFact(closedAt);
+      if (token === null) this.closed.publish(teammateClosedFact(this.current(), closedAt));
       return Promise.resolve({ teammate: this.status() });
     }
     if (this.phase === 'active') this.phase = 'closing';
@@ -563,8 +573,8 @@ export class TeammateService {
   ): Promise<AgentEntityCloseResult> {
     await this.runtimeOwner.stopRuntime();
     await this.turns.drainAdmissions();
-    await this.waitForOrdinaryMutations();
-    await this.turns.settleAndDeliverRetained();
+    await this.ordinaryMutations.drain();
+    await this.turns.convergeRetainedTurns();
 
     const identity = this.current();
     const shouldCleanup =
@@ -586,7 +596,7 @@ export class TeammateService {
     // that evicted it now would materialize a second live instance for the
     // same name while the holder still has this one.
     if (token === null) {
-      this.queueClosedFact(closedAt);
+      this.closed.publish(teammateClosedFact(this.current(), closedAt));
     } else {
       this.assertLockToken(token);
     }
@@ -606,38 +616,8 @@ export class TeammateService {
       if (closedAt === null) {
         throw new Error('closed-held TeamMate has no durable closed_at');
       }
-      this.queueClosedFact(closedAt);
+      this.closed.publish(teammateClosedFact(this.current(), closedAt));
     }
-  }
-
-  private queueClosedFact(closedAt: number): void {
-    const identity = this.current();
-    const fact: TeammateClosedFact = Object.freeze({
-      schema_version: 1,
-      kind: 'teammate.closed',
-      dispatcher_id: identity.dispatcher_id,
-      team_id: identity.team_id,
-      name: identity.name,
-      closed_at: closedAt,
-    });
-    const listeners = [...this.closedListeners];
-    queueMicrotask(() => {
-      for (const listener of listeners) {
-        try {
-          void Promise.resolve(listener(fact)).catch((error) => {
-            this.deps.log.warn(
-              { teammate: identity.name, error },
-              'TeamMate retirement listener failed',
-            );
-          });
-        } catch (error) {
-          this.deps.log.warn(
-            { teammate: identity.name, error },
-            'TeamMate retirement listener failed',
-          );
-        }
-      }
-    });
   }
 
   private enterOrdinaryMutation(label: string): () => void {
@@ -650,22 +630,7 @@ export class TeammateService {
         `TeamMate ${JSON.stringify(this.name)} cannot accept ${label}`,
       );
     }
-    this.ordinaryMutations += 1;
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      this.ordinaryMutations -= 1;
-      if (this.ordinaryMutations === 0) {
-        for (const resolve of this.ordinaryIdleWaiters) resolve();
-        this.ordinaryIdleWaiters.clear();
-      }
-    };
-  }
-
-  private waitForOrdinaryMutations(): Promise<void> {
-    if (this.ordinaryMutations === 0) return Promise.resolve();
-    return new Promise((resolve) => this.ordinaryIdleWaiters.add(resolve));
+    return this.ordinaryMutations.enter();
   }
 
   private assertLockToken(token: object): void {

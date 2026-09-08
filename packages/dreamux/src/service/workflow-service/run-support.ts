@@ -46,19 +46,6 @@ export class WorkflowSemaphore {
   }
 }
 
-export interface Deferred<T> {
-  promise: Promise<T>;
-  resolve(value: T): void;
-}
-
-export function deferred(): Deferred<void> {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
-}
-
 export class WorkflowPersistenceError extends Error {}
 
 export function normalizeAgentOptions(
