@@ -89,7 +89,8 @@ export function handleProtocolEvent(
  * context the CLI injected into its own conversation: the body of a skill it
  * just loaded, hook output, reminders. None of that text is the agent's, and
  * none of it is the operator's (stdin is never echoed back), so it is not
- * displayed at all. Operator ruling, 2026-09-03: 「所有的 user 消息都隐藏即可」.
+ * displayed at all: every `user` envelope is hidden, by operator ruling on
+ * 2026-09-03.
  */
 function emitStreamActivity(
   line: ClaudeActivityLine,
@@ -115,11 +116,11 @@ function emitStreamActivity(
 
 /**
  * The one line the card shows for a compaction, in the words Claude Code's
- * own UI uses. The summary the CLI wrote is not shown. Operator ruling,
- * 2026-09-04: 「我不要正文，正文太长了，只显示压缩发生了即可。claude code 的网页上只
- * 显示了 Compacted session，我只需要这一行字即可。」 — and on the shape, 「没必要给他
- * 单独加一个新的 activity 类型，你直接在provider 里，多推一个 assistant message，
- * 内容就这一行。」
+ * own UI uses. The summary the CLI wrote is not shown — the operator ruled on
+ * 2026-09-04 that the body is too long and that the card only needs to say a
+ * compaction happened, the single line the Claude Code web UI shows. He also
+ * ruled the shape: no new activity kind, the provider just pushes one more
+ * assistant message carrying that line.
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 

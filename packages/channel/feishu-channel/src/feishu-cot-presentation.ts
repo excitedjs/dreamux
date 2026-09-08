@@ -2,8 +2,8 @@
  * What a COT card shows for a tool call. Core redacts; this module owns display
  * text, deriving it from one tool call; `feishu-cot-events.ts`, its only
  * caller, builds the events and fits them to Feishu's per-event limit — the
- * one bound a card string has (operator ruling, 2026-09-04: 「截断长度以飞书平台
- * 上给出的最长长度为准」).
+ * one bound a card string has, and the one the operator ruled on 2026-09-04
+ * that truncation must follow.
  */
 import type {
   RuntimeToolAction,
@@ -49,9 +49,9 @@ export interface CotItemList {
  * invocation the expanded row shows in the caller's notation instead of as
  * JSON, and the items the call was about as the pills of a `list` segment.
  * Nothing here comes from the tool's identity: a Channel-owned tool and a
- * foreign MCP tool are presented by the same rule (operator ruling,
- * 2026-09-04: 「这些全部回退吧」, on the Channel's hand-made titles for its own
- * `reply`, `react` and `list_chat_bots`).
+ * foreign MCP tool are presented by the same rule — the operator ruled on
+ * 2026-09-04 that the Channel's hand-made titles for its own `reply`, `react`
+ * and `list_chat_bots` all come back out.
  */
 interface ToolPresentation {
   readonly toolCallName: string;
@@ -67,8 +67,9 @@ interface ToolPresentation {
  * enum (`search`, `bash`, `read`, `write`, `doc`, `calendar`, `task`,
  * `meeting`, `default`) or a token from the card icon library. This Channel
  * uses the built-ins a runtime's tool actions map onto, and the library's
- * `app-default_outlined` for a call nothing could label (operator ruling,
- * 2026-09-04: 「mcp 工具隐藏掉参数吧，icon 选 app-default_outlined」).
+ * `app-default_outlined` for a call nothing could label — the icon the
+ * operator picked on 2026-09-04, when he also ruled an MCP tool row hides its
+ * arguments.
  */
 export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'app-default_outlined';
 
@@ -127,8 +128,8 @@ export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
  * within `TOOL_ITEMS_SOFT_MAX_BYTES` so a patch over many files leaves room
  * for its diff: the pills that fit, then one `+N` pill for the rest. A first
  * item longer than the whole budget is truncated into one pill instead of
- * being folded into a count no pill explains (operator ruling, 2026-09-04:
- * 「按照单条去截断即可」).
+ * being folded into a count no pill explains — the operator ruled on
+ * 2026-09-04 that truncation happens per item.
  */
 function itemList(event: CotToolCallActivity): CotItemList | null {
   if (event.items.length === 0) return null;

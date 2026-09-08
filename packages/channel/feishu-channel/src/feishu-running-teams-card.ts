@@ -63,9 +63,9 @@ function escapeMarkdown(value: string): string {
  * the name, the intent, and the bindings independently. A tile is free to be as
  * tall as its data: Feishu lays a two-column `column_set` out as a waterfall, so
  * a tall tile lengthens its own column and never stretches the one beside it.
- * Operator, 2026-09-07, on a draft that truncated the intent and counted all but
- * the first binding to keep tiles the same height: 「你不用担心，飞书这个两栏做了瀑布
- * 布局。这些截断都是无意义的」.
+ * A draft truncated the intent and counted all but the first binding to keep
+ * tiles the same height; the operator rejected that on 2026-09-07 because the
+ * waterfall layout makes those truncations pointless.
  */
 function teamItem(input: {
   team: RunningTeamRow;

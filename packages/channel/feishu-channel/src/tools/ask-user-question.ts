@@ -9,8 +9,7 @@
  * the message it came out of. AskUserQuestion, answered inside the client that
  * called it, needs neither. The other two are gone: `multiSelect`, because the
  * operator ruled multi-select out of this channel, and `preview`, which the
- * operator dropped after seeing what it cost the card —
- * "这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". Rendering it meant
+ * operator dropped after seeing what it cost the card. Rendering it meant
  * a second column beside the options, which reshaped every question that used
  * it.
  *

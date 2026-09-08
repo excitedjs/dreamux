@@ -96,10 +96,10 @@ const COMMANDS: Readonly<Record<FeishuSlashCommand, CommandDefinition>> = {
     // An accepted dissolve is the one command that already announces itself:
     // the Team's close reaches this Channel as a `team.state` closed event,
     // which removes the routes and announces that to the conversation. A
-    // receipt here would be the second message about the same event. Operator
-    // ruling, 2026-09-07: 「/dissolve 的时候如果成功了，就不发卡 … 现在 /dissolve
-    // 发了两张卡了」. Only the accepted case is silent — a refusal is news the
-    // conversation cannot get anywhere else, and still answers.
+    // receipt here would be the second message about the same event, which is
+    // what the operator saw and ruled out on 2026-09-07. Only the accepted case
+    // is silent — a refusal is news the conversation cannot get anywhere else,
+    // and still answers.
     return { kind: 'silent' };
   }),
 };

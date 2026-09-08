@@ -45,10 +45,10 @@ const PATH_TOKEN_CHARACTER_RE = /[\p{L}\p{N}_.~\\/-]/u;
 
 /**
  * Core redacts and never truncates. How much of a payload a surface can show
- * is that surface's own limit, applied where it sends (operator ruling,
- * 2026-09-04: 「core那边只做脱敏，不做截断 … Channel这边先去解析JSON，然后在发送接
- * 口之前去做截断」). Cutting here would hand every surface an already-damaged
- * value — a JSON result that no longer parses — with no way to get it back.
+ * is that surface's own limit, applied where it sends: the Channel parses the
+ * JSON first and cuts just before the send call (operator ruling, 2026-09-04).
+ * Cutting here would hand every surface an already-damaged value — a JSON
+ * result that no longer parses — with no way to get it back.
  */
 interface RedactedText { value: string; redacted: boolean }
 

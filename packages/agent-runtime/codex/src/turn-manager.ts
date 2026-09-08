@@ -404,10 +404,10 @@ function createRuntimeSubmission(): SubmissionDeferred {
 /**
  * The one line the card shows for a compaction, in the words Claude Code's
  * UI uses for the same fact. codex's `contextCompaction` item carries only
- * its id, and the summary codex wrote never leaves codex-core. Operator
- * ruling, 2026-09-04: 「只显示压缩发生了即可 … 我只需要这一行字即可」 — and on the
- * shape, 「没必要给他单独加一个新的 activity 类型，你直接在provider 里，多推一个
- * assistant message，内容就这一行。」
+ * its id, and the summary codex wrote never leaves codex-core. The operator
+ * ruled on 2026-09-04 that the card only needs to say a compaction happened,
+ * and that the shape is a provider-pushed assistant message rather than a new
+ * activity kind.
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 
@@ -416,18 +416,18 @@ const COMPACTED_SESSION_MESSAGE = 'Compacted session';
  * Code's own UI uses for the same fact. codex reports an interrupt only as a
  * terminal status on `turn/completed`, and a status is not a card fact, so
  * without this push the card shows an ordinary end and nothing says the turn
- * was stopped rather than answered. Operator ruling, 2026-09-07: 「codex 也加一个
- * 打断text ，对齐claude code」. The shape is the one he ruled for `Compacted
- * session`: an assistant message from the provider, not a new activity kind.
+ * was stopped rather than answered. The operator ruled on 2026-09-07 that
+ * codex must carry an interrupt marker too, aligned with Claude Code, in the
+ * `Compacted session` shape: an assistant message from the provider, not a new
+ * activity kind.
  *
- * The end matches the marker. The operator first ruled the end status did not
- * matter — 「最后卡片是什么状态其实没那么重要」 — and codex's own `completed` was
- * kept. He then ran the alpha and ruled otherwise, 2026-09-07: 「codex 发送 stop，
- * COT 显示状态是任务已完成，Claude code 展示的是任务中断 … 应该都是任务中断才对」.
- * A card's terminal is `turn.ended.status` verbatim: the Feishu channel maps
- * `completed` to `RUN_FINISHED status: done` (任务已完成) and `interrupted` to
- * `status: interrupted` (任务中断), so the end has to read the same status the
- * marker does.
+ * The end matches the marker. The first ruling was that the terminal status
+ * did not matter, so codex's own `completed` was kept; after testing the alpha
+ * the operator ruled that a stopped codex turn must read as interrupted on the
+ * card, exactly as Claude Code's does. A card's terminal is
+ * `turn.ended.status` verbatim: the Feishu channel maps `completed` to
+ * `RUN_FINISHED status: done` and `interrupted` to `status: interrupted`, so
+ * the end has to read the same status the marker does.
  */
 const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
 
