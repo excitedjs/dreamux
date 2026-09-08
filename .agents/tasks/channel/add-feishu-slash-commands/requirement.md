@@ -265,6 +265,19 @@ Verified against current source, not inherited from any document.
   leave it alone for now"). This defers review finding #5; it is not a claim that
   redelivery cannot happen.
 
+- On the route-removal announcement, after the double-card finding was traced
+  back to a pre-existing `next` defect rather than to this task's addition, the
+  operator restated the mechanism and ruled the fix: 「本质上是因为 第二条消息撞上了
+  team_closed，触发了 channel 的自动解绑重投 dispatcher 的逻辑。这个状态确实比较窄、
+  解法就是增加一个closing。记到issue里面」 ("essentially the second message hits
+  `team_closed`, which trips the Channel's automatic unbind-and-repost-to-the-
+  Dispatcher path. That state is fairly narrow; the fix is to add a `closing`.
+  Record it in the issue."). Recorded as issue #394 item 6. The alternative the
+  TeamLeader had put forward — let only the `team.state` notification announce,
+  deleting `bindingRouteEndedCard` — was not taken. Nothing about the
+  announcement changes in this task; what this task changed is only that a
+  rejected command no longer removes routes at all.
+
 ### TeamLeader decisions the operator did not object to
 
 - Commands are handled deterministically by the Channel rather than delivered to
