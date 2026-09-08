@@ -65,6 +65,17 @@ export class CompletionDeliveryPolicy {
     private readonly deps: {
       dispatcherId: string;
       log: DreamuxLogger;
+      /**
+       * Whether the dispatcher scope still takes work.
+       *
+       * Read once per requested delivery, before it is queued. The dispatcher
+       * publishes this fence when it stops, shuts down, or rolls back a failed
+       * start; a request that arrives behind the fence is news for an owner
+       * that is being torn down, and is dropped here rather than raced into a
+       * recipient that will refuse or, worse, accept it into a runtime that
+       * stops moments later.
+       */
+      accepting: () => boolean;
       /** Deterministic test seam for the internal delivery-operation bound. */
       attemptTimeoutMs?: number;
     },
@@ -93,12 +104,27 @@ export class CompletionDeliveryPolicy {
    * a fabricated identity would only make two distinct settlements look like
    * one. Both forms queue on the same per-recipient tail, so a recipient reads
    * its news in the order the turns settled.
+   *
+   * The scope fence is read here, before folding or queueing: a delivery that
+   * was already queued when the fence went up is never retracted, and a token
+   * already folded is not a way past it.
    */
   deliverRuntime(
     initiator: CompletionInitiator,
     token: RuntimeCompletion | null,
     completion: PreparedCompletionFact,
   ): Promise<void> {
+    if (!this.deps.accepting()) {
+      this.deps.log.info(
+        {
+          dispatcher_id: this.deps.dispatcherId,
+          source: completion.source,
+          status: completion.status,
+        },
+        'dropping completion: dispatcher is not accepting work',
+      );
+      return Promise.resolve();
+    }
     const recipientKey = initiator.recipientKey ?? initiator;
     if (token === null) {
       return this.enqueue(recipientKey, initiator, completion);

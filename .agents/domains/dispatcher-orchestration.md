@@ -354,11 +354,41 @@ ids, completion text, or slot heuristics.
 - completion delivery is process-local and is not replayed after restart;
   durable recovery is through `last` and Workflow/TeamMate records.
 
+Whether a settled turn is reported at all is the recipient scope's decision,
+read at the moment delivery would start. The producer never learns that its
+owner is going away, and no teardown walks the producer population:
+
+- an entity reports a turn only while it is `active` and not under host
+  release (`TeammateService` states this through the coordinator's
+  `owesCompletion`). A turn its own close, host stop, or dissolve ended is
+  settled for convergence and dropped for good, so a later `ensureDelivery()`
+  cannot revive it; a delivery already under way is never retracted. Both
+  fences are published before the native stop, so a turn admitted ahead of
+  the fence reads it when it settles, and host release still drains admissions
+  when the native stop fails;
+- `CompletionDeliveryPolicy` reads the dispatcher admission gate
+  (`DispatcherTaskDrain.accepting`) once per requested delivery, before folding
+  or queueing. Stop, shutdown, and failed-start rollback close that gate
+  synchronously, so nothing settling behind it — including a Team member's or
+  leader's natural completion during a long Workflow teardown — reaches a
+  stopping owner; a successful rollback reopens it. No in-process stop→start
+  path exists today; one would have to reopen the gate;
+- a Team-scope recipient runs its delivery inside `TeamService.admit()`, so a
+  dissolving Team refuses it with `TeamClosedError`;
+- a Workflow run stops owing its terminal report the moment a stop reserves
+  the `stopped` intent (`WorkflowRun` clears its `deliverTerminal` in the
+  terminal's admission-close callback); a completed or failed intent that won
+  first keeps its report. A leader turn that completes naturally inside a
+  dissolve's Workflow-stop window is still real news and reaches the
+  dispatcher.
+
 Source:
 
 - `/packages/dreamux/src/service/completion-router/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/inbound-task-drain.ts`
 - `/packages/dreamux/src/service/teammate-service/turn-recording.ts`
 - `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/service/workflow-service/run.ts`
 
 ### Workspaces
 
@@ -447,9 +477,14 @@ Source:
   runs in that directory records a plain `reuse-cwd` workspace, so it can
   neither clean the Team's checkout nor hold a drifting copy of its state. The
   attempt that created a checkout is the only one that may discard it.
-- **Every settled turn is reported.** Completion delivery folds on the
-  provider's own completion token when there is one, delivers a failed or
-  stopped turn without inventing one, and keeps per-recipient FIFO order.
+- **A settled turn is reported unless its owner ended it.** Completion
+  delivery folds on the provider's own completion token when there is one,
+  delivers an independently failed or stopped turn without inventing one, and
+  keeps per-recipient FIFO order. Whether to report at all is the recipient
+  scope's fence, read when delivery would start: an entity's own close or host
+  release, a Workflow's stop, a dissolving Team, and a dispatcher whose
+  admission is closed produce no push. A delivery already started is never
+  retracted.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** Role
   differentiation is the tool set and system prompt injected at launch.
 - **Commands are domain-owned.** Each owning module declares its canonical

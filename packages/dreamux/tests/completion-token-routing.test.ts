@@ -59,6 +59,7 @@ function policy(attemptTimeoutMs?: number): CompletionDeliveryPolicy {
   return new CompletionDeliveryPolicy({
     dispatcherId: 'flow',
     log: noopLog(),
+    accepting: () => true,
     ...(attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs }),
   });
 }

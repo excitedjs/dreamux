@@ -69,8 +69,19 @@ export interface TeammateClosedFact {
   readonly closed_at: number;
 }
 
-export interface TeammateClosedSubscription {
-  unsubscribe(): void;
+/** The fact a TeamMate publishes once its identity is durably closed. */
+export function teammateClosedFact(
+  identity: AgentEntityIdentity,
+  closedAt: number,
+): TeammateClosedFact {
+  return Object.freeze({
+    schema_version: 1,
+    kind: 'teammate.closed',
+    dispatcher_id: identity.dispatcher_id,
+    team_id: identity.team_id,
+    name: identity.name,
+    closed_at: closedAt,
+  });
 }
 
 export interface WorkflowTeammateSubmitInput {

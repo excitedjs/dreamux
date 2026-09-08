@@ -32,9 +32,12 @@ runtime app-server readiness, and same-version restart cautions.
   An untyped provider rejection is ambiguous. Runtime stop fences new admission
   synchronously and waits for already-started admission calls to settle before
   it reports completion.
-- Every settled turn is reported to the Agent that was waiting for it,
-  including one that failed or was stopped without a native provider result. A
-  missing completion is therefore a delivery problem, not evidence that the
+- A settled turn is reported to the Agent that was waiting for it, including
+  one that failed or was stopped without a native provider result, unless that
+  Agent's own close, a Workflow stop, a Team dissolve, or the service's own
+  stop ended it: those produce no push, and a service that is stopping delivers
+  nothing that settles behind its fence. A missing completion for a turn the
+  owner did not end is therefore a delivery problem, not evidence that the
   turn ended badly.
 - Completion preparation and each prepared submission attempt have an internal
   deadline. Deadline expiry is admission-ambiguous and terminal: Dreamux logs
@@ -90,6 +93,10 @@ runtime app-server readiness, and same-version restart cautions.
   compilation, metadata validation, runtime execution, completion delivery,
   or visible Channel delivery succeeded. Inspect the run's terminal state and
   then the delivery boundary separately.
+- A run stopped by `workflow_stop`, Team dissolve, or host stop converges its
+  record and journal to `stopped` and pushes no terminal completion to the
+  Agent that started it; a run whose completed or failed terminal was selected
+  first keeps its one push.
 - Startup completes a `running` Workflow record from its already-committed
   terminal journal fact when present; otherwise it marks the interrupted run
   `stopped`. Workflow execution and completion delivery do not resume; journal

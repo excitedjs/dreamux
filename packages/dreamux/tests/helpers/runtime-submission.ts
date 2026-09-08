@@ -45,7 +45,7 @@ export interface ControllableRuntimeSubmission {
   failCompletion(error: Error): RuntimeCompletion;
   /** Settle as an internal non-completion failure: never a completion token. */
   fail(error: Error): boolean;
-  /** Settle as internal `stopped`: never a completion token, never a push. */
+  /** Settle as internal `stopped`: never a completion token. */
   stop(): boolean;
   isSettled(): boolean;
 }

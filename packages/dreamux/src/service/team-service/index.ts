@@ -50,12 +50,9 @@ import {
   teamLeaderAgentBase,
   type TeamLeaderCreationInput,
 } from './leader-agent.js';
+import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
 import { TeamClosing } from './closing.js';
 import { TeamWorktreeCleanup } from '../team-collection/worktree-cleanup.js';
-import {
-  TeamClosedPublisher,
-  type TeamClosedListener,
-} from './closed-fact.js';
 import {
   resolveTeamLeaderCompletionDelivery,
   TeamLeaderCompletionTargets,
@@ -67,9 +64,11 @@ import {
 } from './collaborators.js';
 import { TeamRosterProjection } from './roster-projection.js';
 import { teamView } from './team-view.js';
-import type {
-  TeamClosedSubscription,
-  TeamSchedulerLifecycle,
+import {
+  teamClosedFact,
+  type TeamClosedFact,
+  type TeamClosedListener,
+  type TeamSchedulerLifecycle,
   TeamServiceCreateOutput,
   TeamServiceCreateInput,
   TeamServiceDeps,
@@ -116,14 +115,14 @@ export class TeamService {
   /** This Team's leader, as everything inside it reports to it. */
   private readonly leaderTargets: TeamLeaderCompletionTargets;
   /** Everyone holding this Team, told once it is durably over. */
-  private readonly closed: TeamClosedPublisher;
+  private readonly closed: ClosedFactPublisher<TeamClosedFact>;
 
   private constructor(
     private readonly deps: TeamServiceDeps,
     teamId: string,
   ) {
     this.id = teamId;
-    this.closed = new TeamClosedPublisher(deps.log);
+    this.closed = new ClosedFactPublisher<TeamClosedFact>(deps.log);
     this.leaderTargets = new TeamLeaderCompletionTargets({
       admit: (task) => this.admit(task),
       prepareLeaderCompletion: async (completion) =>
@@ -388,7 +387,7 @@ export class TeamService {
     };
   }
 
-  onClosed(listener: TeamClosedListener): TeamClosedSubscription {
+  onClosed(listener: TeamClosedListener): ClosedSubscription {
     return this.closed.subscribe(listener);
   }
 
@@ -666,7 +665,7 @@ export class TeamService {
     // The write that closes the record is what ends this Team, so the fact is
     // stated exactly where it becomes true — once, on the transition.
     if (previous.status !== 'closed' && updated.status === 'closed') {
-      this.closed.publish(updated);
+      this.closed.publish(teamClosedFact(updated));
     }
     return updated;
   }

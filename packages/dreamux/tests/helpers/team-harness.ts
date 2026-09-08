@@ -130,6 +130,7 @@ export async function buildTeamCollectionHarness(input?: {
   const completionDelivery = new CompletionDeliveryPolicy({
     dispatcherId,
     log: silentLog,
+    accepting: () => true,
   });
   const worktrees = new WorktreeManager();
 

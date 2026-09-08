@@ -16,6 +16,7 @@ import type {
   AgentEntitySubmissionResult,
 } from '../agent-entity/types.js';
 import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
+import type { ClosedListener } from '../closed-fact.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
@@ -25,6 +26,7 @@ import type { TeamMateSharedWorkspace } from '../teammate-collection/types.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
   TeamCreateRequestIdentity,
+  TeamRecord,
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 
@@ -115,8 +117,17 @@ export interface TeamClosedFact {
   readonly closed_at: number;
 }
 
-export interface TeamClosedSubscription {
-  unsubscribe(): void;
+export type TeamClosedListener = ClosedListener<TeamClosedFact>;
+
+/** The fact a Team publishes from the record that made it closed. */
+export function teamClosedFact(record: TeamRecord): TeamClosedFact {
+  return Object.freeze({
+    schema_version: 1,
+    kind: 'team.closed',
+    dispatcher_id: record.dispatcher_id,
+    team_id: record.team_id,
+    closed_at: record.closed_at ?? Date.now(),
+  });
 }
 
 /**

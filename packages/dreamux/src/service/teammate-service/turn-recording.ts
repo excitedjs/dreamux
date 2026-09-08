@@ -101,7 +101,12 @@ export class EntityTurn implements Turn {
   constructor(
     readonly runtime: RuntimeSubmission,
     private readonly producerName: string,
-    private readonly deliveryClosure: TurnCompletionDelivery | null,
+    private deliveryClosure: TurnCompletionDelivery | null,
+    /**
+     * Whether the entity still owes its owner this turn's news, read once, at
+     * the moment delivery would start.
+     */
+    private readonly owed: () => boolean,
   ) {
     this.settled = runtime.settled.then((settlement): TurnOutcome => {
       if (settlement.kind === 'completion') {
@@ -143,13 +148,19 @@ export class EntityTurn implements Turn {
   }
 
   /**
-   * Every settled turn is reported, whatever ended it.
+   * A settled turn is reported while the entity still owes its owner news.
    *
    * The waiting Agent asked for the work, not for a native result: a turn that
-   * failed or was stopped is exactly the news it cannot infer on its own, so it
+   * failed or was stopped on its own is exactly the news it cannot infer, so it
    * is delivered from the outcome this turn already selected. Only a provider
    * completion carries a token, and that token is passed through solely as the
    * settlement's identity for folding.
+   *
+   * A turn the entity's own close or host release ended is different news:
+   * the party that ended it is the one that would read the report. The
+   * entity says so through {@link owed}, read once here; a negative answer
+   * releases the closure for good, so a later `ensureDelivery()` cannot revive
+   * the report, while a delivery that already started is never retracted.
    */
   private startDeliveryIfReady(): void {
     if (
@@ -157,6 +168,10 @@ export class EntityTurn implements Turn {
       this.deliveryClosure === null ||
       this.selectedOutcome === null
     ) {
+      return;
+    }
+    if (!this.owed()) {
+      this.deliveryClosure = null;
       return;
     }
     const outcome = this.selectedOutcome;

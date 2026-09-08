@@ -1,50 +1,39 @@
+import { InFlightWork } from '../in-flight-work.js';
+
 /**
  * Dispatcher-owned admission gate for work that can publish runtime, scheduler,
  * route, or durable state. Stop closes admission first, then drains every task
  * that crossed this synchronous gate before the ownership tree is swept.
  */
 export class DispatcherTaskDrain {
-  private readonly tasks = new Set<Promise<unknown>>();
-  private accepting = true;
+  private readonly tasks = new InFlightWork();
+  private open = true;
 
   constructor(private readonly rejectMessage: () => string) {}
 
+  /**
+   * Whether this gate still admits work. Completion delivery reads it as the
+   * dispatcher-scope fence: news for an owner whose admission is closed has no
+   * one left to read it.
+   */
+  get accepting(): boolean {
+    return this.open;
+  }
+
   closeAdmission(): void {
-    this.accepting = false;
+    this.open = false;
   }
 
   openAdmission(): void {
-    this.accepting = true;
+    this.open = true;
   }
 
   run<T>(task: () => Promise<T>): Promise<T> {
-    if (!this.accepting) throw new Error(this.rejectMessage());
-    const tracked = Promise.resolve().then(task);
-    this.track(tracked);
-    return tracked;
+    if (!this.open) throw new Error(this.rejectMessage());
+    return this.tasks.track(Promise.resolve().then(task));
   }
 
-  /**
-   * Track work whose durable acceptance already crossed the normal admission
-   * gate. Shutdown must drain this task even if admission closes between the
-   * accepting request and runner publication.
-   */
-  trackAccepted<T>(task: () => Promise<T>): Promise<T> {
-    const tracked = Promise.resolve().then(task);
-    this.track(tracked);
-    return tracked;
-  }
-
-  private track<T>(task: Promise<T>): void {
-    this.tasks.add(task);
-    void task.finally(() => {
-      this.tasks.delete(task);
-    }).catch(() => {});
-  }
-
-  async drain(): Promise<void> {
-    while (this.tasks.size > 0) {
-      await Promise.allSettled([...this.tasks]);
-    }
+  drain(): Promise<void> {
+    return this.tasks.drain();
   }
 }
