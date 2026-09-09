@@ -350,6 +350,88 @@ describe('parseLine', () => {
   });
 });
 
+describe('TurnAggregator native usage', () => {
+  function assistant(input: number, parentToolUseId: string | null = null): ReturnType<typeof parseLine> {
+    return parseLine(JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: parentToolUseId,
+      message: {
+        content: [],
+        usage: { input_tokens: input, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 4_000, output_tokens: 1 },
+      },
+    }));
+  }
+
+  function result(modelUsage: unknown): ReturnType<typeof parseLine> {
+    return parseLine(JSON.stringify({
+      type: 'result', subtype: 'success', result: 'answer', modelUsage,
+      usage: { input_tokens: 999_999, output_tokens: 999_999 },
+    }));
+  }
+
+  const models = {
+    main: { inputTokens: 1_000, cacheReadInputTokens: 20_000, cacheCreationInputTokens: 4_000, outputTokens: 60 },
+    other: { inputTokens: 568, cacheReadInputTokens: 2_000, cacheCreationInputTokens: 1_000, outputTokens: 9 },
+  };
+
+  it('uses the latest main context and sums only the current result model totals', () => {
+    const agg = new TurnAggregator();
+    agg.accept(assistant(4_000));
+    agg.accept(assistant(500));
+    agg.accept(assistant(50_000, 'sub-agent-call'));
+    agg.accept(result(models));
+    expect(agg.takeOutcome()).toMatchObject({
+      text: 'answer', tokenUsage: { inputTokens: 28_568, outputTokens: 69 }, contextTokens: 14_500,
+    });
+    expect(agg.outcome()).toBeNull();
+
+    agg.accept(assistant(750));
+    agg.accept(result({ main: { ...models.main, inputTokens: 10_000 } }));
+    expect(agg.takeOutcome()).toMatchObject({
+      tokenUsage: { inputTokens: 34_000, outputTokens: 60 }, contextTokens: 14_750,
+    });
+    agg.accept(result(models));
+    expect(agg.takeOutcome()?.contextTokens).toBeNull();
+  });
+
+  it('discards context when native cancellation discards the pending turn', () => {
+    const agg = new TurnAggregator();
+    agg.accept(assistant(500));
+    agg.discard();
+    agg.accept(result(models));
+    expect(agg.takeOutcome()).toMatchObject({
+      tokenUsage: { inputTokens: 28_568, outputTokens: 69 }, contextTokens: null,
+    });
+  });
+
+  it('does not reuse context when the latest main message has no usage', () => {
+    const agg = new TurnAggregator();
+    agg.accept(assistant(500));
+    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { content: [] } })));
+    agg.accept(result(models));
+    expect(agg.takeOutcome()?.contextTokens).toBeNull();
+  });
+
+  it.each([undefined, {}, null, { main: { inputTokens: '100', outputTokens: 1 } }])(
+    'omits unavailable cumulative data rather than using per-turn usage: %j',
+    (modelUsage) => {
+      const agg = new TurnAggregator();
+      agg.accept(assistant(500));
+      agg.accept(result(modelUsage));
+      expect(agg.takeOutcome()).not.toHaveProperty('tokenUsage');
+    },
+  );
+
+  it('preserves zero counts and accepts absent cache fields', () => {
+    const agg = new TurnAggregator();
+    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 0 } } })));
+    agg.accept(result({ main: { inputTokens: 0, outputTokens: 0 } }));
+    expect(agg.takeOutcome()).toMatchObject({
+      tokenUsage: { inputTokens: 0, outputTokens: 0 }, contextTokens: 0,
+    });
+  });
+});
+
 describe('TurnAggregator', () => {
   it('aggregates init + assistant + result into an outcome', () => {
     const agg = new TurnAggregator();

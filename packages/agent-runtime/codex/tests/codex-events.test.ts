@@ -72,6 +72,29 @@ describe('subscribeTurnCollection (issue #126 PR8)', () => {
     });
   });
 
+  it('forwards usage only for its thread without affecting collected result text', async () => {
+    const { client, emit } = fakeClient();
+    const usages: unknown[] = [];
+    const collector = subscribeTurnCollection(client, 'thread-A', {
+      onTokenUsage: (usage) => usages.push(usage),
+    });
+    const tokenUsage = {
+      total: { inputTokens: 28_568, outputTokens: 69 },
+      last: { totalTokens: 14_500 },
+      modelContextWindow: 29_000,
+    };
+    emit({ method: 'thread/tokenUsage/updated', params: { threadId: 'thread-B', turnId: 't1', tokenUsage } });
+    emit({ method: 'thread/tokenUsage/updated', params: { threadId: 'thread-A', turnId: 't1', tokenUsage } });
+    emit({
+      method: 'turn/completed',
+      params: { threadId: 'thread-A', turn: { id: 't1', items: [] } },
+    });
+    expect(usages).toEqual([tokenUsage]);
+    await expect(collector.awaitTurn()).resolves.toEqual({ threadId: 'thread-A', turnId: 't1', items: [] });
+    emit({ method: 'thread/tokenUsage/updated', params: { threadId: 'thread-A', turnId: 't2', tokenUsage } });
+    expect(usages).toHaveLength(1);
+  });
+
   it('strict mode ignores a turn/completed for a foreign thread', async () => {
     const { client, emit } = fakeClient();
     const collector = subscribeTurnCollection(client, 'thread-A');

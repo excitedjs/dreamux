@@ -110,6 +110,7 @@ export interface ResultEnvelope {
    * not return a validated structured object.
    */
   readonly hasStructuredOutput: boolean;
+  readonly tokenUsage?: { readonly inputTokens: number; readonly outputTokens: number };
 }
 
 /**
@@ -143,6 +144,8 @@ export interface TurnOutcome {
    * was returned.
    */
   readonly hasStructuredOutput: boolean;
+  readonly tokenUsage?: { readonly inputTokens: number; readonly outputTokens: number };
+  readonly contextTokens?: number | null;
 }
 
 /** Everything needed to spawn one resident `claude` stream-json child. */
@@ -188,7 +191,7 @@ export type ClaudeActivityLine = Extract<
 >;
 
 export type ClaudeProtocolEvent =
-  | { readonly kind: 'interrupted' }
+  | { readonly kind: 'interrupted'; readonly outcome?: TurnOutcome }
   | {
       /** Public native observation; lifecycle alone does not supply a completion. */
       readonly kind: 'command_lifecycle';

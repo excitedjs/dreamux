@@ -191,6 +191,17 @@ the same change that touches it.
   presentation is a deliberately tuned surface; changes to it are their own
   requirement, never a refactor side effect.
   (Decision: [feishu-cot-conversation-display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).)
+- **A native turn closes with a compact usage line when metrics are available.**
+  Both built-in runtimes append an ordinary assistant message immediately before
+  the native end: `Context usage <value> | Token usage: total=<count> input=<count> output=<count>`.
+  Codex shows context percentage; Claude Code shows its latest main-model input
+  token count, excluding the final response. Counts use decimal lowercase `k`,
+  `m`, and `b`, at most one decimal, and plain numbers below 1,000. Totals are
+  native cumulative measurements, not a Dreamux historical ledger; Claude's
+  cumulative scope is its resident query/process. Missing totals omit the line;
+  missing context alone shows `n/a`. The line is display-only, never an answer
+  delivered to another agent or inserted into model context.
+  (Task: [display-turn-usage-summary](/.agents/tasks/channel/display-turn-usage-summary/README.md).)
 - **A runtime's own conversation traffic is not the agent speaking.** What a
   Claude Code session emits as a `user` envelope — its tool results, and the
   context the CLI injects into its own conversation such as the whole SKILL.md

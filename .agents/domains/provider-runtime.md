@@ -599,8 +599,8 @@ Source:
 
 ### Claude Code Stream-Json Envelopes On The Display Line
 
-The display line reads three stdout envelopes and nothing else
-(`ClaudeActivityLine`): `assistant`, whose text blocks are the model's words and
+`ClaudeActivityLine` carries three conversational stdout envelopes:
+`assistant`, whose text blocks are the model's words and
 whose `tool_use` blocks are its tool calls; `user`, whose `tool_result`
 blocks are what those tools returned, correlated to the call by `tool_use_id`;
 and the `system` envelope with subtype `compact_boundary`, which becomes the
@@ -701,6 +701,46 @@ Source:
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/codex/tests/codex-events.test.ts`
+
+### Native Turn Usage Display
+
+Usage is provider-local native data, emitted as one ordinary `assistant.message`
+immediately before the native terminal's `turn.ended`, after an interruption
+marker when present. There is no new neutral field, Core/Channel formatting,
+query, transcript read, persistent ledger, or completion-text mutation. Generic
+teardown does not emit another usage line.
+
+- Codex's collector forwards matching-thread `thread/tokenUsage/updated`.
+  TurnManager replaces one latest snapshot and clears it on a collector/thread
+  change. Input/output come from `total.inputTokens` and `total.outputTokens`;
+  cached input and reasoning output are already included. Context is
+  `round(last.totalTokens / modelContextWindow * 100)` for a positive window,
+  deliberately not the TUI's baseline-adjusted calculation.
+- Claude's stream parser sums the current result's `modelUsage` entries:
+  input includes `inputTokens`, `cacheReadInputTokens` and
+  `cacheCreationInputTokens`; output is `outputTokens`. These are native
+  resident-query cumulative values, not per-turn `result.usage` and not totals
+  guaranteed across process restarts. Context is the latest main assistant's
+  `message.usage` input plus cache-read/cache-creation input, excluding output
+  and sub-agent envelopes. Result consumption and consumed cancellation clear
+  that per-turn context. Native result and interrupted-result callbacks carry
+  the measurements before settlement; an interrupted callback's outcome remains
+  optional for custom session factories that supply no usage.
+
+Each runtime formats total as input plus output and uses the presentation in the
+[product catalog](../product/README.md#observing-agents). Missing cumulative
+metrics omit the row; missing context alone produces `n/a`. Formatting stays
+local to each runtime rather than adding a shared presentation dependency.
+
+**Regression trap:** cumulative snapshots are replaced, never added to previous
+snapshots. Doing so double-counts usage; reconstructing missing process history
+would also violate this feature's native-data-only scope.
+
+Source: `/packages/agent-runtime/codex/src/events.ts`,
+`/packages/agent-runtime/codex/src/turn-manager.ts`,
+`/packages/agent-runtime/claude-code/src/stream.ts`,
+`/packages/agent-runtime/claude-code/src/runtime-activity.ts`,
+`/packages/agent-runtime/claude-code/src/rpc.ts`.
 
 ### Activity Reads And Scheduling
 

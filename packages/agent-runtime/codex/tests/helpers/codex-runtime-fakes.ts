@@ -15,6 +15,7 @@ import type {
 import type {
   ServerNotification,
   ThreadItem,
+  ThreadTokenUsage,
 } from '../../src/types.js';
 import type {
   AgentRuntimePathContext,
@@ -203,6 +204,10 @@ export class FakeCodexWsClient {
     }
     if (method === 'turn/interrupt') return {} as R;
     throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
+  }
+
+  emitTokenUsage(threadId: string, turnId: string, tokenUsage: ThreadTokenUsage): void {
+    this.emit({ method: 'thread/tokenUsage/updated', params: { threadId, turnId, tokenUsage } });
   }
 
   emitCompleted(threadId: string, turnId: string, text: string): void {

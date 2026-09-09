@@ -308,7 +308,7 @@ export class ClaudeCodeStreamRpc {
         // Remove the answered requests before callbacks can admit or stop work.
         // Native end is still delivered before these submissions settle.
         this.options.onProtocolEvent?.(interrupted
-          ? { kind: 'interrupted' }
+          ? { kind: 'interrupted', outcome }
           : { kind: 'result', outcome, commandUuids: submittedUuids });
         for (const request of answered) {
           this.acceptRequest(request);

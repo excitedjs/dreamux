@@ -100,6 +100,18 @@ export interface ThreadItem {
  */
 export type TurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
 
+export interface ThreadTokenUsage {
+  total: { inputTokens: number; outputTokens: number };
+  last: { totalTokens: number };
+  modelContextWindow: number | null;
+}
+
+export interface ThreadTokenUsageUpdatedNotification {
+  threadId: string;
+  turnId: string;
+  tokenUsage: ThreadTokenUsage;
+}
+
 export interface TurnCompletedNotification {
   threadId: string;
   turn: {
