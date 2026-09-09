@@ -463,13 +463,13 @@ Rules:
 - explicitly rebuildable server state may warn and rebuild only when documented;
 - removed layouts may be detected for diagnostics, but not read as source data,
   rewritten, or deleted;
-- incompatible shape, version, or path changes need a Rush change file with
-  `BREAKING:` and concrete `Rebuild:` guidance;
-- an explicitly operator-approved same-shape semantic change may retain its
-  version only when the note starts with `BREAKING:`, immediately gives a
-  `Review:` warning, explicitly says no rebuild is needed, and contains no
-  `Rebuild:` instruction. The V3 Feishu `allow_chats` trust reinterpretation is
-  the accepted instance of this exception.
+- an incompatible shape, version, or path change that leaves the upgraded
+  reader unable to start needs a Rush change file with `BREAKING:` and concrete
+  `Rebuild:` guidance — that upgrade-blocking migration is the only thing
+  `BREAKING:` marks;
+- every other change — including API, MCP, and CLI contract changes and behavior
+  changes that leave persisted files readable as they are — is an ordinary
+  change note that must never use `BREAKING:`, `Rebuild:`, or `Review:`.
 
 Any change to the shape, validation, default, ownership, or meaning of a config
 or persisted state file also updates

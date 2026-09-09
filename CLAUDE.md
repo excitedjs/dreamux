@@ -195,21 +195,20 @@ If yes, update `.agents/` in the same PR and run:
 
 ## Changelog Responsibility
 
-Dreamux 0.x handles incompatible config/state shape, version, or path changes by
-fail-loud plus manual rebuild. Any change that can block or break a user's
-upgrade needs a Rush change file. Use `rush change`; never hand-edit generated
-changelogs.
+Any change that can block or break a user's upgrade needs a Rush change file.
+Use `rush change`; never hand-edit generated changelogs.
 
-Typical upgrade blockers include config/state/cache/run/log path semantics,
-persisted file formats, onboard/daemon behavior, bundled skills, dispatcher
-cwd/work directory contracts, and any manual rebuild requirement.
+An incompatible shape, version, or path change to a config or persisted
+state/cache/run/log file leads with `BREAKING:` and includes `Rebuild:` with
+the exact manual action. `BREAKING:` means upgrade-blocking and nothing else:
+it applies only when the upgraded daemon or CLI cannot start until the operator
+performs that migration by hand. Dreamux 0.x handles those by fail-loud plus
+manual rebuild, never by silent migration.
 
-For incompatible shape, version, or path changes, breaking notes lead with
-`BREAKING:` and include `Rebuild:` with the exact manual action. A same-shape
-semantic change may retain its state version only when the operator explicitly
-approves that tradeoff; its breaking note must lead with `BREAKING:`, immediately
-include `Review:` with the required operator check, explicitly say no rebuild is
-needed, and contain no `Rebuild:` instruction.
+Everything else is an ordinary change note. API, MCP, and CLI tool contract
+changes, and behavior or semantic changes that leave persisted files readable
+as they are, do not block an upgrade: describe them plainly and never use
+`BREAKING:`, `Rebuild:`, or `Review:`.
 
 While a package stays on the 0.x version line, its change files must never
 use type `major` — Rush bumps a 0.x package straight to 1.0.0 on a pending
