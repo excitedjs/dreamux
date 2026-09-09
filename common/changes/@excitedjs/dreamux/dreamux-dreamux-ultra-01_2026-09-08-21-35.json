@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "BREAKING: The teammate.spawn and team.create MCP tools no longer accept repo.slug. Rebuild: Regenerate saved creation-tool requests without repo.slug. Existing worktrees and persisted state need no rebuild; automatic directory naming and repo.branch remain available.",
+      "comment": "The teammate.spawn and team.create MCP tools no longer accept repo.slug in their repo input; the repo schema is closed, so a call that passes slug now fails input validation before the handler runs. The worktree directory and default branch already derive from the allocated entity name (dreamux/<teammate_name>, or dreamux/team-<team_name> for a Team), and repo.branch still overrides the default. Existing worktrees, persisted state, and canonical Commands are unchanged.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }
