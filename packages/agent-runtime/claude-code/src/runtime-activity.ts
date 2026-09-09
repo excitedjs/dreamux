@@ -55,20 +55,27 @@ export function handleProtocolEvent(
   context: ProtocolEventContext,
 ): void {
   if (event.kind === 'command_lifecycle') return;
-  if (event.kind === 'interrupted') {
-    emitActivity(interruptedActivity(context.activity), context.activitySink);
-    endNativeTurn('interrupted', null, context.activitySink);
-    context.activity.tools.clear();
-    return;
-  }
-  if (event.kind === 'result') {
+  if (event.kind === 'result' || event.kind === 'interrupted') {
+    const interrupted = event.kind === 'interrupted';
+    if (interrupted) emitActivity(interruptedActivity(context.activity), context.activitySink);
+    const usage = event.outcome?.tokenUsage;
+    if (usage !== undefined) {
+      const contextTokens = event.outcome?.contextTokens;
+      const contextUsage = contextTokens == null ? 'n/a' : formatTokenCount(contextTokens);
+      emitActivity({
+        kind: 'assistant.message',
+        occurredAt: Date.now(),
+        id: `stream-${context.activity.activitySequence++}:usage`,
+        text: `Context usage ${contextUsage} | Token usage: total=${formatTokenCount(usage.inputTokens + usage.outputTokens)} input=${formatTokenCount(usage.inputTokens)} output=${formatTokenCount(usage.outputTokens)}`,
+      }, context.activitySink);
+    }
     // `result` is claude's native terminal, and the display line ends on it:
     // attribution, completion and request settlement are
     // push-back's work on the same fact, and none of them may change the end,
     // delay it, or withhold it.
     endNativeTurn(
-      event.outcome.isError ? 'failed' : 'completed',
-      event.outcome.isError ? turnFailureMessage(event.outcome) : null,
+      interrupted ? 'interrupted' : event.outcome.isError ? 'failed' : 'completed',
+      !interrupted && event.outcome.isError ? turnFailureMessage(event.outcome) : null,
       context.activitySink,
     );
     context.activity.tools.clear();
@@ -249,4 +256,16 @@ function toJsonValue(value: unknown): JsonValue | null {
   } catch {
     return String(value);
   }
+}
+
+function formatTokenCount(count: number): string {
+  if (count < 1_000) return String(count);
+  const units = ['k', 'm', 'b'];
+  let value = count / 1_000;
+  let unit = 0;
+  while (Math.round(value * 10) / 10 >= 1_000 && unit < units.length - 1) {
+    value /= 1_000;
+    unit++;
+  }
+  return `${Math.round(value * 10) / 10}${units[unit]}`;
 }

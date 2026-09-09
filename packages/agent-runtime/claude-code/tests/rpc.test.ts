@@ -91,6 +91,49 @@ function interruptArtifact(commandUuid: string): Record<string, unknown> {
   };
 }
 
+describe('native usage boundaries', () => {
+  it('forwards native totals before settlement without extra requests or cross-result accumulation', async () => {
+    const order: string[] = [];
+    const events: ClaudeProtocolEvent[] = [];
+    const h = harness({ onProtocolEvent: (event) => {
+      events.push(event);
+      if (event.kind === 'result') order.push('result');
+    } });
+    h.init();
+    for (const [index, uuid] of ['A', 'B'].entries()) {
+      const submission = await h.send(uuid);
+      void submission.settled.then(() => { order.push('settle'); });
+      h.lifecycle(uuid, 'started');
+      h.emit({ type: 'assistant', parent_tool_use_id: null,
+        message: { content: [], usage: { input_tokens: 500 + index, cache_read_input_tokens: 14_000 } } });
+      h.result('answer', uuid, { modelUsage: { main: { inputTokens: 20_000 + index * 10_000, outputTokens: 69 } } });
+      h.lifecycle(uuid, 'completed');
+      await expect(completion(submission)).resolves.toEqual({ status: 'completed', resultText: 'answer' });
+    }
+    expect(events.filter((event) => event.kind === 'result').map((event) => event.outcome)).toMatchObject([
+      { tokenUsage: { inputTokens: 20_000, outputTokens: 69 }, contextTokens: 14_500 },
+      { tokenUsage: { inputTokens: 30_000, outputTokens: 69 }, contextTokens: 14_501 },
+    ]);
+    expect(order).toEqual(['result', 'settle', 'result', 'settle']);
+    expect(h.writes).toHaveLength(2);
+    expect(h.controls).toEqual([]);
+  });
+
+  it('carries native usage on an interrupted result without creating a completion', async () => {
+    const h = harness();
+    h.init();
+    const submission = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.emit({ ...interruptArtifact('A'), modelUsage: { main: { inputTokens: 200, outputTokens: 10 } } });
+    expect(h.events.find((event) => event.kind === 'interrupted')).toMatchObject({
+      outcome: { tokenUsage: { inputTokens: 200, outputTokens: 10 }, contextTokens: null },
+    });
+    await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.results()).toEqual([]);
+    expect(h.controls).toEqual([]);
+  });
+});
+
 describe('resident request admission and settlement', () => {
   it('acknowledges input before its answer, then accepts another input before late completed', async () => {
     const h = harness();

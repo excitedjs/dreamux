@@ -474,6 +474,19 @@ Source: `/.github/workflows/release.yml`, `/.github/workflows/promote-next.yml`,
 
 ## Regression Traps
 
+### An environment-injected hooksPath hides the repository hooks
+
+**Trigger:** Rush refuses to install `common/git-hooks` because the coding
+harness supplied `core.hooksPath` through Git's environment overrides.
+
+**Rejected direction:** using `--bypass-policy` to retain that override, or
+committing without the repository hook. Inspect the setting's origin, remove
+only the confirmed harness override from the command environment, and run normal
+Rush setup and Git commit. Do not rewrite repository/global Git configuration;
+keep staged lint, author checks, gitleaks, and the internal-content check active.
+
+Source: `/common/git-hooks/pre-commit`.
+
 ### Pushing release refs with `GITHUB_TOKEN`
 
 **Trigger:** simplifying the deploy-key setup away, or letting

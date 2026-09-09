@@ -23,3 +23,4 @@
 - [Refine Feishu COT and binding cards](/.agents/tasks/channel/refine-feishu-cot-and-binding-cards/README.md) — `review`: Bound plain-text COT tool results by line count, restore Team runtime context on binding cards, distinguish route-removal notifications, and complete superseded COT cards successfully
 - [Feishu slash commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md) — `done`: Handle /stop, /teams, and /dissolve deterministically in the Feishu channel through one extensible command table
 - [Align Codex command display parsing](/.agents/tasks/channel/align-codex-command-display/README.md) — `done`: Show the inner shell script in Codex tool rows instead of the shell launcher wrapper
+- [Display turn usage summaries](/.agents/tasks/channel/display-turn-usage-summary/README.md) — `done`: Implement native context and cumulative token usage as the final assistant activity; draft-only delivery pending live Codex verification.

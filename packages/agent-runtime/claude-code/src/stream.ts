@@ -103,6 +103,41 @@ export function assistantText(message: unknown): string {
   return parts.join('');
 }
 
+function sumTokenCounts(...values: unknown[]): number | undefined {
+  let total = 0;
+  for (const value of values) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+    total += value;
+  }
+  return total;
+}
+
+function parseModelUsage(value: unknown): ResultEnvelope['tokenUsage'] {
+  if (!isObject(value) || Object.keys(value).length === 0) return undefined;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const model of Object.values(value)) {
+    if (!isObject(model)) return undefined;
+    const input = sumTokenCounts(
+      model['inputTokens'], model['cacheReadInputTokens'] ?? 0, model['cacheCreationInputTokens'] ?? 0,
+    );
+    const output = sumTokenCounts(model['outputTokens']);
+    if (input === undefined || output === undefined) return undefined;
+    inputTokens += input;
+    outputTokens += output;
+  }
+  return { inputTokens, outputTokens };
+}
+
+function mainContextTokens(raw: JsonObject): number | null {
+  const message = raw['message'];
+  if (!isObject(message) || !isObject(message['usage'])) return null;
+  const usage = message['usage'];
+  return sumTokenCounts(
+    usage['input_tokens'], usage['cache_read_input_tokens'] ?? 0, usage['cache_creation_input_tokens'] ?? 0,
+  ) ?? null;
+}
+
 function parseResult(o: JsonObject): ResultEnvelope {
   const subtype = str(o['subtype']);
   const errorsRaw = o['errors'];
@@ -116,6 +151,7 @@ function parseResult(o: JsonObject): ResultEnvelope {
   } else {
     isError = o['is_error'] === true || errors.length > 0;
   }
+  const tokenUsage = parseModelUsage(o['modelUsage']);
   // In --json-schema mode Claude Code surfaces the validated object in
   // `structured_output`; prefer it over the free-form `result` text so the
   // workflow always receives clean, schema-conformant JSON to parse.
@@ -139,6 +175,7 @@ function parseResult(o: JsonObject): ResultEnvelope {
     userMessageUuid: str(o['user_message_uuid']),
     errors,
     hasStructuredOutput,
+    ...(tokenUsage === undefined ? {} : { tokenUsage }),
   };
 }
 
@@ -349,6 +386,7 @@ export function buildControlAck(requestId: string): string {
  */
 export class TurnAggregator {
   private lastAssistantText = '';
+  private contextTokens: number | null = null;
   private result: ResultEnvelope | null = null;
   private initSessionId: string | null = null;
 
@@ -369,6 +407,7 @@ export class TurnAggregator {
         break;
       case 'assistant':
         if (line.text.length > 0) this.lastAssistantText = line.text;
+        if (line.raw['parent_tool_use_id'] == null) this.contextTokens = mainContextTokens(line.raw);
         break;
       case 'result':
         this.result = line.outcome;
@@ -391,6 +430,7 @@ export class TurnAggregator {
       terminalReason: r.terminalReason,
       errors: r.errors,
       hasStructuredOutput: r.hasStructuredOutput,
+      ...(r.tokenUsage === undefined ? {} : { tokenUsage: r.tokenUsage, contextTokens: this.contextTokens }),
     };
   }
 
@@ -406,5 +446,6 @@ export class TurnAggregator {
   discard(): void {
     this.result = null;
     this.lastAssistantText = '';
+    this.contextTokens = null;
   }
 }

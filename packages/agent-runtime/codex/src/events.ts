@@ -2,7 +2,7 @@
  * Collects a Codex turn from the JSON-RPC notification stream.
  *
  * Adapted from claudemux's `plugins/claudemux/core/src/engines/codex/events.ts`.
- * We drop token-usage bookkeeping and `notLoaded` item merging. Feishu
+ * We drop `notLoaded` item merging. Feishu
  * outbound delivery is MCP reply-only, so collected assistant text is for
  * diagnostics and tests rather than channel forwarding.
  */
@@ -13,6 +13,8 @@ import type {
   ItemCompletedNotification,
   ItemStartedNotification,
   ThreadItem,
+  ThreadTokenUsage,
+  ThreadTokenUsageUpdatedNotification,
   TurnCompletedNotification,
   TurnErrorNotification,
   TurnStartResponse,
@@ -68,6 +70,7 @@ export interface TurnSubscriptionOptions {
   onTrace?: (event: TurnTraceEvent) => void;
   /** Keep listening while a resident runtime observes successive native turns. */
   retainAfterTerminal?: boolean;
+  onTokenUsage?: (usage: ThreadTokenUsage) => void;
   onItemStarted?: (turnId: string, item: ThreadItem) => void;
   onItemCompleted?: (turnId: string, item: ThreadItem, occurredAt: number) => void;
   onTerminal?: (turnId: string, terminal: CollectedTurn | Error) => void;
@@ -159,7 +162,10 @@ export function subscribeTurnCollection(
       });
     }
     if (closed || !matches) return;
-    if (notif.method === 'item/started') {
+    if (notif.method === 'thread/tokenUsage/updated') {
+      const params = notif.params as ThreadTokenUsageUpdatedNotification;
+      options.onTokenUsage?.(params.tokenUsage);
+    } else if (notif.method === 'item/started') {
       const params = notif.params as ItemStartedNotification;
       if (terminalFingerprints.has(params.turnId)) return;
       options.onItemStarted?.(params.turnId, params.item);

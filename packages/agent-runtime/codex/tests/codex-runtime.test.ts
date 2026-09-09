@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CodexRuntime } from '../src/runtime.js';
+import { TurnManager } from '../src/turn-manager.js';
 import {
   createCodexAgentRuntimeProvider,
   codexRuntimeArgsForMcpServers,
@@ -590,6 +591,133 @@ describe('CodexRuntime submit() and settlement', () => {
  * Dreamux submissions settle from that one terminal — and it is still one end,
  * because the fact describes the runtime's turn, not the requests inside it.
  */
+describe('CodexRuntime usage summary', () => {
+  const usage = (inputTokens = 28_568, outputTokens = 69) => ({
+    total: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, cachedInputTokens: 10_000, reasoningOutputTokens: 10 },
+    last: { totalTokens: 14_500 },
+    modelContextWindow: 29_000,
+  });
+
+  it('replaces cumulative snapshots and emits usage before the end without changing completion text', async () => {
+    const activity: RuntimeActivity[] = [];
+    const { deps, client } = makeDeps({
+      client: new FakeCodexWsClient({ autoComplete: false }),
+      activitySink: (fact) => { activity.push(fact); },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const first = requireSubmitted(await runtime.submit({ text: 'first' }));
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', usage(500, 10));
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', usage());
+    client.emitTokenUsage('foreign-thread', 'turn-other', usage(999_999, 10));
+    expect(activity).toEqual([]);
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'first answer');
+    expect(activity.map((fact) => fact.kind)).toEqual(['assistant.message', 'assistant.message', 'turn.ended']);
+    expect(activity.at(-2)).toMatchObject({
+      kind: 'assistant.message', text: 'Context usage 50% | Token usage: total=28.6k input=28.6k output=69',
+    });
+    await expect(first.settled).resolves.toMatchObject({ completion: { resultText: 'first answer' } });
+
+    const second = requireSubmitted(await runtime.submit({ text: 'second' }));
+    client.emitTokenUsage('fresh-thread-1', 'turn-2', usage(40_000, 100));
+    client.emitTurnFailed('fresh-thread-1', 'turn-2', 'model failed');
+    expect(activity.at(-2)).toMatchObject({ text: 'Context usage 50% | Token usage: total=40.1k input=40k output=100' });
+    expect(activity.at(-1)).toMatchObject({ kind: 'turn.ended', status: 'failed', reason: 'model failed' });
+    await second.settled;
+    const rowCount = activity.filter((fact) => fact.kind === 'assistant.message').length;
+    await runtime.stop();
+    expect(activity.filter((fact) => fact.kind === 'assistant.message')).toHaveLength(rowCount);
+  });
+
+  it('preserves the interrupt marker before usage and the native interrupted end', async () => {
+    const activity: RuntimeActivity[] = [];
+    const { deps, client } = makeDeps({
+      client: new FakeCodexWsClient({ autoComplete: false }),
+      activitySink: (fact) => { activity.push(fact); },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', usage());
+    client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
+    expect(activity).toMatchObject([
+      { kind: 'assistant.message', text: '[Request interrupted by user]' },
+      { kind: 'assistant.message', text: 'Context usage 50% | Token usage: total=28.6k input=28.6k output=69' },
+      { kind: 'turn.ended', status: 'interrupted', reason: null },
+    ]);
+    await expect(submission.settled).resolves.toMatchObject({
+      kind: 'completion', completion: { status: 'completed', resultText: null },
+    });
+    await runtime.stop();
+  });
+
+  it('does not wait for admission before displaying usage and the native end', async () => {
+    const activity: RuntimeActivity[] = [];
+    const { deps, client } = makeDeps({
+      client: new FakeCodexWsClient({ autoComplete: false }),
+      activitySink: (fact) => { activity.push(fact); },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    client.block('turn/start');
+    const admission = runtime.submit({ text: 'work' });
+    await waitFor(() => client.hasBlocked('turn/start'));
+    client.emitTokenUsage('fresh-thread-1', 'turn-early', usage());
+    client.emitCompleted('fresh-thread-1', 'turn-early', 'answer');
+    expect(activity.at(-2)).toMatchObject({ id: 'turn-early:usage' });
+    expect(activity.at(-1)).toMatchObject({ kind: 'turn.ended' });
+    client.emitCompleted('fresh-thread-1', 'turn-early', 'answer');
+    expect(activity.filter((fact) => fact.kind === 'assistant.message' && fact.id === 'turn-early:usage')).toHaveLength(1);
+    client.release('turn/start', { turn: { id: 'turn-early' } });
+    await requireSubmitted(await admission).settled;
+    await runtime.stop();
+  });
+
+  it('clears the latest snapshot when the collector changes threads', async () => {
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const activity: RuntimeActivity[] = [];
+    let threadId = 'thread-A';
+    const manager = new TurnManager({
+      dispatcherId: 'agent-1', getThreadId: () => threadId,
+      client: client as unknown as CodexWsClient, codec: null,
+      activitySink: (fact) => { activity.push(fact); },
+    });
+    const first = requireSubmitted(await manager.submitInput({ text: 'first' }));
+    client.emitTokenUsage(threadId, 'turn-1', usage());
+    client.emitCompleted(threadId, 'turn-1', 'answer');
+    await first.settled;
+    activity.length = 0;
+    threadId = 'thread-B';
+    const second = requireSubmitted(await manager.submitInput({ text: 'second' }));
+    client.emitCompleted(threadId, 'turn-2', 'answer');
+    await second.settled;
+    expect(activity.map((fact) => fact.kind)).toEqual(['assistant.message', 'turn.ended']);
+    await manager.stop();
+  });
+
+  it.each([
+    [0, '0'], [69, '69'], [999, '999'], [1_000, '1k'], [28_637, '28.6k'],
+    [999_949, '999.9k'], [999_950, '1m'], [1_450_000, '1.5m'],
+    [999_950_000, '1b'], [1_250_000_000, '1.3b'],
+  ])('formats %i as %s with unavailable context', async (count, formatted) => {
+    const activity: RuntimeActivity[] = [];
+    const { deps, client } = makeDeps({
+      client: new FakeCodexWsClient({ autoComplete: false }),
+      activitySink: (fact) => { activity.push(fact); },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', { ...usage(count, 0), modelContextWindow: null });
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'answer');
+    await submission.settled;
+    expect(activity.at(-2)).toMatchObject({
+      text: `Context usage n/a | Token usage: total=${formatted} input=${formatted} output=0`,
+    });
+    await runtime.stop();
+  });
+});
+
 describe('CodexRuntime native turn end', () => {
   it('reports one completed end for a native turn that folded two submissions', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
