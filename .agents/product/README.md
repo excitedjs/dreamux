@@ -100,7 +100,11 @@ the same change that touches it.
   The absolute repo cwd and runtime working directory are **deliberately**
   disclosed to the bound conversation's members — an explicit operator ruling
   that narrowed the earlier disclosure allowlist. Delivery is best-effort with
-  one retry; a failed card never affects the binding change it reports.
+  one retry; a failed card never affects the binding change it reports. Successful
+  `bind_channel` and actual `unbind_channel` MCP receipts also tell the agent that
+  the system sends this card automatically and no additional user notification is
+  needed. A no-op unbind or refusal makes no success or card-delivery claim.
+  (Task: [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).)
 
 ## Team lifecycle
 
@@ -244,8 +248,9 @@ the same change that touches it.
   Failed status lines, and the truncation marker — are English. Dreamux's own teammate tools (spawn,
   send, close, workflow) appear as plain unlabelled rows for now.
 - **A compaction is one line.** When the runtime compacts its context, the
-  card shows `Compacted session` as an assistant message, and nothing of the
-  summary the runtime wrote for itself.
+  card shows `COMPACTED SESSION` as an assistant message, and nothing of the
+  summary the runtime wrote for itself. The uppercase label is specified in
+  [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).
   (Ruling: 「优化一下 COT 的展示效果 … 你需要同时兼顾 claude code 和 codex 这两边
   … 然后在 dreamux 的 activity 的 interface 里，扩展一些字段，最后
   feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」, 2026-09-03, in
@@ -301,7 +306,10 @@ the same change that touches it.
   outlast a runtime's tool timeout (dissolve, spawns, workflow runs) returns an
   immediate acceptance receipt; completion arrives as a push, and one settled
   turn produces at most one push: exactly one while its owner still waits for
-  it, none once that owner ended it.
+  it, none once that owner ended it. Task-dispatch receipts explicitly tell the
+  caller not to poll for completion and allow a natural turn end while waiting
+  for the push; operator-requested progress inspection remains available.
+  (Task: [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/README.md).)
 
 ## Local state and upgrades
 

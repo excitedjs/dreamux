@@ -69,8 +69,10 @@ export function createFeishuSessionMcp(
         if (!outcome.ok) {
           log.info({ ...scope, reason: outcome.message },
             'feishu MCP tool refused a call');
+          return outcome;
         }
-        return outcome;
+        const text = def.successText?.(outcome.value);
+        return text !== undefined ? { ...outcome, text } : outcome;
       } catch (err) {
         log.error({ ...scope, err: errInfo(err) }, 'feishu MCP tool failed');
         throw err;

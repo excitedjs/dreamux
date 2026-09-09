@@ -27,12 +27,12 @@ Current source owners:
 - A reminder states a consequence the model cannot see, at the moment of the
   action, and does not generally order the model what to do. The
   dispatch-result reminders (`spawn`/`send`/`team.create`/`team.send`/
-  `workflow_run`, owned by `dispatch-reminders.ts`) are recorded as the
-  operator's specific wording choice at that boundary — borrowed from how
-  Claude Code phrases its own subagent-dispatch result — and do carry short
-  imperatives ("do not report or predict it", "Do not edit the files it is
-  working on"). That is a deliberate, narrow exception at one boundary, not a
-  license to add imperatives to reminders generally.
+  `workflow_run`, owned by `dispatch-reminders.ts`) explicitly prohibit polling
+  for completion, explain automatic push delivery, and permit natural turn
+  ending when no other work remains. This is a deliberate, narrow exception at
+  one boundary, not a license to add imperatives to reminders generally.
+  The wording is specified in
+  [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/technical-design/final.md).
 - Each rule has one owner, in the layer nearest the action: the channel owns
   "the user sees only the reply tool", the dispatch delegate owns "the result
   arrives later", the skill owns methodology, and the tool description owns
@@ -214,7 +214,11 @@ its output schema. Successful objects appear unchanged in `structuredContent`
 with exact `content: []` for ordinary calls. Keep top-level output objects closed
 unless a named JSON-valued extension field is intentionally open. Do not return
 duplicate JSON text, generic forwarding acknowledgements, nested JSON strings,
-or prompt guidance in structured fields.
+or prompt guidance in structured fields. A Channel tool may provide separate
+success `text` through `ChannelMcpToolOutcome`; Core forwards it unchanged to MCP
+`content`. Feishu `bind_channel` and actual `unbind_channel` results use that
+carrier to explain automatic notification cards and avoid duplicate user
+notifications; no-op unbinds and refusals carry no success reminder.
 
 Known-tool input-schema failures are normal MCP tool results with `isError`.
 Unknown tools and malformed protocol requests are SDK-owned protocol errors.
@@ -246,7 +250,7 @@ called with a `prompt` (result status `created`) carry their matching
 reminder; a `create` called without a `prompt` attaches nothing; a
 `workflow_run` receipt with a non-empty `run_id` carries the workflow
 reminder; idle, failed, read, unrelated, and ordinary mutation results carry no
-text — and the trailing sentence of the hand-off tool descriptions (`spawn`,
+dispatch reminder — and the trailing sentence of the hand-off tool descriptions (`spawn`,
 `send`, `team.create`, `team.send`, `workflow_run`), which states the same
 fact as a short contract sentence so the model reads it even where the
 reminder itself is not visible (Claude Code drops the reminder's `content`

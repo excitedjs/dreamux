@@ -473,7 +473,7 @@ Each provider maps the neutral call to its own protocol:
   The CLI also writes `[Request interrupted by user]` itself, as a text block
   on a `user` envelope. Those blocks are not displayed, so the provider pushes
   the same sentence as an `assistant.message` — the shape ruled for
-  `Compacted session` — and that line, not the card's end status, is what an
+  `COMPACTED SESSION` — and that line, not the card's end status, is what an
   interrupt owes the operator.
 - **Codex** sends `turn/interrupt` with `{ threadId, turnId }` and gets an empty
   response. The method is part of the app-server v2 surface at the declared
@@ -604,7 +604,7 @@ Source:
 whose `tool_use` blocks are its tool calls; `user`, whose `tool_result`
 blocks are what those tools returned, correlated to the call by `tool_use_id`;
 and the `system` envelope with subtype `compact_boundary`, which becomes the
-one-line `Compacted session` message described below.
+one-line `COMPACTED SESSION` message described below.
 A `user` envelope on stdout is the CLI's own, never the operator's: stdin input
 is not echoed back (Dreamux does not pass `--replay-user-messages`), so a text
 block there is context the CLI injected into its conversation — observed on
@@ -759,7 +759,7 @@ The agent is the subject, and it is known before any submission binds. The union
 has three members: `assistant.message`, `tool.call`, and `turn.ended` — the
 runtime stopped producing, with a completed, failed or interrupted status and
 its own reason text when it has one. A context compaction is published through
-the same union as an `assistant.message` reading `Compacted session` — Claude
+the same union as an `assistant.message` reading `COMPACTED SESSION` — Claude
 Code on its `system`/`compact_boundary` envelope, Codex on the completion of
 its `contextCompaction` item — and the summary is not: Claude Code puts it on
 the wire as a synthetic `user` envelope whose content is one string (dropped
@@ -768,7 +768,10 @@ item carries only an id, and codex-core records the compaction output into
 history without an event). Operator ruling, 2026-09-04: 「我不要正文，正文太长了，
 只显示压缩发生了即可。claude code 的网页上只显示了 Compacted session，我只需要这一
 行字即可。」 and, on the shape, 「我觉得没必要给他单独加一个新的 activity 类型，你直接在
-provider 里，多推一个 assistant message，内容就这一行。」 The sink is
+provider 里，多推一个 assistant message，内容就这一行。」 The current uppercase
+label is specified by
+[strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).
+The sink is
 generation-fenced, synchronous, display-only and fail-open — a write from a
 revoked generation is dropped, and a throwing consumer never affects
 settlement. That guard is Core's (`createConversationProjection`'s `guarded`

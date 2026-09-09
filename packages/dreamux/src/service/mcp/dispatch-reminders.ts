@@ -7,9 +7,6 @@
  * holding only the receipt otherwise reports or predicts an outcome nobody has
  * yet, or polls a read tool until one appears.
  *
- * The wording matches Claude Code's own phrasing for its dispatch results,
- * including its "do not edit the files it is working on" sentence.
- *
  * They are not read on every engine. Claude Code drops an MCP result's
  * `content` text when `structuredContent` is present, and every hand-off tool
  * here publishes an output schema, so on that engine the tool description's own
@@ -21,10 +18,10 @@
  */
 
 export const TEAM_DISPATCH_SUCCESS_REMINDER =
-  'Submitted. The Team is working; Dreamux will notify you automatically when its TeamLeader finishes, whether it completed, failed, or was stopped. You know nothing about its result until that notification arrives, so do not report or predict it; continue other work or answer the user in the meantime. Do not edit the files it is working on.';
+  'Reminder: The Team task was submitted successfully. Dreamux core will automatically push the Team completion back when it finishes. Do not poll last or other read tools for completion; if you have no other work, you may end this turn naturally.';
 
 export const TEAMMATE_DISPATCH_SUCCESS_REMINDER =
-  'Submitted. The TeamMate is working; Dreamux will notify you automatically when it finishes, whether it completed, failed, or was stopped. You know nothing about its result until that notification arrives, so do not report or predict it; continue other work or answer the user in the meantime. Do not edit the files it is working on.';
+  'Reminder: The TeamMate task was submitted successfully. Dreamux core will automatically push the TeamMate completion back when it finishes. Do not poll last or other read tools for completion; if you have no other work, you may end this turn naturally.';
 
 export const WORKFLOW_RUN_SUCCESS_REMINDER =
-  'Submitted. The workflow is running; Dreamux will notify you automatically when it finishes, whether it completed, failed, or was stopped. You know nothing about its result until that notification arrives, so do not report or predict it; continue other work or answer the user in the meantime. Do not edit the files its agents are working on.';
+  'Reminder: The workflow runs in the background. When it finishes, Dreamux automatically pushes the terminal completion into the caller\'s current context. Unless the user explicitly asks for a status check, do not call or poll workflow_status or other status/read tools; wait for the system push. If there is no other work, the turn may end naturally.';

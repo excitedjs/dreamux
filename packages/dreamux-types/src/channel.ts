@@ -18,7 +18,7 @@
  * only and must not import `@excitedjs/dreamux`.
  */
 import type { DreamuxLogger } from './logger.js';
-import type { JsonInvokeResult, JsonInvoker } from './invoke.js';
+import type { JsonInvoker } from './invoke.js';
 import type { JsonValue } from './json.js';
 import type {
   DreamuxEnvironment,
@@ -229,8 +229,8 @@ export interface ChannelSessionMcpCapability {
 }
 
 /**
- * What a Channel tool answers: the result object, or a refusal the Channel
- * decided the model may read.
+ * What a Channel tool answers: the result object with optional model-facing
+ * text, or a refusal the Channel decided the model may read.
  *
  * A refusal is a value, not an exception, because the two sides are different
  * packages and often different processes. A Channel that says "that chat is not
@@ -243,9 +243,13 @@ export interface ChannelSessionMcpCapability {
  * and answers with its own sanitized wording, so an unhandled bug can never
  * become model-facing text by accident.
  */
-export type ChannelMcpToolOutcome = JsonInvokeResult<
-  Readonly<Record<string, JsonValue>>
->;
+export type ChannelMcpToolOutcome =
+  | {
+      readonly ok: true;
+      readonly value: Readonly<Record<string, JsonValue>>;
+      readonly text?: string;
+    }
+  | { readonly ok: false; readonly message: string };
 
 /**
  * What `createSession` produced. MCP is composed outside the base session, so a

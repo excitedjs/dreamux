@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Restore explicit no-polling guidance on task dispatch receipts and forward Channel-owned success text through MCP.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -136,7 +136,7 @@ describe('resident background turns and submitted commands', () => {
       'assistant.message', 'tool.call', 'tool.call', 'assistant.message', 'turn.ended',
     ]);
     expect(h.activity[2]).toMatchObject({ toolName: 'Bash', status: 'completed', result: 'done', arguments: { command: 'pwd' } });
-    expect(h.activity[3]).toMatchObject({ text: 'Compacted session' });
+    expect(h.activity[3]).toMatchObject({ text: 'COMPACTED SESSION' });
     expect(h.activity[4]).toMatchObject({ status: 'completed' });
 
     const next = await h.submit('next');

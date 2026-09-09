@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Allow Channel MCP success results to carry optional model-facing text alongside their structured value.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}
