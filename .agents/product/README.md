@@ -132,6 +132,14 @@ the same change that touches it.
   before the failure stays committed (closed members stay closed, deleted cron
   stores stay deleted); the next ordinary use rebuilds from disk, and the next
   dissolve retries the same close operations. No rollback product exists.
+- **Creation tools use entity-based worktree names.** The Dispatcher-facing
+  `teammate.spawn` and `team.create` MCP tools accept repo mode, path, base ref,
+  branch, and cleanup controls, but no custom directory slug. A managed
+  worktree's directory follows the concrete TeamMate name or `team-<team_name>`;
+  its default branch uses the same name under `dreamux/`. An explicit branch
+  remains selectable. Existing workspaces and canonical Command inputs keep
+  their meaning.
+  (Requirement: [remove-creation-repo-slug](/.agents/tasks/mcp/remove-creation-repo-slug/requirement.md).)
 - **`identity` shapes only the agent it is given to.** The `identity` passed
   to `team.create` guides the created TeamLeader alone; members do not inherit
   it — each member's identity comes from its own `teammate.spawn`.

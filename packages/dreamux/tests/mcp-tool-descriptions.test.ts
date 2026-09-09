@@ -183,6 +183,31 @@ describe('Dreamux MCP tool descriptions', () => {
   }
 });
 
+describe('creation tool repository inputs', () => {
+  for (const [catalog, name] of [
+    ['teammate (dispatcher)', 'spawn'],
+    ['team (dispatcher)', 'create'],
+  ] as const) {
+    it(`${catalog} ${name} exposes repository controls without a slug`, () => {
+      const tool = (CATALOGS[catalog] as readonly AdvertisedTool[])
+        .find((advertised) => advertised.name === name)!;
+      const properties = inputProperties(tool.inputSchema, '');
+      expect(properties.map(([path]) => path).filter((path) => path.startsWith('repo.')).sort())
+        .toEqual(['repo.base_ref', 'repo.branch', 'repo.cleanup', 'repo.mode', 'repo.path']);
+      expect(tool.description).not.toMatch(/slug/i);
+      const branch = properties.find(([path]) => path === 'repo.branch')?.[1];
+      expect(branch).toMatchObject({ description: expect.not.stringMatching(/slug/i) });
+    });
+  }
+
+  it('keeps TeamLeader spawn in the shared workspace without a repo input', () => {
+    const tool = (CATALOGS['teammate (team_leader)'] as readonly AdvertisedTool[])
+      .find((advertised) => advertised.name === 'spawn')!;
+    expect(inputProperties(tool.inputSchema, '').map(([path]) => path))
+      .not.toContain('repo');
+  });
+});
+
 describe('role guidance is not a precondition for tool calls', () => {
   it('keeps the Dispatcher prompts from routing tool work through a skill', () => {
     for (const [prompt, text] of Object.entries(DISPATCHER_PROMPTS)) {

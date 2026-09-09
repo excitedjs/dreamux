@@ -15,7 +15,15 @@ import {
   runMcpServer,
   type McpToolDefinition,
 } from '../src/mcp/server.js';
-import { callTool, connectMcpClient, listedTools } from './helpers/mcp-client.js';
+import { validateMcpToolCatalog } from '../src/mcp/catalog.js';
+import { createTeamMcpDelegate } from '../src/service/team-collection/mcp-delegate.js';
+import { teammateToolDescriptors } from '../src/service/teammate-collection/mcp-tool-descriptors.js';
+import {
+  callTool,
+  connectMcpClient,
+  listedTools,
+  type McpProtocolVersion,
+} from './helpers/mcp-client.js';
 
 const ECHO_TOOL: McpToolDefinition = {
   name: 'echo',
@@ -65,6 +73,79 @@ function deferred<T>(): {
   });
   return { promise, resolve };
 }
+
+describe('creation tool repo validation over MCP', () => {
+  for (const name of ['spawn', 'create'] as const) {
+    const catalog = name === 'spawn'
+      ? teammateToolDescriptors('dispatcher')
+      : createTeamMcpDelegate({
+          dispatcher: {} as never,
+          caller: { kind: 'dispatcher' },
+        }).describe().tools;
+    const descriptor = validateMcpToolCatalog(catalog, name)
+      .find((tool) => tool.name === name)!;
+    const args: Record<string, unknown> = name === 'spawn'
+      ? { name_prefix: 'worker', intent: 'review', prompt: 'review the changes' }
+      : { name_prefix: 'workers', intent: 'review', leader_agent_runtime: 'test-runtime' };
+
+    for (const version of DREAMUX_SUPPORTED_PROTOCOL_VERSIONS) {
+      it(`${name} rejects repo.slug before dispatch over ${version}`, async () => {
+        const received: Record<string, unknown>[] = [];
+        const tool: McpToolDefinition = {
+          ...descriptor,
+          handler: async (input) => {
+            received.push(input);
+            return {
+              structured: name === 'spawn'
+                ? { teammate: {}, status: 'submitted' }
+                : {
+                    status: 'created',
+                    team_name: 'workers-a1b2',
+                    leader_name: 'leader-a1b2',
+                    leader_agent_runtime: 'test-runtime',
+                    runtime_cwd: '/tmp/project',
+                  },
+            };
+          },
+        };
+        const connection = await connectMcpClient(
+          (transport) => serve(transport, [tool]),
+          version as McpProtocolVersion,
+        );
+        try {
+          for (const mode of ['managed', 'reuse-cwd']) {
+            const result = await callTool(connection.client, name, {
+              ...args,
+              repo: { mode, slug: 'custom-directory' },
+            });
+            expect(result).toMatchObject({ isError: true });
+            expect(received).toEqual([]);
+          }
+          for (const repo of [
+            undefined,
+            { mode: 'managed' },
+            { mode: 'reuse-cwd', path: '/tmp/project' },
+            {
+              mode: 'managed',
+              path: '/tmp/project',
+              base_ref: 'HEAD',
+              branch: 'feature/review',
+              cleanup: 'keep',
+            },
+          ]) {
+            const input = { ...args, ...(repo === undefined ? {} : { repo }) };
+            const result = await callTool(connection.client, name, input);
+            expect(result.isError).not.toBe(true);
+            expect(received.at(-1)).toEqual(input);
+          }
+          expect(received).toHaveLength(4);
+        } finally {
+          await connection.close();
+        }
+      });
+    }
+  }
+});
 
 describe('shared MCP protocol conformance', () => {
   it('pins exactly the approved protocol revisions in preference order', () => {

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -117,6 +117,43 @@ describe('WorktreeManager.prepare(): create-failure ownership', () => {
     expect(result.worktree.cleanup_state).toBe('managed-active');
     expect(await pathIsDirectory(result.worktree.path)).toBe(true);
   });
+});
+
+describe('WorktreeManager.prepare(): entity-based naming', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'dreamux-worktree-naming-'));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  for (const name of ['reviewer-a1b2', 'team-reviewers-a1b2']) {
+    for (const branch of [undefined, 'feature/review']) {
+      it(`uses ${name} for the directory with ${branch ?? 'the default branch'}`, async () => {
+        const repo = await initRepo(root);
+        const workspace = join(root, 'workspace');
+        await mkdir(workspace);
+        const result = await new WorktreeManager().prepare({
+          dispatcherId: 'test-dispatcher',
+          teammateName: name,
+          cwd: repo,
+          dispatcherWorkspace: workspace,
+          request: { mode: 'managed', ...(branch === undefined ? {} : { branch }) },
+        });
+        const expectedBranch = branch ?? `dreamux/${name}`;
+        expect(basename(result.runtimeCwd)).toBe(name);
+        expect(result.worktree.slug).toBe(name);
+        expect(result.worktree.branch).toBe(expectedBranch);
+        expect(result.worktree.cleanup).toBe('delete-on-close');
+        expect((await git(result.runtimeCwd, ['branch', '--show-current'])).trim())
+          .toBe(expectedBranch);
+        expect(await readFile(join(result.runtimeCwd, 'a.txt'), 'utf8')).toBe('hello\n');
+      });
+    }
+  }
 });
 
 describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery', () => {
