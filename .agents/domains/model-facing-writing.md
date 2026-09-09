@@ -243,10 +243,11 @@ The no-polling and completion-delivery rule has no home in Dispatcher or
 TeamLeader role prompts; those carry only identity and the MCP server map (see
 Prompt Shape above). It has two owners instead, each stating the same fact at
 a different layer:
-`/packages/dreamux/src/service/mcp/dispatch-reminders.ts`, which selects one
+`/packages/dreamux/src/service/mcp/dispatch-reminders.ts`, which owns the
 operation-local reminder text without changing the tool's canonical structured
-result — submitted TeamMate `spawn`/`send`, Team `send`, and a Team `create`
-called with a `prompt` (result status `created`) carry their matching
+result. The Team and TeamMate MCP delegates select it: submitted TeamMate
+`spawn`/`send`, Team `send`, and a successful Team `create` called with a
+`prompt` carry their matching
 reminder; a `create` called without a `prompt` attaches nothing; a
 `workflow_run` receipt with a non-empty `run_id` carries the workflow
 reminder; idle, failed, read, unrelated, and ordinary mutation results carry no
@@ -254,9 +255,9 @@ dispatch reminder — and the trailing sentence of the hand-off tool description
 `send`, `team.create`, `team.send`, `workflow_run`), which states the same
 fact as a short contract sentence so the model reads it even where the
 reminder itself is not visible (Claude Code drops the reminder's `content`
-text once `structuredContent` is present). The selector in
-`dispatch-reminders.ts` is not public tool metadata, Command data, or a
-Channel provider contract.
+text once `structuredContent` is present). Receipt attachment belongs to the
+MCP delegates, not public tool metadata, Command data, or a Channel provider
+contract.
 
 ## Tests
 

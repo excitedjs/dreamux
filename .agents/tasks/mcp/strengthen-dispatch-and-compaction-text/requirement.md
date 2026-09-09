@@ -126,3 +126,14 @@ with one independent read-only review.
   guarantee of this text-only task.
 - All three items are approved for combined implementation and one independent
   read-only review. The task README records development and PR authorization.
+
+## Since this was recorded
+
+On 2026-09-09 the branch was rebased onto `next` at `4c45df35`. That base
+includes #390's creation projection: MCP `team.create` mints a fresh request
+id, so a successful prompt-bearing call always represents a new submission.
+The earlier replay acceptance case belongs to callers supplying a durable
+request identity, not this MCP entry. The rebase retains the base's selector
+and removes the obsolete MCP replay fixture; it does not add a dispatch or
+completion behavior change. Verification is recorded in
+[verification.md](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/verification.md).

@@ -75,7 +75,10 @@ without rewriting unrelated documentation or native protocol handling.
 - Generate patch Rush change notes for the five affected publishable packages
   through `rush change`. No upgrade, rebuild, or migration is introduced.
 - The operator subsequently authorized commit, push, and opening a PR targeting
-  `next` on 2026-09-09. Merge, deployment, and Team dissolution are not authorized.
+  `next` on 2026-09-09, then authorized merge after the independent approval.
+  The exact authorization is recorded in the
+  [task README](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/README.md).
+  Deployment and Team dissolution are outside that authorization.
 
 ## Binding notification receipts
 
