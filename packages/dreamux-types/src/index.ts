@@ -118,6 +118,7 @@ export type {
   TeammateActivityEvent,
   TeammateActorScope,
   TeammateInputEvent,
+  TeammateInputNotice,
   TeammateRole,
   TeammateStateEvent,
   TeammateStatus,

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "teammate.input now carries an optional notice naming the producer of an automated push-back, and the tool.call contract states that invocation and arguments_json are published verbatim while every other member keeps Core redaction.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

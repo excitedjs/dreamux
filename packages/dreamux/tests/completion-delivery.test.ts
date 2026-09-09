@@ -471,6 +471,7 @@ describe('the real conversation projection presents a dispatcher completion deli
         source: COMPLETION_SOURCE,
         sourceId: null,
         text: 'TeamMate worker has finished its task.',
+        notice: { kind: 'teammate_completion', producer: 'worker' },
         occurredAt: Date.now(),
       },
     );
@@ -519,6 +520,7 @@ describe('the real conversation projection presents a dispatcher completion deli
         source: COMPLETION_SOURCE,
         sourceId: null,
         text: 'TeamMate worker has finished its task.',
+        notice: { kind: 'teammate_completion', producer: 'worker' },
         occurredAt: Date.now(),
       },
     );

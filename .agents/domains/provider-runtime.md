@@ -806,9 +806,16 @@ fails Codex's quoting round-trip check, keep their original spelling. The full
 display command is the invocation; raw arguments stay unchanged.
 A patch is its paths with the diffs codex prepared as invocation;
 a `webSearch` item, which carries no tool name and was dropped before, is a
-`web_search` row. Anything outside those tables — every MCP tool — reports
-`null` and displays as its name. Core sanitizes both facts exactly as it does
-arguments and results.
+`web_search` row. Codex projects that item's native `query` and `action` together
+as its arguments, preserving every search query and open/find parameter; this
+uses the existing argument seam and does not change native item pairing. Null
+or absent query/action fields are omitted; when neither is present, arguments
+remain null.
+Anything outside those tables — every MCP tool — reports
+`null` for descriptive facts and an empty item list, and displays as its name.
+Core redacts summaries/items/results but preserves argument/invocation values
+without redaction under the operator's current display policy; see
+[Channel projection](channel.md).
 
 A normal native turn ends at its provider-native terminal: Claude Code `result`
 or Codex `turn/completed`. A resident Claude session can answer several inputs

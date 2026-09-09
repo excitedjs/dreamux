@@ -95,6 +95,7 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
       source: 'feishu',
       source_id: null,
       content: 'hi',
+      notice: null,
       redacted: false,
     },
     'teammate.activity': {
@@ -353,7 +354,7 @@ describe('DispatcherCoreEventBus: live, best-effort delivery', () => {
     const agent: ProjectedAgent = { identity, role: 'teammate' };
     expect(() =>
       projection.projectInput(agent, {
-        source: 'feishu', sourceId: null, text: 'go', occurredAt: Date.now(),
+        source: 'feishu', sourceId: null, text: 'go', notice: null, occurredAt: Date.now(),
       }),
     ).not.toThrow();
     expect(() =>
@@ -729,6 +730,7 @@ describe('display fact correlation', () => {
       source: 'feishu:chat-1',
       sourceId: 'message-fixture',
       text: 'investigate',
+      notice: null,
       occurredAt: Date.now(),
     });
     projection.projectActivity(agent, {
@@ -765,7 +767,7 @@ describe('display fact correlation', () => {
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
     projection.projectInput(agent, {
-      source: 'feishu:chat-1', sourceId: null, text: 'do it', occurredAt: Date.now(),
+      source: 'feishu:chat-1', sourceId: null, text: 'do it', notice: null, occurredAt: Date.now(),
     });
     projection.projectActivity(agent, {
       kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null,
@@ -789,7 +791,7 @@ describe('display fact correlation', () => {
     const identity = makeIdentity({ team_id: null, name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
     projection.projectInput(agent, {
-      source: 'dispatcher:cli', sourceId: null, text: 'go', occurredAt: Date.now(),
+      source: 'dispatcher:cli', sourceId: null, text: 'go', notice: null, occurredAt: Date.now(),
     });
 
     expect(publisher.published).toHaveLength(0);
@@ -805,7 +807,7 @@ describe('display fact correlation', () => {
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
     projection.projectInput(agent, {
-      source: 'feishu', sourceId: null, text: 'go', occurredAt: Date.now(),
+      source: 'feishu', sourceId: null, text: 'go', notice: null, occurredAt: Date.now(),
     });
 
     expect(publisher.published).toHaveLength(0);

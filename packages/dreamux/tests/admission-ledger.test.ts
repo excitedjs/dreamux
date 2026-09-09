@@ -589,6 +589,54 @@ describe('TeammateService.prepareCompletion: completion delivery defaults to the
     expect(deliveredText.startsWith('<task-notification')).toBe(true);
     expect(deliveredText).not.toMatch(/^<channel/);
   });
+
+  it.each([
+    {
+      what: 'a TeamMate',
+      fact: {
+        kind: 'teammate' as const,
+        source: 'reporter-agent',
+        status: 'completed' as const,
+        result: 'the work is done',
+      },
+      notice: { kind: 'teammate_completion', producer: 'reporter-agent' },
+      says: 'TeamMate reporter-agent has finished its task.',
+    },
+    {
+      what: 'a Workflow',
+      fact: {
+        kind: 'workflow' as const,
+        source: 'workflow' as const,
+        runId: 'wf-1',
+        status: 'completed' as const,
+        result: 'the run is done',
+      },
+      notice: { kind: 'workflow_completion' },
+      says: 'Workflow wf-1 has completed.',
+    },
+  ])('tells the display which producer reported when $what finished', async (
+    { fact, notice, says },
+  ) => {
+    const { projection, inputs } = recordingProjection();
+    const h = await harness({ conversationProjection: projection });
+    await h.service.submitInput({ source: 'channel', text: 'get started' });
+
+    await (await h.service.prepareCompletion(fact)).submit();
+
+    // Every provenance name here is the same `task-notification`, so the
+    // producer is stated as a fact rather than read back out of the prose.
+    expect(inputs[1]?.notice).toEqual(notice);
+    // The model still gets the whole notification body it always got.
+    expect(inputs[1]?.text).toContain(says);
+    expect(h.submittedInputs[1]?.text).toContain(says);
+  });
+
+  it('leaves an ordinary submission without a producer notice', async () => {
+    const { projection, inputs } = recordingProjection();
+    const h = await harness({ conversationProjection: projection });
+    await h.service.submitInput({ source: 'channel', text: 'do the thing' });
+    expect(inputs[0]?.notice).toBeNull();
+  });
 });
 
 /**

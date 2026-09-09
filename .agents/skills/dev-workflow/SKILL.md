@@ -17,6 +17,26 @@ the current implementation and not as permission to edit code. Verify code facts
 challenge hidden assumptions, and keep the confirmed task record current so work
 can survive context compression or transfer to another TeamLeader.
 
+## Mandatory clarification of unsettled requirements
+
+At every stage, if code or knowledge-base facts expose ambiguity, an inaccurate
+description, or a possible scope wider than the operator has stated, use
+`ask_human_question` to confirm and clarify **one issue at a time**. This duty also
+applies to behavior the operator has not mentioned. Evidence reveals a question;
+it does not authorize the TeamLeader to choose or extend the requirement.
+
+Keep unresolved interpretations out of accepted requirements and out of the basis
+for design, implementation, and review. Pause dependent work until the answer
+arrives; continue independent, already authorized work. Do not reopen a decision
+the operator has already settled or turn routine implementation choices within
+that scope into new approval requests. Follow the concrete procedure in
+[requirement-clarification.md](references/requirement-clarification.md).
+
+The TeamLeader must remain alert to this failure throughout the task: imprecise
+requirements compounded by the TeamLeader's overinterpretation propagate into
+developer briefs, implementation, and review. More reviewers and passing tests
+cannot repair an unconfirmed premise.
+
 ## Hard development gate
 
 Do not modify product code, tests, configuration, scripts, migrations, generated
@@ -126,6 +146,11 @@ development authorization, authoritative `.agents/**` and GitHub updates, commit
 pushes, PR actions, and the final merge outcome. Technical consultation may
 delegate only each seat's disjoint proposal or solution-review task file. TeamMate
 agreement and vote count never replace TeamLeader judgment or an operator decision.
+
+When drafting a developer handoff or follow-up, read
+[TeamMate task briefs: good and bad cases](references/teammate-briefs.md) for
+examples of concise task prompts, where to keep context, and how an over-prescribed
+handoff can displace the actual requirement.
 
 Every technical-solution consultant and implementation-review TeamMate carries the
 common challenger identity from

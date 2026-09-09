@@ -2,6 +2,7 @@ import type {
   AgentRuntimeInterruptOutcome,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
+  TeammateInputNotice,
   TeammateRole,
 } from '@excitedjs/dreamux-types';
 
@@ -319,6 +320,7 @@ export class TeammateService {
       source: input.source,
       sourceId: input.sourceId ?? null,
       text: input.text,
+      notice: input.notice ?? null,
       occurredAt: Date.now(),
     });
   }
@@ -368,8 +370,13 @@ export class TeammateService {
         completion,
         dispatcherCompletionSpillDir(this.current().dispatcher_id),
       );
+      // The body says whose work finished in prose the model reads; the notice
+      // says the same in facts, so a display can show one line without parsing
+      // that prose back apart.
       return Object.freeze({
-        submit: () => this.submitCompletionInput(body),
+        submit: () => this.submitCompletionInput(body, completion.kind === 'teammate'
+          ? { kind: 'teammate_completion', producer: completion.source }
+          : { kind: 'workflow_completion' }),
       });
     } finally {
       leave();
@@ -526,6 +533,7 @@ export class TeammateService {
    */
   private async submitCompletionInput(
     body: string,
+    notice: TeammateInputNotice,
   ): Promise<CompletionDeliveryResult> {
     let leave: (() => void) | null = null;
     try {
@@ -536,7 +544,7 @@ export class TeammateService {
     try {
       return asCompletionDeliveryResult(
         await this.submitAdmitted(
-          { source: COMPLETION_SOURCE, text: body },
+          { source: COMPLETION_SOURCE, text: body, notice },
           { wake: false },
         ),
       );

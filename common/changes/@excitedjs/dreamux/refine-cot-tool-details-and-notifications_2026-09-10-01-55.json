@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Publish tool call arguments and invocations to conversation displays exactly as the runtime wrote them, without secret masking or workspace/home path renaming; summaries, items, results, and message bodies keep their existing redaction. Completion push-backs now also state which TeamMate or Workflow reported, so a display can label them without parsing the notification body.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

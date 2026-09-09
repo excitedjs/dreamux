@@ -481,10 +481,35 @@ function itemActivity(
     toolName,
     ...toolDisplay(item),
     status: phase === 'started' ? 'started' : failed ? 'failed' : 'completed',
-    arguments: toJsonValue(item['arguments'] ?? item['input'] ?? item['command'] ?? item['changes'] ?? null),
+    arguments: argumentsFor(item),
     result: phase === 'completed' ? resultFor(item) : null,
     error,
   };
+}
+
+/**
+ * The call's own input, under whichever member of the item carries it.
+ *
+ * A web search states its input in `query` and `action` — the queries, the URL
+ * opened, the pattern looked for — rather than in a tool-call argument member,
+ * so those are its arguments. A search that only had a query carries
+ * `action: null`, which says the search had no action rather than that it had
+ * a null one, so an absent member is left out instead of shown as `null`.
+ * Every other item keeps the members codex already names for its input.
+ */
+function argumentsFor(item: ThreadItem): JsonValue | null {
+  if (item.type === 'webSearch') {
+    const query = item['query'] ?? null;
+    const action = item['action'] ?? null;
+    if (query === null && action === null) return null;
+    return toJsonValue({
+      ...(query === null ? {} : { query }),
+      ...(action === null ? {} : { action }),
+    });
+  }
+  return toJsonValue(
+    item['arguments'] ?? item['input'] ?? item['command'] ?? item['changes'] ?? null,
+  );
 }
 
 function resultFor(item: ThreadItem): JsonValue | null {

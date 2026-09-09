@@ -17,6 +17,43 @@ Do not route work solely from the label supplied by the operator:
   and the concrete structural problem and completion boundary are explicit.
 - Treat a refactor that changes observable behavior as a requirement change.
 
+## Ask about each unsettled interpretation
+
+When code or knowledge-base facts reveal that the operator's description is
+ambiguous, inaccurate, or could cover more behavior than stated, the TeamLeader
+must use `ask_human_question` to clarify each issue separately. An omission is not
+approval to change the omitted behavior. Apply this rule whenever the discovery
+occurs, including during implementation and review.
+
+`ask_human_question` is the operator's name for the interactive clarification
+tool. The current Feishu channel exposes it as `ask_user_question`; use that tool
+in the originating topic with its `chat_id` and `message_id`.
+
+1. State the operator's actual wording and the specific code or knowledge-base
+   fact that creates the uncertainty. Label the TeamLeader's interpretation as an
+   interpretation, not as an operator decision.
+2. Explain the concrete behavior or scope difference, then ask one focused
+   question through `ask_human_question`. Do not bundle independent decisions.
+3. Wait for the answer before proceeding with work that depends on it. Record the
+   answer verbatim or narrower, then move to the next unresolved issue. Independent
+   work within the already authorized scope may continue.
+4. Update the requirement and affected task artifacts before handing the settled
+   scope to a developer or reviewer. Until confirmed, the interpretation stays an
+   open question and cannot be cited as an accepted requirement.
+
+Do not silently choose the broadest reading, treat an existing design document as
+permission, or use reviewer agreement and passing tests to validate an inferred
+requirement. Later approval does not retroactively authorize an earlier expansion.
+Already settled decisions and routine implementation choices within the approved
+behavior do not require repeated clarification.
+
+Operator ruling (2026-09-10): "如果用户没提到，但是你在知识库和代码事实中发现用户的描述模糊，不准确，或者可能有更大覆盖范围，有歧义等，务必用 ask_human_question 工具逐个确认与澄清。"
+
+The TeamLeader must keep this risk in view throughout the workflow: an imprecise
+requirement document combined with the TeamLeader's overinterpretation amplifies
+downstream errors. Clarification belongs before that interpretation becomes a
+developer brief or review criterion.
+
 ## Clarify the task, not the implementation
 
 Use concrete discoveries to help the operator expose hidden constraints. Prefer a

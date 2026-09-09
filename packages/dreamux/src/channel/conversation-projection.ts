@@ -5,6 +5,7 @@ import type {
   TeammateActivity,
   TeammateActivityEvent,
   TeammateInputEvent,
+  TeammateInputNotice,
   TeammateRole,
 } from '@excitedjs/dreamux-types';
 
@@ -72,6 +73,8 @@ export interface ConversationInput {
   readonly sourceId: string | null;
   /** The source's own body, never the assembled provenance envelope. */
   readonly text: string;
+  /** Which producer's work this reports, for the automated push-backs that carry one. */
+  readonly notice: TeammateInputNotice | null;
   readonly occurredAt: number;
 }
 
@@ -136,6 +139,11 @@ export function createConversationProjection(input: {
           source: admitted.source,
           source_id: admitted.sourceId,
           content: content.value,
+          // The producer is an Agent name this host assigned, from an alphabet
+          // (`TEAMMATE_NAME_PATTERN`) with no separator, colon, or space in it:
+          // no redaction rule can match one, and the two that could match its
+          // *shape* would only mangle a legal name.
+          notice: admitted.notice,
           redacted: content.redacted,
         };
         input.coreEvents.publish(identity.dispatcher_id, event);
@@ -207,12 +215,11 @@ function projectedActivity(
       const summary = activity.summary === null
         ? null
         : redactText(activity.summary, cwd, homePathPrefixes);
-      const invocation = activity.invocation === null
-        ? null
-        : redactText(activity.invocation, cwd, homePathPrefixes);
       const items = activity.items.map((item) => redactText(item, cwd, homePathPrefixes));
-      const args = redactJson(activity.arguments, cwd, homePathPrefixes);
-      const result = redactJson(activity.error ?? activity.result, cwd, homePathPrefixes);
+      const resultText = jsonText(activity.error ?? activity.result);
+      const result = resultText === null
+        ? null
+        : redactText(resultText, cwd, homePathPrefixes);
       return {
         kind: 'tool.call',
         event_id: activity.id,
@@ -220,14 +227,17 @@ function projectedActivity(
         tool_name: activity.toolName,
         tool_action: activity.action,
         summary: summary?.value ?? null,
-        invocation: invocation?.value ?? null,
+        // What the call was is shown as the runtime wrote it. A masked command
+        // is a command nobody can judge — the operator asked to read the real
+        // one — so these two members skip the redactor while every payload
+        // around them keeps it.
+        invocation: activity.invocation,
         items: items.map((item) => item.value),
         status: activity.status,
-        arguments_json: args?.value ?? null,
+        arguments_json: jsonText(activity.arguments),
         result_json: result?.value ?? null,
-        redacted: (summary?.redacted ?? false) || (invocation?.redacted ?? false) ||
-          items.some((item) => item.redacted) ||
-          (args?.redacted ?? false) || (result?.redacted ?? false),
+        redacted: (summary?.redacted ?? false) ||
+          items.some((item) => item.redacted) || (result?.redacted ?? false),
       };
     }
     case 'turn.ended': {
@@ -245,18 +255,17 @@ function projectedActivity(
 }
 
 /**
- * A structured value travels as its compact JSON text, redacted like any other
- * string; a value that already is a string travels as itself. A consumer that
- * wants the structure back parses the text — it is whole, never cut, and a
- * redacted secret inside it is still a JSON string, so it still parses.
+ * A structured value travels as its compact JSON text; a value that already is
+ * a string travels as itself. What this guarantees is the serialization: the
+ * text is whole, never cut. Parsability is not part of it — the result text
+ * still passes the redactor after this point, and a replacement that lands
+ * inside a JSON string can leave text no parser accepts — so a consumer that
+ * wants the structure back treats a parse failure as "this is text", which is
+ * what a display does with any payload it cannot read as JSON.
  */
-function redactJson(
-  value: JsonValue | string | null,
-  cwd: string,
-  homePathPrefixes: readonly string[],
-): RedactedText | null {
+function jsonText(value: JsonValue | string | null): string | null {
   if (value === null) return null;
-  return redactText(typeof value === 'string' ? value : JSON.stringify(value), cwd, homePathPrefixes);
+  return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
 /**

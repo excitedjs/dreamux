@@ -855,6 +855,82 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
+  it('projects what a web search asked for, which it states outside an argument member', async () => {
+    const activity: RuntimeActivity[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({ client, activitySink: (fact) => { activity.push(fact); } });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const submission = requireSubmitted(await runtime.submit({ text: 'look it up' }));
+    const action = { type: 'search', queries: ['rust async traits', 'pin projection'] };
+    for (const phase of ['started', 'completed'] as const) {
+      client.emitItem('fresh-thread-1', 'turn-1', phase, {
+        type: 'webSearch',
+        id: 'search-1',
+        query: 'rust async traits',
+        action,
+      });
+    }
+    // A web search carries no `arguments`/`input`/`command`/`changes` member,
+    // so without this mapping the row could show nothing about what was asked.
+    // The label the TUI picks is unchanged, and the item has no invocation.
+    expect(activity.filter((fact) => fact.kind === 'tool.call')).toEqual(
+      ['started', 'completed'].map((status) => ({
+        kind: 'tool.call',
+        occurredAt: expect.any(Number),
+        id: `turn-1:search-1:${status}`,
+        callId: 'search-1',
+        toolName: 'web_search',
+        action: 'search',
+        summary: 'rust async traits …',
+        invocation: null,
+        items: [],
+        status,
+        arguments: { query: 'rust async traits', action },
+        result: null,
+        error: null,
+      })),
+    );
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'found it');
+    await submission.settled;
+    await runtime.stop();
+  });
+
+  it('leaves out the action a plain web search reports as null', async () => {
+    const activity: RuntimeActivity[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({ client, activitySink: (fact) => { activity.push(fact); } });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const submission = requireSubmitted(await runtime.submit({ text: 'look it up' }));
+    // A query-only search states its action as null, not as an absent member;
+    // showing `"action": null` in the row's arguments would be noise.
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'webSearch',
+      id: 'search-1',
+      query: 'rust async traits',
+      action: null,
+    });
+    expect(activity.filter((fact) => fact.kind === 'tool.call')).toEqual([{
+      kind: 'tool.call',
+      occurredAt: expect.any(Number),
+      id: 'turn-1:search-1:completed',
+      callId: 'search-1',
+      toolName: 'web_search',
+      action: 'search',
+      summary: 'rust async traits',
+      invocation: null,
+      items: [],
+      status: 'completed',
+      arguments: { query: 'rust async traits' },
+      result: null,
+      error: null,
+    }]);
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'found it');
+    await submission.settled;
+    await runtime.stop();
+  });
+
   it('ends a native turn no submission ever bound, after its items displayed', async () => {
     const activity: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });

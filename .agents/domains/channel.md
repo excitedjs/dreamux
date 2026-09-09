@@ -830,15 +830,15 @@ an event changes only that catalog and its consumers.
 No event carries a turn identity: presentation correlation is the `source_id` a
 caller supplied, echoed back on its own input, and nothing exposes a
 runtime-native Turn object or transcript. Conversation events may contain
-redacted user/assistant display text and redacted tool arguments/results, whole:
-Core bounds nothing, and the Channel cuts a string only where it would exceed
-Feishu's per-event limit (「core那边只做脱敏，不做截断 … Channel这边先去解析JSON，
-然后在发送接口之前去做截断」, 2026-09-04). Redaction keeps a structured payload
-parseable — a quoted secret becomes the quoted string `<redacted>`, and a bare
-one stops at the quote or bracket that closes it — because the Channel parses
-`result_json` to decide how to show it. Other
-events contain no prompt or assistant text. No event contains native transcript
-paths, raw errors, or platform user identity.
+redacted user/assistant display text and redacted tool results, whole. Argument
+payloads and invocation strings are the operator-selected exception: Core
+serializes arguments and preserves invocation text without secret masking or path
+rewriting ("参数全给我放开，不要做脱敏了", 2026-09-09; see
+[the task record](../tasks/channel/refine-cot-tool-details-and-notifications/README.md)).
+Core bounds nothing; the Channel parses JSON and cuts a string only at its native
+send limit. Other event metadata does not expose a runtime transcript or its
+path. Raw arguments can contain the values submitted to a tool; they are not
+covered by the redacted-result/body guarantee.
 
 Delivery is live and best-effort: Core invokes listeners in publication order
 without awaiting them, and a listener's exception or rejection never escapes into
@@ -914,86 +914,79 @@ target fallbacks. Fencing is the whole of the TeamLeader's extra lifecycle
 policy; the Dispatcher, having no Team, is never fenced. Feishu ignores
 Team-member events explicitly and never routes them through a recipient's state.
 
-Once a recipient has an anchor, everything Core projects for it displays:
-assistant text, tool calls and results, and every input whatever its source name,
-including `task`, `task-notification`, `cron`, `system`, and a restart notice
-delivered inside a live session. The one exception is the body of the message
-this Channel itself submitted, which the operator can already see as their own
-Feishu message: the session holds a bounded set of the caller-owned ids it
-issued and recognizes an input by **comparing** `source_id` against them. Its
-mere presence proves nothing — cron fires, task push-backs, and restart notices
-carry one too. There is no source whitelist. A fact
-that arrives before the recipient has an anchor produces no card because there is
-nowhere to place one, not because its source or kind was filtered.
+Once a recipient has an anchor, Core-projected assistant text, tool calls and
+results, and inputs enter its display. Ordinary inputs retain their bodies.
+Automated inputs use compact Channel-owned labels: `TEAMMATE CALLBACK` with the
+producer name, `CRON TRIGGERED`, `WORKFLOW FINISHED` without a name, and
+`SYSTEM RESTARTED` for the current Dispatcher system notice. Completion kind and
+producer name come from structured provenance supplied by the completion owner,
+never from parsing its notification text. `TeammateInputEvent.notice` carries
+`TeammateInputNotice`: `{kind: 'teammate_completion', producer}`,
+`{kind: 'workflow_completion'}`, or null for other inputs. The producer is the
+host's Agent identity name and travels unchanged, like `teammate_name` in the
+actor scope; it is not part of the redacted notification body. Its owning
+identity store validates the name before creation.
+The model-facing body stays intact.
+The Channel suppresses only its own already-visible inbound body by comparing
+`source_id` with the bounded set it issued; a source ID's presence alone proves
+nothing. Before an anchor exists, there is no place to send a card.
 
-A tool row is composed from what the runtime said about the call, never from
-its argument schema. The row's `TOOL_CALL_START` carries the built-in `icon`
-the COT Message Brief documents for the call's `tool_action` (`read`; `write`
-for an edit; `search` for a search or a listing; `bash` for a run) and a
-`title` composed from the runtime's `summary`: the summary alone for a run,
-whose summary is already a sentence; a verb before it for a read, listing,
-search or edit; the display tool name before it for a call with no action. No
-row sends `TOOL_CALL_ARGS`: a call with neither an action nor a label — an MCP
-tool no runtime can label, today, this Channel's own tools (`reply`, `react`,
-`list_chat_bots`) and Core's teammate tools included — shows its display name
-behind the icon-library token
-`app-default_outlined` with its arguments hidden (operator ruling, 2026-09-04:
-「现在 mcp 工具效果比较差，mcp 工具隐藏掉参数吧，icon 选 app-default_outlined」); its
-output still expands. The Channel used to compose titles for Core's teammate
-tools (`spawn`, `send`, `close`, `workflow_run`) by matching the MCP name and
-re-parsing the arguments against Core's field names — a copy of Core's tool
-schema living in the Channel, with no record of the design. The operator had
-it removed, 2026-09-04: 「那你先给 dreamux 内置mcp 工具的覆盖都删掉吧。我想想这里怎么
-做。」 How Core's own tools get labelled is an open design point; until it is
-settled they are plain unlabelled rows. The Channel's own three tools lost
-their hand-made titles and icons the same day, on the ruling 「这些全部回退吧」
-that followed the operator noticing `react`'s built-in `default` icon renders
-nothing: no row is presented from the tool's identity any more, only from what
-the runtime said about the call. The `TOOL_CALL_RESULT` of a
-runtime-labelled row is the documented segment array: `Failed` first when it
-failed, the call's `items` as the pills of a `list` segment (each with the
-icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
-`+N` pill standing for the rest; a first item longer than the whole budget is
-truncated into one pill rather than folded into that count, per 「按照单条去截断
-即可」, 2026-09-04), the `invocation` as a `code` segment
-(`language: bash` for a run), then the output, shown by what it is rather
-than by how long it is: a value that parses as a JSON object or array is
-pretty-printed (`JSON.stringify(value, null, 2)`) in a `json` code segment,
-anything else is a plain `text` segment (「文本的输出，就按文本输出。能解析成JSON
-的再放进代码段」, 2026-09-04). The text segment travels with each space that
-begins a line, or sits in a run of two or more, turned into a no-break space
-(U+00A0, `preserveSpacing` in `feishu-cot-presentation.ts`): the client
-collapses a run of ordinary spaces and drops a leading one, so a Bash
-output's indentation and column alignment were lost (「这里头的空格都没了」,
-2026-09-04). A probe card the same day settled the client facts: a raw run
-collapses; U+00A0, U+2002 and the `&nbsp;` entity all keep it; a `<pre>`
-wrapper is shown as literal text with its spaces still collapsed; and an
-entity inside a row `title` is decoded too — tags are escaped, entities are
-decoded. The character was chosen over the entity for costing two bytes of
-the event budget rather than six, and a single inner space stays ordinary so
-a long line still wraps. A code segment keeps its own spaces. That rule replaced, within one day, both #347's
-inline exception for a one-line output under 120 bytes and the all-code rule
-that lasted one commit (「全都给他们包到代码块里面」), once MCP rows made the
-mix of boxed and unboxed outputs visible. A code segment spells its body in
-the documented `code` field. Every string a row sends is cut only where it
-would exceed Feishu's 4,096-byte per-event content limit, last, after the
-JSON was parsed and printed, with the English truncation marker (「截断长度以飞
-书平台上给出的最长长度为准，现在有点短」): the earlier 512-byte invocation and
-title soft caps and the 1,024-byte output soft cap are gone, and so is Core's
-own bounding. A read or edit that
-succeeded stops after its pills: the operator ruled the diff and the output
-redundant beside them (「有了胶囊的，可以忽略底下这个编辑的代码段。只看编辑了
-哪些文件就行了」) because the client cannot fold a code segment away; a failed
-one keeps them, since the output is where the failure's reason appears. A probe card sent to the operator on 2026-09-03 settled the
-three client facts this rests on: a titled row shows the `title` alone, with
-no tool name in front of it; an `ARGS` delta sent beside a title is shown
-nowhere, which is why the invocation has to travel in the result; and the
-client renders a code segment's body from `code` and from the older `content`
-alike, so the switch follows the docs, not a rendering failure. A third probe
-(2026-09-04) settled the icon facts: the icon-library token
-`app-default_outlined` renders a glyph on an untitled and on a titled row
-alike, while the built-in `default` renders no glyph at all — a row sent with
-`icon: default` looks exactly like one sent without `icon`.
+`/packages/channel/feishu-channel/src/feishu-cot-presentation.ts` owns the existing
+action names and title words: read/list_files/search/edit map to Read/List/Search/Edit
+and prefix a supplied summary with that word. The run action uses Bash as its
+untitled name and its summary without a prefix. The edit action also covers Write.
+Tools without an action use their raw runtime summary as title, or tool_name
+when untitled, without the former 80-byte name cap. Existing action icons remain.
+The Channel does not parse a tool's
+argument schema. It selects invocation code language from the existing
+tool_action: run uses bash, other actions use text. It formats JSON arguments
+locally, without a provider language-classification field. Arguments and invocation
+strings arrive without redaction by the operator's field-specific ruling.
+Generic/MCP tools follow the same display policy. A nonempty invocation always
+precedes arguments_json, even for non-Bash tools; only an empty invocation uses
+the JSON/text argument fallback. R3 explicitly confirmed this ordering. Codex
+web search supplies its native `{query, action}` through that argument fallback.
+
+The native event order remains START, END, then RESULT after execution. No row
+sends `TOOL_CALL_ARGS`: the client hides that delta beside a title, so arguments
+are rendered through the result's documented rich segments instead. END means
+argument input is complete and execution starts, not that execution finished.
+The COT Message Brief defines only toolCallId on END, and messageId,
+toolCallId, content, and role on RESULT; neither documents a per-tool execution
+status field. Failure text is therefore part of this Channel's result content.
+
+A call with items uses the native `list` result alone, whether the call succeeded
+or failed. Items retain action icons, the existing soft byte budget, per-item
+truncation, and the `+N` more pill. The existing pill budget counts text bytes;
+many short items can still exceed the final event budget and fall back to a
+status word. The operator declined the R2 accounting change in the task record.
+Other calls show their argument code segment without an ARGUMENTS heading,
+followed by a separate `{type: "text", text: "RESULT\n\n---"}`
+segment before the result area when output or a failure indication exists.
+The blank line keeps RESULT from becoming a Markdown setext heading. Ordinary
+failed rows put Failed after this label and before actual output, following any
+arguments. Failed without actual output still has the label and failure text.
+Non-list result assembly fits its two variable strings in
+result-then-argument order; it has no later whole-payload dropping stages.
+
+A JSON object or array is formatted with `JSON.stringify(value, null, 2)` and
+shown as `{type: "code", language: "json", code: ...}`. Other output remains a
+text segment, with the first ten content lines and an English truncation marker
+when more exist. A terminal LF/CRLF does not create another content line.
+`preserveSpacing` keeps indentation and repeated spaces using U+00A0; single
+inner spaces remain ordinary so wrapping still works. Code segments preserve
+their own spaces. The full result is classified before line/byte truncation.
+The Channel fits title and result text to Feishu's 4096-byte content limit and
+checks the complete event before sending; Core never truncates. Tool names are
+sent unchanged. START retains its original title-only fitting and final size
+check, without a shared title/name budget, under the operator's explicit ruling.
+
+The native client behavior was confirmed by rendering probes: titled rows show
+only the title, ARGS deltas beside a title disappear, list segments render pills,
+and code segments use the documented `code` field. `app-default_outlined` renders
+on titled and untitled rows; the built-in `default` renders no glyph. The current
+presentation supersedes the earlier hidden-MCP-arguments and failed-list-details
+rules; see [the task record](../tasks/channel/refine-cot-tool-details-and-notifications/README.md).
 
 A card's one terminal is a `turn.ended` activity. There is no per-submission
 lifecycle fact at this boundary at all: a provider folds any number of
@@ -1042,9 +1035,9 @@ reasoning in the
 
 Every admitted input publishes exactly one `teammate.input`, and the runtime's
 own stream carries everything after it; an entity whose conversation is out of
-scope publishes nothing. Input bodies and live activity are redacted in core —
-never bounded there: a surface cuts what it cannot send, where it sends it —
-and operator paths are renamed rather than blanked — the workspace
+scope publishes nothing. Core redacts input bodies and live activity except
+argument/invocation values, and never bounds them there: a surface cuts what it cannot send, where it sends it —
+and paths in the fields covered by redaction are renamed rather than blanked — the workspace
 reads `.` and this host's home reads `~`, from prefixes `Server.start()` resolves
 once and injects into each conversation projection as a value. Card I/O has a
 20-second operation deadline so settled draining state is eventually reaped.

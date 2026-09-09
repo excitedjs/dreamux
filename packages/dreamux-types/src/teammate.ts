@@ -65,6 +65,19 @@ export interface TeammateActorScope {
 }
 
 /**
+ * Which producer's work an automated push-back reports.
+ *
+ * Carried only where the body alone cannot say it. A cron fire and a restart
+ * notice already name themselves through `source`, and an ordinary task or
+ * Channel message is the sender's own words; a completion push-back is the one
+ * input whose provenance name is the same for every producer, so the producer
+ * is stated here rather than recovered by parsing the notification prose.
+ */
+export type TeammateInputNotice =
+  | { readonly kind: 'teammate_completion'; readonly producer: string }
+  | { readonly kind: 'workflow_completion' };
+
+/**
  * Core admitted one input for this TeamMate.
  *
  * Published at the moment of submission, before any runtime has accepted it, so
@@ -91,13 +104,21 @@ export type TeammateInputEvent = TeammateActorScope & {
   readonly source_id: string | null;
   /** The source's own body, never the assembled provenance envelope. */
   readonly content: string;
+  /**
+   * What kind of automated push-back this is, when it is one. `null` for every
+   * input a person or an Agent wrote, whose body is what a reader wants. Its
+   * producer name is an Agent name the host assigned, not payload text, so it
+   * carries neither a secret nor a path and `redacted` never speaks for it.
+   */
+  readonly notice: TeammateInputNotice | null;
   readonly redacted: boolean;
 };
 
 /**
  * One thing the runtime did, in the runtime's own vocabulary, already
- * redacted by Core. Core bounds nothing here: how much of a payload a
- * surface can show is that surface's own limit, applied where it sends.
+ * redacted by Core — except for the two argument members named below. Core
+ * bounds nothing here: how much of a payload a surface can show is that
+ * surface's own limit, applied where it sends.
  *
  * The member names match `RuntimeActivity`'s on purpose: this is the same
  * fact with its payloads made safe to display, not a second vocabulary a
@@ -117,11 +138,19 @@ export type TeammateActivity =
       readonly tool_name: string;
       readonly tool_action: RuntimeToolAction | null;
       readonly summary: string | null;
+      /**
+       * What the call was, verbatim: the two argument members carry the
+       * runtime's own text with neither secret masking nor path renaming, so
+       * the command a reader is asked to judge is the command that ran. Every
+       * other member here, `redacted` included, keeps the ordinary policy.
+       */
       readonly invocation: string | null;
       readonly items: readonly string[];
       readonly status: 'started' | 'completed' | 'failed';
+      /** The call's full structured input as JSON text, verbatim like `invocation`. */
       readonly arguments_json: string | null;
       readonly result_json: string | null;
+      /** Whether any redacted member was rewritten; the argument members never count. */
       readonly redacted: boolean;
     }
   | {

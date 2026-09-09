@@ -122,11 +122,11 @@ export function acceptAssistantMessage(
 }
 
 /**
- * One body Core admitted as input, on this recipient's card.
+ * One input Core admitted, on this recipient's card.
  *
  * The caller has already decided this is not the body the operator can see in
- * their own Feishu message; everything else — cron fires, task push-backs,
- * restart notices, another Channel's message — displays normally.
+ * their own Feishu message, and which text stands for it: a person's or an
+ * Agent's own words, or the one-line label an automated push-back gets.
  */
 export function acceptInputMessage(
   sink: CotActivitySink,
