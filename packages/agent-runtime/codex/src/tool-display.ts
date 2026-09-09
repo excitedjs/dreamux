@@ -12,6 +12,8 @@
  * for summary and invocation and shows as its name.
  */
 
+import { parse as parsePath } from 'node:path';
+
 import type { RuntimeToolAction } from '@excitedjs/dreamux-types';
 
 import type { ThreadItem } from './types.js';
@@ -47,7 +49,7 @@ interface CommandAction {
 }
 
 function commandDisplay(item: ThreadItem): ToolDisplay {
-  const command = stringField(item, 'command');
+  const command = shellScriptForDisplay(stringField(item, 'command'));
   const actions = commandActions(item['commandActions']);
   const first = actions[0];
   const uniform = first !== undefined && actions.every((entry) => entry.action === first.action);
@@ -61,6 +63,100 @@ function commandDisplay(item: ThreadItem): ToolDisplay {
     invocation: command,
     items: first.action === 'read' ? unique(actions.map((entry) => entry.file)) : [],
   };
+}
+
+function shellScriptForDisplay(command: string | null): string | null {
+  if (command === null) return command;
+  const words = splitShellWords(command);
+  if (words === null || words.length === 0) return command;
+  // Codex only decodes Windows drive-path text when its shlex spelling round-trips exactly.
+  if (command.includes(':\\') && words.map(quoteShellWord).join(' ') !== command) return command;
+  let shell = words[0]!;
+  while (!['bash', 'zsh', 'sh', 'pwsh', 'powershell'].includes(shell)) {
+    const stem = parsePath(shell).name;
+    if (stem === shell) return command;
+    shell = stem;
+  }
+  if (['bash', 'zsh', 'sh'].includes(shell)) {
+    return words.length === 3 && (words[1] === '-lc' || words[1] === '-c') ? words[2]! : command;
+  }
+  for (let i = 1; i + 1 < words.length; i++) {
+    const flag = words[i]!.toLowerCase();
+    if (flag === '-command' || flag === '-c') return words[i + 1]!;
+    if (flag !== '-nologo' && flag !== '-noprofile') return command;
+  }
+  return command;
+}
+
+// Shell-word parsing and quoting follow rust-shlex 1.3.0; attribution is in LICENSE.
+function splitShellWords(command: string): string[] | null {
+  const words: string[] = [];
+  let word = '';
+  let quote = '';
+  let started = false;
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]!;
+    if (quote === "'") {
+      if (char === "'") quote = '';
+      else word += char;
+    } else if (char === '\\') {
+      const next = command[++i];
+      if (next === undefined) return null;
+      if (next !== '\n') {
+        if (quote === '"' && !['$', '`', '"', '\\'].includes(next)) word += '\\';
+        word += next;
+      }
+      started = true;
+    } else if (quote === '"') {
+      if (char === '"') quote = '';
+      else word += char;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      started = true;
+    } else if (char === ' ' || char === '\t' || char === '\n') {
+      if (started) words.push(word);
+      word = '';
+      started = false;
+    } else if (char === '#' && !started) {
+      while (i < command.length && command[i] !== '\n') i++;
+    } else {
+      word += char;
+      started = true;
+    }
+  }
+  if (quote !== '') return null;
+  if (started) words.push(word);
+  return words;
+}
+
+function quoteShellWord(word: string): string {
+  if (word === '') return "''";
+  let result = '';
+  for (let start = 0; start < word.length;) {
+    let unquoted = true;
+    let single = true;
+    let double = true;
+    let end = start;
+    if (word[start] === '^') {
+      unquoted = false;
+      double = false;
+      end++;
+    }
+    for (; end < word.length; end++) {
+      const char = word[end]!;
+      const nextUnquoted: boolean = unquoted && /^[a-zA-Z0-9_+./:@\]-]$/.test(char);
+      const nextSingle: boolean = single && char !== "'" && char !== '^' && char !== '\\';
+      const nextDouble: boolean = double && !['`', '$', '!', '^'].includes(char);
+      if (!nextUnquoted && !nextSingle && !nextDouble) break;
+      unquoted = nextUnquoted;
+      single = nextSingle;
+      double = nextDouble;
+    }
+    const chunk = word.slice(start, end);
+    result += unquoted ? chunk : single ? `'${chunk}'` : `"${chunk.replace(/[$`"\\]/g, '\\$&')}"`;
+    start = end;
+  }
+  return result;
 }
 
 function commandActions(value: unknown): CommandAction[] {

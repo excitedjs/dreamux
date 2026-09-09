@@ -20,6 +20,133 @@ describe('toolDisplay', () => {
     })).toEqual({ action: 'run', summary: 'npm test', invocation: 'npm test\necho done', items: [] });
   });
 
+  it.each([
+    ['/usr/bin/zsh', '-lc'],
+    ['zsh', '-c'],
+    ['/bin/bash', '-lc'],
+    ['bash', '-c'],
+    ['/bin/sh', '-c'],
+    ['sh', '-lc'],
+    ['bash.exe', '-lc'],
+    ['/bin/zsh.backup.exe', '-c'],
+  ])('unwraps %s %s without changing the inner script', (shell, flag) => {
+    expect(toolDisplay({
+      type: 'commandExecution',
+      id: 'item-1',
+      command: `${shell} ${flag} 'node --check script.mjs'`,
+    })).toEqual({ action: 'run', summary: 'node --check script.mjs', invocation: 'node --check script.mjs', items: [] });
+  });
+
+  it.each([
+    [String.raw`/bin/zsh -lc "python3 -c 'print(\"Hello, world!\")'"`, `python3 -c 'print("Hello, world!")'`],
+    [String.raw`bash -c 'printf '\''%s'\'' "value"'`, `printf '%s' "value"`],
+    [String.raw`bash -c 'printf '"'%s'"' value'`, `printf '%s' value`],
+    ['bash -c "echo \\$HOME \\`date\\` \\\\path \\q"', 'echo $HOME `date` \\path \\q'],
+    [String.raw`bash -c 'echo "$HOME" $(pwd) && printf "%s" "雪" | wc -c'`, 'echo "$HOME" $(pwd) && printf "%s" "雪" | wc -c'],
+    ['bash -c "node --check script.mjs\necho done"', 'node --check script.mjs\necho done'],
+    ['bash -c "echo one\\\ntwo"', 'echo onetwo'],
+    ['bash -c echo\\\nhello', 'echohello'],
+    ["bash -c 'echo one\\\ntwo'", 'echo one\\\ntwo'],
+    ["bash -c 'bash -c echo'", 'bash -c echo'],
+    ["bash -c ''", ''],
+    ["bash -c '  echo hello'", '  echo hello'],
+    ["bash -c 'echo one\r\necho two'", 'echo one\r\necho two'],
+    ["# launcher\n bash\t-c 'echo hello' # trailing comment", 'echo hello'],
+    ["bash -c echo#literal", 'echo#literal'],
+  ])('decodes shell quoting in %s', (command, script) => {
+    expect(toolDisplay({ type: 'commandExecution', id: 'item-1', command })).toEqual({
+      action: 'run',
+      summary: script.trimStart().split('\n', 1)[0]?.trimEnd() || null,
+      invocation: script,
+      items: [],
+    });
+  });
+
+  it.each([
+    'pwsh -Command',
+    'powershell.exe -c',
+    '/usr/local/bin/pwsh -NoLogo -NoProfile -Command',
+    'pwsh -nOpRoFiLe -COMMAND',
+  ])('unwraps %s using the upstream PowerShell flag rules', (prefix) => {
+    expect(toolDisplay({
+      type: 'commandExecution',
+      id: 'item-1',
+      command: `${prefix} 'Write-Host "$HOME"'`,
+    })).toEqual({ action: 'run', summary: 'Write-Host "$HOME"', invocation: 'Write-Host "$HOME"', items: [] });
+  });
+
+  it('uses the argument following PowerShell -Command without interpreting its script or trailing arguments', () => {
+    const script = 'try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\nWrite-Host hi';
+    expect(toolDisplay({
+      type: 'commandExecution',
+      id: 'item-1',
+      command: `pwsh -Command '${script}' extra`,
+    })).toMatchObject({ summary: script.split('\n')[0], invocation: script });
+  });
+
+  it.each([
+    'npm test\necho done',
+    '  node  --check "script.mjs"',
+    '/usr/bin/fish -c "echo hi"',
+    'BASH -c "echo hi"',
+    'env bash -c "echo hi"',
+    'bash --login -c "echo hi"',
+    'bash -l -c "echo hi"',
+    'bash -lc "echo hi" argument',
+    'bash -lc',
+    'bash -lc "echo hi',
+    "bash -lc 'echo hi",
+    'bash -c echo\\',
+    'pwsh -File script.ps1',
+    'pwsh -ExecutionPolicy Bypass -Command "Write-Host hi"',
+    'pwsh -NoProfile -Command',
+    String.raw`C:\Program Files\Git\bin\bash.exe -lc "echo hi"`,
+    String.raw`bash -c 'echo C:\work'`,
+  ])('preserves an ordinary or unrecognized command: %s', (command) => {
+    expect(toolDisplay({ type: 'commandExecution', id: 'item-1', command })).toEqual({
+      action: 'run',
+      summary: command.trimStart().split('\n', 1)[0]?.trimEnd() || null,
+      invocation: command,
+      items: [],
+    });
+  });
+
+  it.each([
+    [String.raw`bash -c "echo C:\\work"`, String.raw`echo C:\work`],
+    [String.raw`bash -c "echo C:\\work "'$HOME'`, String.raw`echo C:\work $HOME`],
+    [String.raw`bash -c "echo C:\\work "'^caret'`, String.raw`echo C:\work ^caret`],
+    [String.raw`bash -c "echo C:\\work '雪'"`, String.raw`echo C:\work '雪'`],
+    [String.raw`bash -c "echo C:\\work "'!'`, String.raw`echo C:\work !`],
+  ])('accepts canonical Windows drive-path quoting: %s', (command, script) => {
+    expect(toolDisplay({ type: 'commandExecution', id: 'item-1', command }))
+      .toEqual({ action: 'run', summary: script, invocation: script, items: [] });
+  });
+
+  it.each([
+    { type: 'read', name: 'a.rs', path: '/repo/a.rs', action: 'read', summary: 'a.rs', items: ['/repo/a.rs'] },
+    { type: 'listFiles', path: 'src', action: 'list_files', summary: 'src', items: [] },
+    { type: 'search', query: 'TODO', path: 'src', action: 'search', summary: 'TODO in src', items: [] },
+  ])('keeps the $type label and items while unwrapping its invocation', ({ action, summary, items, ...entry }) => {
+    expect(toolDisplay({
+      type: 'commandExecution',
+      id: 'item-1',
+      command: "zsh -lc 'cat a.rs | grep TODO'",
+      commandActions: [entry],
+    })).toEqual({ action, summary, invocation: 'cat a.rs | grep TODO', items });
+  });
+
+  it('uses the whole decoded script rather than lossy mixed action fragments', () => {
+    expect(toolDisplay({
+      type: 'commandExecution',
+      id: 'item-1',
+      command: "zsh -lc 'cat a.rs | grep TODO\necho done'",
+      commandActions: [
+        { type: 'read', name: 'a.rs', path: '/repo/a.rs', command: 'cat a.rs' },
+        { type: 'search', query: 'TODO', command: 'grep TODO' },
+      ],
+    })).toEqual({ action: 'run', summary: 'cat a.rs | grep TODO', invocation: 'cat a.rs | grep TODO\necho done', items: [] });
+  });
+
   it('labels an all-read command by the files it read, deduplicated, the way the TUI groups an Explored cell, and lists their paths', () => {
     expect(toolDisplay({
       type: 'commandExecution',

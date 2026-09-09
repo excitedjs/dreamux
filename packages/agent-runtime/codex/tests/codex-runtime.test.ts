@@ -815,6 +815,46 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
+  it('decodes command display on start and completion without changing raw arguments', async () => {
+    const activity: RuntimeActivity[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({ client, activitySink: (fact) => { activity.push(fact); } });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const submission = requireSubmitted(await runtime.submit({ text: 'check the script' }));
+    const command = "/usr/bin/zsh -lc 'node --check script.mjs\necho done'";
+    for (const phase of ['started', 'completed'] as const) {
+      client.emitItem('fresh-thread-1', 'turn-1', phase, {
+        type: 'commandExecution',
+        id: 'exec-1',
+        command,
+        commandActions: [{ type: 'unknown', command: 'node --check script.mjs' }],
+        status: phase === 'started' ? 'inProgress' : 'completed',
+        aggregatedOutput: phase === 'completed' ? 'done' : null,
+      });
+    }
+    expect(activity.filter((fact) => fact.kind === 'tool.call')).toEqual(
+      ['started', 'completed'].map((status) => ({
+        kind: 'tool.call',
+        occurredAt: expect.any(Number),
+        id: `turn-1:exec-1:${status}`,
+        callId: 'exec-1',
+        toolName: 'exec_command',
+        action: 'run',
+        summary: 'node --check script.mjs',
+        invocation: 'node --check script.mjs\necho done',
+        items: [],
+        status,
+        arguments: command,
+        result: status === 'completed' ? 'done' : null,
+        error: null,
+      })),
+    );
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'checked');
+    await submission.settled;
+    await runtime.stop();
+  });
+
   it('ends a native turn no submission ever bound, after its items displayed', async () => {
     const activity: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Cover decoded command display facts in Feishu tool row title and invocation tests without changing runtime behavior.",
+      "type": "none"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}
