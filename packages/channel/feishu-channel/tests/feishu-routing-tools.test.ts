@@ -14,6 +14,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
 
+import type { FeishuChannelSession } from '../src/feishu-channel.js';
+import { createFeishuSessionMcp } from '../src/feishu-session-mcp.js';
+
 import {
   bindChannelDef,
   leaderBindChannelDef,
@@ -180,5 +183,94 @@ describe('unbind_channel — TeamLeader self-release', () => {
     expect(session.unbinds).toEqual([
       { target: { chatId: 'oc_anyones' }, requireOwner: undefined },
     ]);
+  });
+});
+
+function mcpFor(session: FeishuToolSession) {
+  return createFeishuSessionMcp(
+    { toolSession: () => session } as unknown as FeishuChannelSession,
+    session.logger,
+  );
+}
+
+describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
+  const context = { dispatcher_id: 'd1', channel_id: 'chan-1', caller };
+
+  it('adds notification guidance alongside the successful binding value', async () => {
+    const result = await mcpFor(fakeSession()).invoke({
+      name: 'bind_channel',
+      arguments: {
+        chat_id: 'oc_target',
+        ...(caller.kind === 'dispatcher' ? { team_name: 'my-team' } : {}),
+      },
+    }, context);
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        chat_id: 'oc_target',
+        thread_id: null,
+        team_name: 'my-team',
+        previous_team_name: null,
+      },
+      text: expect.stringMatching(/^Binding succeeded\..*automatically.*notification card/),
+    });
+    expect(result).toMatchObject({
+      text: expect.stringContaining('no additional user notification is needed'),
+    });
+  });
+
+  it.each(['my-team', null])('adds unbinding guidance only for a removed route (%s)', async (teamName) => {
+    const session = fakeSession();
+    session.unbindChannel = async () => ({ team_name: teamName });
+    const result = await mcpFor(session).invoke({
+      name: 'unbind_channel',
+      arguments: { chat_id: 'oc_target' },
+    }, context);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        chat_id: 'oc_target',
+        thread_id: null,
+        unbound: teamName !== null,
+        team_name: teamName,
+      },
+    });
+    if (teamName === null) {
+      expect(result).not.toHaveProperty('text');
+    } else {
+      expect(result).toMatchObject({
+        text: expect.stringMatching(/^Unbinding succeeded\..*automatically.*notification card/),
+      });
+      expect(result).toMatchObject({
+        text: expect.stringContaining('no additional user notification is needed'),
+      });
+    }
+  });
+
+  it.each(['bind_channel', 'unbind_channel'])('does not claim success for a refused %s call', async (name) => {
+    const result = await mcpFor(fakeSession()).invoke({ name, arguments: {} }, context);
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining('chat_id') });
+    expect(result).not.toHaveProperty('text');
+  });
+
+  it('does not attach binding guidance to other tools', async () => {
+    const result = await mcpFor(fakeSession()).invoke({
+      name: 'ask_user_question',
+      arguments: {
+        chat_id: 'oc_target',
+        questions: [{
+          header: 'Choice',
+          question: 'Which option?',
+          options: [
+            { label: 'First', description: 'The first option' },
+            { label: 'Second', description: 'The second option' },
+          ],
+        }],
+      },
+    }, context);
+    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('text');
   });
 });

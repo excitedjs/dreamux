@@ -502,6 +502,34 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     expect(seen).toEqual([{ dispatcher_id: 'd1', channel_id: 'c1', caller: DISPATCHER_CALLER }]);
   });
 
+  it.each(['session', 'provider'] as const)(
+    'passes %s-owned text alongside the unchanged result object',
+    async (target) => {
+      const value = { accepted: true };
+      const text = 'The channel will notify the user automatically.';
+      const invoke = async (): Promise<ChannelMcpToolOutcome> => ({ ok: true, value, text });
+      const provider = fakeProvider(
+        () => [{ target, tool: { name: 'notify', inputSchema: { type: 'object' } } }],
+        invoke,
+      );
+      const delegate = createChannelMcpDelegate({
+        dispatcherId: 'd1',
+        providerId: 'fake',
+        channelId: 'c1',
+        provider,
+        config: {},
+        caller: DISPATCHER_CALLER,
+        sessionMcp: sessionCapability(invoke),
+        dispatch: (task) => task(),
+      });
+
+      const result = await delegate.call({ name: 'notify', arguments: {} });
+      expect(result).toEqual({ ok: true, structured: value, text });
+      if (!result.ok) throw new Error('expected success');
+      expect(result.structured).toBe(value);
+    },
+  );
+
   it('passes a Channel refusal through verbatim (ok:false is a value, not an exception)', async () => {
     const provider = fakeProvider(
       () => [{ target: 'provider', tool: { name: 't', inputSchema: { type: 'object' } } }],

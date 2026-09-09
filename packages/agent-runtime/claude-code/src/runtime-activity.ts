@@ -120,14 +120,8 @@ function emitStreamActivity(
   }
 }
 
-/**
- * The one line the card shows for a compaction, in the words Claude Code's
- * own UI uses. The summary the CLI wrote is not shown: the body is too long
- * for a card, which only needs to say a compaction happened — the single
- * line the Claude Code web UI shows. Hence the shape here: no new activity
- * kind, just one more assistant message carrying that line.
- */
-const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+// The compaction summary is too long for a card; display only that compaction happened.
+const COMPACTED_SESSION_MESSAGE = 'COMPACTED SESSION';
 
 function compactedActivity(activityState: NativeActivityState): RuntimeActivity {
   return {
@@ -144,7 +138,7 @@ function compactedActivity(activityState: NativeActivityState): RuntimeActivity 
  * envelope, and those blocks are not displayed (see the `user` note above) —
  * an interrupted tool call otherwise leaves only a red tool row saying claude
  * was told not to proceed. So the provider pushes the marker as an assistant
- * message, the same shape used for `Compacted session`: no new activity kind,
+ * message, the same shape used for `COMPACTED SESSION`: no new activity kind,
  * one more assistant message carrying the line. This line reaching the COT is
  * what an interrupt owes the card; the card's terminal status matters less.
  */

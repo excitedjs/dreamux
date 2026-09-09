@@ -145,8 +145,18 @@ The built-in provider supplies closed input and output schemas for every tool.
 Successful results are canonical values: `reply` returns
 `{ message_ids: string[] }`, `react` returns `{ reaction_id: string }`, and
 `list_chat_bots` returns `{ chat_id, known, trusted }`. The shared server exposes
-the value unchanged as `structuredContent` with exact `content: []` and validates
-it against the provider output schema.
+the value unchanged as `structuredContent` and validates it against the provider
+output schema. `ChannelMcpToolOutcome` may carry separate success `text`; Core
+passes it into standard MCP `content` without inspecting provider tool names.
+Without that text, `content` is exactly `[]`.
+
+For both caller scopes, successful `bind_channel` and actual `unbind_channel`
+results also explain that the system automatically sends a notification card
+and no additional user notification is needed. Feishu tool definitions own this
+wording through `successText`; a no-op unbind, refusal, or other tool gets no
+binding-success text. This says nothing about confirmed card delivery and does
+not change the existing notification path.
+(Task: [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/technical-design/final.md).)
 
 #### `ask_user_question`
 

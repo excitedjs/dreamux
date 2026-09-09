@@ -115,6 +115,7 @@ export interface FeishuToolDef<TInput = unknown> {
   callers: readonly ChannelMcpCaller['kind'][];
   parse(raw: unknown): TInput;
   handle(ctx: FeishuToolContext, input: TInput): Promise<FeishuToolResult>;
+  successText?(result: FeishuToolResult): string | undefined;
 }
 
 export interface FeishuTargetSelectorFields {

@@ -196,5 +196,11 @@ async function invoke(
     caller: input.caller,
   };
   const outcome = await handler(channelCall, context);
-  return outcome.ok ? { ok: true, structured: outcome.value } : outcome;
+  return outcome.ok
+    ? {
+        ok: true,
+        structured: outcome.value,
+        ...(outcome.text !== undefined ? { text: outcome.text } : {}),
+      }
+    : outcome;
 }

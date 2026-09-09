@@ -413,14 +413,8 @@ function createRuntimeSubmission(): SubmissionDeferred {
   return { submission, settle(settlement) { if (settled) return false; settled = true; resolve(settlement); return true; } };
 }
 
-/**
- * The one line the card shows for a compaction, in the words Claude Code's
- * UI uses for the same fact. codex's `contextCompaction` item carries only
- * its id, and the summary codex wrote never leaves codex-core: the card only
- * needs to say a compaction happened, so the shape here is a provider-pushed
- * assistant message rather than a new activity kind.
- */
-const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+// Compaction summaries stay inside codex-core; display only that compaction happened.
+const COMPACTED_SESSION_MESSAGE = 'COMPACTED SESSION';
 
 /**
  * The one line the card shows for an interrupted turn, in the words Claude
@@ -428,7 +422,7 @@ const COMPACTED_SESSION_MESSAGE = 'Compacted session';
  * terminal status on `turn/completed`, and a status is not a card fact, so
  * without this push the card shows an ordinary end and nothing says the turn
  * was stopped rather than answered. codex carries an interrupt marker too,
- * aligned with Claude Code, in the `Compacted session` shape: an assistant
+ * aligned with Claude Code, in the `COMPACTED SESSION` shape: an assistant
  * message from the provider, not a new activity kind.
  *
  * The end matches the marker: a stopped codex turn must read as interrupted

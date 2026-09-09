@@ -35,6 +35,10 @@ import {
 } from './schema.js';
 
 const mutating = { readOnlyHint: false, destructiveHint: false } as const;
+const BIND_SUCCESS_TEXT =
+  'Binding succeeded. The system will automatically send a notification card; no additional user notification is needed.';
+const UNBIND_SUCCESS_TEXT =
+  'Unbinding succeeded. The system will automatically send a notification card; no additional user notification is needed.';
 
 interface TargetInput {
   chatId: string;
@@ -170,6 +174,7 @@ export const bindChannelDef: FeishuToolDef<BindInput> = {
   ),
   outputSchema: bindOutputSchema,
   annotations: mutating,
+  successText: () => BIND_SUCCESS_TEXT,
   parse(raw) {
     const obj = asRecord(raw, 'bind_channel arguments');
     return {
@@ -200,6 +205,7 @@ export const leaderBindChannelDef: FeishuToolDef<
   ),
   outputSchema: bindOutputSchema,
   annotations: mutating,
+  successText: () => BIND_SUCCESS_TEXT,
   parse(raw) {
     const obj = asRecord(raw, 'bind_channel arguments');
     return {
@@ -223,6 +229,7 @@ export const unbindChannelDef: FeishuToolDef<TargetInput> = {
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
   outputSchema: unbindOutputSchema,
   annotations: mutating,
+  successText: (result) => result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },
@@ -242,6 +249,7 @@ export const leaderUnbindChannelDef: FeishuToolDef<TargetInput> = {
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
   outputSchema: unbindOutputSchema,
   annotations: mutating,
+  successText: (result) => result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },

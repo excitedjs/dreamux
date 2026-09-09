@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Tell callers that successful channel binding and unbinding automatically send notification cards without an additional user notification.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

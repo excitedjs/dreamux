@@ -982,7 +982,7 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
-  it('shows a contextCompaction item as the one line Compacted session, on completion only', async () => {
+  it('shows a contextCompaction item as the one line COMPACTED SESSION, on completion only', async () => {
     const messages: string[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
@@ -999,7 +999,7 @@ describe('CodexRuntime native turn end', () => {
     client.emitItem('fresh-thread-1', 'turn-1', 'completed', { type: 'contextCompaction', id: 'compact-1' });
     await waitFor(() => messages.length === 1);
 
-    expect(messages).toEqual(['Compacted session']);
+    expect(messages).toEqual(['COMPACTED SESSION']);
     await runtime.stop();
   });
 

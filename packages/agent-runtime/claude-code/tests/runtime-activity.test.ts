@@ -96,7 +96,7 @@ function streamUserEnvelope(
 }
 
 describe('handleProtocolEvent live activity', () => {
-  it('shows a compaction as the one line Compacted session, never the summary the CLI wrote', () => {
+  it('shows a compaction as the one line COMPACTED SESSION, never the summary the CLI wrote', () => {
     const h = makeHarness();
     h.fire({
       kind: 'stream',
@@ -120,7 +120,7 @@ describe('handleProtocolEvent live activity', () => {
       },
     });
     expect(h.activityEvents).toEqual([
-      expect.objectContaining({ kind: 'assistant.message', text: 'Compacted session' }),
+      expect.objectContaining({ kind: 'assistant.message', text: 'COMPACTED SESSION' }),
     ]);
   });
 
