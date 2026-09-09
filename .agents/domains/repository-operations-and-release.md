@@ -240,13 +240,16 @@ version, or path changes by fail-loud plus explicit rebuild guidance rather than
 automatic migration. Any change that can block or break a user's upgrade needs a
 Rush change file.
 
-Incompatible shape, version, or path notes lead with `BREAKING:` and include
-`Rebuild:` with the exact manual action. A same-shape semantic change may retain
-its state version only when the operator explicitly approves that tradeoff; its
-note leads with `BREAKING:`, immediately includes `Review:` with the required
-operator check, explicitly says no rebuild is needed, and contains no `Rebuild:`
-instruction. The V3 Feishu `allow_chats` trust change is the accepted example
-(see [Feishu pairing and access](feishu-pairing-access.md)).
+An incompatible shape, version, or path change to a config or persisted state
+file leads with `BREAKING:` and includes `Rebuild:` with the exact manual
+action. `BREAKING:` means upgrade-blocking and nothing else: it applies only
+when the upgraded daemon or CLI cannot start until the operator performs that
+migration by hand.
+
+Everything else is an ordinary change note. API, MCP, and CLI tool contract
+changes, and behavior or semantic changes that leave persisted files readable as
+they are, do not block an upgrade: describe them plainly and never use
+`BREAKING:`, `Rebuild:`, or `Review:`.
 
 While a package stays on the 0.x version line its change files must never use
 type `major`: Rush bumps a 0.x package straight to 1.0.0 on a pending major.

@@ -192,12 +192,15 @@ describe('trusted allow_chats release contract', () => {
     expect(rootRules).toMatch(/single owning reference/);
     expect(rootRules).toContain('references/self-upgrade.md');
     expect(rootRules).toMatch(/current-state-only/);
-    expect(rootRules).toMatch(/incompatible shape, version, or path[\s\S]{0,160}`Rebuild:`/);
-    expect(rootRules).toMatch(/same-shape[\s\S]{0,220}`Review:`/);
-    for (const domain of [stateDomain, releaseDomain]) {
-      expect(domain).toMatch(/incompatible shape, version, or path[\s\S]{0,180}`Rebuild:`/i);
-      expect(domain).toMatch(/same-shape semantic change[\s\S]{0,220}`Review:`/);
-      expect(domain).toMatch(/no rebuild|no `Rebuild:`/);
+    // `BREAKING:` is upgrade-blocking migration only. The superseded
+    // "same-shape semantic change carries BREAKING: + Review:" category must
+    // stay deleted from the rule docs; published CHANGELOGs keep their
+    // historical `BREAKING: Review:` notes and are asserted separately above.
+    for (const rules of [rootRules, stateDomain, releaseDomain]) {
+      expect(rules).toMatch(/incompatible shape, version, or path[\s\S]{0,180}`Rebuild:`/i);
+      expect(rules).toMatch(/upgrade-blocking/);
+      expect(rules).toContain('`BREAKING:`, `Rebuild:`, or `Review:`');
+      expect(rules).not.toMatch(/same-shape/);
     }
   });
 });
