@@ -203,7 +203,7 @@ describe('dreamux onboard', () => {
       id: 'flow',
       cwd: join(root, 'dispatcher-cwd'),
       enabled: true,
-      workspace: { enabled: true },
+      workspace: { enabled: false },
       channels: [
         {
           id: 'primary',
@@ -710,7 +710,7 @@ describe('dreamux onboard', () => {
         id: 'flow',
         cwd: join(root, 'flow-cwd'),
         enabled: true,
-        workspace: { enabled: true },
+        workspace: { enabled: false },
         channels: [
           {
             id: 'primary',
@@ -727,7 +727,7 @@ describe('dreamux onboard', () => {
         id: 'docs',
         cwd: join(root, 'docs-cwd'),
         enabled: true,
-        workspace: { enabled: true },
+        workspace: { enabled: false },
         channels: [
           {
             id: 'primary',
@@ -741,6 +741,48 @@ describe('dreamux onboard', () => {
         agentRuntime: 'docs',
       },
     ]);
+  });
+
+  it('keeps an explicitly enabled workspace when the same dispatcher is onboarded again', async () => {
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    mkdirSync(configDir, { recursive: true });
+    const seeded = testSingleDispatcherFileObject({
+      id: 'flow',
+      cwd: join(root, 'flow-cwd'),
+      enabled: true,
+      feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+    });
+    // Onboarding never asks about workspace isolation, so an operator who
+    // turned it on by hand must get it back untouched.
+    (seeded['dispatchers'] as Array<Record<string, unknown>>)[0]!['workspace'] = {
+      enabled: true,
+    };
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify(seeded), {
+      mode: 0o600,
+    });
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'flow',
+      dispatcherCwd: join(root, 'flow-cwd'),
+      registerService: false,
+      channels: [feishuOnboardChannel('app-flow', 'secret-flow')],
+    });
+    writeGlobalCodexAuth(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    const saved = JSON.parse(
+      readFileSync(join(configDir, 'config.json'), 'utf8'),
+    ) as Record<string, any>;
+    expect(saved['dispatchers']).toHaveLength(1);
+    expect(saved['dispatchers'][0]['workspace']).toEqual({ enabled: true });
   });
 
   it('preserves a teammate-only agent (unreferenced by any dispatcher) on rerun', async () => {

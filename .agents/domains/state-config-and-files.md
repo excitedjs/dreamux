@@ -71,7 +71,10 @@ It declares:
 
 Legacy top-level `workspace.enabled` is not accepted. Set
 `dispatchers[].workspace.enabled` on each dispatcher instead; omitted dispatcher
-workspace policy defaults to enabled. A dispatcher `runtime` block is likewise
+workspace policy defaults to disabled. An empty `workspace` object uses the same
+default. Explicit true enables isolated plain work directories; explicit false
+uses the dispatcher cwd. Onboarding preserves an existing explicit policy and
+defaults new dispatchers to false. A dispatcher `runtime` block is likewise
 rejected with the rebuild instruction to declare a named `agents[]` entry.
 
 `dreamux serve` fails loudly and creates no silent defaults when the config file
@@ -405,6 +408,11 @@ areas live under that dispatcher workspace, never under `~/.dreamux`:
 <dispatcher cwd>/                                     repo omitted, workspace.enabled false
 <dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/   repo: { mode: 'managed' }
 ```
+
+Omitting a repository uses the dispatcher cwd by default. Setting
+`dispatchers[].workspace.enabled: true` opts into the isolated plain directory.
+Neither choice requires a Git repository; explicit repository requests retain
+their own worktree policy. Existing persisted agent workspaces keep their paths.
 
 When the `.workspace/` boundary is used it self-ignores with a `*` `.gitignore`
 so generated work areas never become repo content, and a `.gitignore` that does

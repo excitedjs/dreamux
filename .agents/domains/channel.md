@@ -86,11 +86,27 @@ Command invoker and one read-only, dispatcher-scoped event source. A Channel
 names a Command, hands it a payload, and gets one answer; both public adapters
 bind the same registry, so a Channel gets no smaller catalog and no private door.
 
+Canonical `team.create` accepts optional opaque `{ provider, payload }` context.
+Core copies it into creation-only `summary.metadata` and publishes a fresh
+`team.created` event after creation succeeds; the payload's meaning stays with
+the provider. Ordinary status reads do not include metadata, identical retries
+do not republish, and context has no durable record or replay mechanism.
+
+For `builtin:feishu`, the creation payload is exactly `{ chat_id, title }` for an
+already-existing group. The session binds that group through its routing owner,
+updates COT ownership, and sends the ordinary binding card. It tracks this work
+in its existing session lifecycle and drains it during close. Binding or
+notification failure is logged without changing the successful creation result.
+Other providers' context is ignored by Feishu. This does not create a group or
+move binding authority into Core.
+
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
+- `/packages/channel/feishu-channel/src/feishu-team-create.ts`
+- `/packages/channel/feishu-channel/src/feishu-session-bindings.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`
 
@@ -796,14 +812,17 @@ best-effort distribution helper, not a fact owner or store. Existing owners
 publish after their normal write point: `TeamStore` publishes Team status and
 concrete leader changes; `AgentIdentityStore` publishes TeamLeader and TeamMate
 status changes; the conversation projection publishes display-only input and
-activity facts for the dispatcher agent and TeamLeaders. Routing produces no
-core event — a Channel already owns its routing records, so it describes its own
+activity facts for the dispatcher agent and TeamLeaders. `TeamCollection`
+publishes a creation summary after a fresh canonical creation succeeds. Routing
+produces no core event — a Channel already owns its routing records, so it describes its own
 state from them at the moment it changes them, and Core publishing a binding fact
 back would mean Core holding one. Workflow, scheduler, and host-maintenance events
 are deliberately absent.
 
-The published catalog is an explicit set of four kinds: `team.state`,
-`teammate.state`, `teammate.input`, and `teammate.activity`. The last two are
+The published catalog is an explicit set of five kinds: `team.created`, `team.state`,
+`teammate.state`, `teammate.input`, and `teammate.activity`. `team.created` carries
+the fresh creation summary and any provider-owned metadata; it is neither a
+binding fact nor a durable notification. The last two kinds are
 the whole conversation, split by producer: Core says what it admitted, and the
 runtime says what it did. Both are **actor-scoped** — they name the Dispatcher
 or TeamLeader whose conversation they belong to and carry no `turn_id`, member

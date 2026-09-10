@@ -256,6 +256,13 @@ identities. Both DTOs are open objects on the Command and MCP catalogs, like
 every other entity DTO. `team.history` remains its separate compact recovery
 projection.
 
+The canonical creation command also accepts optional provider-owned context.
+Only its creation response and fresh `team.created` event project that context
+as `metadata`; it does not become an ordinary status fact or persisted Team
+field. Context participates in the existing request hash. Identical retries
+project the same context without publishing another creation event. The
+provider-side meaning and event handling are owned by [Channel](channel.md).
+
 Binding a conversation to a Team is not a Team capability at all: routing is the
 Channel's own decision, made with that Channel's tools, so Team MCP has no
 `bind_channel` and no `transfer_back`. Peer Team send remains future work;
@@ -414,11 +421,12 @@ under that dispatcher workspace, never under `~/.dreamux`:
 
 ```text
 <dispatcher cwd>/.workspace/work/<name>/
-<dispatcher cwd>/                # when dispatchers[].workspace.enabled is false
+<dispatcher cwd>/                # default; workspace.enabled is false
 <dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/
 ```
 
-Omitting `repo` creates a plain work directory with `mkdir -p` and persists a
+Omitting `repo` uses the dispatcher cwd unless workspace isolation is explicitly
+enabled. The selected plain work directory is created with `mkdir -p` and persists a
 `reuse-cwd` worktree; no git command runs, so the dispatcher cwd need not be a
 git repository. Managed worktrees are created only when the request explicitly
 asks for managed repo work. `.workspace/` self-ignores with `*`.

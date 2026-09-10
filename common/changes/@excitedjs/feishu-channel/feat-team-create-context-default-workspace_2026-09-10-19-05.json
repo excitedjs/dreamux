@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Bind an existing group and send its binding card from provider-owned Team creation context.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}
