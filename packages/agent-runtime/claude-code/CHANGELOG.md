@@ -1,6 +1,19 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Sun, 06 Sep 2026 09:34:07 GMT and should not be manually modified.
+This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+
+## 0.7.0
+Thu, 10 Sep 2026 04:59:50 GMT
+
+### Minor changes
+
+- Claude Code agents can now interrupt the active native turn without stopping the resident session; an idle runtime reports that no turn is running, and an interrupted turn is marked on its card with the CLI's own [Request interrupted by user] line.
+- Custom ClaudeCodeSessionFactory implementations and direct ClaudeCodeStreamRpc consumers must replace submitTurn/steerTurn with submit returning RuntimeAdmission and per-request settlement. Session specs provide sessionId and optional outputSchemaEnabled; RPC options require sessionId and accept outputSchemaEnabled, and reapOnTimeout receives an Error. Replace RPC failPending(error) with fail(error) for failure or stop() for deliberate teardown. Session exit handlers receive the failure Error, retained through cleanup. Protocol callbacks observe results, command_lifecycle and interrupted boundaries rather than performing settlement; ResultEnvelope and TurnOutcome expose terminalReason. Remove request-window coordination, retain native background work, and settle folded or queued inputs directly. Preserve genuine native errors, including success results with is_error true, without mistaking native cancelled or failure cleanup for user stop. Core and neutral runtime contracts are unchanged.
+
+### Patches
+
+- Show native context and cumulative token usage before the turn display ends, without extra queries or transcript scans.
+- Display context compaction as COMPACTED SESSION without exposing the runtime summary.
 
 ## 0.6.1
 Sun, 06 Sep 2026 09:34:07 GMT

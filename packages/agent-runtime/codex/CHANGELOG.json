@@ -2,6 +2,40 @@
   "name": "@excitedjs/agent-runtime-codex",
   "entries": [
     {
+      "version": "0.6.0",
+      "tag": "@excitedjs/agent-runtime-codex_v0.6.0",
+      "date": "Thu, 10 Sep 2026 04:59:50 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Show native context and cumulative token usage before the turn display ends, without extra queries or transcript scans."
+          },
+          {
+            "comment": "Display the inner script of recognized Codex shell commands in tool summaries and invocations without changing execution arguments."
+          },
+          {
+            "comment": "Display context compaction as COMPACTED SESSION without changing activity timing or summary suppression."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "Codex agents can now interrupt the active app-server turn through turn/interrupt; an idle runtime reports that no turn is running, and an interrupted turn is marked on its card with the same [Request interrupted by user] line Claude Code writes."
+          },
+          {
+            "comment": "Project a web search's query and action as the call's arguments, so a search row can show what was asked; codex states them outside the argument members every other item uses."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.10.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.5.1`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.5.0",
       "tag": "@excitedjs/agent-runtime-codex_v0.5.0",
       "date": "Fri, 04 Sep 2026 10:24:24 GMT",

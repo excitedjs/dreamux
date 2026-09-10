@@ -1,6 +1,20 @@
 # Change Log - @excitedjs/dreamux-types
 
-This log was last generated on Fri, 04 Sep 2026 10:24:24 GMT and should not be manually modified.
+This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+
+## 0.10.0
+Thu, 10 Sep 2026 04:59:50 GMT
+
+### Minor changes
+
+- Agent Runtime providers now expose a neutral interrupt operation that reports whether an active turn was interrupted or the runtime was idle. Any package implementing AgentRuntime must now implement interrupt().
+- Expose the created TeamLeader runtime ID and runtime cwd on the canonical team.create result.
+- teammate.input now carries an optional notice naming the producer of an automated push-back, and the tool.call contract states that invocation and arguments_json are published verbatim while every other member keeps Core redaction.
+- Consumers of Team create and status results must replace the separate response shapes with the flat lifecycle-oriented TeamSummary contract; team.list rows keep their compact shape.
+
+### Patches
+
+- Allow Channel MCP success results to carry optional model-facing text alongside their structured value.
 
 ## 0.9.0
 Fri, 04 Sep 2026 10:24:24 GMT

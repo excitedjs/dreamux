@@ -2,6 +2,21 @@
   "name": "@excitedjs/feishu-transport",
   "entries": [
     {
+      "version": "0.10.0",
+      "tag": "@excitedjs/feishu-transport_v0.10.0",
+      "date": "Thu, 10 Sep 2026 04:59:50 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Feishu transports can resolve a chat's current name through the chat lookup API for Channel-rendered binding displays."
+          },
+          {
+            "comment": "Message reads report the chat and topic a message is in, alongside its content."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.0",
       "tag": "@excitedjs/feishu-transport_v0.9.0",
       "date": "Fri, 04 Sep 2026 10:24:24 GMT",

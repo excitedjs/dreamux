@@ -1,6 +1,23 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Sun, 06 Sep 2026 09:34:07 GMT and should not be manually modified.
+This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+
+## 6.2.0
+Thu, 10 Sep 2026 04:59:50 GMT
+
+### Minor changes
+
+- Remove the dead `FeishuBot.inviteMembers` pass-through and its test fakes. The method was added for the dispatcher-only `team.create_group` flow and has had no caller since that flow was retired in the #182 PR-8 cleanup; `FeishuBot` is a Dreamux-internal contract. The Feishu transport `createGroup`/`inviteMembers` wrappers and their exported types are intentionally kept.
+- The built-in Feishu Channel recognizes human-authored /stop, /teams, and /dissolve after ordinary inbound authorization. Commands reply directly without creating a model turn and touch no routing state, and /teams renders the current Running Team locator card. The /introduce acknowledgement is now in English.
+- Consume the canonical Team summary for provisioning and manual binding, and tighten the approved Card 2.0 route-notification layout.
+- COT tool rows now show what the call was: an argument code segment, then a RESULT label and divider, then the output, with a failure line inside the result area instead of ahead of the arguments. A call that named the items it was about still shows those pills alone, now including a failed one. A row the runtime labelled but named no action for uses that label as its title, and an unlabelled one shows its whole tool name. Automated push-backs display one line — TEAMMATE CALLBACK, CRON TRIGGERED, WORKFLOW FINISHED, SYSTEM RESTARTED — while the agent still receives the full notification.
+
+### Patches
+
+- Refine Feishu route cards with canonical Team runtime context and distinct removal reasons; limit plain-text COT results to ten lines and complete superseded cards successfully. Route notifications use Card 2.0 and require Feishu 7.20 or newer. No state rebuild is needed.
+- Tell callers that successful channel binding and unbinding automatically send notification cards without an additional user notification.
+- Show tool output after a divider without a RESULT heading, and use Complete or Failed only when output is absent.
+- Question cards are addressed exactly as `reply` is: an explicit message id sends the card as a reply to that message, and without one the card is created in the chat. A submitted, dismissed, or expired answer is routed from the card it belongs to, whose chat and topic are read back from Feishu, instead of from a target computed before the card was sent; a follow-up question therefore stays in the topic its answer came from. An answer whose card cannot be located is a failed delivery rather than a message sent to a guessed chat.
 
 ## 6.1.0
 Sun, 06 Sep 2026 09:34:07 GMT

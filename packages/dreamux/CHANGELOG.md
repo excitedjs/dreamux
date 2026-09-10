@@ -1,6 +1,24 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Sun, 06 Sep 2026 09:34:08 GMT and should not be manually modified.
+This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+
+## 0.25.0
+Thu, 10 Sep 2026 04:59:50 GMT
+
+### Minor changes
+
+- The teammate.spawn and team.create MCP tools no longer accept repo.slug in their repo input; the repo schema is closed, so a call that passes slug now fails input validation before the handler runs. The worktree directory and default branch already derive from the allocated entity name (dreamux/<teammate_name>, or dreamux/team-<team_name> for a Team), and repo.branch still overrides the default. Existing worktrees, persisted state, and canonical Commands are unchanged.
+- Adds the team.interrupt Command and includes the TeamLeader runtime in team.list. A non-forced team.dissolve now checks worktree reclaimability before returning its receipt, so a blocked dissolve is rejected while the Team is still open.
+- Return the TeamLeader runtime ID and runtime cwd directly from team.create so callers do not need a follow-up status query.
+- Add the provider-neutral `channel.list` Core command: lists the dispatcher's configured Channels in config order as `{channel_id, provider, identity, live}` without starting any Channel session. Additive; no existing command, tool, or state changes.
+- Publish tool call arguments and invocations to conversation displays exactly as the runtime wrote them, without secret masking or workspace/home path renaming; summaries, items, results, and message bodies keep their existing redaction. Completion push-backs now also state which TeamMate or Workflow reported, so a display can label them without parsing the notification body.
+- Callers of team.create and team.status must consume the same flat Team summary and lifecycle status; create no longer reports an operation outcome, and member_count on a live Team now counts member-directory occupancy (closed and unreadable members included) instead of readable members. team.list keeps its compact row with the same field names and meanings.
+
+### Patches
+
+- Stop pushing a stopped completion into the owner whose own close, Workflow stop, Team dissolve, or service stop ended the work. A stopping dispatcher delivers nothing that settles behind its fence; an independently failed or stopped turn is still reported once.
+- The bundled `teamwork` skill now tells a TeamLeader what a member has that a subagent does not, a judgment of its own, and how to use it: the brief carries the question the work turns on before the leader's answer, the leader's design is marked as a guess, a member's identity includes standing to contradict the leader's framing, and when review rounds keep adding mechanism to one area the leader stops patching, writes the premise, and puts it to members that have not seen the draft. No skill name, description, or load trigger changes.
+- Restore explicit no-polling guidance on task dispatch receipts and forward Channel-owned success text through MCP.
 
 ## 0.24.0
 Sun, 06 Sep 2026 09:34:07 GMT

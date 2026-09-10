@@ -1,6 +1,14 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Fri, 04 Sep 2026 10:24:24 GMT and should not be manually modified.
+This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+
+## 0.10.0
+Thu, 10 Sep 2026 04:59:50 GMT
+
+### Minor changes
+
+- Feishu transports can resolve a chat's current name through the chat lookup API for Channel-rendered binding displays.
+- Message reads report the chat and topic a message is in, alongside its content.
 
 ## 0.9.0
 Fri, 04 Sep 2026 10:24:24 GMT
