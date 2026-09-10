@@ -25,9 +25,11 @@
 - Current verification: Build, lint, full test (including real Codex),
   typecheck:tests, and the knowledge check passed. See the current correction in
   [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
-- Current next action: Create the repair PR and request the operator-selected
-  external final review. Review and CI remain pending. No installation or restart
-  is requested.
+- Current PR: [#403](https://github.com/excitedjs/dreamux/pull/403), targeting
+  `next`; implementation commit `85c34b7a` passed all GitHub CI checks.
+- Current next action: Resolve the operator-selected external final review,
+  requested on the PR's implementation commit. Review remains pending. No
+  installation or restart is requested.
 
 ## Historical feature snapshot before PR #401 merged
 

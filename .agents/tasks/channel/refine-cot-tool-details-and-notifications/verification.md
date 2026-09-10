@@ -24,6 +24,12 @@ Validation on the final implementation:
 - `node common/scripts/install-run-rush.js typecheck:tests`: passed.
 - `.agents/scripts/check.sh`: passed (223 files reachable).
 - `git diff --check`: passed.
+- Rush patch change file: generated with `rush change --bulk`; verification
+  against `origin/next` passed after the change file was committed.
+- Mandatory pre-commit staged ESLint, author, gitleaks, and internal-content
+  gates: passed.
+- GitHub CI on implementation commit `85c34b7a`: all nine checks passed,
+  including the Linux and macOS Rush jobs.
 
 Behavioral coverage includes actual failed text/JSON output without an added
 status line, successful text/JSON output, both outcomes with no output with and
@@ -32,9 +38,11 @@ arguments/output staying inside the event budget. Assertions that previously
 required Failed beside output or omitted RESULT for empty success were updated
 against the operator's new explicit requirement.
 
-Independent external review and GitHub CI remain pending. No package has been
-installed into the running service and no service restart or live-client visual
-acceptance is claimed for this correction.
+Independent external review was requested for
+[PR #403](https://github.com/excitedjs/dreamux/pull/403) at implementation commit
+`85c34b7a` and remains pending. Subsequent bookkeeping does not change product
+code or tests. No package has been installed into the running service and no
+service restart or live-client visual acceptance is claimed for this correction.
 
 ## Historical attempt: restarted from next on 2026-09-10
 
