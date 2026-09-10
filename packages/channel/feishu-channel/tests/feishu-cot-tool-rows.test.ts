@@ -6,7 +6,7 @@
  * `{type:'code', language, code}` and `{type:'list', items, more?}`).
  *
  * An expanded row reads in the order it happened: what was asked as one code
- * segment, a divider, then what came back. What came back is shown by
+ * segment, a RESULT heading and divider, then what came back. What came back is shown by
  * what it is, not by how long it is: a value that parses as JSON is
  * pretty-printed in a `json` code segment, anything else is plain text
  * (operator ruling, 2026-09-04). Plain text keeps ten content lines; every
@@ -48,9 +48,9 @@ function eventTypes(events: ReadonlyArray<{ eventType: string }>): string[] {
 }
 
 /**
- * The divider stands between the call and what came back, as its own segment.
+ * The heading and divider stand between the call and its result, in one segment.
  */
-const RESULT = { type: 'text', text: '\n\n---' };
+const RESULT = { type: 'text', text: '###### RESULT\n\n---' };
 
 /** The segments of one `TOOL_CALL_RESULT`, whether it sent one or many. */
 function segmentsOf(event: { content: unknown }): unknown {

@@ -1,6 +1,18 @@
 # Requirement
 
-## Current correction: result status labels (2026-09-10)
+## Current amendment: restore the RESULT heading (2026-09-10)
+
+The operator reported that removing RESULT in PR #403 made the expanded tool
+result less readable and requested restoring a label before `\n\n---`.
+After comparing eight private native COT probes, each containing text and JSON
+output, the operator selected B: "选 B 吧，feishu桌面端不吃这个灰色的标识".
+B uses exactly `###### RESULT\n\n---`. This supersedes only the heading-removal
+ruling in the historical correction below. Use no grey HTML markup.
+
+Preserve the existing argument/result order, actual-output handling, empty-output
+Complete/Failed labels, list-only rows, and encoded event budget.
+
+## Historical correction: result status labels (2026-09-10)
 
 After reporting that Failed was much more visible than Completed, the operator
 directed "那把固定插入的失败也干掉。", then narrowed that instruction:

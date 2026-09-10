@@ -1,6 +1,20 @@
 # Technical solution
 
-## Current correction: result status labels (2026-09-10)
+## Current amendment: restore the RESULT heading (2026-09-10)
+
+Use the minimal-change fast path. Change the existing fixed non-list separator
+in `feishu-cot-events.ts` to `###### RESULT\n\n---` and name it RESULT_HEADER.
+Keep it as its own text segment so it precedes either plain text or JSON output.
+The existing full-content fitting includes the longer fixed text automatically.
+No new mechanism, option, provider fact, or cross-package change is needed.
+
+Update the existing result-segment expectation, current Product and Channel
+knowledge, this task, and a Rush patch change file. Run Rush build, lint, test,
+and typecheck:tests plus knowledge and change-file validation. Use one independent
+implementation review. The operator selected this exact probed payload after the
+TeamLeader offered to implement the chosen sample.
+
+## Historical correction: result status labels (2026-09-10)
 
 The current result-status amendment supersedes the success and failure label
 rules below. The Channel's existing non-list result assembly always emits the

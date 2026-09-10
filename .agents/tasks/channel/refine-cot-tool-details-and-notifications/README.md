@@ -2,9 +2,35 @@
 
 ## Current state
 
+- Goal: Restore a subtle RESULT heading above the existing tool-result divider.
+- State: `done`
+- Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
+- Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
+- Baseline: Freshly fetched `origin/next` at `ecfb378d`.
+- Branch: `fix/cot-result-heading`.
+- Approval (2026-09-10): "选 B 吧，feishu桌面端不吃这个灰色的标识".
+  This selects the native COT sample `###### RESULT\n\n---` after the
+  TeamLeader offered to implement the chosen sample. It resumes the same
+  tool-result presentation task and supersedes only the #403 heading removal.
+- Method: TeamLeader-authored minimal change with independent final review;
+  no separate solution Issue is needed.
+- Verification: [Evidence](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
+- Knowledge owners: Product catalog and Channel documentation.
+- Delivery: [PR #405](https://github.com/excitedjs/dreamux/pull/405), targeting
+  `next`. External final review approved implementation commit `929f11a6`; all
+  nine GitHub CI checks passed on that commit. The following closeout changes
+  only task records and leaves the reviewed implementation unchanged.
+- Review adjudication: No findings; the TeamLeader accepts the external approval
+  after checking the result ordering, status/list paths, and event-budget diff.
+- Merge approval (2026-09-10): "合入吧。"
+- Current next action: Squash-merge PR #405 after final CI passes. Package
+  installation and service restart are not requested.
+
+## Historical #403 status correction
+
 - Goal: Show actual tool output without an extra status line; when output is
   absent, show the divider and Complete or Failed for either outcome.
-- State: `done`
+- Historical state: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
 - Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
 - Solution review Issue: None; the operator explicitly directed development

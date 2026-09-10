@@ -970,10 +970,10 @@ truncation, and the `+N` more pill. The existing pill budget counts text bytes;
 many short items can still exceed the final event budget and fall back to a
 status word. The operator declined the R2 accounting change in the task record.
 Other calls show their argument code segment without an ARGUMENTS heading,
-followed by a separate `{type: "text", text: "\n\n---"}`
-segment before the result area, with no RESULT heading. Actual output follows
-the divider directly, without an
-additional status line for either outcome. Without actual output, Complete or
+followed by a separate `{type: "text", text: "###### RESULT\n\n---"}`
+segment before the result area, using a sixth-level Markdown heading. Actual
+output follows the divider directly, without an additional status line for either
+outcome. Without actual output, Complete or
 Failed follows the divider according to the call's status, whether or not
 arguments exist.
 Non-list result assembly fits its two variable strings in
