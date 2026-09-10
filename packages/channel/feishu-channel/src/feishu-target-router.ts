@@ -68,27 +68,52 @@ export class FeishuTargetRouter {
     signal?: AbortSignal,
   ): Promise<FeishuInboundRoute> {
     assertRoutingActive(signal);
-    let route: FeishuInboundRoute = {
-      target: chatTarget(event.chatId, event.chatType),
-      containerChatId: null,
-    };
-    if (
-      event.chatType === 'group' &&
-      event.threadId !== undefined &&
-      event.threadId !== ''
-    ) {
-      const mode = await this.chatMode(event.chatId, signal);
-      assertRoutingActive(signal);
-      if (mode === 'topic') {
-        route = {
-          target: topicTarget(event.chatId, event.threadId),
-          containerChatId: event.chatId,
-        };
-      }
-    }
+    const route = await this.project(
+      {
+        chatId: event.chatId,
+        chatType: event.chatType,
+        ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
+      },
+      signal,
+    );
     assertRoutingActive(signal);
     this.observe(event.messageId, route.target);
     return route;
+  }
+
+  /**
+   * Which target a message sits in, from the place Feishu reports for it.
+   *
+   * A thread id is only half the answer: outside a topic-mode group it names a
+   * reply chain rather than a topic, so the chat's mode decides — and that
+   * lookup is spent only on a message that claims a thread at all. `chatType`
+   * is absent for a message read back from the API, which reports none; an
+   * ordinary group is what this router already assumes for a chat it cannot
+   * name, and the two kinds differ only in whether a binding could exist.
+   */
+  async project(
+    place: { chatId: string; threadId?: string; chatType?: string },
+    signal?: AbortSignal,
+  ): Promise<FeishuInboundRoute> {
+    const chatType = place.chatType ?? 'group';
+    if (
+      chatType === 'group' &&
+      place.threadId !== undefined &&
+      place.threadId !== ''
+    ) {
+      const mode = await this.chatMode(place.chatId, signal);
+      assertRoutingActive(signal);
+      if (mode === 'topic') {
+        return {
+          target: topicTarget(place.chatId, place.threadId),
+          containerChatId: place.chatId,
+        };
+      }
+    }
+    return {
+      target: chatTarget(place.chatId, chatType),
+      containerChatId: null,
+    };
   }
 
   /** Record a message this session sent or received against its target. */

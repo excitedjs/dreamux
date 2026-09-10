@@ -7,7 +7,7 @@ export interface FeishuMessageReadRequest {
   cardContent?: FeishuMessageReadMode
 }
 
-/** Content-only projection of one `im.v1.message.get` item. */
+/** Projection of one `im.v1.message.get` item: its content, and where it is. */
 export interface FeishuMessageReadItem {
   messageId: string
   messageType: string
@@ -15,6 +15,10 @@ export interface FeishuMessageReadItem {
   mentions: Mention[]
   deleted: boolean
   malformed: boolean
+  /** The chat the message is in. Empty when the response omitted it. */
+  chatId: string
+  /** The topic it is in, present only for a message inside one. */
+  threadId?: string
 }
 
 export interface FeishuMessageReadResponse {
@@ -31,6 +35,8 @@ export interface RawMessageReadItem {
   message_id?: string
   msg_type?: string
   deleted?: boolean
+  chat_id?: string
+  thread_id?: string
   body?: { content?: string }
   mentions?: Array<{
     key?: string
@@ -46,12 +52,15 @@ export function normalizeMessageReadItem(
   const messageId = raw.message_id ?? ''
   const messageType = raw.msg_type ?? ''
   const content = raw.body?.content ?? ''
+  const threadId = raw.thread_id ?? ''
   return {
     messageId,
     messageType,
     content,
     mentions: (raw.mentions ?? []).map(normalizeMessageReadMention),
     deleted: raw.deleted === true,
+    chatId: raw.chat_id ?? '',
+    ...(threadId !== '' ? { threadId } : {}),
     malformed:
       messageId === '' ||
       messageType === '' ||

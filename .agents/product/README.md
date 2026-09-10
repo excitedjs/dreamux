@@ -43,10 +43,14 @@ the same change that touches it.
   tool returns as soon as the card is sent, never the answer. Anyone in the chat
   may answer, an explicit operator ruling rather than a gap, and the answer
   arrives as an ordinary inbound message carrying who clicked and the answered
-  card's message id. Follow-up questions addressed to that card stay in its
-  existing topic. Dismissing the card tells the agent to stop asking and talk
-  it through instead; a card nobody answers closes itself before Feishu stops
-  accepting clicks and tells the agent to stand still rather than wait forever.
+  card's message id. A supplied reply message id is used directly, including
+  one the session has not observed; without one, the card is a new chat message.
+  Answers and expiry notices follow the card's actual conversation, obtained
+  from message details. A failed lookup does not redirect them to the parent
+  chat. Follow-up questions addressed to the card stay in its existing topic.
+  Dismissing the card tells the agent to stop asking and talk it through instead;
+  a card nobody answers closes itself before Feishu stops accepting clicks and
+  tells the agent to stand still rather than wait forever.
   (Domain: [channel](/.agents/domains/channel.md).)
 - **A message that starts with a known slash command is executed, not
   delivered.** In the built-in Feishu channel a human message whose leading

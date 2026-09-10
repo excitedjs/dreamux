@@ -39,7 +39,10 @@ import {
 import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
-import type { FeishuTargetRouter } from './feishu-target-router.js';
+import type {
+  FeishuInboundRoute,
+  FeishuTargetRouter,
+} from './feishu-target-router.js';
 import { CHANNEL_REMINDER, type FeishuInboundDelivery } from './feishu-submit.js';
 import type {
   AskUserExpiry,
@@ -370,23 +373,52 @@ export async function approvePairingByToken(
 }
 
 /**
+ * Where the question card actually is, asked of Feishu rather than assumed.
+ *
+ * The round was opened before its card existed, so nothing it holds says where
+ * the card landed: a question sent as a reply lives in the replied-to message's
+ * topic, which only Feishu can report. A card this fails to locate is a failed
+ * delivery — the chat the question was asked from is a guess, and a guess puts
+ * one conversation's answer in front of another.
+ */
+async function askUserCardRoute(
+  h: SessionHandle,
+  cardMessageId: string,
+): Promise<FeishuInboundRoute> {
+  const read = await h.bot.readMessage?.({ messageId: cardMessageId });
+  const card = read?.items.find((item) => item.messageId === cardMessageId);
+  if (card === undefined || card.chatId === '') {
+    throw new Error(`Feishu reported no chat for card ${cardMessageId}`);
+  }
+  return h.targetRouter.project({
+    chatId: card.chatId,
+    ...(card.threadId !== undefined ? { threadId: card.threadId } : {}),
+  });
+}
+
+/**
  * Hand a settled ask-user round to Core as an ordinary inbound submission.
  *
  * The answer travels the path a typed reply travels, so nothing downstream has
  * to learn that a card produced it. A delivery that fails is logged and
  * dropped, exactly as the inbound path treats a message Core would not take:
  * re-delivering risks a second turn for one answer, and the user can say it
- * again.
+ * again. A card that cannot be located fails the same way, for the same reason.
  */
 async function deliverAskUserSettlement(
   h: SessionHandle,
   settlement: AskUserSettlement,
 ): Promise<void> {
-  const { target } = settlement;
+  const { cardMessageId } = settlement;
   try {
+    if (cardMessageId === undefined) {
+      throw new Error('the question card reported no message id');
+    }
+    const route = await askUserCardRoute(h, cardMessageId);
+    const { target } = route;
     const outcome = await h.delivery.deliver({
       target,
-      containerChatId: target.kind === 'topic' ? target.chatId : null,
+      containerChatId: route.containerChatId,
       submission: {
         attrs: {
           // Same provenance the inbound envelope carries, in the same place:
@@ -396,9 +428,7 @@ async function deliverAskUserSettlement(
           ...(target.threadId !== undefined
             ? { thread_id: target.threadId }
             : {}),
-          ...(settlement.cardMessageId !== undefined
-            ? { message_id: settlement.cardMessageId }
-            : {}),
+          message_id: cardMessageId,
           // Anyone in the chat may answer the card; this is deliberate, so
           // there is no check on who clicked. Carrying the clicker keeps the
           // fact the model would otherwise lose.
@@ -414,9 +444,8 @@ async function deliverAskUserSettlement(
           chatId: target.chatId,
           // The question card, never `sourceId`: this id is handed to Feishu as
           // a COT presentation's origin, and a synthetic one would be sent to
-          // the API as if it were real. Empty when the card id is unknown,
-          // which the COT layer already treats as "no anchor".
-          messageId: settlement.cardMessageId ?? '',
+          // the API as if it were real.
+          messageId: cardMessageId,
           target,
         },
       },
@@ -435,7 +464,7 @@ async function deliverAskUserSettlement(
     log(h).error(
       {
         dispatcher_id: h.opts.dispatcherId,
-        chat_id: target.chatId,
+        message_id: cardMessageId,
         ask_user_request_id: settlement.requestId,
         err: errInfo(err),
       },
@@ -451,11 +480,12 @@ async function deliverAskUserSettlement(
  * card-action route, and the answer reaches Core as an inbound submission, so
  * the tool that called this is long finished by the time the user decides.
  *
- * `messageId` is the message the question came out of, and the target follows
- * it the way an ordinary reply does — into that message's topic, under the
- * anchor the router holds for it. Without one the target names the chat, and
- * in a topic group the card opens a topic of its own, which is right for a
- * question that belongs to no particular message and wrong for one that does.
+ * `messageId` addresses the card the way `reply` addresses a message: the card
+ * is sent as a reply to it, which is what puts it in that message's topic.
+ * Without one the card is a new message in the chat, and in a topic group that
+ * opens a topic of its own — right for a question that belongs to no particular
+ * message, wrong for one that does. Where the answer goes is not decided here;
+ * it is read back from the card that was actually sent.
  *
  * The round is put in play only once the card is really sent, so a send that
  * throws leaves no question behind and fails where the model can see it.
@@ -468,14 +498,15 @@ export async function askUserQuestion(
     messageId?: string;
   },
 ): Promise<{ request_id: string }> {
-  const target = h.targetRouter.outboundTarget(input.chatId, input.messageId);
-  const opened = h.askUser.open({ questions: input.questions, target });
+  const opened = h.askUser.open(input.questions);
   const sent = await sendCard(h, {
-    target: h.targetRouter.notificationTarget(target),
+    target: {
+      conversationId: input.chatId,
+      ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
+    },
     card: opened.card,
     mode: 'inbound',
   });
-  for (const messageId of sent.messageIds) h.targetRouter.observe(messageId, target);
   opened.activate(sent.messageIds[0]);
   return { request_id: opened.requestId };
 }
@@ -493,7 +524,7 @@ export async function expireAskUserQuestion(
   expiry: AskUserExpiry,
 ): Promise<void> {
   await deliverAskUserSettlement(h, expiry.settlement);
-  const { messageId } = expiry;
+  const messageId = expiry.settlement.cardMessageId;
   if (messageId === undefined) return;
   try {
     await h.bot.editCard(messageId, expiry.card);

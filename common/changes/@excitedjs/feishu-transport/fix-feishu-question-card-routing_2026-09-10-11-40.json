@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Message reads report the chat and topic a message is in, alongside its content.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -75,6 +75,7 @@ function item(
     mentions: [],
     deleted: false,
     malformed: false,
+    chatId: 'oc_room',
     ...overrides,
   };
 }

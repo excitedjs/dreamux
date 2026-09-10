@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Keep follow-up question cards in their original topic by recording sent card message ids for reply routing.",
+      "comment": "Question cards are addressed exactly as `reply` is: an explicit message id sends the card as a reply to that message, and without one the card is created in the chat. A submitted, dismissed, or expired answer is routed from the card it belongs to, whose chat and topic are read back from Feishu, instead of from a target computed before the card was sent; a follow-up question therefore stays in the topic its answer came from. An answer whose card cannot be located is a failed delivery rather than a message sent to a guessed chat.",
       "type": "patch",
       "packageName": "@excitedjs/feishu-channel"
     }

@@ -37,13 +37,11 @@ import {
   type AskUserQuestionSpec,
 } from '../src/feishu-ask-user-card.js';
 import { DREAMUX_ACTION_KEY } from '../src/feishu-pairing-card.js';
-import { FeishuTargetRouter } from '../src/feishu-target-router.js';
 import {
   ASK_USER_NEXT_INSTRUCTION,
   askUserQuestionDef,
 } from '../src/tools/ask-user-question.js';
 import type { FeishuToolContext, FeishuToolSession } from '../src/tools/types.js';
-import { chatTarget, topicTarget } from '../src/routing/target.js';
 
 const QUESTIONS: readonly AskUserQuestionSpec[] = [
   {
@@ -63,8 +61,6 @@ const QUESTIONS: readonly AskUserQuestionSpec[] = [
     ],
   },
 ];
-
-const target = chatTarget('oc_test', 'group');
 
 function event(
   action: string,
@@ -115,7 +111,7 @@ function openRound(
   registry: AskUserRegistry,
   messageId: string | undefined = undefined,
 ): string {
-  const opened = registry.open({ questions: QUESTIONS, target });
+  const opened = registry.open(QUESTIONS);
   opened.activate(messageId);
   return opened.requestId;
 }
@@ -267,7 +263,7 @@ describe('ask-user registry', () => {
       onExpire: (expiry) => expired.push(expiry),
     });
     // The send threw, so `activate` was never reached.
-    const opened = registry.open({ questions: QUESTIONS, target });
+    const opened = registry.open(QUESTIONS);
 
     const applied = registry.apply(
       event(DREAMUX_ASK_SUBMIT_ACTION, {
@@ -283,7 +279,7 @@ describe('ask-user registry', () => {
 
   it('refuses a submit with nothing chosen instead of spending the round', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const opened = registry.open({ questions: QUESTIONS, target });
+    const opened = registry.open(QUESTIONS);
     opened.activate(undefined);
     const { requestId } = opened;
 
@@ -370,7 +366,7 @@ describe('ask-user registry', () => {
 
     expect(expired).toHaveLength(1);
     expect(expired[0]?.settlement.outcome).toBe('expired');
-    expect(expired[0]?.messageId).toBe('om_card');
+    expect(expired[0]?.settlement.cardMessageId).toBe('om_card');
     expect(expired[0]?.settlement.text).toContain('take no further action');
     // The card id is carried out because nothing else can repaint a card that
     // expired without a click to answer.
@@ -467,8 +463,8 @@ describe('ask_user_question tool', () => {
   });
 
   it('leaves the message id out when the model named none', () => {
-    // Not an empty string: the target router reads "no message to thread
-    // under" from the field's absence, and would look up '' as an id.
+    // Not an empty string: absence is what tells the send there is no message
+    // to reply under, and '' would be handed to Feishu as a message id.
     expect(askUserQuestionDef.parse(validArgs)).not.toHaveProperty('messageId');
   });
 
@@ -515,54 +511,5 @@ describe('ask_user_question tool', () => {
         questions: Array.from({ length: 5 }, () => validArgs.questions[0]),
       }),
     ).toThrow(/1-4 questions/);
-  });
-});
-
-/**
- * Where `message_id` sends the card. The rule is the one `reply` already
- * follows — the card belongs wherever the message it answers lives — so this
- * covers the router, not a second routing path for questions.
- */
-describe('addressing the question card', () => {
-  const silent = {
-    error: () => undefined,
-    warn: () => undefined,
-    info: () => undefined,
-    debug: () => undefined,
-    trace: () => undefined,
-  };
-
-  function router(): FeishuTargetRouter {
-    return new FeishuTargetRouter({ chatModes: {}, log: silent });
-  }
-
-  it('follows the named message into its topic', () => {
-    const r = router();
-    r.observe('om_asked', topicTarget('oc_room', 'omt_thread'));
-
-    expect(r.outboundTarget('oc_room', 'om_asked')).toEqual(
-      topicTarget('oc_room', 'omt_thread'),
-    );
-  });
-
-  it('addresses the chat itself when no message is named', () => {
-    const r = router();
-    r.observe('om_asked', topicTarget('oc_room', 'omt_thread'));
-
-    // A question that belongs to no message opens a topic of its own.
-    expect(r.outboundTarget('oc_room', undefined)).toEqual(
-      chatTarget('oc_room', 'group'),
-    );
-  });
-
-  it('ignores a message from another chat rather than redirecting the card', () => {
-    const r = router();
-    r.observe('om_elsewhere', topicTarget('oc_other', 'omt_thread'));
-
-    // Deliberate: a stale or copied id must not send a question meant for one
-    // conversation into another. The named chat wins.
-    expect(r.outboundTarget('oc_room', 'om_elsewhere')).toEqual(
-      chatTarget('oc_room', 'group'),
-    );
   });
 });
