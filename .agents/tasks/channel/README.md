@@ -24,5 +24,5 @@
 - [Feishu slash commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md) — `done`: Handle /stop, /teams, and /dissolve deterministically in the Feishu channel through one extensible command table
 - [Align Codex command display parsing](/.agents/tasks/channel/align-codex-command-display/README.md) — `done`: Show the inner shell script in Codex tool rows instead of the shell launcher wrapper
 - [Display turn usage summaries](/.agents/tasks/channel/display-turn-usage-summary/README.md) — `done`: Implement native context and cumulative token usage as the final assistant activity; draft-only delivery pending live Codex verification.
-- [Refine COT tool details and notification display](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md) — `review`: After #403, preserve the result divider's blank line with a leading no-break space.
+- [Refine COT tool details and notification display](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md) — `cancelled`: The divider-spacing follow-up in #404 was closed after Alpha feedback showed no apparent improvement; earlier #401 and #403 work remains merged.
 - [Keep question-card replies in their topic](/.agents/tasks/channel/fix-question-card-topic-routing/README.md) — `review`: Send explicit card replies and route settlements from the actual card's conversation.

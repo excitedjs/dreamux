@@ -4,7 +4,10 @@
 
 - Goal: Preserve the blank line before the COT result divider with the result
   spacing character, U+00A0, after the RESULT-heading removal in #403.
-- State: `review`
+- State: `cancelled`
+- Cancellation (2026-09-10): "好像没啥效果，看起来是飞书的bug 了，先关闭吧，不修了。"
+  The operator observed no apparent improvement with the Alpha and cancelled
+  the follow-up. A Feishu client bug is suspected, not a confirmed root cause.
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
 - Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
 - Baseline: Freshly fetched `origin/next` at `ecfb378d`, including merged #403.
@@ -15,17 +18,16 @@
 - Path: TeamLeader-only minimal change with independent review; no solution Issue.
 - Verification: Build, lint, full test (including real Codex), typecheck:tests,
   and knowledge checks passed; see [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
-- PR: [Draft #404](https://github.com/excitedjs/dreamux/pull/404), targeting `next`.
+- PR: [Closed #404](https://github.com/excitedjs/dreamux/pull/404), unmerged.
   Implementation commit `8ef9e6fb` passed all nine CI checks.
-- Review: External independent review requested on the implementation commit;
-  no verdict received yet.
+- Review: Request withdrawn after operator cancellation; no verdict received.
 - Alpha approval (2026-09-10): "发一个 alpha 包出来".
 - Alpha: `@excitedjs/dreamux@0.25.1-alpha.g8ef9e6fb9676`, published by
   [release run 34440974386](https://github.com/excitedjs/dreamux/actions/runs/34440974386).
   npm metadata confirms its `@excitedjs/feishu-channel` dependency is
   `6.2.1-alpha.g8ef9e6fb9676`. No host install or restart was requested.
-- Next action: Obtain external review. Merge is not yet authorized
-  for this follow-up; the earlier merge approval applied to #403.
+- Next action: None. Do not continue the repair or merge this follow-up.
+  The published Alpha remains available; the fix did not enter `next`.
 
 ## Historical status-label repair (#403, merged)
 

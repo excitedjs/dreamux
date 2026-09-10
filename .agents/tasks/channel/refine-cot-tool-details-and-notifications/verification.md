@@ -26,8 +26,11 @@ CLI smoke and packed-artifact audit. npm metadata confirms
 `@excitedjs/dreamux@0.25.1-alpha.g8ef9e6fb9676` depends on the matching
 `@excitedjs/feishu-channel@6.2.1-alpha.g8ef9e6fb9676`.
 
-External independent review is pending. Client rendering has not been
-inspected, and the running service has not been changed.
+The operator reported no apparent improvement after trying the Alpha and
+cancelled the repair on 2026-09-10. PR #404 was closed without merging, and the
+external review request was withdrawn. A Feishu client bug remains a hypothesis;
+the passing payload tests do not establish the desired visual effect. The agent
+did not install or restart the running service.
 
 ## Current correction: result status labels (2026-09-10)
 
