@@ -42,10 +42,11 @@ the same change that touches it.
   questions, each with an "Other" text box — and the agent stops and waits: the
   tool returns as soon as the card is sent, never the answer. Anyone in the chat
   may answer, an explicit operator ruling rather than a gap, and the answer
-  arrives as an ordinary inbound message carrying who clicked. Dismissing the
-  card tells the agent to stop asking and talk it through instead; a card nobody
-  answers closes itself before Feishu stops accepting clicks and tells the agent
-  to stand still rather than wait forever.
+  arrives as an ordinary inbound message carrying who clicked and the answered
+  card's message id. Follow-up questions addressed to that card stay in its
+  existing topic. Dismissing the card tells the agent to stop asking and talk
+  it through instead; a card nobody answers closes itself before Feishu stops
+  accepting clicks and tells the agent to stand still rather than wait forever.
   (Domain: [channel](/.agents/domains/channel.md).)
 - **A message that starts with a known slash command is executed, not
   delivered.** In the built-in Feishu channel a human message whose leading

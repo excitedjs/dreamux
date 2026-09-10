@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Keep follow-up question cards in their original topic by recording sent card message ids for reply routing.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

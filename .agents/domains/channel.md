@@ -174,6 +174,12 @@ message, wrong for one that does. A message id from another chat is ignored
 rather than obeyed, the same rule `reply` follows, so a stale id cannot
 redirect a question into a conversation it was not meant for.
 
+After a successful question-card send, the session records the returned message
+ids against the question's target in the existing observed-message ledger. The
+answer envelope and presentation anchor carry the answered card's message id.
+A subsequent question using that id therefore inherits the same topic; it
+does not substitute the earlier human message or the round's deduplication id.
+
 The other two fields are gone. There is no `multiSelect`: the operator ruled
 multi-select out of this channel, so every question takes exactly one answer.
 And there is no `preview`: it was first drawn as a column beside the options,

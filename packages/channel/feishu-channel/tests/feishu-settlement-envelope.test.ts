@@ -12,9 +12,19 @@
 import { describe, expect, it } from 'vitest';
 
 import { createAskUserRegistry } from '../src/feishu-ask-user.js';
+import {
+  DREAMUX_ASK_OPTION_KEY,
+  DREAMUX_ASK_PICK_ACTION,
+  DREAMUX_ASK_QUESTION_KEY,
+  DREAMUX_ASK_REQUEST_KEY,
+  DREAMUX_ASK_SUBMIT_ACTION,
+} from '../src/feishu-ask-user-card.js';
+import { DREAMUX_ACTION_KEY } from '../src/feishu-pairing-card.js';
 import { FeishuTargetRouter } from '../src/feishu-target-router.js';
 import {
+  askUserQuestion,
   expireAskUserQuestion,
+  handleCardAction,
   sessionHandle,
   type SessionHandle,
 } from '../src/feishu-session-ops.js';
@@ -55,8 +65,10 @@ function capturingDelivery(): {
   };
 }
 
-function handle(delivery: FeishuInboundDelivery): SessionHandle {
-  const bot = createFakeFeishuBot();
+function handle(
+  delivery: FeishuInboundDelivery,
+  bot = createFakeFeishuBot(),
+): SessionHandle {
   return sessionHandle({
     opts: {
       dispatcherId: 'dispatcher-1',
@@ -78,6 +90,71 @@ function handle(delivery: FeishuInboundDelivery): SessionHandle {
 }
 
 describe('the ask-card settlement envelope', () => {
+  it('uses each answered card id to keep the next question in the same topic', async () => {
+    const { delivery, submissions } = capturingDelivery();
+    const bot = createFakeFeishuBot();
+    const h = handle(delivery, bot);
+    const target = topicTarget('oc_room', 'omt_thread');
+    h.targetRouter.observe('om_initial', target);
+    let messageId = 'om_initial';
+
+    try {
+      for (let round = 0; round < 2; round++) {
+        const opened = await askUserQuestion(h, {
+          chatId: target.chatId,
+          messageId,
+          questions: [{
+            header: 'Choice',
+            question: 'Which option?',
+            options: [
+              { label: 'First', description: 'Use the first option' },
+              { label: 'Second', description: 'Use the second option' },
+            ],
+          }],
+        });
+        const card = bot.sentCards[round];
+        expect(card?.target).toEqual({
+          chatId: target.chatId,
+          replyToMessageId: messageId,
+        });
+        const cardId = card?.messageIds[0];
+        if (cardId === undefined) throw new Error('expected a sent card');
+
+        for (const action of [DREAMUX_ASK_PICK_ACTION, DREAMUX_ASK_SUBMIT_ACTION]) {
+          await handleCardAction(h, {
+            actionValue: {
+              [DREAMUX_ACTION_KEY]: action,
+              [DREAMUX_ASK_REQUEST_KEY]: opened.request_id,
+              [DREAMUX_ASK_QUESTION_KEY]: 0,
+              [DREAMUX_ASK_OPTION_KEY]: 0,
+            },
+            openMessageId: cardId,
+            operatorOpenId: 'ou_clicker',
+            raw: {},
+          });
+        }
+
+        const answer = submissions[round];
+        expect(answer?.attrs).toMatchObject({
+          source: 'feishu',
+          chat_id: target.chatId,
+          thread_id: target.threadId,
+          message_id: cardId,
+          ask_user_request_id: opened.request_id,
+        });
+        expect(answer?.anchor).toEqual({
+          chatId: target.chatId,
+          messageId: cardId,
+          target,
+        });
+        messageId = String(answer?.attrs.message_id);
+      }
+      expect(submissions).toHaveLength(2);
+    } finally {
+      h.askUser.abandonAll();
+    }
+  });
+
   it('carries source="feishu" among its attributes, next to the ids', async () => {
     const { delivery, submissions } = capturingDelivery();
 

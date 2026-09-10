@@ -475,6 +475,7 @@ export async function askUserQuestion(
     card: opened.card,
     mode: 'inbound',
   });
+  for (const messageId of sent.messageIds) h.targetRouter.observe(messageId, target);
   opened.activate(sent.messageIds[0]);
   return { request_id: opened.requestId };
 }
