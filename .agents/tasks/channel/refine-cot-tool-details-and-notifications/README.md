@@ -3,7 +3,7 @@
 ## Current state
 
 - Goal: Show actual tool output without an extra status line; when output is
-  absent, show RESULT, its divider, and Complete or Failed for either outcome.
+  absent, show the divider and Complete or Failed for either outcome.
 - State: `review`
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
 - Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
@@ -22,14 +22,20 @@
   the minimal-change fast path: Channel-owned result assembly, its behavioral
   checks, the affected knowledge, and a Rush patch change file. List-only rows
   and the existing event-size fallback remain unchanged.
+- Final pre-merge refinement: "稍等，额外增加一个小点，就是给 RESULT 这个leading 字符删掉，只保留 /n/n--- 这个分割线".
+  The result separator is now `\n\n---`, with no RESULT word. All status rules
+  above remain in force.
 - Current verification: Build, lint, full test (including real Codex),
   typecheck:tests, and the knowledge check passed. See the current correction in
   [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
 - Current PR: [#403](https://github.com/excitedjs/dreamux/pull/403), targeting
   `next`; implementation commit `85c34b7a` passed all GitHub CI checks.
-- Current next action: Resolve the operator-selected external final review,
-  requested on the PR's implementation commit. Review remains pending. No
-  installation or restart is requested.
+- Current review: External final review approved the status behavior at
+  `85c34b7a`. The final divider-only refinement passed all four local gates and
+  needs follow-up review and CI.
+- Merge approval: "可以合入了", followed by the additional divider refinement.
+- Current next action: Validate and review the final divider refinement, then
+  squash-merge PR #403 into next. No installation or restart is requested.
 
 ## Historical feature snapshot before PR #401 merged
 

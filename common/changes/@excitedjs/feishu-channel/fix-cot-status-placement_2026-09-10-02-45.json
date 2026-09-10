@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Show Complete or Failed under RESULT only when a tool call has no output.",
+      "comment": "Show tool output after a divider without a RESULT heading, and use Complete or Failed only when output is absent.",
       "type": "patch",
       "packageName": "@excitedjs/feishu-channel"
     }

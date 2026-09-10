@@ -16,9 +16,13 @@ The operator then aligned success:
 "成功也保持对齐，有输出就不显示 Complete ，没有输出才显示",
 followed by RESULT, the divider, and Complete.
 
-For ordinary tool rows, show RESULT and its divider immediately before actual
+Before merge, the operator additionally requested:
+"稍等，额外增加一个小点，就是给 RESULT 这个leading 字符删掉，只保留 /n/n--- 这个分割线".
+Remove only the RESULT word; the separate text segment becomes `\n\n---`.
+
+For ordinary tool rows, show the divider immediately before actual
 output, without an additional fixed status segment for either outcome. When no
-output exists, show RESULT, the divider, and Complete or Failed according to the
+output exists, show the divider and Complete or Failed according to the
 call's status, whether or not arguments exist. Use the operator's Complete
 spelling. List-only rows and the existing event-size fallback retain their
 behavior. Do not infer a status from the output text.

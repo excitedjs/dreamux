@@ -268,14 +268,12 @@ export function toolResultOutput(resultJson: string | null): ToolResultOutput | 
 }
 
 /**
- * The label that separates what was asked from what came back.
+ * The divider that separates what was asked from what came back.
  *
  * Its own segment, before the output rather than glued onto it, so it survives
- * whatever the output turns out to be — a `json` code block included. The blank
- * line keeps the word a paragraph: directly above `---` it would be Markdown's
- * setext heading instead.
+ * whatever the output turns out to be — a `json` code block included.
  */
-const RESULT_HEADER = 'RESULT\n\n---';
+const RESULT_DIVIDER = '\n\n---';
 
 /**
  * One row's content, fitted to what a Feishu event may carry.
@@ -316,7 +314,7 @@ function toolResultContent(
 
 /**
  * What an expanded row shows, in the order it happened: what was asked, then
- * the RESULT label, then what came back. Without output, Complete or Failed
+ * the divider, then what came back. Without output, Complete or Failed
  * fills that area; actual output needs no additional status line.
  */
 function toolResultSegments(
@@ -332,7 +330,7 @@ function toolResultSegments(
       code: argumentCode.code,
     });
   }
-  segments.push({ type: 'text', text: RESULT_HEADER });
+  segments.push({ type: 'text', text: RESULT_DIVIDER });
   if (result !== null) {
     segments.push(result.kind === 'json'
       ? { type: 'code', language: 'json', code: result.text }

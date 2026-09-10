@@ -236,8 +236,8 @@ the same change that touches it.
   supply formatted JSON or text code. Argument/invocation values are shown
   without secret masking or path rewriting, per the operator's explicit ruling;
   generic/MCP tools follow the same rule. Every non-list result has a separate
-  RESULT label and horizontal divider after any arguments. Actual output follows
-  the divider directly, without an extra status line for either outcome. When
+  horizontal divider after any arguments, with no RESULT heading. Actual output
+  follows the divider directly, without an extra status line for either outcome. When
   output is absent, this area shows Complete or Failed from the call's status,
   including when arguments are also absent.
   A JSON object or array is pretty-printed in

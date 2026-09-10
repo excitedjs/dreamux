@@ -7,13 +7,13 @@ Branch: `fix/cot-status-placement`. This is the follow-up to merged PR #401;
 all older attempts and review records below are historical.
 
 The only product-code change is the Channel's non-list result-segment assembly.
-Both outcomes now render arguments when present, RESULT and its divider, then
+Both outcomes now render arguments when present, a `\n\n---` divider, then
 actual output or the appropriate no-output status, Complete or Failed. The
 conditional header, unconditional failure line, and separate successful-empty
 fallback were removed. Provider/Core facts, list rendering, event-size fallback,
 formatting, redaction, and card lifetime are unchanged.
 
-Validation on the final implementation:
+Validation on the initial status implementation (before the final heading removal):
 
 - `node common/scripts/install-run-rush.js update`: passed.
 - `node common/scripts/install-run-rush.js build`: passed.
@@ -38,11 +38,19 @@ arguments/output staying inside the event budget. Assertions that previously
 required Failed beside output or omitted RESULT for empty success were updated
 against the operator's new explicit requirement.
 
-Independent external review was requested for
+Independent external review approved
 [PR #403](https://github.com/excitedjs/dreamux/pull/403) at implementation commit
-`85c34b7a` and remains pending. Subsequent bookkeeping does not change product
-code or tests. No package has been installed into the running service and no
-service restart or live-client visual acceptance is claimed for this correction.
+`85c34b7a`, recorded on `f45e46b9`; there were no blocking findings. The operator
+authorized merge and then requested removing only the RESULT word, preserving
+the `\n\n---` divider. This final refinement changes the fixed segment and its
+expected value, with no change to status conditions or event order. On this final
+refinement, Rush build, lint, full test (including real Codex), and
+typecheck:tests were rerun and all passed. Exact text/JSON and empty-output
+segment assertions now require the divider without a heading. Knowledge and
+diff checks passed. Follow-up review and CI remain pending.
+
+No package has been installed into the running service and no service restart
+or live-client visual acceptance is claimed for this correction.
 
 ## Historical attempt: restarted from next on 2026-09-10
 

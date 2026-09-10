@@ -4,12 +4,15 @@
 
 The current result-status amendment supersedes the success and failure label
 rules below. The Channel's existing non-list result assembly always emits the
-RESULT header after any arguments. It follows the header with actual output when
+separate `\n\n---` divider after any arguments. It follows the divider with actual output when
 present, otherwise with Complete or Failed from the call's status. Remove the
 success-only empty-segment fallback and the conditional header, because every
 non-list result now has this common structure. Keep list selection, the existing
 event-size fallback, and byte fitting unchanged. No new mechanism or ownership
 boundary is needed.
+
+The final pre-merge refinement removes the literal RESULT word from that
+segment. It changes no segment ordering or status condition.
 
 Verify successful and failed text and JSON output, both outcomes without output
 with and without arguments, the existing list/fallback cases, and event byte fitting.
