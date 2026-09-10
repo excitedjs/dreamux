@@ -24,11 +24,18 @@ and forwarding in separate probes; the relevant tests failed in each case and
 production code was restored. A misleading event comment was also corrected:
 a creation event is a creation-time snapshot, not proof of current Team status.
 
-Independent external implementation review has been requested and is pending.
-The review surface is the complete task diff from baseline `af96c9f4`, including
-new files, together with this requirement and solution, using the Team's approved
-external-review path. The external reviewer could not access the local checkout,
-so a draft PR makes the code available before review and final knowledge closeout.
+Independent external implementation review
+[approved the complete diff](https://github.com/excitedjs/dreamux/pull/408#pullrequestreview-5171702336)
+from baseline `af96c9f4` through `93e6d8a8`, with no blocking findings. It covered
+the requirement, solution, implementation, tests, and knowledge against the
+engineering whitepaper. The external reviewer could not access the local checkout,
+so a draft PR provided the review surface before final knowledge closeout.
+
+The TeamLeader accepted the review. Two non-blocking text nits were corrected
+during closeout: maintenance-reference punctuation and a workspace-comment line
+wrap. The third observation, the Feishu session's proximity to its line limit,
+remains the recorded future cleanup consideration below. No implementation or
+test behavior changed after approval, and no accepted finding remains unresolved.
 
 ## Validation evidence
 
@@ -67,7 +74,11 @@ not repeated. The task record check also passed.
 
 The staged pre-commit checks passed, including ESLint, author identity, gitleaks,
 and internal-content checks. Rush change files were generated through `rush
-change`; their branch comparison verification remains to be run after commit.
+change`; `rush change --verify --target-branch origin/next --no-fetch` passed after
+commit. [GitHub CI](https://github.com/excitedjs/dreamux/actions/runs/34521453238)
+passed all nine checks on `93e6d8a8`, including the full Rush pipeline on Linux
+and macOS. The final documentation/comment closeout follows the same CI gate;
+its current result is recorded on the PR.
 
 ## Knowledge and release
 
@@ -92,4 +103,6 @@ scope.
 
 - Issue: [#407](https://github.com/excitedjs/dreamux/issues/407).
 - Supplemental entry-point tests: passed.
-- Independent review, PR, CI, and merge: pending.
+- Independent review: approved; no blocking findings.
+- Knowledge closeout: complete.
+- PR, final CI, and merge outcome: [#408](https://github.com/excitedjs/dreamux/pull/408).

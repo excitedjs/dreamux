@@ -188,8 +188,7 @@ export class WorktreeManager {
    * (issue #199): the dispatcher workspace itself, or a plain
    * `<dispatcherWorkspace>/.workspace/work/<slug>/` directory when the
    * dispatcher opts into workspace isolation. Neither mode creates a git
-   * worktree. The
-   * dispatcher cwd need not be a git repo — no git command runs — so
+   * worktree. The dispatcher cwd need not be a git repo — no git command runs — so
    * `source_repo` is reported as null even if the directory happens to sit inside
    * a repo. The `.workspace/` boundary is only created for the isolated mode.
    */

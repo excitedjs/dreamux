@@ -3,12 +3,12 @@
 ## Current state
 
 - Goal: Allow callers to attach provider-owned context to fresh Team creation and default repository-free agents to the dispatcher working directory.
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/architecture/extend-team-create-context/requirement.md)
 - Final solution: [Implementation scope](/.agents/tasks/architecture/extend-team-create-context/technical-design/final.md)
 - Solution review Issue: [#407](https://github.com/excitedjs/dreamux/issues/407).
 - Blockers: None.
-- Next action: Publish a draft PR for external review, then adjudicate findings.
+- Next action: Complete normal CI and squash-merge handoff for PR #408.
 - Related tasks: Builds on [minimal provider boundaries](/.agents/tasks/architecture/minimize-provider-boundaries/README.md) and [Team projections](/.agents/tasks/architecture/unify-team-command-projections/README.md).
 
 ## Development approval
@@ -20,7 +20,14 @@
 ## Delivery
 
 - Verification: [Validation and review record](/.agents/tasks/architecture/extend-team-create-context/verification.md).
-- Pull request: Preparing a draft so the external reviewer can access the code.
-- CI / merge: Pending.
-- Knowledge closeout: Current domain, product, and maintenance guidance updated;
-  final closeout follows independent review.
+- Pull request: [#408](https://github.com/excitedjs/dreamux/pull/408).
+- Independent review: [Approved with no blocking findings](https://github.com/excitedjs/dreamux/pull/408#pullrequestreview-5171702336).
+- CI: All nine checks passed on the reviewed implementation; final closeout commit
+  follows the same normal CI gate. Merge outcome is tracked by PR #408.
+- Knowledge closeout: Complete. Updated [Channel](/.agents/domains/channel.md),
+  [current architecture](/.agents/domains/current-architecture.md),
+  [dispatcher orchestration](/.agents/domains/dispatcher-orchestration.md),
+  [state/config](/.agents/domains/state-config-and-files.md), the
+  [product catalog](/.agents/product/README.md), maintenance configuration guidance,
+  and the historical provider-boundary design annotation. No new glossary term or
+  root routing entry is needed: existing owners retain their responsibilities.

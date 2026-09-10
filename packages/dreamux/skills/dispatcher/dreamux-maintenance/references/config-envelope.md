@@ -26,7 +26,7 @@ The complete current host envelope has independently optional `agents` and
   and an empty `workspace` object both take that default. `false` runs
   repository-free Team and Dispatcher-owned TeamMate work in the Dispatcher
   `cwd`; `true` gives each one its own plain directory under that `cwd`.
-  Onboarding preserves whichever value is already written;
+  Onboarding preserves whichever value is already written.
 - required non-empty `channels[]`;
 - required non-empty `agentRuntime` matching an `agents[].id`.
 
