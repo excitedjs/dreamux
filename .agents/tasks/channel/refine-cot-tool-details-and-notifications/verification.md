@@ -18,9 +18,15 @@ transmitted segment. The full test suite completed in 2 minutes 20 seconds.
 TeamLeader pre-review confirms that the product diff only prefixes the existing
 divider literal; it stays in the Feishu presentation owner and adds no contract,
 state, or mechanism. Product and Channel documentation reflect the new literal.
-Rush generated a patch change file; committed change-file validation follows.
+Rush generated a patch change file; committed change-file validation passed.
 
-External independent review and CI are pending. Client rendering has not been
+Implementation commit `8ef9e6fb` passed all nine CI checks on PR #404.
+Release run `34440974386` succeeded for that exact commit, including the built
+CLI smoke and packed-artifact audit. npm metadata confirms
+`@excitedjs/dreamux@0.25.1-alpha.g8ef9e6fb9676` depends on the matching
+`@excitedjs/feishu-channel@6.2.1-alpha.g8ef9e6fb9676`.
+
+External independent review is pending. Client rendering has not been
 inspected, and the running service has not been changed.
 
 ## Current correction: result status labels (2026-09-10)

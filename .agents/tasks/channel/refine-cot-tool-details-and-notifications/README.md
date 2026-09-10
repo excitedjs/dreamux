@@ -15,9 +15,16 @@
 - Path: TeamLeader-only minimal change with independent review; no solution Issue.
 - Verification: Build, lint, full test (including real Codex), typecheck:tests,
   and knowledge checks passed; see [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
-- Review: External independent review pending; prepare a draft PR as the review
-  surface under this task's recorded review handoff.
-- Next action: Obtain external review and clear CI. Merge is not yet authorized
+- PR: [Draft #404](https://github.com/excitedjs/dreamux/pull/404), targeting `next`.
+  Implementation commit `8ef9e6fb` passed all nine CI checks.
+- Review: External independent review requested on the implementation commit;
+  no verdict received yet.
+- Alpha approval (2026-09-10): "发一个 alpha 包出来".
+- Alpha: `@excitedjs/dreamux@0.25.1-alpha.g8ef9e6fb9676`, published by
+  [release run 34440974386](https://github.com/excitedjs/dreamux/actions/runs/34440974386).
+  npm metadata confirms its `@excitedjs/feishu-channel` dependency is
+  `6.2.1-alpha.g8ef9e6fb9676`. No host install or restart was requested.
+- Next action: Obtain external review. Merge is not yet authorized
   for this follow-up; the earlier merge approval applied to #403.
 
 ## Historical status-label repair (#403, merged)
