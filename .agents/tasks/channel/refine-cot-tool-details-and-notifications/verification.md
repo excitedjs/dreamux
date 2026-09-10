@@ -24,7 +24,10 @@ Passed on this amendment:
 - `node common/scripts/install-run-rush.js typecheck:tests`.
 - Task-record validation, `.agents/scripts/check.sh` (227 reachable files),
   and `git diff --check`.
-- Rush patch change file generated with `rush change --bulk`.
+- Rush patch change file generated with `rush change --bulk`; validation with
+  `rush change --verify --target-branch origin/next --no-fetch` passed.
+- Mandatory pre-commit author, staged source, gitleaks, and internal-content
+  checks passed.
 
 Existing coverage includes successful and failed text/JSON output, empty output
 with and without arguments, list-only rows and overflow fallback, whitespace,
@@ -32,9 +35,20 @@ line truncation, and long Unicode arguments/results within the event budget.
 The expectation changed because the operator selected a new visible heading;
 no assertion about output/status ordering or event limits was weakened.
 
-Independent external review and GitHub CI: pending. Product catalog and Channel
-knowledge now describe the chosen heading. No package installation, service
-restart, or live run of the patched service was requested or performed.
+Independent external review approved implementation commit `929f11a6` in
+[PR #405](https://github.com/excitedjs/dreamux/pull/405). The GitHub APPROVED
+review was verified on 2026-09-10, as were all nine successful CI checks.
+The reviewer examined the full diff and reported no findings: text/JSON order,
+empty-output statuses, list-only rows, overflow fallback, and the complete event
+budget retain their existing rules. The TeamLeader accepts that conclusion from
+the reviewed diff; no corrective change or additional review round is needed.
+
+Product catalog, Channel knowledge, and the task now describe the selected
+heading. The final closeout edits only task records, so local implementation
+gates are not repeated. Task and knowledge validation still apply, and the final
+push must pass normal GitHub CI. No package installation, service restart, or
+live run of the patched service was requested or performed. The operator then
+authorized squash-merge with "合入吧。"; final CI remains the last merge gate.
 
 ## Historical correction: result status labels (2026-09-10)
 
