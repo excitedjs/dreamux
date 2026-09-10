@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Restore a subtle sixth-level RESULT heading above the tool-result divider in Feishu COT cards.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
