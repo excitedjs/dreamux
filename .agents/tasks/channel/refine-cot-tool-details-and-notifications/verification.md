@@ -47,7 +47,12 @@ expected value, with no change to status conditions or event order. On this fina
 refinement, Rush build, lint, full test (including real Codex), and
 typecheck:tests were rerun and all passed. Exact text/JSON and empty-output
 segment assertions now require the divider without a heading. Knowledge and
-diff checks passed. Follow-up review and CI remain pending.
+diff checks passed. All nine GitHub CI checks passed on `cc3904cf`. The selected
+external reviewer approved that final implementation in a second GitHub review
+and reported no blocking findings. The review covered the heading removal and
+its interaction with the already-approved status, list, and fitting behavior.
+Only task closeout records change after that reviewed implementation; no further
+product-code or test change is included. Merge is authorized by the operator.
 
 No package has been installed into the running service and no service restart
 or live-client visual acceptance is claimed for this correction.

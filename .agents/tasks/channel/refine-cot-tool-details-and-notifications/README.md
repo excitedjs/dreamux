@@ -4,7 +4,7 @@
 
 - Goal: Show actual tool output without an extra status line; when output is
   absent, show the divider and Complete or Failed for either outcome.
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
 - Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
 - Solution review Issue: None; the operator explicitly directed development
@@ -29,13 +29,13 @@
   typecheck:tests, and the knowledge check passed. See the current correction in
   [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
 - Current PR: [#403](https://github.com/excitedjs/dreamux/pull/403), targeting
-  `next`; implementation commit `85c34b7a` passed all GitHub CI checks.
+  `next`; final implementation commit `cc3904cf` passed all nine GitHub CI checks.
 - Current review: External final review approved the status behavior at
-  `85c34b7a`. The final divider-only refinement passed all four local gates and
-  needs follow-up review and CI.
+  `85c34b7a` and approved the final divider refinement at `cc3904cf`. No blocking
+  findings remain. All four local gates passed on the final implementation.
 - Merge approval: "可以合入了", followed by the additional divider refinement.
-- Current next action: Validate and review the final divider refinement, then
-  squash-merge PR #403 into next. No installation or restart is requested.
+- Current next action: Squash-merge PR #403 into next under the operator's
+  recorded authorization. No installation or restart is requested.
 
 ## Historical feature snapshot before PR #401 merged
 
