@@ -165,14 +165,22 @@ field descriptions, so a model reads the two as one tool: 1-4 `questions`, each
 with a `header` chip, a `question`, and 2-4 `options` of `label` +
 `description`. Four fields differ, and two of them are the chat. A `chat_id` is
 required, because a chat tool needs a destination and AskUserQuestion has no
-such concept; a `message_id` is optional, and when the model names the message
-its question came out of, the card is addressed the way a reply is — into that
-message's topic, under the anchor the target router already holds for it. With
-no message named, the card is addressed at the chat, which in a topic group
-opens a topic of its own: right for a question belonging to no particular
-message, wrong for one that does. A message id from another chat is ignored
-rather than obeyed, the same rule `reply` follows, so a stale id cannot
-redirect a question into a conversation it was not meant for.
+such concept; a `message_id` is optional. When supplied, that exact id addresses
+an interactive-card reply, just as it does for `reply`, without an observed-message
+lookup or anchor substitution. Without it the card is created in the named chat;
+in a topic group it opens a topic of its own.
+
+Question rounds store their sent card id, not a precomputed routing target. On
+submission or cancellation, the card callback identifies the answered card. Feishu
+message lookup supplies its actual chat and optional thread id for existing
+chat-mode and binding routing. Expiry resolves the sent card id through the same
+path. The answer envelope and presentation anchor carry that card id, never the
+earlier human message or the round's deduplication id. A failed lookup is logged
+as a delivery failure; it is not a reason to route to a guessed parent chat.
+
+This adds one message query per settlement. The existing Feishu message reader
+exposes chat/topic metadata alongside content; Core and runtime providers acquire
+no Feishu-specific fields or routing responsibilities.
 
 The other two fields are gone. There is no `multiSelect`: the operator ruled
 multi-select out of this channel, so every question takes exactly one answer.

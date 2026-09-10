@@ -35,7 +35,6 @@ import {
   type AskUserQuestionSpec,
 } from './feishu-ask-user-card.js';
 import { DREAMUX_ACTION_KEY, type FeishuCardActionResponse } from './feishu-pairing-card.js';
-import type { FeishuTarget } from './routing/target.js';
 
 const REQUEST_ID_BYTES = 8;
 
@@ -68,11 +67,6 @@ const realTimers: AskUserTimers = {
   },
 };
 
-export interface AskUserOpenInput {
-  readonly questions: readonly AskUserQuestionSpec[];
-  readonly target: FeishuTarget;
-}
-
 export interface AskUserOpened {
   readonly requestId: string;
   readonly card: unknown;
@@ -91,7 +85,6 @@ export interface AskUserOpened {
  */
 export interface AskUserSettlement {
   readonly requestId: string;
-  readonly target: FeishuTarget;
   readonly outcome: 'submitted' | 'cancelled' | 'expired';
   readonly text: string;
   /**
@@ -101,8 +94,10 @@ export interface AskUserSettlement {
    */
   readonly sourceId: string;
   /**
-   * The question card's own message id — a real `om_` id, and the anchor the
-   * answer belongs under. Absent only if the send never reported one.
+   * The question card's own message id — a real `om_` id. It is the anchor the
+   * answer belongs under and the only address the session has for it: where
+   * the answer is delivered is read from this card, not from where the round
+   * was opened. Absent only if the send never reported one.
    */
   readonly cardMessageId?: string;
   /** Who clicked. Absent when the round closed on its timer. */
@@ -111,13 +106,11 @@ export interface AskUserSettlement {
 
 /**
  * A round that closed on its own. Unlike a click, nothing is there to repaint
- * the card from a callback response, so the message id is carried out and the
- * session patches the card in place.
+ * the card from a callback response, so the session patches the card in place
+ * — at `settlement.cardMessageId`, the same id the answer is routed from.
  */
 export interface AskUserExpiry {
   readonly settlement: AskUserSettlement;
-  /** Absent only if the card's id never came back from the send. */
-  readonly messageId?: string;
   readonly card: unknown;
 }
 
@@ -139,7 +132,7 @@ export interface AskUserRegistry {
    * that threw leave a question behind with no card, and its TTL would later
    * report an unanswered question to a model whose user was never asked one.
    */
-  open(input: AskUserOpenInput): AskUserOpened;
+  open(questions: readonly AskUserQuestionSpec[]): AskUserOpened;
   apply(event: FeishuCardActionEvent): AskUserApplyResult;
   /** Drop every open round; their cards report the round as gone on next click. */
   abandonAll(): void;
@@ -148,7 +141,6 @@ export interface AskUserRegistry {
 interface OpenRound {
   readonly requestId: string;
   readonly questions: readonly AskUserQuestionSpec[];
-  readonly target: FeishuTarget;
   readonly answers: Map<number, AskUserAnswer>;
   messageId?: string;
   timer?: unknown;
@@ -252,7 +244,6 @@ export function createAskUserRegistry(
     const cardMessageId = by?.cardMessageId ?? round.messageId;
     return {
       requestId: round.requestId,
-      target: round.target,
       outcome,
       text,
       sourceId: `ask_user_question:${round.requestId}`,
@@ -298,12 +289,11 @@ export function createAskUserRegistry(
   }
 
   return {
-    open(input): AskUserOpened {
+    open(questions): AskUserOpened {
       const requestId = newRequestId();
       const round: OpenRound = {
         requestId,
-        questions: input.questions,
-        target: input.target,
+        questions,
         answers: new Map(),
       };
       return {
@@ -317,12 +307,8 @@ export function createAskUserRegistry(
             // the round is gone; `closeRound` on a stale round would report a
             // second settlement for one question.
             if (rounds.get(requestId) !== round) return;
-            const settlement = closeRound(round, 'expired');
             options.onExpire?.({
-              settlement,
-              ...(round.messageId !== undefined
-                ? { messageId: round.messageId }
-                : {}),
+              settlement: closeRound(round, 'expired'),
               card: buildAskUserClosedCard('expired'),
             });
           }, ttlMs);

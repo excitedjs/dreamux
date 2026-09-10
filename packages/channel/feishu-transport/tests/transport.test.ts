@@ -132,6 +132,8 @@ function stubClient() {
       items: [{
         message_id: 'om_read',
         msg_type: 'interactive',
+        chat_id: 'oc_read',
+        thread_id: 'omt_topic',
         body: { content: JSON.stringify({ title: 'visible' }) },
         upper_message_id: 'om_parent',
         sender: {
@@ -716,6 +718,10 @@ describe('createFeishuTransport — message reads', () => {
         }],
         deleted: false,
         malformed: false,
+        // Where the message is, which is how a card answer finds its way back
+        // into the conversation the card is actually in.
+        chatId: 'oc_read',
+        threadId: 'omt_topic',
       }],
     })
   })
@@ -759,6 +765,7 @@ describe('createFeishuTransport — message reads', () => {
         content: '',
         mentions: [],
         deleted: true,
+        chatId: '',
         malformed: true,
       }],
     })

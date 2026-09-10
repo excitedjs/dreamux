@@ -25,3 +25,4 @@
 - [Align Codex command display parsing](/.agents/tasks/channel/align-codex-command-display/README.md) — `done`: Show the inner shell script in Codex tool rows instead of the shell launcher wrapper
 - [Display turn usage summaries](/.agents/tasks/channel/display-turn-usage-summary/README.md) — `done`: Implement native context and cumulative token usage as the final assistant activity; draft-only delivery pending live Codex verification.
 - [Refine COT tool details and notification display](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md) — `done`: After #401, show actual output without an extra status line; show Complete or Failed below a divider only when output is absent, without a RESULT heading.
+- [Keep question-card replies in their topic](/.agents/tasks/channel/fix-question-card-topic-routing/README.md) — `review`: Send explicit card replies and route settlements from the actual card's conversation.
