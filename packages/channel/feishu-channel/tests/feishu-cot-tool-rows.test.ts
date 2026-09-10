@@ -50,7 +50,7 @@ function eventTypes(events: ReadonlyArray<{ eventType: string }>): string[] {
 /**
  * The divider stands between the call and what came back, as its own segment.
  */
-const RESULT = { type: 'text', text: '\n\n---' };
+const RESULT = { type: 'text', text: '\u00a0\n\n---' };
 
 /** The segments of one `TOOL_CALL_RESULT`, whether it sent one or many. */
 function segmentsOf(event: { content: unknown }): unknown {

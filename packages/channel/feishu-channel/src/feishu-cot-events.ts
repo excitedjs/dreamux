@@ -271,9 +271,10 @@ export function toolResultOutput(resultJson: string | null): ToolResultOutput | 
  * The divider that separates what was asked from what came back.
  *
  * Its own segment, before the output rather than glued onto it, so it survives
- * whatever the output turns out to be — a `json` code block included.
+ * whatever the output turns out to be — a `json` code block included. A leading
+ * no-break space preserves the blank line, as it does in text result spacing.
  */
-const RESULT_DIVIDER = '\n\n---';
+const RESULT_DIVIDER = '\u00a0\n\n---';
 
 /**
  * One row's content, fitted to what a Feishu event may carry.

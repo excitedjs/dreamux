@@ -1,5 +1,17 @@
 # Technical solution
 
+## Current correction: divider spacing (2026-09-10)
+
+Use the minimal-change fast path. Prefix the existing Channel-owned
+`RESULT_DIVIDER` literal with U+00A0, the no-break space already used by
+`preserveSpacing`. Keep the divider as its own text segment. Update the existing
+result-segment expectations; introduce no helper, export, or shared contract.
+The existing whole-event byte fitting includes the added character.
+
+Run Rush build, lint, test, and typecheck:tests, knowledge checks, and change-file
+validation. Request independent review of the concrete diff. A green payload
+test verifies the transmitted string; client rendering requires live inspection.
+
 ## Current correction: result status labels (2026-09-10)
 
 The current result-status amendment supersedes the success and failure label

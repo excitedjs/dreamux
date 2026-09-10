@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Preserve spacing above COT tool result dividers with a leading no-break space.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -1,5 +1,15 @@
 # Requirement
 
+## Current correction: divider spacing (2026-09-10)
+
+Operator instruction: "给他 \n\n--- 前面加一个不可见字符，就和 result 的空白字符处理一样，改成 {不可见字符}\n\n---".
+
+The operator reported that removing the RESULT heading in #403 rendered poorly
+in Feishu and requested an invisible character before `\n\n---`, using the
+same character as result whitespace preservation. The divider becomes
+`\u00a0\n\n---`. This supersedes only the divider literal below; all result
+content, ordering, and status rules remain in force.
+
 ## Current correction: result status labels (2026-09-10)
 
 After reporting that Failed was much more visible than Completed, the operator

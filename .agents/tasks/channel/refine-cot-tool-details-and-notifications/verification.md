@@ -1,5 +1,28 @@
 # Verification
 
+## Current correction: divider spacing (2026-09-10)
+
+Baseline: `origin/next` at `ecfb378d`, including merged #403.
+Branch: `fix/cot-result-divider-spacing`.
+
+The result divider is now `\u00a0\n\n---`. U+00A0 matches the character
+already used by `preserveSpacing` for text results. Existing segment-output
+assertions cover text, JSON, missing output, and event budgets with this prefix;
+no new test or mechanism is needed for the literal change.
+
+Passed: `node common/scripts/install-run-rush.js build`, `lint`, `test`
+(including real Codex), and `typecheck:tests`; `.agents/scripts/check.sh`;
+`git diff --check`. The existing Feishu result tests pass with the updated
+transmitted segment. The full test suite completed in 2 minutes 20 seconds.
+
+TeamLeader pre-review confirms that the product diff only prefixes the existing
+divider literal; it stays in the Feishu presentation owner and adds no contract,
+state, or mechanism. Product and Channel documentation reflect the new literal.
+Rush generated a patch change file; committed change-file validation follows.
+
+External independent review and CI are pending. Client rendering has not been
+inspected, and the running service has not been changed.
+
 ## Current correction: result status labels (2026-09-10)
 
 Baseline: `origin/next` at `22cf0a7a53ea636daad9c939ff2185e3379bc42e`.

@@ -2,6 +2,26 @@
 
 ## Current state
 
+- Goal: Preserve the blank line before the COT result divider with the result
+  spacing character, U+00A0, after the RESULT-heading removal in #403.
+- State: `review`
+- Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
+- Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
+- Baseline: Freshly fetched `origin/next` at `ecfb378d`, including merged #403.
+- Branch: `fix/cot-result-divider-spacing`.
+- Approval (2026-09-10): The operator directly requested the exact replacement
+  `{invisible character}\n\n---` and identified result whitespace handling as
+  the reference. This authorizes the bounded divider repair and routine checks.
+- Path: TeamLeader-only minimal change with independent review; no solution Issue.
+- Verification: Build, lint, full test (including real Codex), typecheck:tests,
+  and knowledge checks passed; see [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
+- Review: External independent review pending; prepare a draft PR as the review
+  surface under this task's recorded review handoff.
+- Next action: Obtain external review and clear CI. Merge is not yet authorized
+  for this follow-up; the earlier merge approval applied to #403.
+
+## Historical status-label repair (#403, merged)
+
 - Goal: Show actual tool output without an extra status line; when output is
   absent, show the divider and Complete or Failed for either outcome.
 - State: `done`
