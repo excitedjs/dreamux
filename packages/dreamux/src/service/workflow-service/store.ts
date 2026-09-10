@@ -122,6 +122,8 @@ function parseRecord(
     team_id: teamId,
     caller_kind: callerKind as WorkflowCallerKind,
     script_hash: stringField(raw, 'script_hash', path),
+    name: optionalNullableStringField(raw, 'name', path),
+    description: optionalNullableStringField(raw, 'description', path),
     status: status as WorkflowRunStatus,
     max_concurrency: numberField(raw, 'max_concurrency', path),
     phase: nullableStringField(raw, 'phase', path),
@@ -158,6 +160,13 @@ function parseAgent(raw: unknown, path: string, position: number): WorkflowAgent
   };
 }
 
+/**
+ * Read a field a record written by an older build may not carry at all.
+ *
+ * `nullableStringField` rejects `undefined`, which is the right answer for a
+ * field every record has always had; a field added later is absent, not
+ * malformed, so it reads as null instead of failing the whole record.
+ */
 function optionalNullableStringField(
   record: Record<string, unknown>,
   field: string,

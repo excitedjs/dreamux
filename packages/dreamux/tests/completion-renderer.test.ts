@@ -4,7 +4,10 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
+import type {
+  PreparedCompletionFact,
+  WorkflowCompletionFact,
+} from '../src/service/completion-router/index.js';
 import { buildCompletionTurnText } from '../src/service/teammate-service/completion-renderer.js';
 
 const roots: string[] = [];
@@ -54,33 +57,72 @@ describe('buildCompletionTurnText', () => {
     },
   );
 
-  it.each([
-    ['completed', 'Workflow report-1 has completed.'],
-    ['failed', 'Workflow report-1 failed.'],
-    ['stopped', 'Workflow report-1 was stopped.'],
-  ] as const)('renders workflow %s wording', async (status, line) => {
+  it('states a finished run as tagged facts and never inlines its result', async () => {
     const text = await buildCompletionTurnText(
-      workflowCompletion(status, 'result'),
+      workflowCompletion('completed'),
       temporarySpillDir(),
     );
 
-    expect(text).toBe(`${line} ${NOTIFICATION} Output below:\n\nresult`);
+    expect(text).toBe(
+      [
+        NOTIFICATION,
+        '',
+        '<workflow-notification>',
+        '<task-id>report-1</task-id>',
+        '<output-file>/runs/report-1/output.json</output-file>',
+        '<status>completed — 3 agents: 3 succeeded, 0 failed</status>',
+        '<summary>Dynamic workflow "survey the tree" completed</summary>',
+        '<diagnostics>Per-agent results: /runs/report-1/journal.jsonl — one ' +
+          '{"kind":"result",...} line per settled Agent. Read it before ' +
+          'diagnosing an unexpected result.</diagnostics>',
+        '</workflow-notification>',
+      ].join('\n'),
+    );
+    // The result is the one thing the notification does not carry: no tag holds
+    // it, and no length of result can put it into the caller's context.
+    expect(text).not.toContain('<result>');
   });
 
-  it('uses the same spill directory for workflow completions', async () => {
-    const spillDir = temporarySpillDir();
+  it.each(['failed', 'stopped'] as const)(
+    'appends the %s reason to the status line',
+    async (status) => {
+      const text = await buildCompletionTurnText(
+        {
+          ...workflowCompletion(status),
+          error: 'boom',
+          agents: { total: 3, succeeded: 1, failed: 2 },
+        },
+        temporarySpillDir(),
+      );
+
+      expect(text).toContain(
+        `<status>${status} — 3 agents: 1 succeeded, 2 failed — boom</status>`,
+      );
+      expect(text).toContain(
+        `<summary>Dynamic workflow "survey the tree" ${status}</summary>`,
+      );
+    },
+  );
+
+  it('counts a single Agent in the singular', async () => {
     const text = await buildCompletionTurnText(
-      workflowCompletion('completed', 'x'.repeat(32_001)),
-      spillDir,
+      {
+        ...workflowCompletion('completed'),
+        agents: { total: 1, succeeded: 1, failed: 0 },
+      },
+      temporarySpillDir(),
     );
 
-    const prefix =
-      `Workflow report-1 has completed. ${NOTIFICATION} The output is too ` +
-      'long, so the full result was saved to a file:\n\n';
-    expect(text.startsWith(prefix)).toBe(true);
-    expect(text.slice(prefix.length)).toMatch(
-      new RegExp(`^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`, 'u'),
+    expect(text).toContain('<status>completed — 1 agent: 1 succeeded, 0 failed</status>');
+  });
+
+  it('names the run when the record predates the script\'s own words', async () => {
+    const text = await buildCompletionTurnText(
+      { ...workflowCompletion('completed'), description: null },
+      temporarySpillDir(),
     );
+
+    expect(text).toContain('<summary>Dynamic workflow report-1 completed</summary>');
   });
 });
 
@@ -98,19 +140,18 @@ function teammateCompletion(
 
 function workflowCompletion(
   status: PreparedCompletionFact['status'],
-  result: string,
-): PreparedCompletionFact {
+): WorkflowCompletionFact {
   return {
     kind: 'workflow',
     source: 'workflow',
     runId: 'report-1',
     status,
-    result,
+    description: 'survey the tree',
+    error: null,
+    agents: { total: 3, succeeded: 3, failed: 0 },
+    outputPath: '/runs/report-1/output.json',
+    journalPath: '/runs/report-1/journal.jsonl',
   };
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function temporarySpillDir(): string {

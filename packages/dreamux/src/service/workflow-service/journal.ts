@@ -50,7 +50,7 @@ export class WorkflowJournal {
   private tail: Promise<void> = Promise.resolve();
   private facts: WorkflowJournalFacts | null = null;
 
-  constructor(private readonly path: string) {}
+  constructor(readonly path: string) {}
 
   create(event: Extract<WorkflowJournalEvent, { kind: 'run' }>): Promise<void> {
     return this.enqueue(async () => {

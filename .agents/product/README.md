@@ -327,6 +327,12 @@ the same change that touches it.
   caller not to poll for completion and allow a natural turn end while waiting
   for the push; operator-requested progress inspection remains available.
   (Task: [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/README.md).)
+- **A Workflow push states facts; a TeamMate push carries its answer.** A
+  TeamMate's completion is its own words, so the push contains the result. A
+  finished Workflow run's push instead names its status, its Agent counts, and
+  the paths to its output and journal — the result stays in the run's
+  `output.json` and never enters the caller's context unasked. (Domain:
+  [model-facing-writing](/.agents/domains/model-facing-writing.md).)
 
 ## Local state and upgrades
 
