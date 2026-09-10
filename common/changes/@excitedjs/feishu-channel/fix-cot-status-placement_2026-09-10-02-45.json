@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Show tool output after a divider without a RESULT heading, and use Complete or Failed only when output is absent.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

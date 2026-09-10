@@ -6,7 +6,7 @@
  * `{type:'code', language, code}` and `{type:'list', items, more?}`).
  *
  * An expanded row reads in the order it happened: what was asked as one code
- * segment, the RESULT label, then what came back. What came back is shown by
+ * segment, a divider, then what came back. What came back is shown by
  * what it is, not by how long it is: a value that parses as JSON is
  * pretty-printed in a `json` code segment, anything else is plain text
  * (operator ruling, 2026-09-04). Plain text keeps ten content lines; every
@@ -48,11 +48,9 @@ function eventTypes(events: ReadonlyArray<{ eventType: string }>): string[] {
 }
 
 /**
- * The label that stands between the call and what came back, as its own
- * segment. The blank line keeps `RESULT` a paragraph: directly above `---` it
- * would be Markdown's setext heading instead.
+ * The divider stands between the call and what came back, as its own segment.
  */
-const RESULT = { type: 'text', text: 'RESULT\n\n---' };
+const RESULT = { type: 'text', text: '\n\n---' };
 
 /** The segments of one `TOOL_CALL_RESULT`, whether it sent one or many. */
 function segmentsOf(event: { content: unknown }): unknown {
@@ -425,20 +423,23 @@ describe('runtime-labelled tool rows', () => {
     expect(list.more).toEqual({ text: `+${paths.length - list.items!.length}` });
   });
 
-  it('puts a failure inside the result area, after the command that failed', () => {
+  it.each([
+    { output: 'command failed', segment: { type: 'text', text: 'command failed' } },
+    {
+      output: '{"error":"command failed"}',
+      segment: { type: 'code', language: 'json', code: '{\n  "error": "command failed"\n}' },
+    },
+  ])('shows the actual failure output without an extra status line: $output', ({ output, segment }) => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'failed',
       summary: 'Run the tests',
       invocation: 'npm test',
-      result_json: 'command failed',
+      result_json: output,
     }));
-    // Failed is what the call returned, so it belongs on the result side of
-    // the label, never in front of the command a reader is judging.
     expect(segmentsOf(result!)).toEqual([
       { type: 'code', language: 'bash', code: 'npm test' },
       RESULT,
-      { type: 'text', text: 'Failed' },
-      { type: 'text', text: 'command failed' },
+      segment,
     ]);
   });
 
@@ -455,21 +456,29 @@ describe('runtime-labelled tool rows', () => {
     ]);
   });
 
-  it('says Completed alone when a call succeeded with nothing to show', () => {
-    const [result] = toolCallResultEvents(toolCall({ status: 'completed' }));
-    expect(segmentsOf(result!)).toEqual({ type: 'text', text: 'Completed' });
+  it('keeps the failure area when both arguments and output are absent', () => {
+    const [result] = toolCallResultEvents(toolCall({ status: 'failed' }));
+    expect(segmentsOf(result!)).toEqual([
+      RESULT,
+      { type: 'text', text: 'Failed' },
+    ]);
   });
 
-  it('shows the arguments alone when a call succeeded and returned nothing', () => {
+  it('shows Complete in the result area when a call succeeded with nothing to show', () => {
+    const [result] = toolCallResultEvents(toolCall({ status: 'completed' }));
+    expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: 'Complete' }]);
+  });
+
+  it('shows Complete after the arguments when a call succeeded and returned nothing', () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',
       invocation: 'git add -A',
     }));
-    expect(segmentsOf(result!)).toEqual({
-      type: 'code',
-      language: 'bash',
-      code: 'git add -A',
-    });
+    expect(segmentsOf(result!)).toEqual([
+      { type: 'code', language: 'bash', code: 'git add -A' },
+      RESULT,
+      { type: 'text', text: 'Complete' },
+    ]);
   });
 
   it('prefers the invocation to the full arguments for every tool, not only Bash', () => {
@@ -524,7 +533,11 @@ describe('runtime-labelled tool rows', () => {
         status: 'completed',
         arguments_json: args,
       }));
-      expect(segmentsOf(result!)).toEqual({ type: 'code', language: 'text', code: args });
+      expect(segmentsOf(result!)).toEqual([
+        { type: 'code', language: 'text', code: args },
+        RESULT,
+        { type: 'text', text: 'Complete' },
+      ]);
     },
   );
 
@@ -551,11 +564,10 @@ describe('runtime-labelled tool rows', () => {
       result_json: '界'.repeat(3_000),
     }));
     const shown = segmentsOf(result!) as Array<{ type: string; text?: string; code?: string }>;
-    expect(shown.map((segment) => segment.type)).toEqual(['code', 'text', 'text', 'text']);
+    expect(shown.map((segment) => segment.type)).toEqual(['code', 'text', 'text']);
     expect(shown[0]!.code!.endsWith('… (truncated)')).toBe(true);
     expect(shown[1]).toEqual(RESULT);
-    expect(shown[2]).toEqual({ type: 'text', text: 'Failed' });
-    expect(shown[3]!.text!.endsWith('… (truncated)')).toBe(true);
+    expect(shown[2]!.text!.endsWith('… (truncated)')).toBe(true);
     expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
   });
 

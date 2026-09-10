@@ -2,13 +2,45 @@
 
 ## Current state
 
-- Goal: Show tool arguments and labeled results, preserve list-only rows, and
-  summarize automated inputs on Feishu COT cards.
-- State: `review`
+- Goal: Show actual tool output without an extra status line; when output is
+  absent, show the divider and Complete or Failed for either outcome.
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
 - Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
 - Solution review Issue: None; the operator explicitly directed development
   after the interactive requirement and presentation-design alignment.
+- Current repair baseline: Freshly fetched `origin/next` at
+  `22cf0a7a53ea636daad9c939ff2185e3379bc42e`, which contains merged PR #401.
+- Current repair branch: `fix/cot-status-placement`.
+- Current repair approval (2026-09-10): "从 next 切分支出来修", followed by
+  "不对，如果有输出就干掉，没有输出的时候才显示成" and the explicit
+  `RESULT`, divider, `Failed` layout. This resumes the paused work and supersedes
+  the interim selection of a status beside the RESULT title.
+  The final success-alignment instruction is
+  "成功也保持对齐，有输出就不显示 Complete ，没有输出才显示"
+  with the same RESULT/divider/Complete layout. The repair uses
+  the minimal-change fast path: Channel-owned result assembly, its behavioral
+  checks, the affected knowledge, and a Rush patch change file. List-only rows
+  and the existing event-size fallback remain unchanged.
+- Final pre-merge refinement: "稍等，额外增加一个小点，就是给 RESULT 这个leading 字符删掉，只保留 /n/n--- 这个分割线".
+  The result separator is now `\n\n---`, with no RESULT word. All status rules
+  above remain in force.
+- Current verification: Build, lint, full test (including real Codex),
+  typecheck:tests, and the knowledge check passed. See the current correction in
+  [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
+- Current PR: [#403](https://github.com/excitedjs/dreamux/pull/403), targeting
+  `next`; final implementation commit `cc3904cf` passed all nine GitHub CI checks.
+- Current review: External final review approved the status behavior at
+  `85c34b7a` and approved the final divider refinement at `cc3904cf`. No blocking
+  findings remain. All four local gates passed on the final implementation.
+- Merge approval: "可以合入了", followed by the additional divider refinement.
+- Current next action: Squash-merge PR #403 into next under the operator's
+  recorded authorization. No installation or restart is requested.
+
+## Historical feature snapshot before PR #401 merged
+
+The following implementation and delivery notes predate the current repair.
+
 - Baseline: Freshly fetched `origin/next`,
   `00b858efa2f9cfdb7fdbf829aac9cfe0856b6915`, before implementation.
 - Current review base: freshly fetched `origin/next` at
