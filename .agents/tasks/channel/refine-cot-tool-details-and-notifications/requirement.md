@@ -1,5 +1,32 @@
 # Requirement
 
+## Current correction: result status labels (2026-09-10)
+
+After reporting that Failed was much more visible than Completed, the operator
+directed "那把固定插入的失败也干掉。", then narrowed that instruction:
+"不对，如果有输出就干掉，没有输出的时候才显示成" with this exact layout:
+
+```text
+RESULT
+---
+Failed
+```
+
+The operator then aligned success:
+"成功也保持对齐，有输出就不显示 Complete ，没有输出才显示",
+followed by RESULT, the divider, and Complete.
+
+For ordinary tool rows, show RESULT and its divider immediately before actual
+output, without an additional fixed status segment for either outcome. When no
+output exists, show RESULT, the divider, and Complete or Failed according to the
+call's status, whether or not arguments exist. Use the operator's Complete
+spelling. List-only rows and the existing event-size fallback retain their
+behavior. Do not infer a status from the output text.
+
+This supersedes the earlier Failed-before-output and successful-empty-content
+requirements below and the interim "RESULT 标题同行" selection. Development was
+authorized by "从 next 切分支出来修" and resumed by these corrective instructions.
+
 ## Starting point
 
 This is a new implementation of the requested tool details and concise system

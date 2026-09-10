@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Show Complete or Failed under RESULT only when a tool call has no output.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

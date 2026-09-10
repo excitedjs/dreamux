@@ -953,7 +953,8 @@ are rendered through the result's documented rich segments instead. END means
 argument input is complete and execution starts, not that execution finished.
 The COT Message Brief defines only toolCallId on END, and messageId,
 toolCallId, content, and role on RESULT; neither documents a per-tool execution
-status field. Failure text is therefore part of this Channel's result content.
+status field. Status labels used without actual output are therefore part of
+this Channel's result content.
 
 A call with items uses the native `list` result alone, whether the call succeeded
 or failed. Items retain action icons, the existing soft byte budget, per-item
@@ -962,10 +963,11 @@ many short items can still exceed the final event budget and fall back to a
 status word. The operator declined the R2 accounting change in the task record.
 Other calls show their argument code segment without an ARGUMENTS heading,
 followed by a separate `{type: "text", text: "RESULT\n\n---"}`
-segment before the result area when output or a failure indication exists.
-The blank line keeps RESULT from becoming a Markdown setext heading. Ordinary
-failed rows put Failed after this label and before actual output, following any
-arguments. Failed without actual output still has the label and failure text.
+segment before the result area. The blank line keeps RESULT from becoming a
+Markdown setext heading. Actual output follows the divider directly, without an
+additional status line for either outcome. Without actual output, Complete or
+Failed follows the divider according to the call's status, whether or not
+arguments exist.
 Non-list result assembly fits its two variable strings in
 result-then-argument order; it has no later whole-payload dropping stages.
 

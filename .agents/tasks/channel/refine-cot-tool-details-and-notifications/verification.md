@@ -1,6 +1,42 @@
 # Verification
 
-## Current attempt: restarted from next on 2026-09-10
+## Current correction: result status labels (2026-09-10)
+
+Baseline: `origin/next` at `22cf0a7a53ea636daad9c939ff2185e3379bc42e`.
+Branch: `fix/cot-status-placement`. This is the follow-up to merged PR #401;
+all older attempts and review records below are historical.
+
+The only product-code change is the Channel's non-list result-segment assembly.
+Both outcomes now render arguments when present, RESULT and its divider, then
+actual output or the appropriate no-output status, Complete or Failed. The
+conditional header, unconditional failure line, and separate successful-empty
+fallback were removed. Provider/Core facts, list rendering, event-size fallback,
+formatting, redaction, and card lifetime are unchanged.
+
+Validation on the final implementation:
+
+- `node common/scripts/install-run-rush.js update`: passed.
+- `node common/scripts/install-run-rush.js build`: passed.
+- `node common/scripts/install-run-rush.js lint`: passed.
+- `node common/scripts/install-run-rush.js test`: passed, including the real
+  Codex integration and non-blocking-inbound live gate. Runtime tests emitted
+  expected diagnostic warnings; the command exited successfully.
+- `node common/scripts/install-run-rush.js typecheck:tests`: passed.
+- `.agents/scripts/check.sh`: passed (223 files reachable).
+- `git diff --check`: passed.
+
+Behavioral coverage includes actual failed text/JSON output without an added
+status line, successful text/JSON output, both outcomes with no output with and
+without arguments, existing lists and oversized-list fallback, and long Unicode
+arguments/output staying inside the event budget. Assertions that previously
+required Failed beside output or omitted RESULT for empty success were updated
+against the operator's new explicit requirement.
+
+Independent external review and GitHub CI remain pending. No package has been
+installed into the running service and no service restart or live-client visual
+acceptance is claimed for this correction.
+
+## Historical attempt: restarted from next on 2026-09-10
 
 The operator stopped the prior attempt and requested restoring all non-.agents
 files to next before a new developer starts. The old writer was closed, origin/next

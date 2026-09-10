@@ -235,10 +235,11 @@ the same change that touches it.
   invocation is empty does arguments_json
   supply formatted JSON or text code. Argument/invocation values are shown
   without secret masking or path rewriting, per the operator's explicit ruling;
-  generic/MCP tools follow the same rule. Before output or a failure indication,
-  a separate text segment shows RESULT and a horizontal divider. On a non-list
-  failed call, Failed follows this label and precedes actual output, after any
-  arguments; the failure area also appears when actual output is absent.
+  generic/MCP tools follow the same rule. Every non-list result has a separate
+  RESULT label and horizontal divider after any arguments. Actual output follows
+  the divider directly, without an extra status line for either outcome. When
+  output is absent, this area shows Complete or Failed from the call's status,
+  including when arguments are also absent.
   A JSON object or array is pretty-printed in
   a json code segment; other output is text with its existing indentation and
   column alignment preserved using no-break spaces. Text keeps its first ten

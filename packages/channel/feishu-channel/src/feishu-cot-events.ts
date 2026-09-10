@@ -316,10 +316,8 @@ function toolResultContent(
 
 /**
  * What an expanded row shows, in the order it happened: what was asked, then
- * the RESULT label, then what came back — a failure line included, because a
- * failure is what that call returned and belongs on the same side of the label
- * as the output explaining it. A call that succeeded with nothing to show says
- * so in one word and needs no label.
+ * the RESULT label, then what came back. Without output, Complete or Failed
+ * fills that area; actual output needs no additional status line.
  */
 function toolResultSegments(
   failed: boolean,
@@ -334,17 +332,15 @@ function toolResultSegments(
       code: argumentCode.code,
     });
   }
-  if (failed || result !== null) {
-    segments.push({ type: 'text', text: RESULT_HEADER });
-  }
-  if (failed) segments.push({ type: 'text', text: 'Failed' });
+  segments.push({ type: 'text', text: RESULT_HEADER });
   if (result !== null) {
     segments.push(result.kind === 'json'
       ? { type: 'code', language: 'json', code: result.text }
       : { type: 'text', text: result.text });
+  } else {
+    segments.push({ type: 'text', text: failed ? 'Failed' : 'Complete' });
   }
-  if (segments.length === 0) return { type: 'text', text: 'Completed' };
-  return segments.length === 1 ? segments[0] : segments;
+  return segments;
 }
 
 function shrinkForContentBudget(value: string, overflowBytes: number): string {

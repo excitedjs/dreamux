@@ -2,13 +2,37 @@
 
 ## Current state
 
-- Goal: Show tool arguments and labeled results, preserve list-only rows, and
-  summarize automated inputs on Feishu COT cards.
+- Goal: Show actual tool output without an extra status line; when output is
+  absent, show RESULT, its divider, and Complete or Failed for either outcome.
 - State: `review`
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
 - Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
 - Solution review Issue: None; the operator explicitly directed development
   after the interactive requirement and presentation-design alignment.
+- Current repair baseline: Freshly fetched `origin/next` at
+  `22cf0a7a53ea636daad9c939ff2185e3379bc42e`, which contains merged PR #401.
+- Current repair branch: `fix/cot-status-placement`.
+- Current repair approval (2026-09-10): "从 next 切分支出来修", followed by
+  "不对，如果有输出就干掉，没有输出的时候才显示成" and the explicit
+  `RESULT`, divider, `Failed` layout. This resumes the paused work and supersedes
+  the interim selection of a status beside the RESULT title.
+  The final success-alignment instruction is
+  "成功也保持对齐，有输出就不显示 Complete ，没有输出才显示"
+  with the same RESULT/divider/Complete layout. The repair uses
+  the minimal-change fast path: Channel-owned result assembly, its behavioral
+  checks, the affected knowledge, and a Rush patch change file. List-only rows
+  and the existing event-size fallback remain unchanged.
+- Current verification: Build, lint, full test (including real Codex),
+  typecheck:tests, and the knowledge check passed. See the current correction in
+  [verification.md](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
+- Current next action: Create the repair PR and request the operator-selected
+  external final review. Review and CI remain pending. No installation or restart
+  is requested.
+
+## Historical feature snapshot before PR #401 merged
+
+The following implementation and delivery notes predate the current repair.
+
 - Baseline: Freshly fetched `origin/next`,
   `00b858efa2f9cfdb7fdbf829aac9cfe0856b6915`, before implementation.
 - Current review base: freshly fetched `origin/next` at
