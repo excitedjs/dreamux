@@ -430,6 +430,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'TeammateStateEvent',
         'TeammateStatus',
         'TeammateInputEvent',
+        'TeammateInputNotice',
       ].sort(),
     );
   });

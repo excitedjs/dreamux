@@ -128,6 +128,7 @@ function input(
   content: string,
   source = 'feishu',
   sourceId: string | null = null,
+  notice: TeammateInputEvent['notice'] = null,
 ): TeammateInputEvent {
   return {
     schema_version: 1,
@@ -137,6 +138,7 @@ function input(
     source,
     source_id: sourceId,
     content,
+    notice,
     redacted: false,
   };
 }
@@ -821,8 +823,8 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     lease?.release();
   }
 
-  it.each(['task', 'task-notification', 'cron', 'system', 'a-future-source'])(
-    'shows a %s input once the recipient has an anchor',
+  it.each(['task', 'task-notification', 'a-future-source'])(
+    'shows a %s input body once the recipient has an anchor',
     async (source) => {
       const { seam, cot } = seamHarness();
       submitThroughSeam(
@@ -846,6 +848,62 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
       await seam.close();
     },
   );
+
+  /**
+   * An automated push-back is news about work, not a message anyone wrote, and
+   * its body is a paragraph of instructions addressed to the model. The card
+   * shows the one line that says which producer reported, and the model still
+   * receives the whole body — the two are different consumers of one input.
+   */
+  it.each([
+    {
+      what: 'a cron fire',
+      event: (): TeammateInputEvent =>
+        input(LEADER, 'Your scheduled job "nightly" is due …', 'cron'),
+      shown: 'CRON TRIGGERED',
+    },
+    {
+      what: 'a restart notice',
+      event: (): TeammateInputEvent =>
+        input(LEADER, 'The Dreamux dispatcher restarted; your session …', 'system'),
+      shown: 'SYSTEM RESTARTED',
+    },
+    {
+      what: 'a TeamMate completion',
+      event: (): TeammateInputEvent =>
+        input(
+          LEADER,
+          'TeamMate tm-scout has finished its task. This is an automated notification …',
+          'task-notification',
+          null,
+          { kind: 'teammate_completion', producer: 'tm-scout' },
+        ),
+      shown: 'TEAMMATE CALLBACK · tm-scout',
+    },
+    {
+      what: 'a Workflow completion',
+      event: (): TeammateInputEvent =>
+        input(
+          LEADER,
+          'Workflow wf_abc123 has completed. This is an automated notification …',
+          'task-notification',
+          null,
+          { kind: 'workflow_completion' },
+        ),
+      shown: 'WORKFLOW FINISHED',
+    },
+  ])('reduces $what to one line on the card', async ({ event, shown }) => {
+    const { seam, cot } = seamHarness();
+    submitThroughSeam(seam, LEADER, 'turn-channel', anchorAt('oc_team', 'om_1'));
+    await settle();
+
+    seam.handle(event());
+    seam.handle(message(LEADER, 'on it'));
+    await settle();
+
+    expectOpeningTexts(cot.cards[0]!, [shown, 'on it']);
+    await seam.close();
+  });
 
   it('forwards the turn end, which is the only terminal a card has', async () => {
     const { seam, cot } = seamHarness();

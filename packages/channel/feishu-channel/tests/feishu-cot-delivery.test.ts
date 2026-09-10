@@ -148,6 +148,7 @@ function inputEvent(
     source,
     source_id: sourceId,
     content,
+    notice: null,
     redacted: false,
   };
 }

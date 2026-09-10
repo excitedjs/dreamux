@@ -49,6 +49,7 @@ import {
   acceptToolCallActivity,
   type CotActivitySink,
 } from './feishu-cot-activity.js';
+import { inputDisplayContent } from './feishu-cot-presentation.js';
 import { FeishuCotIo, type FeishuCotIoHandle } from './feishu-cot-io.js';
 import { FeishuInboundCorrelations } from './feishu-inbound-anchor.js';
 import {
@@ -210,7 +211,8 @@ export class FeishuCotAdapter {
    * the operator can already see as their own Feishu message. Recognition is a
    * comparison against the ids this session issued: a `source_id` is present on
    * cron fires, task push-backs, and restart notices too, so its mere presence
-   * proves nothing.
+   * proves nothing. What is shown for an automated push-back is the label the
+   * presentation layer picks, not the notification the model reads.
    */
   onInput(event: TeammateInputEvent): void {
     const found = this.stateFor(event);
@@ -218,7 +220,7 @@ export class FeishuCotAdapter {
     if (this.inboundCorrelations.consume(event.source_id)) return;
     acceptInputMessage(this.activity, found.key, found.state, {
       displayId: `input:${randomUUID()}`,
-      content: event.content,
+      content: inputDisplayContent(event),
     });
   }
 

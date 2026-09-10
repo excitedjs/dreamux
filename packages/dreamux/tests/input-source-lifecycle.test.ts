@@ -351,6 +351,7 @@ function allCatalogEvents(): ChannelCoreEvent[] {
       source: 'channel',
       source_id: null,
       content: 'hi',
+      notice: null,
       redacted: false,
     },
     {

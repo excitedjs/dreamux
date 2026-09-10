@@ -26,6 +26,7 @@ import type {
   TeammateActivityEvent,
   TeammateActorScope,
   TeammateInputEvent,
+  TeammateInputNotice,
   TeammateStateEvent,
 } from '../src/teammate.js';
 
@@ -252,6 +253,7 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
         | 'source'
         | 'source_id'
         | 'content'
+        | 'notice'
         | 'redacted'
       >
     >();
@@ -266,6 +268,7 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
       source: 'feishu',
       source_id: 'message-fixture',
       content: 'hello',
+      notice: null,
       redacted: false,
     };
 
@@ -274,6 +277,34 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
     // issued. Presence proves nothing: cron fires, task push-backs, and restart
     // notices carry a source id too.
     expect(Object.keys(input)).not.toContain('turn_id');
+  });
+
+  it('names the producer only for the push-backs whose provenance name cannot', () => {
+    const callback: TeammateInputEvent = {
+      schema_version: 1,
+      occurred_at: 1,
+      teammate_name: 'agent-1',
+      role: 'teammate',
+      team_name: 'team-a',
+      kind: 'teammate.input',
+      source: 'task-notification',
+      source_id: null,
+      content: 'TeamMate tm-1 has finished its task. …',
+      notice: { kind: 'teammate_completion', producer: 'tm-1' },
+      redacted: false,
+    };
+
+    // The body still carries the whole notification the model reads; the
+    // notice is the same fact stated as data, for a display that shows one line.
+    expect(callback.notice).toEqual({ kind: 'teammate_completion', producer: 'tm-1' });
+    expect(callback.content).toContain('has finished its task');
+    // A Workflow push-back names no producer: the operator's display shows none.
+    assertType<
+      Equal<
+        keyof Extract<TeammateInputNotice, { kind: 'workflow_completion' }>,
+        'kind'
+      >
+    >();
   });
 
   it('teammate.activity nests the whole runtime vocabulary under one kind, addressed by the actor alone', () => {

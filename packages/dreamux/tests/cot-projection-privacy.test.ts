@@ -35,6 +35,7 @@ import {
 } from './helpers/event-harness.js';
 
 const CWD = '/workspace/repo';
+const HOME = '/home/operator';
 
 function harness(overrides: { hasSources?: boolean } = {}) {
   const publisher = createCapturingPublisher(overrides.hasSources ?? true);
@@ -42,7 +43,7 @@ function harness(overrides: { hasSources?: boolean } = {}) {
   const projection = createConversationProjection({
     coreEvents: publisher,
     log: logger,
-    homePathPrefixes: [],
+    homePathPrefixes: [HOME],
   });
   const identity = makeIdentity({ team_id: 'alpha', name: 'scout', cwd: CWD });
   const agent: ProjectedAgent = { identity, role: 'teammate' };
@@ -76,6 +77,7 @@ function projectPrompt(
     source: 'feishu',
     sourceId: null,
     text,
+    notice: null,
     occurredAt: Date.now(),
   });
 }
@@ -372,7 +374,7 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
   });
 
-  it('renames workspace paths inside the tool summary and invocation, like every other payload', () => {
+  it('renames workspace paths in the summary and items while the call itself stays verbatim', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -392,11 +394,16 @@ describe('conversation projection: content visible after redaction is unchanged,
 
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary).toBe('src/a.ts');
-    expect(tool.kind === 'tool.call' && tool.invocation).toBe('cat src/a.ts');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
+    // The command a reader is asked to judge is the command that ran: the two
+    // argument members skip the redactor, paths included (operator ruling,
+    // 2026-09-09: "参数全给我放开，不要做脱敏了").
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe(`cat ${CWD}/src/a.ts`);
+    expect(tool.kind === 'tool.call' && tool.arguments_json)
+      .toBe(JSON.stringify({ command: `cat ${CWD}/src/a.ts` }));
   });
 
-  it('passes a long summary through whole and folds a redacted invocation into redacted', () => {
+  it('passes a long summary through whole and leaves a secret-shaped invocation alone', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -409,14 +416,46 @@ describe('conversation projection: content visible after redaction is unchanged,
       invocation: 'post https://example.test with Bearer abcDEF123.ghiJKL456-_9',
       items: [],
       status: 'started',
-      arguments: null,
+      arguments: { token: 'abc123secret', home: `${HOME}/keys` },
       result: null,
       error: null,
     });
 
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(100_000);
-    expect(tool.kind === 'tool.call' && tool.invocation).toBe('post https://example.test with Bearer <redacted>');
+    expect(tool.kind === 'tool.call' && tool.invocation)
+      .toBe('post https://example.test with Bearer abcDEF123.ghiJKL456-_9');
+    expect(tool.kind === 'tool.call' && tool.arguments_json)
+      .toBe(JSON.stringify({ token: 'abc123secret', home: `${HOME}/keys` }));
+    // Nothing the redactor still owns fired, so the row is not marked redacted:
+    // the argument members never count toward it.
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
+  });
+
+  it('keeps the redactor on every member beside the two argument ones', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'echo with token: dummy',
+      invocation: 'echo "token: dummy"',
+      items: [`${CWD}/src/a.ts`],
+      status: 'failed',
+      arguments: { command: 'echo "token: dummy"' },
+      result: null,
+      error: 'failed with token: dummy',
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.summary).toBe('echo with token: <redacted>');
+    expect(tool.kind === 'tool.call' && tool.result_json).toBe('failed with token: <redacted>');
+    expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
+    expect(tool.kind === 'tool.call' && tool.invocation)
+      .toBe('echo "token: dummy"');
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 

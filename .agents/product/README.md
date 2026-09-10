@@ -223,30 +223,40 @@ the same change that touches it.
   the body the operator can already see in the chat.
   (Ruling: 「所有的 user 消息都隐藏即可」, 2026-09-03, in
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
-- **A tool row says what the call was, not how the runtime spelled it.** A
-  tool row on the Feishu card is titled the way the runtime's own UI would
-  title it — a command's stated purpose, the file a read or edit touched, the
-  pattern a search ran, the task a sub-agent was given — carries the icon for
-  what it did, and expands to the call in the caller's own notation (the
-  shell command line, the task text) before its output. A read or edit that
-  succeeded expands to the files it touched as pills and nothing more; only
-  a failed one still shows its diff and output. A row no runtime could label
-  — today every MCP tool, the Channel's own reply/react/list_chat_bots
-  included — shows its tool name behind a generic app icon with its arguments
-  hidden; its output still expands. An output that parses as JSON is
-  pretty-printed in a json code segment; any other output is plain text
-  that keeps its indentation and column alignment (each space that begins
-  a line or sits in a run is sent as a no-break space, because the client
-  collapses ordinary runs; single spaces between words still wrap).
-  A non-JSON tool result keeps its first ten content lines and gains the English
-  truncation marker when an eleventh line exists; a terminal LF or CRLF does not
-  invent another content line. A JSON object or array bypasses that line rule.
-  Every card string is still finally bounded by Feishu's per-event limit, never
-  earlier in Core. Raw
-  JSON arguments appear nowhere on the card. Codex web searches are rows too.
-  The card's own words — row verbs (Read, Edit, Search, List), the Completed and
-  Failed status lines, and the truncation marker — are English. Dreamux's own teammate tools (spawn,
-  send, close, workflow) appear as plain unlabelled rows for now.
+- **Tool details use the runtime's facts.** Tool rows retain the fixed
+  Read/List/Search/Edit action words before a summary, with the matching action
+  name when no summary exists. The run action uses its summary directly or Bash
+  when untitled. Tools without an action use the summary directly or tool_name
+  when untitled, without the former 80-byte name cap. Rows keep the icon for their action.
+  A call with items expands to its list of pills
+  alone, including when it failed. Other calls show arguments as a code
+  segment without an ARGUMENTS heading. Nonempty invocation always wins: the
+  existing run action uses bash code, other actions use text code. Only when
+  invocation is empty does arguments_json
+  supply formatted JSON or text code. Argument/invocation values are shown
+  without secret masking or path rewriting, per the operator's explicit ruling;
+  generic/MCP tools follow the same rule. Before output or a failure indication,
+  a separate text segment shows RESULT and a horizontal divider. On a non-list
+  failed call, Failed follows this label and precedes actual output, after any
+  arguments; the failure area also appears when actual output is absent.
+  A JSON object or array is pretty-printed in
+  a json code segment; other output is text with its existing indentation and
+  column alignment preserved using no-break spaces. Text keeps its first ten
+  content lines and adds the English truncation marker when more exist; a
+  terminal newline is not another line. All segments share Feishu's per-event
+  byte limit, applied in the Channel. Other display fields retain their existing
+  Core redaction rules. Card-owned labels
+  remain English. Tool details still arrive through the existing native
+  START/END/RESULT event sequence.
+  (Task: [COT tool details and notifications](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md).)
+- **Automated input is summarized on the COT card.** A TeamMate completion is
+  `TEAMMATE CALLBACK` followed by its producer's name, a due cron fire is
+  `CRON TRIGGERED`, a Workflow callback is `WORKFLOW FINISHED` without a name,
+  and the current Dispatcher restart input is `SYSTEM RESTARTED`. These are
+  human display labels; the receiving agent still gets the full original body.
+  Actual task submissions and ordinary input remain visible, and the Channel
+  still suppresses its own already-visible inbound body by source ID.
+  (Task: [COT tool details and notifications](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md).)
 - **A compaction is one line.** When the runtime compacts its context, the
   card shows `COMPACTED SESSION` as an assistant message, and nothing of the
   summary the runtime wrote for itself. The uppercase label is specified in
@@ -256,8 +266,8 @@ the same change that touches it.
   feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」, 2026-09-03, in
   [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md).)
 - **A displayed input is announced when it is submitted, and always ends.** The
-  input appears with the text that was submitted, before any runtime has
-  accepted it, so a submission that fails is visible together with what failed.
+  input appears before any runtime accepts it, using its body or the automated
+  input label described above, so a submission that fails remains visible.
   Anything no runtime accepted — a stopped, skipped, ambiguous, or failed
   admission — ends its own display as a failure, carrying the reason, instead of
   leaving a surface open forever. That includes a completion push-back whose

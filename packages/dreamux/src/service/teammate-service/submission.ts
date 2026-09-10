@@ -22,16 +22,19 @@
  * converting its Markdown fences would corrupt exactly the text the source
  * meant the model to read.
  */
+import type { TeammateInputNotice } from '@excitedjs/dreamux-types';
+
 import type { TurnCompletionDelivery } from './turn-recording.js';
 
 /**
  * One admitted submission, as `TeammateService` accepts it.
  *
- * The first four fields are the complete model-facing input. The last three are
- * Core-only facts that are never rendered: `sourceId` is the key of the bounded
- * duplicate ledger, `intent` is the durable recovery subject of the turn Core
- * actually admits, and `deliverCompletion` is the optional callback for a
- * Core-side initiator awaiting this turn's completion.
+ * The first four fields are the complete model-facing input. The rest are
+ * Core-only facts that are never rendered: `notice` says which producer an
+ * automated push-back reports, `sourceId` is the key of the bounded duplicate
+ * ledger, `intent` is the durable recovery subject of the turn Core actually
+ * admits, and `deliverCompletion` is the optional callback for a Core-side
+ * initiator awaiting this turn's completion.
  */
 export interface TeammateSubmitInput {
   /** Open, owner-selected provenance name. Rendered as the envelope root. */
@@ -42,6 +45,12 @@ export interface TeammateSubmitInput {
   readonly text: string;
   /** One optional trailing note, rendered once after the source block. */
   readonly reminder?: string;
+  /**
+   * Which producer's work an automated push-back reports. Never rendered: the
+   * body already says it in the words the model reads, and this is the same
+   * fact for the display that shows a line instead of that body.
+   */
+  readonly notice?: TeammateInputNotice;
   /** Stable per-source id for Core's duplicate ledger. Never rendered. */
   readonly sourceId?: string;
   /** Recovery subject for a newly admitted turn. Never rendered. */
