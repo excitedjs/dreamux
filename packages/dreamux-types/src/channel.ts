@@ -29,7 +29,7 @@ import type {
   ProviderFactory,
   ProviderOnboard,
 } from './provider.js';
-import type { TeamStateEvent } from './team.js';
+import type { TeamCreatedEvent, TeamStateEvent } from './team.js';
 import type {
   TeammateActivityEvent,
   TeammateInputEvent,
@@ -45,6 +45,7 @@ import type {
  * absent.
  */
 export type ChannelCoreEvent =
+  | TeamCreatedEvent
   | TeamStateEvent
   | TeammateStateEvent
   | TeammateInputEvent

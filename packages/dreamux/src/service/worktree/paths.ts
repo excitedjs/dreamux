@@ -42,7 +42,7 @@ function managedWorkRoot(dispatcherWorkspace: string): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), WORK_SUBDIR);
 }
 
-/** `<workspace>` — direct dispatcher cwd when workspace isolation is disabled. */
+/** `<workspace>` — the dispatcher cwd itself, shared when workspace isolation is off. */
 export function directWorkspaceWorkPath(input: {
   dispatcherWorkspace: string;
   slug?: string;

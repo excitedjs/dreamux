@@ -36,6 +36,7 @@ import type {
 import { AgentNameRegistry } from '../../src/service/agent-entity/identity-store.js';
 import { AdmissionLedger } from '../../src/service/teammate-service/admission-ledger.js';
 import { CompletionDeliveryPolicy } from '../../src/service/completion-router/index.js';
+import type { DispatcherCoreEventPublisher } from '../../src/service/dispatcher-core-events/index.js';
 import { TeamCollection } from '../../src/service/team-collection/index.js';
 import type { TeamCollectionOptions } from '../../src/service/team-collection/types.js';
 import { TeamStore } from '../../src/service/team-collection/store.js';
@@ -107,6 +108,22 @@ export async function buildTeamCollectionHarness(input?: {
    * the next one" case) rather than a real random suffix.
    */
   nameSuffixGenerator?: () => string;
+  /** Optional observable Core-event sink for lifecycle publication tests. */
+  coreEvents?: DispatcherCoreEventPublisher;
+  /**
+   * Produce the dispatcher config from a real config file instead of the
+   * literal below.
+   *
+   * The literal writes `workspace` out explicitly, so a test using it can only
+   * ever observe the value it wrote — it cannot show what an operator who
+   * omits the block actually gets. A test whose subject is a loader default
+   * loads the config the way the server does; the harness still owns the temp
+   * directories and their cleanup.
+   */
+  configFor?: (input: {
+    dispatcherId: string;
+    dispatcherCwd: string;
+  }) => Promise<DreamuxConfig>;
 }): Promise<TeamCollectionHarness> {
   const dispatcherId = input?.dispatcherId ?? 'harness-dispatcher';
   const dreamuxRoot = await mkdtemp(join(tmpdir(), 'dreamux-root-'));
@@ -116,25 +133,28 @@ export async function buildTeamCollectionHarness(input?: {
   const workspaceCwd = await mkdtemp(join(tmpdir(), 'dreamux-workspace-'));
   process.env['DREAMUX_ROOT'] = dreamuxRoot;
 
-  const config: DreamuxConfig = {
-    agents: input?.agentRuntime === undefined
-      ? {}
+  const config: DreamuxConfig =
+    input?.configFor !== undefined
+      ? await input.configFor({ dispatcherId, dispatcherCwd: workspaceCwd })
       : {
-          [input.agentRuntime.id]: {
-            provider: 'harness-provider',
-            config: {},
-          } as unknown as ResolvedAgentConfig,
-        },
-    dispatchers: [{
-      id: dispatcherId,
-      cwd: workspaceCwd,
-      enabled: true,
-      workspace: { enabled: false },
-      channels: [],
-      agentRuntime: 'unused-default',
-      runtime: { provider: 'unused', config: {} },
-    }],
-  };
+          agents: input?.agentRuntime === undefined
+            ? {}
+            : {
+                [input.agentRuntime.id]: {
+                  provider: 'harness-provider',
+                  config: {},
+                } as unknown as ResolvedAgentConfig,
+              },
+          dispatchers: [{
+            id: dispatcherId,
+            cwd: workspaceCwd,
+            enabled: true,
+            workspace: { enabled: false },
+            channels: [],
+            agentRuntime: 'unused-default',
+            runtime: { provider: 'unused', config: {} },
+          }],
+        };
 
   const teamCollectionRoot = dispatcherTeamDir(dispatcherId);
   const names = new AgentNameRegistry({
@@ -172,6 +192,7 @@ export async function buildTeamCollectionHarness(input?: {
     }),
     log: silentLog,
     workflowLog: silentLog,
+    ...(input?.coreEvents !== undefined ? { coreEvents: input.coreEvents } : {}),
     ...(input?.nameSuffixGenerator !== undefined
       ? { nameSuffixGenerator: input.nameSuffixGenerator }
       : {}),
@@ -197,6 +218,7 @@ export async function buildTeamCollectionHarness(input?: {
 /** A cold collection over the same durable Team root, as after a restart. */
 export function buildRestartedTeamCollection(
   harness: TeamCollectionHarness,
+  input?: { coreEvents?: DispatcherCoreEventPublisher },
 ): TeamCollection {
   return new TeamCollection({
     dispatcherId: harness.dispatcherId,
@@ -217,6 +239,7 @@ export function buildRestartedTeamCollection(
     }) as unknown as ReturnType<TeamCollectionOptions['leaderMcp']>,
     log: silentLog,
     workflowLog: silentLog,
+    ...(input?.coreEvents !== undefined ? { coreEvents: input.coreEvents } : {}),
   });
 }
 

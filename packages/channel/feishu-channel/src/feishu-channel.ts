@@ -15,6 +15,7 @@
  * Channel's own commit queue, and releases the bot.
  */
 import type {
+  ChannelCoreEvent,
   ChannelCorePort,
   ChannelEventSubscription,
   ChannelMcpCaller,
@@ -220,30 +221,41 @@ export class FeishuChannelSession {
     this.lifecycle = lifecycle;
     this.cot.start(() => lifecycle.fence.isCurrent());
     // The single subscription, demultiplexed here because this session owns
-    // both consumers. Nothing awaits: the COT seam projects synchronously, and
-    // a closed Team's routes are removed through the store's ordinary commit,
-    // queued rather than waited on, because the event stream must not stall
-    // behind a disk write. Until that commit lands one more message can still
-    // route to the closed Team — Core rejects it before admission, and the
-    // fallback removes the route again on its way to the Dispatcher Agent.
+    // every consumer. Nothing awaits: the COT seam projects synchronously, a
+    // closed Team's routes are removed through the store's ordinary commit, and
+    // a creation this Channel was named in binds its group as a tracked
+    // background task — all queued rather than waited on, because the event
+    // stream must not stall behind a disk write or a Feishu round trip. Until
+    // the close commit lands one more message can still route to the closed
+    // Team — Core rejects it before admission, and the fallback removes the
+    // route again on its way to the Dispatcher Agent.
+    const listenerFailed = (event: ChannelCoreEvent, error: unknown): void => {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          channel_id: this.opts.channelId,
+          event_kind: event.kind,
+          err: { message: errorMessage(error) },
+        },
+        'Feishu core-event listener failed',
+      );
+    };
     this.subscription = port.events.subscribe((event) => {
       try {
         this.cot.handle(event);
+        if (event.kind === 'team.created') {
+          if (!lifecycle.fence.isCurrent()) return;
+          void this.track(lifecycle, this.bindings.bindCreatedTeam(event))
+            .catch((error: unknown) => listenerFailed(event, error));
+          return;
+        }
         if (event.kind !== 'team.state' || event.status !== 'closed') return;
         void this.routeReconciliation.forgetTeamRoutes(
           event.team_name,
           'team_closed',
         );
       } catch (error) {
-        this.opts.log.warn(
-          {
-            dispatcher_id: this.opts.dispatcherId,
-            channel_id: this.opts.channelId,
-            event_kind: event.kind,
-            err: { message: errorMessage(error) },
-          },
-          'Feishu core-event listener failed',
-        );
+        listenerFailed(event, error);
       }
     });
   }

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Default omitted dispatcher workspace policies to false so repository-free Teams and TeamMates use the dispatcher cwd; preserve explicit isolation and existing agent workspaces. Accept optional provider-owned team.create context and publish it once after fresh creation without persisting or replaying it.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

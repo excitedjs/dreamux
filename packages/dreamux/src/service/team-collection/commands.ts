@@ -21,6 +21,7 @@ import type {
   AgentRuntimeInterruptOutcome,
   AgentRuntimeSkillSource,
   CoreCommandDefinition,
+  JsonValue,
   TeamCreateCommand,
   TeamSummary,
   TeamSubmitCommand,
@@ -41,6 +42,7 @@ import {
   mustRecord,
   optionalBooleanField,
   optionalNonBlankString,
+  optionalRecordField,
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
@@ -134,6 +136,12 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
           ['agent_runtime'],
         ),
         repo: REPO_REQUEST_SCHEMA,
+        // Opaque to Core: only `provider` is a Core-readable name, and the
+        // payload is whatever that provider's own contract says it is.
+        context: objectSchema(
+          { provider: NON_EMPTY_STRING, payload: OBJECT },
+          ['provider', 'payload'],
+        ),
       },
       ['request_id', 'name_prefix', 'intent', 'leader'],
     ),
@@ -145,6 +153,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       const identity = optionalNonBlankString(leader, 'identity');
       const parsedSkillSources = optionalParsedSkillSources(leader);
       const repo = repoRequest(params, 'repo');
+      const context = optionalRecordField(params, 'context').context;
       const command: TeamCreateCommand = {
         request_id: mustNonBlankString(params, 'request_id'),
         name_prefix: mustNonBlankString(params, 'name_prefix'),
@@ -158,6 +167,14 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
             : {}),
         },
         ...(repo !== null ? { repo } : {}),
+        ...(context !== undefined
+          ? {
+              context: {
+                provider: mustNonEmptyString(context, 'provider'),
+                payload: mustRecord(context, 'payload') as Record<string, JsonValue>,
+              },
+            }
+          : {}),
       };
       return {
         command,
@@ -199,6 +216,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
             : {}),
           ...(skillSources !== null ? { skillSources } : {}),
         },
+        ...(command.context !== undefined ? { context: command.context } : {}),
       });
     },
   };

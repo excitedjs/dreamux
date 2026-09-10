@@ -1,7 +1,7 @@
 /**
  * Coverage cell C (event half), Stage 9 node "core-events".
  *
- * Covers the seven-kind Core event catalog, the dispatcher-scoped live bus's
+ * Covers the five-kind Core event catalog, the dispatcher-scoped live bus's
  * best-effort delivery and subscription-lifecycle guarantees
  * (`service/dispatcher-core-events/`), the `teammate.state` role catalog and
  * `team.state` redundant-aggregate republication rule
@@ -68,6 +68,39 @@ function baseScope(overrides: Partial<{
 /** One minimal, schema-valid fixture for every kind the catalog union admits. */
 function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
   return {
+    'team.created': {
+      schema_version: 1,
+      kind: 'team.created',
+      occurred_at: Date.now(),
+      summary: {
+        team_name: 'alpha',
+        status: 'running',
+        intent: 'ship it',
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        closed_at: null,
+        close_note: null,
+        leader_name: 'alpha-leader',
+        leader_agent_runtime: 'fixture-runtime',
+        runtime_cwd: '/workspace/repo',
+        leader_state: 'running',
+        leader_session_id: null,
+        leader_runtime_status: null,
+        leader_intent: 'lead the work',
+        leader_last_error: null,
+        leader_closed_at: null,
+        leader_close_note: null,
+        member_count: 0,
+        source_repo: null,
+        worktree_mode: 'reuse-cwd',
+        worktree_cleanup_mode: 'keep',
+        worktree_cleanup: 'not-managed',
+        metadata: {
+          provider: 'builtin:feishu',
+          payload: { chat_id: 'oc_fixture', title: 'Fixture Team' },
+        },
+      },
+    },
     'team.state': {
       schema_version: 1,
       kind: 'team.state',
@@ -153,7 +186,7 @@ function makeTeamRecordInput(
   };
 }
 
-describe('the published Core event catalog is exactly four kinds', () => {
+describe('the published Core event catalog is exactly five kinds', () => {
   it('accepts a schema-valid fixture of every catalog kind', () => {
     const fixtures = catalogFixtures();
     for (const [kind, event] of Object.entries(fixtures)) {
@@ -164,10 +197,10 @@ describe('the published Core event catalog is exactly four kinds', () => {
   });
 
   it('rejects every deleted or never-added event kind', () => {
-    // Binding, Collaboration Space, Workflow, scheduler, host-maintenance, and
-    // a separate creation event are all deliberately absent from the union
-    // (see channel.ts doc comment); a stray publisher naming one of these
-    // kinds must be dropped, not silently accepted.
+    // Binding, Collaboration Space, Workflow, scheduler, and host-maintenance
+    // events are all deliberately absent from the union (see channel.ts doc
+    // comment); a stray publisher naming one of these kinds must be dropped,
+    // not silently accepted.
     const rejectedKinds = [
       'team.binding',
       'channel.binding.route',

@@ -1,4 +1,4 @@
-import type { TeamSummary } from '@excitedjs/dreamux-types';
+import type { TeamCreateContext, TeamSummary } from '@excitedjs/dreamux-types';
 
 import type { WorktreeManager } from '../worktree/manager.js';
 import { requireLifecycleText } from '../agent-entity/types.js';
@@ -120,6 +120,8 @@ export class TeamCollection {
     requestId: string;
     payloadHash: string;
     options: TeamCreateInput;
+    /** Projected onto this answer and, for a fresh creation, its event. */
+    context?: TeamCreateContext;
   }): Promise<TeamSummary> {
     return this.createRequestLifecycle.run(input.requestId, async () => {
       const { namePrefix, ...options } = input.options;
@@ -132,7 +134,10 @@ export class TeamCollection {
           );
         }
         // Read the accepted Team without materializing it or resubmitting work.
-        return this.summaryFromRecord(accepted);
+        return withCreateMetadata(
+          await this.summaryFromRecord(accepted),
+          input.context,
+        );
       }
       const outcome: { created: TeamService | null } = { created: null };
       const teamName = await allocateConcreteNameAsync({
@@ -168,7 +173,17 @@ export class TeamCollection {
             `${JSON.stringify(teamName)} without publishing a Team record`,
         );
       }
-      return created.status();
+      const summary = withCreateMetadata(await created.status(), input.context);
+      // Only a fresh creation publishes: a replay answers from the record it
+      // already accepted, and republishing there would tell every Channel to
+      // act again on work that already happened.
+      this.opts.coreEvents?.publish(this.dispatcherId, {
+        schema_version: 1,
+        kind: 'team.created',
+        occurred_at: Date.now(),
+        summary,
+      });
+      return summary;
     });
   }
 
@@ -361,4 +376,19 @@ export class TeamCollection {
   async stopForHost(): Promise<void> {
     await this.runtimes.stopForHost();
   }
+}
+
+/**
+ * The creation answer, carrying the context this creation was asked for.
+ *
+ * Creation-only by construction: nothing writes it to the Team record, so the
+ * next ordinary read of the same Team reconstructs a summary without it.
+ */
+function withCreateMetadata(
+  summary: TeamSummary,
+  context: TeamCreateContext | undefined,
+): TeamSummary {
+  return context === undefined
+    ? summary
+    : { ...summary, metadata: { provider: context.provider, payload: context.payload } };
 }

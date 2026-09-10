@@ -5,11 +5,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type {
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
+  JsonValue,
+  TeamCreateContext,
+  TeamSummary,
 } from '@excitedjs/dreamux-types';
 
+import type { CoreCommandPort } from '../src/command/port.js';
+import type { TeamCollection } from '../src/service/team-collection/index.js';
 import { teamCreatePayloadHash } from '../src/service/team-collection/create-request.js';
 import { IdempotencyConflictError } from '../src/service/team-collection/errors.js';
 
+import { channelContext, createCommandHarness } from './helpers/command-harness.js';
 import {
   buildRestartedTeamCollection,
   buildTeamCollectionHarness,
@@ -18,6 +24,7 @@ import {
   type TeamCollectionHarness,
 } from './helpers/team-harness.js';
 import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
+import { createCapturingPublisher } from './helpers/event-harness.js';
 
 /**
  * `team.create` idempotency (technical-design/final.md §1-4): the Team record
@@ -41,6 +48,19 @@ afterEach(async () => {
 function hashOf(payload: unknown): string {
   return teamCreatePayloadHash(payload);
 }
+
+/**
+ * One provider's opaque creation context; Core never reads inside `payload`.
+ *
+ * `satisfies` rather than an annotation: this fixture is also sent as a raw
+ * Command payload, and a declared interface type carries no index signature to
+ * make it a `JsonValue`. Checking it against the contract while keeping its
+ * literal type is what lets the same fixture stand on both sides.
+ */
+const feishuContext = {
+  provider: 'builtin:feishu',
+  payload: { chat_id: 'oc_team_create', title: 'Team Create Contract' },
+} satisfies TeamCreateContext;
 
 /** Every file this harness's whole `DREAMUX_ROOT` durably wrote, recursively. */
 async function allFiles(root: string): Promise<string[]> {
@@ -277,7 +297,8 @@ describe('team.create idempotency', () => {
   });
 
   it('leaves a durable, replayable acceptance even when creation fails AFTER the record is published', async () => {
-    harness = await buildTeamCollectionHarness();
+    const publisher = createCapturingPublisher();
+    harness = await buildTeamCollectionHarness({ coreEvents: publisher });
     submission = mockLeaderSubmissionRejected(new Error('runtime boom'));
     // A prompt is what makes the leader's first submission happen at all — a
     // promptless creation reaches no runtime, so it could never fail here.
@@ -299,6 +320,10 @@ describe('team.create idempotency', () => {
         },
       }),
     ).rejects.toThrow(/runtime boom/);
+    // Creation never completed, so no Channel is told to act on it.
+    expect(
+      publisher.published.filter(({ event }) => event.kind === 'team.created'),
+    ).toEqual([]);
 
     // The record the failed attempt published is still there, still carrying
     // the request identity, and now durably closed — not silently discarded.
@@ -319,6 +344,9 @@ describe('team.create idempotency', () => {
     });
     expect(replay.status).toBe('closed');
     expect(replay.team_name).toBe(all[0]?.team_id);
+    expect(
+      publisher.published.filter(({ event }) => event.kind === 'team.created'),
+    ).toEqual([]);
   });
 
   it('serializes two concurrent createFromRequest calls under the same request id into one created Team', async () => {
@@ -347,5 +375,147 @@ describe('team.create idempotency', () => {
 
     const all = await harness.seedStore.list();
     expect(all).toHaveLength(1);
+  });
+});
+
+/**
+ * The same creation context, at the surface that actually carries it.
+ *
+ * The Command owns the declared payload schema, the parse into a
+ * `TeamCreateContext`, and the canonical hash — so a test that calls
+ * `createFromRequest` with a hash it computed itself proves nothing about
+ * whether `team.create` reads, hashes, or forwards `context` at all. These go
+ * through the real registry instead, standing the real `TeamCollection` where
+ * production stands it: `DispatcherService.createTeam` is a one-line forward
+ * to `createFromRequest`, and there is nothing else between the two.
+ */
+describe('team.create context, through the Command a Channel invokes', () => {
+  function commandPortOver(collection: () => TeamCollection): CoreCommandPort {
+    return createCommandHarness({
+      dispatcherOverrides: {
+        createTeam: (input) =>
+          collection().createFromRequest(
+            input as Parameters<TeamCollection['createFromRequest']>[0],
+          ),
+      },
+    }).port;
+  }
+
+  /** One valid `team.create` payload, as a Channel sends it. */
+  function createPayload(extra: Record<string, JsonValue> = {}): JsonValue {
+    return {
+      request_id: 'req-created-event',
+      name_prefix: 'alpha',
+      intent: 'bind the external conversation',
+      leader: { agent_runtime: 'fake' },
+      ...extra,
+    };
+  }
+
+  it('projects create context onto the fresh answer and publishes team.created once, never on replay', async () => {
+    const publisher = createCapturingPublisher();
+    harness = await buildTeamCollectionHarness({ coreEvents: publisher });
+    let target: TeamCollection = harness.collection;
+    const port = commandPortOver(() => target);
+    const request = createPayload({ context: feishuContext });
+    const createdEvents = (): unknown[] =>
+      publisher.published.filter(({ event }) => event.kind === 'team.created');
+
+    const created = (await port.invoke(
+      channelContext(),
+      'team.create',
+      request,
+    )) as unknown as TeamSummary;
+    expect(created.metadata).toEqual(feishuContext);
+    // The context lives on this answer and this event only: it is never
+    // written to the Team record, so the ordinary read has nothing to return.
+    expect(await target.summary(created.team_name)).not.toHaveProperty('metadata');
+    expect(createdEvents()).toHaveLength(1);
+    expect(createdEvents()[0]).toMatchObject({
+      dispatcherId: harness.dispatcherId,
+      event: { schema_version: 1, kind: 'team.created', summary: created },
+    });
+
+    // A replay answers from the accepted record and projects the same context,
+    // but nothing was created, so nothing is announced a second time.
+    expect(await port.invoke(channelContext(), 'team.create', request)).toEqual(created);
+    expect(createdEvents()).toHaveLength(1);
+
+    target = buildRestartedTeamCollection(harness, { coreEvents: publisher });
+    expect(await port.invoke(channelContext(), 'team.create', request)).toEqual({
+      ...created,
+      leader_runtime_status: null,
+    });
+    expect(createdEvents()).toHaveLength(1);
+  });
+
+  it('creates without metadata when the caller sends no context, and conflicts when a replay adds one', async () => {
+    const publisher = createCapturingPublisher();
+    harness = await buildTeamCollectionHarness({ coreEvents: publisher });
+    const target = harness.collection;
+    const port = commandPortOver(() => target);
+
+    const created = (await port.invoke(
+      channelContext(),
+      'team.create',
+      createPayload(),
+    )) as unknown as TeamSummary;
+    expect(created).not.toHaveProperty('metadata');
+    expect(
+      publisher.published.filter(({ event }) => event.kind === 'team.created'),
+    ).toHaveLength(1);
+
+    // Context is part of the canonical payload the Command hashes, so adding
+    // one to a replayed id is a different request, not the same one described
+    // differently — and the Team that request already made is the only one.
+    await expect(
+      port.invoke(
+        channelContext(),
+        'team.create',
+        createPayload({ context: feishuContext }),
+      ),
+    ).rejects.toBeInstanceOf(IdempotencyConflictError);
+    expect(await target.list()).toHaveLength(1);
+  });
+
+  it('conflicts when a replay changes only what is inside the provider payload', async () => {
+    harness = await buildTeamCollectionHarness();
+    const target = harness.collection;
+    const port = commandPortOver(() => target);
+    await port.invoke(channelContext(), 'team.create', createPayload({ context: feishuContext }));
+
+    // Core reads nothing inside `payload`, but it hashes all of it: a context
+    // naming a different group is a different creation request.
+    await expect(
+      port.invoke(
+        channelContext(),
+        'team.create',
+        createPayload({
+          context: {
+            ...feishuContext,
+            payload: { ...feishuContext.payload, title: 'Renamed Group' },
+          },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(IdempotencyConflictError);
+    expect(await target.list()).toHaveLength(1);
+  });
+
+  it.each<[string, JsonValue]>([
+    ['a context that is not an object at all', 'builtin:feishu'],
+    ['a context naming no provider', { payload: { chat_id: 'oc_x' } }],
+    ['a context with an empty provider', { provider: '', payload: { chat_id: 'oc_x' } }],
+    ['a context carrying no payload', { provider: 'builtin:feishu' }],
+    ['a context whose payload is not an object', { provider: 'builtin:feishu', payload: 'oc_x' }],
+  ])('refuses %s as the caller’s mistake, creating nothing', async (_case, context) => {
+    harness = await buildTeamCollectionHarness();
+    const target = harness.collection;
+    const port = commandPortOver(() => target);
+
+    await expect(
+      port.invoke(channelContext(), 'team.create', createPayload({ context })),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // Refused at the surface, so no Team, no record, and nothing to replay.
+    expect(await target.list()).toEqual([]);
   });
 });
