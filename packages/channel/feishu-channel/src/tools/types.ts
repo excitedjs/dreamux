@@ -57,7 +57,7 @@ export interface FeishuToolSession {
   sendText(
     chatId: string,
     text: string,
-    opts?: { messageId?: string; mentionUserIds?: string[] },
+    opts?: { messageId?: string },
   ): Promise<{ message_ids: string[] }>;
   react(
     chatId: string | undefined,
