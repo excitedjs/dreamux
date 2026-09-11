@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { mergeInteractiveContentParts } from '../src/parse/card'
-import { applyMentions, extractPostText, mentionName, narrowMetaFromEvent, parseInbound, toChannelInbound } from '../src/parse/content'
+import { narrowMetaFromEvent, parseInbound, toChannelInbound } from '../src/parse/content'
 import type { InboundContentPart, InboundMessage } from '../src/parse/content'
 import type { Mention } from '../src/contract/types'
 
@@ -19,16 +19,6 @@ describe('parseInbound — text', () => {
   test('resolves @-mention placeholders to display names', () => {
     const msg = message('text', { text: '@_user_1 ping' }, [{ key: '@_user_1', name: 'Alice' }])
     expect(parseInbound(msg).text).toBe('@Alice ping')
-  })
-
-  test('finds a mention display name by open_id', () => {
-    const mentions: Mention[] = [
-      { key: '@_user_1', name: 'Alice', id: { open_id: 'ou_a' } },
-      { key: '@_user_2', name: 'Bob', id: { open_id: 'ou_b' } },
-    ]
-    expect(mentionName(mentions, 'ou_b')).toBe('Bob')
-    expect(mentionName(mentions, 'ou_missing')).toBeUndefined()
-    expect(mentionName(undefined, 'ou_b')).toBeUndefined()
   })
 
   test('text with no JSON content falls back gracefully', () => {
@@ -218,7 +208,11 @@ describe('narrowMetaFromEvent', () => {
   })
 })
 
-describe('extractPostText', () => {
+function postText(post: Record<string, unknown>): string {
+  return parseInbound(message('post', post)).text
+}
+
+describe('post projection', () => {
   test('flattens a zh_cn post with title and tagged elements', () => {
     const post = {
       zh_cn: {
@@ -236,32 +230,32 @@ describe('extractPostText', () => {
         ],
       },
     }
-    expect(extractPostText(post)).toBe(
+    expect(postText(post)).toBe(
       'Title\nhello [link](http://x)\n@Bob look[image attachment: k]',
     )
   })
 
   test('falls back to en_us when zh_cn is absent', () => {
     const post = { en_us: { title: 'Hi', content: [[{ tag: 'text', text: 'world' }]] } }
-    expect(extractPostText(post)).toBe('Hi\nworld')
+    expect(postText(post)).toBe('Hi\nworld')
   })
 
   test('falls back to ja_jp when zh_cn and en_us are absent', () => {
     const post = { ja_jp: { title: 'やあ', content: [[{ tag: 'text', text: '世界' }]] } }
-    expect(extractPostText(post)).toBe('やあ\n世界')
+    expect(postText(post)).toBe('やあ\n世界')
   })
 
   test('reads a post that has no locale wrapper at all', () => {
     const post = { title: 'Bare', content: [[{ tag: 'text', text: 'body' }]] }
-    expect(extractPostText(post)).toBe('Bare\nbody')
+    expect(postText(post)).toBe('Bare\nbody')
   })
 
   test('a link with no text renders its href', () => {
     const post = { zh_cn: { content: [[{ tag: 'a', href: 'http://only-href' }]] } }
-    expect(extractPostText(post)).toBe('http://only-href')
+    expect(postText(post)).toBe('http://only-href')
   })
 
-  test('parseInbound routes post messages through extractPostText', () => {
+  test('parseInbound routes post messages through the post parser', () => {
     const post = { zh_cn: { title: 'T', content: [[{ tag: 'text', text: 'body' }]] } }
     expect(parseInbound(message('post', post)).text).toBe('T\nbody')
   })
@@ -799,18 +793,51 @@ describe('parseInbound — other concrete types', () => {
   })
 })
 
-describe('applyMentions', () => {
-  test('returns the text unchanged when there are no mentions', () => {
-    expect(applyMentions('plain', undefined)).toBe('plain')
+describe('text mentions', () => {
+  test('a message with no mention records is one plain text part', () => {
+    expect(parseInbound(message('text', { text: 'plain' })).parts).toEqual([
+      { kind: 'text', text: 'plain' },
+    ])
   })
 
-  test('replaces every occurrence of a placeholder', () => {
-    const mentions: Mention[] = [{ key: '@_user_1', name: 'Sam' }]
-    expect(applyMentions('@_user_1 and @_user_1', mentions)).toBe('@Sam and @Sam')
+  test('every occurrence of a placeholder becomes its own mention part', () => {
+    const mentions: Mention[] = [
+      { key: '@_user_1', name: 'Sam', id: { open_id: 'ou_sam' } },
+    ]
+    const parsed = parseInbound(
+      message('text', { text: '@_user_1 and @_user_1' }, mentions),
+    )
+    expect(parsed.parts).toEqual([
+      { kind: 'mention', id: 'ou_sam', name: 'Sam' },
+      { kind: 'text', text: ' and ' },
+      { kind: 'mention', id: 'ou_sam', name: 'Sam' },
+    ])
+    expect(parsed.text).toBe('@Sam and @Sam')
   })
 
-  test('ignores a mention with no name', () => {
+  test('a record with no supported identity stays ordinary @name text', () => {
+    const mentions: Mention[] = [{ key: '@_user_1', name: 'Peer Bot' }]
+    const parsed = parseInbound(
+      message('text', { text: '@_user_1 here' }, mentions),
+    )
+    expect(parsed.parts).toEqual([
+      { kind: 'text', text: '@Peer Bot' },
+      { kind: 'text', text: ' here' },
+    ])
+  })
+
+  test('a record that names and identifies nobody leaves the placeholder', () => {
     const mentions: Mention[] = [{ key: '@_user_1' }]
-    expect(applyMentions('@_user_1 here', mentions)).toBe('@_user_1 here')
+    expect(parseInbound(message('text', { text: '@_user_1 here' }, mentions)).text)
+      .toBe('@_user_1 here')
+  })
+
+  test('literal Markdown in a plain text message stays literal', () => {
+    const parsed = parseInbound(
+      message('text', { text: '```\nnot code, just text\n```' }),
+    )
+    expect(parsed.parts).toEqual([
+      { kind: 'text', text: '```\nnot code, just text\n```' },
+    ])
   })
 })

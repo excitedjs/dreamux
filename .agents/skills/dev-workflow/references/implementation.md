@@ -3,8 +3,10 @@
 ## Start one development writer
 
 Enter this phase only after valid development approval is recorded in the task
-README. Set `State: implementation` and preserve the approved requirement, final
-solution, scope, and verification links.
+README, including evidence of the sent development-authorization card and the
+operator's explicit approving response. A declared approval without that evidence
+does not open this gate. Set `State: implementation` and preserve the approved
+requirement, final solution, scope, and verification links.
 
 For the minimal-change fast path, have the TeamLeader implement directly as previously
 approved and do not start a TeamMate. When the entire implementation surface is

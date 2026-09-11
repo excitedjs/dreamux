@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/feishu-transport",
   "version": "0.10.0",
-  "description": "Shared Feishu platform-I/O core for dreamux and claudemux: connect / receive / send / auth / render / parse around the Lark node SDK.",
+  "description": "Feishu platform-I/O core for Dreamux: connect / receive / send / auth / parse around the Lark node SDK.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,6 +28,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",

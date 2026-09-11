@@ -457,9 +457,6 @@ export class FeishuChannelSession {
             ...(sendOpts?.messageId !== undefined
               ? { messageId: sendOpts.messageId }
               : {}),
-            ...(sendOpts?.mentionUserIds !== undefined
-              ? { mentionUserIds: sendOpts.mentionUserIds }
-              : {}),
           },
           caller,
         ),
@@ -497,7 +494,6 @@ export class FeishuChannelSession {
       chatId: string;
       text: string;
       messageId?: string;
-      mentionUserIds?: string[];
     },
     caller: ChannelMcpCaller,
   ): Promise<{ message_ids: string[] }> {

@@ -42,6 +42,11 @@ cannot repair an unconfirmed premise.
 Do not modify product code, tests, configuration, scripts, migrations, generated
 files, or other implementation artifacts before the operator explicitly approves
 development against the final recorded requirement and technical solution.
+Obtain that approval through `ask_user_question` or an equivalent interactive
+question card: the development-authorization card must have been sent and the
+operator must explicitly approve in response. Without that card and answer,
+development is not authorized; ordinary chat agreement or a reviewer verdict
+cannot substitute for them.
 
 Before approval, allow only read-only investigation plus writes to the confirmed
 task directory, the parent task README indexes required to discover it, and its
@@ -78,7 +83,8 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
 
 4. **Obtain development approval.** Play back the final requirement, final
    technical solution, implementation boundary, and verification plan. Ask the
-   operator explicitly whether to enter development. Record a valid approval in
+   operator through a development-authorization interactive card whether to enter
+   development. Record the sent-card evidence and explicit approval in
    the task README before permitting any implementation write or starting any
    implementation TeamMate. Follow
    [development-approval.md](references/development-approval.md).
