@@ -59,16 +59,14 @@ collaborators retain only their assigned proposal or review file.
 Run at least:
 
 ```bash
-python3 .agents/skills/dev-workflow/scripts/init_task.py check \
-  --domain <domain-path> \
-  --slug <task-slug>
 .agents/scripts/check.sh
 git diff --check
 ```
 
-Also run the focused test for any changed knowledge or task script. Check that
-links and cited paths resolve against the current repository; the general
-knowledge checker does not replace the task check.
+`check.sh` validates every task record in the repository, including this one,
+and it holds each to what may land on the trunk: a record still reading
+`State: review` fails here rather than on the trunk. Also run the focused test
+for any changed knowledge or task script.
 
 When closeout passes, record the knowledge links or justified `N/A` results in the
 task README, set `State: done`, and include all task and knowledge changes in the

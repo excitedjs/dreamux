@@ -242,7 +242,7 @@ observation is not proven behavior-neutral by a repository-only consumer search.
 The existing pending-request idle timeout remains outside this style cleanup.
 
 The operator subsequently authorized fixing style and redundancy directly.
-The task is reopened for that cleanup; its results will be recorded below.
+The task was reopened for that cleanup; its results are recorded below.
 
 ### Cleanup implementation and TeamLeader pre-review
 

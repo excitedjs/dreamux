@@ -12,7 +12,7 @@
 - Solution review Issue: Not created — the operator approved the recorded final solution directly and waived further consultation (simplest path).
 - Blockers: None.
 - Accepted decision record: [accepted-decision.md](/.agents/tasks/completion-routing/adopt-completion-token-routing/accepted-decision.md) (backfilled 2026-09-01).
-- Next action: Push the verified PR review corrections to PR #384 and observe normal CI. Merge requires separate operator authority.
+- Next action: None.
 - Historical test replacement inventory (completed in PR #344; see verification): claude-code `rpc/runtime-activity/session/stream/transcript.test.ts`; codex `turn-manager.test.ts`; core `agent-runtime-provider`, `claude-code-live`, `claude-code-runtime`, `codex-completion`, `codex-live`, `core-event-owner-publishers`, `dispatcher-collaboration-space`, `entity-turn`, `external-runtime-parity`, `team-collection-read-path`, `team-scheduler`, `teammate-service`, `workflow-service` tests plus `helpers/fake-runtime`, `helpers/fake-team-runtime`, `helpers/runtime-turn`, `fixtures/external-runtime-provider`; types `fixtures.test.ts`, `root-exports.test.ts`, `fixtures/external-provider.ts`. Retained consumer suites (`team-dissolve-*`, `team-mcp-dissolve-boundary`, `collaboration-space-repo-close`, and all untouched files) compile again once the shared helpers are restored; the re-coverage stage must restore every deleted contract without weakening it.
 - Related tasks: None.
 
@@ -26,7 +26,7 @@
 
 ## Original delivery (PR #344)
 
-- Pull request / merge: PR #344 merged into `next` as `7fb1b8d3`.
+- Pull request: [#344](https://github.com/excitedjs/dreamux/pull/344).
 - Knowledge closeout: Complete — decision record `provider-completion-token-routing`, current-architecture alignment, change files with breaking review notes, KB gate green (129 files reachable).
 
 ## Background-turn regression repair (2026-09-07)
@@ -68,7 +68,7 @@
 
 ## Style and redundancy cleanup (2026-09-07)
 
-- PR #384 is open at `72af66e5`; its alpha was published and verified before the
+- PR #384 was open at `72af66e5`; its alpha was published and verified before the
   independent Claude complexity review.
 - The review found lower complexity and no required correctness correction.
   The operator then explicitly authorized cleaning style and redundant code
@@ -105,7 +105,7 @@ explicitly approved implementation of that proposal; see [rulings](rulings.md).
 
 The current implementation baseline is `6acc6d28`. Earlier repair, cleanup,
 alpha and review results above describe that earlier implementation, not the
-replacement. Its acceptance and evidence will be recorded separately.
+replacement. Its acceptance and evidence are recorded below.
 
 ### Replacement knowledge closeout
 

@@ -7,10 +7,9 @@
 - Requirement: [Current requirement](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md)
 - Final solution: [Final technical solution](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/technical-design/final.md)
 - Solution review Issue: Not required for the minimal-change fast path.
-- Blockers: No unresolved implementation findings. The documentation closeout must pass the normal PR CI before merge.
-- Next action: Merge PR #400 into `next` under the recorded operator authorization once the final PR checks pass.
+- Blockers: None.
+- Next action: None.
 - Workflow: The operator approved continued direct TeamLeader implementation of all three items with one independent read-only review.
-- Branch: `fix/async-receipt-guidance-cot-label`, created from `origin/next` at `dd2fc68`, then rebased onto `4c45df35` as `6a9d72f9`.
 - Related tasks: Builds on [refine-model-facing-surfaces](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md) and [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md). This new combined wording request does not reopen either historical implementation scope.
 
 ## Development approval
@@ -24,8 +23,7 @@
 
 ## Delivery
 
-- Pull request: [#400](https://github.com/excitedjs/dreamux/pull/400), targeting `next`; the PR records the final merge status and commit.
-- CI: All nine checks passed on the reviewed implementation `6a9d72f9` ([run](https://github.com/excitedjs/dreamux/actions/runs/34343587453)). The documentation closeout follows through normal PR CI.
+- Pull request: [#400](https://github.com/excitedjs/dreamux/pull/400).
 - Independent review: [Approved](https://github.com/excitedjs/dreamux/pull/400#pullrequestreview-5153504772). The sole remaining closeout comment is addressed by these delivery-record updates.
 - Knowledge closeout: Complete. Channel, model-facing writing, provider runtime, product behavior, task records, and the MCP index match the rebased implementation. Config/state maintenance is not applicable because no persisted contract changed.
 - Validation: [Verification and review](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/verification.md).

@@ -108,8 +108,7 @@ No accepted implementation-review finding remains unresolved.
 
 ## PR Delivery
 
-- Pull request: [#339](https://github.com/excitedjs/dreamux/pull/339),
-  targeting `next`.
+- Pull request: [#339](https://github.com/excitedjs/dreamux/pull/339).
 - Reviewed implementation commit:
   `d2aa0eda1e37275bf31ba38d5451ed0d91c2ef82`.
 - Delivery-record head:
@@ -121,5 +120,5 @@ No accepted implementation-review finding remains unresolved.
   - knowledge-base link/orphan validation;
   - full-history gitleaks;
   - Rush bootstrap/build/typecheck/lint/test on Ubuntu and macOS.
-- PR remains unmerged; GitHub review approval and operator merge authority are
-  separate gates.
+- The pull request was unmerged when this record was written; GitHub review
+  approval and operator merge authority are separate gates.

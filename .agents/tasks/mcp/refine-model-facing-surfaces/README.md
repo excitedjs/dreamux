@@ -8,7 +8,8 @@
 - Final solution: [technical-design/final.md](/.agents/tasks/mcp/refine-model-facing-surfaces/technical-design/final.md) (2026-09-06), adjudicated from [draft.md](/.agents/tasks/mcp/refine-model-facing-surfaces/technical-design/draft.md) and the two reviews under `technical-design/reviews/` (Codex and Seed runtimes, R18; the Codex file includes its reconsideration under R21).
 - Solution review Issue: Not created.
 - Blockers: None.
-- Next action: Merge #380 (operator). #369 is closed. The acceptance probes of final.md §1 ran on the alpha built from the PR branch (verification.md, "Alpha acceptance"); the external review round is answered (verification.md, "External review of #380").
+- Next action: None.
+- Evidence: the acceptance probes of final.md §1 ran on the alpha built from the PR branch (verification.md, "Alpha acceptance"), and the external review round is answered (verification.md, "External review of #380").
 - Verification: [verification.md](/.agents/tasks/mcp/refine-model-facing-surfaces/verification.md) — implementation method, gates, built-artifact probes, the independent review with adjudication, the live probes of final.md §8, the alpha acceptance, the external review round, residual risk.
 - Lineage: the deep review of PR #369 (https://github.com/excitedjs/dreamux/pull/369) on 2026-09-05; that PR's own record (`relocate-role-skill-guidance`, on the PR branch) holds the 2026-09-02 rulings this task builds on. This task adds one delivery line to that PR's record (draft §3.11): #369 is not merged and its content ships through this task's PR.
 - Related tasks: None.
@@ -22,7 +23,7 @@
 
 ## Delivery
 
-- Pull request / CI / merge: https://github.com/excitedjs/dreamux/pull/380 (opened 2026-09-06 on `next` from the closeout commit; squash-merged 2026-09-06 15:38 as dc2b7eb3 on the operator's order). #369 is closed unmerged (2026-09-06); its content ships here.
+- Pull request: [#380](https://github.com/excitedjs/dreamux/pull/380). [#369](https://github.com/excitedjs/dreamux/pull/369) is closed unmerged by the operator's ruling of 2026-09-05; its content ships here.
 - External review (2026-09-06): eight findings by the non-author reviewer, ruled by the operator as R28–R33 and answered in one commit; the design's §3.1, §3.6, §3.7, §3.9 and the new §3.14 record what changed after approval: the TeamLeader prompt's workspace sentence, the workflow agent's shorter prompt, the envelope attribute order dropped as a contract, the adapter's stable directory, and the managed worktree's `delete-on-close` default.
 - Post-merge correction (R34, 2026-09-06): the TeamLeader prompt's workspace sentence names only the workspace kind and its cleanup mode; the meaning of the modes at dissolve moved into the `dissolve` description. Follow-up PR #382 on `next` before the beta; final.md §3.1 and §3.14, the dispatcher-orchestration page, and the `@excitedjs/dreamux` change note follow. Its review added R35: `team.status` reports `worktree_mode` and `worktree_cleanup_mode`, since the lifecycle state alone cannot tell the Dispatcher whether a dissolve removes the worktree.
 - Knowledge closeout (2026-09-06):

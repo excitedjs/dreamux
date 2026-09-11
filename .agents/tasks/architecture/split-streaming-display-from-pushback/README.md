@@ -3,12 +3,10 @@
 ## Current state
 
 - Goal: Separate the conversation-display surface every channel-facing TeamLeader and Dispatcher needs from the submission push-back mechanism it is currently built on, so a display consumer no longer requires a Dreamux submission to exist.
-- State: `implemented` — built on branch `refactor/split-display-from-pushback`;
-  `rush build`, `rush lint`, `rush typecheck:tests`, and `rush test` all green,
-  and the issue #63 live gate (`tests/codex-live.test.ts`, 8/8) passes against a
-  real codex 0.151.0 rather than being skipped. The card terminal is
-  three-valued as of the 2026-09-02 probe: `RUN_FINISHED done`,
-  `RUN_FINISHED interrupted`, and `RUN_ERROR` for a failed end.
+- State: `done`
+- Card terminal: the 2026-09-02 live probe found it three-valued —
+  `RUN_FINISHED done`, `RUN_FINISHED interrupted`, and `RUN_ERROR` for a
+  failed end.
 - Requirement: [Current requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)
 - Review record:
   [review-corrections.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/review-corrections.md)
@@ -32,11 +30,11 @@
   activity-fact dedupe, the embedded-versus-reshaped payload) are resolved
   inline in that document.
 - Solution review Issue: Not created.
-- Blockers: None. Questions 1, 1b and 2 are answered and question 3 is
-  implemented, so the solution they gated is built rather than pending.
-- Next action: Operator review of three things the implementation decided.
-  The design had explicitly left the first two to a ruling; the third is a
-  review-time deletion made without one.
+- Blockers: None.
+- Next action: None.
+- Decisions made without a prior operator ruling: the design had explicitly
+  left the first two to a ruling; the third is a review-time deletion made
+  without one.
   1. **A dropped completion push-back is now visible.** Applying rulings 4 and 8
      uniformly moved the input publish above the recipient-liveness check, so a
      push-back to an agent whose runtime is already gone now shows the delivered
@@ -56,15 +54,13 @@
      **COT Message Brief** on `open.larkoffice.com`, which the public
      `open.feishu.cn` docs do not carry; see item 3.
   3. **The provider-side guard around the activity sink is deleted without a
-     ruling** (commit `34208cdf`). `AgentRuntimeActivitySink` now states that
-     the sink never throws — Core's `createConversationProjection` wraps every
-     call — so the try/catch in both providers defended no named scenario and
-     the tests that forged a throwing sink went with it. Its own commit, so one
-     revert drops it. The two display-state rulings of 2026-09-03 that the
-     rest of the branch rests on are recorded verbatim in `requirement.md`
-     § Ruling on display state.
-
-  Recorded and deliberately not done:
+     ruling.** `AgentRuntimeActivitySink` now states that the sink never
+     throws — Core's `createConversationProjection` wraps every call — so the
+     try/catch in both providers defended no named scenario and the tests
+     that forged a throwing sink went with it. The two display-state rulings
+     of 2026-09-03 that the rest of the branch rests on are recorded verbatim
+     in `requirement.md` § Ruling on display state.
+- Recorded and deliberately not done:
   - `isSynthetic` is producer-less in `src/` exactly like `priority` was, but
     ruling 1 names only `priority`, so it was left alone (item 9).
   - `submitLocked` re-asserts its lock token after `ensureStarted()`, so the
@@ -73,15 +69,13 @@
   - `enterOrdinaryMutation` stays at four call sites, not the three the change
     inventory predicted: the completion path must translate a closing entity's
     refusal into `unsupported` instead of throwing (item 12).
-
-  Review defect fixed on the way:
+- Review defect fixed on the way:
   - The split left codex's display line asymmetric: an unbound native turn's
     activity displayed while its end was refused, leaving a card nothing could
     close. The end now rides the same path its items already take, on the COT
     requirement's own terms (rules 1 and 8). See `final.md` § As built,
     departure 7.
-
-  Cleanup folded in on the way (ruling 2):
+- Cleanup folded in on the way (ruling 2):
   - `seal.ts`'s `KINDS` allowlist was a bare `ReadonlySet<string>` that silently
     dropped an unlisted kind; it is now derived from an exhaustive
     `Record<ChannelCoreEvent['kind'], true>`, so a missing entry fails to
@@ -184,24 +178,14 @@ not the status, is what says which shape to expect.
 
 ## Delivery
 
-- Pull request / CI / merge: [PR #367](https://github.com/excitedjs/dreamux/pull/367)
+- Pull request: [PR #367](https://github.com/excitedjs/dreamux/pull/367)
   carries both halves — the display split and question 3's anti-leak
-  infrastructure, which depends on none of the design above — all checks green,
-  awaiting review.
-  One thing PR #367 still cannot verify before merge, named in its body: the
-  `release.yml` step is only exercised by the next real release (watch the
-  "Install gitleaks" step and the version-bump commit passing the hook). The
-  other — the new `internal-content` job and the rewritten `gitleaks` job,
-  which `ci.yml` runs on this branch only through the pull request — ran green
-  on the PR itself.
-  The display split ships in the same PR: #367 carries it on
-  `refactor/split-display-from-pushback` with five Rush change files, alongside
-  the anti-leak gate's one.
-- Follow-up fix (2026-09-03, branch `fix/leader-start-failure-display`): after
-  #367 merged, a TeamLeader whose codex could not start left its Feishu card on
-  the opening label with no error. Every TeamLeader path pre-started the leader
-  in `TeamService.ensureRouteReady()`, outside the entity's announce/end span,
-  so the start failure reached no display. The operator's directive:
+  infrastructure, which depends on none of the design above.
+- Follow-up fix: a TeamLeader whose codex could not start left its Feishu card
+  on the opening label with no error. Every TeamLeader path pre-started the
+  leader in `TeamService.ensureRouteReady()`, outside the entity's announce/end
+  span, so the start failure reached no display. The operator's directive
+  (2026-09-03):
 
   > 这两个问题都修一下，找一个合适的时机把错误信息也放进ended 事件里丢给 channel，让他能反映出 provider 的真实报错 第二个是在 codex 如果精确命中了 no rollout found 错误，就丢弃 resume 语义拉起一个新的 对话来
 
@@ -220,4 +204,7 @@ not the status, is what says which shape to expect.
   ruling and what it changes for the operator are in `requirement.md`, last
   section; the product catalog carries the new bullet "Creating a Team starts
   no process".
-- Knowledge closeout: Pending.
+- Knowledge closeout: Complete. The channel, provider-runtime,
+  dispatcher-orchestration, and repository-operations-and-release domain
+  pages and the product catalog were updated alongside the code; the
+  catalog gained "Creating a Team starts no process".

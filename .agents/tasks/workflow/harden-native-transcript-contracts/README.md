@@ -8,11 +8,10 @@
 - Final solution: [Direct hardening solution](/.agents/tasks/workflow/harden-native-transcript-contracts/technical-design/final.md)
 - Solution review Issue: Skipped by explicit operator instruction for this bounded follow-up.
 - Verification: [Current verification evidence](/.agents/tasks/workflow/harden-native-transcript-contracts/verification.md)
-- Blockers: No accepted finding or required CI gate remains unresolved.
-  External Codex model-service gates remain outside this bounded hardening
-  change; GitHub review approval remains required.
-- Next action: Obtain GitHub review approval for PR #339. Do not merge
-  automatically.
+- Blockers: None.
+- Coverage limit: external Codex model-service gates are outside this bounded
+  hardening change.
+- Next action: None.
 - Related tasks: Builds on [Unify Workflow agents with TeamMate lifecycle ownership](/.agents/tasks/workflow/unified-teammate-lifecycle/README.md) and merged PR [#338](https://github.com/excitedjs/dreamux/pull/338).
 
 ## Development approval
@@ -41,13 +40,7 @@
 
 ## Delivery
 
-- Pull request: [#339](https://github.com/excitedjs/dreamux/pull/339),
-  targeting `next`.
-- CI: Passed on reviewed head
-  `df52ebb7bf771a225d24734efef87cd8329172a5`: Rush change declaration,
-  author metadata, Linux/macOS shellcheck, KB validation, full-history
-  gitleaks, and Linux/macOS Rush build/typecheck/lint/test.
-- Merge: Not authorized or attempted.
+- Pull request: [#339](https://github.com/excitedjs/dreamux/pull/339).
 - Independent review:
   - Combined development/review workflow
     `run-08ea99ea-91c9-46c0-bda1-71937f0079e7`: `FIX_REQUIRED`; all accepted

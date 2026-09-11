@@ -24,6 +24,23 @@ STATES = {
     "blocked",
 }
 
+# The states a task record may be committed to the integration trunk in.
+#
+# A record is committed inside the pull request that delivers it, so it can
+# never contain the result of its own merge. The rule that follows from that:
+# a state may land on `next` only if nothing happening outside the repository
+# can turn it false. `intake` (nothing has started), `blocked` (waiting on a
+# named blocker), and `done` (the work is finished and submitted) are all
+# self-consistent — they stay true whatever the pull request does next.
+#
+# The six middle states describe a process in flight. `review` stops being true
+# the moment a reviewer answers; `implementation` stops being true when the
+# branch is pushed. They are useful on a working branch, which is a working
+# copy, and they are a lie the moment that branch merges. Merge facts belong to
+# git and GitHub, which record them authoritatively and for free; copying them
+# into a file is what creates staleness, so the record does not try.
+TRUNK_STATES = {"intake", "blocked", "done"}
+
 
 class TaskError(RuntimeError):
     pass
@@ -33,7 +50,7 @@ def validate_segment(value: str, label: str, action_slug: bool = False) -> str:
     if not SEGMENT_RE.fullmatch(value):
         raise TaskError(f"{label} must already be lowercase kebab-case: {value!r}")
     if action_slug and "-" not in value:
-        raise TaskError("task slug must include an action prefix")
+        raise TaskError(f"{label} must include an action prefix: {value!r}")
     return value
 
 
@@ -134,7 +151,7 @@ def task_readme(domain: tuple[str, ...], slug: str, title: str, goal: str) -> st
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
+- Pull request: Not opened.
 - Knowledge closeout: Pending.
 """
 
@@ -287,7 +304,7 @@ def create(args: argparse.Namespace) -> int:
         domain_text,
         ("## Tasks", "## Active Tasks"),
         task_link(domain, slug),
-        f"- [{title}]({task_link(domain, slug)}) — `intake`: {goal}",
+        f"- [{title}]({task_link(domain, slug)}) — {goal}",
     )
     replace(domain_index, domain_text)
     print(f"Created lean task record: {task_dir}")
@@ -310,10 +327,232 @@ def check(args: argparse.Namespace) -> int:
     for target, text in expected.items():
         if f"]({target})" not in text:
             raise TaskError(f"missing index link: {target}")
+    check_state(task_text, f"{domain_name(domain)}/{slug}", args.allow_in_flight)
+    print(f"Task record OK: .agents/tasks/{domain_name(domain)}/{slug}")
+    return 0
+
+
+def check_state(task_text: str, name: str, allow_in_flight: bool) -> None:
+    """Validate the one line that says where a task stands.
+
+    The anchored pattern is the format rule: the line carries the state and
+    stops. A branch name, a date, a list of green gates, or any other
+    parenthetical appended here is a fact that expires while the state around
+    it stays put, which is the drift this whole check exists to prevent.
+    """
     states = re.findall(r"^- State: `([^`]+)`$", task_text, re.MULTILINE)
     if len(states) != 1 or states[0] not in STATES:
-        raise TaskError("task README has no supported workflow state")
-    print(f"Task record OK: .agents/tasks/{domain_name(domain)}/{slug}")
+        raise TaskError(
+            f"{name}: task README has no supported workflow state. The line must "
+            f"read exactly '- State: `<state>`' with nothing after it, and "
+            f"<state> must be one of: {', '.join(sorted(STATES))}"
+        )
+    if not allow_in_flight and states[0] not in TRUNK_STATES:
+        raise TaskError(
+            f"{name}: state `{states[0]}` describes work in flight, so it cannot "
+            f"be committed to the trunk — it stops being true the moment this "
+            f"branch merges. Use it while you work; before opening the pull "
+            f"request set `done` (finished and submitted), `blocked` (waiting on "
+            f"a named blocker), or `intake` (not started). Whether the pull "
+            f"request merged is git's fact, not the record's."
+        )
+
+
+# A domain index and a task record are told apart by the headings only one of
+# them can carry. Depth cannot do it: a domain may nest inside a domain, so
+# `mcp/scheduler` sits exactly where a task record would.
+DOMAIN_HEADINGS = frozenset({"## Child Scopes", "## Tasks", "## Active Tasks"})
+RECORD_HEADING = "## Current state"
+
+
+def is_domain_index(name: str, text: str) -> bool:
+    """Decide which kind of file this is, and refuse to guess.
+
+    Headings are matched as whole lines. A substring test would read
+    `## Tasks completed` inside a record as the index heading `## Tasks`, and
+    because an index is checked far more loosely than a record, that reading
+    silently exempts the record from the state rule — the exact bypass this
+    walk exists to close.
+
+    Anything that is not an index is treated as a record, so an unrecognized
+    file is answered with the field it is missing rather than skipped. The
+    asymmetry is deliberate and only safe in that direction: mistaking a record
+    for an index is silent, mistaking an index for a record is loud. A file
+    carrying both kinds of heading is refused outright rather than resolved by
+    precedence, because either reading would be a guess.
+    """
+    headings = {line.strip() for line in unfenced_lines(text)}
+    domain = bool(headings & DOMAIN_HEADINGS)
+    record = RECORD_HEADING in headings
+    if domain and record:
+        raise TaskError(
+            f"{name}: README carries both a domain-index heading and "
+            f"'{RECORD_HEADING}', so it cannot be checked as either. A domain "
+            f"index and a task record are separate files."
+        )
+    return domain
+
+
+# Bullet labels that report where delivery stood at the moment of writing.
+# The rule is on the label, which is a closed structural token, and never on the
+# prose after it, which is not: a phrase list cannot tell a live status from the
+# same words quoted inside an operator ruling, and this repository's records
+# quote operators verbatim by policy.
+DELIVERY_STATUS_LABELS = frozenset({
+    "Baseline",
+    "Branch",
+    "CI",
+    "CI / merge",
+    "Commit",
+    "Current PR",
+    "Current next action",
+    "Current repair baseline",
+    "Current repair branch",
+    "Merge",
+    "Pull request / CI / merge",
+    "Pull request / merge",
+})
+
+# A section under this heading is a frozen snapshot of a past round, kept on
+# purpose. It records what was true then, which is not a claim about now, so the
+# label rule does not reach into it.
+#
+# The word boundary is the whole point: a prefix test also matches
+# `## Historically speaking …`, which exempts everything after it. An exemption
+# that a passing phrase can claim by accident is the same fail-open as reading a
+# heading by substring.
+FROZEN_SECTION_RE = re.compile(r"^## Historical\b")
+
+LABEL_RE = re.compile(r"^- ([A-Z][A-Za-z0-9 /-]{0,40}):")
+
+
+def unfenced_lines(text: str) -> list[str]:
+    """Everything outside a fenced block.
+
+    A format token inside an example is not document structure. Reading it as
+    structure is a real bypass, not a hypothetical one: a record whose body
+    contained a fenced `## Tasks` would be classified as a domain index and skip
+    the state rule entirely. Structure is read from these lines only.
+    """
+    lines: list[str] = []
+    fenced = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            lines.append(line)
+    return lines
+
+
+def live_lines(text: str) -> list[str]:
+    """The lines that make a claim about the present.
+
+    Frozen sections are dropped on top of the fenced ones: they describe a past
+    round, and a record of what was true then is not a claim about now.
+    """
+    lines: list[str] = []
+    frozen = False
+    for line in unfenced_lines(text):
+        if line.startswith("## "):
+            frozen = FROZEN_SECTION_RE.match(line) is not None
+        if not frozen:
+            lines.append(line)
+    return lines
+
+
+def check_delivery_labels(name: str, lines: list[str]) -> None:
+    for line in lines:
+        match = LABEL_RE.match(line)
+        if match and match.group(1) in DELIVERY_STATUS_LABELS:
+            raise TaskError(
+                f"{name}: the `- {match.group(1)}:` field reports where delivery "
+                f"stood when it was written, so it goes false on its own. git and "
+                f"GitHub already record it. Keep the pull request link; drop the "
+                f"branch, baseline, commit, CI result, and merge status. The "
+                f"full set is: "
+                f"{', '.join(sorted(DELIVERY_STATUS_LABELS))}. A past round kept "
+                f"on purpose belongs under a '## Historical ...' heading, which "
+                f"this check skips."
+            )
+
+
+def check_record(directory: Path, name: str, text: str, allow_in_flight: bool) -> None:
+    validate_segment(directory.name, f"{name}: task slug", action_slug=True)
+    if not (directory / "requirement.md").is_file():
+        raise TaskError(f"{name}: missing requirement.md")
+    if "\n## Current state" not in text:
+        raise TaskError(f"{name}: task README has no '## Current state' section")
+    lines = live_lines(text)
+    check_state("\n".join(lines), name, allow_in_flight)
+    if not allow_in_flight:
+        check_delivery_labels(name, lines)
+    if f"](/.agents/tasks/{name}/requirement.md)" not in text:
+        raise TaskError(f"{name}: the record does not link its own requirement.md")
+    link = f"/.agents/tasks/{name}/README.md"
+    if f"]({link})" not in read(directory.parent / "README.md"):
+        raise TaskError(f"{name}: the parent task index does not link this record")
+
+
+INDEX_BULLET_RE = re.compile(
+    r"^- \[[^\]]*\]\((/\.agents/tasks/[^)]*README\.md)\)(.*)$", re.MULTILINE
+)
+
+
+def check_index(name: str, text: str) -> None:
+    """Validate what a domain index may not repeat.
+
+    An index entry says what a task is for and where to read it. It does not
+    carry the task's state. Two copies of one fact in two files is the drift
+    itself: the record moves on, the index keeps yesterday's answer, and a
+    reader has no way to tell which of the two is stale. That the links resolve
+    is checked once for the whole knowledge base by `.agents/scripts/check.sh`.
+    """
+    for link, rest in INDEX_BULLET_RE.findall("\n".join(unfenced_lines(text))):
+        for state in re.findall(r"`([^`]+)`", rest):
+            if state in STATES:
+                raise TaskError(
+                    f"{name}: the index entry for {link} repeats the task's state "
+                    f"`{state}`. The state belongs to the record alone; the index "
+                    f"entry carries the title, the link, and the goal."
+                )
+
+
+def check_all(args: argparse.Namespace) -> int:
+    """Check every task record in the repository.
+
+    A per-task check only runs when someone remembers to run it for that task,
+    which is how a record reaches the trunk in a state nobody validated. This
+    walks the tree instead, so the gate also covers records nobody is working on.
+
+    Anything that is not a domain index is checked as a task record, so a record
+    whose format has drifted is answered with the specific thing it is missing
+    instead of being skipped as unrecognized. Silently skipping is how an
+    unchecked record hides, which is the failure this gate exists to close.
+    """
+    root = repo_root(args.repo_root)
+    tasks = root / ".agents/tasks"
+    failures: list[str] = []
+    records = 0
+    for readme in sorted(tasks.rglob("README.md")):
+        directory = readme.parent
+        relative = directory.relative_to(tasks)
+        name = relative.as_posix() if relative.parts else "."
+        text = read(readme)
+        try:
+            if is_domain_index(name, text):
+                check_index(name, text)
+            else:
+                records += 1
+                check_record(directory, name, text, args.allow_in_flight)
+        except TaskError as error:
+            failures.append(str(error))
+    for failure in failures:
+        print(f"error: {failure}", file=sys.stderr)
+    if failures:
+        print(f"\n{len(failures)} of {records} task records failed.", file=sys.stderr)
+        return 1
+    print(f"Task records OK: {records} checked")
     return 0
 
 
@@ -339,8 +578,21 @@ def parser() -> argparse.ArgumentParser:
     check_parser = commands.add_parser("check")
     check_parser.add_argument("--domain", required=True)
     check_parser.add_argument("--slug", required=True)
+    check_parser.add_argument(
+        "--allow-in-flight",
+        action="store_true",
+        help="permit a mid-workflow state; use while the task is on a branch",
+    )
     check_parser.add_argument("--repo-root", help=argparse.SUPPRESS)
     check_parser.set_defaults(handler=check)
+    check_all_parser = commands.add_parser("check-all")
+    check_all_parser.add_argument(
+        "--allow-in-flight",
+        action="store_true",
+        help="permit mid-workflow states; use while tasks are on a branch",
+    )
+    check_all_parser.add_argument("--repo-root", help=argparse.SUPPRESS)
+    check_all_parser.set_defaults(handler=check_all)
     return result
 
 

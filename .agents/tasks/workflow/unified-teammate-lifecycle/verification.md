@@ -249,8 +249,9 @@ Required CI passed on that exact head:
 - Rush bootstrap/build/typecheck/lint/test on Ubuntu: passed.
 - Rush bootstrap/build/typecheck/lint/test on macOS: passed.
 
-The PR remains unmerged. GitHub reports the review requirement as the remaining
-merge gate; merge authority remains with the operator.
+The pull request was unmerged when this record was written, with GitHub
+reporting the review requirement as the remaining merge gate. Merge authority
+rests with the operator.
 
 ### Architecture, Deletion, And Publication Gates
 

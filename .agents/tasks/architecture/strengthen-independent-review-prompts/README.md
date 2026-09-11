@@ -8,8 +8,7 @@
 - Final solution: [Minimal identity and prompt correction](/.agents/tasks/architecture/strengthen-independent-review-prompts/technical-design/final.md)
 - Solution review Issue: N/A — operator selected the minimal-change path.
 - Blockers: None.
-- Next action: Wait for the requested pull request's normal CI and operator
-  re-review.
+- Next action: None.
 - Related task: [Completion-delivery lifecycle fix](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/README.md).
 - Related evidence: GitHub PR #389 and its replacement PR #391 exposed the
   shared-premise review failure.
@@ -23,9 +22,7 @@
 
 ## Delivery
 
-- Pull request: [#392](https://github.com/excitedjs/dreamux/pull/392), targeting
-  `next`.
-- CI / merge: Review comments addressed; CI and operator re-review are pending;
-  merge remains operator-owned.
+- Pull request: [#392](https://github.com/excitedjs/dreamux/pull/392).
+- Review: comments addressed.
 - Verification: [Completed verification](/.agents/tasks/architecture/strengthen-independent-review-prompts/verification.md).
 - Knowledge closeout: Complete; no product, domain, or release owner changed.

@@ -27,7 +27,16 @@
   14's "failed or interrupted native ends close it as interrupted" no longer
   holds. Read every mechanism named below under one of those old names through
   that mapping.
-- State: `in-progress`
+- Superseded in part (2026-09-07, approved
+  [Claude background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07)):
+  the fail-loud unattributed-result path that the 2026-09-02 Simplification
+  adjudication below deliberately retained no longer holds. Native background
+  tasks may start turns without a Dreamux submission; those results are valid
+  and must not terminate the resident process. Explicit steers that join them
+  still settle through the existing completion-token routing. The
+  [current settlement contract](/.agents/domains/provider-runtime.md#claude-code-stream-json-settlement)
+  owns the replacement behavior.
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md)
 - Technical design: owned by the single Claude implementation developer. The
   developer receives only the locked requirement and must derive the design
@@ -43,9 +52,7 @@
 - Continued optimization (simplification findings raised after the draft pull
   request, none approved for implementation):
   [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
-- Next action: None. Pull request
-  [#357](https://github.com/excitedjs/dreamux/pull/357) carries the corrective
-  and simplification rounds and is approved and merged into `next`.
+- Next action: None.
 - Related tasks: Builds on
   [adopt-completion-token-routing](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md)
   (the submission activity sink this task consumes). The parked
@@ -178,8 +185,7 @@
   accepted losses rather than left in a review thread.
 - Existing proposal files, the withdrawn previous solution, public review text,
   and the generated Feishu design document are not implementation authorities.
-- Pull request / CI / merge: [#357](https://github.com/excitedjs/dreamux/pull/357)
-  merged into `next` with CI green on its final head.
+- Pull request: [#357](https://github.com/excitedjs/dreamux/pull/357).
 
 ## Follow-ups
 
@@ -192,13 +198,3 @@
   before further edits; it is at the 700-line lint cap.
 - No per-target or per-logical-turn presentation split is permitted by the
   current requirement.
-
-## Since this was recorded
-
-2026-09-07: The approved [Claude background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07)
-supersedes the retained fail-loud unattributed-result path above. Native
-background tasks may start turns without a Dreamux submission; those results
-are valid and must not terminate the resident process. Explicit steers that
-join them still settle through the existing completion-token routing. The
-historical adjudication is preserved here; the [current settlement contract](/.agents/domains/provider-runtime.md#claude-code-stream-json-settlement)
-owns the replacement behavior.

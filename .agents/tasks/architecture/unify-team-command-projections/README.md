@@ -4,7 +4,7 @@
 
 - Goal: One Team vocabulary across create, list, and status: one `status`
   meaning, one set of field names, no third create shape
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/architecture/unify-team-command-projections/requirement.md)
 - Draft solution:
   [technical-design/draft.md](/.agents/tasks/architecture/unify-team-command-projections/technical-design/draft.md).
@@ -20,7 +20,7 @@
   [Seed review](/.agents/tasks/architecture/unify-team-command-projections/technical-design/reviews/review-seed.md), and
   [Trae-Claude review](/.agents/tasks/architecture/unify-team-command-projections/technical-design/reviews/review-trae-claude.md).
 - Blockers: None.
-- Next action: Operator re-review of the fix commit on PR #390, then merge.
+- Next action: None.
 - Related tasks: Keeps the compact `team.list` decision recorded in
   [Refine the model-facing surfaces of the TeamLeader](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md)
   (its final solution: "`list` and `history` stay compact") and builds on the
@@ -46,12 +46,11 @@
 
 ## Delivery
 
-- Pull request / CI / merge: [PR #390](https://github.com/excitedjs/dreamux/pull/390)
-  to `next`, refs issue #383. CI was green on the first push (9e66edd). The
-  operator's review on 2026-09-09 reversed two choices of that push — closed
-  output schemas and the full summary as every list row — and a second commit
-  on the same branch applies the reversal; merge is pending.
-- Implementation: Complete on the PR branch.
+- Pull request: [PR #390](https://github.com/excitedjs/dreamux/pull/390),
+  refs issue #383. The operator's review on 2026-09-09 reversed two choices of
+  the initial implementation — closed output schemas and the full summary as
+  every list row — and the delivered implementation applies that reversal.
+- Implementation: Complete.
 - Verification: [verification.md](/.agents/tasks/architecture/unify-team-command-projections/verification.md).
 - Knowledge closeout: Completed 2026-09-07 and redone 2026-09-09 after the
   operator's review (create/status share the summary, list stays compact,

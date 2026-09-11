@@ -8,7 +8,7 @@
 - Final solution: [Judgment added to the teamwork skill](/.agents/tasks/builtin-skills/teamwork-teammates-are-not-subagents/technical-design/final.md)
 - Solution review Issue: N/A; the operator asked for the change directly and the boundary is one bundled skill.
 - Blockers: None.
-- Next action: Land the pull request after CI and review.
+- Next action: None.
 - Related tasks:
   - Prior ruling and the skill's current shape: [Refine the model-facing surfaces](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md), ruling R8.
   - The principle's repository-side form: [PR #392](https://github.com/excitedjs/dreamux/pull/392), whose task record lands with that PR.
@@ -21,6 +21,6 @@
 
 ## Delivery
 
-- Pull request: [#393](https://github.com/excitedjs/dreamux/pull/393), opened on 2026-09-08 against `next`; CI and merge pending.
+- Pull request: [#393](https://github.com/excitedjs/dreamux/pull/393).
 - Verification: [Completed verification](/.agents/tasks/builtin-skills/teamwork-teammates-are-not-subagents/verification.md)
 - Knowledge closeout: the skill is its own owner; no domain or product page describes its content. Change file recorded.

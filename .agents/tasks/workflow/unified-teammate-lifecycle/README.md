@@ -36,11 +36,10 @@
   checks, deletion scans, and publication-surface scans passed. Evidence is
   recorded in
   [verification.md](/.agents/tasks/workflow/unified-teammate-lifecycle/verification.md#current-native-transcript-iteration).
-- Blockers: No accepted implementation-review finding or required CI gate
-  remains unresolved. Two non-required Codex real-model gates remain limited by
+- Blockers: None.
+- Coverage limit: two non-required Codex real-model gates were limited by
   external model-service health and are recorded as residual live coverage.
-- Next action: Obtain the required GitHub review and operator merge authority
-  for PR #338. Do not merge automatically.
+- Next action: None.
 - Related tasks: Builds on public issue [#328](https://github.com/excitedjs/dreamux/issues/328). PRs [#329](https://github.com/excitedjs/dreamux/pull/329) and [#330](https://github.com/excitedjs/dreamux/pull/330) are competing historical inputs, not an accepted solution.
 
 ## Execution constraint
@@ -64,10 +63,6 @@
   `2026-08-16T14:36:07+08:00`.
 - Superseded requirement: `requirement.md` SHA-256 `bc6c770f46362b535050f69342a68dd4a954346abb2eea8200e63946ca87df54`.
 - Superseded solution: `technical-design/final.md` SHA-256 `3ce44602ca9b47a9fcf4c17f0c8456b2d70ab03d4cb506bf9aea996e1d1cb20d`.
-- Pending approval requirement: `requirement.md` SHA-256
-  `e44f6411914cd1ff5ea49c55f09bbae17ad162f62335123f43d89ea0405208d0`.
-- Pending approval solution: `technical-design/final.md` SHA-256
-  `157cb2602c2986d7877ab34085be6b7401c33c5778f9657ec85f4c866c05f300`.
 - Approved requirement: `requirement.md` SHA-256
   `e44f6411914cd1ff5ea49c55f09bbae17ad162f62335123f43d89ea0405208d0`.
 - Approved solution: `technical-design/final.md` SHA-256
@@ -96,18 +91,8 @@
 
 ## Delivery
 
-- Pull request: [#338](https://github.com/excitedjs/dreamux/pull/338),
-  targeting `next`. Its public head must match this reviewed workspace and pass
-  the normal CI gate before merge.
-- Local final gate: Passed on the reviewed native-transcript workspace:
-  focused remediation tests, Rush build/typecheck/test-typecheck/lint/test,
-  Rush change verification, task/KB checks, diff validation, deletion scans,
-  and repository-publication scans.
-- CI: Passed on reviewed head
-  `e09c64fef47b7afa4c686f403198d18d030b4302`: Rush change declaration,
-  author metadata, Linux/macOS shellcheck, KB validation, full-history
-  gitleaks, and Linux/macOS Rush build/typecheck/lint/test.
-- Merge: Not authorized or attempted.
+- Pull request: [#338](https://github.com/excitedjs/dreamux/pull/338).
+- Validation: [verification.md](/.agents/tasks/workflow/unified-teammate-lifecycle/verification.md).
 - Independent implementation review: Complete. The non-Codex `xhigh` workflow
   verified all 32 candidates with no partial coverage, reported 14 primary
   findings, and refuted 13 candidates. TeamLeader adjudication accepted eight

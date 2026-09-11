@@ -3,12 +3,12 @@
 ## Current state
 
 - Goal: Dispatcher and TeamLeader stop loading dispatcher-workflow and team-workflow every turn: tool knowledge moves into MCP tool and parameter descriptions, the pre-schema map of the role's MCP servers moves into the role prompts (no behavioral rules), and both skills stay bundled as optional, on-demand TeamMate-collaboration methodology.
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/mcp/relocate-role-skill-guidance/requirement.md)
 - Final solution: [technical-design/final.md](/.agents/tasks/mcp/relocate-role-skill-guidance/technical-design/final.md) (draft: [draft.md](/.agents/tasks/mcp/relocate-role-skill-guidance/technical-design/draft.md); review: [reviews/codex-review.md](/.agents/tasks/mcp/relocate-role-skill-guidance/technical-design/reviews/codex-review.md)).
 - Solution review Issue: https://github.com/excitedjs/dreamux/issues/368
-- Blockers: None. The task record was restored and WIP-committed (operator-approved) after the incident below; the leftover edits of the stopped run were discarded (operator-approved).
-- Next action: Land the adjudicated review findings (verification.md, "Review adjudication") through one developer TeamMate as a follow-up commit on PR #369, complete knowledge closeout, set `done`, request re-review.
+- Blockers: None.
+- Next action: None.
 - Implementation: the re-run implementation workflow completed with all gates green (an earlier re-run failed at script compile before any agent started). TeamLeader pre-review passed; evidence in [verification.md](/.agents/tasks/mcp/relocate-role-skill-guidance/verification.md).
 - Related tasks: None.
 - Solution path (operator ruling, 2026-09-02, Feishu group, verbatim): "ok，拉一个 codex 评审即可，不用走三位了" — TeamLeader-authored solution reviewed by exactly one Codex reviewer instead of three. Requirement input revision: requirement.md as of this ruling.
@@ -24,13 +24,17 @@
 ## Incident (2026-09-02)
 
 - Implementation workflow run (9 disjoint writer lanes → fidelity critic + gates → bounded self-repair) started 17:25 Asia/Shanghai. Every writer lane completed, then the Team workspace directory was deleted from under the run at about 17:39: the Dreamux server log shows a dissolve of a different Team with the same name prefix, first blocked because "the managed worktree is dirty" (dirty with this Team's uncommitted lane edits), which points at both Teams having resolved to the same managed worktree path. The round-1 fixer re-created the worktree clean at ca30883; all uncommitted work, including this task record, was lost. The run was stopped by the TeamLeader at 18:10 before the round-2 fixer could invent prompt text without the solution.
-- Recovery: the task record (README, requirement, draft, final, review) was rewritten from the TeamLeader's context. Lane reports from the stopped run are the only record of the lost edits; the implementation is re-run from the restored solution.
+- Recovery: the task record (README, requirement, draft, final, review) was rewritten from the TeamLeader's context and WIP-committed, both operator-approved; the leftover edits of the stopped run were discarded, also operator-approved. Lane reports from the stopped run are the only record of the lost edits; the implementation is re-run from the restored solution.
 
 ## Delivery
 
-- Pull request / CI / merge: https://github.com/excitedjs/dreamux/pull/369 (opened 2026-09-02 on the operator's instruction before the independent review finished; head `YisenFE:dreamux/dreamux-fable` on the fork `YisenFE/dreamux-fork` because the pushing account has read-only access to `excitedjs/dreamux`; rebased onto `next` on 2026-09-03 at the operator's request, no conflicts; commits `8dcbf98` (implementation) and `771d35b` (accepted review findings), plus the closeout commit). CI: green before the rebase; re-running after it. Review: the operator requested changes on 2026-09-02; all nine items landed in `771d35b` and each thread was answered. Merge: pending operator.
+- Pull request: https://github.com/excitedjs/dreamux/pull/369 (opened 2026-09-02 on the operator's instruction before the independent review finished). Review: the operator requested nine changes on 2026-09-02; all were addressed and each thread was answered.
 - #369 was not merged, by operator ruling of 2026-09-05: its content is
   delivered through the
   [refine-model-facing-surfaces](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md)
   task's PR instead.
-- Knowledge closeout: Pending.
+- Knowledge closeout: Complete through the
+  [refine-model-facing-surfaces](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md)
+  closeout of 2026-09-06, which updated the knowledge pages of the approved
+  boundary above. #369 carried a closeout commit of its own; it never landed,
+  because the pull request closed unmerged.

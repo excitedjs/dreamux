@@ -8,8 +8,8 @@
 - Final solution: [Native-data-only display solution](/.agents/tasks/channel/display-turn-usage-summary/technical-design/final.md).
 - Solution workflow: Operator selected the minimal-change fast path on 2026-09-09.
 - Solution review Issue: Omitted under the selected fast path.
-- Blockers: Real Codex model requests time out independently of Dreamux; full live verification is not green.
-- Next action: Wait for PR CI and clear live-verification limitations before readiness. `done` records implementation/review/knowledge closeout, not live-verification or merge readiness.
+- Blockers: None.
+- Next action: None.
 - Verification: [Commands, coverage, and residual risk](/.agents/tasks/channel/display-turn-usage-summary/verification.md).
 - Related tasks: Builds on [Feishu COT cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md) and preserves [display/push-back separation](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).
 
@@ -24,10 +24,9 @@
 
 ## Delivery
 
-- Pull request: [#397](https://github.com/excitedjs/dreamux/pull/397), draft targeting `next`; implementation commit `6da5210`. Not ready for merge.
-- CI / merge: Await normal PR CI; merge is not authorized.
+- Pull request: [#397](https://github.com/excitedjs/dreamux/pull/397).
 - Independent review: APPROVE with no findings; TeamLeader adjudication and the final optional-outcome compatibility correction are recorded in verification.
 - Knowledge closeout: Complete. Updated [Observing agents](/.agents/product/README.md#observing-agents), [native usage ownership](/.agents/domains/provider-runtime.md#native-turn-usage-display), and the [repository hook trap](/.agents/domains/repository-operations-and-release.md#an-environment-injected-hookspath-hides-the-repository-hooks).
 - Unchanged owners: Config/state/maintenance, neutral contracts, CLI, glossary, and root routing are N/A because their shape and behavior did not change.
 - Release notes: Generated patch change files for both runtimes; this additive display enhancement imposes no rebuild or custom-session migration.
-- Validation: Task check, knowledge check, diff check, build, lint, source/test typechecks, both runtime suites, and built-CLI smoke pass. The full suite remains failed in five real-model Codex cases; live Claude and Feishu UI were not observed.
+- Coverage limit: five real-model Codex cases could not be made to pass, and live Claude and the Feishu UI were never observed. Everything else is recorded in the verification file.
