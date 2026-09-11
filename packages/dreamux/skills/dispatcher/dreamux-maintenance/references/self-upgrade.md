@@ -8,19 +8,36 @@ external stop/start and is not covered here.
 ### 1. Install the requested version
 
 Confirm the current Dispatcher id and retain the originating Channel message and
-provider reply tool for the resumed report. Record the current `dreamux
---version` as `oldVersion`.
+provider reply tool for the resumed report.
 
-Use the same Node/npm environment and global prefix as the managed service. When
-the operator does not name a version, use `latest`:
+Resolve the managed service once with `dreamux doctor --json`. Treat
+`service.execStart[0]` as the launcher the service actually runs, use its
+captured environment for every later command, and record that launcher's
+`--version` as `oldVersion`. Stop and report when that launcher, the `dreamux`
+on this shell's `PATH`, and the package under `npm prefix -g` are not the same
+install: onboarding pins the service to whichever launcher ran it, so upgrading
+one copy and restarting another would report a version that is not running.
+
+Resolve the exact target before changing anything. When the operator does not
+name a version, use `latest`:
 
 ```text
-npm install --global @excitedjs/dreamux@<requested-or-latest>
+npm view @excitedjs/dreamux@<requested-or-latest> version
 ```
 
-Require the install to succeed, then run `dreamux --version` again and record the
-installed result as `targetVersion`. If installation or version resolution
-fails, diagnose and fix it before continuing. Do not restart.
+Compare the resolved target with `oldVersion`. Equal is a no-op: report it and
+stop. Lower is a downgrade this guide does not perform — report it and stop,
+because the forward changelog range in step 2 would be empty and meaningless.
+Only a higher target continues:
+
+```text
+npm install --global @excitedjs/dreamux@<resolved-target>
+```
+
+Require the install to succeed, then re-read the managed launcher's `--version`,
+require it to equal the resolved target, and record it as `targetVersion`. If
+installation or version resolution fails, diagnose and fix it before continuing.
+Do not restart.
 
 ### 2. Read changelog and migrate config
 
@@ -63,5 +80,7 @@ with the provider reply tool. Report `oldVersion`, `targetVersion`, the changelo
 actions and config migrations completed, the passing doctor result, and the
 restart result. Assistant text alone is not Channel delivery.
 
-Use the root skill's Service lifecycle route if restart fails or the notice does
-not arrive. Do not claim upgrade success without the resumed notice.
+If the restart command itself fails while this turn is still alive, route to the
+root skill's Service lifecycle entry. Once the restart is in flight this caller
+may be reaped, so it claims nothing: the resumed notice is what reports the
+upgrade.

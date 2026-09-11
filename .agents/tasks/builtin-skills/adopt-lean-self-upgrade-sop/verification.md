@@ -92,3 +92,67 @@ change file were each checked and reported clean. The reviewer confirmed no
 - The lean SOP has no rollback step. That is the accepted consequence of the
   operator's ruling, not an oversight: a failed install is diagnosed before any
   restart, and doctor must pass before the daemon is restarted at all.
+
+
+# Verification — follow-up slice (issue #374)
+
+## TeamLeader pre-review
+
+| Command | Result |
+|---|---|
+| `rush build` | SUCCESS |
+| `rush lint` | SUCCESS |
+| `rush test` | SUCCESS, no failure |
+| `rush typecheck:tests` | SUCCESS |
+| `.agents/scripts/check.sh` | `KB OK`, exit 0 |
+| `init_task.py check` | Task record OK |
+| `gitleaks protect --staged` | no leaks found |
+| `common/scripts/check-internal-content.sh` | exit 0 |
+
+The anti-leak gate was run by hand. This machine sets `core.hooksPath` to an
+external security-hook directory, so the repository's own
+`common/git-hooks/pre-commit` never fires and the mandatory gate is silently
+inert. Nothing about the machine's git configuration was changed; the hook's two
+checks were executed directly against the staged content instead. This is a
+repository-level gap — the gate CLAUDE.md calls mandatory can be bypassed by a
+setting the repository never inspects — and was reported to the operator rather
+than worked around quietly.
+
+## Independent implementation review
+
+One read-only reviewer, minimal-change fast path, one turn. One blocker, no
+improvements. Accepted.
+
+### Blocker — the product catalog re-promised a delivery the system cannot make
+
+The first draft of the catalog entry said an upgrade "reports itself" and that
+"the operator sees ... the restart outcome". That is the exact guarantee issue
+#374's third scenario removed from the SOP.
+
+`packages/dreamux/src/service/dispatcher-service/restart-notice.ts` returns early
+unless `startContinuity() === 'resumed'`, and an injection failure only warns to
+the log. So when resume or startup fails there is no turn, no notice, and no
+Channel delivery. A catalog entry claiming otherwise would invite a future
+implementer to satisfy it by adding the timer, retry, or recovery actor this task
+exists to keep out.
+
+Fix: the entry now names a *resumed* upgrade, qualifies the operator-visible
+report with "Once the Dispatcher resumes", and states plainly that a Dispatcher
+which never resumes reports nothing at all.
+
+### Reviewer findings with no defect
+
+All three named scenarios were walked against the new text and confirmed closed
+before any mutation: scenario 1 halts on the launcher/PATH/prefix mismatch before
+install, scenario 2 halts on the pre-install `npm view` comparison, and scenario
+3's actor-less instruction is gone. No non-goal was reintroduced. Every command
+and field the guide names was verified against current source, including
+`service.execStart` and `service.environment` in the doctor JSON. The SOP is 86
+lines and still four steps. Public-repository safety and the Rush change file
+were clean.
+
+## Residual risk
+
+- A Dispatcher that never resumes after the restart reports nothing. That is the
+  accepted fail-loud boundary named in issue #374, now stated in the product
+  catalog rather than papered over.
