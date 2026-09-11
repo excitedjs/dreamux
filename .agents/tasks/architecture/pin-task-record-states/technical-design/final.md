@@ -76,7 +76,7 @@ which this repository's workflow already borrows from.
 |---|---|
 | A status whose values cannot go stale (`proposed` / `implemented` / `rejected`) | The same property, different shape: nine states stay, but only three may be committed to the trunk. Upstream notes have no working-branch phase to describe; our task records drive one. |
 | "The status carries no dates and no parentheticals" | The `State:` line is matched anchored, so trailing prose fails the check rather than being tolerated. |
-| No note carries a delivery-status field. Pull requests are cited where they explain something — 16 of 1948 notes do — but never as a line reporting where the work stands | The Delivery section keeps the pull request *link* and drops its *status*, the merge commit, the gate results, and the dates. A link is a cross-reference; a status is a claim with an expiry date. |
+| No note carries a delivery-status field. Pull requests are cited where they explain something — 16 of 1948 note files do — but never as a line reporting where the work stands | The Delivery section keeps the pull request *link* and drops its *status*, the merge commit, the gate results, and the dates. A link is a cross-reference; a status is a claim with an expiry date. |
 | "Rewrite stale facts in place; do not append change history" | Adopted as a written rule in `task-records.md`. A record is the current state of one task; git holds the log. |
 | A script enforces the closed set, and CI runs it | `check-all` wired into `check.sh`, which the `kb` job already runs. |
 | One owner per fact — upstream keeps no central index precisely so a note owns its own rationale | The same principle, applied to the one field that was duplicated: the state now lives only in the record. |
@@ -92,7 +92,7 @@ which this repository's workflow already borrows from.
 | Lifecycle encoded in the directory path, cross-checked against the status | Tasks here are filed by capability domain, not by lifecycle. Moving a directory when a state changes would break every inbound link, and `check.sh` check 4 pins those from outside `.agents/` across the whole repository. |
 | The first-proposed date in the filename | Slugs here are action-prefixed capability names used as stable link targets. A date in the slug would put an expiring-looking token into every link. |
 | A separate `archived/` tree with a hash manifest and an append-only seal | The exemption it exists to grant is borrowed — a `## Historical …` section is skipped — without moving files into a second tree or maintaining a manifest. Nothing here is sealed, so nothing needs a hash to prove it unchanged. |
-| A required section skeleton (`## Problem`, `## Decision`, `## Consequences`) | Upstream's note vocabulary is closed because it was mandated from the start. Ours is not: 130 distinct bullet labels are in use across 36 records, most of them genuine one-off facts. Requiring a skeleton would redden nearly every record for cosmetics. The *banned* half of the same gate transfers without that cost, and it is the half that catches staleness. |
+| A required section skeleton (`## Problem`, `## Decision`, `## Consequences`) | Upstream's note vocabulary is closed because it was mandated from the start. Ours is not: counted with this gate's own label rule over its own live lines, about 140 distinct bullet labels are in use across 36 records, most of them genuine one-off facts. The figure is rounded on purpose: the argument needs its order of magnitude, and an exact count would go stale the next time anyone edits a record. Requiring a skeleton would redden nearly every record for cosmetics. The *banned* half of the same gate transfers without that cost, and it is the half that catches staleness. |
 | Cross-references must be relative markdown links | The convention here is repository-absolute `/.agents/...`. `check.sh` already resolves those (check 1) and pins them from outside the tree (check 4). Switching would churn every link in the knowledge base and buy nothing. |
 
 ## 7. Bringing existing records into compliance
@@ -136,9 +136,10 @@ The same token here is the bullet label. A record does not say "the CI is still
 running" in free prose — it writes `- CI:` and then says it. So the label is
 what the check rejects, and only on a record being committed to the trunk:
 
-    - CI:            - Merge:       - Branch:     - Baseline:
-    - Commit:        - Current PR:  - Current next action:
-    - CI / merge:    - Pull request / CI / merge:  - Pull request / merge:
+    - Baseline:      - Branch:       - CI:          - CI / merge:
+    - Commit:        - Current PR:   - Current next action:
+    - Current repair baseline:       - Current repair branch:
+    - Merge:         - Pull request / CI / merge:   - Pull request / merge:
 
 Two exemptions come from upstream unchanged. Fenced blocks are stripped before
 the file's structure is read, because a token inside an example is not
@@ -146,7 +147,10 @@ structure — reading it as structure was a live bypass, not a hypothetical one:
 a record whose body contained `## Tasks completed` was classified as a domain
 index and skipped the state rule entirely, exit code 0. And a section under a
 `## Historical …` heading is skipped, for the reason upstream's gates skip
-`archived/`: a record of what was true then is not a claim about now.
+`archived/`: a record of what was true then is not a claim about now. That
+heading is matched on a word boundary, not as a prefix — `## Historically
+speaking …` must not be able to claim the exemption by accident, which is the
+same fail-open shape as reading a heading by substring.
 
 What is still not mechanically checked is a stale sentence inside an otherwise
 live field — `- Knowledge closeout:` describing work as ongoing, say. The labels

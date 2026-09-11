@@ -98,9 +98,10 @@ under it. These report where delivery stood when they were written, so a record
 being committed to the trunk may not carry them:
 
 ```text
-- CI:          - Merge:        - Branch:    - Baseline:    - Commit:
-- CI / merge:  - Current PR:   - Current next action:
-- Pull request / CI / merge:   - Pull request / merge:
+- Baseline:      - Branch:       - CI:          - CI / merge:
+- Commit:        - Current PR:   - Current next action:
+- Current repair baseline:       - Current repair branch:
+- Merge:         - Pull request / CI / merge:   - Pull request / merge:
 ```
 
 Write `- Pull request:` with the link, and put durable evidence behind

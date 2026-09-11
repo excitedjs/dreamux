@@ -9,8 +9,8 @@
 - Solution review Issue: Skipped by explicit operator instruction for this bounded follow-up.
 - Verification: [Current verification evidence](/.agents/tasks/workflow/harden-native-transcript-contracts/verification.md)
 - Blockers: None.
-  External Codex model-service gates remain outside this bounded hardening
-  change; GitHub review approval remains required.
+- Coverage limit: external Codex model-service gates are outside this bounded
+  hardening change.
 - Next action: None.
 - Related tasks: Builds on [Unify Workflow agents with TeamMate lifecycle ownership](/.agents/tasks/workflow/unified-teammate-lifecycle/README.md) and merged PR [#338](https://github.com/excitedjs/dreamux/pull/338).
 

@@ -6,6 +6,7 @@
 - State: `done`
 - Requirement: [Current requirement](/.agents/tasks/architecture/pin-task-record-states/requirement.md)
 - Final solution: [Pin the state a task record may carry on the trunk](/.agents/tasks/architecture/pin-task-record-states/technical-design/final.md)
+- Verification: [Gates, behavior probes, and counts](/.agents/tasks/architecture/pin-task-record-states/verification.md)
 - Solution review Issue: None. The operator directed the work in the Feishu group and approved the approach there.
 - Blockers: None.
 - Next action: None.

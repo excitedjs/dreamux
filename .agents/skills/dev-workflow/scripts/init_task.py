@@ -416,7 +416,12 @@ DELIVERY_STATUS_LABELS = frozenset({
 # A section under this heading is a frozen snapshot of a past round, kept on
 # purpose. It records what was true then, which is not a claim about now, so the
 # label rule does not reach into it.
-FROZEN_SECTION_PREFIX = "## Historical"
+#
+# The word boundary is the whole point: a prefix test also matches
+# `## Historically speaking …`, which exempts everything after it. An exemption
+# that a passing phrase can claim by accident is the same fail-open as reading a
+# heading by substring.
+FROZEN_SECTION_RE = re.compile(r"^## Historical\b")
 
 LABEL_RE = re.compile(r"^- ([A-Z][A-Za-z0-9 /-]{0,40}):")
 
@@ -450,7 +455,7 @@ def live_lines(text: str) -> list[str]:
     frozen = False
     for line in unfenced_lines(text):
         if line.startswith("## "):
-            frozen = line.startswith(FROZEN_SECTION_PREFIX)
+            frozen = FROZEN_SECTION_RE.match(line) is not None
         if not frozen:
             lines.append(line)
     return lines
@@ -464,9 +469,11 @@ def check_delivery_labels(name: str, lines: list[str]) -> None:
                 f"{name}: the `- {match.group(1)}:` field reports where delivery "
                 f"stood when it was written, so it goes false on its own. git and "
                 f"GitHub already record it. Keep the pull request link; drop the "
-                f"branch, baseline, commit, CI result, and merge status. A past "
-                f"round that is kept on purpose belongs under a "
-                f"'{FROZEN_SECTION_PREFIX} ...' heading, which this check skips."
+                f"branch, baseline, commit, CI result, and merge status. The "
+                f"full set is: "
+                f"{', '.join(sorted(DELIVERY_STATUS_LABELS))}. A past round kept "
+                f"on purpose belongs under a '## Historical ...' heading, which "
+                f"this check skips."
             )
 
 

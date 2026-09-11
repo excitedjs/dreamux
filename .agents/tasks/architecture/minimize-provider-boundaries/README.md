@@ -589,10 +589,11 @@ the final holistic code review and must not be promoted into product state or
 architecture merely because it is possible.
 
 - Next action: None.
-- Final Fable audit: the failure ledger below requires an independent
-  line-by-line audit of the complete diff against every ledger item. This
-  record carries no evidence that it was performed, and the epic shipped
-  without it.
+- Final Fable audit: the
+  [TeamLeader failure ledger](#teamleader-failure-ledger-for-the-final-fable-audit)
+  requires an independent line-by-line audit of the complete diff against every
+  ledger item. This record carries no evidence that it was performed, and the
+  epic shipped without it.
 - Related tasks: Surfaced after [Feishu COT Conversation Cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); this is an independent architecture outcome.
 
 ## Development approval

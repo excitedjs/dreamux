@@ -77,10 +77,11 @@ The following implementation and delivery notes predate the current repair.
   closed. At that reset only .agents records remained changed; the fresh Claude
   implementation passed final local pre-review. The remote draft PR and published Alpha
   still contain the discarded implementation.
-- Blockers: None. The test-fixture scan failure was resolved under operator
-  approval by changing only the synthetic commands, with the gitleaks rules
-  unchanged. The operator rejected the added shared START title/name budget; its
-  withdrawal is verified, and the approved 80-byte cap removal remains.
+- Blockers at the time: external final review was still pending. The
+  test-fixture scan failure had been resolved under operator approval by
+  changing only the synthetic commands, with the gitleaks rules unchanged. The
+  operator rejected the added shared START title/name budget; its withdrawal was
+  verified, and the approved 80-byte cap removal remained.
   R2 remains unchanged, R3 keeps invocation-first selection, and R6 keeps the
   existing formatting entry under the operator's explicit rulings.
 - Next action at the time: update the existing draft PR, run CI, and request the
@@ -150,11 +151,11 @@ The following implementation and delivery notes predate the current repair.
 
 ## Delivery
 
-- PR: [Draft #401](https://github.com/excitedjs/dreamux/pull/401), targeting `next`.
-- Alpha: `0.25.0-alpha.g4a45d478cc7c`, published and verified on npm after the
-  operator explicitly requested publication. It includes the rebase and heading
-  removal. It belongs to the discarded implementation and does not validate the
-  new attempt.
+- Pull requests: [#401](https://github.com/excitedjs/dreamux/pull/401) carried
+  the feature, [#403](https://github.com/excitedjs/dreamux/pull/403) the status
+  placement, and [#405](https://github.com/excitedjs/dreamux/pull/405) the
+  RESULT heading. The discarded round and its alpha are recorded in the frozen
+  snapshot above.
 - Verification: [Local checks and review](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
 - Knowledge closeout: Product, Channel, provider, task, and requested workflow-skill
   records are aligned with the final local implementation; external review may
