@@ -140,7 +140,6 @@ export async function sendReply(
     chatId: string;
     text: string;
     messageId?: string;
-    mentionUserIds?: string[];
     onMessageCreated?: FeishuSendOptions['onMessageCreated'];
   },
 ): Promise<{ messageIds: string[] }> {
@@ -150,9 +149,6 @@ export async function sendReply(
       channelOutboundToFeishuTarget({
         conversationId: input.chatId,
         ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
-        ...(input.mentionUserIds !== undefined
-          ? { mentionUsers: input.mentionUserIds }
-          : {}),
       }),
       input.text,
       { onMessageCreated: input.onMessageCreated },
@@ -174,7 +170,6 @@ export async function sendReply(
       dispatcher_id: h.opts.dispatcherId,
       chat_id: input.chatId,
       message_id: input.messageId,
-      mention_count: input.mentionUserIds?.length ?? 0,
       message_ids: result.messageIds,
     },
     'feishu message sent',

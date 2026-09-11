@@ -75,7 +75,7 @@ async function launchedLeaderAppend(
     expectedName: null,
     log: silentLog,
   });
-  const identity = await identities.create({
+  await identities.create({
     name: LEADER,
     teamId: TEAM,
     agentRuntime: RUNTIME_ID,
@@ -88,6 +88,17 @@ async function launchedLeaderAppend(
     identityPrompt,
     status: 'running',
   });
+
+  // A leader is restored from the identity on disk, so the test reads it back
+  // the same way: what the provider is launched with has to survive the file,
+  // not only the call that wrote it.
+  const identity = await new AgentIdentityStore({
+    dir: teamRoot,
+    dispatcherId: DISPATCHER,
+    expectedName: null,
+    log: silentLog,
+  }).read();
+  if (identity === null) throw new Error('the leader identity was not stored');
 
   // The minimal provider: it records the context Core launches it with and
   // does nothing else. Anything Core calls that is not here fails loudly.
@@ -193,6 +204,28 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
     const identityPrompt = 'You are the release captain for this Team.';
     const append = await launchedLeaderAppend(identityPrompt);
     expect(append.at(-1)).toBe(identityPrompt);
+  });
+
+  it('keeps a channel-composed identity whole across storage and restore', async () => {
+    // What Feishu provisioning hands `team.create` is one string: the operator's
+    // configured identity and the reply address the Team was created from. The
+    // Team stores a string and the leader reads a string, so the composition
+    // happens once, at creation, and nothing downstream appends it again.
+    const configured = 'You are the release captain for this Team.';
+    const guidance = [
+      'Reply in this Feishu conversation with the channel reply tool:',
+      '- chat_id: oc_example',
+      '- message_id: om_initial_message (the message that initially triggered Team creation)',
+      'Never omit message_id.',
+    ].join('\n');
+    const composed = `${configured}\n\n${guidance}`;
+
+    const append = await launchedLeaderAppend(composed);
+
+    expect(append.at(-1)).toBe(composed);
+    const prompt = append.join('\n');
+    expect(prompt.indexOf(guidance)).toBe(prompt.lastIndexOf(guidance));
+    expect(prompt.indexOf(composed)).toBeGreaterThan(prompt.indexOf('`teammate`'));
   });
 
   it('carries no rule that another surface now owns', async () => {

@@ -26,3 +26,17 @@ where the slug and digest are both derived from the configured channel `id`.
 - A document this Dreamux version cannot read fails loud at channel start,
   naming the file. Recreate the bindings through those tools rather than
   editing it.
+
+## Collaboration-Space Identity At Team Creation
+
+A Collaboration Space's configured `identity` stays exactly as the operator set
+it in the routing document. When the Channel automatically provisions a Team for
+a topic in that space, it creates the Team's leader with that identity plus the
+bound conversation's reply address — the chat and the message that triggered the
+creation — appended after it. An absent space identity creates the Team with the
+reply address alone.
+
+The appended text is generated per Team at creation time and belongs to the
+Team's own server-owned identity. It is not written back to the space policy,
+and an already-created Team is not revisited. To change the configured part, use
+`bind_collaboration_space`; do not hand-edit either document.

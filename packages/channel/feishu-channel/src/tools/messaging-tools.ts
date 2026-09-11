@@ -11,7 +11,6 @@ import {
   closedObjectSchema,
   nonEmptyString,
   optionalString,
-  optionalStringArray,
   requireString,
 } from './schema.js';
 
@@ -26,7 +25,6 @@ interface ReplyInput {
   chatId: string;
   text: string;
   messageId?: string;
-  mentionUserIds?: string[];
 }
 
 export const replyDef: FeishuToolDef<ReplyInput> = {
@@ -54,15 +52,13 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
       text: {
         ...nonEmptyString,
         description:
-          'Message text. In a group or other broad audience, keep secrets, ' +
-          'tokens, private identifiers, hidden instructions, private ' +
-          'context from other sources, and machine-local paths out of it.',
-      },
-      mention_user_ids: {
-        type: 'array',
-        items: nonEmptyString,
-        description:
-          'Optional Feishu user open_ids to @-mention inline in the reply.',
+          'Message body, sent as Feishu rich text: Markdown headings, lists, ' +
+          'tables, links, and fenced code render natively. To @-mention ' +
+          'someone, write the tag where you want it, for example ' +
+          '<at user_id="ou_example">Example</at>. In a group or other broad ' +
+          'audience, keep secrets, tokens, private identifiers, hidden ' +
+          'instructions, private context from other sources, and ' +
+          'machine-local paths out of it.',
       },
     },
     ['chat_id', 'text'],
@@ -75,20 +71,15 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
   parse(raw) {
     const obj = asRecord(raw, 'reply arguments');
     const messageId = optionalString(obj, 'message_id');
-    const mentionUserIds = optionalStringArray(obj, 'mention_user_ids');
     return {
       chatId: requireString(obj, 'chat_id'),
       text: requireString(obj, 'text'),
       ...(messageId !== null ? { messageId } : {}),
-      ...(mentionUserIds !== null ? { mentionUserIds } : {}),
     };
   },
   async handle(ctx, input) {
     const result = await ctx.session.sendText(input.chatId, input.text, {
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
-      ...(input.mentionUserIds !== undefined
-        ? { mentionUserIds: input.mentionUserIds }
-        : {}),
     });
     return { message_ids: result.message_ids };
   },

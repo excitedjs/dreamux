@@ -74,10 +74,6 @@ class FakeTransport implements FeishuTransport {
     throw new Error('unused in this test');
   }
 
-  async editText(): Promise<void> {
-    throw new Error('unused in this test');
-  }
-
   async fetchDocComment(): Promise<FeishuDocComment | null> {
     throw new Error('unused in this test');
   }

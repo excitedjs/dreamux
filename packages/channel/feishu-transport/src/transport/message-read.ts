@@ -78,7 +78,11 @@ function normalizeMessageReadMention(
       ? { union_id: id }
       : raw.id_type === 'user_id'
         ? { user_id: id }
-        : { open_id: id }
+        // An application id is not a user identity and nothing can reply to
+        // one, so the record keeps its key and name and claims no identity.
+        : raw.id_type === 'app_id'
+          ? undefined
+          : { open_id: id }
   return {
     key: raw.key ?? '',
     ...(identity !== undefined ? { id: identity } : {}),

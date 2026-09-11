@@ -11,8 +11,8 @@ package that exposes Lark SDK / JSAPI capabilities to channel layers.
   platform capabilities.
 - Keep exported types and results platform-oriented, not Dreamux- or
   agent-oriented.
-- Keep the package usable by multiple hosts. Dreamux and claudemux must not
-  depend on each other through this package.
+- Keep the package host-agnostic: platform capabilities only, with no
+  knowledge of the channel layer that calls them.
 
 ## Boundaries
 
@@ -28,16 +28,15 @@ package that exposes Lark SDK / JSAPI capabilities to channel layers.
 
 ## Existing Compatibility Surface
 
-Some current exports are shared parsing/rendering/policy primitives from earlier
-work. Do not use them as precedent for adding Dreamux-specific serialization.
-When touching them, keep changes engine-agnostic and avoid expanding this
-package toward channel orchestration.
+Some current exports are shared parsing primitives from earlier work. Do not
+use them as precedent for adding Dreamux-specific serialization. When touching
+them, keep changes engine-agnostic and avoid expanding this package toward
+channel orchestration.
 
 ## Upstream / Downstream Contract
 
 - Upstream: the Feishu/Lark SDK and platform JSON contracts.
-- Downstream: `@excitedjs/feishu-channel`, `@excitedjs/dreamux`, and external
-  consumers that need platform I/O primitives.
+- Downstream: `@excitedjs/feishu-channel` and `@excitedjs/dreamux`.
 - If a downstream caller needs attachment download/cache policy or
   Codex-friendly formatting, expose only the low-level Lark resource operation
   here and implement policy/formatting in the channel package.
