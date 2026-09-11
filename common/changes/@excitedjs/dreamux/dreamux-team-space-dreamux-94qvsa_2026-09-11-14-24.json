@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Document creation-time Feishu reply guidance in the maintenance reference and cover identity persistence, restore, and provider prompt composition without changing Core runtime or stored formats.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

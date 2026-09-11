@@ -43,7 +43,8 @@ Keep these fields current and concise:
 - finite workflow state;
 - requirement and final-solution links;
 - public GitHub solution-review Issue link;
-- development approval source, time, and approved boundary;
+- the sent development-authorization card and approving response, their times,
+  and the approved boundary (public-safe descriptions, never private transport IDs);
 - blockers and next action;
 - lineage and related-task links;
 - the pull request link once one is open;

@@ -12,19 +12,40 @@ Play back to the operator:
 - verification plan;
 - non-blocking assumptions and known residual risks.
 
-Ask an explicit question such as:
+Send an explicit development-authorization question through `ask_user_question`
+or an equivalent interactive-card tool, such as:
 
 > Do you approve this requirement and technical solution and want the team to enter
 > development?
+
+**No sent development-authorization card means no development authorization.**
+The card must refer to the current recorded requirement, final solution, and
+implementation scope. Sending it alone is insufficient: wait for the operator's
+explicit approval in response. A pending, expired, unanswered, or declined card
+does not authorize development. A product-choice or solution-review card is not
+a development-authorization card.
 
 The original request never counts as approval because it precedes investigation,
 requirement convergence, and solution review. Agreement with a diagnosis, answer to
 a product question, reaction, or instruction to continue investigating also does
 not count.
 
-A short response such as "OK", "approved", or "start development" counts only when
-it directly answers the explicit development question against the current recorded
-requirement and final solution.
+A short response such as "OK", "approved", or "start development" counts only
+when it explicitly answers that sent development-authorization card against the
+current recorded requirement and final solution. An ordinary chat confirmation
+without that card does not count, even if it says to start. Neither a reviewer's
+verdict nor the leader declaring the task approved replaces the card and answer.
+If no interactive-card tool is available, leave the task awaiting approval and
+report that the required authorization mechanism is unavailable; do not replace
+it with a prose-only question.
+
+## Regression Trap: reviewed requirements are not authorization
+
+A leader started a developer after requirement confirmation and an independent
+review, then had to stop when the operator clarified that development was not
+authorized. A task-state declaration cannot supply the missing consent: check
+for the sent development-authorization card and its approving response before
+starting a developer or writing implementation artifacts.
 
 ## Record and enforce the scope
 
@@ -34,7 +55,8 @@ with at least:
 - `State: implementation`;
 - the approved requirement and solution links;
 - the approved implementation scope;
-- a public-safe, provider-neutral approval source description and time;
+- a public-safe, provider-neutral description of the sent development-authorization
+  card, its time, and the operator's explicit approving response and time;
 - `Next action: Enter development`.
 
 Treat the task README as the visible current-state authority. A deeper progress log

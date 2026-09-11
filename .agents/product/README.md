@@ -36,6 +36,23 @@ the same change that touches it.
   needing no orphan governance; a later message on that conversation simply
   creates or selects another Team. Dissolving a Team cancels all bindings that
   point at it.
+- **Replies use Feishu native rich text.** The agent writes Markdown and inline
+  `<at user_id="ou_example">Example</at>` directly in the `reply` body; there is
+  no separate mention-list argument. A supplied `message_id` addresses the
+  original conversation. One body is one message when its serialized content
+  fits 28 KiB; larger bodies split in order, preserving Unicode clusters, code
+  fences, and table headers. An indivisible oversized table row produces a
+  size error. Explicit interactive cards and COT remain available. Platform
+  send failures expose the operation, available HTTP status, Feishu code,
+  reason, and log ID in logs and the MCP failure without copying request data.
+  (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **Existing peer message formats remain readable.** Text placeholders,
+  structured mentions, native-post Markdown, and legacy card Markdown share
+  one ordered mention representation. The model reads actual mentions as
+  `<at user_id="...">`; code examples and plain-text lookalikes stay literal.
+  Native-post readback prefers its richer content projection. Changing outgoing
+  replies does not change the raw-event mention gate for peer-bot admission.
+  (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
 - **A question the agent cannot answer becomes a card, and the turn ends.**
   When an agent is blocked on a decision only the user can make, the built-in
   Feishu channel posts an interactive question card — 1-4 single-select
@@ -91,7 +108,12 @@ the same change that touches it.
 - **A collaboration space is a Channel product flow.** The Channel provisions a
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
-  than a persisted saga.
+  than a persisted saga. A newly provisioned Feishu topic Team receives its
+  configured identity followed by the bound chat and initial triggering message
+  address. The leader must use that initial message ID when its current context
+  offers no other one, and must never omit the reply message ID. Existing Teams
+  and the shared space policy are unchanged; identity stays a string.
+  (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
 - **Binding changes are confirmed with a card, and the card names real paths.**
   When a chat, topic, or space binding changes, the built-in Feishu channel
   posts a confirmation card: space-bound shows the space name, TeamLeader

@@ -1,0 +1,267 @@
+{
+  "base_commit": "3cac2f7b00a7be159a52bd6aee0a9cdcd43214e1",
+  "scope": "All tracked changes and untracked additions; null hash denotes deletion. The manifest excludes itself.",
+  "files_sha256": "e8da7007ff5111c738c0a33273355f086513f719e94a55f9cd638a66fc9423ab",
+  "files": [
+    {
+      "path": ".agents/domains/channel.md",
+      "sha256": "aae8ae0f40db20161dd9bf96a1372773ec9a24c1ccf44066e33dcc9d389dfdc3"
+    },
+    {
+      "path": ".agents/product/README.md",
+      "sha256": "11e04aa730c7e2782c1df5dbe66e8ebab2ff2fd3ce09682b195e4e573c440bf8"
+    },
+    {
+      "path": ".agents/skills/dev-workflow/SKILL.md",
+      "sha256": "1c931999ea9fd6e6347fd7dcb0524adc8499f7e8cbfdabe97d240fafbf456955"
+    },
+    {
+      "path": ".agents/skills/dev-workflow/references/development-approval.md",
+      "sha256": "836293b0db30a69ed5a1421b41868cf819c647b70fceaa7202e79870f349f4dd"
+    },
+    {
+      "path": ".agents/skills/dev-workflow/references/implementation.md",
+      "sha256": "31de38fa619227e1736c633384a92d9a16f383615c241e9792c2ab0907b7148a"
+    },
+    {
+      "path": ".agents/skills/dev-workflow/references/task-records.md",
+      "sha256": "7f385409fc1b7e78fa06eb87caa4a8e71d0f4f5ba1fdc6ffd19d84af01ec4b23"
+    },
+    {
+      "path": ".agents/tasks/channel/README.md",
+      "sha256": "7822b7a9ae10300ad7430f52b6ec1f44fe7ad8557ddd4c7cdf9191e0c5f45c92"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/README.md",
+      "sha256": "d9c10afa98225473cfa851f3d9030b0e45ff002b9aec37a065fba028d1a6aa19"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/artifacts/inspect-native-post-inbound.mjs",
+      "sha256": "cba351db8d52bcdac9462be0826d0127f582c38f05c38d014c7abdaee7daa294"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/artifacts/issue-410-current-solution.md",
+      "sha256": "031122c4e4dbc582da6984b9ad65d4259feb7fc0131aa34c2897bbb748831165"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/artifacts/native-post-appid-probe.mjs",
+      "sha256": "2b7874152e98a3a6214f0de357160cf0be69f17227c202bd08dddc970ce939f0"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/artifacts/native-post-probes.mjs",
+      "sha256": "7ddaece4ffd5a1766e97dab69670237eeebb204108c394364f1b9b73db626660"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/inbound-analysis.md",
+      "sha256": "922958491aac3c4312ef25dbc8ed01e5f0c7a44a2e6d9854727224122d06a23c"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/requirement.md",
+      "sha256": "900a71d848c231436215201cdc5a2f24a8d1f4c5f12b56e97143c7ddebbfd504"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/technical-design/final.md",
+      "sha256": "b000aa89baa95cf5a96c5e3c63e96d8c3a4e619860cb80afdc43d8e7b3257eed"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/technical-design/reviews/2026-09-11-adjudication.md",
+      "sha256": "310bf9dd49e9a10f8a87b05a097827f8f1197de4f27927aa24a690dcbd1916fc"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/technical-design/reviews/2026-09-11-claude.md",
+      "sha256": "872650f174259b0a706cdd9206ce22d73ba6e43bd0a8004cda8721abaef702d1"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/technical-design/reviews/2026-09-11-deepseek.md",
+      "sha256": "4a5522c876546f868a4a2336ef277cba24a5f9ab12914348dc1e18d1a30537d8"
+    },
+    {
+      "path": ".agents/tasks/channel/simplify-feishu-replies/verification.md",
+      "sha256": "ef4ce3d836f5077472976e6eff4758aad9834328ef359ae132343943621e1dea"
+    },
+    {
+      "path": "common/changes/@excitedjs/feishu-channel/feat-native-post-replies_2026-09-11-20-50.json",
+      "sha256": "b25aa63eb3c7fc0e1f0d72d236b8fe62a8e91a24169c448c87dc5eae181e39c9"
+    },
+    {
+      "path": "common/changes/@excitedjs/feishu-transport/feat-native-post-replies_2026-09-11-20-50.json",
+      "sha256": "61a60cbc7a08284fb740bc02f0cb4937c131abf361b792a42f998dfd9c09791e"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/bot.ts",
+      "sha256": "7a32b076607097a2cfce9826c339ffe1fde6cd6fdb2becd0f5cdf0c05d9a7611"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/feishu-channel.ts",
+      "sha256": "180eb517219b2ac59d92490f11408f14c8dd73aae3b49b048ca00585c5f914c3"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/feishu-message-render.ts",
+      "sha256": "1f62c05d2edeb09ad67c8fdc3cafe0915c817ab416fa835d0005fefcfede8242"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/feishu-provisioning.ts",
+      "sha256": "6f347acca03a62155e4a53037aeeb71c40b655c8d30f97562ae2ff6ff0f1c186"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/feishu-session-inbound.ts",
+      "sha256": "4650885c63d65fbd90fcd2bc231b3d91e258a99b7d8628de19bc88405a3c59a4"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/feishu-session-ops.ts",
+      "sha256": "1f524af3b0be65acb8daadb1d350d847c737af99ba813173260c55fa70d69dbc"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/tools/messaging-tools.ts",
+      "sha256": "3a259a1ebd968fe417f300955b19b30f9ee67507f325643cba1330cf27bc9571"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/tools/schema.ts",
+      "sha256": "d6c18dffb820fff32e63d04f376a7b857a53c0ffe12432e68c3c51345ce556f2"
+    },
+    {
+      "path": "packages/channel/feishu-channel/src/tools/types.ts",
+      "sha256": "d7a76ec45e169ebd646584006b348faa71da908e0a63f65d23f02f3e114fc3aa"
+    },
+    {
+      "path": "packages/channel/feishu-channel/tests/feishu-bot.test.ts",
+      "sha256": "5d5300eab2114215f0a0f6e50ebee299fd260810101d962689c8985e8f934748"
+    },
+    {
+      "path": "packages/channel/feishu-channel/tests/feishu-message-budget.test.ts",
+      "sha256": "de48eae0240ce1ea00f53d87800278cf8d58ff8b3f24bc823bb3489beab81285"
+    },
+    {
+      "path": "packages/channel/feishu-channel/tests/feishu-provisioning.test.ts",
+      "sha256": "f3b2087bdf2036ed3fd339c083a068a3651280c7db3e3d4d37941513356f3bdf"
+    },
+    {
+      "path": "packages/channel/feishu-channel/tests/feishu-reply-tool.test.ts",
+      "sha256": "00a0904b2e4f6b2ccba3f7797ac96adf3911c50ac906d40ed0ed8ba447e13dd3"
+    },
+    {
+      "path": "packages/channel/feishu-transport/CLAUDE.md",
+      "sha256": "6e59ba77f0e7b8a7fe19ddc41b1a4e0547be9807d155d41ef2cf51069aa877d5"
+    },
+    {
+      "path": "packages/channel/feishu-transport/README.md",
+      "sha256": "7d955af6d2943f785215a0e854a4efa457e991b41f9b737d6c5919b944f6bdb5"
+    },
+    {
+      "path": "packages/channel/feishu-transport/package.json",
+      "sha256": "66612af94a06359bb9be3ba1f43d38a097b750699c4395c6ea7835070d588d56"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/contract/outbound.ts",
+      "sha256": "494c49d53eba007ae96b13e2902edef0ad2dd2f1e5a5e7eb3ea38795bf2e158e"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/index.ts",
+      "sha256": "9d6f12bbcc1b613f564ae757017a54932096a0136efeefdecf87f40bdea4eb83"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/parse/card.ts",
+      "sha256": "4a5a46a5450b7bdfc25deae16a2fe8421d0a9559b080f8aa6c76b8be18264742"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/parse/content.ts",
+      "sha256": "99df7235172d4a91e7a01f65eec8276d7b3281cead090f6437dc31fb2af0b072"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/parse/markdown.ts",
+      "sha256": "cc42f2933f4d7f3008395395d7c54baafc2ea9d726d48bdd1d87410d44764bc7"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/parse/mention.ts",
+      "sha256": "b4e61cc4d47b38a63cec6a6621637c31d47ab5a96e7cc1bb0efe36263976317c"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/parse/parts.ts",
+      "sha256": "01ff95625bb00ad22e060627d974be573032d4b837d8b6515b5b84933fb2f0ef"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/parse/post.ts",
+      "sha256": "157f43ed050ba77a9d592e78e1271b92a1eabaffe6d2320be3c6fb782865a13d"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/render/constants.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/render/pack.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/render/render.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/render/split.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/render/table.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/render/types.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/transport/feishu.ts",
+      "sha256": "da0745889213564525fa4a7c3fbd23f6580064cffc5262dc84a4289ba0ff62b7"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/transport/message-content.ts",
+      "sha256": "eb32a484a7bb3d65f7abc126a8c4cade8b8fe5af233c4bdc79cd657e603ab8b0"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/transport/message-read.ts",
+      "sha256": "79279e0d46ab9aa25e10d999b1b758094440377c24dcf76bfdeb09c263f91631"
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/transport/outbound-card.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/src/transport/outbound-message.ts",
+      "sha256": "a68fe7d06a69ad2fe428256268fefbcb26602e29da23a4c929640157eb7ddef7"
+    },
+    {
+      "path": "packages/channel/feishu-transport/tests/content.test.ts",
+      "sha256": "5d05c6243907a44e7dc12e1def5f30145e638cc2d2631c22d5b1e7a2c20e177f"
+    },
+    {
+      "path": "packages/channel/feishu-transport/tests/inbound-markdown.test.ts",
+      "sha256": "764a92fda8a849a162570a9952ad43bc8301e9a439d0feb5ada9d6d4078d90b3"
+    },
+    {
+      "path": "packages/channel/feishu-transport/tests/render.test.ts",
+      "sha256": null
+    },
+    {
+      "path": "packages/channel/feishu-transport/tests/transport.test.ts",
+      "sha256": "ff71f3aa6c73ce095aab6a6d39561340e26d8c9817314f1a02a7931c3f5fe89e"
+    },
+    {
+      "path": "packages/channel/feishu-transport/tsconfig.tests.json",
+      "sha256": "159228c4ae539c0ebfbb513cbeb4908a98b9b584a492be43d256233ac4c24932"
+    },
+    {
+      "path": "packages/dreamux/skills/dispatcher/dreamux-maintenance/references/builtin-feishu.md",
+      "sha256": "9c068bbb74002bd56d3dcb5ea35369f490baab27d250d9571fc74aa43d874194"
+    },
+    {
+      "path": "packages/dreamux/tests/package-boundary-guards.test.ts",
+      "sha256": "47faee35f6b1f0a754ebaed20e72da19aefe7777e09cf2e669bf7c84949908ff"
+    },
+    {
+      "path": "packages/dreamux/tests/team-leader-identity-persistence.test.ts",
+      "sha256": "2e327dc5c33e72faeac850c621c65ed3205c5700873c7f3e2f6ec3e5fd2291d4"
+    },
+    {
+      "path": "packages/dreamux/tests/team-leader-prompt.test.ts",
+      "sha256": "6210d85c9f0134d85303247a92671137f02cf73c4ae612f94e3955ad898c0945"
+    }
+  ]
+}

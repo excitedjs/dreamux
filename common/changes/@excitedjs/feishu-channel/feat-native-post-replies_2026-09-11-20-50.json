@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The `reply` tool now takes exactly `chat_id`, optional `message_id`, and `text`; the `mention_user_ids` argument is gone, and a mention is written in the body with Feishu's own `<at user_id=\"ou_example\">Example</at>` syntax, which the tool description now shows. Replies are delivered as native rich text, so the authored Markdown renders as written instead of being converted into a card. Inbound mentions reach the model as `<at user_id=\"...\">`, changed from `<at id=\"...\">`, and are taken from the parsed message rather than recovered from its raw body. A Team the channel provisions automatically for a Collaboration Space topic is now created with the space's configured identity followed by its bound reply address \u2014 the chat and the message that triggered creation \u2014 so the leader can still address the conversation after a compaction; the space policy is unchanged. A failed send now reports the platform's own status, code, reason, and log id in the channel log and the MCP failure.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -388,7 +388,7 @@ describe('Feishu inbound resource budgets', () => {
 
   it('closes a CDATA code element before the rich-body truncation marker', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      parsedText: `\`\`\`ts\n${'x'.repeat(170_000)}\n\`\`\``,
+      contentParts: [{ kind: 'code', code: 'x'.repeat(170_000), language: 'ts' }],
     }));
 
     const markerIndex = result.body.indexOf('[message content truncated:');
@@ -402,7 +402,11 @@ describe('Feishu inbound resource budgets', () => {
 
   it('charges repeated CDATA terminators before selecting a closed code prefix', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      parsedText: `\`\`\`xml\n${']]>'.repeat(60_000)}\n\`\`\``,
+      contentParts: [{
+        kind: 'code',
+        code: ']]>'.repeat(60_000),
+        language: 'xml',
+      }],
     }));
 
     const markerIndex = result.body.indexOf('[message content truncated:');
@@ -580,3 +584,34 @@ describe('Feishu channel timestamp', () => {
     expect(formatFeishuCreateTime('not-a-time')).toBe('not-a-time');
   });
 });
+
+describe('Feishu inbound mention serialization', () => {
+  it('writes a mention with the same attribute the reply tool accepts', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      contentParts: [
+        { kind: 'text', text: 'Hi ' },
+        { kind: 'mention', id: 'ou_example', name: 'Example' },
+        { kind: 'text', text: ', please look.' },
+      ],
+    }));
+
+    expect(result.body).toContain(
+      '<at user_id="ou_example">Example</at>',
+    );
+    expect(result.body).not.toContain('<at id=');
+  });
+
+  it('escapes a hostile display name and identifier', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      contentParts: [{
+        kind: 'mention',
+        id: 'ou_"><script>',
+        name: '<b>bold</b>',
+      }],
+    }));
+
+    expect(result.body).not.toContain('<script>');
+    expect(result.body).toContain('&lt;b&gt;bold&lt;/b&gt;');
+    expect(result.body.match(/<at user_id="/g)).toHaveLength(1);
+  });
+})

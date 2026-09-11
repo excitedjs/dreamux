@@ -7,9 +7,9 @@
  * message types expose de-duplicated resource keys beside those positional
  * parts.
  *
- * Ported verbatim from claudemux's `feishu-channel/src/content.ts` (the source
- * of truth — it carries the `interactive`-card parse dreamux's drifted copy had
- * lost); only the `./types` import was repointed to `../contract/types`.
+ * Mentions are part of that source order: the message's `mentions` records are
+ * resolved into their own parts here, at the one parsing boundary, whichever
+ * form the sending client used to write them.
  */
 
 import type { Mention } from '../contract/types.js'
@@ -17,6 +17,7 @@ import {
   mergeInteractiveContentParts,
   parseInteractiveContent,
 } from './card.js'
+import { textPartsWithMentions } from './mention.js'
 import {
   projectLegacyText,
   projectUniqueResources,
@@ -85,13 +86,12 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
   switch (type) {
     case 'text': {
       const text = typeof content.text === 'string' ? content.text : ''
-      const rendered = applyMentions(text, message.mentions)
       return projectParsedContent({
-        parts: rendered === '' ? [] : [{ kind: 'text', text: rendered }],
+        parts: textPartsWithMentions(text, message.mentions),
       })
     }
     case 'post':
-      return projectParsedContent(parsePostContent(content))
+      return projectParsedContent(parsePostContent(content, message.mentions))
     case 'image':
     {
       const key = nonEmptyString(content.image_key)
@@ -111,7 +111,9 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
       })
     }
     case 'interactive':
-      return projectParsedContent(parseInteractiveContent(content))
+      return projectParsedContent(
+        parseInteractiveContent(content, message.mentions),
+      )
     case 'audio': {
       const key = nonEmptyString(content.file_key)
       return projectParsedContent({
@@ -239,8 +241,8 @@ function projectParsedContent(content: ParsedContent): ParsedInbound {
  *
  * Content parsing only sees `message.content`; identifiers such as
  * `message_id`, `chat_id`, and `sender_id` live in the event envelope. Keeping
- * this Feishu-specific field mapping in core prevents dreamux and claudemux
- * from copy-drifting it in their host adapters.
+ * this Feishu-specific field mapping here keeps the host adapter free of
+ * platform field names.
  */
 export function narrowMetaFromEvent(rawEvent: unknown): Record<string, unknown> {
   if (!rawEvent || typeof rawEvent !== 'object' || Array.isArray(rawEvent)) return {}
@@ -315,38 +317,6 @@ function omitEmptyStrings(input: Record<string, string | undefined>): Record<str
     if (value !== undefined && value !== '') out[key] = value
   }
   return out
-}
-
-/**
- * Replace Feishu's `@_user_N` placeholders in text with the mentioned display
- * names, so the forwarded message reads naturally.
- */
-export function applyMentions(text: string, mentions: Mention[] | undefined): string {
-  if (!mentions) return text
-  let out = text
-  for (const m of mentions) {
-    if (m.key && m.name) {
-      out = out.split(m.key).join(`@${m.name}`)
-    }
-  }
-  return out
-}
-
-/** Return the display name for an open_id in a Feishu mention list, if present. */
-export function mentionName(
-  mentions: Mention[] | undefined,
-  openId: string,
-): string | undefined {
-  return mentions?.find((m) => m.id?.open_id === openId)?.name
-}
-
-/**
- * Flatten a Feishu rich-text "post" payload into plain text. A post is
- * locale-wrapped (`{ zh_cn: { title, content } }`) and its body is an array of
- * paragraphs, each an array of tagged inline elements.
- */
-export function extractPostText(content: Record<string, unknown>): string {
-  return projectParsedContent(parsePostContent(content)).text
 }
 
 function safeMessageType(value: string): string {

@@ -237,7 +237,11 @@ export class FeishuProvisioning {
       }),
       leader: {
         agent_runtime: space.leader_agent_runtime,
-        ...(space.identity !== null ? { identity: space.identity } : {}),
+        identity: leaderIdentity(
+          space.identity,
+          target.chatId,
+          input.submission.anchor.messageId,
+        ),
       },
       // Feishu owns a narrow repository policy — a source path and a base ref —
       // and maps it into the Command's full managed-worktree branch here, so
@@ -256,4 +260,34 @@ export class FeishuProvisioning {
         : {}),
     } as JsonValue)) as unknown as TeamSummary;
   }
+}
+
+/**
+ * The identity an auto-provisioned Team's leader is created with.
+ *
+ * A Team created this way is bound to a conversation it never chose, and the
+ * only place its reply address is stated is the message that triggered it —
+ * which a compaction can take away. Writing the address into the creation
+ * identity puts it where the leader keeps reading it, using the existing
+ * identity lifecycle rather than a lookup or an address cache.
+ *
+ * The configured space identity is preserved in full and this text follows it;
+ * the space policy itself is untouched.
+ */
+function leaderIdentity(
+  configured: string | null,
+  chatId: string,
+  messageId: string,
+): string {
+  const guidance = [
+    "This Team was automatically created for a topic in the Feishu channel's",
+    'bound collaboration-space chat.',
+    `chat_id: ${chatId}`,
+    `message_id: ${messageId} (the message that initially triggered Team`,
+    'creation)',
+    'When using the reply tool in this bound conversation, use the message_id',
+    'visible in the current context. If no other message_id is visible, you',
+    'MUST pass the initial message_id above. Never omit message_id.',
+  ].join('\n');
+  return configured === null ? guidance : `${configured}\n\n${guidance}`;
 }

@@ -135,7 +135,7 @@ export interface FeishuInboundRoutes {
 }
 
 export interface FeishuSendResult {
-  /** message_id of each card sent, in order. Empty if Feishu omitted ids. */
+  /** message_id of each message sent, in order. Empty if Feishu omitted ids. */
   messageIds: string[];
 }
 
@@ -202,10 +202,6 @@ export interface ChannelOutboundTarget {
   conversationId: string;
   /** Optional channel-local source message to thread under. */
   replyTo?: string;
-  /** Optional channel-local participants to bring into the reply. */
-  mentionUsers?: string[];
-  /** Optional host/runtime routing hint, opaque to the channel adapter. */
-  conversationKey?: string;
 }
 
 export function createFeishuBot(
@@ -350,12 +346,6 @@ export function channelOutboundToFeishuTarget(
     chatId: target.conversationId,
     ...(target.replyTo !== undefined
       ? { replyToMessageId: target.replyTo }
-      : {}),
-    ...(target.mentionUsers !== undefined
-      ? { mentionUserIds: target.mentionUsers }
-      : {}),
-    ...(target.conversationKey !== undefined
-      ? { conversationKey: target.conversationKey }
       : {}),
   };
 }

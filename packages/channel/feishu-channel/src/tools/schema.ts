@@ -56,18 +56,6 @@ export function optionalString(
   return value;
 }
 
-export function optionalStringArray(
-  obj: Record<string, unknown>,
-  key: string,
-): string[] | null {
-  const value = obj[key];
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new PublicInvokeFailure(`${key} must be an array of strings`);
-  }
-  return value as string[];
-}
-
 export function optionalRecord(
   obj: Record<string, unknown>,
   key: string,

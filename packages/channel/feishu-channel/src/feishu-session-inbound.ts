@@ -222,10 +222,10 @@ export async function onMessage(
         await sendReply(h, {
           chatId: inbound.chat_id,
           text:
+            `<at user_id="${inbound.sender_id}"></at>\n` +
             '已有授权卡，请点击已发出的授权卡完成授权。\n' +
             'An approval card already exists. Please use the existing card to authorize access.',
           messageId: action.prompt_message_id,
-          mentionUserIds: [inbound.sender_id],
         });
       } catch (err) {
         log(h).error(

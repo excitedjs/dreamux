@@ -12,6 +12,12 @@ export type InboundContentPart =
   | { kind: 'text'; text: string }
   | { kind: 'code'; code: string; language?: string }
   | { kind: 'resource'; resource: InboundResource }
+  /**
+   * One mention occurrence, at the position it was written. `id` is always a
+   * user identity the reply syntax accepts; a record the platform gave no such
+   * identity for (an application, for one) stays ordinary `@name` text.
+   */
+  | { kind: 'mention'; id: string; name: string }
 
 /** Canonical parser result before compatibility projections are added. */
 export interface ParsedContent {
@@ -79,6 +85,7 @@ export function resourceIdentity(
 function projectLegacyPart(part: InboundContentPart): string {
   if (part.kind === 'text') return part.text
   if (part.kind === 'code') return renderLegacyCode(part)
+  if (part.kind === 'mention') return `@${part.name === '' ? part.id : part.name}`
   return resourceMarker(part.resource)
 }
 

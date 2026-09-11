@@ -368,3 +368,156 @@ describe('FeishuProvisioning — no persisted saga/outbox/cursor', () => {
     );
   });
 });
+
+describe('FeishuProvisioning — creation-time reply address', () => {
+  function createdIdentity(h: Harness): string | undefined {
+    const create = h.invokeCalls.find((call) => call.command === 'team.create');
+    const leader = (create?.payload as Record<string, unknown> | undefined)?.[
+      'leader'
+    ] as Record<string, unknown> | undefined;
+    const identity = leader?.['identity'];
+    return typeof identity === 'string' ? identity : undefined;
+  }
+
+  it('gives a Team with no configured identity the bound address and the message that triggered it', async () => {
+    const h = await harness();
+    const spaceRecord = await h.routing.bindSpace(space());
+
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target: topicTarget('oc_container', 'thread_new'),
+      display: null,
+      submission: submission('msg-1'),
+    });
+
+    const identity = createdIdentity(h);
+    expect(identity).toContain('chat_id: oc_container');
+    // The message that triggered creation, not the dedup source id and not a
+    // later announcement.
+    expect(identity).toContain('message_id: m-msg-1');
+    expect(identity).toContain('Never omit message_id.');
+  });
+
+  it('addresses the bound chat the target names, not the anchor that was captured', async () => {
+    const h = await harness();
+    const spaceRecord = await h.routing.bindSpace(
+      space({ containerChatId: 'oc_bound' }),
+    );
+
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target: topicTarget('oc_bound', 'thread_new'),
+      display: null,
+      submission: submission('msg-1'),
+    });
+
+    expect(createdIdentity(h)).toContain('chat_id: oc_bound');
+  });
+
+  it('preserves a configured identity in full and appends the guidance after it', async () => {
+    const h = await harness();
+    const configured = 'You are the release captain.\nSpeak plainly.';
+    const spaceRecord = await h.routing.bindSpace(space({ identity: configured }));
+
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target: topicTarget('oc_container', 'thread_new'),
+      display: null,
+      submission: submission('msg-1'),
+    });
+
+    const identity = createdIdentity(h) ?? '';
+    expect(identity.startsWith(`${configured}\n\n`)).toBe(true);
+    expect(identity).toContain('message_id: m-msg-1');
+    // The Space policy itself is untouched; only the created Team carries the
+    // appended guidance.
+    expect(h.routing.spaceByName('space-a')?.identity).toBe(configured);
+  });
+
+  it('gives each topic the message that triggered its own Team', async () => {
+    const h = await harness();
+    const spaceRecord = await h.routing.bindSpace(space());
+
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target: topicTarget('oc_container', 'thread_1'),
+      display: null,
+      submission: submission('m1'),
+    });
+    h.createResult = teamSummary('space-team-2');
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target: topicTarget('oc_container', 'thread_2'),
+      display: null,
+      submission: submission('m2'),
+    });
+
+    const identities = h.invokeCalls
+      .filter((call) => call.command === 'team.create')
+      .map((call) => {
+        const leader = (call.payload as Record<string, unknown>)['leader'] as
+          Record<string, unknown>;
+        return String(leader['identity']);
+      });
+    expect(identities[0]).toContain('message_id: m-m1');
+    expect(identities[1]).toContain('message_id: m-m2');
+  });
+
+  it('keeps the first arrival as the initial message when a second lands mid-run', async () => {
+    const h = await harness();
+    const spaceRecord = await h.routing.bindSpace(space());
+    const target = topicTarget('oc_container', 'thread_shared');
+
+    let resolveCreate!: (value: JsonValue) => void;
+    h.createImpl = () =>
+      new Promise<JsonValue>((resolve) => {
+        resolveCreate = resolve;
+      });
+
+    const first = h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target,
+      display: null,
+      submission: submission('first'),
+    });
+    await Promise.resolve();
+    const second = h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target,
+      display: null,
+      submission: submission('second'),
+    });
+    resolveCreate(teamSummary('shared-team') as unknown as JsonValue);
+    await Promise.all([first, second]);
+
+    expect(createdIdentity(h)).toContain('message_id: m-first');
+    expect(createdIdentity(h)).not.toContain('m-second');
+  });
+
+  it('replays one redelivered message to the same creation payload', async () => {
+    const h = await harness();
+    const spaceRecord = await h.routing.bindSpace(space());
+    const payloads: JsonValue[] = [];
+    h.createImpl = async (payload) => {
+      payloads.push(structuredClone(payload));
+      return h.createResult as unknown as JsonValue;
+    };
+
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target: topicTarget('oc_container', 'thread_1'),
+      display: null,
+      submission: submission('msg-1'),
+    });
+    await h.routing.unbind(topicTarget('oc_container', 'thread_1'));
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target: topicTarget('oc_container', 'thread_1'),
+      display: null,
+      submission: submission('msg-1'),
+    });
+
+    expect(payloads).toHaveLength(2);
+    expect(payloads[0]).toEqual(payloads[1]);
+  });
+});
