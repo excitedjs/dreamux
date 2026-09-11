@@ -837,16 +837,20 @@ an event changes only that catalog and its consumers.
 
 No event carries a turn identity: presentation correlation is the `source_id` a
 caller supplied, echoed back on its own input, and nothing exposes a
-runtime-native Turn object or transcript. Conversation events may contain
-redacted user/assistant display text and redacted tool results, whole. Argument
-payloads and invocation strings are the operator-selected exception: Core
-serializes arguments and preserves invocation text without secret masking or path
-rewriting ("参数全给我放开，不要做脱敏了", 2026-09-09; see
-[the task record](../tasks/channel/refine-cot-tool-details-and-notifications/README.md)).
-Core bounds nothing; the Channel parses JSON and cuts a string only at its native
+runtime-native Turn object or transcript. Every payload a conversation event
+carries is redacted whole: user/assistant display text, tool results, and the
+argument payloads and invocation strings alike. The 2026-09-09 argument
+exemption was withdrawn ("全量脱敏，跟其它成员一视同仁", 2026-09-11; see
+[the task record](../tasks/channel/redact-tool-call-arguments/README.md)) — a
+secret in a command reaches a chat surface the same way a secret in a result
+does, so both go through one policy. Core bounds nothing; the Channel parses JSON and cuts a string only at its native
 send limit. Other event metadata does not expose a runtime transcript or its
-path. Raw arguments can contain the values submitted to a tool; they are not
-covered by the redacted-result/body guarantee.
+path. Raw arguments carry the values submitted to a tool under the same
+redaction guarantee as a result body. Both are redacted by walking the JSON
+value before it is serialized, not by pattern-matching its serialization: a
+field whose name says secret has its value destroyed, every string leaf goes
+through the text rules, and what arrived as JSON is still JSON afterwards. The
+capability itself lives in `@excitedjs/dreamux-utils`; Core only calls it.
 
 Delivery is live and best-effort: Core invokes listeners in publication order
 without awaiting them, and a listener's exception or rejection never escapes into
@@ -949,8 +953,8 @@ The Channel does not parse a tool's
 argument schema. It selects invocation code language from the existing
 tool_action: run uses bash, other actions use text. It formats JSON arguments
 locally, without a provider language-classification field. Arguments and invocation
-strings arrive without redaction by the operator's field-specific ruling.
-Generic/MCP tools follow the same display policy. A nonempty invocation always
+strings arrive redacted like every other member. Generic/MCP tools follow the
+same display policy. A nonempty invocation always
 precedes arguments_json, even for non-Bash tools; only an empty invocation uses
 the JSON/text argument fallback. R3 explicitly confirmed this ordering. Codex
 web search supplies its native `{query, action}` through that argument fallback.
@@ -1062,6 +1066,7 @@ surface remain.
 Source:
 
 - `/packages/dreamux/src/channel/conversation-projection.ts`
+- `/packages/dreamux-utils/src/redaction.ts`
 - `/packages/dreamux/src/service/teammate-service/index.ts`
 - `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/dreamux/src/platform/home-paths.ts`

@@ -39,6 +39,7 @@
 import { chmod } from 'node:fs/promises';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { isSecretKeyName } from '@excitedjs/dreamux-utils';
 import pino, {
   type DestinationStream,
   type LoggerOptions,
@@ -87,7 +88,6 @@ export interface CreateLoggerOptions {
 }
 
 const REDACTED_VALUE = '[REDACTED]';
-const SECRET_KEY_RE = /(secret|password|passwd|token|authorization|cookie|credential)/i;
 
 function resolveLevel(level?: pino.Level): pino.Level {
   if (level !== undefined) return level;
@@ -160,7 +160,7 @@ function redactLogValue(value: unknown, seen = new WeakSet<object>()): unknown {
   seen.add(value);
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    out[key] = SECRET_KEY_RE.test(key)
+    out[key] = isSecretKeyName(key)
       ? REDACTED_VALUE
       : redactLogValue(entry, seen);
   }

@@ -214,10 +214,6 @@ importers:
         version: 2.1.9(@types/node@22.19.19)
 
   ../../packages/dreamux-utils:
-    dependencies:
-      '@excitedjs/dreamux-types':
-        specifier: workspace:*
-        version: link:../dreamux-types
     devDependencies:
       '@excitedjs/eslint-config':
         specifier: workspace:*

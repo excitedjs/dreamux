@@ -63,6 +63,11 @@ const EXPECTED_RUNTIME_EXPORTS = [
   // json-invoke.ts
   'PublicInvokeFailure',
   'settleJsonInvoke',
+  // redaction.ts
+  'isSecretKeyName',
+  'redactSecretKeyValues',
+  'redactText',
+  'redactJson',
 ].sort();
 
 describe('@excitedjs/dreamux-utils public export surface', () => {
@@ -72,11 +77,12 @@ describe('@excitedjs/dreamux-utils public export surface', () => {
   });
 
   it('re-exports every module listed in index.ts (barrel completeness sanity)', () => {
-    // A representative name from each of the ten src modules, so a barrel line
+    // A representative name from each of the eleven src modules, so a barrel line
     // silently dropped from index.ts fails here even if the full-list
     // comparison above were ever loosened.
     const representative: Record<string, keyof typeof api> = {
       'config-validate.ts': 'isPlainObject',
+      'redaction.ts': 'redactText',
       'os.ts': 'pathExists',
       'fs.ts': 'writeAtomic',
       'completion-body.ts': 'resolveCompletionBody',

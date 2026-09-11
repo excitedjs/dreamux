@@ -8,3 +8,4 @@ export * from './activity-scan.js';
 export * from './unsupported-feature.js';
 export * from './runtime-state-fence.js';
 export * from './json-invoke.js';
+export * from './redaction.js';

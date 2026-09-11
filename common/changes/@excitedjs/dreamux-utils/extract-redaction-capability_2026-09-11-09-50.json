@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the shared redaction capability: one list of secret key names, the text rules (secret shapes destroyed, host paths renamed), and redactJson, which redacts a JSON value by walking its structure instead of pattern-matching its serialization. The package now depends on no Dreamux package at all: @excitedjs/dreamux-types is the contract external providers compile against, so the JSON value and settled-invoke shapes are declared here instead of imported.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

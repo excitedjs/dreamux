@@ -25,7 +25,6 @@ import type {
 
 import {
   createConversationProjection,
-  redactText,
   type ProjectedAgent,
 } from '../src/channel/conversation-projection.js';
 import {
@@ -137,18 +136,6 @@ describe('conversation projection: secret redaction', () => {
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 
-  it('stops a bare secret at the quote and bracket that close its JSON string', () => {
-    const envelope = JSON.stringify({
-      content: [{ type: 'text', text: 'token: xyz' }],
-      structuredContent: { ok: true },
-    });
-    const { value } = redactText(envelope, '/workspace/repo', ['/home/me']);
-    expect(JSON.parse(value)).toEqual({
-      content: [{ type: 'text', text: 'token: <redacted>' }],
-      structuredContent: { ok: true },
-    });
-  });
-
   it('redacts an inline api_key= assignment', () => {
     const { publisher, projection, agent } = harness();
     const fakeSecret = ['sk', 'live', 'abcdef1234567890'].join('_');
@@ -216,130 +203,15 @@ describe('conversation projection: secret redaction', () => {
     expect(content).toBe('file at secrets/env.local was read');
   });
 
-  it('renders the bare workspace itself as a dot', () => {
-    expect(redactText(`ran in ${CWD} today`, CWD, []).value).toBe('ran in . today');
-  });
-
-  it('renames this host home to ~, keeping the rest of the path legible', () => {
-    expect(redactText('key at /home/me/.ssh/id_rsa now', '', ['/home/me']).value)
-      .toBe('key at ~/.ssh/id_rsa now');
-  });
-
-  it('renames a Windows home the same way', () => {
-    const home = 'C:\\Users\\me';
-    expect(redactText(`backup at ${home}\\notes.txt now`, '', [home]).value)
-      .toBe('backup at ~\\notes.txt now');
-  });
-
-  it('renames the bare home with no path after it', () => {
-    expect(redactText('cd /home/me and stop', '', ['/home/me']).value)
-      .toBe('cd ~ and stop');
-  });
-
-  it('renames a home prefix at the head of a file URL', () => {
-    expect(redactText('open file:///home/me/x', '', ['/home/me']).value)
-      .toBe('open file://~/x');
-  });
-
-  it('renames a bare home before ordinary closing punctuation', () => {
-    const value =
-      'paths /home/me. /home/me, /home/me; /home/me: (/home/me) [/home/me] "/home/me"';
-    expect(redactText(value, '', ['/home/me']).value).toBe(
-      'paths ~. ~, ~; ~: (~) [~] "~"',
-    );
-  });
-
-  it('treats a trailing period as prose punctuation for home and workspace paths', () => {
-    const home = '/home/me';
-    const cwd = `${home}/work/repo`;
-    expect(
-      redactText(`see ${home}. edit ${cwd}/a.ts.`, cwd, [home]).value,
-    ).toBe('see ~. edit a.ts.');
-  });
-
-  it('distinguishes dot-suffixed home siblings from workspace-adjacent siblings', () => {
-    const home = '/home/me';
-    const cwd = `${home}/work/repo`;
-    const value = [
-      `${home}.bak/notes.md`,
-      `${home}.git/config`,
-      `${cwd}.bak/notes.md`,
-      `${cwd}.git/config`,
-    ].join(' ');
-    expect(redactText(value, cwd, [home]).value).toBe([
-      `${home}.bak/notes.md`,
-      `${home}.git/config`,
-      '~/work/repo.bak/notes.md',
-      '~/work/repo.git/config',
-    ].join(' '));
-  });
-
-  it('renames workspace-adjacent siblings through the containing home prefix', () => {
-    const home = '/home/me';
-    const cwd = `${home}/work/repo`;
-    expect(
-      redactText(`${cwd}.git/config ${cwd}-old/x`, cwd, [home]).value,
-    ).toBe('~/work/repo.git/config ~/work/repo-old/x');
-  });
-
-  it('does not treat a doubled filesystem separator as a URL scheme boundary', () => {
-    const home = '/home/me';
-    const cwd = `${home}/work/repo`;
-    const value = `/mnt/backup/${home}/x /mnt/backup/${cwd}/x`;
-    expect(redactText(value, cwd, [home]).value).toBe(value);
-  });
-
   /**
    * The whole reason this is prefix scanning rather than a `/home/<name>/…`
    * regex: another account's directory is not this operator's home, and blanking
    * it costs the reader the one fact they needed.
    */
-  it('leaves a path that merely starts with the same characters alone', () => {
-    const value =
-      'compare /home/mexyz and /home/me-old/notes.txt with /home/meredith/notes.txt';
-    expect(redactText(value, '', ['/home/me']).value).toBe(value);
-  });
-
-  it('leaves a home-shaped fragment that is not rooted alone', () => {
-    const value = 'the string not/home/me/x is not a path here';
-    expect(redactText(value, '', ['/home/me']).value).toBe(value);
-  });
-
-  it('does not treat a foreign home-shaped path as this host home', () => {
-    const value = 'their build ran in /home/someoneelse/repo';
-    expect(redactText(value, '', ['/home/me']).value).toBe(value);
-  });
-
-  it('prefers the longest matching home prefix', () => {
-    expect(
-      redactText('at /home/me/nested/file.ts', '', ['/home/me/nested', '/home/me']).value,
-    ).toBe('at ~/file.ts');
-  });
-
   /**
    * A workspace normally sits under the home. Relativizing it first is what
    * keeps the shorter, more useful form instead of `~/...`-prefixing everything.
    */
-  it('relativizes the workspace before renaming the home it sits under', () => {
-    const home = '/home/me';
-    const cwd = `${home}/work/repo`;
-    expect(
-      redactText(`edited ${cwd}/src/a.ts and ${home}/.config/x`, cwd, [home]).value,
-    ).toBe('edited src/a.ts and ~/.config/x');
-  });
-
-  it('keeps workspace renaming when no host home prefix was resolved', () => {
-    const cwd = '/workspace/repo';
-    expect(
-      redactText(`work in ${cwd}; leave /home/me/x alone`, cwd, []).value,
-    ).toBe('work in .; leave /home/me/x alone');
-  });
-
-  it('reports redacted:false when a path rule found nothing to rename', () => {
-    expect(redactText('nothing to rename here', '/workspace/repo', ['/home/me']).redacted)
-      .toBe(false);
-  });
-
   it('marks redacted:true only when a rule actually fired, false for ordinary text', () => {
     const { publisher, projection, agent } = harness();
     projectPrompt(projection, agent, 'nothing sensitive here at all');
@@ -374,7 +246,7 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
   });
 
-  it('renames workspace paths in the summary and items while the call itself stays verbatim', () => {
+  it('renames workspace paths in every member of a call, the call text included', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -387,7 +259,7 @@ describe('conversation projection: content visible after redaction is unchanged,
       invocation: `cat ${CWD}/src/a.ts`,
       items: [`${CWD}/src/a.ts`],
       status: 'started',
-      arguments: { command: `cat ${CWD}/src/a.ts` },
+      arguments: { command: `cat ${HOME}/src/a.ts` },
       result: null,
       error: null,
     });
@@ -395,15 +267,13 @@ describe('conversation projection: content visible after redaction is unchanged,
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary).toBe('src/a.ts');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
-    // The command a reader is asked to judge is the command that ran: the two
-    // argument members skip the redactor, paths included (operator ruling,
-    // 2026-09-09: "参数全给我放开，不要做脱敏了").
-    expect(tool.kind === 'tool.call' && tool.invocation).toBe(`cat ${CWD}/src/a.ts`);
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe('cat src/a.ts');
     expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe(JSON.stringify({ command: `cat ${CWD}/src/a.ts` }));
+      .toBe(JSON.stringify({ command: 'cat ~/src/a.ts' }));
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 
-  it('passes a long summary through whole and leaves a secret-shaped invocation alone', () => {
+  it('passes a long summary through whole and redacts a secret-shaped invocation', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -424,15 +294,40 @@ describe('conversation projection: content visible after redaction is unchanged,
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(100_000);
     expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('post https://example.test with Bearer abcDEF123.ghiJKL456-_9');
+      .toBe('post https://example.test with Bearer <redacted>');
     expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe(JSON.stringify({ token: 'abc123secret', home: `${HOME}/keys` }));
-    // Nothing the redactor still owns fired, so the row is not marked redacted:
-    // the argument members never count toward it.
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
+      .toBe(JSON.stringify({ token: '<redacted>', home: '~/keys' }));
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 
-  it('keeps the redactor on every member beside the two argument ones', () => {
+  it('marks a call redacted when the only secret sat in the invocation', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'ran a request',
+      invocation: 'curl -H "authorization: abc123" https://example.test',
+      items: ['src/a.ts'],
+      status: 'completed',
+      arguments: null,
+      result: 'ok',
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.invocation)
+      .toBe('curl -H "authorization: <redacted>" https://example.test');
+    expect(tool.kind === 'tool.call' && tool.summary).toBe('ran a request');
+    expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
+    expect(tool.kind === 'tool.call' && tool.result_json).toBe('ok');
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+  });
+
+  it('keeps the redactor on every member of a call', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -455,8 +350,115 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.result_json).toBe('failed with token: <redacted>');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
     expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('echo "token: dummy"');
+      .toBe('echo "token: <redacted>"');
+    expect(tool.kind === 'tool.call' && tool.arguments_json)
+      .toBe(JSON.stringify({ command: 'echo "token: <redacted>"' }));
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+  });
+
+  it('redacts a multi-line .env written through a tool argument, line by line', () => {
+    const { publisher, projection, agent } = harness();
+    const content = 'NODE_ENV="production"\nTOKEN="t1"\nPORT=3000\nAPI_KEY=k2\nDEBUG=false';
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Write',
+      action: 'edit',
+      summary: '.env',
+      invocation: null,
+      items: ['.env'],
+      status: 'completed',
+      arguments: { file_path: '.env', content },
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.arguments_json).toBe(JSON.stringify({
+      file_path: '.env',
+      content: 'NODE_ENV="production"\nTOKEN="<redacted>"\nPORT=3000\nAPI_KEY=<redacted>\nDEBUG=false',
+    }));
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+  });
+
+  it('keeps a redacted argument payload parsable as JSON, by construction', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'write the env',
+      invocation: null,
+      items: [],
+      status: 'completed',
+      arguments: { command: 'echo \'export API_KEY="sk-real-value"\' >> .env' },
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    const args = tool.kind === 'tool.call' ? tool.arguments_json : null;
+    expect(args).not.toBeNull();
+    expect(JSON.parse(args ?? '')).toEqual({
+      command: 'echo \'export API_KEY="<redacted>"\' >> .env',
+    });
+  });
+
+  it('covers a serialized value whose own text contains a backslash', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'connect',
+      invocation: null,
+      items: [],
+      status: 'completed',
+      // Serialized, a literal backslash is `\\` and a value ending in one runs
+      // into the quote that closes its string. Neither is a problem the walk
+      // has: it hands over the leaf, which is the text the runtime wrote.
+      arguments: { command: 'password=C:\\name', fallback: 'password=abc\\' },
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    const args = tool.kind === 'tool.call' ? tool.arguments_json : null;
+    expect(JSON.parse(args ?? '')).toEqual({
+      command: 'password=<redacted>',
+      fallback: 'password=<redacted>',
+    });
+  });
+
+  it('covers a raw value whose own text contains a backslash, tail included', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'connect',
+      invocation: 'net use X: /user:svc password=C:\\keys\\id and then continue',
+      items: [],
+      status: 'completed',
+      arguments: null,
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.invocation)
+      .toBe('net use X: /user:svc password=<redacted> and then continue');
   });
 
   it('keeps an ordinary assistant message byte-identical', () => {

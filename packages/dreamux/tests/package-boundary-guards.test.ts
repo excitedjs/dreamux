@@ -215,12 +215,27 @@ describe('dreamux-types stays declaration-only with no runtime dependency', () =
   });
 });
 
-describe('dreamux-utils depends on dreamux-types only, never on @excitedjs/dreamux core', () => {
-  it('runtime "dependencies" is exactly { "@excitedjs/dreamux-types": "workspace:*" }', () => {
-    const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-utils')!;
+describe('dreamux-utils depends on no Dreamux package at all', () => {
+  const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-utils')!;
+
+  it('has no runtime "dependencies" field at all', () => {
     const manifest = readManifest(project.projectFolder);
-    const deps = manifest['dependencies'] as Record<string, string>;
-    expect(deps).toEqual({ '@excitedjs/dreamux-types': 'workspace:*' });
+    expect(manifest['dependencies']).toBeUndefined();
+  });
+
+  it('imports no Dreamux package in any module, not even a type', () => {
+    // `@excitedjs/dreamux-types` is the type set an external provider compiles
+    // against; core is the host. A utility every layer calls sits below both,
+    // so an `import type` here would be a boundary crossing that leaves no
+    // trace in the build output and none in package.json either.
+    const files = walkTs(join(repoRoot, project.projectFolder, 'src'));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const imports = readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => /^\s*import /.test(line) && line.includes('@excitedjs/'));
+      expect(imports, `${file} must import no Dreamux package`).toEqual([]);
+    }
   });
 });
 
@@ -300,6 +315,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         './fs.js',
         './json-invoke.js',
         './os.js',
+        './redaction.js',
         './runtime-state-fence.js',
         './socket-budget.js',
         './supervised-child.js',

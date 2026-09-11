@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Document that every TeammateActivity tool.call member is redacted, including invocation and arguments_json.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

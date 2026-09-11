@@ -33,6 +33,28 @@ declarations only: provider descriptors, Agent Runtime contracts, Channel
 contracts, turn shapes, and diagnostics. It does not export host stores, path
 helpers, provider loaders, or runtime implementations.
 
+**Who may depend on it is part of what it is.** It exists for code *outside*
+Dreamux — an external provider compiles against it to be loadable — so a
+dependency on it is a statement that the depending code is provider-facing.
+`@excitedjs/dreamux-utils` therefore depends on it not at all, not even for a
+type: utils sits below both the host and the provider seam, is called from
+every layer, and borrowing a contract from the layer above would invert that
+(operator ruling, 2026-09-11: "dreamux types 是一个给外部 provider 使用的类型集合。
+utils 完全不应该依赖这个玩意"). Where utils needs a shape that package also
+names — a JSON value, a settled one-request result — it declares its own,
+structurally identical, so a caller holding the contract's version passes it
+without a cast. `import type` is not an exception: it leaves no trace in the
+build output, which is exactly why the boundary is pinned in source rather than
+in `package.json` alone
+(`/packages/dreamux/tests/package-boundary-guards.test.ts`).
+
+The three-way rule, in one line each:
+
+- `@excitedjs/dreamux-types` — declarations only, depends on nothing.
+- `@excitedjs/dreamux-utils` — pure helpers, depends on nothing.
+- Provider packages — depend on `dreamux-types` (and may use `dreamux-utils`),
+  never on `@excitedjs/dreamux`.
+
 Agent Runtime providers implement `AgentRuntimeProvider` and return one
 `AgentRuntime` instance per launched agent. The runtime interface is
 single-instance and has exactly four methods: `start`, `submit`, `interrupt`,
@@ -65,6 +87,7 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux-types/tests/no-host-types.test.ts`
+- `/packages/dreamux-utils/package.json`
 - `/packages/agent-runtime/codex/package.json`
 - `/packages/agent-runtime/claude-code/package.json`
 - `/packages/channel/feishu-channel/package.json`
