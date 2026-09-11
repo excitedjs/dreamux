@@ -10,6 +10,8 @@
 #      (fails loudly when the domains tree itself is missing)
 #   4. every .agents/ path cited by tracked files OUTSIDE .agents/ resolves
 #      (comments, READMEs, tests; generated changelogs are exempt)
+#   5. every task record under .agents/tasks/ carries a well-formed state that
+#      can still be true after its own pull request merges
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.
@@ -230,6 +232,19 @@ done < <(
         fi
       done
 )
+
+# ---------- 5) task record format and state ----------
+# The task tree is the only part of .agents/ with a per-file state machine, and
+# a state is the one fact in the knowledge base that can be written true and go
+# false by itself. Checks 1-4 read links and paths, which cannot see that. The
+# rule and the reasoning behind it live with the states, in the script below.
+task_checker="$KB_ROOT/skills/dev-workflow/scripts/init_task.py"
+if [ ! -f "$task_checker" ]; then
+  echo "task record checker missing: $task_checker" >&2
+  errors=$((errors + 1))
+elif ! python3 "$task_checker" check-all --repo-root "$REPO_ROOT"; then
+  errors=$((errors + 1))
+fi
 
 if [ "$errors" -gt 0 ]; then
   echo "" >&2

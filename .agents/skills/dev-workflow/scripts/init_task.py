@@ -24,6 +24,23 @@ STATES = {
     "blocked",
 }
 
+# The states a task record may be committed to the integration trunk in.
+#
+# A record is committed inside the pull request that delivers it, so it can
+# never contain the result of its own merge. The rule that follows from that:
+# a state may land on `next` only if nothing happening outside the repository
+# can turn it false. `intake` (nothing has started), `blocked` (waiting on a
+# named blocker), and `done` (the work is finished and submitted) are all
+# self-consistent — they stay true whatever the pull request does next.
+#
+# The six middle states describe a process in flight. `review` stops being true
+# the moment a reviewer answers; `implementation` stops being true when the
+# branch is pushed. They are useful on a working branch, which is a working
+# copy, and they are a lie the moment that branch merges. Merge facts belong to
+# git and GitHub, which record them authoritatively and for free; copying them
+# into a file is what creates staleness, so the record does not try.
+TRUNK_STATES = {"intake", "blocked", "done"}
+
 
 class TaskError(RuntimeError):
     pass
@@ -33,7 +50,7 @@ def validate_segment(value: str, label: str, action_slug: bool = False) -> str:
     if not SEGMENT_RE.fullmatch(value):
         raise TaskError(f"{label} must already be lowercase kebab-case: {value!r}")
     if action_slug and "-" not in value:
-        raise TaskError("task slug must include an action prefix")
+        raise TaskError(f"{label} must include an action prefix: {value!r}")
     return value
 
 
@@ -134,7 +151,7 @@ def task_readme(domain: tuple[str, ...], slug: str, title: str, goal: str) -> st
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
+- Pull request: Not opened.
 - Knowledge closeout: Pending.
 """
 
@@ -287,7 +304,7 @@ def create(args: argparse.Namespace) -> int:
         domain_text,
         ("## Tasks", "## Active Tasks"),
         task_link(domain, slug),
-        f"- [{title}]({task_link(domain, slug)}) — `intake`: {goal}",
+        f"- [{title}]({task_link(domain, slug)}) — {goal}",
     )
     replace(domain_index, domain_text)
     print(f"Created lean task record: {task_dir}")
@@ -310,10 +327,120 @@ def check(args: argparse.Namespace) -> int:
     for target, text in expected.items():
         if f"]({target})" not in text:
             raise TaskError(f"missing index link: {target}")
+    check_state(task_text, f"{domain_name(domain)}/{slug}", args.allow_in_flight)
+    print(f"Task record OK: .agents/tasks/{domain_name(domain)}/{slug}")
+    return 0
+
+
+def check_state(task_text: str, name: str, allow_in_flight: bool) -> None:
+    """Validate the one line that says where a task stands.
+
+    The anchored pattern is the format rule: the line carries the state and
+    stops. A branch name, a date, a list of green gates, or any other
+    parenthetical appended here is a fact that expires while the state around
+    it stays put, which is the drift this whole check exists to prevent.
+    """
     states = re.findall(r"^- State: `([^`]+)`$", task_text, re.MULTILINE)
     if len(states) != 1 or states[0] not in STATES:
-        raise TaskError("task README has no supported workflow state")
-    print(f"Task record OK: .agents/tasks/{domain_name(domain)}/{slug}")
+        raise TaskError(
+            f"{name}: task README has no supported workflow state. The line must "
+            f"read exactly '- State: `<state>`' with nothing after it, and "
+            f"<state> must be one of: {', '.join(sorted(STATES))}"
+        )
+    if not allow_in_flight and states[0] not in TRUNK_STATES:
+        raise TaskError(
+            f"{name}: state `{states[0]}` describes work in flight, so it cannot "
+            f"be committed to the trunk — it stops being true the moment this "
+            f"branch merges. Use it while you work; before opening the pull "
+            f"request set `done` (finished and submitted), `blocked` (waiting on "
+            f"a named blocker), or `intake` (not started). Whether the pull "
+            f"request merged is git's fact, not the record's."
+        )
+
+
+# A domain index and a task record are told apart by the headings only one of
+# them can carry. Depth cannot do it: a domain may nest inside a domain, so
+# `mcp/scheduler` sits exactly where a task record would.
+DOMAIN_HEADINGS = ("## Child Scopes", "## Tasks", "## Active Tasks")
+
+
+def is_domain_index(text: str) -> bool:
+    return any(f"\n{heading}" in text for heading in DOMAIN_HEADINGS)
+
+
+def check_record(directory: Path, name: str, text: str, allow_in_flight: bool) -> None:
+    validate_segment(directory.name, f"{name}: task slug", action_slug=True)
+    if not (directory / "requirement.md").is_file():
+        raise TaskError(f"{name}: missing requirement.md")
+    if "\n## Current state" not in text:
+        raise TaskError(f"{name}: task README has no '## Current state' section")
+    check_state(text, name, allow_in_flight)
+    if f"](/.agents/tasks/{name}/requirement.md)" not in text:
+        raise TaskError(f"{name}: the record does not link its own requirement.md")
+    link = f"/.agents/tasks/{name}/README.md"
+    if f"]({link})" not in read(directory.parent / "README.md"):
+        raise TaskError(f"{name}: the parent task index does not link this record")
+
+
+INDEX_BULLET_RE = re.compile(
+    r"^- \[[^\]]*\]\((/\.agents/tasks/[^)]*README\.md)\)(.*)$", re.MULTILINE
+)
+
+
+def check_index(name: str, text: str) -> None:
+    """Validate what a domain index may not repeat.
+
+    An index entry says what a task is for and where to read it. It does not
+    carry the task's state. Two copies of one fact in two files is the drift
+    itself: the record moves on, the index keeps yesterday's answer, and a
+    reader has no way to tell which of the two is stale. That the links resolve
+    is checked once for the whole knowledge base by `.agents/scripts/check.sh`.
+    """
+    for link, rest in INDEX_BULLET_RE.findall(text):
+        for state in re.findall(r"`([^`]+)`", rest):
+            if state in STATES:
+                raise TaskError(
+                    f"{name}: the index entry for {link} repeats the task's state "
+                    f"`{state}`. The state belongs to the record alone; the index "
+                    f"entry carries the title, the link, and the goal."
+                )
+
+
+def check_all(args: argparse.Namespace) -> int:
+    """Check every task record in the repository.
+
+    A per-task check only runs when someone remembers to run it for that task,
+    which is how a record reaches the trunk in a state nobody validated. This
+    walks the tree instead, so the gate also covers records nobody is working on.
+
+    Anything that is not a domain index is checked as a task record, so a record
+    whose format has drifted is answered with the specific thing it is missing
+    instead of being skipped as unrecognized. Silently skipping is how an
+    unchecked record hides, which is the failure this gate exists to close.
+    """
+    root = repo_root(args.repo_root)
+    tasks = root / ".agents/tasks"
+    failures: list[str] = []
+    records = 0
+    for readme in sorted(tasks.rglob("README.md")):
+        directory = readme.parent
+        relative = directory.relative_to(tasks)
+        name = relative.as_posix() if relative.parts else "."
+        text = read(readme)
+        try:
+            if is_domain_index(text):
+                check_index(name, text)
+            else:
+                records += 1
+                check_record(directory, name, text, args.allow_in_flight)
+        except TaskError as error:
+            failures.append(str(error))
+    for failure in failures:
+        print(f"error: {failure}", file=sys.stderr)
+    if failures:
+        print(f"\n{len(failures)} of {records} task records failed.", file=sys.stderr)
+        return 1
+    print(f"Task records OK: {records} checked")
     return 0
 
 
@@ -339,8 +466,21 @@ def parser() -> argparse.ArgumentParser:
     check_parser = commands.add_parser("check")
     check_parser.add_argument("--domain", required=True)
     check_parser.add_argument("--slug", required=True)
+    check_parser.add_argument(
+        "--allow-in-flight",
+        action="store_true",
+        help="permit a mid-workflow state; use while the task is on a branch",
+    )
     check_parser.add_argument("--repo-root", help=argparse.SUPPRESS)
     check_parser.set_defaults(handler=check)
+    check_all_parser = commands.add_parser("check-all")
+    check_all_parser.add_argument(
+        "--allow-in-flight",
+        action="store_true",
+        help="permit mid-workflow states; use while tasks are on a branch",
+    )
+    check_all_parser.add_argument("--repo-root", help=argparse.SUPPRESS)
+    check_all_parser.set_defaults(handler=check_all)
     return result
 
 

@@ -46,7 +46,7 @@ Keep these fields current and concise:
 - development approval source, time, and approved boundary;
 - blockers and next action;
 - lineage and related-task links;
-- delivery summary for pull request, CI, and merge when recorded;
+- the pull request link once one is open;
 - knowledge-closeout status and links.
 
 Use one of these states:
@@ -56,7 +56,46 @@ Use one of these states:
 
 Do not keep a parallel progress file or free-form maturity field. Preserve only
 milestones that another TeamLeader cannot safely reconstruct: development approval,
-material re-approval, review adjudication, and merge.
+material re-approval, and review adjudication.
+
+## Write only facts that cannot expire on their own
+
+A record is committed inside the pull request that delivers it, so it can never
+contain the result of its own merge. Everything written here is read later by
+someone who has no way to tell a current fact from a fact that was true when it
+was typed, so the record carries only the second kind — and git and GitHub
+already record the first kind authoritatively, for free, and without drifting.
+
+Apply one test to every line: **can something outside this repository make this
+false while the file sits untouched?**
+
+- A state of `intake`, `blocked`, or `done` survives the test. The six middle
+  states do not: `review` stops being true the moment a reviewer answers, and
+  `implementation` stops being true when the branch is pushed. They are correct
+  and expected on a working branch, which is a working copy — and they are a
+  lie the moment that branch merges. `.agents/scripts/check.sh` rejects them,
+  so set `done`, `blocked`, or `intake` before opening the pull request.
+  `done` means the work is finished and submitted; whether it merged is git's
+  fact, not the record's.
+- The pull request *link* survives the test; its *status* does not. Write the
+  link. Do not write `(open)`, a CI result, a merge commit, a list of green
+  gates, or a merge date: each is a snapshot that GitHub will contradict within
+  the day.
+- A date that records when something happened survives the test — an operator
+  approval on a given day stays true forever. A date that stands in for a
+  status does not.
+- The `State:` line carries the state and stops. A branch name, a date, or a
+  parenthetical appended to it is a fact that expires while the state beside it
+  stays put, so the check rejects the whole line.
+- A domain index entry carries the title, the link, and the goal. It does not
+  repeat the task's state: two copies of one fact in two files is the drift
+  itself, because the record moves on and the index keeps yesterday's answer.
+
+**Rewrite stale facts in place; do not append change history.** When something
+recorded here is no longer true, edit the line to say what is true now. A record
+is the current state of one task, not a log of how that state was reached — git
+holds the log, and appending to the file makes the reader work out for himself
+which of several claims is live.
 
 ## Keep the requirement current
 
@@ -120,8 +159,14 @@ Validate a task and its parent indexes with:
 ```bash
 python3 .agents/skills/dev-workflow/scripts/init_task.py check \
   --domain <domain-path> \
-  --slug <task-slug>
+  --slug <task-slug> \
+  --allow-in-flight
 ```
+
+Pass `--allow-in-flight` while the task is still on its branch; without it the
+check holds the record to what may land on the trunk. `.agents/scripts/check.sh`
+runs the same validation over every record in the repository and never passes
+that flag, which is what makes the rule binding rather than advisory.
 
 The initializer and every authoritative task update belong to the TeamLeader.
 Developer TeamMates treat `.agents/**` as read-only and return evidence in their
