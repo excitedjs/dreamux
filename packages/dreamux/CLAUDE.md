@@ -67,27 +67,6 @@ Two settled shape rules govern where code lives:
   starting sessions or exposing provider configuration. There is no public CLI
   wrapper: the public CLI is reserved for host lifecycle operations.
 
-## `team.create` context
-
-`team.create` accepts an optional `context: { provider, payload }`. Core reads
-`provider` and nothing else: it copies the pair verbatim onto the `TeamSummary`
-this creation answers with, as `metadata`, and — for a fresh creation only —
-publishes one `team.created` event carrying that same summary on the existing
-dispatcher-local event bus. Which Channel acts on it, and what the payload
-means, belongs entirely to the provider that authored it.
-
-Nothing about it is durable. `metadata` is never written to the Team record, so
-`team.status` and `team.list` do not carry it, and a caller replaying an
-accepted `request_id` gets the same context projected onto the record's summary
-without a second event. Context is part of the canonical payload hash, so
-changing it under a used `request_id` is the ordinary idempotency conflict.
-
-Entry points: `service/team-collection/commands.ts` (schema and parse),
-`service/team-collection/index.ts` (projection and publication), and the neutral
-declarations in `@excitedjs/dreamux-types`. Do not grow this into a synchronous
-callback into a Channel, a cross-Channel lookup, or Core-owned routing: the
-event exists precisely so binding stays where the binding records are.
-
 ## Boundaries
 
 - **Do not leak runtime specifics into shared/core layers.** codex and claude

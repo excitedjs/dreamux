@@ -1,7 +1,5 @@
 /**
- * Every routing decision that installs or removes a route, and what it does to
- * live state — the operator's own tool calls, and the one a Team's creation
- * context asks for on its behalf.
+ * Every routing decision an operator can make, and what it does to live state.
  *
  * A bind is four things at once — the durable row, the presentation fence for
  * whoever used to own the target, the fence release for whoever owns it now,
@@ -12,7 +10,7 @@
  * Card delivery is handed in rather than done here: it needs the session's
  * lifecycle fence and bounded-send policy, and this module needs neither.
  */
-import type { JsonValue, TeamCreatedEvent } from '@excitedjs/dreamux-types';
+import type { JsonValue } from '@excitedjs/dreamux-types';
 import { isPlainObject, PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 
 import {
@@ -24,7 +22,6 @@ import {
   spaceUnboundCard,
 } from './feishu-binding-notification-card.js';
 import type { FeishuCotSessionSeam } from './feishu-cot-session.js';
-import { feishuTeamCreateBinding } from './feishu-team-create.js';
 import type { FeishuSpaceRecord } from './routing/document.js';
 import type {
   FeishuRemovedRoute,
@@ -94,63 +91,9 @@ export class FeishuBindingOperations {
         `Team ${JSON.stringify(input.teamName)} has no readable TeamLeader identity; its creation did not complete.`,
       );
     }
-    const { previousTeamName } = await this.installRoute({
-      target,
-      display: input.display,
-      teamName: input.teamName,
-      leaderName: team['leader_name'],
-      agentRuntime: team['leader_agent_runtime'],
-      runtimeCwd: team['runtime_cwd'],
-      ...(input.requireOwner !== undefined
-        ? { requireOwner: input.requireOwner }
-        : {}),
-    });
-    return { team_name: input.teamName, previous_team_name: previousTeamName };
-  }
-
-  /**
-   * Bind the group a fresh Team's own creation context named.
-   *
-   * Same four steps an operator's `bind_channel` performs, minus the Team read:
-   * the created Team's identity arrives on the event, so this asks Core nothing
-   * and binds what that creation reported — a snapshot of the moment it
-   * succeeded, not a statement about the Team's status by the time this runs.
-   * A creation whose context belongs to another provider is not this Channel's
-   * business.
-   */
-  async bindCreatedTeam(event: TeamCreatedEvent): Promise<void> {
-    const request = feishuTeamCreateBinding(event);
-    if (request === null) return;
-    await this.installRoute({
-      target: request.target,
-      display: request.display,
-      teamName: event.summary.team_name,
-      leaderName: event.summary.leader_name,
-      agentRuntime: event.summary.leader_agent_runtime,
-      runtimeCwd: event.summary.runtime_cwd,
-    });
-  }
-
-  /**
-   * Install one route and tell everyone who tracks route ownership.
-   *
-   * The durable row, the displaced Team's presentation fence, the new owner's
-   * claim, and the card are one decision; splitting them across callers is how
-   * a Team ends up owning a route whose COT still belongs to its predecessor.
-   */
-  private async installRoute(input: {
-    target: FeishuTarget;
-    display: string | null;
-    teamName: string;
-    leaderName: string;
-    agentRuntime: string;
-    runtimeCwd: string;
-    requireOwner?: string;
-  }): Promise<{ previousTeamName: string | null }> {
-    const { target, teamName } = input;
     const { previousTeamName } = await this.opts.routing.bind({
       target,
-      teamName,
+      teamName: input.teamName,
       display: input.display,
       origin: 'manual',
       spaceId: null,
@@ -158,23 +101,23 @@ export class FeishuBindingOperations {
         ? { requireOwner: input.requireOwner }
         : {}),
     });
-    if (previousTeamName !== null && previousTeamName !== teamName) {
+    if (previousTeamName !== null && previousTeamName !== input.teamName) {
       this.opts.cot.onRouteReleased({ teamName: previousTeamName, target });
     }
-    this.opts.cot.onRouteClaimed({ teamName, target });
+    this.opts.cot.onRouteClaimed({ teamName: input.teamName, target });
     this.opts.notify(
       target,
       bindingBoundCard({
         target,
         display: input.display,
-        teamName,
-        leaderName: input.leaderName,
-        agentRuntime: input.agentRuntime,
-        runtimeCwd: input.runtimeCwd,
+        teamName: team['team_name'],
+        leaderName: team['leader_name'],
+        agentRuntime: team['leader_agent_runtime'],
+        runtimeCwd: team['runtime_cwd'],
       }),
-      teamName,
+      input.teamName,
     );
-    return { previousTeamName };
+    return { team_name: input.teamName, previous_team_name: previousTeamName };
   }
 
   async unbindChannel(

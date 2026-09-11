@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { defaultWorkspaceEnabled, loadConfig } from '../src/config/config.js';
+import { loadConfig } from '../src/config/config.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
@@ -118,68 +118,12 @@ describe('config parser accepts the current shape and rejects a dangling agent r
     expect(config.dispatchers[0]).toMatchObject({
       id: 'flow',
       agentRuntime: 'flow',
-      workspace: { enabled: false },
       runtime: { provider: BUILTIN_CODEX_PROVIDER_REF },
     });
     expect(config.dispatchers[0]!.channels).toHaveLength(1);
     expect(config.dispatchers[0]!.channels[0]!.provider).toBe(
       BUILTIN_FEISHU_PROVIDER_REF,
     );
-  });
-
-  it('reads an empty workspace object the same way as an omitted one', async () => {
-    await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
-      dispatchers: [
-        {
-          id: 'flow',
-          agentRuntime: 'flow',
-          workspace: {},
-          channels: [
-            {
-              id: 'primary',
-              provider: BUILTIN_FEISHU_PROVIDER_REF,
-              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
-            },
-          ],
-        },
-      ],
-    });
-    const { config } = await loadConfig({
-      configDir,
-      providerRegistry: fakeProviderRegistry(),
-    });
-    expect(config.dispatchers[0]!.workspace.enabled).toBe(false);
-    expect(defaultWorkspaceEnabled(config, 'flow')).toBe(false);
-    // A dispatcher id nobody declared answers the same way a declared one with
-    // no workspace block does: shared cwd, not isolation.
-    expect(defaultWorkspaceEnabled(config, 'missing')).toBe(false);
-  });
-
-  it('keeps an explicitly enabled dispatcher workspace', async () => {
-    await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
-      dispatchers: [
-        {
-          id: 'flow',
-          agentRuntime: 'flow',
-          workspace: { enabled: true },
-          channels: [
-            {
-              id: 'primary',
-              provider: BUILTIN_FEISHU_PROVIDER_REF,
-              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
-            },
-          ],
-        },
-      ],
-    });
-    const { config } = await loadConfig({
-      configDir,
-      providerRegistry: fakeProviderRegistry(),
-    });
-    expect(config.dispatchers[0]!.workspace.enabled).toBe(true);
-    expect(defaultWorkspaceEnabled(config, 'flow')).toBe(true);
   });
 
   it('rejects a dispatcher whose agentRuntime does not match any agents[].id', async () => {

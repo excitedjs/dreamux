@@ -186,14 +186,6 @@ Dispatcher declarations live in `config.json`:
 }
 ```
 
-Each dispatcher may also carry an optional `workspace` block. Omitting it — or
-writing `{}` — means `workspace.enabled: false`: a Team or Dispatcher-owned
-TeamMate created without a `repo` request runs in the dispatcher `cwd` itself,
-which need not be a git repository. Setting `workspace.enabled: true` opts into
-isolation instead, giving each such name its own plain directory under
-`<cwd>/.workspace/work/`. Explicit `repo` requests are unaffected either way,
-and re-running `dreamux onboard` keeps whichever value is already written.
-
 `dreamux onboard` is provider-ref driven. Its interactive default selects
 `builtin:codex` and `builtin:feishu`, but provider-specific config prompts are
 owned by those provider packages. Non-interactive runs pass provider raw config

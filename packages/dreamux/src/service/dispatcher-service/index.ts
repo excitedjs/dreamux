@@ -1,7 +1,4 @@
-import type {
-  DreamuxLogger,
-  TeamCreateContext,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import {
@@ -484,7 +481,6 @@ export class DispatcherService {
     requestId: string;
     payloadHash: string;
     options: TeamCreateInput;
-    context?: TeamCreateContext;
   }) {
     return this.admitOperation(() => this.teams.createFromRequest(input));
   }

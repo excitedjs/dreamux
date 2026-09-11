@@ -28,17 +28,6 @@ depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`, and
   injected `invoke` port first: a missing or closed Team is refused with a
   public failure and mutates no routing state. A dissolved Team's routes are
   invalidated from the `team.closed` event.
-- Own what a `team.created` event means to Feishu. The session consumes only
-  creations whose `summary.metadata.provider` is `builtin:feishu`, and their
-  payload is exactly `{ chat_id, title }` — both non-empty strings, any other
-  key refused. The group already exists and the Team is already created, so the
-  handler binds that group through this package's own routing owner, moves COT
-  route ownership, and sends the ordinary `bindingBoundCard`; it never creates a
-  group, invites anyone, or sends an opening message. The event's neutral
-  `TeamSummary` supplies the TeamLeader, runtime, and cwd the card shows, so no
-  Core read follows the event. It runs as a tracked background session task that
-  `close()` drains; a failed bind or an undelivered card is logged and changes
-  nothing about the Team that was created.
 - Own the Feishu slash-command surface. A human message whose leading text
   (after mentions) starts with a known `/command` token is executed here as one
   Command against Core and answered as a receipt; it is never delivered to any

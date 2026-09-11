@@ -104,8 +104,6 @@ export type {
 } from './command.js';
 export type {
   TeamCreateCommand,
-  TeamCreateContext,
-  TeamCreatedEvent,
   TeamCreateRepoRequest,
   TeamStatus,
   TeamSummary,

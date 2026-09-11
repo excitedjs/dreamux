@@ -8,7 +8,6 @@
  */
 import type { AgentRuntimeSkillSource, AgentRuntimeStatus } from './agent-runtime.js';
 import type { ChannelCommandError } from './command.js';
-import type { JsonValue } from './json.js';
 import type { TeamContainedRole, TeammateStatus } from './teammate.js';
 
 /**
@@ -39,20 +38,6 @@ export type TeamCreateRepoRequest =
     };
 
 /**
- * Provider-owned context attached to one Team creation.
- *
- * Core never reads `payload`: it names the provider that authored the context
- * and copies the pair through unchanged. The owning provider recognizes its own
- * `provider` value on the resulting `team.created` event and interprets the
- * payload against its own contract — for `builtin:feishu` that is the existing
- * conversation the new Team should be bound to.
- */
-export interface TeamCreateContext {
-  readonly provider: string;
-  readonly payload: Readonly<Record<string, JsonValue>>;
-}
-
-/**
  * Create a Team with restart-durable request identity.
  *
  * Core canonicalizes the validated payload and stores its request id and hash
@@ -76,11 +61,6 @@ export interface TeamCreateCommand {
     readonly skill_sources?: readonly AgentRuntimeSkillSource[];
   };
   readonly repo?: TeamCreateRepoRequest;
-  /**
-   * Opaque context for the provider that will act on this creation. It is part
-   * of the canonical payload, so a replay must repeat it to stay a replay.
-   */
-  readonly context?: TeamCreateContext;
 }
 
 export type TeamStatus = 'starting' | 'running' | 'closed';
@@ -120,12 +100,6 @@ export interface TeamSummary {
     | 'retained-unmerged'
     | 'retained-unique-commits'
     | 'retained-error';
-  /**
-   * The `team.create` context this result was produced for, projected verbatim.
-   * Creation-only: it is never stored on the Team record, so `team.status` and
-   * `team.list` never carry it, and a Team created without context has none.
-   */
-  readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
 
 /**
@@ -213,21 +187,4 @@ export interface TeamStateEvent {
   readonly leader_name: string;
   readonly status: TeamStatus;
   readonly teammates: readonly TeamStateTeammateSummary[];
-}
-
-/**
- * One Team that has just been created, complete and running.
- *
- * Published once per fresh creation, after the Team record exists and its
- * TeamLeader is materialized. It carries the same summary the creating caller
- * received, `metadata` included, so a provider acting on its own creation
- * context needs no follow-up read. It is live-only: an idempotent replay of the
- * same request publishes nothing, and a subscriber that was absent never sees
- * it.
- */
-export interface TeamCreatedEvent {
-  readonly schema_version: 1;
-  readonly kind: 'team.created';
-  readonly occurred_at: number;
-  readonly summary: TeamSummary;
 }

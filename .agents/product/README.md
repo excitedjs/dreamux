@@ -36,12 +36,6 @@ the same change that touches it.
   needing no orphan governance; a later message on that conversation simply
   creates or selects another Team. Dissolving a Team cancels all bindings that
   point at it.
-- **A caller can bind an existing group when creating its Team.** The canonical
-  creation command accepts provider-owned context. Feishu uses its own context
-  to bind the named existing group and send a binding card after fresh Team
-  creation. This does not create an external group. A failed channel action
-  leaves the Team created; an identical creation retry does not replay the action.
-  (Task: [Team creation context](/.agents/tasks/architecture/extend-team-create-context/README.md).)
 - **A question the agent cannot answer becomes a card, and the turn ends.**
   When an agent is blocked on a decision only the user can make, the built-in
   Feishu channel posts an interactive question card — 1-4 single-select
@@ -119,13 +113,6 @@ the same change that touches it.
 
 ## Team lifecycle
 
-- **Work without a repository shares the dispatcher directory by default.** A
-  Team or dispatcher-owned TeamMate created without a repository uses the
-  dispatcher cwd, which need not be a Git repository. Operators can explicitly
-  enable workspace isolation to give each one a separate plain directory.
-  Explicit repository requests retain their selected policy, and existing
-  agents keep their recorded workspace.
-  (Task: [Team creation context and workspace default](/.agents/tasks/architecture/extend-team-create-context/README.md).)
 - **The Team record is the only existence fact.** A readable, valid Team record
   means the Team exists and its name is taken; no record (or an invalid one)
   means no Team and a free name. Nothing else — ledgers, claims, identities —
@@ -175,11 +162,9 @@ the same change that touches it.
 - **Create and status show the same Team facts; list stays compact.**
   `team.create` and `team.status` return one flat current Team summary. Its
   `status` is only the Team lifecycle (`starting`, `running`, or `closed`); a
-  replay carries no separate created/existing outcome. Creation-only provider
-  metadata may accompany the canonical create result; status reads do not
-  reproduce it. The summary includes stable TeamLeader and workspace facts,
-  nullable current leader state, and the number of occupied Team-member names
-  excluding the leader. Each `team.list`
+  replay carries no separate created/existing outcome. The summary includes
+  stable TeamLeader and workspace facts, nullable current leader state, and the
+  number of occupied Team-member names excluding the leader. Each `team.list`
   item is a compact scan row that uses the same field names and meanings
   (name, lifecycle status, intent, repo, leader name, runtime, and state,
   member count, timestamps, worktree cleanup) and carries no machine-local path.

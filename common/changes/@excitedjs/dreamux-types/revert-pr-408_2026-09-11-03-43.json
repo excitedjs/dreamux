@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Revert #408 and restore the previous workspace and Team creation behavior.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
