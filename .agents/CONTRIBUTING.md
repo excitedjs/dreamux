@@ -88,7 +88,11 @@ taught the next agent a shipped bug. Copies rot; owners travel.
   (starting with `/`) from KB files to source files or always-loaded repo
   files. Task trees use absolute `/.agents/tasks/...` links (the task
   scaffold's convention).
-- **Status matters.** Historical material must say that it is historical.
+- **Status matters.** Historical material must say that it is historical. In a
+  task record the stricter rule applies: it carries only facts that cannot
+  expire on their own, and stale ones are rewritten in place rather than
+  appended to. The rule and its test are owned by
+  [task records](skills/dev-workflow/references/task-records.md).
 
 ## Regression Trap: a green check.sh does not mean the facts are right
 
@@ -107,6 +111,7 @@ Before committing KB changes, run:
 ```
 
 It validates links, reachability from `root.md`, domains-page source-path
-liveness, and that every `.agents/` path cited by tracked files outside the KB
-(comments, READMEs, tests) still resolves. Failures are noisy on purpose; CI
-rejects anything it rejects.
+liveness, that every `.agents/` path cited by tracked files outside the KB
+(comments, READMEs, tests) still resolves, and that every task record carries a
+well-formed state that can still be true after its own pull request merges.
+Failures are noisy on purpose; CI rejects anything it rejects.

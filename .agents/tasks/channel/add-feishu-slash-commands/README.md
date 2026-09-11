@@ -34,9 +34,6 @@
 
 ## Delivery
 
-- Commit: rebased onto `origin/next` at `2575e056` (after #380 and #382 merged
-  and released), then a second commit for review round 2. The branch carries
-  nothing else.
 - Pull request: [PR #379](https://github.com/excitedjs/dreamux/pull/379).
 - Gates: details and coverage in
   [verification.md](/.agents/tasks/channel/add-feishu-slash-commands/verification.md).

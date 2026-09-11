@@ -9,8 +9,9 @@
 - Solution review Issue: Not required for the minimal-change fast path.
 - Workflow: TeamLeader implementation after approval, followed by one independent read-only review.
 - Verification: [Checks and display evidence](/.agents/tasks/channel/align-codex-command-display/verification.md).
-- Blockers: No functional or architecture blocker; both review findings are approved and applied. All four repository gates also passed on the isolated delivery branch based on `next`, excluding the unrelated baseline commit.
-- Next action: Await the required GitHub approving review and separate operator merge authorization. Current-head CI is tracked on the PR; Feishu client visual verification remains unperformed.
+- Blockers: None; both review findings are approved and applied.
+- Next action: None.
+- Coverage limit: Feishu client visual verification was never performed.
 - Related tasks: Builds on [Feishu conversation-of-thought cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); dedicated task creation confirmed by the operator on 2026-09-09.
 
 ## Development approval
@@ -38,12 +39,6 @@
   or service restart.
 - Pull request: [#396](https://github.com/excitedjs/dreamux/pull/396),
   `fix/codex-command-display` into `next`.
-- CI: All 9 checks passed for `1305d36d` in
-  [run 34288628691](https://github.com/excitedjs/dreamux/actions/runs/34288628691),
-  including Linux and macOS Rush gates. This delivery-record update will trigger
-  the ordinary CI checks again; the PR owns the current-head result.
-- Merge: Not performed or authorized; GitHub still requires an approving review.
-  No deployment or service restart was performed.
 - Knowledge closeout: Complete; owner updates and final local checks passed.
 
 ## Knowledge closeout

@@ -6,8 +6,6 @@
 - State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/requirement.md).
 - Final solution: [Technical solution](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/technical-design/final.md).
-- Baseline: Freshly fetched `origin/next` at `ecfb378d`.
-- Branch: `fix/cot-result-heading`.
 - Approval (2026-09-10): "选 B 吧，feishu桌面端不吃这个灰色的标识".
   This selects the native COT sample `###### RESULT\n\n---` after the
   TeamLeader offered to implement the chosen sample. It resumes the same
@@ -23,8 +21,7 @@
 - Review adjudication: No findings; the TeamLeader accepts the external approval
   after checking the result ordering, status/list paths, and event-budget diff.
 - Merge approval (2026-09-10): "合入吧。"
-- Current next action: Squash-merge PR #405 after final CI passes. Package
-  installation and service restart are not requested.
+- Next action: None.
 
 ## Historical #403 status correction
 
@@ -80,20 +77,18 @@ The following implementation and delivery notes predate the current repair.
   closed. At that reset only .agents records remained changed; the fresh Claude
   implementation passed final local pre-review. The remote draft PR and published Alpha
   still contain the discarded implementation.
-- Blockers: External final review remains pending. The test-fixture scan failure
-  was resolved under operator approval by changing only the synthetic commands;
-  staged gitleaks now passes with its rules unchanged. The operator rejected the
-  added shared START title/name budget; its withdrawal is verified while the
-  approved 80-byte cap removal remains.
-  Earlier implementation and gate results are historical.
+- Blockers: None. The test-fixture scan failure was resolved under operator
+  approval by changing only the synthetic commands, with the gitleaks rules
+  unchanged. The operator rejected the added shared START title/name budget; its
+  withdrawal is verified, and the approved 80-byte cap removal remains.
   R2 remains unchanged, R3 keeps invocation-first selection, and R6 keeps the
   existing formatting entry under the operator's explicit rulings.
-- Next action: Update the existing draft PR, run CI, and request the
+- Next action at the time: update the existing draft PR, run CI, and request the
   operator-selected external final review. Its
   [implementation brief](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/implementation-brief.md)
   states the original presentation requirement plus failure ordering against next.
-  External final review remains required. The replacement Codex writer was closed and its
-  partial source edits were discarded before this reassignment.
+  The replacement Codex writer was closed and its partial source edits were
+  discarded before this reassignment.
 - Related tasks: Builds on
   [Feishu COT cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md)
   and [COT refinement](/.agents/tasks/channel/refine-feishu-cot-and-binding-cards/README.md).

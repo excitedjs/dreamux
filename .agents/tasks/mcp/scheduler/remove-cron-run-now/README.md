@@ -9,8 +9,7 @@
 - Verification: [Verification](/.agents/tasks/mcp/scheduler/remove-cron-run-now/verification.md)
 - Solution review Issue: [#334](https://github.com/excitedjs/dreamux/issues/334)
 - Blockers: None.
-- Next action: Await explicit operator direction before merging pull request
-  [#335](https://github.com/excitedjs/dreamux/pull/335).
+- Next action: None.
 - Related tasks: None.
 
 ## Development approval

@@ -361,11 +361,113 @@ def check_state(task_text: str, name: str, allow_in_flight: bool) -> None:
 # A domain index and a task record are told apart by the headings only one of
 # them can carry. Depth cannot do it: a domain may nest inside a domain, so
 # `mcp/scheduler` sits exactly where a task record would.
-DOMAIN_HEADINGS = ("## Child Scopes", "## Tasks", "## Active Tasks")
+DOMAIN_HEADINGS = frozenset({"## Child Scopes", "## Tasks", "## Active Tasks"})
+RECORD_HEADING = "## Current state"
 
 
-def is_domain_index(text: str) -> bool:
-    return any(f"\n{heading}" in text for heading in DOMAIN_HEADINGS)
+def is_domain_index(name: str, text: str) -> bool:
+    """Decide which kind of file this is, and refuse to guess.
+
+    Headings are matched as whole lines. A substring test would read
+    `## Tasks completed` inside a record as the index heading `## Tasks`, and
+    because an index is checked far more loosely than a record, that reading
+    silently exempts the record from the state rule — the exact bypass this
+    walk exists to close.
+
+    Anything that is not an index is treated as a record, so an unrecognized
+    file is answered with the field it is missing rather than skipped. The
+    asymmetry is deliberate and only safe in that direction: mistaking a record
+    for an index is silent, mistaking an index for a record is loud. A file
+    carrying both kinds of heading is refused outright rather than resolved by
+    precedence, because either reading would be a guess.
+    """
+    headings = {line.strip() for line in unfenced_lines(text)}
+    domain = bool(headings & DOMAIN_HEADINGS)
+    record = RECORD_HEADING in headings
+    if domain and record:
+        raise TaskError(
+            f"{name}: README carries both a domain-index heading and "
+            f"'{RECORD_HEADING}', so it cannot be checked as either. A domain "
+            f"index and a task record are separate files."
+        )
+    return domain
+
+
+# Bullet labels that report where delivery stood at the moment of writing.
+# The rule is on the label, which is a closed structural token, and never on the
+# prose after it, which is not: a phrase list cannot tell a live status from the
+# same words quoted inside an operator ruling, and this repository's records
+# quote operators verbatim by policy.
+DELIVERY_STATUS_LABELS = frozenset({
+    "Baseline",
+    "Branch",
+    "CI",
+    "CI / merge",
+    "Commit",
+    "Current PR",
+    "Current next action",
+    "Current repair baseline",
+    "Current repair branch",
+    "Merge",
+    "Pull request / CI / merge",
+    "Pull request / merge",
+})
+
+# A section under this heading is a frozen snapshot of a past round, kept on
+# purpose. It records what was true then, which is not a claim about now, so the
+# label rule does not reach into it.
+FROZEN_SECTION_PREFIX = "## Historical"
+
+LABEL_RE = re.compile(r"^- ([A-Z][A-Za-z0-9 /-]{0,40}):")
+
+
+def unfenced_lines(text: str) -> list[str]:
+    """Everything outside a fenced block.
+
+    A format token inside an example is not document structure. Reading it as
+    structure is a real bypass, not a hypothetical one: a record whose body
+    contained a fenced `## Tasks` would be classified as a domain index and skip
+    the state rule entirely. Structure is read from these lines only.
+    """
+    lines: list[str] = []
+    fenced = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            lines.append(line)
+    return lines
+
+
+def live_lines(text: str) -> list[str]:
+    """The lines that make a claim about the present.
+
+    Frozen sections are dropped on top of the fenced ones: they describe a past
+    round, and a record of what was true then is not a claim about now.
+    """
+    lines: list[str] = []
+    frozen = False
+    for line in unfenced_lines(text):
+        if line.startswith("## "):
+            frozen = line.startswith(FROZEN_SECTION_PREFIX)
+        if not frozen:
+            lines.append(line)
+    return lines
+
+
+def check_delivery_labels(name: str, lines: list[str]) -> None:
+    for line in lines:
+        match = LABEL_RE.match(line)
+        if match and match.group(1) in DELIVERY_STATUS_LABELS:
+            raise TaskError(
+                f"{name}: the `- {match.group(1)}:` field reports where delivery "
+                f"stood when it was written, so it goes false on its own. git and "
+                f"GitHub already record it. Keep the pull request link; drop the "
+                f"branch, baseline, commit, CI result, and merge status. A past "
+                f"round that is kept on purpose belongs under a "
+                f"'{FROZEN_SECTION_PREFIX} ...' heading, which this check skips."
+            )
 
 
 def check_record(directory: Path, name: str, text: str, allow_in_flight: bool) -> None:
@@ -374,7 +476,10 @@ def check_record(directory: Path, name: str, text: str, allow_in_flight: bool) -
         raise TaskError(f"{name}: missing requirement.md")
     if "\n## Current state" not in text:
         raise TaskError(f"{name}: task README has no '## Current state' section")
-    check_state(text, name, allow_in_flight)
+    lines = live_lines(text)
+    check_state("\n".join(lines), name, allow_in_flight)
+    if not allow_in_flight:
+        check_delivery_labels(name, lines)
     if f"](/.agents/tasks/{name}/requirement.md)" not in text:
         raise TaskError(f"{name}: the record does not link its own requirement.md")
     link = f"/.agents/tasks/{name}/README.md"
@@ -396,7 +501,7 @@ def check_index(name: str, text: str) -> None:
     reader has no way to tell which of the two is stale. That the links resolve
     is checked once for the whole knowledge base by `.agents/scripts/check.sh`.
     """
-    for link, rest in INDEX_BULLET_RE.findall(text):
+    for link, rest in INDEX_BULLET_RE.findall("\n".join(unfenced_lines(text))):
         for state in re.findall(r"`([^`]+)`", rest):
             if state in STATES:
                 raise TaskError(
@@ -428,7 +533,7 @@ def check_all(args: argparse.Namespace) -> int:
         name = relative.as_posix() if relative.parts else "."
         text = read(readme)
         try:
-            if is_domain_index(text):
+            if is_domain_index(name, text):
                 check_index(name, text)
             else:
                 records += 1

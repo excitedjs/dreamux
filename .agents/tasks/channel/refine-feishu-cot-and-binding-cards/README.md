@@ -25,8 +25,7 @@
 - Verification:
   [verification.md](/.agents/tasks/channel/refine-feishu-cot-and-binding-cards/verification.md).
 - Blockers: None.
-- Next action: Deliver the accepted compact-layout correction in the canonical
-  Team summary follow-up pull request.
+- Next action: None.
 - Related tasks: Builds on
   [Feishu conversation-of-thought cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md).
 
@@ -55,8 +54,7 @@
 
 ## Delivery
 
-- Pull request / CI / merge: PR #386 merged. The post-merge presentation
-  correction is frozen for a new follow-up PR.
+- Pull request: [#386](https://github.com/excitedjs/dreamux/pull/386).
 - Post-merge compact-layout implementation: Complete in the approved follow-up
   workspace; production payload tests pin the accepted typography, spacing, and
   orange dissolution treatment.

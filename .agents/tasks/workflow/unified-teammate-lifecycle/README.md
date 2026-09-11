@@ -36,11 +36,10 @@
   checks, deletion scans, and publication-surface scans passed. Evidence is
   recorded in
   [verification.md](/.agents/tasks/workflow/unified-teammate-lifecycle/verification.md#current-native-transcript-iteration).
-- Blockers: No accepted implementation-review finding or required CI gate
-  remains unresolved. Two non-required Codex real-model gates remain limited by
+- Blockers: None.
+- Coverage limit: two non-required Codex real-model gates were limited by
   external model-service health and are recorded as residual live coverage.
-- Next action: Obtain the required GitHub review and operator merge authority
-  for PR #338. Do not merge automatically.
+- Next action: None.
 - Related tasks: Builds on public issue [#328](https://github.com/excitedjs/dreamux/issues/328). PRs [#329](https://github.com/excitedjs/dreamux/pull/329) and [#330](https://github.com/excitedjs/dreamux/pull/330) are competing historical inputs, not an accepted solution.
 
 ## Execution constraint
@@ -96,18 +95,8 @@
 
 ## Delivery
 
-- Pull request: [#338](https://github.com/excitedjs/dreamux/pull/338),
-  targeting `next`. Its public head must match this reviewed workspace and pass
-  the normal CI gate before merge.
-- Local final gate: Passed on the reviewed native-transcript workspace:
-  focused remediation tests, Rush build/typecheck/test-typecheck/lint/test,
-  Rush change verification, task/KB checks, diff validation, deletion scans,
-  and repository-publication scans.
-- CI: Passed on reviewed head
-  `e09c64fef47b7afa4c686f403198d18d030b4302`: Rush change declaration,
-  author metadata, Linux/macOS shellcheck, KB validation, full-history
-  gitleaks, and Linux/macOS Rush build/typecheck/lint/test.
-- Merge: Not authorized or attempted.
+- Pull request: [#338](https://github.com/excitedjs/dreamux/pull/338).
+- Validation: [verification.md](/.agents/tasks/workflow/unified-teammate-lifecycle/verification.md).
 - Independent implementation review: Complete. The non-Codex `xhigh` workflow
   verified all 32 candidates with no partial coverage, reported 14 primary
   findings, and refuted 13 candidates. TeamLeader adjudication accepted eight

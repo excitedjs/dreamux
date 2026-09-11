@@ -14,7 +14,7 @@ it has merged.
 
 Measured on `next` at `27428f85`, 2026-09-11.
 
-- 7 of 36 task records carry a state that cannot be true on the trunk. Three
+- 7 of 35 task records carry a state that cannot be true on the trunk. Three
   are values outside the supported set entirely — `implemented`, `in-progress`,
   `delivery` — which the existing check would have rejected.
 - Every one of the 7 was delivered. Six were delivered by a merged pull
@@ -27,8 +27,10 @@ Measured on `next` at `27428f85`, 2026-09-11.
   `architecture/harness-gaps` at `intake`: nothing has started, which stays
   true indefinitely.
 - The same state was duplicated in the domain index entry for all 35 records,
-  and two of those copies already disagreed with the record they described. A
-  reader had no way to tell which of the two was stale.
+  and three of those copies already disagreed with the record they described
+  (`split-streaming-display-from-pushback`, `feishu-cot-conversation-cards`,
+  `refine-feishu-cot-and-binding-cards`). A reader had no way to tell which of
+  the two files was stale.
 - `architecture/split-streaming-display-from-pushback` carried six lines of
   prose after its state — branch name, four gate results, and a probe finding.
   Every one of those is a snapshot.

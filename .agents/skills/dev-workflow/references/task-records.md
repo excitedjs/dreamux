@@ -91,6 +91,28 @@ false while the file sits untouched?**
   repeat the task's state: two copies of one fact in two files is the drift
   itself, because the record moves on and the index keeps yesterday's answer.
 
+The check enforces this on the part of the record that can be checked without
+reading a claim: the bullet **label**. A label is a closed token — it cannot
+appear inside a quotation, and rejecting one says nothing about the sentences
+under it. These report where delivery stood when they were written, so a record
+being committed to the trunk may not carry them:
+
+```text
+- CI:          - Merge:        - Branch:    - Baseline:    - Commit:
+- CI / merge:  - Current PR:   - Current next action:
+- Pull request / CI / merge:   - Pull request / merge:
+```
+
+Write `- Pull request:` with the link, and put durable evidence behind
+`- Verification:` or `- Coverage limit:`, which do not expire.
+
+Two things are exempt. A fenced block is an example, not structure, so the
+check strips it first. And a section under a `## Historical …` heading is a
+snapshot of a past round kept on purpose — it records what was true then, which
+is not a claim about now, so the rule does not reach into it. Do not rewrite
+such a section: if a sentence there sounds live, put it in the past tense rather
+than deleting the round it describes.
+
 **Rewrite stale facts in place; do not append change history.** When something
 recorded here is no longer true, edit the line to say what is true now. A record
 is the current state of one task, not a log of how that state was reached — git
