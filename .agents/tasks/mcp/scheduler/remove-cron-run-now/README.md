@@ -24,10 +24,7 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Pull request
-  [#335](https://github.com/excitedjs/dreamux/pull/335) is open against `next`;
-  CI and merge state are tracked on the pull request, and no merge has been
-  performed.
+- Pull request: [#335](https://github.com/excitedjs/dreamux/pull/335).
 - Knowledge closeout: Complete. Current behavior is recorded in the package
   README, bundled workflow skills, dispatcher and service-topology references;
   superseded scheduler proposals are archived. Capability-domain task routing is

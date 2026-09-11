@@ -8,7 +8,7 @@
 - Final solution: [Final technical solution](/.agents/tasks/builtin-skills/adopt-lean-self-upgrade-sop/technical-design/final.md)
 - Solution review Issue: Not applicable; the operator ruled this onto the minimal-change fast path.
 - Blockers: None.
-- Next action: Commit the reviewed workspace and open the PR against `next`.
+- Next action: None.
 - Verification: [Verification record](/.agents/tasks/builtin-skills/adopt-lean-self-upgrade-sop/verification.md)
 - Related tasks: None.
 
@@ -25,7 +25,7 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
+- Pull request: [#370](https://github.com/excitedjs/dreamux/pull/370).
 - Knowledge closeout: Complete. Owners touched and results:
   - `.agents/tasks/**` — this task record is the decision record: requirement,
     final solution, operator rulings, and verification.

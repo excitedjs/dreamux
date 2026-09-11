@@ -3,7 +3,7 @@
 ## Current state
 
 - Goal: Stop reporting a turn or Workflow terminal to the owner whose own close, stop, dissolve, or shutdown ended it, by reading the scope fence on the recipient side rather than retiring obligations on the producer side.
-- State: `delivery`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md)
 - Final solution: [Fence completion delivery at the recipient's scope](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/technical-design/final.md)
 - Solution review Issue: [#388](https://github.com/excitedjs/dreamux/issues/388)
@@ -12,8 +12,7 @@
   (“他现在这个写法像是各处的堵漏”); its behavior tests are reused, its mechanisms
   are not, and its review trail stays on that PR.
 - Blockers: None.
-- Next action: Land [PR #391](https://github.com/excitedjs/dreamux/pull/391)
-  after CI and review.
+- Next action: None.
 - Related tasks:
   - `builds-on`: [Adopt provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — retains the general failed/stopped settlement path introduced before that refactor.
   - Historical behavior origin: [PR #149](https://github.com/excitedjs/dreamux/pull/149).
@@ -35,12 +34,7 @@
 
 ## Delivery
 
-- Branch: `dreamux/fence-completion-delivery-at-scope`, cut from `next` at
-  `fffc3bd337f8ce28070fb8658fc30893e71730bb`.
-- Gates: Rush build, lint, test, `typecheck:tests`, the knowledge-base check,
-  and `git diff --check` pass on the branch.
-- Pull request: [#391](https://github.com/excitedjs/dreamux/pull/391), opened
-  on 2026-09-08 against `next`; CI and merge pending.
+- Pull request: [#391](https://github.com/excitedjs/dreamux/pull/391).
 - Knowledge closeout: product catalog, dispatcher-orchestration domain, service
   topology, `service/CLAUDE.md`, and the maintenance service-lifecycle
   reference updated in the same change; no config or persisted-state shape

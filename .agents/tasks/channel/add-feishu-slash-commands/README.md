@@ -11,12 +11,11 @@
   consultation and the public review Issue for this task.
 - Blockers: None. The dissolve-receipt question was ruled on by the operator and
   is recorded in the requirement and the solution.
-- Next action: Obtain the required non-author approval on PR #379, then merge on
-  operator authority. Review round 2 (Devbox inline comments) is answered and went
-  green on all nine required checks; its most consequential finding led to a live
-  probe that overturned the round-1 fix for interrupt settlement. Round 3 carries
-  the operator's ruling that codex writes the same interrupted line — see the
-  probe tables in `verification.md`.
+- Next action: None.
+- Review history: round 2 (Devbox inline comments) was answered, and its most
+  consequential finding led to a live probe that overturned the round-1 fix for
+  interrupt settlement. Round 3 carries the operator's ruling that codex writes
+  the same interrupted line — see the probe tables in `verification.md`.
 - Related tasks: None.
 
 ## Development approval
@@ -38,15 +37,9 @@
 - Commit: rebased onto `origin/next` at `2575e056` (after #380 and #382 merged
   and released), then a second commit for review round 2. The branch carries
   nothing else.
-- Pull request / CI / merge: [PR #379](https://github.com/excitedjs/dreamux/pull/379)
-  open against `next`; all nine required checks (both `rush` legs, `rush change`
-  declaration, KB link/orphan, gitleaks full history, internal-content path scan,
-  commit metadata, both shellcheck legs) are green on the round-2 head, as they
-  were on the pre-rebase head. Merge pending operator authority and the required
-  non-author approval.
-- Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-  `rush change --verify`, and `.agents/scripts/check.sh` all green. Details and
-  coverage in [verification.md](/.agents/tasks/channel/add-feishu-slash-commands/verification.md).
+- Pull request: [PR #379](https://github.com/excitedjs/dreamux/pull/379).
+- Gates: details and coverage in
+  [verification.md](/.agents/tasks/channel/add-feishu-slash-commands/verification.md).
 
 ### Knowledge closeout
 

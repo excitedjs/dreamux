@@ -1,13 +1,15 @@
 # Keep question-card replies in their topic
 
+## Current state
+
 - Goal: Keep follow-up questions in the answered card's topic.
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/fix-question-card-topic-routing/requirement.md)
 - Final solution: [Actual-card routing](/.agents/tasks/channel/fix-question-card-topic-routing/technical-design/final.md)
 - Verification: [Evidence](/.agents/tasks/channel/fix-question-card-topic-routing/verification.md)
-- Solution review Issue: The operator approved the replacement in conversation; review proceeds on PR #402.
+- Solution review Issue: None; the operator approved the replacement in conversation, and PR #402 served as the review surface.
 - Blockers: None.
-- Next action: Publish the verified revision and obtain DevBox review on PR #402.
+- Next action: None.
 - Related tasks: Found during [COT display work](../refine-cot-tool-details-and-notifications/README.md); this is an independent, pre-existing routing defect.
 
 ## Development approval
@@ -30,11 +32,7 @@ verification; no public or persisted contract changes.
 
 ## Delivery
 
-- Baseline: `22cf0a7a53ea636daad9c939ff2185e3379bc42e` from freshly fetched next.
-- Pull request: https://github.com/excitedjs/dreamux/pull/402 (open).
-- Earlier repair: `1e011989dff1487ca45120bb4cfab206bc7b6438`, CI passed and Alpha published.
-- Current revision: Actual-card routing implemented on next `6bb8a713`; local gates passed.
-- Review: DevBox review of this revision is pending. Do not reuse the earlier patch approval.
+- Pull request: https://github.com/excitedjs/dreamux/pull/402.
 - Knowledge closeout: Channel and product documentation updated for actual-card routing.
 
 ## Review workflow ruling

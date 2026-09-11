@@ -3,12 +3,12 @@
 ## Current state
 
 - Goal: Run every projected tool.call member through the redactor, removing the argument/invocation exemption so a secret in a command or its arguments cannot reach a chat surface
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/redact-tool-call-arguments/requirement.md)
 - Final solution: [Final technical design](/.agents/tasks/channel/redact-tool-call-arguments/technical-design/final.md)
 - Solution review Issue: Not created — the operator waived the solution stage.
 - Blockers: None.
-- Next action: External review on the PR, then merge into `next`.
+- Next action: None.
 - Related tasks: supersedes the argument-exemption ruling recorded in
   [`refine-cot-tool-details-and-notifications`](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md).
 
@@ -77,5 +77,5 @@ a shorter copy of the secret key-name list and never hid `api_key`,
 
 ## Delivery
 
-- Pull request / CI / merge: PR open against `next`; awaiting review and CI.
-- Knowledge closeout: `.agents/product/README.md` and `.agents/domains/channel.md` updated in the same change; `.agents/scripts/check.sh` clean.
+- Pull request: [#412](https://github.com/excitedjs/dreamux/pull/412).
+- Knowledge closeout: `.agents/product/README.md` and `.agents/domains/channel.md` updated in the same change.

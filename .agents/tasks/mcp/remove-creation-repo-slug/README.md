@@ -10,7 +10,7 @@
 - Solution review Issue: Omitted by the operator-approved simplified workflow.
 - Solution path: On 2026-09-09 the operator selected "简化流程 (Recommended)": TeamLeader authors the solution and implementation, obtains separate development approval, then uses one independent read-only reviewer and the full test gates.
 - Blockers: None.
-- Next action: Commit and push only this reviewed task, open a PR targeting `next`, and wait for normal CI. Do not merge without separate operator authority.
+- Next action: None.
 - Lineage: Independent requirement; task creation confirmed by the operator on 2026-09-09.
 - Related tasks: None.
 
@@ -23,7 +23,7 @@
 
 ## Delivery
 
-- Pull request / CI / merge: PR preparation authorized on 2026-09-09; GitHub CI pending; not merged.
+- Pull request: [#398](https://github.com/excitedjs/dreamux/pull/398).
 - Knowledge closeout: Completed on 2026-09-09. Product behavior is recorded in [the catalog](/.agents/product/README.md#team-lifecycle); the MCP/canonical input boundary is recorded in [model-facing writing](/.agents/domains/model-facing-writing.md#mcp-descriptions-and-results); decisions, checks, and residual compatibility are recorded in [verification](/.agents/tasks/mcp/remove-creation-repo-slug/verification.md).
 - Other knowledge owners: Maintenance references, package/directory guidance, path/state documentation, and glossary updates are N/A because their contracts did not change.
-- Local delivery: Implementation and one independent review are complete; both review items were explicitly adjudicated by the operator. The four Rush gates and knowledge checks passed. PR delivery follows the authorization above.
+- Local delivery: Implementation and one independent review are complete; both review items were explicitly adjudicated by the operator.
