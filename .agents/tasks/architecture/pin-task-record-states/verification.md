@@ -93,8 +93,11 @@ Both are the same failure: an exemption a passing phrase can claim by accident.
 ## Counts
 
 The record counts in the design and the pull request description are measured
-by running the gate against the pre-change trunk. It reports 7 state-rejected,
-23 label-rejected, and 23 in the union, because the seven are a subset:
+by running the gate against `27428f85`, the trunk commit this task was measured
+on. The commit is named rather than written as `origin/next`, which stops
+meaning the pre-change trunk the moment this merges. It reports 7
+state-rejected, 23 label-rejected, and 23 in the union, the seven being a
+subset:
 
 ```python
 import subprocess, sys
@@ -104,11 +107,11 @@ import init_task as gate
 
 state, label = set(), set()
 for path in subprocess.run(
-        ['git', 'ls-tree', '-r', '--name-only', 'origin/next', '.agents/tasks'],
+        ['git', 'ls-tree', '-r', '--name-only', '27428f85', '.agents/tasks'],
         capture_output=True, text=True).stdout.split():
     if not path.endswith('README.md'):
         continue
-    text = subprocess.run(['git', 'show', f'origin/next:{path}'],
+    text = subprocess.run(['git', 'show', f'27428f85:{path}'],
                           capture_output=True, text=True).stdout
     if gate.is_domain_index(path, text):
         continue
