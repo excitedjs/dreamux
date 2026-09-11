@@ -97,27 +97,33 @@ which this repository's workflow already borrows from.
 
 ## 7. Bringing existing records into compliance
 
-The gate turns the seven non-compliant records red the moment it is added, so
-the rules and the correction land in one pull request. Each was verified against
-GitHub before its state was changed; the evidence is in
-[the requirement](/.agents/tasks/architecture/pin-task-record-states/requirement.md).
-
-Twelve more records passed the gate while still describing finished work in the
-present tense, because what had expired in them was prose rather than the state.
-They were corrected too. Several were not merely stale but false: PR #335 had
-been merged for a month while its record said no merge had been performed, and
+Measured on the trunk with the gate itself, it rejects **23 of the 35 records**:
+seven on the `State:` line and twenty-three on a delivery-status label, the
+seven being a subset. They are corrected in this pull request, and every
+referenced pull request was checked against GitHub before its record was
+touched. Several were not merely stale but false: PR #335 had been merged for a
+month while its record said no merge had been performed, and
 `adopt-lean-self-upgrade-sop` was `done` while its delivery said the pull
 request had not started.
 
-That gap is the honest limit of the check, and §8 states it rather than leaving
-a reader to infer that a green gate means a clean tree.
+**One further record is corrected that the gate does not reject.**
+`teamwork-teammates-are-not-subagents` said "Land the pull request after CI and
+review" under `- Next action:` and cited #393 as "CI and merge pending", after
+#393 had merged. Both sit inside labels that are not banned, because both are
+ordinarily durable fields. So twenty-four records are edited in total: the
+twenty-three the gate catches, plus the one only a reader would have caught.
+
+That last record is the honest limit of the check, and §8 states it rather than
+leaving a reader to infer that a green gate means a clean tree.
 
 ## 8. Checking staleness without reading prose
 
 The first version of this check read only the `State:` line and the index
 entries, and its stated limit was that a record could still describe finished
-work in the present tense and pass. That limit was real: nineteen records were
-corrected by hand precisely because the gate could not see them.
+work in the present tense and pass. That limit was real, and enumerating it by
+hand did not work: the hand sweep found nineteen records, while the label rule
+below rejects twenty-three of the thirty-five on the trunk. Reading prose for
+status phrases misses what a closed set of tokens does not.
 
 The reasoning behind accepting that limit was wrong, and the operator said so —
 "这个东西你也别自己偷偷搞了，你直接抄一下上游的作业" (2026-09-11). The argument had

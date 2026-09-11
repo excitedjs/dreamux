@@ -79,8 +79,11 @@ taught the next agent a shipped bug. Copies rot; owners travel.
   raise it with the operator. Delete a trap when the mechanism it guards is
   deleted or redesigned — traps are bounded, not a chronicle.
 - **Since this was recorded.** Historical text (backfilled records, frozen
-  snapshots) is never edited in place. Corrections go into a dated
-  `## Since this was recorded` section beneath the preserved body.
+  snapshots) is never rewritten to say something different. Corrections go into
+  a dated `## Since this was recorded` section beneath the preserved body.
+  Putting a preserved sentence into the past tense is not a correction — the
+  fact is unchanged, and only its tense stopped it from reading as a live
+  claim — so that edit is made in place and needs no dated section.
 - **Backfill provenance.** Content moved from a dissolved structure carries a
   banner naming the move date and origin; original dates and statuses stay
   verbatim.

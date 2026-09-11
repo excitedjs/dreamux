@@ -22,8 +22,7 @@
 
 ## Delivery
 
-- Pull request: [#392](https://github.com/excitedjs/dreamux/pull/392), targeting
-  `next`.
+- Pull request: [#392](https://github.com/excitedjs/dreamux/pull/392).
 - Review: comments addressed.
 - Verification: [Completed verification](/.agents/tasks/architecture/strengthen-independent-review-prompts/verification.md).
 - Knowledge closeout: Complete; no product, domain, or release owner changed.

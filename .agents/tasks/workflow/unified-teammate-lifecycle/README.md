@@ -63,10 +63,6 @@
   `2026-08-16T14:36:07+08:00`.
 - Superseded requirement: `requirement.md` SHA-256 `bc6c770f46362b535050f69342a68dd4a954346abb2eea8200e63946ca87df54`.
 - Superseded solution: `technical-design/final.md` SHA-256 `3ce44602ca9b47a9fcf4c17f0c8456b2d70ab03d4cb506bf9aea996e1d1cb20d`.
-- Pending approval requirement: `requirement.md` SHA-256
-  `e44f6411914cd1ff5ea49c55f09bbae17ad162f62335123f43d89ea0405208d0`.
-- Pending approval solution: `technical-design/final.md` SHA-256
-  `157cb2602c2986d7877ab34085be6b7401c33c5778f9657ec85f4c866c05f300`.
 - Approved requirement: `requirement.md` SHA-256
   `e44f6411914cd1ff5ea49c55f09bbae17ad162f62335123f43d89ea0405208d0`.
 - Approved solution: `technical-design/final.md` SHA-256

@@ -105,7 +105,7 @@ explicitly approved implementation of that proposal; see [rulings](rulings.md).
 
 The current implementation baseline is `6acc6d28`. Earlier repair, cleanup,
 alpha and review results above describe that earlier implementation, not the
-replacement. Its acceptance and evidence will be recorded separately.
+replacement. Its acceptance and evidence are recorded below.
 
 ### Replacement knowledge closeout
 

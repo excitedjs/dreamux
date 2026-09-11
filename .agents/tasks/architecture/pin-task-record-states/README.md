@@ -34,7 +34,10 @@
   [ported from upstream's format gate](/.agents/tasks/architecture/pin-task-record-states/technical-design/final.md),
   which rejects a closed set of structural tokens rather than parsing prose —
   the first version of this task checked only the state line and left the rest
-  to a hand sweep.
+  to a hand sweep. What it still cannot see is stale text inside a label that is
+  not banned: `teamwork-teammates-are-not-subagents` said "Land the pull request
+  after CI and review" under `- Next action:` after #393 had merged, and only a
+  reader found it. A green gate is not a clean tree.
 - Knowledge closeout: Complete. `task-records.md` owns the rule;
   `knowledge-closeout.md` points at the gate that enforces it. No package
   boundary, CLI surface, protocol contract, or persisted state shape changed,

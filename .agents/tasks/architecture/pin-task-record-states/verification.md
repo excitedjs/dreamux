@@ -92,10 +92,47 @@ Both are the same failure: an exemption a passing phrase can claim by accident.
 
 ## Counts
 
+The record counts in the design and the pull request description are measured
+by running the gate against the pre-change trunk. It reports 7 state-rejected,
+23 label-rejected, and 23 in the union, because the seven are a subset:
+
+```python
+import subprocess, sys
+sys.dont_write_bytecode = True  # a .pyc here embeds an absolute path and cannot be committed
+sys.path.insert(0, '.agents/skills/dev-workflow/scripts')
+import init_task as gate
+
+state, label = set(), set()
+for path in subprocess.run(
+        ['git', 'ls-tree', '-r', '--name-only', 'origin/next', '.agents/tasks'],
+        capture_output=True, text=True).stdout.split():
+    if not path.endswith('README.md'):
+        continue
+    text = subprocess.run(['git', 'show', f'origin/next:{path}'],
+                          capture_output=True, text=True).stdout
+    if gate.is_domain_index(path, text):
+        continue
+    for bucket, check in ((state, lambda: gate.check_state(text, path, False)),
+                          (label, lambda: gate.check_delivery_labels(path, gate.live_lines(text)))):
+        try:
+            check()
+        except Exception:
+            bucket.add(path)
+print(len(state), len(label), len(state | label))
+```
+
+The twenty-fourth corrected record, `teamwork-teammates-are-not-subagents`, is
+absent from both sets on purpose: its stale text sat inside `- Next action:` and
+`- Pull request:`, labels that are not banned. It is the worked example of the
+residual gap §8 admits, and it is why the gate's output is not reported as proof
+that the tree is clean.
+
 The claim that about 140 distinct bullet labels are in use is reproduced with
-the gate's own rule, over its own definition of a live line. It read 139 when
-this was written; the design doc rounds it because an exact count expires on the
-next record edit, which is the rule this task exists to enforce:
+the gate's own rule, over its own definition of a live line. The design doc
+rounds the figure because an exact count expires on the next record edit — which
+is the rule this task exists to enforce, and which it demonstrated on itself:
+the block read 141, then 139, then 137 over the course of this task, each drop
+caused by correcting a record. Run it for the current number:
 
 ```python
 import pathlib, sys

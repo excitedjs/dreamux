@@ -14,10 +14,10 @@
   no separate solution Issue is needed.
 - Verification: [Evidence](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
 - Knowledge owners: Product catalog and Channel documentation.
-- Delivery: [PR #405](https://github.com/excitedjs/dreamux/pull/405), targeting
-  `next`. External final review approved implementation commit `929f11a6`; all
-  nine GitHub CI checks passed on that commit. The following closeout changes
-  only task records and leaves the reviewed implementation unchanged.
+- Delivery: [PR #405](https://github.com/excitedjs/dreamux/pull/405). External
+  final review approved implementation commit `929f11a6`; all nine GitHub CI
+  checks passed on that commit. The following closeout changes only task records
+  and leaves the reviewed implementation unchanged.
 - Review adjudication: No findings; the TeamLeader accepts the external approval
   after checking the result ordering, status/list paths, and event-budget diff.
 - Merge approval (2026-09-10): "合入吧。"
@@ -158,5 +158,4 @@ The following implementation and delivery notes predate the current repair.
   snapshot above.
 - Verification: [Local checks and review](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
 - Knowledge closeout: Product, Channel, provider, task, and requested workflow-skill
-  records are aligned with the final local implementation; external review may
-  require further updates.
+  records are aligned with the final local implementation.
