@@ -212,6 +212,26 @@ describe('redactJson: structure walked, not serialization read', () => {
     expect(redacted).toBe(false);
   });
 
+  it('keeps a member named __proto__, which is ordinary data off the wire', () => {
+    // A Provider's events arrive as JSON text, and `JSON.parse` builds a
+    // `__proto__` key as an own data property rather than touching any
+    // prototype. So it reaches here as a plain member, and the result must
+    // still carry it — writing it back with a plain assignment would not.
+    const fromWire = JSON.parse('{"__proto__":"keep-me","a":1,"token":"t"}') as
+      Parameters<typeof redactJson>[0];
+    const { value } = walk(fromWire);
+    expect(JSON.stringify(value)).toBe('{"__proto__":"keep-me","a":1,"token":"<redacted>"}');
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+  });
+
+  it('keeps an object-valued __proto__ member as a member, not as a prototype', () => {
+    const fromWire = JSON.parse('{"__proto__":{"nested":"keep"}}') as
+      Parameters<typeof redactJson>[0];
+    const { value } = walk(fromWire);
+    expect(JSON.stringify(value)).toBe('{"__proto__":{"nested":"keep"}}');
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+  });
+
   it('carries a null payload through as null', () => {
     expect(walk(null)).toEqual({ value: null, redacted: false });
   });

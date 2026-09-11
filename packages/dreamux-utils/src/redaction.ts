@@ -212,16 +212,18 @@ export function redactJson(
     }
     if (Array.isArray(node)) return node.map(walk);
     if (node === null || typeof node !== 'object') return node;
-    const out: { [key: string]: JsonValue } = {};
-    for (const [key, child] of Object.entries(node)) {
+    // Built with `Object.fromEntries` because it creates own properties. A
+    // plain `out[key] = ...` would not: a payload carrying its own `__proto__`
+    // member — ordinary data, which is exactly what `JSON.parse` builds it as —
+    // would reach the prototype setter instead and disappear from the result.
+    const entries = Object.entries(node).map(([key, child]): [string, JsonValue] => {
       if (isSecretKeyName(key)) {
         redacted = true;
-        out[key] = '<redacted>';
-        continue;
+        return [key, '<redacted>'];
       }
-      out[key] = walk(child);
-    }
-    return out;
+      return [key, walk(child)];
+    });
+    return Object.fromEntries(entries);
   };
   return value === null
     ? { value: null, redacted: false }

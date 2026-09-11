@@ -53,6 +53,13 @@ Implementation surfaced two questions the operator settled, both 2026-09-11.
   `json-invoke.ts`, one added here) are replaced by locally declared,
   structurally identical shapes, and the rule is written into
   `.agents/domains/provider-runtime.md` and pinned by a source-level guard.
+- **A `__proto__` member in a payload.** Review reported the walk dropping it.
+  The operator first ruled it out of scope (「Activity这个场景不需要考虑原型链」),
+  then, given the measured fact that `JSON.parse` builds such a key as an
+  ordinary own data property — so a Provider's JSON-RPC event can carry one and
+  the loss happens on the write, not the read — approved the fix:
+  「行吧，那你按照你说的那个更简单的办法改了吧」. The walk builds its result with
+  `Object.fromEntries`, which creates own properties; no guard was added.
 - **How a structured payload is redacted.** Asked as A (keep patching the text
   pattern so it can read secrets through JSON escaping) or B (redact
   `arguments`/`result` by walking the `JsonValue` before it is serialized, and
