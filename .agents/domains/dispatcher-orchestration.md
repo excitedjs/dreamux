@@ -414,12 +414,13 @@ under that dispatcher workspace, never under `~/.dreamux`:
 
 ```text
 <dispatcher cwd>/.workspace/work/<name>/
-<dispatcher cwd>/                # when dispatchers[].workspace.enabled is false
+<dispatcher cwd>/                # default; dispatchers[].workspace.enabled is false
 <dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/
 ```
 
-Omitting `repo` creates a plain work directory with `mkdir -p` and persists a
-`reuse-cwd` worktree; no git command runs, so the dispatcher cwd need not be a
+Omitting `repo` uses the dispatcher cwd by default; explicit workspace isolation
+selects a separate plain directory. The selected path persists as a `reuse-cwd`
+worktree; no git command runs, so the dispatcher cwd need not be a
 git repository. Managed worktrees are created only when the request explicitly
 asks for managed repo work. `.workspace/` self-ignores with `*`.
 

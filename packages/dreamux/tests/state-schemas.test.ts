@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { loadConfig } from '../src/config/config.js';
+import { defaultWorkspaceEnabled, loadConfig } from '../src/config/config.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
@@ -223,6 +223,50 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       /dispatchers\[0\]\.runtime is no longer supported/,
     );
   });
+
+  /**
+   * Workspace isolation policy, read through the real loader: an omitted
+   * `workspace` block and an empty one both mean the default, and an explicit
+   * boolean means itself. `defaultWorkspaceEnabled()` is the lookup every
+   * workspace allocation goes through, so it is asserted beside the parsed
+   * value.
+   */
+  for (const workspaceCase of [
+    { label: 'an omitted workspace block', workspace: undefined, enabled: false },
+    { label: 'an empty workspace block', workspace: {}, enabled: false },
+    { label: 'an explicit true', workspace: { enabled: true }, enabled: true },
+    { label: 'an explicit false', workspace: { enabled: false }, enabled: false },
+  ]) {
+    it(`resolves ${workspaceCase.label} to workspace.enabled=${workspaceCase.enabled}`, async () => {
+      await writeConfig({
+        agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+        dispatchers: [
+          {
+            id: 'flow',
+            agentRuntime: 'flow',
+            ...(workspaceCase.workspace === undefined
+              ? {}
+              : { workspace: workspaceCase.workspace }),
+            channels: [
+              {
+                id: 'primary',
+                provider: BUILTIN_FEISHU_PROVIDER_REF,
+                config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+              },
+            ],
+          },
+        ],
+      });
+      const { config } = await loadConfig({
+        configDir,
+        providerRegistry: fakeProviderRegistry(),
+      });
+      expect(config.dispatchers[0]!.workspace).toEqual({
+        enabled: workspaceCase.enabled,
+      });
+      expect(defaultWorkspaceEnabled(config, 'flow')).toBe(workspaceCase.enabled);
+    });
+  }
 
   /**
    * The REAL default path, with no fake registry: `loadConfig()` over

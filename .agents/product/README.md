@@ -113,6 +113,9 @@ the same change that touches it.
 
 ## Team lifecycle
 
+- **Workspace isolation defaults to off.** Omitted dispatcher workspace policy
+  uses `enabled: false`; explicit true/false values retain their meaning.
+  Configuration: [state and config](/.agents/domains/state-config-and-files.md).
 - **The Team record is the only existence fact.** A readable, valid Team record
   means the Team exists and its name is taken; no record (or an invalid one)
   means no Team and a free name. Nothing else — ledgers, claims, identities —

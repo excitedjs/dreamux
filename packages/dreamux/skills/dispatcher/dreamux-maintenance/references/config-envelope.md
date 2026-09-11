@@ -22,7 +22,7 @@ The complete current host envelope has independently optional `agents` and
 - schema-optional or null `cwd`; every enabled Dispatcher must nevertheless
   have an explicit non-empty usable `cwd` before server startup;
 - optional boolean `enabled`, default `true`;
-- optional `workspace.enabled`, default `true`;
+- optional `workspace.enabled`, default `false`;
 - required non-empty `channels[]`;
 - required non-empty `agentRuntime` matching an `agents[].id`.
 

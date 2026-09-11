@@ -294,7 +294,7 @@ function readWorkspaceConfig(
   file: string,
   prefix: string,
 ): DreamuxWorkspaceConfig {
-  if (rawWorkspace === undefined) return { enabled: true };
+  if (rawWorkspace === undefined) return { enabled: false };
   if (!isPlainObject(rawWorkspace)) {
     throw new Error(
       `dreamux config error in ${file}: ${prefix.slice(0, -1)} must be an object (got ${describeType(rawWorkspace)})`,
@@ -302,7 +302,7 @@ function readWorkspaceConfig(
   }
   rejectUnknownKeys(rawWorkspace, new Set(['enabled']), file, prefix);
   return {
-    enabled: readOptionalBoolean(rawWorkspace, 'enabled', true, file, prefix),
+    enabled: readOptionalBoolean(rawWorkspace, 'enabled', false, file, prefix),
   };
 }
 
@@ -312,7 +312,7 @@ export function defaultWorkspaceEnabled(
 ): boolean {
   return (
     config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)?.workspace
-      .enabled ?? true
+      .enabled ?? false
   );
 }
 

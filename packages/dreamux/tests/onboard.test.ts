@@ -29,7 +29,10 @@ import {
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
-import { testSingleDispatcherFileObject } from './helpers/config.js';
+import {
+  testConfigFileObject,
+  testSingleDispatcherFileObject,
+} from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
@@ -203,7 +206,7 @@ describe('dreamux onboard', () => {
       id: 'flow',
       cwd: join(root, 'dispatcher-cwd'),
       enabled: true,
-      workspace: { enabled: true },
+      workspace: { enabled: false },
       channels: [
         {
           id: 'primary',
@@ -710,7 +713,7 @@ describe('dreamux onboard', () => {
         id: 'flow',
         cwd: join(root, 'flow-cwd'),
         enabled: true,
-        workspace: { enabled: true },
+        workspace: { enabled: false },
         channels: [
           {
             id: 'primary',
@@ -727,7 +730,7 @@ describe('dreamux onboard', () => {
         id: 'docs',
         cwd: join(root, 'docs-cwd'),
         enabled: true,
-        workspace: { enabled: true },
+        workspace: { enabled: false },
         channels: [
           {
             id: 'primary',
@@ -741,6 +744,56 @@ describe('dreamux onboard', () => {
         agentRuntime: 'docs',
       },
     ]);
+  });
+
+  it('preserves an explicit workspace policy when the same dispatcher is re-onboarded', async () => {
+    // Onboard seeds a new dispatcher's workspace policy with the default and
+    // otherwise carries the existing dispatcher's own block through untouched,
+    // so an explicit `true` survives a rerun even though the default is false.
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify(
+        testConfigFileObject({
+          agents: [{ id: 'flow' }],
+          dispatchers: [
+            {
+              id: 'flow',
+              cwd: join(root, 'flow-cwd'),
+              agentRuntime: 'flow',
+              workspace: { enabled: true },
+            },
+          ],
+        }),
+      ),
+      { mode: 0o600 },
+    );
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'flow',
+      dispatcherCwd: join(root, 'flow-cwd'),
+      registerService: false,
+    });
+    writeGlobalCodexAuth(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
+
+    const saved = JSON.parse(
+      readFileSync(join(configDir, 'config.json'), 'utf8'),
+    ) as Record<string, any>;
+    expect(saved['dispatchers']).toHaveLength(1);
+    expect(saved['dispatchers'][0]).toMatchObject({
+      id: 'flow',
+      workspace: { enabled: true },
+    });
   });
 
   it('preserves a teammate-only agent (unreferenced by any dispatcher) on rerun', async () => {
