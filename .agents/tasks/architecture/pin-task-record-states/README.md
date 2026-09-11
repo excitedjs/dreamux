@@ -37,7 +37,10 @@
   to a hand sweep. What it still cannot see is stale text inside a label that is
   not banned: `teamwork-teammates-are-not-subagents` said "Land the pull request
   after CI and review" under `- Next action:` after #393 had merged, and only a
-  reader found it. A green gate is not a clean tree.
+  reader found it. It also reads `README.md` and nothing else, so the same prose
+  in a sibling `requirement.md` or `verification.md` is out of its reach — one
+  such line, `#339` still "targeting `next`" a month after it merged, was found
+  by grep during this task and corrected. A green gate is not a clean tree.
 - Knowledge closeout: Complete. `task-records.md` owns the rule;
   `knowledge-closeout.md` points at the gate that enforces it. No package
   boundary, CLI surface, protocol contract, or persisted state shape changed,
