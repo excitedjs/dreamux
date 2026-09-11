@@ -71,7 +71,9 @@ It declares:
 
 Legacy top-level `workspace.enabled` is not accepted. Set
 `dispatchers[].workspace.enabled` on each dispatcher instead; omitted dispatcher
-workspace policy defaults to enabled. A dispatcher `runtime` block is likewise
+workspace policy defaults to disabled, including an empty `workspace` object.
+Explicit true/false values are preserved; onboarding seeds new policy as false
+and preserves existing policy. A dispatcher `runtime` block is likewise
 rejected with the rebuild instruction to declare a named `agents[]` entry.
 
 `dreamux serve` fails loudly and creates no silent defaults when the config file

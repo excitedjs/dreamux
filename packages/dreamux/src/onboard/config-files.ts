@@ -29,7 +29,7 @@ export function dreamuxConfigFromAnswers(
   dispatchers.push(
     dispatcherConfigFromAnswers(
       answers,
-      existingDispatcher?.workspace ?? { enabled: true },
+      existingDispatcher?.workspace ?? { enabled: false },
     ),
   );
   // Runtime config lands only in agents[]. Onboard creates or updates the

@@ -37,7 +37,7 @@ export function managedWorktreeRoot(dispatcherWorkspace: string): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), WORKTREE_SUBDIR);
 }
 
-/** `<workspace>/.workspace/work` — root of default (non-git) per-name work dirs. */
+/** `<workspace>/.workspace/work` — root of isolated (non-git) per-name work dirs. */
 function managedWorkRoot(dispatcherWorkspace: string): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), WORK_SUBDIR);
 }
@@ -51,7 +51,7 @@ export function directWorkspaceWorkPath(input: {
 }
 
 /**
- * Absolute path of the default (no-`repo`) plain work directory for a concrete
+ * Absolute path of the isolated (no-`repo`) plain work directory for a concrete
  * TeamMate/Team name under a dispatcher workspace (issue #199). Unlike a managed
  * worktree this is a plain `mkdir`'d directory, not a git worktree — so the
  * dispatcher cwd need not be a git repo — and it shares the self-ignored

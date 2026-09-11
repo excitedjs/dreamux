@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Default omitted dispatcher workspace policies and new onboarding to false; preserve explicit values. Repository-free work uses the dispatcher cwd unless isolation is enabled.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
