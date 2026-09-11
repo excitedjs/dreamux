@@ -241,9 +241,10 @@ the same change that touches it.
   segment without an ARGUMENTS heading. Nonempty invocation always wins: the
   existing run action uses bash code, other actions use text code. Only when
   invocation is empty does arguments_json
-  supply formatted JSON or text code. Argument/invocation values are shown
-  without secret masking or path rewriting, per the operator's explicit ruling;
-  generic/MCP tools follow the same rule. Every non-list result has a separate
+  supply formatted JSON or text code. Argument/invocation values are redacted
+  like every other displayed member — secret masking and path rewriting both
+  apply ("全量脱敏，跟其它成员一视同仁", 2026-09-11, superseding the
+  2026-09-09 exemption); generic/MCP tools follow the same rule. Every non-list result has a separate
   sixth-level RESULT heading and horizontal divider after any arguments. Actual
   output follows the divider directly, without an extra status line for either
   outcome. When

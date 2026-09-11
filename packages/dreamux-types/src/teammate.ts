@@ -115,10 +115,10 @@ export type TeammateInputEvent = TeammateActorScope & {
 };
 
 /**
- * One thing the runtime did, in the runtime's own vocabulary, already
- * redacted by Core — except for the two argument members named below. Core
- * bounds nothing here: how much of a payload a surface can show is that
- * surface's own limit, applied where it sends.
+ * One thing the runtime did, in the runtime's own vocabulary, with every
+ * payload member already redacted by Core. Core bounds nothing here: how much
+ * of a payload a surface can show is that surface's own limit, applied where
+ * it sends.
  *
  * The member names match `RuntimeActivity`'s on purpose: this is the same
  * fact with its payloads made safe to display, not a second vocabulary a
@@ -138,19 +138,19 @@ export type TeammateActivity =
       readonly tool_name: string;
       readonly tool_action: RuntimeToolAction | null;
       readonly summary: string | null;
-      /**
-       * What the call was, verbatim: the two argument members carry the
-       * runtime's own text with neither secret masking nor path renaming, so
-       * the command a reader is asked to judge is the command that ran. Every
-       * other member here, `redacted` included, keeps the ordinary policy.
-       */
+      /** What the call was — the command line, the diff, the prompt. */
       readonly invocation: string | null;
       readonly items: readonly string[];
       readonly status: 'started' | 'completed' | 'failed';
-      /** The call's full structured input as JSON text, verbatim like `invocation`. */
+      /**
+       * The call's full structured input as JSON text. Redaction runs over that
+       * text, so a replacement landing inside a JSON string can leave text no
+       * parser accepts — the same contract `result_json` already carries, and a
+       * consumer that wants the structure back treats a parse failure as text.
+       */
       readonly arguments_json: string | null;
       readonly result_json: string | null;
-      /** Whether any redacted member was rewritten; the argument members never count. */
+      /** Whether the redactor rewrote any member of this call. */
       readonly redacted: boolean;
     }
   | {

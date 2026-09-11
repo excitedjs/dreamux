@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Redact tool call invocations and arguments in the conversation projection. Secret masking and workspace/home path renaming now apply to every displayed member of a tool call, closing the gap where a token pasted into a command or its arguments reached a chat surface unmasked.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

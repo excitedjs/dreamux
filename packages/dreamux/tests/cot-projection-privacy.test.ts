@@ -374,7 +374,7 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
   });
 
-  it('renames workspace paths in the summary and items while the call itself stays verbatim', () => {
+  it('renames workspace paths in every member of a call, the call text included', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -387,7 +387,7 @@ describe('conversation projection: content visible after redaction is unchanged,
       invocation: `cat ${CWD}/src/a.ts`,
       items: [`${CWD}/src/a.ts`],
       status: 'started',
-      arguments: { command: `cat ${CWD}/src/a.ts` },
+      arguments: { command: `cat ${HOME}/src/a.ts` },
       result: null,
       error: null,
     });
@@ -395,15 +395,13 @@ describe('conversation projection: content visible after redaction is unchanged,
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary).toBe('src/a.ts');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
-    // The command a reader is asked to judge is the command that ran: the two
-    // argument members skip the redactor, paths included (operator ruling,
-    // 2026-09-09: "参数全给我放开，不要做脱敏了").
-    expect(tool.kind === 'tool.call' && tool.invocation).toBe(`cat ${CWD}/src/a.ts`);
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe('cat src/a.ts');
     expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe(JSON.stringify({ command: `cat ${CWD}/src/a.ts` }));
+      .toBe(JSON.stringify({ command: 'cat ~/src/a.ts' }));
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 
-  it('passes a long summary through whole and leaves a secret-shaped invocation alone', () => {
+  it('passes a long summary through whole and redacts a secret-shaped invocation', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -424,15 +422,40 @@ describe('conversation projection: content visible after redaction is unchanged,
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(100_000);
     expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('post https://example.test with Bearer abcDEF123.ghiJKL456-_9');
+      .toBe('post https://example.test with Bearer <redacted>');
     expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe(JSON.stringify({ token: 'abc123secret', home: `${HOME}/keys` }));
-    // Nothing the redactor still owns fired, so the row is not marked redacted:
-    // the argument members never count toward it.
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
+      .toBe(JSON.stringify({ token: '<redacted>', home: '~/keys' }));
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 
-  it('keeps the redactor on every member beside the two argument ones', () => {
+  it('marks a call redacted when the only secret sat in the invocation', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'ran a request',
+      invocation: 'curl -H "authorization: abc123" https://example.test',
+      items: ['src/a.ts'],
+      status: 'completed',
+      arguments: null,
+      result: 'ok',
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.invocation)
+      .toBe('curl -H "authorization: <redacted>" https://example.test');
+    expect(tool.kind === 'tool.call' && tool.summary).toBe('ran a request');
+    expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
+    expect(tool.kind === 'tool.call' && tool.result_json).toBe('ok');
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+  });
+
+  it('keeps the redactor on every member of a call', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -455,7 +478,13 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.result_json).toBe('failed with token: <redacted>');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
     expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('echo "token: dummy"');
+      .toBe('echo "token: <redacted>"');
+    // A secret whose value ran up against a JSON escape takes the backslash with
+    // it, so this payload is no longer parsable JSON. That is `jsonText`'s
+    // stated contract — the serialization is whole, parsability is not promised
+    // — and the Channel shows an unparsable payload as text.
+    expect(tool.kind === 'tool.call' && tool.arguments_json)
+      .toBe('{"command":"echo \\"token: <redacted>""}');
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 

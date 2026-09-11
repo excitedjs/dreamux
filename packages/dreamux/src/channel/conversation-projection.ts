@@ -18,10 +18,15 @@ import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
  * quoted string (a JSON string with its escapes, or a shell-style single- or
  * back-quoted one) or one bare word. A bare word stops at whitespace, a
  * separator, a quote, or a closing bracket, so the shape *around* the secret
- * survives: a structured result carries redaction inside its own string and is
- * still the same JSON afterwards (the Channel parses it to decide how to show
- * it), and a `token: xyz` phrase inside a JSON string does not swallow the
- * quote and bracket that close it.
+ * usually survives: a payload whose own field is the secret keeps its quotes
+ * and stays the same JSON, which is what lets the Channel parse it to decide
+ * how to show it.
+ *
+ * A bare word does *not* stop at a backslash, because a backslash can sit
+ * inside a real secret and stopping there would leave the tail of one visible.
+ * A secret written inside a JSON string therefore takes the escape that closes
+ * that string with it and the payload stops parsing — see `jsonText`, which
+ * promises a whole serialization and not a parsable one.
  */
 const INLINE_SECRET_RE = /(["']?\b(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|`[^`]*`|[^\s,;"'`)\]}]+)/giu;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
@@ -212,14 +217,13 @@ function projectedActivity(
       };
     }
     case 'tool.call': {
-      const summary = activity.summary === null
-        ? null
-        : redactText(activity.summary, cwd, homePathPrefixes);
+      const redact = (text: string | null): RedactedText | null =>
+        text === null ? null : redactText(text, cwd, homePathPrefixes);
+      const summary = redact(activity.summary);
+      const invocation = redact(activity.invocation);
+      const args = redact(jsonText(activity.arguments));
+      const result = redact(jsonText(activity.error ?? activity.result));
       const items = activity.items.map((item) => redactText(item, cwd, homePathPrefixes));
-      const resultText = jsonText(activity.error ?? activity.result);
-      const result = resultText === null
-        ? null
-        : redactText(resultText, cwd, homePathPrefixes);
       return {
         kind: 'tool.call',
         event_id: activity.id,
@@ -227,17 +231,13 @@ function projectedActivity(
         tool_name: activity.toolName,
         tool_action: activity.action,
         summary: summary?.value ?? null,
-        // What the call was is shown as the runtime wrote it. A masked command
-        // is a command nobody can judge — the operator asked to read the real
-        // one — so these two members skip the redactor while every payload
-        // around them keeps it.
-        invocation: activity.invocation,
+        invocation: invocation?.value ?? null,
         items: items.map((item) => item.value),
         status: activity.status,
-        arguments_json: jsonText(activity.arguments),
+        arguments_json: args?.value ?? null,
         result_json: result?.value ?? null,
-        redacted: (summary?.redacted ?? false) ||
-          items.some((item) => item.redacted) || (result?.redacted ?? false),
+        redacted: [summary, invocation, args, result, ...items]
+          .some((member) => member?.redacted ?? false),
       };
     }
     case 'turn.ended': {
