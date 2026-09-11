@@ -112,6 +112,15 @@ command can no longer be copied and re-run verbatim. His choice, verbatim:
 
 ## Decisions and unknowns
 
+- **Open, not in scope: a fourth secret key-name list.**
+  `/packages/channel/feishu-transport/src/transport/diagnostics.ts:167` holds a
+  fourth copy of the list, as short and as drifted as the logger's was, missing
+  `api_key`, `private_key`, and `client_secret`. `feishu-transport` depends on
+  the Lark SDK and `marked` only, so sharing the one list would add a new
+  package dependency edge — a boundary decision for the operator, not a
+  refactor this task may fold in.
+
+
 ### Confirmed operator decisions
 
 | Date | Decision | Operator's words |

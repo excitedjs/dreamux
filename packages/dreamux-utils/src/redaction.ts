@@ -170,11 +170,8 @@ export function redactText(
     INLINE_SECRET_RE,
     (_match, key: string, separator: string, secret: string) => {
       // A quoted secret stays a quoted (now empty of meaning) string, so the
-      // text around it keeps whatever grammar it had — JSON included. A nested
-      // JSON string is quoted by its escape, not by the bare character.
-      const quote = secret.startsWith('\\"')
-        ? '\\"'
-        : (/^["'`]/u.test(secret) ? secret[0] : '');
+      // text around it keeps whatever grammar it had — JSON included.
+      const quote = /^["'`]/u.test(secret) ? secret[0] : '';
       return `${key}${separator}${quote}<redacted>${quote}`;
     },
   );

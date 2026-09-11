@@ -19,12 +19,20 @@ Three things, in dependency order.
    seam. The JSON value shape and the settled-invoke shape are declared locally
    and structurally, so a caller holding the contract's version still passes one
    without a cast.
-2. **Secret key names are written once.** They had been written out three
-   times — the inline text pattern, `config-helpers.ts`'s `isSecretConfigKey`,
-   and `logger.ts`'s `SECRET_KEY_RE` — and the copies had drifted: the logger's
-   was missing `api_key`, `private_key`, and `client_secret`, so those three
-   were never hidden in a host log. One list now compiles into both the text
-   pattern and `isSecretKeyName`, and that gap closes with it.
+2. **Secret key names are written once — in the three places this change can
+   reach.** They had been written out in the inline text pattern, in
+   `config-helpers.ts`'s `isSecretConfigKey`, and in `logger.ts`'s
+   `SECRET_KEY_RE`, and the copies had drifted: the logger's was missing
+   `api_key`, `private_key`, and `client_secret`, so those three were never
+   hidden in a host log. One list now compiles into both the text pattern and
+   `isSecretKeyName`, and that gap closes with it.
+
+   A fourth copy survives, out of reach here:
+   `/packages/channel/feishu-transport/src/transport/diagnostics.ts` has the
+   same short, drifted list and the same three missing names. Unifying it would
+   add a `feishu-transport` → `dreamux-utils` dependency edge, which is a
+   package-boundary decision and not this task's to make. Recorded rather than
+   silently left: see the open questions below.
 3. **A tool call's structured payloads are redacted by walking the structure.**
    `arguments` and `result` arrive as `JsonValue`, so `redactJson` walks them
    before serialization: a field whose *name* says secret has its value
