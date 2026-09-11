@@ -120,5 +120,5 @@ No accepted implementation-review finding remains unresolved.
   - knowledge-base link/orphan validation;
   - full-history gitleaks;
   - Rush bootstrap/build/typecheck/lint/test on Ubuntu and macOS.
-- PR remains unmerged; GitHub review approval and operator merge authority are
-  separate gates.
+- The pull request was unmerged when this record was written; GitHub review
+  approval and operator merge authority are separate gates.

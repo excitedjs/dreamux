@@ -68,7 +68,7 @@
 
 ## Style and redundancy cleanup (2026-09-07)
 
-- PR #384 is open at `72af66e5`; its alpha was published and verified before the
+- PR #384 was open at `72af66e5`; its alpha was published and verified before the
   independent Claude complexity review.
 - The review found lower complexity and no required correctness correction.
   The operator then explicitly authorized cleaning style and redundant code

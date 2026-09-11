@@ -48,7 +48,7 @@ heading. The final closeout edits only task records, so local implementation
 gates are not repeated. Task and knowledge validation still apply, and the final
 push must pass normal GitHub CI. No package installation, service restart, or
 live run of the patched service was requested or performed. The operator then
-authorized squash-merge with "合入吧。"; final CI remains the last merge gate.
+authorized squash-merge with "合入吧。"; final CI was the last merge gate.
 
 ## Historical correction: result status labels (2026-09-10)
 
@@ -243,7 +243,7 @@ adjudication and the operator rulings are recorded below. Every initial finding
 now has a disposition. The original writer completed R4 and R7 together; the
 TeamLeader inspected their complete diff and checked the final combined gate
 logs. Final review of the complete resulting change is assigned to the
-operator-selected external reviewer and remains pending.
+operator-selected external reviewer and was pending at that point.
 
 Implementation started from freshly fetched next commit
 `00b858efa2f9cfdb7fdbf829aac9cfe0856b6915`, before any implementation write. The
@@ -313,7 +313,7 @@ pinned commit as the requested review surface. The stopped run is not a clean
 review and no conclusion is inferred from it. The first completed xhigh review
 and its ratified corrections remain recorded above.
 
-External final review remains pending until the selected reviewer's result is adjudicated.
+External final review was pending at that point, until the selected reviewer's result was adjudicated.
 The draft PR is an explicit review artifact, not a ready-to-merge declaration.
 Its scope is the complete diff against the pinned baseline, with the current
 requirement, final solution, and the R1-R7 dispositions above. The subsequent
@@ -388,7 +388,7 @@ The operator approved fixing Failed before arguments: "确实，这个顺序问�
 Non-list rows put arguments first, then the RESULT label/divider, then Failed
 and any actual output. Failed without output still belongs in that RESULT
 area. Successful empty-content and previously retained list-overflow fallbacks
-are unchanged. Fresh combined implementation and validation are pending.
+are unchanged. Fresh combined implementation and validation were pending at that point.
 
 The TeamLeader reopened the official COT Message Brief on 2026-09-10 and checked
 the END and RESULT sections: END marks complete argument input and execution
@@ -399,8 +399,8 @@ No native status field or new lifecycle event is introduced for this correction.
 
 - Initial task/knowledge links, anti-leak hooks, and committed Rush change
   verification passed. Validate the Alpha feedback again before updating the PR.
-- CI for the next revision remains pending. No build has been
-  installed into the running service; no final-build live Feishu probe is claimed.
+- CI for that revision was pending when this was written. No build had been
+  installed into the running service; no final-build live Feishu probe was claimed.
 - The baseline result redactor has the same escaped-string limitation observed
   in R1. That path is unchanged; the argument ruling does not authorize its
   rewrite. R2's known list overflow remains per the explicit operator ruling.
