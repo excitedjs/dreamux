@@ -90,6 +90,26 @@ to keep if the set is ever trimmed:
 
 Both are the same failure: an exemption a passing phrase can claim by accident.
 
+**Nothing runs these probes but a person.** `check.sh` runs the gate over the
+tree; it never exercises the gate's own rules, so a regression in the rules
+themselves passes CI. Measured by reverting `FROZEN_SECTION_RE` to the prefix
+test and running both:
+
+| | `check.sh` | the fourteen probes |
+| --- | --- | --- |
+| `^## Historical` prefix test restored | exit 0, reports `Task records OK: 36 checked` | 13 `PASS`, 1 `FAIL` — the `## Historically speaking` probe |
+| the expired prose this task corrected by hand | exit 0 | all `PASS` |
+
+The first row is the gap: the fail-open this task shipped twice would return
+today without CI noticing. The clean home is a `self-test` subcommand on
+`init_task.py`, wired into `check.sh`'s fifth check, which needs no new CI job.
+
+The second row is not a gap and must not be treated as one. Those lines carry
+no banned label, so neither the gate nor any self-test of the gate can see
+them; that class is held by the closed label set plus the limits written down
+in the task record's `- Coverage:`. Teaching the gate to parse prose to close
+it would add the mechanism this design exists to avoid.
+
 ## Counts
 
 The record counts in the design and the pull request description are measured
