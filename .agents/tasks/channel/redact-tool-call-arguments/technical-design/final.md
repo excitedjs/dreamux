@@ -1,84 +1,93 @@
 # Final technical design
 
 The operator waived the solution stage (「省掉方案阶段，直接改」, 2026-09-11).
-This page is the archive record of what was changed and how it was verified, not
-a proposal that was reviewed before implementation.
+This page is the archive record of what was built and how it was verified, not
+a proposal that was reviewed before implementation. The design below is the one
+he chose during implementation (「好，按照B 来做」) after the direct path
+exposed what the exemption had been hiding.
 
 ## Change
 
-Two places: the projection branch that decided who gets redacted, and the
-secret pattern that had never been shown a tool argument.
-`projectedActivity()`'s `tool.call` case in
-`packages/dreamux/src/channel/conversation-projection.ts` ran three of its five
-payload members through `redactText` and handed `invocation` and
-`arguments_json` to the Channel untouched. The exemption is deleted: the branch
-now redacts all five through one local `redact(text: string | null)` helper, and
-`redacted` is the OR over every member instead of the three that used to count.
+Three things, in dependency order.
 
-Nothing else moves. The five secret patterns, the path-prefix renaming, and
-`redactText` itself are unchanged — this task widens who is redacted, not what
-redaction means. `RuntimeActivity`, `TeammateActivity`, and the Channel's
-rendering keep their shapes, so no persisted file, protocol frame, or config is
-affected.
+1. **The redaction capability moves to `@excitedjs/dreamux-utils`**
+   (「给整个脱敏能力抽到 utils 包里去，不要放在 core 包了」). It is pure and
+   depends on types alone, so it fits there and core no longer owns rules it
+   only consumes. `conversation-projection.ts` drops from 387 lines to 227.
+2. **Secret key names are written once.** They had been written out three
+   times — the inline text pattern, `config-helpers.ts`'s `isSecretConfigKey`,
+   and `logger.ts`'s `SECRET_KEY_RE` — and the copies had drifted: the logger's
+   was missing `api_key`, `private_key`, and `client_secret`, so those three
+   were never hidden in a host log. One list now compiles into both the text
+   pattern and `isSecretKeyName`, and that gap closes with it.
+3. **A tool call's structured payloads are redacted by walking the structure.**
+   `arguments` and `result` arrive as `JsonValue`, so `redactJson` walks them
+   before serialization: a field whose *name* says secret has its value
+   destroyed, every string leaf goes through `redactText`, and numbers and
+   booleans travel as they are. `invocation`, `summary`, and `items` are
+   genuinely text and keep text redaction. `jsonText` now runs after redaction
+   rather than before.
 
-## Why the exemption could go
+The projection branch itself is the original change: the `invocation` /
+`arguments_json` exemption is deleted, and `redacted` is the OR over every
+member instead of the three that used to count.
 
-It existed to keep a command judgeable: a masked command is a command nobody can
-evaluate. The operator withdrew that trade on 2026-09-11 (「全量脱敏，跟其它成员
-一视同仁」) after seeing the cost stated — a secret pasted into a shell command
-or a tool's arguments reaches a chat surface with no gate in front of it, and
-that is the same surface the result members were already being protected from.
+## Why walking, and not a better pattern
 
-## What the exemption had been hiding
+Widening redaction to `arguments_json` put the text pattern in front of a shape
+it had never been shown: a JSON string nested inside another. It failed, and
+each fix exposed the next failure — the value of `TOKEN=\"abc\"`, then every
+line of a multi-line `.env` but the first, then a redacted line swallowing the
+lines below it, then a serialized backslash read as a boundary, then a nested
+JSON *object* whose key no longer sits beside its separator, then a nested value
+containing an escaped quote. Six symptoms of one cause.
 
-`arguments_json` had never been through the redactor, so `INLINE_SECRET_RE` had
-never been asked to handle the shape a tool argument actually carries: a JSON
-string nested inside another. Three defects surfaced the moment it was, and all
-three are fixed in the same change — leaving them would have met the letter of
-the ruling and not its point.
+The cause is level, not coverage. The same payload that leaks when serialized is
+redacted correctly when raw:
 
-1. **`TOKEN=\"abc\"` leaked its value.** The value alternatives expected a bare
-   quote; a nested JSON string opens with the two characters `\"`, so the
-   quoted branch failed and the bare word stopped on the backslash — covering
-   the `=` and nothing else. `.env` text and `export FOO="bar"` are exactly this
-   shape. A nested-string alternative now matches it as a unit.
-2. **Every line of a multi-line payload but the first was invisible.** A key
-   must start on a word boundary; a serialized newline is `\n`, whose `n` is a
-   word character, so `\nTOKEN=` had no boundary for `\b` to find. A JSON
-   escape now counts as a boundary of its own.
-3. **A redacted line swallowed the lines below it.** Symmetrically, a bare word
-   ran straight through `\r\n` and took the rest of the payload with it. A
-   bare word now stops at `\"`, `\n`, `\r`, and `\t` — the escapes that end a
-   value — while any other backslash continues it, so a serialized
-   `C:\\Users\\x` is still covered whole rather than truncated to `C:`.
+```
+{"content":"{\"client_secret\":\"shhSECRET\"}"}   → passes through
+{"client_secret":"shhSECRET"}                      → {"client_secret":"<redacted>"}
+```
 
-One narrow cost is accepted and documented at the regex: in raw, non-JSON text,
-a secret whose value contains a backslash immediately followed by `n`, `r`, or
-`t` is cut there and its tail stays visible. That buys the three fixes above,
-each of which is a whole secret rather than a tail.
+A regex cannot count nesting depth, so every patch buys one shape and leaves the
+next. Walking removes the problem rather than chasing it: whatever parsed the
+structure has already peeled one level of escaping, so every string the walk
+reaches is ordinary text — the one thing the pattern is good at. Depth stops
+mattering.
 
-With those, a payload that arrived as JSON is still JSON after redaction.
-`jsonText`'s contract is unchanged and still the authority — the serialization
-is whole, parsability is not promised — and the consumer already degrades
-correctly either way: `feishu-cot-presentation.ts`'s `prettyJson` parses in a
-`try`/`catch` and falls back to `{ language: 'text', code: args }`.
+Two consequences follow for free. A payload that arrived as JSON is still JSON
+after redaction, because the structure was never flattened, so the parsability
+caveat this design once needed is gone. And a key that *names* a secret is now
+answered by its name, which covers the low-entropy and oddly-punctuated values
+no pattern would have matched.
+
+Because the walk hands over raw text, `INLINE_SECRET_RE` needed no change at
+all. It is `next`'s pattern, recomposed from the shared name list and otherwise
+untouched; the extension made while chasing the symptoms is reverted.
 
 ## Records rewritten in the same change
 
 - `packages/dreamux-types/src/teammate.ts` — the `TeammateActivity` doc and the
-  `tool.call` variant's three member docs stated the exemption as the contract.
-- `.agents/product/README.md`, `.agents/domains/channel.md` — the user-visible
-  behavior catalog and the domain page, both of which quoted the 2026-09-09
-  ruling as current.
+  `tool.call` variant's member docs stated the exemption as the contract.
+- `.agents/product/README.md`, `.agents/domains/channel.md` — the behavior
+  catalog and the domain page both quoted the 2026-09-09 ruling as current.
+- `.agents/domains/current-architecture.md` — the utils package now owns the
+  redaction capability.
 - The 2026-09-09 task record is left as it is: it is the history of a decision
   that was true when made, and this task's README links to it as superseded.
 
 ## Verification
 
-- `packages/dreamux/tests/cot-projection-privacy.test.ts` — three cases locked
-  the exemption and are rewritten against the acceptance criteria: paths renamed
-  in every member, a secret-shaped `invocation` and `arguments_json` redacted,
-  `redacted: true` when the only hit was inside `invocation`, and a clean call
-  still byte-identical.
-- `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`.
-- Independent implementation review before the PR.
+- `packages/dreamux-utils/tests/redaction.test.ts` — the rules' own cases, moved
+  out of the projection suite, plus `redactJson` coverage for every shape named
+  above: nested object, escaped quote, multi-line `.env`, backslash-bearing
+  value, key-name destruction, arrays, path renaming, a clean payload left
+  byte-identical, and a redacted payload that still serializes.
+- `packages/dreamux/tests/cot-projection-privacy.test.ts` — every
+  projection-level case, with the three that locked the old exemption rewritten
+  against the acceptance criteria.
+- `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
+  `.agents/scripts/check.sh`.
+- Independent review by Devbox, which found the last two of the six symptoms
+  above; both are covered by the walk.

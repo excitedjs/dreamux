@@ -29,7 +29,7 @@ the rush path only.
 |---|---|---|
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
 | `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider-authoring contracts |
-| `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared provider/runtime utility helpers (transcript bounds, digest validation, positional reads, deterministic rendering, path containment) |
+| `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared provider/runtime utility helpers (transcript bounds, digest validation, positional reads, deterministic rendering, path containment) plus the one redaction capability — secret key names, text rules, and the JSON walk — that core, the logger, and config display all call |
 | `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | built-in Codex Agent Runtime provider behind `builtin:codex` |
 | `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | built-in Claude Code Agent Runtime provider behind `builtin:claude-code` |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |

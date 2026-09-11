@@ -144,10 +144,9 @@ export type TeammateActivity =
       readonly status: 'started' | 'completed' | 'failed';
       /**
        * The call's full structured input as JSON text, redacted like every
-       * other member. Redaction runs over the text rather than the structure,
-       * so this carries `result_json`'s contract: the serialization is whole,
-       * and a consumer that wants the structure back treats a parse failure as
-       * text.
+       * other member. Redaction walks the structure and rewrites its string
+       * leaves, so what arrived as JSON is still JSON here; a payload the
+       * runtime supplied as plain text travels as that text.
        */
       readonly arguments_json: string | null;
       readonly result_json: string | null;

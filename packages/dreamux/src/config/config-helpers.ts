@@ -5,6 +5,7 @@ import type { ChannelProvider } from '@excitedjs/dreamux-types';
 import {
   describeType,
   isPlainObject,
+  redactSecretKeyValues,
 } from '@excitedjs/dreamux-utils';
 
 import {
@@ -16,6 +17,13 @@ import {
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
+
+/**
+ * What `dreamux config show` must not print. The walk and the secret key names
+ * are the one redaction capability in `@excitedjs/dreamux-utils`; this name
+ * stays because config is what the CLI asks for.
+ */
+export const redactConfigSecrets = redactSecretKeyValues;
 
 export function resolveConfigProvider(
   rawProvider: string,
@@ -116,27 +124,6 @@ export function readOptionalBoolean(
   if (typeof v === 'boolean') return v;
   throw new Error(
     `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
-  );
-}
-
-export function redactConfigSecrets(value: unknown): void {
-  if (Array.isArray(value)) {
-    for (const item of value) redactConfigSecrets(item);
-    return;
-  }
-  if (!isPlainObject(value)) return;
-  for (const [key, child] of Object.entries(value)) {
-    if (isSecretConfigKey(key)) {
-      value[key] = '<redacted>';
-      continue;
-    }
-    redactConfigSecrets(child);
-  }
-}
-
-function isSecretConfigKey(key: string): boolean {
-  return /(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)/i.test(
-    key,
   );
 }
 

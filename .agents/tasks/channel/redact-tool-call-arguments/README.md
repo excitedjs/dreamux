@@ -24,27 +24,42 @@
   The solution stage and its three-reviewer consultation are skipped; the
   independent implementation review still runs.
 - Approved implementation boundary:
+  - `packages/dreamux-utils/src/redaction.ts` (new) — the whole redaction
+    capability: one list of secret key names, the text rules, and `redactJson`.
   - `packages/dreamux/src/channel/conversation-projection.ts` — the `tool.call`
-    projection branch only.
-    - **Extended by the TeamLeader, operator confirmation pending.**
-      `INLINE_SECRET_RE` was also changed. Widening redaction to
-      `arguments_json` put that pattern in front of a shape it had never seen —
-      a JSON string nested inside another — and it failed on three of them:
-      `TOKEN=\"abc\"` leaked its value, every line of a multi-line payload but
-      the first went unmatched, and a redacted line swallowed the lines below
-      it. Meeting acceptance criterion 2 in its most likely real instance was
-      impossible without the fix, so it was made and reported in chat. The
-      pattern is shared by every redacted member, so this reaches beyond
-      `tool.call`: that is the TeamLeader's inference from 「全量脱敏，跟其它成
-      员一视同仁」, not the operator's stated decision. Whether it stays in this
-      PR or is split out is his call, and is asked separately.
+    projection branch; the rules it used to own now live in utils.
+  - `packages/dreamux/src/config/config-helpers.ts`,
+    `packages/dreamux/src/platform/logger.ts` — call the shared capability
+    instead of keeping their own copy of the key-name list.
   - `packages/dreamux-types/src/teammate.ts` — the `tool.call` variant's doc
     comments only; no field shape changes.
-  - `packages/dreamux/tests/cot-projection-privacy.test.ts` — the two cases that
-    lock the old exemption, plus coverage for the new criteria.
-  - `.agents/product/README.md`, `.agents/domains/channel.md` — the recorded
-    contract.
-  - One Rush change file per affected package, ordinary note.
+  - Tests: the redaction rules' own cases move to
+    `packages/dreamux-utils/tests/redaction.test.ts`; the projection keeps every
+    projection-level case. Two pinned surface tests gain the new module.
+  - `.agents/product/README.md`, `.agents/domains/channel.md`,
+    `.agents/domains/current-architecture.md` — the recorded contract.
+  - One Rush change file per affected package, ordinary notes.
+
+## Rulings during implementation
+
+Implementation surfaced two questions the operator settled, both 2026-09-11.
+
+- **Where the capability lives.** 「这个事情还是比较复杂的，给整个脱敏能力抽到
+  utils 包里去，不要放在 core 包了」
+- **How a structured payload is redacted.** Asked as A (keep patching the text
+  pattern so it can read secrets through JSON escaping) or B (redact
+  `arguments`/`result` by walking the `JsonValue` before it is serialized, and
+  text-redact only what is genuinely text). Answer: 「好，按照B 来做」
+
+B settles the question this task's README previously carried as pending: because
+every string the walk reaches is ordinary text, the text pattern needed no
+change at all, and `INLINE_SECRET_RE` is `next`'s pattern unmodified. The
+TeamLeader's earlier extension of it is reverted, so nothing here reaches past
+the `tool.call` members into the other redacted members' behavior.
+
+One behavior change does reach further, and is deliberate: the host logger kept
+a shorter copy of the secret key-name list and never hid `api_key`,
+`private_key`, or `client_secret`. Sharing one list fixes that.
 
 ## Delivery
 

@@ -300,6 +300,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         './fs.js',
         './json-invoke.js',
         './os.js',
+        './redaction.js',
         './runtime-state-fence.js',
         './socket-budget.js',
         './supervised-child.js',

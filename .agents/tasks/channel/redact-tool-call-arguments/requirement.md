@@ -76,14 +76,10 @@ command can no longer be copied and re-run verbatim. His choice, verbatim:
 
 ## Non-goals
 
-- ~~No change to the redaction rules themselves. The five secret patterns and the
-  path-prefix rewriter are untouched; this task only changes which members they
-  run over.~~ **Broken during implementation, operator confirmation pending.**
-  `INLINE_SECRET_RE` had to change: it had never been shown a JSON string nested
-  inside another, which is the shape a tool argument carries, and it failed on
-  three variants of it — see the README's implementation boundary for what was
-  changed and why criterion 2 could not be met without it. The other four
-  patterns and the path-prefix rewriter are untouched as stated.
+- No change to the redaction *rules*. The five secret patterns and the
+  path-prefix rewriter are unchanged; what changed is where they live
+  (`@excitedjs/dreamux-utils`) and, for a structured payload, that they are
+  applied to each string leaf instead of to the serialization.
 - No new provider-branded token detectors. That gap is recorded below as an open
   question, not scope.
 - No change to which member the Channel displays first: nonempty `invocation`

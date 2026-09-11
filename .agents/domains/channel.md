@@ -846,7 +846,11 @@ secret in a command reaches a chat surface the same way a secret in a result
 does, so both go through one policy. Core bounds nothing; the Channel parses JSON and cuts a string only at its native
 send limit. Other event metadata does not expose a runtime transcript or its
 path. Raw arguments carry the values submitted to a tool under the same
-redaction guarantee as a result body.
+redaction guarantee as a result body. Both are redacted by walking the JSON
+value before it is serialized, not by pattern-matching its serialization: a
+field whose name says secret has its value destroyed, every string leaf goes
+through the text rules, and what arrived as JSON is still JSON afterwards. The
+capability itself lives in `@excitedjs/dreamux-utils`; Core only calls it.
 
 Delivery is live and best-effort: Core invokes listeners in publication order
 without awaiting them, and a listener's exception or rejection never escapes into
@@ -1062,6 +1066,7 @@ surface remain.
 Source:
 
 - `/packages/dreamux/src/channel/conversation-projection.ts`
+- `/packages/dreamux-utils/src/redaction.ts`
 - `/packages/dreamux/src/service/teammate-service/index.ts`
 - `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/dreamux/src/platform/home-paths.ts`
