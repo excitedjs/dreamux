@@ -19,7 +19,24 @@ the two default owners. Other source edits correct comments describing isolation
 - The omitted/empty loader cases distinguish the new default from the previous
   true default. Existing explicit values remain regression guards.
 - Task-record, knowledge, and diff checks passed.
-- Independent review and PR delivery are pending.
+- [GitHub CI](https://github.com/excitedjs/dreamux/actions/runs/34565609925)
+  passed all nine checks on `a0c1cbd4`, including Linux and macOS Rush pipelines.
+- Mandatory commit hooks and Rush change-file verification passed.
+
+## Independent review
+
+[Review approved `a0c1cbd4`](https://github.com/excitedjs/dreamux/pull/411#pullrequestreview-5175266391)
+with no blocking findings. It confirmed the four Boolean replacements, preserved
+explicit policy, corresponding tests, and consistent current documentation.
+Reverting the four values in a temporary probe made the omitted/empty policy and
+onboarding-default tests fail while explicit-value cases continued to pass; the
+reviewer restored the probe before finishing.
+
+The reviewer also ran the host package suite: 1092 passed, one live test skipped
+because that review machine lacked Codex. The implementation verification above
+included real Codex. No source or test changes followed the approval; this final
+closeout only records review and delivery evidence. Final CI and the operator's
+merge decision are tracked by [PR #411](https://github.com/excitedjs/dreamux/pull/411).
 
 ## Documentation ownership
 

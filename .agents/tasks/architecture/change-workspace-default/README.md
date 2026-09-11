@@ -3,11 +3,11 @@
 ## Current state
 
 - Goal: Change only the workspace default from true to false while preserving explicit configuration.
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/architecture/change-workspace-default/requirement.md)
 - Final solution: [Default-value substitution](/.agents/tasks/architecture/change-workspace-default/technical-design/final.md).
 - Blockers: None.
-- Next action: Obtain independent review of the bounded implementation diff.
+- Next action: Present PR #411 for the operator's merge decision.
 - Related tasks: None.
 
 ## Development approval
@@ -21,5 +21,12 @@
 ## Delivery
 
 - Verification: [Checks and scope](/.agents/tasks/architecture/change-workspace-default/verification.md).
-- Pull request / CI / merge: Not started.
-- Knowledge closeout: Pending.
+- Pull request: [#411](https://github.com/excitedjs/dreamux/pull/411).
+- Review: [Approved with no blocking findings](https://github.com/excitedjs/dreamux/pull/411#pullrequestreview-5175266391).
+- CI: All nine checks passed on the reviewed implementation; the documentation
+  closeout follows the same CI gate. The PR records the final result.
+- Merge: Awaiting operator confirmation.
+- Knowledge closeout: Complete. Maintenance configuration guidance,
+  [state/config](/.agents/domains/state-config-and-files.md),
+  [dispatcher workspaces](/.agents/domains/dispatcher-orchestration.md), and the
+  [product catalog](/.agents/product/README.md) state the authorized default.
