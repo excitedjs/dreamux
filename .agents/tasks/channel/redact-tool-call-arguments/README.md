@@ -26,6 +26,18 @@
 - Approved implementation boundary:
   - `packages/dreamux/src/channel/conversation-projection.ts` — the `tool.call`
     projection branch only.
+    - **Extended by the TeamLeader, operator confirmation pending.**
+      `INLINE_SECRET_RE` was also changed. Widening redaction to
+      `arguments_json` put that pattern in front of a shape it had never seen —
+      a JSON string nested inside another — and it failed on three of them:
+      `TOKEN=\"abc\"` leaked its value, every line of a multi-line payload but
+      the first went unmatched, and a redacted line swallowed the lines below
+      it. Meeting acceptance criterion 2 in its most likely real instance was
+      impossible without the fix, so it was made and reported in chat. The
+      pattern is shared by every redacted member, so this reaches beyond
+      `tool.call`: that is the TeamLeader's inference from 「全量脱敏，跟其它成
+      员一视同仁」, not the operator's stated decision. Whether it stays in this
+      PR or is split out is his call, and is asked separately.
   - `packages/dreamux-types/src/teammate.ts` — the `tool.call` variant's doc
     comments only; no field shape changes.
   - `packages/dreamux/tests/cot-projection-privacy.test.ts` — the two cases that

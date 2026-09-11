@@ -541,7 +541,37 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
   });
 
-  it('covers a value whose own text contains a backslash, tail included', () => {
+  it('covers a serialized value whose own text contains a backslash', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'connect',
+      invocation: null,
+      items: [],
+      status: 'completed',
+      // A literal backslash serializes as `\\`. Read one character at a time it
+      // looks like the `\n` that ends a value, so the escaped pair is taken as
+      // a unit — otherwise this leaks `\name`, and a value ending in a
+      // backslash steals the quote that closes its string.
+      arguments: { command: 'password=C:\\name', fallback: 'password=abc\\' },
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    const args = tool.kind === 'tool.call' ? tool.arguments_json : null;
+    expect(JSON.parse(args ?? '')).toEqual({
+      command: 'password=<redacted>',
+      fallback: 'password=<redacted>',
+    });
+  });
+
+  it('covers a raw value whose own text contains a backslash, tail included', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',

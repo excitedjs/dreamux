@@ -25,9 +25,10 @@ import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
  * A bare word stops at whitespace, a separator, a quote, or a closing bracket,
  * and at a JSON escape — `\"`, `\n`, `\r`, `\t`. Those four are the text
  * that *ends* a value rather than text inside one: the escape closing the
- * string around it, or the line break after it. Any other backslash continues
- * the word, so a serialized `C:\\Users\\x` is covered whole instead of
- * leaving its tail visible.
+ * string around it, or the line break after it. A backslash that is itself
+ * escaped, `\\`, is the opposite — it is one character *of* the value — so it
+ * is taken as a unit before those four are looked for, and a serialized
+ * `C:\\name` is covered whole rather than cut at the `\n` that is not there.
  *
  * The same four are a boundary at the key end too, where `\b` cannot see one:
  * a newline serialized into JSON is the two characters `\n`, and its `n` is a
@@ -39,7 +40,7 @@ import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
  * decide how to show it, and a redacted line does not take the lines after it
  * along.
  */
-const INLINE_SECRET_RE = /(["']?(?:\b|(?<=\\[nrt]))(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)(\\"(?:[^"\\]|\\.)*?\\"|"(?:[^"\\]|\\.)*"|'[^']*'|`[^`]*`|(?:(?!\\["nrt])[^\s,;"'`)\]}])+)/giu;
+const INLINE_SECRET_RE = /(["']?(?:\b|(?<=\\[nrt]))(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)(\\"(?:[^"\\]|\\.)*?\\"|"(?:[^"\\]|\\.)*"|'[^']*'|`[^`]*`|(?:\\\\|(?!\\["nrt])[^\s,;"'`)\]}])+)/giu;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
