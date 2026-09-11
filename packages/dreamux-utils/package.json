@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/dreamux-utils",
   "version": "0.5.1",
-  "description": "Pure shared utilities for Dreamux providers and host: neutral config-validation primitives, OS/filesystem helpers, completion-body resolution, and inbound-turn render helpers. Depends on @excitedjs/dreamux-types only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
+  "description": "Pure shared utilities for Dreamux providers and host: neutral config-validation primitives, OS/filesystem helpers, completion-body resolution, and inbound-turn render helpers. Depends on nothing: not on @excitedjs/dreamux core, and not on @excitedjs/dreamux-types, which is the type set external providers compile against.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -35,9 +35,6 @@
     "test:watch": "vitest",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
-  },
-  "dependencies": {
-    "@excitedjs/dreamux-types": "workspace:*"
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",

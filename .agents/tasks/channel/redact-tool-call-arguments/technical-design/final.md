@@ -11,9 +11,14 @@ exposed what the exemption had been hiding.
 Three things, in dependency order.
 
 1. **The redaction capability moves to `@excitedjs/dreamux-utils`**
-   (「给整个脱敏能力抽到 utils 包里去，不要放在 core 包了」). It is pure and
-   depends on types alone, so it fits there and core no longer owns rules it
-   only consumes. `conversation-projection.ts` drops from 387 lines to 227.
+   (「给整个脱敏能力抽到 utils 包里去，不要放在 core 包了」). It is pure, so core
+   no longer owns rules it only consumes; `conversation-projection.ts` drops
+   from 387 lines to 227. The move also settled what utils may depend on: it now
+   depends on no Dreamux package at all, because `@excitedjs/dreamux-types` is
+   the contract *external providers* compile against and utils sits below that
+   seam. The JSON value shape and the settled-invoke shape are declared locally
+   and structurally, so a caller holding the contract's version still passes one
+   without a cast.
 2. **Secret key names are written once.** They had been written out three
    times — the inline text pattern, `config-helpers.ts`'s `isSecretConfigKey`,
    and `logger.ts`'s `SECRET_KEY_RE` — and the copies had drifted: the logger's

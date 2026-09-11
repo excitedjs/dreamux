@@ -1,5 +1,3 @@
-import type { JsonValue } from '@excitedjs/dreamux-types';
-
 import { isPlainObject } from './config-validate.js';
 
 /**
@@ -14,6 +12,23 @@ import { isPlainObject } from './config-validate.js';
  * is why this module exists: that list used to be written out three times, and
  * the three copies had drifted.
  */
+
+/**
+ * A value shaped like JSON, declared here rather than imported.
+ *
+ * JSON is not a Dreamux concept, and this package deliberately knows no Dreamux
+ * contracts: `@excitedjs/dreamux-types` is the type set an *external provider*
+ * compiles against, so a utility every layer calls must not reach into it — not
+ * even for a type. The shape is structural, so a caller holding that package's
+ * `JsonValue` passes one of these without a cast.
+ */
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
 
 /**
  * The key names that mean "the value beside me is a secret". Written once and

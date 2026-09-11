@@ -46,6 +46,13 @@ Implementation surfaced two questions the operator settled, both 2026-09-11.
 
 - **Where the capability lives.** 「这个事情还是比较复杂的，给整个脱敏能力抽到
   utils 包里去，不要放在 core 包了」
+- **What the utils package may depend on.** 「没必要，dreamux types 是一个给外部
+  provider 使用的类型集合。utils 完全不应该依赖这个玩意，如果知识库里写的不清楚，
+  你就给我补清楚」 — so `@excitedjs/dreamux-utils` now depends on no Dreamux
+  package at all. The two type-only imports it had (one pre-existing in
+  `json-invoke.ts`, one added here) are replaced by locally declared,
+  structurally identical shapes, and the rule is written into
+  `.agents/domains/provider-runtime.md` and pinned by a source-level guard.
 - **How a structured payload is redacted.** Asked as A (keep patching the text
   pattern so it can read secrets through JSON escaping) or B (redact
   `arguments`/`result` by walking the `JsonValue` before it is serialized, and

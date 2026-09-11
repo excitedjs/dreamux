@@ -78,12 +78,14 @@ describe('json-invoke.ts source neutrality (issue #209 operator decision)', () =
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, '..', 'src', 'json-invoke.ts'), 'utf8');
 
-  it('imports only @excitedjs/dreamux-types, never a host/Core/domain package', () => {
+  it('imports no Dreamux package, not even a type from dreamux-types', () => {
+    // `@excitedjs/dreamux-types` is the type set an external provider compiles
+    // against, and core is the host. This package sits below both and names
+    // neither, so the settled shape is declared here instead of borrowed.
     const importLines = source
       .split('\n')
       .filter((line) => /^\s*import /.test(line));
-    expect(importLines).toHaveLength(1);
-    expect(importLines[0]).toContain('@excitedjs/dreamux-types');
+    expect(importLines.filter((line) => line.includes('@excitedjs/'))).toEqual([]);
   });
 
   it('names no Command, MCP tool, Team, or Channel vocabulary anywhere in the file', () => {
