@@ -479,13 +479,89 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
     expect(tool.kind === 'tool.call' && tool.invocation)
       .toBe('echo "token: <redacted>"');
-    // A secret whose value ran up against a JSON escape takes the backslash with
-    // it, so this payload is no longer parsable JSON. That is `jsonText`'s
-    // stated contract — the serialization is whole, parsability is not promised
-    // — and the Channel shows an unparsable payload as text.
     expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe('{"command":"echo \\"token: <redacted>""}');
+      .toBe(JSON.stringify({ command: 'echo "token: <redacted>"' }));
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+  });
+
+  it('redacts a multi-line .env written through a tool argument, line by line', () => {
+    const { publisher, projection, agent } = harness();
+    const content = 'NODE_ENV="production"\nTOKEN="t1"\nPORT=3000\nAPI_KEY=k2\nDEBUG=false';
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Write',
+      action: 'edit',
+      summary: '.env',
+      invocation: null,
+      items: ['.env'],
+      status: 'completed',
+      arguments: { file_path: '.env', content },
+      result: null,
+      error: null,
+    });
+
+    // A newline serialized into JSON is the two characters `\n`, whose `n` is a
+    // word character: without the escape counting as a boundary, every line
+    // after the first would keep its secret. And a value must stop at that same
+    // escape, or one redacted line swallows the lines below it.
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.arguments_json).toBe(JSON.stringify({
+      file_path: '.env',
+      content: 'NODE_ENV="production"\nTOKEN="<redacted>"\nPORT=3000\nAPI_KEY=<redacted>\nDEBUG=false',
+    }));
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+  });
+
+  it('keeps a redacted argument payload parsable as JSON', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'write the env',
+      invocation: null,
+      items: [],
+      status: 'completed',
+      arguments: { command: 'echo \'export API_KEY="sk-real-value"\' >> .env' },
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    const args = tool.kind === 'tool.call' ? tool.arguments_json : null;
+    expect(args).not.toBeNull();
+    expect(JSON.parse(args ?? '')).toEqual({
+      command: 'echo \'export API_KEY="<redacted>"\' >> .env',
+    });
+  });
+
+  it('covers a value whose own text contains a backslash, tail included', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 'connect',
+      invocation: 'net use X: /user:svc password=C:\\keys\\id and then continue',
+      items: [],
+      status: 'completed',
+      arguments: null,
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.invocation)
+      .toBe('net use X: /user:svc password=<redacted> and then continue');
   });
 
   it('keeps an ordinary assistant message byte-identical', () => {

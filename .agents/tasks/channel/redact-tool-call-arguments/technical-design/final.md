@@ -6,7 +6,8 @@ a proposal that was reviewed before implementation.
 
 ## Change
 
-One projection branch owns the whole behavior.
+Two places: the projection branch that decided who gets redacted, and the
+secret pattern that had never been shown a tool argument.
 `projectedActivity()`'s `tool.call` case in
 `packages/dreamux/src/channel/conversation-projection.ts` ran three of its five
 payload members through `redactText` and handed `invocation` and
@@ -28,16 +29,39 @@ evaluate. The operator withdrew that trade on 2026-09-11 (「全量脱敏，跟�
 or a tool's arguments reaches a chat surface with no gate in front of it, and
 that is the same surface the result members were already being protected from.
 
-## Parsability of `arguments_json`
+## What the exemption had been hiding
 
-`jsonText`'s contract already says the serialization is whole but parsability is
-not guaranteed, because a replacement landing inside a JSON string can leave
-text no parser accepts. That was written for `result_json`; it now covers
-`arguments_json` too. The consumer already degrades correctly:
-`feishu-cot-presentation.ts`'s `prettyJson` parses in a `try`/`catch` and falls
-back to `{ language: 'text', code: args }`, which is what a display does with
-any payload it cannot read as JSON. `INLINE_SECRET_RE` also preserves a quoted
-secret's quotes, so the common case stays valid JSON.
+`arguments_json` had never been through the redactor, so `INLINE_SECRET_RE` had
+never been asked to handle the shape a tool argument actually carries: a JSON
+string nested inside another. Three defects surfaced the moment it was, and all
+three are fixed in the same change — leaving them would have met the letter of
+the ruling and not its point.
+
+1. **`TOKEN=\"abc\"` leaked its value.** The value alternatives expected a bare
+   quote; a nested JSON string opens with the two characters `\"`, so the
+   quoted branch failed and the bare word stopped on the backslash — covering
+   the `=` and nothing else. `.env` text and `export FOO="bar"` are exactly this
+   shape. A nested-string alternative now matches it as a unit.
+2. **Every line of a multi-line payload but the first was invisible.** A key
+   must start on a word boundary; a serialized newline is `\n`, whose `n` is a
+   word character, so `\nTOKEN=` had no boundary for `\b` to find. A JSON
+   escape now counts as a boundary of its own.
+3. **A redacted line swallowed the lines below it.** Symmetrically, a bare word
+   ran straight through `\r\n` and took the rest of the payload with it. A
+   bare word now stops at `\"`, `\n`, `\r`, and `\t` — the escapes that end a
+   value — while any other backslash continues it, so a serialized
+   `C:\\Users\\x` is still covered whole rather than truncated to `C:`.
+
+One narrow cost is accepted and documented at the regex: in raw, non-JSON text,
+a secret whose value contains a backslash immediately followed by `n`, `r`, or
+`t` is cut there and its tail stays visible. That buys the three fixes above,
+each of which is a whole secret rather than a tail.
+
+With those, a payload that arrived as JSON is still JSON after redaction.
+`jsonText`'s contract is unchanged and still the authority — the serialization
+is whole, parsability is not promised — and the consumer already degrades
+correctly either way: `feishu-cot-presentation.ts`'s `prettyJson` parses in a
+`try`/`catch` and falls back to `{ language: 'text', code: args }`.
 
 ## Records rewritten in the same change
 

@@ -15,20 +15,31 @@ import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
 
 /**
  * `key: value` / `key=value` pairs whose key names a secret. The value is one
- * quoted string (a JSON string with its escapes, or a shell-style single- or
- * back-quoted one) or one bare word. A bare word stops at whitespace, a
- * separator, a quote, or a closing bracket, so the shape *around* the secret
- * usually survives: a payload whose own field is the secret keeps its quotes
- * and stays the same JSON, which is what lets the Channel parse it to decide
- * how to show it.
+ * quoted string or one bare word. Three things count as quotes, because a
+ * secret arrives inside all three: a plain JSON string, a shell-style single-
+ * or back-quoted one, and a JSON string nested inside another — `\"value\"`,
+ * which is what `.env` text or `export FOO="bar"` looks like once it is a
+ * tool argument. The nested form has to be matched as a unit; a bare word
+ * would stop on its opening backslash and leave the value itself uncovered.
  *
- * A bare word does *not* stop at a backslash, because a backslash can sit
- * inside a real secret and stopping there would leave the tail of one visible.
- * A secret written inside a JSON string therefore takes the escape that closes
- * that string with it and the payload stops parsing — see `jsonText`, which
- * promises a whole serialization and not a parsable one.
+ * A bare word stops at whitespace, a separator, a quote, or a closing bracket,
+ * and at a JSON escape — `\"`, `\n`, `\r`, `\t`. Those four are the text
+ * that *ends* a value rather than text inside one: the escape closing the
+ * string around it, or the line break after it. Any other backslash continues
+ * the word, so a serialized `C:\\Users\\x` is covered whole instead of
+ * leaving its tail visible.
+ *
+ * The same four are a boundary at the key end too, where `\b` cannot see one:
+ * a newline serialized into JSON is the two characters `\n`, and its `n` is a
+ * word character, which would hide every line of a multi-line `.env` but the
+ * first. A key still needs a boundary, so `mytoken` is not one.
+ *
+ * Together these keep the shape *around* the secret intact, so a payload that
+ * arrived as JSON is still JSON afterwards and the Channel can parse it to
+ * decide how to show it, and a redacted line does not take the lines after it
+ * along.
  */
-const INLINE_SECRET_RE = /(["']?\b(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|`[^`]*`|[^\s,;"'`)\]}]+)/giu;
+const INLINE_SECRET_RE = /(["']?(?:\b|(?<=\\[nrt]))(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)(\\"(?:[^"\\]|\\.)*?\\"|"(?:[^"\\]|\\.)*"|'[^']*'|`[^`]*`|(?:(?!\\["nrt])[^\s,;"'`)\]}])+)/giu;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
@@ -298,8 +309,11 @@ export function redactText(
     INLINE_SECRET_RE,
     (_match, key: string, separator: string, secret: string) => {
       // A quoted secret stays a quoted (now empty of meaning) string, so the
-      // text around it keeps whatever grammar it had — JSON included.
-      const quote = /^["'`]/u.test(secret) ? secret[0] : '';
+      // text around it keeps whatever grammar it had — JSON included. A nested
+      // JSON string is quoted by its escape, not by the bare character.
+      const quote = secret.startsWith('\\"')
+        ? '\\"'
+        : (/^["'`]/u.test(secret) ? secret[0] : '');
       return `${key}${separator}${quote}<redacted>${quote}`;
     },
   );
