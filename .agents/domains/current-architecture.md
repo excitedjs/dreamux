@@ -128,11 +128,6 @@ publishes no routing event. Owner: [Channel](channel.md); access state:
 [Feishu pairing access](feishu-pairing-access.md); inbound gating:
 [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md).
 
-Canonical creation can carry opaque provider context. A fresh `team.created`
-event makes it available to the owning Channel; Feishu uses its payload to bind
-an existing group. Core stores no context or binding, and ordinary Team status
-does not include the creation-only metadata. Contract: [Channel](channel.md).
-
 ## Dynamic Workflows
 
 Dynamic Workflow is a caller-scoped background orchestration capability on the

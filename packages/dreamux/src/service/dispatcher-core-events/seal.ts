@@ -27,7 +27,6 @@ import { deepFreeze } from '../frozen-snapshot.js';
  * set of strings would have let it be published and silently dropped.
  */
 const KIND_CATALOG: Record<ChannelCoreEvent['kind'], true> = {
-  'team.created': true,
   'team.state': true,
   'teammate.state': true,
   'teammate.input': true,

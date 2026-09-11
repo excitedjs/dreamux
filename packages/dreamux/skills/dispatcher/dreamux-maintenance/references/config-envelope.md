@@ -22,11 +22,7 @@ The complete current host envelope has independently optional `agents` and
 - schema-optional or null `cwd`; every enabled Dispatcher must nevertheless
   have an explicit non-empty usable `cwd` before server startup;
 - optional boolean `enabled`, default `true`;
-- optional `workspace.enabled`, default `false`; an omitted `workspace` block
-  and an empty `workspace` object both take that default. `false` runs
-  repository-free Team and Dispatcher-owned TeamMate work in the Dispatcher
-  `cwd`; `true` gives each one its own plain directory under that `cwd`.
-  Onboarding preserves whichever value is already written.
+- optional `workspace.enabled`, default `true`;
 - required non-empty `channels[]`;
 - required non-empty `agentRuntime` matching an `agents[].id`.
 

@@ -1691,14 +1691,6 @@ unchanged.
 
 ## Since this was recorded
 
-- **2026-09-11 — a Team creation command can carry provider context.**
-  [Team creation context](/.agents/tasks/architecture/extend-team-create-context/README.md)
-  adds a live-only `team.created` notification after a fresh canonical creation
-  succeeds. It projects optional creation context without persisting it or
-  adding a Core routing fact. This is a Team-command notification, not a separate
-  Agent-entity creation event; the `teammate.state` lifecycle described above
-  continues unchanged.
-
 - **2026-09-03 — the creation-time leader start is gone.** "A `starting` Team
   moves to `running` only after the leader is usable" was built as
   `leader.activate()` inside `TeamService.createNew`, ahead of the `running`

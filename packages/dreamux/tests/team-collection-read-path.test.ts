@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,7 +10,7 @@ import { AgentEntityCollectionStore } from '../src/service/agent-entity/identity
 import { teamMateCollectionDir } from '../src/platform/paths.js';
 import { resolveSpawnWorkspace } from '../src/service/worktree/workspaces.js';
 import type { SpawnTeamMateRequest } from '../src/service/teammate-collection/types.js';
-import { loadConfig, type DreamuxConfig } from '../src/config/config.js';
+import type { DreamuxConfig } from '../src/config/config.js';
 
 import {
   buildTeamCollectionHarness,
@@ -20,7 +20,7 @@ import {
   mockLeaderSubmission,
   type TeamCollectionHarness,
 } from './helpers/team-harness.js';
-import { reuseCwdWorktree, WorktreeManager } from '../src/service/worktree/manager.js';
+import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
 
 let harness: TeamCollectionHarness | null = null;
 let submission: { restore(): void } | null = null;
@@ -508,144 +508,3 @@ async function settledOrPending(promise: Promise<unknown>): Promise<void> {
     new Promise((resolve) => setTimeout(resolve, 30)),
   ]);
 }
-
-/**
- * The workspace default an operator's own `config.json` produces, on both
- * repository-free paths that consume it: a dispatcher-owned TeamMate spawn and
- * a Team creation. Every config here goes through the real `loadConfig`, since
- * the value under test is the one the loader supplies when nobody wrote it.
- */
-describe('Repository-free work directories follow the loaded workspace default', () => {
-  let dirs: string[] = [];
-
-  afterEach(async () => {
-    await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
-    dirs = [];
-  });
-
-  async function loadDispatcherConfig(input: {
-    dispatcherId: string;
-    dispatcherCwd: string;
-    workspace?: Record<string, unknown>;
-  }): Promise<DreamuxConfig> {
-    const configDir = await mkdtemp(join(tmpdir(), 'dreamux-workspace-config-'));
-    dirs.push(configDir);
-    await writeFile(
-      join(configDir, 'config.json'),
-      JSON.stringify({
-        agents: [{ id: 'flow', provider: 'builtin:codex', config: {} }],
-        dispatchers: [{
-          id: input.dispatcherId,
-          cwd: input.dispatcherCwd,
-          agentRuntime: 'flow',
-          ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
-          channels: [{
-            id: 'primary',
-            provider: 'builtin:feishu',
-            config: { app_id: 'app-flow', app_secret: 'secret-flow' },
-          }],
-        }],
-      }),
-      { mode: 0o600 },
-    );
-    // No providerRegistry override: the exact call server startup makes.
-    const { config } = await loadConfig({ configDir });
-    return config;
-  }
-
-  /** What a dispatcher-owned `spawn` with neither `repo` nor `cwd` resolves to. */
-  async function spawnedWorkspace(
-    workspace: Record<string, unknown> | undefined,
-    name: string,
-  ): Promise<{ runtimeCwd: string; sourceRepo: string | null; dispatcherCwd: string }> {
-    const dispatcherCwd = await mkdtemp(join(tmpdir(), 'dreamux-workspace-cwd-'));
-    dirs.push(dispatcherCwd);
-    const config = await loadDispatcherConfig({
-      dispatcherId: 'flow',
-      dispatcherCwd,
-      ...(workspace !== undefined ? { workspace } : {}),
-    });
-    return {
-      ...(await resolveSpawnWorkspace({
-        config,
-        worktrees: new WorktreeManager(),
-        dispatcherId: 'flow',
-        name,
-        request: { name, prompt: '', intent: 'work' },
-      })),
-      dispatcherCwd,
-    };
-  }
-
-  /**
-   * One real Team creation over a loaded config — the whole path a
-   * repository-free `team.create` takes, since the workspace a Team gets is
-   * prepared inside creation and is readable only from the Team it produced.
-   */
-  async function createdTeam(
-    workspace: Record<string, unknown> | undefined,
-  ): Promise<{ runtimeCwd: string; teamName: string; dispatcherCwd: string }> {
-    let dispatcherCwd = '';
-    harness = await buildTeamCollectionHarness({
-      dispatcherId: 'flow',
-      configFor: async (input) => {
-        dispatcherCwd = input.dispatcherCwd;
-        return loadDispatcherConfig({
-          dispatcherId: input.dispatcherId,
-          dispatcherCwd: input.dispatcherCwd,
-          ...(workspace !== undefined ? { workspace } : {}),
-        });
-      },
-    });
-    const created = await harness.collection.createFromRequest({
-      requestId: 'req-workspace-default',
-      payloadHash: teamCreatePayloadHash({ intent: 'work in the default place' }),
-      options: {
-        namePrefix: 'alpha',
-        leaderAgentRuntime: 'fake',
-        intent: 'work in the default place',
-      },
-    });
-    return { runtimeCwd: created.runtime_cwd, teamName: created.team_name, dispatcherCwd };
-  }
-
-  it('shares the dispatcher cwd for a spawn when the config declares no workspace policy', async () => {
-    const spawned = await spawnedWorkspace(undefined, 'alpha');
-
-    expect(spawned.runtimeCwd).toBe(await realpath(spawned.dispatcherCwd));
-    // No git command runs on this path, so the cwd need not be a repository.
-    expect(spawned.sourceRepo).toBeNull();
-    // The `.workspace/` boundary belongs to isolation; the shared cwd has none.
-    await expect(stat(join(spawned.dispatcherCwd, '.workspace'))).rejects.toThrow();
-  });
-
-  it('still gives a spawn its own plain directory when isolation is enabled', async () => {
-    const spawned = await spawnedWorkspace({ enabled: true }, 'alpha');
-
-    expect(spawned.runtimeCwd).toBe(
-      join(await realpath(spawned.dispatcherCwd), '.workspace', 'work', 'alpha'),
-    );
-    expect(spawned.sourceRepo).toBeNull();
-    expect(
-      await readFile(join(spawned.dispatcherCwd, '.workspace', '.gitignore'), 'utf8'),
-    ).toContain('*');
-  });
-
-  it('runs a created Team in the dispatcher cwd when the config declares no workspace policy', async () => {
-    const team = await createdTeam(undefined);
-
-    expect(team.runtimeCwd).toBe(await realpath(team.dispatcherCwd));
-    await expect(stat(join(team.dispatcherCwd, '.workspace'))).rejects.toThrow();
-  });
-
-  it('still gives a created Team its own plain directory when isolation is enabled', async () => {
-    const team = await createdTeam({ enabled: true });
-
-    expect(team.runtimeCwd).toBe(
-      join(await realpath(team.dispatcherCwd), '.workspace', 'work', team.teamName),
-    );
-    expect(
-      await readFile(join(team.dispatcherCwd, '.workspace', '.gitignore'), 'utf8'),
-    ).toContain('*');
-  });
-});
