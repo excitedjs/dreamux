@@ -1,11 +1,18 @@
+import type { Mention } from '../contract/types.js'
+import { expandCodeParts, markdownParts } from './markdown.js'
+import { resolveMentionPart } from './mention.js'
 import {
   appendTextPart,
   resourcePart,
   type InboundContentPart,
-  type ParsedContent,
+  type ParsedInbound,
 } from './parts.js'
 
-interface PostRenderState {
+interface PostParseContext {
+  mentions: Mention[] | undefined
+}
+
+interface PostRenderState extends PostParseContext {
   omittedTags: Set<string>
   incomplete: boolean
 }
@@ -13,9 +20,11 @@ interface PostRenderState {
 /** Parse one locale-selected Feishu post while preserving rich inline order. */
 export function parsePostContent(
   content: Record<string, unknown>,
-): ParsedContent {
+  mentions?: Mention[],
+): ParsedInbound {
   const post = pickPostLocale(content)
   const state: PostRenderState = {
+    mentions,
     omittedTags: new Set(),
     incomplete: false,
   }
@@ -23,25 +32,21 @@ export function parsePostContent(
   if (typeof post.title === 'string' && post.title !== '') {
     appendTextPart(parts, post.title)
   }
-  if (Array.isArray(post.content)) {
-    for (const row of post.content) {
-      const rowParts: InboundContentPart[] = []
-      const nodes = Array.isArray(row) ? row : [row]
-      for (const node of nodes) renderPostNode(node, state, rowParts)
-      if (rowParts.length === 0) continue
-      if (parts.length > 0) appendTextPart(parts, '\n')
-      for (const part of rowParts) {
-        if (part.kind === 'text') appendTextPart(parts, part.text)
-        else parts.push(part)
-      }
+  for (const row of postRows(post) ?? []) {
+    const rowParts: InboundContentPart[] = []
+    const nodes = Array.isArray(row) ? row : [row]
+    for (const node of nodes) renderPostNode(node, state, rowParts)
+    if (rowParts.length === 0) continue
+    if (parts.length > 0) appendTextPart(parts, '\n')
+    for (const part of rowParts) {
+      if (part.kind === 'text') appendTextPart(parts, part.text)
+      else parts.push(part)
     }
   }
+  const expanded = expandCodeParts(parts)
   return {
-    parts,
-    ...(parts.length === 0
-      ? { compatibilityText: '(empty rich-text post)' }
-      : {}),
-    ...(state.incomplete || parts.length === 0 ? { incomplete: true } : {}),
+    parts: expanded,
+    ...(state.incomplete || expanded.length === 0 ? { incomplete: true } : {}),
   }
 }
 
@@ -50,14 +55,26 @@ function pickPostLocale(
 ): Record<string, unknown> {
   for (const locale of ['zh_cn', 'en_us', 'ja_jp']) {
     const block = asRecord(content[locale])
-    if (block !== undefined && Array.isArray(block.content)) return block
+    if (block !== undefined && postRows(block) !== undefined) return block
   }
-  if (Array.isArray(content.content)) return content
+  if (postRows(content) !== undefined) return content
   for (const block of Object.values(content)) {
     const record = asRecord(block)
-    if (record !== undefined && Array.isArray(record.content)) return record
+    if (record !== undefined && postRows(record) !== undefined) return record
   }
   return content
+}
+
+/**
+ * The post's paragraph grid. Feishu supplies `content_v2` beside `content` for
+ * a natively authored post: `content` is a lossy flattening that drops heading
+ * markers, table alignment, and inline code delimiters, so `content_v2` is the
+ * projection to read. They are two views of one body, never concatenated.
+ */
+function postRows(block: Record<string, unknown>): unknown[] | undefined {
+  if (Array.isArray(block.content_v2)) return block.content_v2
+  if (Array.isArray(block.content)) return block.content
+  return undefined
 }
 
 function renderPostNode(
@@ -71,12 +88,17 @@ function renderPostNode(
     case 'text':
       appendTextPart(parts, renderTextNode(value))
       return
-    case 'md':
-      appendTextPart(
-        parts,
-        stringValue(value.text) ?? stringValue(value.content) ?? '',
-      )
+    case 'md': {
+      // A native Markdown node is the one post node whose characters carry
+      // inline meaning: its mentions, images, and code are read here, while it
+      // is still known that this node is Markdown and not literal text.
+      const source = stringValue(value.text) ?? stringValue(value.content) ?? ''
+      for (const part of markdownParts(source, state.mentions, 'post')) {
+        if (part.kind === 'text') appendTextPart(parts, part.text)
+        else parts.push(part)
+      }
       return
+    }
     case 'code':
     case 'code_block': {
       const code = stringValue(value.text) ?? stringValue(value.content) ?? ''
@@ -97,9 +119,16 @@ function renderPostNode(
       )
       return
     }
-    case 'at':
-      appendTextPart(parts, `@${stringValue(value.user_name) ?? 'unknown'}`)
+    case 'at': {
+      const part = resolveMentionPart(
+        state.mentions,
+        stringValue(value.user_id) ?? stringValue(value.key) ?? '',
+        stringValue(value.user_name) ?? '',
+      )
+      if (part.kind === 'text') appendTextPart(parts, part.text)
+      else parts.push(part)
       return
+    }
     case 'hr':
       appendTextPart(parts, '---')
       return

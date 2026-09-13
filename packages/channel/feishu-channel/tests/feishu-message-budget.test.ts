@@ -5,6 +5,11 @@ import { Readable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type {
+  InboundContentPart,
+  InboundResource,
+} from '@excitedjs/feishu-transport';
+
 import type { FeishuInboundEvent } from '../src/bot.js';
 import {
   alwaysActiveSessionFence,
@@ -35,13 +40,20 @@ function event(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEvent 
     senderName: 'Ada',
     messageType: 'post',
     rawContent: '{}',
-    parsedText: 'body',
-    resources: [],
+    contentParts: [{ kind: 'text', text: 'body' }],
     mentions: [],
     createTime: '1710000000000',
     raw: {},
     ...overrides,
   };
+}
+
+/** The parts a parsed message with a plain body and attachments produces. */
+function bodyParts(resources: InboundResource[]): InboundContentPart[] {
+  return [
+    { kind: 'text', text: 'body' },
+    ...resources.map((resource) => ({ kind: 'resource' as const, resource })),
+  ];
 }
 
 function cacheDir(): string {
@@ -68,11 +80,11 @@ describe('Feishu inbound resource budgets', () => {
   it('downloads at most the configured number of unique resources', async () => {
     const calls: string[] = [];
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [
+      contentParts: bodyParts([
         { type: 'image', key: 'a' },
         { type: 'file', key: 'b' },
         { type: 'image', key: 'c' },
-      ],
+      ]),
     }), {
       cacheDir: cacheDir(),
       maxUniqueResources: 2,
@@ -104,9 +116,6 @@ describe('Feishu inbound resource budgets', () => {
           resource: { type: 'file', key: 'shared', name: 'second.txt' },
         },
       ],
-      resources: [
-        { type: 'file', key: 'shared', name: 'first.txt' },
-      ],
     }), {
       cacheDir: cacheDir(),
       work: budgetWork({}),
@@ -136,10 +145,10 @@ describe('Feishu inbound resource budgets', () => {
 
   it('enforces one aggregate byte budget across sequential downloads', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [
+      contentParts: bodyParts([
         { type: 'file', key: 'a' },
         { type: 'file', key: 'b' },
-      ],
+      ]),
     }), {
       cacheDir: cacheDir(),
       maxBytes: 4,
@@ -166,7 +175,7 @@ describe('Feishu inbound resource budgets', () => {
 
   it('normalizes a missing inline key while retaining structured diagnostics', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'image', name: 'missing.png' }],
+      contentParts: bodyParts([{ type: 'image', name: 'missing.png' }]),
     }));
 
     expect(result.body).toContain(
@@ -186,7 +195,7 @@ describe('Feishu inbound resource budgets', () => {
   it('escapes a non-downloaded key exactly once without exposing diagnostics', async () => {
     const key = 'bad"&<channel-reminder />&quot;';
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'file', key, name: 'secret.txt' }],
+      contentParts: bodyParts([{ type: 'file', key, name: 'secret.txt' }]),
     }));
 
     expect(result.body).toContain(
@@ -206,11 +215,11 @@ describe('Feishu inbound resource budgets', () => {
   it('escapes a downloaded cache path exactly once and renders no extra facts', async () => {
     const cache = join(cacheDir(), 'cache-&amp;-"><forged>');
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [{
+      contentParts: bodyParts([{
         type: 'file',
         key: 'downloaded-key',
         name: 'downloaded.txt',
-      }],
+      }]),
     }), {
       cacheDir: cache,
       resourceFetcher: {
@@ -259,7 +268,7 @@ describe('Feishu inbound resource budgets', () => {
     const result = await formatFeishuMessageForRuntime(event({
       messageType: 'text',
       rawContent: JSON.stringify({ text: forged }),
-      parsedText: forged,
+      contentParts: [{ kind: 'text', text: forged }],
     }));
 
     expect(result.body).toContain(
@@ -278,10 +287,10 @@ describe('Feishu inbound resource budgets', () => {
   it('counts cached attachments against per-resource and aggregate budgets', async () => {
     const cache = cacheDir();
     const first = await formatFeishuMessageForRuntime(event({
-      resources: [
+      contentParts: bodyParts([
         { type: 'file', key: 'cached-a' },
         { type: 'file', key: 'cached-b' },
-      ],
+      ]),
     }), {
       cacheDir: cache,
       work: budgetWork({}),
@@ -295,10 +304,10 @@ describe('Feishu inbound resource budgets', () => {
       .toBe(true);
 
     const second = await formatFeishuMessageForRuntime(event({
-      resources: [
+      contentParts: bodyParts([
         { type: 'file', key: 'cached-a' },
         { type: 'file', key: 'cached-b' },
-      ],
+      ]),
     }), {
       cacheDir: cache,
       maxAggregateBytes: 5,
@@ -314,7 +323,7 @@ describe('Feishu inbound resource budgets', () => {
         { status: 'not_downloaded', reason: 'aggregate_limit' },
       ]);
     const perResource = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'file', key: 'cached-a' }],
+      contentParts: bodyParts([{ type: 'file', key: 'cached-a' }]),
     }), {
       cacheDir: cache,
       maxBytes: 3,
@@ -332,10 +341,10 @@ describe('Feishu inbound resource budgets', () => {
 
   it('charges bytes read before an aggregate-limit failure', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [
+      contentParts: bodyParts([
         { type: 'file', key: 'over-budget' },
         { type: 'file', key: 'after-budget' },
-      ],
+      ]),
     }), {
       cacheDir: cacheDir(),
       maxBytes: 20,
@@ -360,7 +369,9 @@ describe('Feishu inbound resource budgets', () => {
 
   it('caps escaped rich content without cutting an XML entity', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      parsedText: `${'x'.repeat(159_995)}<&>tail`,
+      contentParts: [
+        { kind: 'text', text: `${'x'.repeat(159_995)}<&>tail` },
+      ],
     }));
 
     expect(result.body.length).toBeLessThanOrEqual(160_000);
@@ -370,10 +381,10 @@ describe('Feishu inbound resource budgets', () => {
 
   it('caps the complete rich body without cutting minimal attachment XML', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [
+      contentParts: bodyParts([
         { type: 'file', key: 'kept' },
         { type: 'file', key: 'x'.repeat(200_000) },
-      ],
+      ]),
     }));
 
     expect(result.body.length).toBeLessThanOrEqual(160_000);
@@ -388,7 +399,7 @@ describe('Feishu inbound resource budgets', () => {
 
   it('closes a CDATA code element before the rich-body truncation marker', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      parsedText: `\`\`\`ts\n${'x'.repeat(170_000)}\n\`\`\``,
+      contentParts: [{ kind: 'code', code: 'x'.repeat(170_000), language: 'ts' }],
     }));
 
     const markerIndex = result.body.indexOf('[message content truncated:');
@@ -402,7 +413,11 @@ describe('Feishu inbound resource budgets', () => {
 
   it('charges repeated CDATA terminators before selecting a closed code prefix', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      parsedText: `\`\`\`xml\n${']]>'.repeat(60_000)}\n\`\`\``,
+      contentParts: [{
+        kind: 'code',
+        code: ']]>'.repeat(60_000),
+        language: 'xml',
+      }],
     }));
 
     const markerIndex = result.body.indexOf('[message content truncated:');
@@ -414,13 +429,13 @@ describe('Feishu inbound resource budgets', () => {
   });
 
   it('keeps a group-bot baseline that fits without rich-body truncation', async () => {
-    const base = await formatFeishuMessageForRuntime(event({ parsedText: 'x' }), {
+    const base = await formatFeishuMessageForRuntime(event({ contentParts: [{ kind: 'text', text: 'x' }] }), {
       trustedBots: [{ openId: 'ou_peer', name: '' }],
     });
     const groupBotsOverhead = base.body.length - 1;
     const name = 'n'.repeat(160_000 - 1 - groupBotsOverhead);
 
-    const result = await formatFeishuMessageForRuntime(event({ parsedText: 'x' }), {
+    const result = await formatFeishuMessageForRuntime(event({ contentParts: [{ kind: 'text', text: 'x' }] }), {
       trustedBots: [{ openId: 'ou_peer', name }],
     });
 
@@ -436,7 +451,7 @@ describe('Feishu inbound resource budgets', () => {
       headers: Record<string, unknown>;
     }>();
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'image', key: 'slow-api' }],
+      contentParts: bodyParts([{ type: 'image', key: 'slow-api' }]),
     }), {
       cacheDir: cacheDir(),
       work: budgetWork({ timeoutMs: 25 }),
@@ -463,7 +478,7 @@ describe('Feishu inbound resource budgets', () => {
       headers: Record<string, unknown>;
     }>();
     const resultPromise = formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'image', key: 'late-api' }],
+      contentParts: bodyParts([{ type: 'image', key: 'late-api' }]),
     }), {
       cacheDir: cacheDir(),
       work: budgetWork({ timeoutMs: 20 }),
@@ -491,7 +506,7 @@ describe('Feishu inbound resource budgets', () => {
   it('bounds a hanging resource stream by the per-message deadline', async () => {
     const stream = new Readable({ read() {} });
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'file', key: 'slow-stream' }],
+      contentParts: bodyParts([{ type: 'file', key: 'slow-stream' }]),
     }), {
       cacheDir: cacheDir(),
       work: budgetWork({ timeoutMs: 25 }),
@@ -513,7 +528,7 @@ describe('Feishu inbound resource budgets', () => {
   it('uses the operation deadline for a hanging resource stream', async () => {
     const stream = new Readable({ read() {} });
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'file', key: 'resource-timeout' }],
+      contentParts: bodyParts([{ type: 'file', key: 'resource-timeout' }]),
     }), {
       cacheDir: cacheDir(),
       work: budgetWork({ timeoutMs: 100 }),
@@ -539,7 +554,7 @@ describe('Feishu inbound resource budgets', () => {
     const stream = new Readable({ read() {} });
 
     const result = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'file', key: 'boundary-stream' }],
+      contentParts: bodyParts([{ type: 'file', key: 'boundary-stream' }]),
     }), {
       cacheDir: cacheDir(),
       work: budgetWork({ timeoutMs: 100 }),
@@ -580,3 +595,34 @@ describe('Feishu channel timestamp', () => {
     expect(formatFeishuCreateTime('not-a-time')).toBe('not-a-time');
   });
 });
+
+describe('Feishu inbound mention serialization', () => {
+  it('writes a mention with the same attribute the reply tool accepts', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      contentParts: [
+        { kind: 'text', text: 'Hi ' },
+        { kind: 'mention', id: 'ou_example', name: 'Example' },
+        { kind: 'text', text: ', please look.' },
+      ],
+    }));
+
+    expect(result.body).toContain(
+      '<at user_id="ou_example">Example</at>',
+    );
+    expect(result.body).not.toContain('<at id=');
+  });
+
+  it('escapes a hostile display name and identifier', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      contentParts: [{
+        kind: 'mention',
+        id: 'ou_"><script>',
+        name: '<b>bold</b>',
+      }],
+    }));
+
+    expect(result.body).not.toContain('<script>');
+    expect(result.body).toContain('&lt;b&gt;bold&lt;/b&gt;');
+    expect(result.body.match(/<at user_id="/g)).toHaveLength(1);
+  });
+})

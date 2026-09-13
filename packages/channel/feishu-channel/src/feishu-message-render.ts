@@ -1,7 +1,6 @@
 import type {
   InboundContentPart,
   InboundResource,
-  Mention,
 } from '@excitedjs/feishu-transport';
 
 import type { FeishuInboundEvent } from './bot.js';
@@ -16,10 +15,6 @@ const MAX_SERIALIZED_BODY_CHARS = 160_000;
 const BODY_TRUNCATION_MARKER =
   '\n[message content truncated: 160000-character limit reached]';
 
-type RenderContentPart =
-  | InboundContentPart
-  | { kind: 'mention'; id: string; name: string };
-
 export interface RenderFeishuBodyResult {
   body: string;
   groupBotsRendered: boolean;
@@ -30,11 +25,11 @@ export function renderFeishuStructuredBody(
   trustedBots: PeerBot[],
   resolveAttachment: (resource: InboundResource) => FormattedFeishuAttachment,
 ): RenderFeishuBodyResult {
-  const parts = contentPartsForEvent(event);
+  const parts = event.contentParts;
   const refs = renderRefs(event);
   let groupBots = renderGroupBots(trustedBots);
   let groupBotsRendered = groupBots !== '';
-  const renderPart = (part: RenderContentPart): string =>
+  const renderPart = (part: InboundContentPart): string =>
     renderContentPart(part, resolveAttachment);
   const fullContent = parts.map(renderPart).join('');
   const contentOpen = event.contentIncomplete === true
@@ -116,66 +111,6 @@ function renderGroupBots(trustedBots: PeerBot[]): string {
   ].join('\n');
 }
 
-function contentPartsForEvent(event: FeishuInboundEvent): RenderContentPart[] {
-  if (event.messageType === 'merge_forward') return [];
-  if (event.messageType === 'text') {
-    const raw = extractRawText(event);
-    if (raw !== null) return textPartsWithMentions(raw, event.mentions);
-  }
-  const parts = event.contentParts;
-  if (parts !== undefined) return parts.flatMap(promoteMarkdownCode);
-  const fallback: RenderContentPart[] = [
-    { kind: 'text', text: event.parsedText },
-    ...(event.resources ?? []).map((resource) => ({
-      kind: 'resource' as const,
-      resource,
-    })),
-  ];
-  return fallback.flatMap(promoteMarkdownCode);
-}
-
-function extractRawText(event: FeishuInboundEvent): string | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(event.rawContent);
-  } catch {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return null;
-  }
-  const text = (parsed as Record<string, unknown>)['text'];
-  return typeof text === 'string' ? text : null;
-}
-
-function textPartsWithMentions(
-  text: string,
-  mentions: Mention[],
-): RenderContentPart[] {
-  let parts: RenderContentPart[] = [{ kind: 'text', text }];
-  for (const mention of mentions) {
-    const id = mention.id?.open_id ?? mention.id?.union_id ?? mention.id?.user_id;
-    if (
-      mention.key === '' ||
-      id === undefined ||
-      mention.name === undefined
-    ) {
-      continue;
-    }
-    parts = parts.flatMap((part): RenderContentPart[] => {
-      if (part.kind !== 'text') return [part];
-      const pieces = part.text.split(mention.key);
-      return pieces.flatMap((piece, index) => [
-        ...(piece === '' ? [] : [{ kind: 'text' as const, text: piece }]),
-        ...(index === pieces.length - 1
-          ? []
-          : [{ kind: 'mention' as const, id, name: mention.name ?? '' }]),
-      ]);
-    });
-  }
-  return parts;
-}
-
 function renderRefs(event: FeishuInboundEvent): string {
   const rows: string[] = [];
   if (event.messageType === 'merge_forward') {
@@ -200,12 +135,16 @@ function renderRefs(event: FeishuInboundEvent): string {
 }
 
 function renderContentPart(
-  part: RenderContentPart,
+  part: InboundContentPart,
   resolveAttachment: (resource: InboundResource) => FormattedFeishuAttachment,
 ): string {
   if (part.kind === 'text') return escapeXmlText(part.text);
   if (part.kind === 'mention') {
-    return `<at id="${escapeXmlAttribute(part.id)}">${escapeXmlText(part.name)}</at>`;
+    // The same syntax the reply tool takes, so a mention read here can be
+    // written straight back.
+    return `<at user_id="${escapeXmlAttribute(part.id)}">${
+      escapeXmlText(part.name)
+    }</at>`;
   }
   if (part.kind === 'resource') {
     return renderAttachment(resolveAttachment(part.resource));
@@ -232,49 +171,10 @@ function escapeCdata(value: string): string {
   return value.replaceAll(']]>', ']]]]><![CDATA[>');
 }
 
-function promoteMarkdownCode(part: RenderContentPart): RenderContentPart[] {
-  if (part.kind !== 'text') return [part];
-  const out: RenderContentPart[] = [];
-  const text = part.text;
-  const opener = /(^|\n)( {0,3})(`{3,}|~{3,})([^\r\n]*)\r?\n/g;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-  while ((match = opener.exec(text)) !== null) {
-    const marker = match[3] ?? '';
-    const info = (match[4] ?? '').trim();
-    if (marker.startsWith('`') && info.includes('`')) continue;
-    const prefixEnd = match.index + (match[1]?.length ?? 0);
-    if (prefixEnd > cursor) {
-      out.push({ kind: 'text', text: text.slice(cursor, prefixEnd) });
-    }
-    const codeStart = match.index + match[0].length;
-    const markerCharacter = marker[0] === '`' ? '`' : '~';
-    const closePattern = new RegExp(
-      `^ {0,3}${markerCharacter}{${marker.length},}[ \\t]*(?:\\r?\\n|$)`,
-      'gm',
-    );
-    closePattern.lastIndex = codeStart;
-    const closer = closePattern.exec(text);
-    let codeEnd = closer?.index ?? text.length;
-    if (codeEnd > codeStart && text[codeEnd - 1] === '\n') codeEnd -= 1;
-    if (codeEnd > codeStart && text[codeEnd - 1] === '\r') codeEnd -= 1;
-    out.push({
-      kind: 'code',
-      code: text.slice(codeStart, codeEnd),
-      ...(info !== '' ? { language: info } : {}),
-    });
-    cursor = closer === null ? text.length : closer.index + closer[0].length;
-    opener.lastIndex = cursor;
-    if (closer === null) break;
-  }
-  if (cursor < text.length) out.push({ kind: 'text', text: text.slice(cursor) });
-  return out.length === 0 ? [part] : out;
-}
-
 function renderPartsWithinBudget(
-  parts: RenderContentPart[],
+  parts: InboundContentPart[],
   budget: number,
-  renderPart: (part: RenderContentPart) => string,
+  renderPart: (part: InboundContentPart) => string,
 ): string {
   const contentBudget = Math.max(0, budget - BODY_TRUNCATION_MARKER.length);
   let output = '';
@@ -300,7 +200,7 @@ function truncateEscapedText(value: string, budget: number): string {
 }
 
 function truncateCode(
-  part: Extract<RenderContentPart, { kind: 'code' }>,
+  part: Extract<InboundContentPart, { kind: 'code' }>,
   budget: number,
 ): string {
   const empty = renderCode('', part.language);

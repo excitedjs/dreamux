@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "`FeishuInboundEvent` carries the message body once, as required `contentParts`. The `parsedText` flat copy and the `resources` duplicate of the resource parts are removed, and with them the render/attachment fallbacks that reconstructed a body from them when parts were absent \u2014 every production path already supplied parts. The serialized `<content>` block, attachment resolution and de-duplication, mentions, code, incomplete-content reporting, and merged-forward handling are unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

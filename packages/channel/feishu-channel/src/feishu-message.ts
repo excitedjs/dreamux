@@ -175,7 +175,8 @@ async function resolveAttachments(
   options: FormatFeishuMessageOptions,
   work: FeishuInboundWorkContext,
 ): Promise<AttachmentResolution> {
-  const resources = resourcesForEvent(event);
+  const resources = event.contentParts.flatMap((part) =>
+    part.kind === 'resource' ? [part.resource] : []);
   const out: FormattedFeishuAttachment[] = [];
   const byIdentity = new Map<string, FormattedFeishuAttachment>();
   const budget: AttachmentBudget = {
@@ -214,14 +215,6 @@ interface AttachmentBudget {
   maxResourceBytes: number;
   remainingAggregateBytes: number;
   maxUniqueResources: number;
-}
-
-function resourcesForEvent(event: FeishuInboundEvent): InboundResource[] {
-  if (event.contentParts !== undefined) {
-    return event.contentParts.flatMap((part) =>
-      part.kind === 'resource' ? [part.resource] : []);
-  }
-  return event.resources ?? [];
 }
 
 function attachmentIdentity(resource: InboundResource): string {

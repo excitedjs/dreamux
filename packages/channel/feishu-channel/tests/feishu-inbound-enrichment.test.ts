@@ -4,6 +4,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {
   FeishuMessageReadItem,
   FeishuMessageReadResponse,
+  InboundContentPart,
 } from '@excitedjs/feishu-transport';
 
 import type { FeishuInboundEvent } from '../src/bot.js';
@@ -53,13 +54,19 @@ function event(
     senderName: 'Authorized sender',
     messageType,
     rawContent: '{}',
-    parsedText: `(${messageType} message)`,
-    resources: [],
+    contentParts: [{ kind: 'text', text: `(${messageType} message)` }],
     mentions: [],
     createTime: '1710000000000',
     raw: {},
     ...overrides,
   };
+}
+
+/** The literal characters the enriched body kept as text. */
+function textOf(parts: InboundContentPart[]): string {
+  return parts
+    .flatMap((part) => (part.kind === 'text' ? [part.text] : []))
+    .join('');
 }
 
 function item(
@@ -117,14 +124,15 @@ describe('interactive message enrichment', () => {
       logger(),
     );
 
-    expect(result.parsedText).toContain('Same\nEdges\nA  B')
-    expect(result.parsedText).toContain('Additional rendered card content:')
-    expect(result.parsedText).toContain('A B')
-    expect(result.parsedText).toContain('xy')
-    expect(result.parsedText).toContain('https://b.example')
-    expect(result.parsedText).toContain('**case**')
-    expect(result.parsedText).toContain('\ncase')
-    expect(result.parsedText.match(/^Edges$/gm)).toHaveLength(1)
+    const body = textOf(result.contentParts);
+    expect(body).toContain('Same\nEdges\nA  B')
+    expect(body).toContain('Additional rendered card content:')
+    expect(body).toContain('A B')
+    expect(body).toContain('xy')
+    expect(body).toContain('https://b.example')
+    expect(body).toContain('**case**')
+    expect(body).toContain('\ncase')
+    expect(body.match(/^Edges$/gm)).toHaveLength(1)
     expect(bot.messageReadRequests).toEqual([
       { messageId: 'om_root', cardContent: 'user_card_content' },
       { messageId: 'om_root', cardContent: 'default' },
@@ -136,11 +144,15 @@ describe('interactive message enrichment', () => {
     const mismatch = response(item('om_other', 'interactive', { elements: [] }));
     bot.setMessageRead('om_root', 'user_card_content', mismatch);
     bot.setMessageRead('om_root', 'default', mismatch);
-    const original = event('interactive', { parsedText: 'event fallback' });
+    const original = event('interactive', {
+      contentParts: [{ kind: 'text', text: 'event fallback' }],
+    });
 
     const result = await enrichFeishuInbound(original, bot, work(), logger());
 
-    expect(result.parsedText).toBe('event fallback');
+    expect(result.contentParts).toEqual([
+      { kind: 'text', text: 'event fallback' },
+    ]);
     expect(result.senderId).toBe('ou_authorized');
     expect(result.contentIncomplete).toBe(true);
   });
@@ -163,10 +175,10 @@ describe('nonsupport resolution', () => {
     );
 
     expect(result.messageType).toBe('audio');
-    expect(result.parsedText).toBe('[voice message attachment: voice-key]');
-    expect(result.resources).toEqual([
-      { type: 'file', key: 'voice-key', name: 'voice.opus' },
-    ]);
+    expect(result.contentParts).toEqual([{
+      kind: 'resource',
+      resource: { type: 'file', key: 'voice-key', name: 'voice.opus' },
+    }]);
     expect(result.senderId).toBe('ou_authorized');
     expect(result.senderName).toBe('Authorized sender');
   });
@@ -186,9 +198,7 @@ describe('nonsupport resolution', () => {
     );
 
     expect(result.messageType).toBe('merge_forward');
-    expect(result.parsedText).toBe('(merged-forward message not expanded)');
-    expect(result.parsedText).not.toContain('must stay hidden');
-    expect(result.resources).toEqual([]);
+    expect(result.contentParts).toEqual([]);
     expect(result.contentIncomplete).toBe(false);
     expect(bot.messageReadRequests).toEqual([
       { messageId: 'om_root', cardContent: 'default' },
@@ -207,8 +217,7 @@ describe('lazy message lookup', () => {
       logger(),
     );
 
-    expect(result.parsedText).toBe('(merged-forward message not expanded)');
-    expect(result.resources).toEqual([]);
+    expect(result.contentParts).toEqual([]);
     expect(result.contentIncomplete).toBe(false);
     expect(bot.messageReadRequests).toEqual([]);
   });
@@ -227,7 +236,7 @@ describe('lazy message lookup', () => {
     );
 
     expect(result.parentMessageType).toBe('post');
-    expect(result.parsedText).toBe('(merged-forward message not expanded)');
+    expect(result.contentParts).toEqual([]);
     expect(bot.messageReadRequests).toEqual([
       { messageId: 'om_parent', cardContent: 'default' },
     ]);
@@ -252,7 +261,7 @@ describe('lazy message lookup', () => {
     const result = await enrichFeishuInbound(
       event('text', {
         rawContent: JSON.stringify({ text: 'current body' }),
-        parsedText: 'current body',
+        contentParts: [{ kind: 'text', text: 'current body' }],
         parentId: 'om_parent',
       }),
       bot,
@@ -261,7 +270,9 @@ describe('lazy message lookup', () => {
     );
 
     expect(result.parentMessageType).toBe(parentMessageType);
-    expect(result.parsedText).toBe('current body');
+    expect(result.contentParts).toEqual([
+      { kind: 'text', text: 'current body' },
+    ]);
     expect(bot.messageReadRequests).toEqual([
       { messageId: 'om_parent', cardContent: 'default' },
     ]);

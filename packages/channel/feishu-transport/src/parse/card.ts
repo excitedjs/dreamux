@@ -1,9 +1,12 @@
+import type { Mention } from '../contract/types.js'
+import { markdownParts } from './markdown.js'
+import { resolveMentionPart } from './mention.js'
 import {
   appendTextPart,
   resourceIdentity,
   resourcePart,
   type InboundContentPart,
-  type ParsedContent,
+  type ParsedInbound,
 } from './parts.js'
 
 const CARD_UPGRADE_FALLBACK = '请升级至最新版本客户端'
@@ -21,25 +24,30 @@ const CARD_CONTAINER_TAGS = new Set([
 
 interface CardRenderState {
   parts: InboundContentPart[]
+  mentions: Mention[] | undefined
   visitedNodes: number
   budgetExhausted: boolean
   incomplete: boolean
 }
 
+/** A visible card field, and whether its value is Markdown or literal text. */
+interface CardField {
+  text: string
+  markdown: boolean
+}
+
 /** Parse the default/simplified and v2/user-DSL card representations. */
 export function parseInteractiveContent(
   outer: Record<string, unknown>,
-): ParsedContent {
+  mentions?: Mention[],
+): ParsedInbound {
   const card = unwrapUserDsl(outer)
   if (card.type === 'template') {
-    return {
-      parts: [],
-      compatibilityText: '(interactive template card)',
-      incomplete: true,
-    }
+    return { parts: [], incomplete: true }
   }
   const state: CardRenderState = {
     parts: [],
+    mentions,
     visitedNodes: 0,
     budgetExhausted: false,
     incomplete: false,
@@ -47,6 +55,7 @@ export function parseInteractiveContent(
   const title = visibleLocalizedText(card.title) ??
     visibleLocalizedText(asRecord(card.header)?.title)
   if (title !== undefined) pushCardText(state, title)
+
 
   const body = asRecord(card.body)
   const elements = Array.isArray(body?.elements)
@@ -60,9 +69,6 @@ export function parseInteractiveContent(
 
   return {
     parts: state.parts,
-    ...(state.parts.length === 0
-      ? { compatibilityText: '(interactive card with no readable content)' }
-      : {}),
     ...(state.incomplete || state.parts.length === 0
       ? { incomplete: true }
       : {}),
@@ -77,29 +83,30 @@ export function mergeInteractiveContentParts(
   primary: InboundContentPart[],
   supplemental: InboundContentPart[],
 ): InboundContentPart[] {
-  const seenText = new Set(cardTextLines(primary).map(normalizeLine))
+  const seen = seenLines()
+  for (const line of partLines(primary)) seen.remember(line)
   const primaryResources = new Set(primary.flatMap((part) => {
     if (part.kind !== 'resource') return []
     const identity = resourceIdentity(part.resource)
     return identity === undefined ? [] : [identity]
   }))
-  const extra: InboundContentPart[] = []
-  for (const part of supplemental) {
-    if (part.kind === 'text') {
-      const lines = normalizeLines(part.text).filter((line) => {
-        const normalized = normalizeLine(line)
-        if (normalized === '' || seenText.has(normalized)) return false
-        seenText.add(normalized)
-        return true
-      })
-      appendTextPart(extra, lines.join('\n'))
+  const extra: InboundContentPart[][] = []
+  for (const line of partLines(supplemental)) {
+    const only = line.length === 1 ? line[0] : undefined
+    if (only?.kind === 'resource') {
+      const identity = resourceIdentity(only.resource)
+      if (identity !== undefined && primaryResources.has(identity)) continue
+      extra.push(line)
       continue
     }
-    if (part.kind === 'resource') {
-      const identity = resourceIdentity(part.resource)
-      if (identity !== undefined && primaryResources.has(identity)) continue
+    if (only?.kind === 'code') {
+      extra.push(line)
+      continue
     }
-    extra.push(part)
+    if (normalizeLine(lineText(line)) === '') continue
+    if (seen.accountsFor(line)) continue
+    seen.remember(line)
+    extra.push(line)
   }
   if (extra.length === 0) return primary
 
@@ -107,11 +114,101 @@ export function mergeInteractiveContentParts(
     ...primary,
     { kind: 'text', text: '\n\nAdditional rendered card content:\n' },
   ]
-  for (const part of extra) {
-    if (part.kind === 'text') appendTextPart(merged, part.text)
-    else merged.push(part)
-  }
+  extra.forEach((line, index) => {
+    const previous = index === 0 ? undefined : extra[index - 1]
+    if (previous !== undefined && isTextLine(previous) && isTextLine(line)) {
+      appendTextPart(merged, '\n')
+    }
+    for (const part of line) {
+      if (part.kind === 'text') appendTextPart(merged, part.text)
+      else merged.push(part)
+    }
+  })
   return merged
+}
+
+/**
+ * Group parts into the visible lines they compose.
+ *
+ * The two card reads see the same message through different projections: the
+ * structured one resolves a mention into its own part, the rendered one leaves
+ * `@Name` inside the surrounding sentence. Comparing whole lines — with each
+ * mention projected back to the name it displays — is what keeps one line from
+ * being appended twice merely because one view knows more about it.
+ */
+function partLines(parts: InboundContentPart[]): InboundContentPart[][] {
+  const lines: InboundContentPart[][] = []
+  let current: InboundContentPart[] = []
+  const flush = (): void => {
+    if (current.length > 0) lines.push(current)
+    current = []
+  }
+  for (const part of parts) {
+    if (part.kind === 'text') {
+      normalizeLines(part.text).forEach((text, index) => {
+        if (index > 0) flush()
+        if (text !== '') current.push({ kind: 'text', text })
+      })
+      continue
+    }
+    if (part.kind === 'mention') {
+      current.push(part)
+      continue
+    }
+    flush()
+    lines.push([part])
+  }
+  flush()
+  return lines
+}
+
+/**
+ * The visible lines already accounted for, each with the identities its own
+ * occurrence named.
+ *
+ * The line is the unit of comparison. The two reads show one line differently
+ * — the structured one resolves a mention into its own part, the rendered one
+ * leaves `@Name` inside the sentence — so the text is what makes them
+ * comparable, and the identities on *that* line are what tell two people
+ * sharing a display name apart. Neither fact is document-wide: `@Same` on one
+ * line says nothing about `@Same` on another.
+ */
+function seenLines(): {
+  remember: (line: InboundContentPart[]) => void
+  accountsFor: (line: InboundContentPart[]) => boolean
+} {
+  const byText = new Map<string, string[][]>()
+  return {
+    remember(line) {
+      const text = normalizeLine(lineText(line))
+      const known = byText.get(text)
+      if (known === undefined) byText.set(text, [lineMentionIds(line)])
+      else known.push(lineMentionIds(line))
+    },
+    accountsFor(line) {
+      const ids = lineMentionIds(line)
+      return (byText.get(normalizeLine(lineText(line))) ?? [])
+        .some((known) => ids.every((id) => known.includes(id)))
+    },
+  }
+}
+
+function lineMentionIds(line: InboundContentPart[]): string[] {
+  return line.flatMap((part) => part.kind === 'mention' ? [part.id] : [])
+}
+
+function isTextLine(line: InboundContentPart[]): boolean {
+  return line.some((part) => part.kind === 'text' || part.kind === 'mention')
+}
+
+function lineText(line: InboundContentPart[]): string {
+  return line.map((part) => {
+    if (part.kind === 'text') return part.text
+    if (part.kind === 'mention') {
+      return `@${part.name === '' ? part.id : part.name}`
+    }
+    return ''
+  }).join('')
 }
 
 function unwrapUserDsl(
@@ -143,15 +240,13 @@ function renderCardValue(
   if (node === undefined || !visitCardNode(state)) return
   const tag = typeof node.tag === 'string' ? node.tag : ''
 
-  if (tag === '') {
+  if (tag === '' || tag === 'div') {
+    const field = visibleField(node.text) ?? visibleField(node.content)
+    if (field !== undefined) pushCardField(state, field)
+  } else if (tag === 'markdown' || tag === 'lark_md') {
     const text = visibleText(node.text) ?? visibleText(node.content)
-    if (text !== undefined) pushCardText(state, text)
-  } else if (
-    tag === 'markdown' ||
-    tag === 'lark_md' ||
-    tag === 'plain_text' ||
-    tag === 'div'
-  ) {
+    if (text !== undefined) pushCardMarkdown(state, text)
+  } else if (tag === 'plain_text') {
     const text = visibleText(node.text) ?? visibleText(node.content)
     if (text !== undefined) pushCardText(state, text)
   } else if (tag === 'button') {
@@ -192,7 +287,7 @@ function renderCardValue(
     const rendered = renderLink(node)
     if (rendered !== '') pushCardText(state, rendered)
   } else if (tag === 'at') {
-    pushCardText(state, `@${stringValue(node.user_name) ?? 'unknown'}`)
+    pushCardPart(state, cardMentionPart(node, state))
   } else if (tag === 'hr') {
     pushCardText(state, '---')
   } else if (tag === 'checker') {
@@ -230,7 +325,7 @@ function renderCardArray(
     if (state.budgetExhausted) break
     const rendered = renderInlineNode(value, state)
     if (rendered !== undefined) {
-      if (!state.budgetExhausted) inline.push(rendered)
+      if (!state.budgetExhausted) inline.push(...rendered)
       continue
     }
     flushInline()
@@ -242,7 +337,7 @@ function renderCardArray(
 function renderInlineNode(
   value: unknown,
   state: CardRenderState,
-): InboundContentPart | undefined {
+): InboundContentPart[] | undefined {
   const node = asRecord(value)
   if (node === undefined) return undefined
   const tag = typeof node.tag === 'string' ? node.tag : ''
@@ -258,44 +353,50 @@ function renderInlineNode(
   ].includes(tag)) {
     return undefined
   }
-  if (!visitCardNode(state)) return { kind: 'text', text: '' }
+  if (!visitCardNode(state)) return []
   if (tag === 'text' || tag === 'plain_text' || tag === 'lark_md') {
-    return {
-      kind: 'text',
-      text: normalizeCardText(
-        visibleText(node.text) ?? visibleText(node.content) ?? '',
-        state,
-      ),
-    }
+    const text = normalizeCardText(
+      visibleText(node.text) ?? visibleText(node.content) ?? '',
+      state,
+    )
+    return tag === 'lark_md'
+      ? markdownParts(text, state.mentions, 'card')
+      : [{ kind: 'text', text }]
   }
   if (tag === 'a') {
-    return {
-      kind: 'text',
-      text: normalizeCardText(renderLink(node), state),
-    }
+    return [{ kind: 'text', text: normalizeCardText(renderLink(node), state) }]
   }
   if (tag === 'at') {
-    return {
-      kind: 'text',
-      text: `@${stringValue(node.user_name) ?? 'unknown'}`,
-    }
+    return [cardMentionPart(node, state)]
   }
   if (tag === 'img' || tag === 'image') {
     const key = stringValue(node.image_key) ?? stringValue(node.img_key)
-    return resourcePart(
+    return [resourcePart(
       'image',
       key,
       key === undefined ? undefined : `${key}.jpg`,
-    )
+    )]
   }
   if (tag === 'file') {
-    return resourcePart(
+    return [resourcePart(
       'file',
       stringValue(node.file_key),
       stringValue(node.file_name),
-    )
+    )]
   }
   return undefined
+}
+
+function cardMentionPart(
+  node: Record<string, unknown>,
+  state: CardRenderState,
+): InboundContentPart {
+  return resolveMentionPart(
+    state.mentions,
+    stringValue(node.user_id) ?? stringValue(node.id) ?? stringValue(node.key) ??
+      '',
+    stringValue(node.user_name) ?? '',
+  )
 }
 
 function renderNested(
@@ -382,11 +483,31 @@ function markUnsupportedComponent(
   if (!hasText(state.parts, marker)) pushCardText(state, marker)
 }
 
+function pushCardField(state: CardRenderState, field: CardField): void {
+  if (field.markdown) pushCardMarkdown(state, field.text)
+  else pushCardText(state, field.text)
+}
+
 function pushCardText(state: CardRenderState, text: string): void {
   const normalized = normalizeCardText(text, state)
   if (normalized !== '') {
     pushCardPart(state, { kind: 'text', text: normalized })
   }
+}
+
+/**
+ * Push one Markdown field. Its inline meaning — mentions, fenced code, image
+ * references — is read here, while the field's type is still known; once a
+ * value is flattened into text nobody downstream can tell it apart from a
+ * `plain_text` field that happens to contain the same characters.
+ */
+function pushCardMarkdown(state: CardRenderState, text: string): void {
+  const normalized = normalizeCardText(text, state)
+  if (normalized === '') return
+  appendCardBlockParts(
+    state.parts,
+    markdownParts(normalized, state.mentions, 'card'),
+  )
 }
 
 function normalizeCardText(text: string, state: CardRenderState): string {
@@ -420,11 +541,6 @@ function appendCardBlockParts(
   }
 }
 
-function cardTextLines(parts: InboundContentPart[]): string[] {
-  return parts.flatMap((part) =>
-    part.kind === 'text' ? normalizeLines(part.text) : [])
-}
-
 function normalizeLines(value: string): string[] {
   return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n')
 }
@@ -435,6 +551,20 @@ function normalizeLine(value: string): string {
 
 function hasText(parts: InboundContentPart[], text: string): boolean {
   return parts.some((part) => part.kind === 'text' && part.text.includes(text))
+}
+
+function visibleField(value: unknown): CardField | undefined {
+  if (typeof value === 'string') {
+    return value === '' ? undefined : { text: value, markdown: false }
+  }
+  const record = asRecord(value)
+  if (record === undefined) return undefined
+  const text = stringValue(record.content) ?? stringValue(record.text)
+  if (text === undefined) return undefined
+  return {
+    text,
+    markdown: record.tag === 'lark_md' || record.tag === 'markdown',
+  }
 }
 
 function visibleText(value: unknown): string | undefined {

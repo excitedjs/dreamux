@@ -158,6 +158,33 @@ binding-success text. This says nothing about confirmed card delivery and does
 not change the existing notification path.
 (Task: [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/technical-design/final.md).)
 
+#### `reply`
+
+`reply(chat_id, message_id?, text)` sends native `post` content containing one
+`md` node. The authored body goes through unchanged, including native
+`<at user_id="...">` tags. No mention array, shorthand rewrite, card renderer,
+or card fallback remains. The transport package serves this repository; its
+unused Markdown-to-card exports and `editText` API are retired. Explicit
+`sendCard`/`editCard` and native COT retain their real callers.
+
+`channelOutboundToFeishuTarget` still maps conversation and reply-message IDs.
+`transport/message-content.ts` owns the 28 KiB serialized-content budget,
+including JSON escaping. A fitting body is sent whole. Oversized bodies use raw
+Markdown blocks, repeated code fences/table headers, then lines and grapheme
+clusters. A table header plus one oversized row fails explicitly. Each successful
+message receipt is observed before the next part; later failure does not retract
+created messages. Raw cards retain the same serialized-byte guard.
+
+`transport/outbound-message.ts` uses one SDK `client.request` send boundary for
+create/reply addressing and raw-card/native-post payloads. It describes rejected
+Feishu response envelopes and resolved nonzero business codes with the operation,
+available HTTP status, code, message, and log ID. Existing channel logs and Core
+MCP failure text preserve that description; Core does not parse Feishu errors.
+Non-Feishu failures and cancellation keep their thrown identity. The description
+never includes the outbound body, credentials, or SDK request configuration.
+
+(Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+
 #### `ask_user_question`
 
 The arguments deliberately mirror Claude Code's own AskUserQuestion, down to the
@@ -469,13 +496,15 @@ bot observation, `/introduce`, pairing, or delivery.
 
 Feishu content parsing and SDK ownership stay split across the two channel
 packages. `@excitedjs/feishu-transport` parses event content once into ordered,
-untrusted `text` / `code` / `resource` parts. That sequence is the internal source
-of truth; the transport projects the legacy flat text and de-duplicated resource
-views only at its public compatibility boundary. It also exposes narrow wrappers
-around `im.v1.message.get`, message-resource download, and contact-backed
-sender-name lookup. `@excitedjs/feishu-channel` decides when those calls are
-allowed, validates reread roots against the already accepted event,
-resolves/downloads resources, and owns the model-facing XML.
+untrusted `text` / `code` / `mention` / `resource` parts. `ParsedInbound` requires
+that sequence and optionally marks incomplete content; `FeishuInboundEvent`
+carries it as required `contentParts`, with no flat-text or resource-list copy.
+Transport separately maps event-envelope metadata to string values and exposes
+narrow wrappers around `im.v1.message.get`, message-resource download, and
+contact-backed sender-name lookup. `@excitedjs/feishu-channel` decides when those
+calls are allowed, validates reread roots against the already accepted event,
+resolves resources directly from parts with download/cache deduplication, and
+owns the model-facing XML.
 
 The access gate runs before any message read or resource fetch. Accepted
 interactive cards use the structured and default read representations with a
@@ -486,6 +515,22 @@ current-message read or child-resource fetch. The Channel emits an empty
 reply/quote ancestry is likewise a `<reply-to>` reference with only the parent id
 and a best-effort proven type; parent content is never injected. Channel content
 does not name or prescribe a lookup tool or command.
+
+Rich posts prefer nested `content_v2` over legacy `content`, never concatenate
+both, and need no new ordinary-post read. Transport resolves text placeholders,
+structured `at` nodes, and native Markdown tags against each read's mention
+records. Post Markdown uses `user_id`; card Markdown uses `id`. Plain fields,
+escaped examples, and inline/fenced code keep their literal meaning. Native
+Markdown fields are interpreted before flattening; assembled legacy post text
+still promotes cross-row fences into code parts. The Channel serializes real
+mentions as `<at user_id="...">`, sharing the outgoing spelling without an
+outgoing converter or a second raw-body parser.
+
+Message GET omits `user_id_type` so bot mentions retain the platform's default
+open-ID projection. An explicit `id_type: app_id` record keeps its key/name but
+populates no supported user-ID slot. No identifier lookup or prefix-based
+identity classifier is added. Raw-event mentions still own admission; parsing
+occurs before that gate and remains part of receipt regression coverage.
 
 Rich posts preserve Markdown/code, links, mentions, rules, and inline resource
 positions. The Channel wraps visible content in `<content>`, renders each
@@ -669,6 +714,14 @@ completed bindings, with no resume scan. What Core sees is only `team.create` an
 `team.submit`; it is never told that a Space exists or that a topic is a child of
 a group. The provider claims no topic-created or topic-closed lifecycle support;
 provisioning begins on first accepted topic inbound.
+
+At creation, Feishu appends reply guidance to the configured identity string,
+using the target chat ID and the first submission's actual message anchor.
+An absent configured identity produces the guidance alone. The space policy is
+not mutated. Existing Core string storage, restore, and provider append paths
+carry the whole identity; restore does not append the guidance again. This is
+creation-time prompt guidance, not a new address cache or routing fallback, and
+it does not rewrite existing or manually created Teams.
 
 The run order is the one that degrades honestly — create the Team, commit the
 route, announce it, deliver the message — and every exit before `team.submit`

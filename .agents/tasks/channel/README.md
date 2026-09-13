@@ -27,3 +27,4 @@
 - [Refine COT tool details and notification display](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md) — Restore a sixth-level RESULT heading above the divider after native COT visual comparison; preserve #403 output and status behavior.
 - [Keep question-card replies in their topic](/.agents/tasks/channel/fix-question-card-topic-routing/README.md) — Send explicit card replies and route settlements from the actual card's conversation.
 - [Redact tool call arguments and invocations](/.agents/tasks/channel/redact-tool-call-arguments/README.md) — Run every projected tool.call member through the redactor, removing the argument/invocation exemption so a secret in a command or its arguments cannot reach a chat surface
+- [Simplify Feishu replies with native Markdown](/.agents/tasks/channel/simplify-feishu-replies/README.md) — Send native Feishu rich-text replies with inline XML mentions and fewer reply-layer mechanisms.

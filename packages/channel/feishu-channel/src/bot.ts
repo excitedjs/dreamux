@@ -3,9 +3,9 @@
  *
  * Since issue #25 PR1 this is a thin adapter over `@excitedjs/feishu-transport`
  * (the shared platform-I/O core): all Feishu SDK I/O — the inbound WebSocket,
- * markdown→card render, content parse, the outbound message API — lives in the
- * core, the single importer of `@larksuiteoapi/node-sdk`. This file only shapes
- * the core's surface into the `FeishuBot` interface the server already wires:
+ * content parse, the outbound message API — lives in the core, the single
+ * importer of `@larksuiteoapi/node-sdk`. This file only shapes the core's
+ * surface into the `FeishuBot` interface the server already wires:
  *   - `start(routes)` takes one handler per Feishu event type (issue #62 seam):
  *     `onMessage` for `im.message.receive_v1` (normalized via the core's
  *     `parseInbound` into a `FeishuInboundEvent`) and an optional
@@ -27,7 +27,6 @@ import {
   narrowMetaFromEvent,
   normalizeBotMemberAddedEvent,
   parseInbound,
-  toChannelInbound,
   type FeishuBotMemberAddedEvent,
   type FeishuMessageResourceFetcher,
   type FeishuMessageResourceRequest,
@@ -40,7 +39,6 @@ import {
   type FeishuCotClient,
   type FeishuTransport,
   type InboundContentPart,
-  type InboundResource,
   type Mention,
   type OutboundTarget,
   type TransportLogger,
@@ -77,12 +75,8 @@ export interface FeishuInboundEvent {
   messageType: string;
   /** Raw JSON-encoded content as Feishu delivered it. */
   rawContent: string;
-  /** Parsed text after the core's content flattening / mention substitution. */
-  parsedText: string;
   /** Untrusted visible content in Feishu source order. */
-  contentParts?: InboundContentPart[];
-  /** Structured Feishu resources discovered in the message content. */
-  resources?: InboundResource[];
+  contentParts: InboundContentPart[];
   /** The local projection omitted or could not resolve visible content. */
   contentIncomplete?: boolean;
   mentions: Mention[];
@@ -135,7 +129,7 @@ export interface FeishuInboundRoutes {
 }
 
 export interface FeishuSendResult {
-  /** message_id of each card sent, in order. Empty if Feishu omitted ids. */
+  /** message_id of each message sent, in order. Empty if Feishu omitted ids. */
   messageIds: string[];
 }
 
@@ -202,10 +196,6 @@ export interface ChannelOutboundTarget {
   conversationId: string;
   /** Optional channel-local source message to thread under. */
   replyTo?: string;
-  /** Optional channel-local participants to bring into the reply. */
-  mentionUsers?: string[];
-  /** Optional host/runtime routing hint, opaque to the channel adapter. */
-  conversationKey?: string;
 }
 
 export function createFeishuBot(
@@ -351,20 +341,14 @@ export function channelOutboundToFeishuTarget(
     ...(target.replyTo !== undefined
       ? { replyToMessageId: target.replyTo }
       : {}),
-    ...(target.mentionUsers !== undefined
-      ? { mentionUserIds: target.mentionUsers }
-      : {}),
-    ...(target.conversationKey !== undefined
-      ? { conversationKey: target.conversationKey }
-      : {}),
   };
 }
 
 /**
  * Reshape a raw `im.message.receive_v1` payload into a `FeishuInboundEvent`,
- * using the core's `parseInbound` + `narrowMetaFromEvent` + `toChannelInbound`
- * for content flattening and event-envelope metadata. Returns `null` for a
- * payload missing the message_id or chat_id that make it routable.
+ * using the core's `parseInbound` for the message body and `narrowMetaFromEvent`
+ * for the event envelope. Returns `null` for a payload missing the message_id or
+ * chat_id that make it routable.
  */
 function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -379,20 +363,17 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     content: rawContent,
     mentions,
   });
-  const payload = toChannelInbound({
-    ...parsed,
-    meta: narrowMetaFromEvent(raw),
-  });
-  const messageId = payload.meta['message_id'] ?? '';
-  const chatId = payload.meta['chat_id'] ?? '';
-  const chatType = payload.meta['chat_type'] ?? '';
-  const threadId = payload.meta['thread_id'] ?? '';
-  const rootId = payload.meta['root_id'] ?? '';
-  const parentId = payload.meta['parent_id'] ?? '';
-  const senderId = payload.meta['sender_id'] ?? '';
-  const senderUnionId = payload.meta['sender_union_id'] ?? '';
-  const senderType = payload.meta['sender_type'] ?? '';
-  const createTime = payload.meta['create_time'] ?? '';
+  const meta = narrowMetaFromEvent(raw);
+  const messageId = meta['message_id'] ?? '';
+  const chatId = meta['chat_id'] ?? '';
+  const chatType = meta['chat_type'] ?? '';
+  const threadId = meta['thread_id'] ?? '';
+  const rootId = meta['root_id'] ?? '';
+  const parentId = meta['parent_id'] ?? '';
+  const senderId = meta['sender_id'] ?? '';
+  const senderUnionId = meta['sender_union_id'] ?? '';
+  const senderType = meta['sender_type'] ?? '';
+  const createTime = meta['create_time'] ?? '';
   const senderName = extractSenderName(raw);
 
   if (messageId === '' || chatId === '') return null;
@@ -410,9 +391,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     senderName,
     messageType,
     rawContent,
-    parsedText: payload.text,
-    ...(parsed.parts !== undefined ? { contentParts: parsed.parts } : {}),
-    resources: parsed.resources ?? [],
+    contentParts: parsed.parts,
     ...(parsed.incomplete === true ? { contentIncomplete: true } : {}),
     mentions,
     createTime,

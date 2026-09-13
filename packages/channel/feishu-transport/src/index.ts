@@ -1,14 +1,12 @@
 /**
- * `@excitedjs/feishu-transport` — the shared Feishu platform-I/O core.
+ * `@excitedjs/feishu-transport` — the Feishu platform-I/O core.
  *
  * The single owner of the `@larksuiteoapi/node-sdk` import: connect / receive /
- * send / auth / render (md→card) / parse (Feishu content→text). Stateless and
+ * send / auth / parse (Feishu content → ordered parts). Stateless and
  * routing-agnostic — it knows nothing about engine threads, sessions, or
- * drop/deliver decisions; those live in each host's channel layer. Imported
- * in-process by both dreamux (`@excitedjs/feishu-channel`) and claudemux's
- * proxy.
+ * drop/deliver decisions; those live in the channel layer.
  *
- * See dreamux#25 / claudemux#155 for the responsibility model and contract.
+ * See dreamux#25 for the responsibility model and contract.
  */
 
 // ── contract/ — the pure types (the future `@excitedjs/channel-contract`
@@ -16,18 +14,13 @@
 export type { Mention } from './contract/types.js'
 export type { OutboundTarget } from './contract/outbound.js'
 
-// ── parse/ — Feishu content → forwardable text + comment-event decode ──
+// ── parse/ — Feishu content → ordered parts + comment-event decode ──
 export {
   parseInbound,
   mergeInteractiveInbound,
   narrowMetaFromEvent,
-  toChannelInbound,
-  applyMentions,
-  mentionName,
-  extractPostText,
   type InboundMessage,
   type ParsedInbound,
-  type ChannelInbound,
   type InboundResource,
   type InboundResourceType,
   type InboundContentPart,
@@ -47,24 +40,10 @@ export {
   isBotSenderType,
 } from './parse/mentions.js'
 
-// ── render/ — markdown → Feishu v2 card (incl. inline `<@open_id>` mentions) ──
-export {
-  renderMarkdownToCards,
-  cardToContent,
-  cardContentBytes,
-  splitMarkdownByBytes,
-  FEISHU_CARD_REQUEST_LIMIT_BYTES,
-  FEISHU_CARD_ELEMENT_HARD_CAP,
-  CELL_MAX_BYTES,
-  type RenderedCard,
-} from './render/render.js'
-
 // ── transport/ — the Feishu SDK boundary (the only lark importer) ──
 export {
   createFeishuTransport,
   commentFromBatchQuery,
-  textMessageContent,
-  FEISHU_CARD_CONTENT_SAFE_BYTES,
   FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
   type FeishuTransport,
   type FeishuCredentials,

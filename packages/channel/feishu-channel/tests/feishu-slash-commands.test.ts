@@ -466,7 +466,7 @@ describe('Feishu slash command inbound placement', () => {
       senderName: 'Human',
       messageType: 'text',
       rawContent: JSON.stringify({ text: '@_user_1 /teams' }),
-      parsedText: '@Dreamux /teams',
+      contentParts: [{ kind: 'text', text: '@Dreamux /teams' }],
       mentions: [{
         key: '@_user_1',
         name: 'Dreamux',
@@ -490,7 +490,7 @@ describe('Feishu slash command inbound placement', () => {
       senderName: 'Human',
       messageType: 'text',
       rawContent: JSON.stringify({ text: '@_user_1 /stop' }),
-      parsedText: '@Dreamux /stop',
+      contentParts: [{ kind: 'text', text: '@Dreamux /stop' }],
       mentions: [{
         key: '@_user_1',
         name: 'Dreamux',
@@ -557,7 +557,7 @@ describe('Feishu slash command inbound placement', () => {
       senderName: 'Peer bot',
       messageType: 'text',
       rawContent: JSON.stringify({ text: '@_user_1 /dissolve' }),
-      parsedText: '@Dreamux /dissolve',
+      contentParts: [{ kind: 'text', text: '@Dreamux /dissolve' }],
       mentions: [{
         key: '@_user_1',
         name: 'Dreamux',
