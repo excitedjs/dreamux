@@ -502,6 +502,41 @@ Record the removed methods/exports, post presentation, and semantic mention
 output in ordinary release notes. No state-format upgrade or publication-pipeline
 change follows from this consumer-scope decision.
 
+## Parts-only follow-up, 2026-09-12
+
+Baseline: PR #414 head `87dda034b746231978cebdf5999f4bc05456e149`.
+The operator selected removal of the legacy inbound text compatibility chain
+rather than another abstraction. This supersedes the old optional-parts
+compatibility rationale in the historical structured-inbound proposal.
+
+- Require ordered parts in the parser result and normalized channel event.
+  Remove the redundant parsed-body type/flat-text projection where the contracts
+  converge, including `compatibilityText`, `projectLegacyText`, legacy code-fence
+  reconstruction, `parsedText`, and text-to-parts fallbacks.
+- Remove `ChannelInbound` / `toChannelInbound` and its generic metadata sanitizer.
+  Keep the transport-owned event metadata mapping, returning its actual narrow
+  string-valued shape directly to the channel normalizer. Do not move Feishu
+  field ownership into Core or merge unrelated event normalization work.
+- Preserve parser errors and unsupported-content indicators as ordinary text
+  parts where needed. Do not add a second reason/fallback field. Preserve the
+  existing visible behavior of image/file/media resources and lazy forwards;
+  legacy projection markers that were never rendered are not new body content.
+- Keep resource discovery/deduplication for its real attachment consumers, the
+  existing structured/default card merge, raw mention admission, and all native
+  post parsing. No scanner, splitter, identity, or send-boundary redesign belongs
+  to this follow-up.
+- Migrate fixtures and assertions to real ordered parts and rendered output.
+  Preserve the actual behavioral assertions for mentions, code literals,
+  resources, dual-read cards, incomplete content, truncation, and slash commands.
+  Delete retired export expectations, not package-boundary enforcement.
+- Run root Rush update, build, lint, test, and `typecheck:tests`, then independent
+  review and KB checks. Update current channel/package documentation and ordinary
+  change notes for the internal contract deletion; no persisted schema changes.
+
+The TeamLeader owns requirement/knowledge records and one developer owns the
+implementation. The operator approved the dedicated follow-up authorization card
+on 2026-09-12; this section is the approved follow-up implementation boundary.
+
 ## Validation and delivery
 
 - Exercise the actual tool session and transport with native post payloads,

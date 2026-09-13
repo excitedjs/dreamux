@@ -19,12 +19,11 @@ export type InboundContentPart =
    */
   | { kind: 'mention'; id: string; name: string }
 
-/** Canonical parser result before compatibility projections are added. */
-export interface ParsedContent {
+/** One inbound message's visible content, in Feishu source order. */
+export interface ParsedInbound {
   parts: InboundContentPart[]
+  /** True when the projection is an honest fallback or omitted visible data. */
   incomplete?: boolean
-  /** Exact legacy text retained only when it cannot be inferred from `parts`. */
-  compatibilityText?: string
 }
 
 export function appendTextPart(
@@ -52,59 +51,10 @@ export function resourcePart(
   }
 }
 
-export function projectLegacyText(content: ParsedContent): string {
-  if (content.compatibilityText !== undefined) {
-    return content.compatibilityText
-  }
-  return content.parts.map(projectLegacyPart).join('')
-}
-
-export function projectUniqueResources(
-  parts: InboundContentPart[],
-): InboundResource[] {
-  const resources: InboundResource[] = []
-  const seen = new Set<string>()
-  for (const part of parts) {
-    if (part.kind !== 'resource') continue
-    const identity = resourceIdentity(part.resource)
-    if (identity !== undefined && seen.has(identity)) continue
-    if (identity !== undefined) seen.add(identity)
-    resources.push(part.resource)
-  }
-  return resources
-}
-
 export function resourceIdentity(
   resource: InboundResource,
 ): string | undefined {
   return resource.key === undefined
     ? undefined
     : `${resource.type}:${resource.key}`
-}
-
-function projectLegacyPart(part: InboundContentPart): string {
-  if (part.kind === 'text') return part.text
-  if (part.kind === 'code') return renderLegacyCode(part)
-  if (part.kind === 'mention') return `@${part.name === '' ? part.id : part.name}`
-  return resourceMarker(part.resource)
-}
-
-function renderLegacyCode(
-  part: Extract<InboundContentPart, { kind: 'code' }>,
-): string {
-  const longestRun = Math.max(
-    0,
-    ...Array.from(part.code.matchAll(/`+/g), (match) => match[0].length),
-  )
-  const fence = '`'.repeat(Math.max(3, longestRun + 1))
-  return `${fence}${part.language ?? ''}\n${part.code}\n${fence}`
-}
-
-function resourceMarker(resource: InboundResource): string {
-  const detail = resource.type === 'image'
-    ? resource.key
-    : resource.name ?? resource.key
-  return detail === undefined
-    ? `[${resource.type} attachment without a resource key]`
-    : `[${resource.type} attachment: ${detail}]`
 }

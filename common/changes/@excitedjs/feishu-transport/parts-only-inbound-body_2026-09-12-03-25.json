@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Ordered parts are the only inbound body representation. `parseInbound` and `mergeInteractiveInbound` return `{ parts, incomplete? }`: the flat `text` projection, the `resources` copy of the resource parts, and the internal `compatibilityText` / `projectLegacyText` / `projectUniqueResources` machinery behind them are gone, along with the placeholder strings only that projection ever produced (`(image message)`, `(file message)`, `(merged-forward message not expanded)`, `(interactive template card)`, and the empty-post / empty-card markers). Every parser already returned parts and the channel already renders them, so nothing a reader sees changes: an image is still one resource part, a merged forward is still empty content, and an unreadable card is still `incomplete`. Removed `toChannelInbound` and the `ChannelInbound` envelope with its protocol-safe key sanitizer; `narrowMetaFromEvent` now returns its own `Record<string, string>` of envelope identifiers directly. The internal `ParsedContent` and the exported `ParsedInbound` are collapsed into one exported type, `ParsedInbound`.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

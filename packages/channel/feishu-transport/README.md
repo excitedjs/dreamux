@@ -38,14 +38,14 @@ success/error handling uniform.
 One pure utility boundary sits above the SDK layer, with no host dependency:
 
 - **`parse/`** — decode Feishu JSON into ordered content parts and metadata.
-  Use `parseInbound` for messages and `toChannelInbound` to project into the
-  channel-agnostic envelope shape. Mentions are resolved once, against the
-  message's own `mentions` records, whichever form the sender used: `@_user_N`
-  placeholders, structured `at` nodes, native post `<at user_id="…">`, or card
-  Markdown `<at id="…">`. The two inline spellings are read only where the
-  source states its value is Markdown; a plain text node or `plain_text` field
-  keeps whatever it contains literal, as do escaped and code-spanned examples.
-  `normalizeCommentEvent` /
+  `parseInbound` returns one message's visible content as ordered parts, and
+  `narrowMetaFromEvent` returns the event envelope's identifiers. Mentions are
+  resolved once, against the message's own `mentions` records, whichever form
+  the sender used: `@_user_N` placeholders, structured `at` nodes, native post
+  `<at user_id="…">`, or card Markdown `<at id="…">`. The two inline spellings
+  are read only where the source states its value is Markdown; a plain text
+  node or `plain_text` field keeps whatever it contains literal, as do escaped
+  and code-spanned examples. `normalizeCommentEvent` /
   `normalizeBotMemberAddedEvent` do the same for comment and bot-added inbound
   events.
 

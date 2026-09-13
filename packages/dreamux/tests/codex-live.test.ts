@@ -224,7 +224,7 @@ function fakeInbound(chatId: string, text: string, messageId: string): FeishuInb
     senderName: 'Live Tester',
     messageType: 'text',
     rawContent: JSON.stringify({ text }),
-    parsedText: text,
+    contentParts: [{ kind: 'text', text }],
     mentions: [
       { key: '@_user_1', id: { open_id: 'fake-open-id-app-live' }, name: 'Dispatcher' },
     ],

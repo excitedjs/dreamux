@@ -1,5 +1,196 @@
 # Verification
 
+## Rebase and draft publication preparation, 2026-09-13
+
+At the operator's request, the TeamLeader rebased the original PR commit onto
+`7cfd6ce5` and restored the parts-only work. The sole conflict was the channel
+task index: retain the incoming goal-only format and the new task link, rather
+than reintroducing duplicated workflow states. Comparison against the pre-rebase
+stash found identical package and task-artifact contents, except that index;
+all three untracked Rush declarations also matched their saved blobs.
+
+Fresh root Rush build exited 0 with eight up-to-date operations; lint and
+`typecheck:tests` each completed seven successful operations. The full test suite
+was not rerun for this documentation-only rebase; the earlier five live-Codex
+failures remain an unresolved acceptance limit. No test skip flag was introduced.
+
+The operator authorized a new PR before further implementation discussion. The
+TeamLeader chose a draft so publication does not claim completed review or
+verification. No correction to R2, R5, R8, or mention token matching is included
+in the publication preparation. The existing PR is not closed or force-updated.
+
+## Parts-only follow-up pre-review, 2026-09-12
+
+The following evidence covers the fresh replacement implementation against PR
+head `87dda034b746231978cebdf5999f4bc05456e149`, not the discarded first attempt.
+The earlier sections below are historical initial-PR evidence.
+
+The TeamLeader inspected every production and test hunk. The sole body result is
+required ordered parts; flat text/resource projections, generic metadata
+sanitization, and text-to-parts fallbacks are deleted without a replacement layer.
+Transport still owns content parsing and envelope mapping. Channel still owns
+attachment resolution and XML; its existing `byIdentity` map de-duplicates
+resources read directly from parts. The only production formatting caller first
+enriches the event, where direct and resolved merged forwards receive empty
+parts. Unsupported/malformed content and incomplete flags retain their existing
+rendered meaning. The product catalog's reply, peer-format, code-literal, and raw
+mention-admission contracts are unchanged. The test diff migrates body fixtures
+and assertions; the live-Codex assertions and attachment-budget assertions are
+not weakened.
+
+Developer execution used root Rush update, build, lint, test, and
+`typecheck:tests`. The final test log records 205 transport tests and 488 channel
+tests passing, with four failures and 1,084 passes in Dreamux. Its 73 non-live
+files pass. The four failures are the real-model structured-output, mid-turn
+activity, unbound native turn, and Feishu mid-turn folding cases. The last fails
+before marker injection; notifications show an error and a failed native turn,
+not a completed folding scenario. Root `rush test` is **not green**.
+
+The TeamLeader read the original developer tool transcript, rather than relying
+only on its summary. The control restored package sources to the PR head,
+rebuilt through root Rush, then ran the package-local locked Vitest 2.1.9 against
+`tests/codex-live.test.ts`. Its output lists the same four test names failing and
+five passing. This was a focused baseline control, **not a baseline root Rush
+test run**, and only filtered failure names/counts were retained; it does not
+establish identical error detail or the remote failure's cause. Restoration
+reported `PATCH IDENTICAL`; the only subsequent package delta before final
+checks was a comment reflow. The Leader did not repeat the source rollback.
+Private transcripts, temporary backups, and raw logs remain outside public
+artifacts.
+
+The Leader independently invoked root Rush build (all eight operations already
+up to date), lint (seven successful operations), and `typecheck:tests` (seven
+successful operations). A direct Node replay against the built transport and
+channel modules passed 17 scenarios covering literal text, native Markdown
+mention/code fidelity, empty and unsupported content, resources without keys,
+audio/media/shared entities, lazy-forward references, card merge, and repeated
+resource positions with one resolved attachment. This is local semantic
+verification, not a live client or delivery test.
+
+A subsequent independent Leader root `rush test` rerun completed with all six
+other package operations passing (two with expected failure-path stderr), but
+five Codex-live cases failed: the same four case names plus fresh/resumed thread
+continuity. Several now time out instead of returning an immediate failed native
+turn. The earlier four-case baseline control does not explain this fifth timeout
+or establish the latest run's cause. Non-live Dreamux files still pass; the full
+test gate remains open. Do not describe the current result as four unchanged
+failures or as proven solely environmental.
+
+The Leader's root `rush update` could not complete because the environment's
+configured `core.hooksPath` prevents Rush from installing the repository hooks.
+No Git configuration was changed and no policy bypass was used. The earlier
+attempt while tests were active was rejected by Rush's normal process lock;
+retrying after completion exposed the hook conflict. The developer's original
+03:11 local-time transcript independently records the same root update command
+finishing successfully in its Claude environment. Thus dependency preparation
+has a verified successful run; repeatability in the Leader's environment is
+blocked at hook installation, not dependency resolution.
+
+The Leader verified `core.hooksPath` has a nonempty command-scope value in its
+shell and resolves to the Trae-managed hook wrapper. The wrapper invokes a managed
+helper on its normal path and contains fallback delegation to the original Git
+hook. That is not evidence that anti-leak checks are disabled, nor proof that
+the helper's normal path preserves them. Confirm the complete effective hook
+chain before any later authorized commit; do not remove the wrapper or bypass
+policy to get a green update. Machine-local paths are intentionally omitted.
+
+The follow-up read-only diagnosis found no intervening package-code change
+between the four- and five-failure runs. The extra continuity case uses only the
+Codex runtime provider, not the changed Feishu fixture; its ordinary model turn
+must settle before the test can exercise resume. The folding case does use the
+changed fixture and reached `feishu inbound submitted` and user-message events,
+but never reached its mid-turn assertion. These facts narrow the investigation;
+they do not identify the cause of the hangs or complete the live contract.
+
+These checks are explicit delivery limitations, not waived contracts. During
+that verification round no tests or skip flags were changed to conceal them,
+no live Feishu message was sent, and the follow-up was not committed or pushed.
+
+The old `inspect-native-post-inbound.mjs` artifact is a historical pre-PR probe
+for baseline `3cac2f7`, not an executable current-contract verification. Its
+flat-text API use and selection-only comparison are retained as historical
+evidence and explicitly labeled; current verification uses the compiled owners
+and the parts-based regression suites.
+
+## Parts-only independent review adjudication, 2026-09-12
+
+The `xhigh` review completed with full reported coverage (`partial: false`):
+seven finders, 26 candidates, 21 verifier agents, 26 verdicts, seven refutations,
+and nine synthesized findings. This is a completed review run, not acceptance of
+its findings or a green delivery gate. The table below is the TeamLeader's
+source-checked disposition, using the report's finding order. On 2026-09-13 the
+operator declined R5 for now; the other rulings remain pending. No implementation
+correction has been dispatched.
+
+| Item | Finding and source | Disposition | Reason | Conflict with operator scope |
+| --- | --- | --- | --- | --- |
+| R1 | Incomplete placeholder examples in the transport change note | Reject as a correctness defect | The note says the legacy projection is removed; omitted examples do not establish a surviving marker, and an exhaustive replacement list would add detail without changing the contract. | None; no code or release-scope expansion proposed. |
+| R2 | Unreachable `attachmentFor` map-miss fallback, `feishu-message.ts:226-245` | Accept as cleanup, pending ratification | Resolution and rendering consume the same parts, and every identity is mapped, including over-budget resources; remove the duplicate fallback, not real attachment failure reasons or deduplication. | None; this removes a remaining fallback in the converged body path. |
+| R3 | Missing fresh KB-check result in the task record | Accept the recording omission only | The check did run successfully; the report's inference that the KB was unverified is false. The execution evidence is recorded below. | None; task evidence remains TeamLeader-owned. |
+| R4 | Historical probe allegedly promises a pinned runnable baseline, `artifacts/inspect-native-post-inbound.mjs:1-24` | Reject as a follow-up regression | The artifact is explicitly historical, not a current verification command; its missing module snapshots already prevent execution at the PR head, before this change. Do not add a snapshot mechanism to repair an unpromised current replay. | Rewriting the historical probe is outside the approved parts-only implementation. |
+| R5 | Hidden-value guards inspect text only and the resource assertion permits extras, `content.test.ts:620-632` | Defer: operator declined for now on 2026-09-13 | The coverage reduction remains real and no current leak was found; the operator selected "暂不采纳", so no correction is dispatched. | Changing this test now would contradict the operator's hold. |
+| R6 | Merge assertion compares the primary array with itself, `inbound-markdown.test.ts:407-421` | Reject as an uncovered regression | The unchanged test at lines 317-328 pins the byte-identical parser input and concrete parts; the merge assertion still catches duplicate appends. The reviewer found no regression escaping both. | None; retain the existing parser and merge contracts. |
+| R7 | Unused `FEISHU_SKILL_FALLBACK_NOTE`, `feishu-message.ts:40-45` | Defer pending a separate scope ruling | It is a pre-existing dead export, neither introduced nor orphaned here; its hypothetical future reuse is not a current defect, and this follow-up does not name its removal. | Treating all old fallback prose as approved deletion would stretch the parts-only ruling. |
+| R8 | Three slash fixtures use flat text where the parser emits a mention, `feishu-slash-commands.test.ts:469,493,560` | Accept as fixture correction, pending ratification | The raw inputs produce mention-plus-text parts; the bot case actually submits the mismatched body. Use real parser output and verify the delivered mention while retaining slash-routing assertions. | None; the approved solution explicitly requires real parts fixtures. |
+| R9 | Two tests pin adjacent text segmentation, `content.test.ts:29-35` and `inbound-markdown.test.ts:512-518` | Reject as a required correction | These inspect the exported parser result, not source layout; rendered equivalence alone does not make them forbidden structure tests. No current behavioral defect is demonstrated. | None; no new segmentation contract or parser change is proposed. |
+
+For R3, the TeamLeader's pre-adjudication `.agents/scripts/check.sh` run and the
+rerun after adding this table and updating the task indexes both exited 0 with
+`KB OK (243 files reachable from root.md)`; `git diff --check` also passed.
+This records completed checks, not a waiver of the five live-Codex failures or
+the Leader's Rush hook-install conflict. Repeat the KB check after subsequent
+knowledge edits.
+
+For R4, the retained script reads source paths relative to its working directory;
+it does not load `3cac2f7` by Git reference. At the PR head and current tree, the
+snapshot lacks the imported Markdown/mention modules, so module loading fails
+before the later obsolete `.text` access. Its historical results are not evidence
+that the script runs against current code. No probe was rerun during adjudication.
+
+The seven refuted candidates do not justify extra fixes: CI already runs the KB
+check; the flagged all-text merge and overflow fixtures retain their behavior
+checks; metadata consumers already received the same string-valued map before
+this change; and shared test-helper extraction, repeated helper calls, and KB
+wording expose no new correctness defect. Do not resurrect the removed projection
+or add metadata defenses on those grounds.
+
+R5 was presented first. Its initial card expired unanswered; at the operator's
+request it was resent on 2026-09-13 with the same test-only correction scope.
+The matching answer was:
+
+> 暂不采纳
+
+Keep R5 unchanged; this is a hold on the proposed correction, not a finding that
+the coverage reduction is harmless. R2 and R8 remain separate unapproved
+corrections. R7 remains outside the correction set unless the operator expands
+the scope. The later publication ruling authorizes committing and pushing the
+preserved work as a draft, not merge or a live Feishu test.
+
+## Published PR status and mention defect, 2026-09-13
+
+Read-only GitHub checks before the requested rebase found PR #414 open at
+`87dda034`, targeting `next`, with the original approval and nine successful
+checks. GitHub reported `mergeable: CONFLICTING` and `mergeStateStatus: DIRTY`.
+Those results did not establish integration against the newer base. At that
+inspection the local parts-only follow-up was uncommitted and absent from the
+published head.
+
+The published review's inline comment identifies overlapping text-mention keys
+at `packages/channel/feishu-transport/src/parse/mention.ts:52-75`. The TeamLeader
+verified the source and reproduced the issue locally through the built
+`parseInbound` entry point using ten synthetic mention records: with
+`@_user_1` processed before `@_user_10`, the last occurrence becomes the first
+person's mention plus literal `0`, rather than the tenth person's identity.
+The renderer emits that mistaken identity as an `<at>` element. No real Feishu
+message or identity was used in the reproduction.
+
+This is a concrete parsing defect, separate from R5's test coverage and R2's
+unreachable fallback. The published reviewer called it pre-existing and
+non-blocking; that assessment does not make the wrong-identity result correct.
+The follow-up does not modify `mention.ts` and does not fix the defect. The
+operator subsequently authorized the rebase recorded above, not a scanner
+change.
+
 ## Observed message-send failure detail loss
 
 Two reply tool invocations during the mention-format explanation failed with

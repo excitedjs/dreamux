@@ -25,7 +25,7 @@ export function renderFeishuStructuredBody(
   trustedBots: PeerBot[],
   resolveAttachment: (resource: InboundResource) => FormattedFeishuAttachment,
 ): RenderFeishuBodyResult {
-  const parts = contentPartsForEvent(event);
+  const parts = event.contentParts;
   const refs = renderRefs(event);
   let groupBots = renderGroupBots(trustedBots);
   let groupBotsRendered = groupBots !== '';
@@ -109,25 +109,6 @@ function renderGroupBots(trustedBots: PeerBot[]): string {
     ...lines,
     '</group_bots>',
   ].join('\n');
-}
-
-/**
- * The parts to serialize. Transport already resolved the message's own meaning
- * — text, code, mentions, resources, in source order — so this layer only
- * writes them out; it never re-reads the raw body to recover what the parser
- * was supposed to hand over.
- */
-function contentPartsForEvent(event: FeishuInboundEvent): InboundContentPart[] {
-  if (event.messageType === 'merge_forward') return [];
-  const parts = event.contentParts;
-  if (parts !== undefined) return parts;
-  return [
-    { kind: 'text', text: event.parsedText },
-    ...(event.resources ?? []).map((resource) => ({
-      kind: 'resource' as const,
-      resource,
-    })),
-  ];
 }
 
 function renderRefs(event: FeishuInboundEvent): string {

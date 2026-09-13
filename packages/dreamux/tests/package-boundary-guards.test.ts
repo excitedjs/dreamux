@@ -651,7 +651,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
     expect(namedExports(src)).toEqual(
       [
         'BOT_MEMBER_ADDED_EVENT_TYPE',
-        'ChannelInbound',
         'DOC_COMMENT_EVENT_TYPE',
         'FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER',
         'FEISHU_COT_APPEND_MAX_EVENTS',
@@ -713,7 +712,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'normalizeBotMemberAddedEvent',
         'normalizeCommentEvent',
         'parseInbound',
-        'toChannelInbound',
       ].sort(),
     );
   });

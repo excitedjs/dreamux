@@ -1,4 +1,4 @@
-/** Replay captured message reads through current-source parsing and body rendering. */
+/** Historical pre-PR probe for baseline 3cac2f7; not a current-contract check. */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';

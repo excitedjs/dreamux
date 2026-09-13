@@ -14,15 +14,13 @@
 export type { Mention } from './contract/types.js'
 export type { OutboundTarget } from './contract/outbound.js'
 
-// ── parse/ — Feishu content → forwardable text + comment-event decode ──
+// ── parse/ — Feishu content → ordered parts + comment-event decode ──
 export {
   parseInbound,
   mergeInteractiveInbound,
   narrowMetaFromEvent,
-  toChannelInbound,
   type InboundMessage,
   type ParsedInbound,
-  type ChannelInbound,
   type InboundResource,
   type InboundResourceType,
   type InboundContentPart,

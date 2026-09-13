@@ -251,7 +251,7 @@ describe('the pairing resend reminder', () => {
       senderName: 'Requester',
       messageType: 'text',
       rawContent: JSON.stringify({ text: 'hello again' }),
-      parsedText: 'hello again',
+      contentParts: [{ kind: 'text', text: 'hello again' }],
       mentions: [],
       createTime: String(now),
       raw: {},

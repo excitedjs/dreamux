@@ -212,7 +212,10 @@ describe('createFeishuBot inbound channel', () => {
       senderName: '',
       messageType: 'text',
       rawContent: JSON.stringify({ text: 'hello @_user_1' }),
-      parsedText: 'hello @Ada',
+      contentParts: [
+        { kind: 'text', text: 'hello ' },
+        { kind: 'mention', id: 'mentioned-open-id', name: 'Ada' },
+      ],
       createTime: '1710000000000',
     });
     expect(received[0]?.mentions).toHaveLength(1);

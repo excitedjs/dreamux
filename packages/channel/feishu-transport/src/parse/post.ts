@@ -5,7 +5,7 @@ import {
   appendTextPart,
   resourcePart,
   type InboundContentPart,
-  type ParsedContent,
+  type ParsedInbound,
 } from './parts.js'
 
 interface PostParseContext {
@@ -21,7 +21,7 @@ interface PostRenderState extends PostParseContext {
 export function parsePostContent(
   content: Record<string, unknown>,
   mentions?: Mention[],
-): ParsedContent {
+): ParsedInbound {
   const post = pickPostLocale(content)
   const state: PostRenderState = {
     mentions,
@@ -46,9 +46,6 @@ export function parsePostContent(
   const expanded = expandCodeParts(parts)
   return {
     parts: expanded,
-    ...(expanded.length === 0
-      ? { compatibilityText: '(empty rich-text post)' }
-      : {}),
     ...(state.incomplete || expanded.length === 0 ? { incomplete: true } : {}),
   }
 }

@@ -3,14 +3,15 @@
 ## Current state
 
 - Goal: Send native Feishu rich-text replies with inline XML mentions and fewer reply-layer mechanisms
-- State: `review`
+- State: `blocked`
 - Requirement: [Current requirement](/.agents/tasks/channel/simplify-feishu-replies/requirement.md)
 - Final solution: [Implementation plan](/.agents/tasks/channel/simplify-feishu-replies/technical-design/final.md). The native-post plan was reviewed; creation-time guidance concatenates into the existing identity string. Identity arrays are deferred. The unused card renderer/editText API is now removed from the target design under the repository-only consumer ruling.
 - Solution review Issue: [#410](https://github.com/excitedjs/dreamux/issues/410). The [published snapshot](artifacts/issue-410-current-solution.md) includes all current scope decisions and send-error visibility; remote body readback matched.
 - Verification: [Native Markdown probes and inbound replay](/.agents/tasks/channel/simplify-feishu-replies/verification.md).
 - Inbound investigation: [Current path and confirmed findings](/.agents/tasks/channel/simplify-feishu-replies/inbound-analysis.md).
-- Blockers: No unresolved TeamLeader pre-review finding. Independent Devbox code review remains outstanding.
-- Next action: Commit and open the PR to `next`, then request Devbox review of its published head. The operator explicitly requires a PR before that review; no independent pass or merge is claimed.
+- Blockers: The overlapping text-mention identity defect and R2/R8 corrections require operator direction; R5 was declined for now. The recorded full test run had five Codex-live failures, with no established common cause. The Leader's dependency-update attempt encountered a hook-install conflict; the developer's earlier update succeeded.
+- Next action: Resume the implementation discussion before authorizing further corrections. Publication is for discussion, not acceptance or merge.
+- Coverage limit: The rebase changed only knowledge records; previous implementation review and test evidence is recorded in verification, not asserted as a green result for a new PR.
 - Related tasks: None.
 
 ## Independent solution review, 2026-09-11
@@ -219,8 +220,83 @@ that is absent from current `next`. Rebase only this task's implementation onto
 rerun the required checks on the resulting source. Historical baseline probe
 results remain labeled with their original scope.
 
-## Delivery
+## Parts-only follow-up, 2026-09-12
 
-- Pull request: Creation authorized before independent review; preparing publication.
-- CI / independent review / merge: Pending.
-- Knowledge closeout: Channel and product owners updated; final reconciliation follows independent review.
+The operator asked for further simplification of PR #414 and, after the
+TeamLeader explained deleting the old inbound text compatibility chain, said:
+
+> 你只要确定，你就可以给它改一下
+
+The follow-up requirement and solution are recorded in the existing linked
+artifacts. Scope: one required ordered body representation; no removal of
+supported inbound formats, attachments, mentions, long replies, or reply guidance.
+The original structured-inbound design retained a flat view for older consumers;
+source inspection at PR head confirms that all current production parser paths
+supply parts. The prior repository-only consumer ruling removes that retention
+reason. The implementation baseline is `87dda034b746231978cebdf5999f4bc05456e149`.
+
+The dedicated follow-up development card was sent on 2026-09-12 after the
+requirement and solution were recorded. Its question explicitly covered removal
+of `text` / `parsedText` / `compatibilityText` conversions and fallbacks, required
+parts, preservation of inbound formats/resources/mentions/splitting/reply
+addresses, full gates, and independent review. Its approving answer was received
+before 02:33 local time that day:
+
+> 批准这次删减 (Recommended)
+
+Sent-card and matching answer receipts are in the private channel transcript;
+no transport identifiers are copied here. This approval was recorded before
+starting the sole implementation writer. It covers the linked requirement and
+solution's parts-only follow-up sections, not a scanner or send-path redesign.
+That development card alone did not confer publication or deployment authority;
+the later publication ruling is recorded below.
+
+The operator subsequently requested a fresh developer:
+
+> 停掉他，回退所有代码变更，按照技能要求拉一个新的
+
+The first follow-up developer was closed and its recovery reminder deleted.
+All 20 modified package files were restored to the PR head above; no staged or
+untracked implementation files remained. Only the TeamLeader's task and
+approval records were retained. A fresh Claude seat receives the approved
+artifact paths and outcome, not the discarded implementation or edit plan.
+Validation results from the discarded attempt do not validate the replacement.
+
+The fresh developer completed its implementation and a read-only verification
+follow-up. The TeamLeader inspected the full diff and passed local
+compile/static/semantic pre-review with the explicit live-test limitations in
+[verification](verification.md#parts-only-follow-up-pre-review-2026-09-12).
+Independent implementation review completed through the shared code-review
+workflow at `xhigh`, with the added requirement-fidelity finder and no partial
+coverage reported. The [TeamLeader adjudication](verification.md#parts-only-independent-review-adjudication-2026-09-12)
+records all nine findings: three proposed implementation/test corrections, one
+KB-check recording omission, one deferred scope question, and four rejected
+claims. The operator answered R5's resent card with "暂不采纳" on 2026-09-13;
+that test correction is on hold, and other findings remain unapproved. The
+subsequent [published PR check](verification.md#published-pr-status-and-mention-defect-2026-09-13)
+found a merge conflict and reproduced the inline review's overlapping-mention
+identity defect. No correction has been dispatched, and neither review
+acceptance nor full-green verification is claimed.
+
+## Publication authority, 2026-09-13
+
+The operator requested a rebase before reopening the implementation discussion:
+
+> 你来接手这个pr
+> 先给 分支 rebase 一下远端 next，然后我们重新聊一下这块的实现。
+
+After the TeamLeader explained the retained local parts-only changes, the
+operator requested publication:
+
+> 那你可以开一个新的PR上去
+
+This authorizes committing and pushing the preserved work to a new PR against
+`next`. The TeamLeader chose draft publication because the named review and
+verification limits are unresolved. It does not approve further implementation
+corrections, merge, deployment, or closing the original PR. R5's hold remains.
+
+## Delivery references
+
+- Original pull request: [#414](https://github.com/excitedjs/dreamux/pull/414).
+- Coverage limit: The original head's review and CI do not establish acceptance of the parts-only follow-up.
+- Knowledge closeout: The channel contract reflects parts-only content; the adjudication and verification evidence retain the unresolved findings.

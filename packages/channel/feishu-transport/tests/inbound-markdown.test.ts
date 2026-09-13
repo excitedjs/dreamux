@@ -22,7 +22,14 @@ function message(
 }
 
 function partsOf(msg: InboundMessage): InboundContentPart[] {
-  return parseInbound(msg).parts ?? []
+  return parseInbound(msg).parts
+}
+
+/** The literal characters the parser kept as text, for presence assertions. */
+function textOf(parts: InboundContentPart[]): string {
+  return parts
+    .flatMap((part) => (part.kind === 'text' ? [part.text] : []))
+    .join('')
 }
 
 /** A native post as `im.v1.message.get` returns it: both projections, nested. */
@@ -39,15 +46,16 @@ describe('native post projection', () => {
   test('reads content_v2 and never mixes it with the legacy projection', () => {
     const parsed = parseInbound(message('post', nativePost('# Heading\n\nBody')))
 
-    expect(parsed.text).toBe('# Heading\n\nBody')
-    expect(parsed.text).not.toContain('legacy flattening')
+    expect(parsed.parts).toEqual([{ kind: 'text', text: '# Heading\n\nBody' }])
   })
 
   test('reads the legacy projection when the post has no content_v2', () => {
     const post = {
       zh_cn: { title: 'T', content: [[{ tag: 'text', text: 'body' }]] },
     }
-    expect(parseInbound(message('post', post)).text).toBe('T\nbody')
+    expect(parseInbound(message('post', post)).parts).toEqual([
+      { kind: 'text', text: 'T\nbody' },
+    ])
   })
 
   test('prefers content_v2 inside a locale block too', () => {
@@ -57,7 +65,9 @@ describe('native post projection', () => {
         content_v2: [[{ tag: 'md', text: '**rich**' }]],
       },
     }
-    expect(parseInbound(message('post', post)).text).toBe('**rich**')
+    expect(parseInbound(message('post', post)).parts).toEqual([
+      { kind: 'text', text: '**rich**' },
+    ])
   })
 })
 
@@ -219,7 +229,6 @@ describe('native post code and resources', () => {
     const source = '\\![shot](img_v2_abc)'
     const parsed = parseInbound(message('post', nativePost(source)))
 
-    expect(parsed.resources).toBeUndefined()
     expect(parsed.parts).toEqual([{ kind: 'text', text: source }])
   })
 
@@ -237,9 +246,6 @@ describe('native post code and resources', () => {
       },
       { kind: 'text', text: ' after' },
     ])
-    expect(parsed.resources).toEqual([
-      { type: 'image', key: 'img_v2_abc', name: 'img_v2_abc.jpg' },
-    ])
   })
 
   test('an ordinary web image is not a message resource', () => {
@@ -248,8 +254,9 @@ describe('native post code and resources', () => {
       nativePost('![shot](https://example.com/a.png)'),
     ))
 
-    expect(parsed.resources).toBeUndefined()
-    expect(parsed.text).toBe('![shot](https://example.com/a.png)')
+    expect(parsed.parts).toEqual([
+      { kind: 'text', text: '![shot](https://example.com/a.png)' },
+    ])
   })
 
   test('an image reference inside code stays code', () => {
@@ -258,7 +265,6 @@ describe('native post code and resources', () => {
       nativePost('```\n![shot](img_v2_abc)\n```\n'),
     ))
 
-    expect(parsed.resources).toBeUndefined()
     expect(parsed.parts).toEqual([
       { kind: 'code', code: '![shot](img_v2_abc)' },
     ])
@@ -282,7 +288,6 @@ describe('native post code and resources', () => {
       [{ key: '@_user_1', id: { open_id: 'ou_example' }, name: 'Example' }],
     ))
 
-    expect(parsed.resources).toBeUndefined()
     expect(parsed.parts).toEqual([{
       kind: 'text',
       text: '<at user_id="ou_example">Example</at> ![shot](img_v2_abc)',
@@ -293,9 +298,10 @@ describe('native post code and resources', () => {
     const post = {
       zh_cn: { content: [[{ tag: 'img', image_key: 'img_v2_node' }]] },
     }
-    expect(parseInbound(message('post', post)).resources).toEqual([
-      { type: 'image', key: 'img_v2_node', name: 'img_v2_node.jpg' },
-    ])
+    expect(parseInbound(message('post', post)).parts).toEqual([{
+      kind: 'resource',
+      resource: { type: 'image', key: 'img_v2_node', name: 'img_v2_node.jpg' },
+    }])
   })
 })
 
@@ -412,7 +418,6 @@ describe('card read merge', () => {
 
     const merged = mergeInteractiveInbound(structured, rendered)
 
-    expect(merged.text).toBe('@Example please review')
     expect(merged.parts).toEqual(structured.parts)
   })
 
@@ -432,8 +437,8 @@ describe('card read merge', () => {
 
     const merged = mergeInteractiveInbound(structured, rendered)
 
-    expect(merged.parts?.filter((part) => part.kind === 'mention')).toHaveLength(2)
-    expect(merged.text).not.toContain('Additional rendered card content')
+    expect(merged.parts.filter((part) => part.kind === 'mention')).toHaveLength(2)
+    expect(textOf(merged.parts)).not.toContain('Additional rendered card content')
   })
 
   test('a line is compared with its own identities, not the whole document', () => {
@@ -458,8 +463,8 @@ describe('card read merge', () => {
 
     const merged = mergeInteractiveInbound(structured, rendered)
 
-    expect(merged.text).toContain('Additional rendered card content');
-    expect(merged.parts?.filter((part) => part.kind === 'mention')).toEqual([
+    expect(textOf(merged.parts)).toContain('Additional rendered card content');
+    expect(merged.parts.filter((part) => part.kind === 'mention')).toEqual([
       { kind: 'mention', id: 'ou_first', name: 'Same' },
       { kind: 'mention', id: 'ou_second', name: 'Same' },
       { kind: 'mention', id: 'ou_second', name: 'Same' },
@@ -486,7 +491,7 @@ describe('card read merge', () => {
 
     const merged = mergeInteractiveInbound(structured, rendered)
 
-    expect(merged.parts?.filter((part) => part.kind === 'mention')).toEqual([
+    expect(merged.parts.filter((part) => part.kind === 'mention')).toEqual([
       { kind: 'mention', id: 'ou_first', name: 'Same' },
       { kind: 'mention', id: 'ou_second', name: 'Same' },
     ])
@@ -504,9 +509,13 @@ describe('card read merge', () => {
 
     const merged = mergeInteractiveInbound(structured, rendered)
 
-    expect(merged.text).toBe(
-      'shared line\n\nAdditional rendered card content:\nrendered only',
-    )
+    expect(merged.parts).toEqual([
+      { kind: 'text', text: 'shared line' },
+      {
+        kind: 'text',
+        text: '\n\nAdditional rendered card content:\nrendered only',
+      },
+    ])
   })
 })
 

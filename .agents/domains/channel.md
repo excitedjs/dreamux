@@ -496,13 +496,15 @@ bot observation, `/introduce`, pairing, or delivery.
 
 Feishu content parsing and SDK ownership stay split across the two channel
 packages. `@excitedjs/feishu-transport` parses event content once into ordered,
-untrusted `text` / `code` / `mention` / `resource` parts. That sequence is the internal source
-of truth; the transport projects the legacy flat text and de-duplicated resource
-views only at its public compatibility boundary. It also exposes narrow wrappers
-around `im.v1.message.get`, message-resource download, and contact-backed
-sender-name lookup. `@excitedjs/feishu-channel` decides when those calls are
-allowed, validates reread roots against the already accepted event,
-resolves/downloads resources, and owns the model-facing XML.
+untrusted `text` / `code` / `mention` / `resource` parts. `ParsedInbound` requires
+that sequence and optionally marks incomplete content; `FeishuInboundEvent`
+carries it as required `contentParts`, with no flat-text or resource-list copy.
+Transport separately maps event-envelope metadata to string values and exposes
+narrow wrappers around `im.v1.message.get`, message-resource download, and
+contact-backed sender-name lookup. `@excitedjs/feishu-channel` decides when those
+calls are allowed, validates reread roots against the already accepted event,
+resolves resources directly from parts with download/cache deduplication, and
+owns the model-facing XML.
 
 The access gate runs before any message read or resource fetch. Accepted
 interactive cards use the structured and default read representations with a

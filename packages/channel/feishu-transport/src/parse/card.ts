@@ -6,7 +6,7 @@ import {
   resourceIdentity,
   resourcePart,
   type InboundContentPart,
-  type ParsedContent,
+  type ParsedInbound,
 } from './parts.js'
 
 const CARD_UPGRADE_FALLBACK = '请升级至最新版本客户端'
@@ -40,14 +40,10 @@ interface CardField {
 export function parseInteractiveContent(
   outer: Record<string, unknown>,
   mentions?: Mention[],
-): ParsedContent {
+): ParsedInbound {
   const card = unwrapUserDsl(outer)
   if (card.type === 'template') {
-    return {
-      parts: [],
-      compatibilityText: '(interactive template card)',
-      incomplete: true,
-    }
+    return { parts: [], incomplete: true }
   }
   const state: CardRenderState = {
     parts: [],
@@ -73,9 +69,6 @@ export function parseInteractiveContent(
 
   return {
     parts: state.parts,
-    ...(state.parts.length === 0
-      ? { compatibilityText: '(interactive card with no readable content)' }
-      : {}),
     ...(state.incomplete || state.parts.length === 0
       ? { incomplete: true }
       : {}),

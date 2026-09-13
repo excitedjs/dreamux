@@ -90,10 +90,8 @@ async function enrichInteractive(
     ...event,
     messageType: 'interactive',
     rawContent: primary.item.content,
-    parsedText: parsed.text,
-    contentParts: parsed.parts ?? [],
+    contentParts: parsed.parts,
     mentions: primary.item.mentions,
-    resources: parsed.resources ?? [],
     ...(parsed.incomplete === true ||
     structuredParsed === undefined ||
     simplifiedParsed === undefined
@@ -142,10 +140,8 @@ async function resolveUnsupported(
     ...event,
     messageType: root.messageType,
     rawContent: root.content,
-    parsedText: parsed.text,
-    contentParts: parsed.parts ?? [],
+    contentParts: parsed.parts,
     mentions: root.mentions,
-    resources: parsed.resources ?? [],
     ...(parsed.incomplete === true
       ? { contentIncomplete: true }
       : { contentIncomplete: false }),
@@ -158,9 +154,7 @@ function asLazyMergedForward(
   return {
     ...event,
     messageType: 'merge_forward',
-    parsedText: '(merged-forward message not expanded)',
     contentParts: [],
-    resources: [],
     contentIncomplete: false,
   };
 }

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Update Feishu inbound test fixtures and the feishu-transport export inventory for the parts-only inbound body.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

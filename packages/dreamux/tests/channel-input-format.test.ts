@@ -54,8 +54,10 @@ function inboundEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboun
     senderName: 'Ada',
     messageType: 'file',
     rawContent: JSON.stringify({ file_key: 'file-key-1', file_name: 'report.pdf' }),
-    parsedText: '(file message)',
-    resources: [{ type: 'file', key: 'file-key-1', name: 'report.pdf' }],
+    contentParts: [{
+      kind: 'resource',
+      resource: { type: 'file', key: 'file-key-1', name: 'report.pdf' },
+    }],
     mentions: [],
     createTime: '1700000000000',
     raw: {},

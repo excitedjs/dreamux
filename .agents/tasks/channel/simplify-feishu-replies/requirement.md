@@ -257,6 +257,37 @@ The requested investigation and explicit interoperability requirement establish 
 - Keep the incoming event's `mentions` and access gates. Those are independent
   of the removed outbound tool parameter; body XML never grants admission.
 
+## Parts-only follow-up, 2026-09-12
+
+After reviewing PR #414, the operator asked whether its implementation could be
+simplified further. The proposed first change removes the old flat-text
+compatibility chain, not supported inbound formats. After that explanation, the
+operator said:
+
+> 你只要确定，你就可以给它改一下
+
+Make ordered `parts` the required, sole inbound body representation. Remove the
+legacy `text` / `parsedText` copies, `compatibilityText`, and their conversion and
+fallback machinery. Keep actual message text, code, mentions, resource order,
+attachment handling, omission reporting, and all supported inbound formats.
+Keep metadata normalization at its existing transport boundary without the
+obsolete text-plus-metadata envelope. Do not rewrite Markdown recognition, card
+dual-read merging, message splitting, reply guidance, or access decisions.
+
+This follows the existing repository-only consumer ruling. The original optional
+parts/legacy-text design preserved older transport consumers; every current
+production parser returns parts and the current renderer consumes them directly.
+Tests of retired compatibility views must move to ordered parts or actual
+model-visible output rather than keeping unused production conversions alive.
+The local four Rush gates and an independent review are required. On 2026-09-12,
+the operator answered the dedicated follow-up development card with
+"批准这次删减 (Recommended)". That card covered this contract deletion and
+preservation boundary, not publication or deployment. On 2026-09-13 the operator
+separately requested a rebase and a new PR; the publication boundary is recorded
+in the task README. R5's proposed test correction was declined for now, and the
+new PR request does not authorize other unratified corrections, merge, or
+deployment.
+
 ## Flag research result
 
 The [official CLI flag documentation](https://github.com/larksuite/cli/blob/main/skills/lark-im/references/lark-im-flag-create.md)
