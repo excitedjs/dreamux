@@ -25,6 +25,17 @@ description, or a possible scope wider than the operator has stated, use
 applies to behavior the operator has not mentioned. Evidence reveals a question;
 it does not authorize the TeamLeader to choose or extend the requirement.
 
+## Every authorization request goes through the interactive card
+
+Whenever the workflow needs the operator's authority rather than their
+information, ask for it with `ask_human_question` — the Feishu channel exposes it
+as `ask_user_question`. That covers selecting or creating a task, confirming the
+solution path, development approval, merge authority, and Team dissolution. Plain
+chat text may carry the playback that precedes the request, but the request itself
+is a card question whose options are the concrete choices. Keep one decision per
+question; a card may carry several questions, and none of them may bundle
+independent decisions into one option list.
+
 Keep unresolved interpretations out of accepted requirements and out of the basis
 for design, implementation, and review. Pause dependent work until the answer
 arrives; continue independent, already authorized work. Do not reopen a decision

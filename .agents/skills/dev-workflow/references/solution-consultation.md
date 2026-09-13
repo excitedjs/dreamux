@@ -37,7 +37,8 @@ workflow questions. Follow a clear applicable preference. Do not infer a durable
 preference from a single past acceptance or from task history.
 
 If no explicit preference applies, state the classification and its concrete
-rationale, then ask once. For example:
+rationale, then ask once on an `ask_human_question` card whose options are the
+eligible paths. For example:
 
 > This task has several competing ownership and architecture choices, so I propose
 > the three-seat solution-consultation path. Is that acceptable, or would you prefer

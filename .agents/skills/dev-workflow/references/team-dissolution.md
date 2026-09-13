@@ -3,10 +3,10 @@
 Enter this stage only when code is confirmed merged into `next`, the task record is
 durable, and no review finding, blocker, or operator decision remains open.
 
-Ask the operator through the current visible user channel whether to dissolve the
-Team. This is a required explicit choice at the end of every completed workflow;
-do not infer consent from development approval, merge approval, silence, or an
-earlier preference.
+Ask the operator whether to dissolve the Team, on an `ask_human_question` card in
+the current visible user channel. This is a required explicit choice at the end
+of every completed workflow; do not infer consent from development approval,
+merge approval, silence, or an earlier preference.
 
 If the operator declines or has not answered, leave the Team open and take no
 lifecycle action.

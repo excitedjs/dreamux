@@ -19,8 +19,9 @@ or an equivalent interactive-card tool, such as:
 > development?
 
 **No sent development-authorization card means no development authorization.**
-The card must refer to the current recorded requirement, final solution, and
-implementation scope. Sending it alone is insufficient: wait for the operator's
+The playback above may be ordinary chat text; it is the request itself that must
+be the card. The card must refer to the current recorded requirement, final
+solution, and implementation scope. Sending it alone is insufficient: wait for the operator's
 explicit approval in response. A pending, expired, unanswered, or declined card
 does not authorize development. A product-choice or solution-review card is not
 a development-authorization card.
