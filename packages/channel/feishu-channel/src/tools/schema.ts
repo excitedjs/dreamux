@@ -56,6 +56,21 @@ export function optionalString(
   return value;
 }
 
+export function optionalLiteral<T extends string>(
+  obj: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+): T | null {
+  const value = optionalString(obj, key);
+  if (value === null) return null;
+  if (!allowed.includes(value as T)) {
+    throw new PublicInvokeFailure(
+      `${key} must be one of: ${allowed.join(', ')}`,
+    );
+  }
+  return value as T;
+}
+
 export function optionalRecord(
   obj: Record<string, unknown>,
   key: string,

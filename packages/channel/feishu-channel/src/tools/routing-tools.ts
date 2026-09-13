@@ -18,8 +18,13 @@
  * `list_bindings` stays Dispatcher-only: it is the whole Channel's routing
  * table, which is an operator read rather than a Team's own business. A view
  * that also wants every Team, bound or not, joins it with `team.list`; nothing
- * here mirrors Core state to make that one call.
+ * here mirrors Core state to make that one call. Its query parameters narrow
+ * that same read and nothing else — they select rows the caller could already
+ * see, so they carry no authority of their own and none of them is a route
+ * resolution: a topic that matches nothing is a topic with no row, not a topic
+ * nobody answers in.
  */
+import type { FeishuBindingView } from '../routing/index.js';
 import type {
   FeishuBindTargetSelector,
   FeishuToolContext,
@@ -30,6 +35,7 @@ import {
   asRecord,
   closedObjectSchema,
   nonEmptyString,
+  optionalLiteral,
   optionalString,
   requireString,
 } from './schema.js';
@@ -258,15 +264,73 @@ export const leaderUnbindChannelDef: FeishuToolDef<TargetInput> = {
   },
 };
 
-export const listBindingsDef: FeishuToolDef<Record<string, never>> = {
+/**
+ * The kinds a query may ask for.
+ *
+ * `p2p` is left out because a direct chat is not a place a Team can be
+ * published to (`isBindableTarget`), and both installers keep that rule: the
+ * bind tools build their target with `selectorTarget`, which spells only these
+ * two, and automatic provisioning is reached only through `FeishuRouting.plan`,
+ * which answers `dispatcher` for a direct chat before a provision plan exists.
+ * `FeishuTargetRecord` still types the kind, so this is the product rule rather
+ * than a shape the document enforces.
+ */
+const QUERYABLE_TARGET_KINDS = ['group', 'topic'] as const;
+
+interface ListBindingsQuery {
+  teamName: string | null;
+  chatId: string | null;
+  threadId: string | null;
+  targetKind: (typeof QUERYABLE_TARGET_KINDS)[number] | null;
+}
+
+function matchesQuery(
+  row: FeishuBindingView,
+  query: ListBindingsQuery,
+): boolean {
+  return (
+    (query.teamName === null || row.team_name === query.teamName) &&
+    (query.chatId === null || row.chat_id === query.chatId) &&
+    (query.threadId === null || row.thread_id === query.threadId) &&
+    (query.targetKind === null || row.target_kind === query.targetKind)
+  );
+}
+
+export const listBindingsDef: FeishuToolDef<ListBindingsQuery> = {
   name: 'list_bindings',
   title: 'List Feishu bindings',
   description:
-    'List every Feishu target this channel routes, with the Team it routes ' +
+    'List the Feishu targets this channel routes, with the Team each routes ' +
     'to. This is the authoritative binding read for this channel; combine it ' +
-    'with the Team list to see unbound Teams.',
+    'with the Team list to see unbound Teams. Every filter is optional and ' +
+    'matched exactly; several of them narrow together, and no filter at all ' +
+    'returns the whole table. Matching nothing is an answer, not a failure — ' +
+    'and it means no row, not that nobody answers there: a topic with no row ' +
+    'of its own is still served by its chat\'s binding.',
   callers: ['dispatcher'],
-  inputSchema: closedObjectSchema({}),
+  inputSchema: closedObjectSchema({
+    team_name: {
+      ...nonEmptyString,
+      description: 'Return only the routes that reach this Team.',
+    },
+    chat_id: {
+      ...nonEmptyString,
+      description:
+        'Return only routes in this chat: the chat\'s own binding and every ' +
+        'topic binding under it.',
+    },
+    thread_id: {
+      ...nonEmptyString,
+      description: 'Return only the binding of this Feishu topic.',
+    },
+    target_kind: {
+      type: 'string',
+      enum: [...QUERYABLE_TARGET_KINDS],
+      description:
+        'Return only whole-chat bindings (group) or only topic bindings ' +
+        '(topic).',
+    },
+  }),
   outputSchema: closedObjectSchema(
     {
       channel_id: nonEmptyString,
@@ -306,13 +370,21 @@ export const listBindingsDef: FeishuToolDef<Record<string, never>> = {
     idempotentHint: true,
   },
   parse(raw) {
-    asRecord(raw ?? {}, 'list_bindings arguments');
-    return {};
+    const obj = asRecord(raw ?? {}, 'list_bindings arguments');
+    return {
+      teamName: optionalString(obj, 'team_name'),
+      chatId: optionalString(obj, 'chat_id'),
+      threadId: optionalString(obj, 'thread_id'),
+      targetKind: optionalLiteral(obj, 'target_kind', QUERYABLE_TARGET_KINDS),
+    };
   },
-  async handle(ctx) {
+  async handle(ctx, query) {
     return {
       channel_id: ctx.session.channelId,
-      bindings: ctx.session.listBindings().map((row) => ({ ...row })),
+      bindings: ctx.session
+        .listBindings()
+        .filter((row) => matchesQuery(row, query))
+        .map((row) => ({ ...row })),
     };
   },
 };

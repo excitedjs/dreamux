@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "`list_bindings` now accepts four optional filters — `team_name`, `chat_id`, `thread_id`, and `target_kind` (`group` or `topic`) — matched exactly and combined with AND, so the Dispatcher can ask for one Team's routes or one chat's rows instead of reading the whole table. `target_kind` is the only way to ask for whole-chat bindings alone, and it offers no `p2p` because a Feishu direct chat cannot be bound to a Team; a value outside the two is refused naming both. Calling the tool with no arguments still returns every binding, matching nothing is an ordinary empty answer, and the result shape is unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

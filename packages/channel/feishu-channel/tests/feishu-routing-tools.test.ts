@@ -24,6 +24,7 @@ import {
   listBindingsDef,
   unbindChannelDef,
 } from '../src/tools/routing-tools.js';
+import type { FeishuBindingView } from '../src/routing/index.js';
 import type {
   FeishuBindTargetSelector,
   FeishuToolContext,
@@ -183,6 +184,142 @@ describe('unbind_channel — TeamLeader self-release', () => {
     expect(session.unbinds).toEqual([
       { target: { chatId: 'oc_anyones' }, requireOwner: undefined },
     ]);
+  });
+});
+
+describe('list_bindings — query parameters narrow one table read', () => {
+  function row(
+    input: Pick<
+      FeishuBindingView,
+      'target_kind' | 'chat_id' | 'thread_id' | 'team_name'
+    >,
+  ): FeishuBindingView {
+    return {
+      ...input,
+      display: null,
+      origin: 'manual',
+      space_name: null,
+      created_at: 1,
+      updated_at: 1,
+    };
+  }
+
+  const rows: readonly FeishuBindingView[] = [
+    row({ target_kind: 'group', chat_id: 'oc_space', thread_id: null, team_name: 'alpha' }),
+    row({ target_kind: 'topic', chat_id: 'oc_space', thread_id: 'omt_one', team_name: 'beta' }),
+    row({ target_kind: 'topic', chat_id: 'oc_space', thread_id: 'omt_two', team_name: 'alpha' }),
+    row({ target_kind: 'group', chat_id: 'oc_other', thread_id: null, team_name: 'beta' }),
+  ];
+
+  /** Each matched row as `chat_id#thread_id`, in table order. */
+  async function matched(args: unknown): Promise<string[]> {
+    const session: FeishuToolSession = { ...fakeSession(), listBindings: () => rows };
+    const result = await listBindingsDef.handle(
+      ctx(dispatcher, session),
+      listBindingsDef.parse(args),
+    );
+    const bindings = result['bindings'] as unknown as FeishuBindingView[];
+    return bindings.map((item) => `${item.chat_id}#${item.thread_id ?? ''}`);
+  }
+
+  it('returns the whole table when no filter is supplied', async () => {
+    expect(await matched({})).toEqual([
+      'oc_space#',
+      'oc_space#omt_one',
+      'oc_space#omt_two',
+      'oc_other#',
+    ]);
+    // The tool is still reachable with no arguments at all.
+    expect(await matched(undefined)).toHaveLength(4);
+  });
+
+  it('team_name returns that Team\'s routes, and an empty answer for a Team with none', async () => {
+    expect(await matched({ team_name: 'alpha' })).toEqual([
+      'oc_space#',
+      'oc_space#omt_two',
+    ]);
+    expect(await matched({ team_name: 'no-such-team' })).toEqual([]);
+  });
+
+  it('chat_id returns the chat\'s own row together with every topic under it', async () => {
+    expect(await matched({ chat_id: 'oc_space' })).toEqual([
+      'oc_space#',
+      'oc_space#omt_one',
+      'oc_space#omt_two',
+    ]);
+  });
+
+  it('thread_id pinpoints one topic', async () => {
+    expect(await matched({ thread_id: 'omt_one' })).toEqual(['oc_space#omt_one']);
+  });
+
+  it('target_kind is the only way to ask for whole-chat rows alone', async () => {
+    expect(await matched({ target_kind: 'group' })).toEqual([
+      'oc_space#',
+      'oc_other#',
+    ]);
+    expect(await matched({ target_kind: 'topic' })).toEqual([
+      'oc_space#omt_one',
+      'oc_space#omt_two',
+    ]);
+  });
+
+  it('several filters narrow together, and matching nothing is an answer', async () => {
+    expect(await matched({ chat_id: 'oc_space', team_name: 'alpha' })).toEqual([
+      'oc_space#',
+      'oc_space#omt_two',
+    ]);
+    expect(await matched({ chat_id: 'oc_other', team_name: 'alpha' })).toEqual([]);
+  });
+
+  it('rejects a target_kind no binding can be installed with, naming what is accepted', () => {
+    expect(() => listBindingsDef.parse({ target_kind: 'p2p' }))
+      .toThrow(/target_kind must be one of: group, topic/);
+  });
+
+  it('advertises the four filters as optional', () => {
+    const schema = listBindingsDef.inputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(Object.keys(schema.properties)).toEqual([
+      'team_name',
+      'chat_id',
+      'thread_id',
+      'target_kind',
+    ]);
+    expect(schema.required).toEqual([]);
+  });
+
+  it('narrows through the registered Dispatcher catalog, not only in the definition', async () => {
+    // The registry advertises `def.inputSchema` and resolves the same object to
+    // serve the call, so this is what proves the schema a Dispatcher reads is
+    // the one its arguments are parsed against.
+    const session: FeishuToolSession = { ...fakeSession(), listBindings: () => rows };
+
+    const result = await mcpFor(session).invoke({
+      name: 'list_bindings',
+      arguments: { team_name: 'alpha', target_kind: 'topic' },
+    }, { dispatcher_id: 'd1', channel_id: 'chan-1', caller: dispatcher });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        bindings: [expect.objectContaining({ chat_id: 'oc_space', thread_id: 'omt_two' })],
+      },
+    });
+  });
+
+  it('refuses a bad filter through the registered catalog without claiming success', async () => {
+    const result = await mcpFor(fakeSession()).invoke({
+      name: 'list_bindings',
+      arguments: { target_kind: 'p2p' },
+    }, { dispatcher_id: 'd1', channel_id: 'chan-1', caller: dispatcher });
+
+    expect(result).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('target_kind must be one of: group, topic'),
+    });
   });
 });
 
