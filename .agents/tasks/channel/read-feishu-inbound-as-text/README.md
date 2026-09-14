@@ -8,7 +8,7 @@
 - Final solution: [Implementation design](/.agents/tasks/channel/read-feishu-inbound-as-text/technical-design/final.md).
 - Solution review Issue: None. The operator ruled on each open design point in the working session and assigned the implementation directly; see Development authorization.
 - Verification: [Evidence](/.agents/tasks/channel/read-feishu-inbound-as-text/verification.md).
-- Pull request: [#423](https://github.com/excitedjs/dreamux/pull/423).
+- Pull request: [#424](https://github.com/excitedjs/dreamux/pull/424).
 - Related tasks: supersedes the inbound half of [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md) (its PR #414 and the parts-only rework #422 were closed in favour of this task); builds-on the outbound half of that task, which this pull request carries unchanged as its first commit.
 
 The submitted implementation replaces the ordered-parts inbound model with one

@@ -63,11 +63,13 @@ says it is a card the model can pull in full with lark-cli.
   `code_block` as a fenced block, `hr` as `---`, `at` as the mention, `img` /
   `file` / `media` as attachments at their position. `content_v2` is read when
   present. A node tag the flattening does not know is dropped and the body is
-  marked incomplete.
+  marked incomplete. The fence and the unknown-tag handling are the leader's
+  readings, listed under Assumptions.
 - Card: read from the event's own content, `user_dsl` when present. Every
   `content` / `text` string the card carries, in document order, one per line,
-  with mentions and message-image references resolved; every `img` / `image` /
-  `file` component as an attachment at its position. A template card has no
+  with mentions and message-image references resolved (button and control
+  labels included; a leader's reading, listed under Assumptions); every `img` /
+  `image` / `file` component as an attachment at its position. A template card has no
   readable body and is marked incomplete. Every card gets a `<refs>` row naming
   the message id and saying it is a rich card the model can pull with lark-cli.
   No message read is issued for a card.
@@ -138,6 +140,15 @@ says it is a card the model can pull in full with lark-cli.
     name is substituted too; nobody has reported such a message.
   - The inbound `<content>` body keeps the XML escaping the Channel applies
     today, with the `<at>` and `<attachment>` tags inserted after escaping.
+  - A post `code_block` renders as a fenced Markdown block in place of the
+    `<code><![CDATA[…]]></code>` element the parts model emitted. No ruling
+    named the shape; a fence is the plain-text form of a code block.
+  - A card's button and control labels are `content` / `text` strings, so they
+    appear as plain lines in document order. No ruling separated them from the
+    card's prose.
+  - A post node tag the flattening does not know is dropped and the body is
+    marked incomplete, instead of being rendered as its raw JSON. No ruling
+    covers unknown tags.
 - Unknowns the capture cannot settle (handled both ways, not asserted):
   - Whether Feishu rewrites a bot-authored `<at user_id="…">` inside a native
     `md` node to a placeholder before delivery. The inline reader accepts
