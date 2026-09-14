@@ -6,7 +6,8 @@ import { readInlineMarkdown } from './inline.js'
  * The keys a card displays its children under: the card body and header, the
  * header's title and subtitle, the containers, and the strings a control
  * shows as its label, placeholder, and option labels. `i18n_elements` is
- * handled apart because it is keyed by locale.
+ * not among them: the schema places it on the card root or body only, and
+ * it is read there once.
  */
 const DISPLAY_KEYS = new Set([
   'body', 'header', 'title', 'subtitle', 'elements', 'columns', 'fields',
@@ -22,9 +23,11 @@ const DISPLAY_KEYS = new Set([
  * every image or file component is a resource at its position. The walk
  * descends only through the keys a card displays its children under, so
  * layout, controls beyond the strings they show, callback payloads (`value`,
- * `behaviors`), and link targets are never reached: a card another bot
- * authored cannot put text in front of the model that the client does not
- * show. A template card carries no readable text at all.
+ * `behaviors`), and link targets are never reached, and `i18n_elements` is
+ * read once from the card root or body, the only places the schema puts it.
+ * A node the walk reaches contributes each `content` / `text` string it
+ * carries; no schema node carries both. A template card carries no readable
+ * text at all.
  */
 export function parseCardContent(
   outer: Record<string, unknown>,
@@ -53,14 +56,15 @@ export function parseCardContent(
     for (const [name, child] of Object.entries(node)) {
       if ((name === 'content' || name === 'text') && typeof child === 'string') {
         body.line(readInlineMarkdown(child, mentions, body))
-      } else if (name === 'i18n_elements') {
-        for (const locale of Object.values(asRecord(child) ?? {})) walk(locale)
       } else if (DISPLAY_KEYS.has(name)) {
         walk(child)
       }
     }
   }
   walk(card)
+  const localized = asRecord(asRecord(card.body)?.i18n_elements) ??
+    asRecord(card.i18n_elements)
+  for (const locale of Object.values(localized ?? {})) walk(locale)
   return body.build()
 }
 

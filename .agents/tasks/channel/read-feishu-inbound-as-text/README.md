@@ -98,6 +98,16 @@ chat, and the operator reported:
 
 so the rewrite was removed and the tag goes out as written.
 
+The second review of the pull request (2026-09-15) reported two crafted
+shapes, `i18n_elements` hung on a component and a wrapper carrying both
+`content` and a string `text`, and the operator ruled:
+
+> 就把第一个改掉吧
+
+read as the first of the two, the `i18n_elements` placement. It is read from
+the card root or body only; the second shape stays as it is and is listed as
+a known limit in the design.
+
 Item 5 ("你来做") is the development assignment. Item 3 is the delivery shape:
 close #414 and #422, open one new pull request from `next` that carries the
 #414 outbound commit first. Item 4 keeps the external capture evidence until

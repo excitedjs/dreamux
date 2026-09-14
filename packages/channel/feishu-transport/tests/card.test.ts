@@ -82,6 +82,20 @@ describe('card text', () => {
     expect(parsed.resources).toEqual([])
   })
 
+  test('i18n_elements is read from the card root or body only', () => {
+    // The schema places a locale map on the card or its body. One hung on a
+    // component is not displayed, so a card built to carry text there
+    // contributes only what the component shows.
+    expect(parseInbound(card({
+      body: { i18n_elements: { zh_cn: [{ tag: 'markdown', content: '正文' }] } },
+    })).text).toBe('正文')
+    expect(parseInbound(dslCard([{
+      tag: 'button',
+      text: { tag: 'plain_text', content: 'OK' },
+      i18n_elements: { zh_cn: [{ tag: 'markdown', content: 'INJECT' }] },
+    }])).text).toBe('OK')
+  })
+
   test('a select contributes its placeholder and option labels, not their values', () => {
     const parsed = parseInbound(dslCard([
       {

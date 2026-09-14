@@ -37,9 +37,9 @@ cache; the Channel never re-reads a raw body.
   otherwise the outer card; `type: 'template'` is an empty incomplete body;
   a document-order walk that descends only through the keys a card displays
   its children under (`body`, `header` and its `title`/`subtitle`,
-  `elements`, every locale of `i18n_elements`, `columns`, `fields`,
-  `actions`, `rows`, `cells`, `extra`, and a control's `text`,
-  `placeholder`, and `options`), turns every `img`/`image`/`file` component
+  `elements`, `columns`, `fields`, `actions`, `rows`, `cells`, `extra`, and
+  a control's `text`, `placeholder`, and `options`), turns every
+  `img`/`image`/`file` component
   it reaches into a resource and every `content`/`text` string leaf into one
   line read through the inline reader. A control's `value`/`behaviors`
   payload is never reached, so text whoever authored the card hid there
@@ -47,6 +47,9 @@ cache; the Channel never re-reads a raw body.
   generic walk that read it. A select's placeholder and option labels are
   display strings, read as plain lines like a button's label; the walker on
   `next` read them too, as one `[select: …; options: …]` line.
+  `i18n_elements` is read once from the card root or body, the two places
+  the schema puts it and the two the walker on `next` read; a locale map
+  hung on a component is not walked (the second review's first item).
 - `parse/content.ts` — the per-type switch and `narrowMetaFromEvent`.
 - `transport/message-read.ts` — `readMessage({ messageId })`; the
   `user_card_content` mode is gone because nothing reads a card.
@@ -121,6 +124,11 @@ Cases added for the capture: `@_user_1` before `9:00`; `@_user_1` and
 ## Known limits
 
 - A card with `i18n_elements` contributes every locale's text.
+- A node the walk reaches contributes both its `content` and a string `text`
+  sibling as two lines; `next` read one (`content ?? text`). No schema node
+  and none of the captured cards carries both. The second review raised it
+  beside the `i18n_elements` placement; the operator had only the placement
+  changed.
 - A header title carried only as a locale map (`title.i18n` with no
   `content`) is not read; the walker on `next` read one locale of it. The
   capture holds no such card, so nothing was added for it.

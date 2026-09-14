@@ -62,6 +62,18 @@ labels and nothing from their `value`s. A title carried only as a locale map
 is the one thing `next` read that this walk does not; the design lists it as
 a known limit.
 
+The second review (2026-09-15) reported two shapes a crafted card can use to
+surface text the client never renders, both reproduced against the built
+parser of f54c314f: `i18n_elements` hung on a button (`OK\nINJECT`) and a
+`text` wrapper carrying both `content` and a string `text`
+(`visible\nINJECT`). The three interactive messages in the capture are all
+schema 2.0 with `body`/`config`/`schema` at the root; none carries a string
+`text` prop, `i18n_elements`, `i18n`, or `content` beside `text`, so neither
+change would move a captured card. The operator had the first fixed:
+`i18n_elements` is read once from the card root or body, and `card.test.ts`
+asserts a button-level map contributes nothing while a body-level one is
+read. The second is recorded as a known limit in the design.
+
 ## Gates
 
 `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass on the
