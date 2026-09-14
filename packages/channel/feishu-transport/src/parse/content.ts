@@ -2,36 +2,26 @@
  * Parsing inbound Feishu message content.
  *
  * Feishu delivers `message.content` as a JSON-encoded string whose shape
- * depends on `message_type`. This module retains the legacy flat text view and
- * also exposes source-ordered text/code/resource parts. Attachment-capable
- * message types expose de-duplicated resource keys beside those positional
- * parts.
- *
- * Mentions are part of that source order: the message's `mentions` records are
- * resolved into their own parts here, at the one parsing boundary, whichever
- * form the sending client used to write them.
+ * depends on `message_type`. Every type flattens to one body: text in Feishu's
+ * own vocabulary — mention placeholders and resource keys left where they
+ * were — beside the list of resources those keys name. The channel layer
+ * resolves both against the message's `mentions` records and its own
+ * attachment downloads when it renders.
  */
 
 import type { Mention } from '../contract/types.js'
 import {
-  mergeInteractiveContentParts,
-  parseInteractiveContent,
-} from './card.js'
-import { textPartsWithMentions } from './mention.js'
-import {
-  projectLegacyText,
-  projectUniqueResources,
-  resourcePart,
-  type InboundContentPart,
-  type InboundResource,
-  type ParsedContent,
-} from './parts.js'
+  createBody,
+  type InboundResourceType,
+  type ParsedInbound,
+} from './body.js'
+import { parseCardContent } from './card.js'
 import { parsePostContent } from './post.js'
 export type {
-  InboundContentPart,
   InboundResource,
   InboundResourceType,
-} from './parts.js'
+  ParsedInbound,
+} from './body.js'
 
 /** The subset of an inbound Feishu message this module reads. */
 export interface InboundMessage {
@@ -41,198 +31,58 @@ export interface InboundMessage {
   mentions?: Mention[]
 }
 
-export interface ParsedInbound {
-  /** Human-readable text to forward to the engine. */
-  text: string
-  /** Untrusted visible content in Feishu source order. */
-  parts?: InboundContentPart[]
-  /** Structured message resources discovered in Feishu content. */
-  resources?: InboundResource[]
-  /** Optional flat/narrow metadata supplied by the host's event normalizer. */
-  meta?: Record<string, unknown>
-  /** True when the projection is an honest fallback or omitted visible data. */
-  incomplete?: boolean
-}
-
-export interface ChannelInbound {
-  /** Flattened markdown-ish text suitable for a narrow channel payload. */
-  text: string
-  /** Flat string-only metadata with protocol-safe underscore keys. */
-  meta: Record<string, string>
-}
-
 /**
- * Parse one inbound Feishu message into forwardable legacy text plus optional
- * ordered parts. Never throws — malformed content falls back to a best-effort
- * string so a weird message still reaches the engine.
+ * Parse one inbound Feishu message into its body. Never throws — content the
+ * platform did not encode as JSON becomes a marked, incomplete body so the
+ * message still reaches the engine.
  */
 export function parseInbound(message: InboundMessage): ParsedInbound {
   const type = message.message_type ?? 'unknown'
-
+  // The channel points at the message instead of expanding its children; the
+  // platform may deliver it with an empty body.
+  if (type === 'merge_forward') return text('')
   let parsed: unknown
   try {
     parsed = JSON.parse(message.content ?? '')
   } catch {
-    const text = type === 'text'
-      ? message.content ?? '(unparseable message)'
-      : `(unparseable ${safeMessageType(type)} message)`
-    return projectParsedContent({
-      parts: [{ kind: 'text', text }],
-      incomplete: true,
-    })
+    return text(`(unparseable ${type} message)`, true)
   }
-  const content = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>
+  const content = asRecord(parsed) ?? {}
 
   switch (type) {
-    case 'text': {
-      const text = typeof content.text === 'string' ? content.text : ''
-      return projectParsedContent({
-        parts: textPartsWithMentions(text, message.mentions),
-      })
-    }
+    case 'text':
+      return text(typeof content.text === 'string' ? content.text : '')
     case 'post':
-      return projectParsedContent(parsePostContent(content, message.mentions))
-    case 'image':
-    {
-      const key = nonEmptyString(content.image_key)
-      return projectParsedContent({
-        parts: [resourcePart('image', key)],
-        compatibilityText: '(image message)',
-        ...(key === undefined ? { incomplete: true } : {}),
-      })
-    }
-    case 'file': {
-      const key = nonEmptyString(content.file_key)
-      const name = nonEmptyString(content.file_name)
-      return projectParsedContent({
-        parts: [resourcePart('file', key, name)],
-        compatibilityText: '(file message)',
-        ...(key === undefined ? { incomplete: true } : {}),
-      })
-    }
+      return parsePostContent(content, message.mentions)
     case 'interactive':
-      return projectParsedContent(
-        parseInteractiveContent(content, message.mentions),
-      )
-    case 'audio': {
-      const key = nonEmptyString(content.file_key)
-      return projectParsedContent({
-        parts: [resourcePart('file', key, 'voice.opus')],
-        compatibilityText: key === undefined
-          ? '(voice message without a resource key)'
-          : `[voice message attachment: ${key}]`,
-        ...(key === undefined ? { incomplete: true } : {}),
-      })
-    }
+      return parseCardContent(content, message.mentions)
+    case 'image':
+      return attachment('image', content.image_key)
+    case 'file':
+      return attachment('file', content.file_key, nonEmptyString(content.file_name))
+    case 'audio':
+      return attachment('file', content.file_key, 'voice.opus')
     case 'media': {
+      const body = createBody()
       const fileKey = nonEmptyString(content.file_key)
       const imageKey = nonEmptyString(content.image_key)
-      return projectParsedContent({
-        parts: [
-          resourcePart('file', fileKey, 'video.mp4'),
-          resourcePart('image', imageKey, 'video-cover.jpg'),
-        ],
-        compatibilityText: [
-          fileKey === undefined
-            ? '[video attachment without a resource key]'
-            : `[video attachment: ${fileKey}]`,
-          imageKey === undefined
-            ? '[video cover without a resource key]'
-            : `[video cover: ${imageKey}]`,
-        ].join('\n'),
-        ...(fileKey === undefined || imageKey === undefined
-          ? { incomplete: true }
-          : {}),
-      })
+      if (fileKey !== undefined) body.line(body.attach('file', fileKey, 'video.mp4'))
+      if (imageKey !== undefined) {
+        body.line(body.attach('image', imageKey, 'video-cover.jpg'))
+      }
+      return body.build(fileKey === undefined || imageKey === undefined)
     }
     case 'sticker':
-      return projectParsedContent({
-        parts: [{
-          kind: 'text',
-          text: '(sticker message; sticker resources are not downloadable)',
-        }],
-      })
-    case 'share_chat': {
-      const chatId = nonEmptyString(content.chat_id)
-      const text = chatId === undefined
-        ? '(shared chat)'
-        : `(shared chat: ${chatId})`
-      return projectParsedContent({
-        parts: [{
-          kind: 'text',
-          text,
-        }],
-        ...(chatId === undefined ? { incomplete: true } : {}),
-      })
-    }
-    case 'share_user': {
-      const userId = nonEmptyString(content.user_id)
-      const text = userId === undefined
-        ? '(shared user)'
-        : `(shared user: ${userId})`
-      return projectParsedContent({
-        parts: [{
-          kind: 'text',
-          text,
-        }],
-        ...(userId === undefined ? { incomplete: true } : {}),
-      })
-    }
-    case 'merge_forward':
-      return projectParsedContent({
-        parts: [],
-        compatibilityText: '(merged-forward message not expanded)',
-        incomplete: true,
-      })
+      return text('(sticker message; sticker resources are not downloadable)')
+    case 'share_chat':
+      return text(describeShared('shared chat', content.chat_id))
+    case 'share_user':
+      return text(describeShared('shared user', content.user_id))
+    // The channel re-reads the message for its authoritative type.
     case 'nonsupport':
-      return projectParsedContent({
-        parts: [{
-          kind: 'text',
-          text: '(unsupported message content not resolved)',
-        }],
-        incomplete: true,
-      })
-    default: {
-      const text = `(${safeMessageType(type)} message)`
-      return projectParsedContent({
-        parts: [{ kind: 'text', text }],
-        incomplete: true,
-      })
-    }
-  }
-}
-
-/**
- * Merge the two real Feishu card read projections at the transport boundary.
- * `parts` stay authoritative; flat compatibility views are projected once.
- */
-export function mergeInteractiveInbound(
-  primary: ParsedInbound,
-  supplemental?: ParsedInbound,
-): ParsedInbound {
-  if (supplemental === undefined || supplemental.parts === undefined) {
-    return primary
-  }
-  const primaryParts = primary.parts === undefined
-    ? primary.text === ''
-      ? []
-      : [{ kind: 'text' as const, text: primary.text }]
-    : primary.parts
-  return projectParsedContent({
-    parts: mergeInteractiveContentParts(primaryParts, supplemental.parts),
-    ...(primary.incomplete === true || supplemental.incomplete === true
-      ? { incomplete: true }
-      : {}),
-  })
-}
-
-function projectParsedContent(content: ParsedContent): ParsedInbound {
-  const resources = projectUniqueResources(content.parts)
-  return {
-    text: projectLegacyText(content),
-    parts: content.parts,
-    ...(resources.length > 0 ? { resources } : {}),
-    ...(content.incomplete === true ? { incomplete: true } : {}),
+      return text('(unsupported message content not resolved)', true)
+    default:
+      return text(`(${type} message)`, true)
   }
 }
 
@@ -244,9 +94,8 @@ function projectParsedContent(content: ParsedContent): ParsedInbound {
  * this Feishu-specific field mapping here keeps the host adapter free of
  * platform field names.
  */
-export function narrowMetaFromEvent(rawEvent: unknown): Record<string, unknown> {
-  if (!rawEvent || typeof rawEvent !== 'object' || Array.isArray(rawEvent)) return {}
-  const root = rawEvent as Record<string, unknown>
+export function narrowMetaFromEvent(rawEvent: unknown): Record<string, string> {
+  const root = asRecord(rawEvent) ?? {}
   const event = asRecord(root.event) ?? root
   const message = asRecord(event.message) ?? {}
   const sender = asRecord(event.sender) ?? {}
@@ -269,36 +118,31 @@ export function narrowMetaFromEvent(rawEvent: unknown): Record<string, unknown> 
   })
 }
 
-/**
- * Convert parsed inbound content into the channel protocol's narrow payload.
- *
- * `parseInbound` owns Feishu content flattening; the host may add raw event
- * metadata under `parsed.meta` before calling this. This function is deliberately
- * engine-agnostic: it preserves only text plus a flat string metadata bag. Keys
- * with hyphens or other protocol-unsafe characters are dropped, and nested /
- * non-string values are not stringified blindly.
- */
-export function toChannelInbound(parsed: ParsedInbound): ChannelInbound {
-  const text = parsed.text === '' ? '(empty message)' : parsed.text
-  return { text, meta: sanitizeChannelMeta(parsed.meta) }
+function text(value: string, incomplete?: boolean): ParsedInbound {
+  const body = createBody()
+  body.line(value)
+  return body.build(incomplete)
 }
 
-const CHANNEL_META_KEY_RE = /^[A-Za-z0-9_]+$/
+function attachment(
+  type: InboundResourceType,
+  keyValue: unknown,
+  name?: string,
+): ParsedInbound {
+  const key = nonEmptyString(keyValue)
+  if (key === undefined) return text('', true)
+  const body = createBody()
+  body.line(body.attach(type, key, name))
+  return body.build()
+}
 
-function sanitizeChannelMeta(meta: Record<string, unknown> | undefined): Record<string, string> {
-  const out: Record<string, string> = {}
-  if (!meta) return out
-  for (const [key, value] of Object.entries(meta)) {
-    if (!CHANNEL_META_KEY_RE.test(key)) continue
-    if (typeof value === 'string') {
-      out[key] = value
-    }
-  }
-  return out
+function describeShared(what: string, idValue: unknown): string {
+  const id = nonEmptyString(idValue)
+  return id === undefined ? `(${what})` : `(${what}: ${id})`
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
 }
@@ -311,15 +155,12 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-function omitEmptyStrings(input: Record<string, string | undefined>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+function omitEmptyStrings(
+  input: Record<string, string | undefined>,
+): Record<string, string> {
+  const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(input)) {
     if (value !== undefined && value !== '') out[key] = value
   }
   return out
-}
-
-function safeMessageType(value: string): string {
-  const safe = value.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 64)
-  return safe === '' ? 'unknown' : safe
 }

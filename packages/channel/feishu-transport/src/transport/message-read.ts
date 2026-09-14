@@ -1,10 +1,7 @@
 import type { Mention } from '../contract/types.js'
 
-export type FeishuMessageReadMode = 'default' | 'user_card_content'
-
 export interface FeishuMessageReadRequest {
   messageId: string
-  cardContent?: FeishuMessageReadMode
 }
 
 /** Projection of one `im.v1.message.get` item: its content, and where it is. */

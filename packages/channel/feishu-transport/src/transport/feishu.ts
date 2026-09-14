@@ -38,7 +38,6 @@ export {
 } from './identity.js'
 export type {
   FeishuMessageReadItem,
-  FeishuMessageReadMode,
   FeishuMessageReadRequest,
   FeishuMessageReadResponse,
   FeishuMessageReader,
@@ -558,11 +557,6 @@ export function createFeishuTransport(
     ): Promise<FeishuMessageReadResponse> {
       const res = await client.im.v1.message.get({
         path: { message_id: request.messageId },
-        params: {
-          ...(request.cardContent === 'user_card_content'
-            ? { card_msg_content_type: 'user_card_content' }
-            : {}),
-        },
       })
       return {
         items: (res.data?.items ?? []).map(normalizeMessageReadItem),

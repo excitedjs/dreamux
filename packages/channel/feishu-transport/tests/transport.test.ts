@@ -1021,20 +1021,16 @@ describe('createFeishuTransport — message resources', () => {
 })
 
 describe('createFeishuTransport — message reads', () => {
-  test('omits card_msg_content_type for the default representation', async () => {
+  test('reads a message by id and nothing else', async () => {
     const stub = stubClient()
     const transport = buildTransport(stub)
 
-    const result = await transport.readMessage({
-      messageId: 'om_read',
-      cardContent: 'default',
-    })
+    const result = await transport.readMessage({ messageId: 'om_read' })
 
     // No `user_id_type`: supplying one makes the platform answer a bot mention
     // with an application id instead of the open id a reply can address.
     expect(stub.messageGet).toHaveBeenCalledWith({
       path: { message_id: 'om_read' },
-      params: {},
     })
     expect(result).toEqual({
       items: [{
@@ -1053,21 +1049,6 @@ describe('createFeishuTransport — message reads', () => {
         chatId: 'oc_read',
         threadId: 'omt_topic',
       }],
-    })
-  })
-
-  test('requests the structured card representation explicitly', async () => {
-    const stub = stubClient()
-    const transport = buildTransport(stub)
-
-    await transport.readMessage({
-      messageId: 'om_read',
-      cardContent: 'user_card_content',
-    })
-
-    expect(stub.messageGet).toHaveBeenCalledWith({
-      path: { message_id: 'om_read' },
-      params: { card_msg_content_type: 'user_card_content' },
     })
   })
 

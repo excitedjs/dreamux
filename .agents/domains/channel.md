@@ -495,57 +495,65 @@ proceed; unknown chat/sender shapes fail closed before access mutation, passive
 bot observation, `/introduce`, pairing, or delivery.
 
 Feishu content parsing and SDK ownership stay split across the two channel
-packages. `@excitedjs/feishu-transport` parses event content once into ordered,
-untrusted `text` / `code` / `mention` / `resource` parts. That sequence is the internal source
-of truth; the transport projects the legacy flat text and de-duplicated resource
-views only at its public compatibility boundary. It also exposes narrow wrappers
-around `im.v1.message.get`, message-resource download, and contact-backed
-sender-name lookup. `@excitedjs/feishu-channel` decides when those calls are
-allowed, validates reread roots against the already accepted event,
-resolves/downloads resources, and owns the model-facing XML.
+packages. `@excitedjs/feishu-transport` flattens each event's content once into
+one body: text written in Feishu's own vocabulary — a mention stands as the
+`@_user_N` placeholder its `mentions` record names, an image or file stands as
+its resource key — beside the list of resources those keys name and an
+`incomplete` flag for a body that omits something visible. It also exposes
+narrow wrappers around `im.v1.message.get`, message-resource download, and
+contact-backed sender-name lookup. `@excitedjs/feishu-channel` decides when
+those calls are allowed, validates reread roots against the already accepted
+event, resolves/downloads resources, and owns the model-facing XML.
 
-The access gate runs before any message read or resource fetch. Accepted
-interactive cards use the structured and default read representations with a
-deterministic visible-text union. `nonsupport` events may adopt a matching root's
-authoritative type/content. Merged-forward messages deliberately perform no
+The access gate runs before any message read or resource fetch. A card is read
+from the event alone: `user_dsl` when present, the outer card otherwise; every
+`content`/`text` string it carries is one line, in document order, and every
+image or file component is a resource at its position. Layout, controls,
+callback values, and link targets are not reconstructed, and no message read
+is issued for a card. `nonsupport` events adopt a matching root's authoritative
+type/content through one read. Merged-forward messages deliberately perform no
 current-message read or child-resource fetch. The Channel emits an empty
-`<content />` plus `<refs><merged-forward message_id="..."/></refs>`. Actionable
-reply/quote ancestry is likewise a `<reply-to>` reference with only the parent id
-and a best-effort proven type; parent content is never injected. Channel content
-does not name or prescribe a lookup tool or command.
+`<content />` plus `<refs><merged-forward message_id="..."/></refs>`; a card
+gets `<refs><card message_id="..." note="..."/></refs>` whose note says the
+message is a rich card the model can pull in full with lark-cli, the one place
+Channel content names a lookup tool (operator ruling, 2026-09-14). Actionable
+reply/quote ancestry is likewise a `<reply-to>` reference with only the parent
+id and a best-effort proven type; parent content is never injected.
 
-Rich posts prefer nested `content_v2` over legacy `content`, never concatenate
-both, and need no new ordinary-post read. Transport resolves text placeholders,
-structured `at` nodes, and native Markdown tags against each read's mention
-records. Post Markdown uses `user_id`; card Markdown uses `id`. Plain fields,
-escaped examples, and inline/fenced code keep their literal meaning. Native
-Markdown fields are interpreted before flattening; assembled legacy post text
-still promotes cross-row fences into code parts. The Channel serializes real
-mentions as `<at user_id="...">`, sharing the outgoing spelling without an
-outgoing converter or a second raw-body parser.
+Rich posts prefer nested `content_v2` over legacy `content` and never
+concatenate both. A structured `at` node stands as the placeholder it carries;
+an `<at>` tag inside a Markdown string is rewritten to the record key it names
+(`mention_key`, or `user_id`/`id` equal to a record's key or identity) and
+stays literal when no record accounts for it. A Markdown image whose target is
+a message image key is that image; a web image stays literal. Links are
+Markdown links, rules are `---`, code blocks are fenced. A post node the
+flattening does not know is dropped and the body marked incomplete.
+
+The Channel escapes the text once, then substitutes the tokens the message's
+own records name in one longest-first pass: a mention record with a user
+identity becomes `<at user_id="...">Name</at>`, byte-identical to the syntax
+the `reply` tool takes; a record without one (an application) becomes `@Name`;
+a resource key becomes its `<attachment>`. Nothing else in the text is
+interpreted, so a placeholder or tag the records do not name reads literally,
+and `@_user_1` directly before `9:00` still resolves. Identity comes only from
+the records; a literal id inside a card's `<at>` is never trusted.
 
 Message GET omits `user_id_type` so bot mentions retain the platform's default
 open-ID projection. An explicit `id_type: app_id` record keeps its key/name but
-populates no supported user-ID slot. No identifier lookup or prefix-based
-identity classifier is added. Raw-event mentions still own admission; parsing
-occurs before that gate and remains part of receipt regression coverage.
+populates no supported user-ID slot. Raw-event mentions still own admission;
+parsing occurs before that gate and remains part of receipt regression coverage.
 
-Rich posts preserve Markdown/code, links, mentions, rules, and inline resource
-positions. The Channel wraps visible content in `<content>`, renders each
-resource occurrence once as an inline `<attachment>` at its original position,
-and de-duplicates only the download/cache result and neutral runtime attachment.
-Downloaded occurrences render exactly `<attachment path="..." />`. Non-downloaded
-occurrences render exactly `<attachment status="not_downloaded" key="..." />`; a
-missing Feishu key is an empty escaped value. The exported structured attachment
-retains type/name/key/path/status/reason details, diagnostics retain the detailed
-failure reason, and the neutral runtime attachment retains applicable
-`kind`/`name`/`localPath` facts. Those facts are not repeated in the
-model-visible XML. Code is Channel-owned `<code><![CDATA[...]]></code>` with safe
-`]]>` splitting, so source operators remain literal without opening the
-surrounding XML. Cards expose only visible labels/text/options and exclude
-callback or hidden values. Audio and media map onto the existing file/image
-resource ABI; stickers, shared entities, and future types receive explicit
-bounded fallbacks instead of raw JSON.
+Every image or file a message carries — a message of its own, a post node, a
+card component, a Markdown image reference — is discovered by key, listed once,
+downloaded, cached, and budgeted the same way, and rendered where it stood.
+Downloaded occurrences render exactly `<attachment path="..." />`; non-downloaded
+occurrences render exactly `<attachment status="not_downloaded" key="..." />`.
+The exported structured attachment retains type/name/key/path/status/reason
+details, diagnostics retain the detailed failure reason, and the neutral runtime
+attachment retains applicable `kind`/`name`/`localPath` facts. Those facts are
+not repeated in the model-visible XML. Audio and media map onto the existing
+file/image resource ABI; stickers, shared entities, and unknown types receive
+explicit bounded markers instead of raw JSON.
 
 Every accepted inbound owns a session-fenced enrichment context. Session close
 revokes it before closing the transport and drains handlers that already started.
@@ -554,11 +562,12 @@ abort, settle-once, and optional late-value-cleanup semantics. The lifecycle
 context bounds the whole enrichment to 60 seconds; the attachment resolver
 separately owns the 32-unique-resource, 25-MiB-per-resource, and
 100-MiB-aggregate policy while retaining one sequential download, each resource
-bounded to 20 seconds. The complete pre-reminder structured body is capped at
-160,000 UTF-16 code units. The typed truncator charges XML wrappers, escaped
-text, CDATA splits, refs, and optional trusted-bot context and always closes
-Channel-owned structures. Untrusted text is escaped exactly once at the final
-Channel boundary. After current-message enrichment, one optional two-second
+bounded to 20 seconds. The complete pre-reminder body is capped at 160,000
+UTF-16 code units: the substituted text is cut at the budget left after the
+wrappers, refs, and optional trusted-bot context, backed off before an
+unfinished tag or entity, and followed by the truncation marker; the group-bot
+block is dropped first when even the marker would not fit beside it. Untrusted
+text is escaped exactly once at the final Channel boundary. After current-message enrichment, one optional two-second
 parent read may add the bounded reply type; the returned parent body and children
 are discarded.
 

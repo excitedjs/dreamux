@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Inbound parsing now returns one text body per message instead of ordered parts. The body is written in Feishu's own vocabulary: a mention stands as the `@_user_N` placeholder its `mentions` record names, whichever form the sender used (a text placeholder, a structured `at` node, or an `<at>` tag inside native post or card Markdown), and an image or file stands as its resource key, with the resources listed beside the text. Cards are read from the event alone as their `content`/`text` strings and their image and file components; layout, controls, and link targets are no longer reconstructed. `readMessage` takes only a message id; the `user_card_content` read mode is gone. Removed `mergeInteractiveInbound`, `toChannelInbound`, `ChannelInbound`, `InboundContentPart`, and `FeishuMessageReadMode`.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

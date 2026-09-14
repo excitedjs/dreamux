@@ -98,7 +98,6 @@ export {
 export {
   formatFeishuMessageForRuntime,
   formatFeishuCreateTime,
-  FEISHU_SKILL_FALLBACK_NOTE,
   type FormatFeishuMessageOptions,
   type FormatFeishuMessageResult,
   type FormattedFeishuAttachment,

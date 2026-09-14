@@ -50,7 +50,6 @@ const EXPECTED_EXPORTS = [
   'targetKey',
   'toWireChatBot',
   'topicTarget',
-  'FEISHU_SKILL_FALLBACK_NOTE',
 ].sort();
 
 /**

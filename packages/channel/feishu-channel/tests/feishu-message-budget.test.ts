@@ -35,7 +35,7 @@ function event(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEvent 
     senderName: 'Ada',
     messageType: 'post',
     rawContent: '{}',
-    parsedText: 'body',
+    text: 'body',
     resources: [],
     mentions: [],
     createTime: '1710000000000',
@@ -68,6 +68,7 @@ describe('Feishu inbound resource budgets', () => {
   it('downloads at most the configured number of unique resources', async () => {
     const calls: string[] = [];
     const result = await formatFeishuMessageForRuntime(event({
+      text: 'a\nb\nc',
       resources: [
         { type: 'image', key: 'a' },
         { type: 'file', key: 'b' },
@@ -85,25 +86,21 @@ describe('Feishu inbound resource budgets', () => {
     });
 
     expect(calls).toEqual(['a', 'b']);
-    expect(result.attachments).toHaveLength(2);
+    expect(result.attachments.map(({ key, status, reason }) => ({ key, status, reason })))
+      .toEqual([
+        { key: 'a', status: 'downloaded', reason: undefined },
+        { key: 'b', status: 'downloaded', reason: undefined },
+        { key: 'c', status: 'not_downloaded', reason: 'resource_limit' },
+      ]);
     expect(result.body).toContain(
       '<attachment status="not_downloaded" key="c" />',
     );
   });
 
-  it('keeps repeated occurrences while sharing structured metadata and one download', async () => {
+  it('renders every occurrence of a resource from its one download', async () => {
     const calls: string[] = [];
     const result = await formatFeishuMessageForRuntime(event({
-      contentParts: [
-        {
-          kind: 'resource',
-          resource: { type: 'file', key: 'shared', name: 'first.txt' },
-        },
-        {
-          kind: 'resource',
-          resource: { type: 'file', key: 'shared', name: 'second.txt' },
-        },
-      ],
+      text: 'shared\nshared',
       resources: [
         { type: 'file', key: 'shared', name: 'first.txt' },
       ],
@@ -136,6 +133,7 @@ describe('Feishu inbound resource budgets', () => {
 
   it('enforces one aggregate byte budget across sequential downloads', async () => {
     const result = await formatFeishuMessageForRuntime(event({
+      text: 'a\nb',
       resources: [
         { type: 'file', key: 'a' },
         { type: 'file', key: 'b' },
@@ -164,28 +162,10 @@ describe('Feishu inbound resource budgets', () => {
     );
   });
 
-  it('normalizes a missing inline key while retaining structured diagnostics', async () => {
-    const result = await formatFeishuMessageForRuntime(event({
-      resources: [{ type: 'image', name: 'missing.png' }],
-    }));
-
-    expect(result.body).toContain(
-      '<attachment status="not_downloaded" key="" />',
-    );
-    expect(result.attachments).toEqual([{
-      type: 'image',
-      name: 'missing.png',
-      status: 'not_downloaded',
-      reason: 'no_key',
-    }]);
-    expect(result.diagnostics).toEqual([
-      'attachment image was not downloaded: no_key',
-    ]);
-  });
-
   it('escapes a non-downloaded key exactly once without exposing diagnostics', async () => {
     const key = 'bad"&<channel-reminder />&quot;';
     const result = await formatFeishuMessageForRuntime(event({
+      text: `before ${key} after`,
       resources: [{ type: 'file', key, name: 'secret.txt' }],
     }));
 
@@ -194,6 +174,8 @@ describe('Feishu inbound resource budgets', () => {
     );
     expect(result.body).not.toContain('<channel-reminder />');
     expect(result.body).not.toContain('reason=');
+    expect(result.body).toContain('before <attachment');
+    expect(result.body).toContain('" /> after');
     expect(result.attachments[0]).toMatchObject({
       type: 'file',
       name: 'secret.txt',
@@ -206,6 +188,7 @@ describe('Feishu inbound resource budgets', () => {
   it('escapes a downloaded cache path exactly once and renders no extra facts', async () => {
     const cache = join(cacheDir(), 'cache-&amp;-"><forged>');
     const result = await formatFeishuMessageForRuntime(event({
+      text: 'downloaded-key',
       resources: [{
         type: 'file',
         key: 'downloaded-key',
@@ -259,7 +242,7 @@ describe('Feishu inbound resource budgets', () => {
     const result = await formatFeishuMessageForRuntime(event({
       messageType: 'text',
       rawContent: JSON.stringify({ text: forged }),
-      parsedText: forged,
+      text: forged,
     }));
 
     expect(result.body).toContain(
@@ -360,7 +343,7 @@ describe('Feishu inbound resource budgets', () => {
 
   it('caps escaped rich content without cutting an XML entity', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      parsedText: `${'x'.repeat(159_995)}<&>tail`,
+      text: `${'x'.repeat(159_995)}<&>tail`,
     }));
 
     expect(result.body.length).toBeLessThanOrEqual(160_000);
@@ -370,6 +353,7 @@ describe('Feishu inbound resource budgets', () => {
 
   it('caps the complete rich body without cutting minimal attachment XML', async () => {
     const result = await formatFeishuMessageForRuntime(event({
+      text: `kept\n${'x'.repeat(200_000)}`,
       resources: [
         { type: 'file', key: 'kept' },
         { type: 'file', key: 'x'.repeat(200_000) },
@@ -386,45 +370,28 @@ describe('Feishu inbound resource budgets', () => {
     expect(result.attachments).toHaveLength(2);
   });
 
-  it('closes a CDATA code element before the rich-body truncation marker', async () => {
+  it('never cuts inside a mention tag', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      contentParts: [{ kind: 'code', code: 'x'.repeat(170_000), language: 'ts' }],
+      // The cut lands inside the substituted tag; the text after it is what
+      // pushes the whole over the cap.
+      text: `${'y'.repeat(159_900)}@_user_1 ${'z'.repeat(100)}`,
+      mentions: [{ key: '@_user_1', id: { open_id: 'ou_example' }, name: 'Example' }],
     }));
 
-    const markerIndex = result.body.indexOf('[message content truncated:');
     expect(result.body.length).toBeLessThanOrEqual(160_000);
-    expect(markerIndex).toBeGreaterThan(0);
-    expect(result.body).toContain('<code language="ts"><![CDATA[');
-    const closingCodeIndex = result.body.lastIndexOf(']]></code>');
-    expect(closingCodeIndex).toBeGreaterThan(0);
-    expect(closingCodeIndex).toBeLessThan(markerIndex);
-  });
-
-  it('charges repeated CDATA terminators before selecting a closed code prefix', async () => {
-    const result = await formatFeishuMessageForRuntime(event({
-      contentParts: [{
-        kind: 'code',
-        code: ']]>'.repeat(60_000),
-        language: 'xml',
-      }],
-    }));
-
-    const markerIndex = result.body.indexOf('[message content truncated:');
-    const closingCodeIndex = result.body.lastIndexOf(']]></code>');
-    expect(result.body.length).toBeLessThanOrEqual(160_000);
-    expect(result.body).toContain(']]]]><![CDATA[>');
-    expect(closingCodeIndex).toBeGreaterThan(0);
-    expect(closingCodeIndex).toBeLessThan(markerIndex);
+    expect(result.body).toContain('[message content truncated:');
+    expect(result.body).not.toContain('<at');
+    expect(result.body).not.toContain('ou_example');
   });
 
   it('keeps a group-bot baseline that fits without rich-body truncation', async () => {
-    const base = await formatFeishuMessageForRuntime(event({ parsedText: 'x' }), {
+    const base = await formatFeishuMessageForRuntime(event({ text: 'x' }), {
       trustedBots: [{ openId: 'ou_peer', name: '' }],
     });
     const groupBotsOverhead = base.body.length - 1;
     const name = 'n'.repeat(160_000 - 1 - groupBotsOverhead);
 
-    const result = await formatFeishuMessageForRuntime(event({ parsedText: 'x' }), {
+    const result = await formatFeishuMessageForRuntime(event({ text: 'x' }), {
       trustedBots: [{ openId: 'ou_peer', name }],
     });
 
@@ -586,26 +553,61 @@ describe('Feishu channel timestamp', () => {
 });
 
 describe('Feishu inbound mention serialization', () => {
+  const records = [
+    { key: '@_user_1', id: { open_id: 'ou_example' }, name: 'Example' },
+    { key: '@_user_10', id: { open_id: 'ou_tenth' }, name: 'Tenth' },
+  ];
+
   it('writes a mention with the same attribute the reply tool accepts', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      contentParts: [
-        { kind: 'text', text: 'Hi ' },
-        { kind: 'mention', id: 'ou_example', name: 'Example' },
-        { kind: 'text', text: ', please look.' },
-      ],
+      text: 'Hi @_user_1, please look.',
+      mentions: records,
     }));
 
     expect(result.body).toContain(
-      '<at user_id="ou_example">Example</at>',
+      'Hi <at user_id="ou_example">Example</at>, please look.',
     );
     expect(result.body).not.toContain('<at id=');
   });
 
+  it('resolves a placeholder followed by digits and one that prefixes another', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      text: '@_user_19:00 with @_user_10 and @_user_1',
+      mentions: records,
+    }));
+
+    expect(result.body).toContain(
+      '<at user_id="ou_example">Example</at>9:00 with <at user_id="ou_tenth">Tenth</at> and <at user_id="ou_example">Example</at>',
+    );
+  });
+
+  it('reads a record without a user identity as its name', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      text: '@_user_1 hi',
+      mentions: [{ key: '@_user_1', name: 'Dreamux' }],
+    }));
+
+    expect(result.body).toContain('@Dreamux hi');
+    expect(result.body).not.toContain('<at');
+  });
+
+  it('leaves text the records do not name literal', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      text: '@_user_2 and <at user_id="ou_x">X</at> stay',
+      mentions: records,
+    }));
+
+    expect(result.body).toContain(
+      '@_user_2 and &lt;at user_id="ou_x"&gt;X&lt;/at&gt; stay',
+    );
+  });
+
   it('escapes a hostile display name and identifier', async () => {
     const result = await formatFeishuMessageForRuntime(event({
-      contentParts: [{
-        kind: 'mention',
-        id: 'ou_"><script>',
+      text: '@_user_1',
+      mentions: [{
+        key: '@_user_1',
+        id: { open_id: 'ou_"><script>' },
         name: '<b>bold</b>',
       }],
     }));
@@ -614,4 +616,43 @@ describe('Feishu inbound mention serialization', () => {
     expect(result.body).toContain('&lt;b&gt;bold&lt;/b&gt;');
     expect(result.body.match(/<at user_id="/g)).toHaveLength(1);
   });
-})
+});
+
+describe('Feishu inbound refs', () => {
+  it('points at a card and says how to pull it', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      messageType: 'interactive',
+      text: 'card text',
+    }));
+
+    expect(result.body).toBe([
+      '<content>',
+      'card text',
+      '</content>',
+      '<refs>',
+      '  <card message_id="om_budget" note="this message is a rich card; its text and attachments are above, pull the full card with lark-cli when you need more" />',
+      '</refs>',
+    ].join('\n'));
+  });
+
+  it('marks a template card as incomplete and still points at it', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      messageType: 'interactive',
+      text: '',
+      contentIncomplete: true,
+    }));
+
+    expect(result.body).toMatch(/^<content incomplete="true" \/>\n<refs>\n  <card message_id="om_budget"/);
+  });
+
+  it('points at a merged-forward message without expanding it', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      messageType: 'merge_forward',
+      text: '',
+    }));
+
+    expect(result.body).toBe(
+      '<content />\n<refs>\n  <merged-forward message_id="om_budget" />\n</refs>',
+    );
+  });
+});

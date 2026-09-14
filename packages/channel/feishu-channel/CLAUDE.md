@@ -72,8 +72,8 @@ depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`, and
 - Do not write private Feishu identifiers, internal domains, operator paths, or
   real resource keys into committed fixtures or docs.
 - Do not make download failure look like success. If no local readable file
-  exists, render `status="not_downloaded"` with the escaped key (empty when
-  missing); retain the short reason in structured diagnostics, not inline XML.
+  exists, render `status="not_downloaded"` with the escaped key; retain the
+  short reason in structured diagnostics, not inline XML.
 
 ## Owner-Only Pairing Approval Card
 

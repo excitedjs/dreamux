@@ -10,7 +10,9 @@
 - Pull request: [#414](https://github.com/excitedjs/dreamux/pull/414).
 - Verification: [Probes, pre-review corrections, and review dispositions](/.agents/tasks/channel/simplify-feishu-replies/verification.md).
 - Inbound investigation: [Source and platform evidence](/.agents/tasks/channel/simplify-feishu-replies/inbound-analysis.md).
-- Related tasks: None.
+- Related tasks: the inbound half of this task is superseded by
+  [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md),
+  whose pull request carries this task's outbound commit unchanged.
 
 The submitted implementation uses native `post + md`, removes the separate mention
 parameters and unused Markdown-to-card APIs, and retains explicit cards and COT.

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Update inbound event test fixtures and the transport export inventory for the one-body inbound contract; no runtime change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

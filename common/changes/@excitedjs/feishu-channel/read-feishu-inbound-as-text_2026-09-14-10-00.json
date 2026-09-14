@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Inbound messages reach the model as one `<content>` body. A mention is written `<at user_id=\"...\">Name</at>`, the same syntax the `reply` tool takes, for every message type and only where the platform's mention records name one; a record without a user identity reads as `@Name`. A card is read from the event alone, contributes its text and its images and files, and gets a `<refs><card message_id=\"...\" note=\"...\" /></refs>` row saying it is a rich card the model can pull in full with lark-cli; the two card reads and their merge are gone. Images and files anywhere in a message are downloaded, cached, and budgeted as before and rendered as `<attachment>` where they stood. Code blocks are fenced Markdown instead of `<code><![CDATA[...]]></code>`. `FeishuInboundEvent` carries `text` and `resources` instead of `parsedText` and `contentParts`; `FEISHU_SKILL_FALLBACK_NOTE` is removed.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

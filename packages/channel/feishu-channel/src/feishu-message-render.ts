@@ -1,7 +1,4 @@
-import type {
-  InboundContentPart,
-  InboundResource,
-} from '@excitedjs/feishu-transport';
+import type { Mention } from '@excitedjs/feishu-transport';
 
 import type { FeishuInboundEvent } from './bot.js';
 import type { PeerBot } from './chat-bots-store.js';
@@ -14,24 +11,32 @@ import {
 const MAX_SERIALIZED_BODY_CHARS = 160_000;
 const BODY_TRUNCATION_MARKER =
   '\n[message content truncated: 160000-character limit reached]';
+const CARD_NOTE =
+  'this message is a rich card; its text and attachments are above, pull the full card with lark-cli when you need more';
 
 export interface RenderFeishuBodyResult {
   body: string;
   groupBotsRendered: boolean;
 }
 
-export function renderFeishuStructuredBody(
+/**
+ * Write the model-facing body. The text is escaped once, then the tokens the
+ * message's own records name are substituted in place: a mention placeholder
+ * becomes the same `<at user_id="…">` the reply tool takes, a resource key
+ * becomes its `<attachment>`. Nothing else in the text is interpreted.
+ */
+export function renderFeishuBody(
   event: FeishuInboundEvent,
   trustedBots: PeerBot[],
-  resolveAttachment: (resource: InboundResource) => FormattedFeishuAttachment,
+  attachments: FormattedFeishuAttachment[],
 ): RenderFeishuBodyResult {
-  const parts = contentPartsForEvent(event);
+  const content = substituteTokens(
+    escapeXmlText(event.text),
+    tokenTable(event.mentions, attachments),
+  );
   const refs = renderRefs(event);
   let groupBots = renderGroupBots(trustedBots);
   let groupBotsRendered = groupBots !== '';
-  const renderPart = (part: InboundContentPart): string =>
-    renderContentPart(part, resolveAttachment);
-  const fullContent = parts.map(renderPart).join('');
   const contentOpen = event.contentIncomplete === true
     ? '<content incomplete="true">'
     : '<content>';
@@ -43,9 +48,10 @@ export function renderFeishuStructuredBody(
       .filter((block) => block !== '')
       .map((block) => `\n${block}`)
       .join('');
-  const whole = parts.length === 0
+  const wrap = (inner: string): string => inner === ''
     ? `${emptyContent}${fixedBlocks()}`
-    : `${contentOpen}\n${fullContent}\n</content>${fixedBlocks()}`;
+    : `${contentOpen}\n${inner}\n</content>${fixedBlocks()}`;
+  const whole = wrap(content);
   if (whole.length <= MAX_SERIALIZED_BODY_CHARS) {
     return { body: whole, groupBotsRendered };
   }
@@ -57,15 +63,11 @@ export function renderFeishuStructuredBody(
     groupBotsRendered = false;
     available = MAX_SERIALIZED_BODY_CHARS - wrapperCost - fixedBlocks().length;
   }
-  const truncated = renderPartsWithinBudget(
-    parts,
-    Math.max(BODY_TRUNCATION_MARKER.length, available),
-    renderPart,
+  const kept = truncate(
+    content,
+    Math.max(0, available - BODY_TRUNCATION_MARKER.length),
   );
-  return {
-    body: `${contentOpen}\n${truncated}\n</content>${fixedBlocks()}`,
-    groupBotsRendered,
-  };
+  return { body: wrap(`${kept}${BODY_TRUNCATION_MARKER}`), groupBotsRendered };
 }
 
 export function formatFeishuCreateTime(value: string): string {
@@ -98,6 +100,80 @@ function formatLocalDate(date: Date): string {
   ].join(':')}`;
 }
 
+/**
+ * What each token in the escaped text is replaced with. Tokens are looked up
+ * in their escaped spelling because the text they are found in is escaped.
+ */
+function tokenTable(
+  mentions: Mention[],
+  attachments: FormattedFeishuAttachment[],
+): Map<string, string> {
+  const table = new Map<string, string>();
+  for (const record of mentions) {
+    if (record.key !== '') table.set(escapeXmlText(record.key), renderMention(record));
+  }
+  for (const attachment of attachments) {
+    table.set(escapeXmlText(attachment.key), renderAttachment(attachment));
+  }
+  return table;
+}
+
+/**
+ * Longest token first, each occurrence claimed once, so `@_user_1` inside
+ * `@_user_19:00` and `@_user_10` beside `@_user_1` both resolve to the record
+ * that names them.
+ */
+function substituteTokens(text: string, table: Map<string, string>): string {
+  const matches: Array<{ start: number; end: number; replacement: string }> = [];
+  const claimed = new Uint8Array(text.length);
+  const tokens = [...table.entries()].sort(([a], [b]) => b.length - a.length);
+  for (const [token, replacement] of tokens) {
+    if (token === '') continue;
+    for (
+      let start = text.indexOf(token);
+      start !== -1;
+      start = text.indexOf(token, start + 1)
+    ) {
+      const end = start + token.length;
+      if (claimed.subarray(start, end).includes(1)) continue;
+      claimed.fill(1, start, end);
+      matches.push({ start, end, replacement });
+    }
+  }
+  matches.sort((a, b) => a.start - b.start);
+  let out = '';
+  let cursor = 0;
+  for (const match of matches) {
+    out += text.slice(cursor, match.start) + match.replacement;
+    cursor = match.end;
+  }
+  return out + text.slice(cursor);
+}
+
+function renderMention(record: Mention): string {
+  const name = escapeXmlText(record.name ?? '');
+  const id = nonEmpty(record.id?.open_id) ??
+    nonEmpty(record.id?.union_id) ??
+    nonEmpty(record.id?.user_id);
+  // An application record carries no user identity; nothing can reply to it,
+  // so it reads as the name it displays.
+  if (id === undefined) return `@${name}`;
+  // The same syntax the reply tool takes, so a mention read here can be
+  // written straight back.
+  return `<at user_id="${escapeXmlAttribute(id)}">${name}</at>`;
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value !== undefined && value !== '' ? value : undefined;
+}
+
+function renderAttachment(attachment: FormattedFeishuAttachment): string {
+  if (attachment.status === 'downloaded' && attachment.path !== undefined) {
+    return `<attachment path="${escapeXmlAttribute(attachment.path)}" />`;
+  }
+  return `<attachment status="not_downloaded" key="${escapeXmlAttribute(attachment.key)}" />`;
+}
+
 function renderGroupBots(trustedBots: PeerBot[]): string {
   if (trustedBots.length === 0) return '';
   const lines = trustedBots.map((bot) => {
@@ -111,30 +187,16 @@ function renderGroupBots(trustedBots: PeerBot[]): string {
   ].join('\n');
 }
 
-/**
- * The parts to serialize. Transport already resolved the message's own meaning
- * — text, code, mentions, resources, in source order — so this layer only
- * writes them out; it never re-reads the raw body to recover what the parser
- * was supposed to hand over.
- */
-function contentPartsForEvent(event: FeishuInboundEvent): InboundContentPart[] {
-  if (event.messageType === 'merge_forward') return [];
-  const parts = event.contentParts;
-  if (parts !== undefined) return parts;
-  return [
-    { kind: 'text', text: event.parsedText },
-    ...(event.resources ?? []).map((resource) => ({
-      kind: 'resource' as const,
-      resource,
-    })),
-  ];
-}
-
 function renderRefs(event: FeishuInboundEvent): string {
   const rows: string[] = [];
   if (event.messageType === 'merge_forward') {
     rows.push(
       `  <merged-forward message_id="${escapeXmlAttribute(event.messageId)}" />`,
+    );
+  }
+  if (event.messageType === 'interactive') {
+    rows.push(
+      `  <card message_id="${escapeXmlAttribute(event.messageId)}" note="${CARD_NOTE}" />`,
     );
   }
   const parentId = replyAncestryParentId(event);
@@ -153,106 +215,21 @@ function renderRefs(event: FeishuInboundEvent): string {
   return rows.length === 0 ? '' : ['<refs>', ...rows, '</refs>'].join('\n');
 }
 
-function renderContentPart(
-  part: InboundContentPart,
-  resolveAttachment: (resource: InboundResource) => FormattedFeishuAttachment,
-): string {
-  if (part.kind === 'text') return escapeXmlText(part.text);
-  if (part.kind === 'mention') {
-    // The same syntax the reply tool takes, so a mention read here can be
-    // written straight back.
-    return `<at user_id="${escapeXmlAttribute(part.id)}">${
-      escapeXmlText(part.name)
-    }</at>`;
-  }
-  if (part.kind === 'resource') {
-    return renderAttachment(resolveAttachment(part.resource));
-  }
-  return renderCode(part.code, part.language);
-}
-
-function renderAttachment(attachment: FormattedFeishuAttachment): string {
-  if (attachment.status === 'downloaded' && attachment.path !== undefined) {
-    return `<attachment path="${escapeXmlAttribute(attachment.path)}" />`;
-  }
-  const key = escapeXmlAttribute(attachment.key ?? '');
-  return `<attachment status="not_downloaded" key="${key}" />`;
-}
-
-function renderCode(code: string, language?: string): string {
-  const languageAttr = language === undefined || language === ''
-    ? ''
-    : ` language="${escapeXmlAttribute(language)}"`;
-  return `<code${languageAttr}><![CDATA[${escapeCdata(code)}]]></code>`;
-}
-
-function escapeCdata(value: string): string {
-  return value.replaceAll(']]>', ']]]]><![CDATA[>');
-}
-
-function renderPartsWithinBudget(
-  parts: InboundContentPart[],
-  budget: number,
-  renderPart: (part: InboundContentPart) => string,
-): string {
-  const contentBudget = Math.max(0, budget - BODY_TRUNCATION_MARKER.length);
-  let output = '';
-  for (const part of parts) {
-    const rendered = renderPart(part);
-    if (output.length + rendered.length <= contentBudget) {
-      output += rendered;
-      continue;
-    }
-    const remaining = Math.max(0, contentBudget - output.length);
-    if (part.kind === 'text') {
-      output += truncateEscapedText(part.text, remaining);
-    } else if (part.kind === 'code') {
-      output += truncateCode(part, remaining);
-    }
-    break;
-  }
-  return `${output}${BODY_TRUNCATION_MARKER}`;
-}
-
-function truncateEscapedText(value: string, budget: number): string {
-  return escapeXmlText(longestRawPrefix(value, budget, escapeXmlText));
-}
-
-function truncateCode(
-  part: Extract<InboundContentPart, { kind: 'code' }>,
-  budget: number,
-): string {
-  const empty = renderCode('', part.language);
-  if (empty.length > budget) return '';
-  const raw = longestRawPrefix(
-    part.code,
-    budget - empty.length,
-    escapeCdata,
-  );
-  return renderCode(raw, part.language);
-}
-
-function longestRawPrefix(
-  value: string,
-  budget: number,
-  render: (value: string) => string,
-): string {
-  let low = 0;
-  let high = value.length;
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2);
-    const prefix = safeUtf16Prefix(value, middle);
-    if (render(prefix).length <= budget) low = middle;
-    else high = middle - 1;
-  }
-  return safeUtf16Prefix(value, low);
-}
-
-function safeUtf16Prefix(value: string, length: number): string {
-  let prefix = value.slice(0, length);
-  const last = prefix.charCodeAt(prefix.length - 1);
-  if (last >= 0xd800 && last <= 0xdbff) prefix = prefix.slice(0, -1);
-  return prefix;
+/**
+ * Cut the rendered content at `budget` without leaving an unfinished tag,
+ * entity, or surrogate pair behind. A literal `<` or `>` in the rendered text
+ * can only belong to a Channel-owned tag, because the message text was escaped
+ * before the tags were substituted in.
+ */
+function truncate(value: string, budget: number): string {
+  let kept = value.slice(0, budget);
+  const openTag = kept.lastIndexOf('<');
+  if (openTag > kept.lastIndexOf('>')) kept = kept.slice(0, openTag);
+  const openEntity = kept.lastIndexOf('&');
+  if (openEntity > kept.lastIndexOf(';')) kept = kept.slice(0, openEntity);
+  const last = kept.charCodeAt(kept.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) kept = kept.slice(0, -1);
+  return kept;
 }
 
 function escapeXmlAttribute(value: string): string {

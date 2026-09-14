@@ -5,7 +5,6 @@ import type {
   FeishuCotClient,
   FeishuMessageResourceRequest,
   FeishuMessageResourceResponse,
-  FeishuMessageReadMode,
   FeishuMessageReadRequest,
   FeishuMessageReadResponse,
   FeishuSendOptions,
@@ -77,7 +76,6 @@ export interface FakeFeishuBot extends FeishuBot {
   ): void;
   setMessageRead(
     messageId: string,
-    cardContent: FeishuMessageReadMode,
     response: FeishuMessageReadResponse | Error | Promise<FeishuMessageReadResponse> | null,
   ): void;
 }
@@ -196,10 +194,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       request: FeishuMessageReadRequest,
     ): Promise<FeishuMessageReadResponse> {
       messageReadRequests.push(request);
-      const mode = request.cardContent ?? 'default';
-      const response = messageReads.get(`${mode}:${request.messageId}`);
+      const response = messageReads.get(request.messageId);
       if (response === undefined) {
-        throw new Error(`no fake Feishu message read for ${mode}:${request.messageId}`);
+        throw new Error(`no fake Feishu message read for ${request.messageId}`);
       }
       if (response instanceof Error) throw response;
       return response;
@@ -289,12 +286,10 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setMessageRead(
       messageId: string,
-      cardContent: FeishuMessageReadMode,
       response: FeishuMessageReadResponse | Error | Promise<FeishuMessageReadResponse> | null,
     ): void {
-      const key = `${cardContent}:${messageId}`;
-      if (response === null) messageReads.delete(key);
-      else messageReads.set(key, response);
+      if (response === null) messageReads.delete(messageId);
+      else messageReads.set(messageId, response);
     },
   };
 }

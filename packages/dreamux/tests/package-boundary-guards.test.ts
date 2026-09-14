@@ -581,7 +581,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'DREAMUX_PAIRING_TOKEN_KEY',
         'DispatcherAccessState',
         'FEISHU_ROUTING_DOCUMENT_VERSION',
-        'FEISHU_SKILL_FALLBACK_NOTE',
         'FEISHU_TOOLS',
         'FeishuBindingRecord',
         'FeishuBindingView',
@@ -651,7 +650,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
     expect(namedExports(src)).toEqual(
       [
         'BOT_MEMBER_ADDED_EVENT_TYPE',
-        'ChannelInbound',
         'DOC_COMMENT_EVENT_TYPE',
         'FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER',
         'FEISHU_COT_APPEND_MAX_EVENTS',
@@ -678,7 +676,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'FeishuInviteMembersInput',
         'FeishuInviteMembersResult',
         'FeishuMessageReadItem',
-        'FeishuMessageReadMode',
         'FeishuMessageReadRequest',
         'FeishuMessageReadResponse',
         'FeishuMessageReader',
@@ -691,7 +688,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'FeishuTransport',
         'FeishuTransportOptions',
         'FeishuWebSocketRegistration',
-        'InboundContentPart',
         'InboundMessage',
         'InboundResource',
         'InboundResourceType',
@@ -708,12 +704,10 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'isBotMentioned',
         'isBotSenderType',
         'isRecord',
-        'mergeInteractiveInbound',
         'narrowMetaFromEvent',
         'normalizeBotMemberAddedEvent',
         'normalizeCommentEvent',
         'parseInbound',
-        'toChannelInbound',
       ].sort(),
     );
   });

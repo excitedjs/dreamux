@@ -30,22 +30,14 @@ import {
 } from './feishu-inbound-work.js';
 import {
   formatFeishuCreateTime,
-  renderFeishuStructuredBody,
+  renderFeishuBody,
 } from './feishu-message-render.js';
 
 const FEISHU_MAX_RESOURCE_BYTES = 25 * 1024 * 1024;
 const FEISHU_MAX_AGGREGATE_RESOURCE_BYTES = 100 * 1024 * 1024;
 const FEISHU_MAX_UNIQUE_RESOURCES = 32;
 
-/**
- * @deprecated Retained for source compatibility. Structured Feishu inbound
- * bodies no longer emit tool-directed fallback prose.
- */
-export const FEISHU_SKILL_FALLBACK_NOTE =
-  'Parser note: message text may be incomplete. Use the Feishu skill with the chat_id and message_id above to fetch the original message when needed.';
-
 export type FeishuAttachmentReason =
-  | 'no_key'
   | 'missing_scope'
   | 'too_large'
   | 'timeout'
@@ -84,7 +76,7 @@ export interface FormatFeishuMessageOptions {
 export interface FormattedFeishuAttachment {
   type: 'file' | 'image';
   name?: string;
-  key?: string;
+  key: string;
   path?: string;
   status: FeishuAttachmentStatus;
   reason?: FeishuAttachmentReason;
@@ -119,13 +111,12 @@ export async function formatFeishuMessageForRuntime(
     : undefined;
   const work = options.work ?? ownedWork;
   if (work === undefined) throw new Error('Feishu inbound work context was not created');
-  let resolution: AttachmentResolution;
+  let attachments: FormattedFeishuAttachment[];
   try {
-    resolution = await resolveAttachments(event, options, work);
+    attachments = await resolveAttachments(event, options, work);
   } finally {
     ownedWork?.dispose();
   }
-  const attachments = resolution.attachments;
   const attrs: Array<[string, string]> = [];
   // First, and constant: the provider name is what lets the model tie this
   // envelope to the `channel-feishu` MCP server whose tools answer it.
@@ -143,10 +134,10 @@ export async function formatFeishuMessageForRuntime(
     'create_time',
     formatFeishuCreateTime(event.createTime),
   );
-  const rendered = renderFeishuStructuredBody(
+  const rendered = renderFeishuBody(
     event,
     options.trustedBots ?? [],
-    (resource) => attachmentFor(resource, resolution),
+    attachments,
   );
   return {
     attrs,
@@ -170,14 +161,17 @@ function appendNonEmptyAttr(
   if (value !== '') attrs.push([name, value]);
 }
 
+/**
+ * One attachment per resource, in the event's order. The transport lists each
+ * resource once, so the download count is the resource count until the
+ * unique-resource budget is reached.
+ */
 async function resolveAttachments(
   event: FeishuInboundEvent,
   options: FormatFeishuMessageOptions,
   work: FeishuInboundWorkContext,
-): Promise<AttachmentResolution> {
-  const resources = resourcesForEvent(event);
+): Promise<FormattedFeishuAttachment[]> {
   const out: FormattedFeishuAttachment[] = [];
-  const byIdentity = new Map<string, FormattedFeishuAttachment>();
   const budget: AttachmentBudget = {
     maxResourceBytes: options.maxBytes ?? FEISHU_MAX_RESOURCE_BYTES,
     remainingAggregateBytes:
@@ -185,29 +179,18 @@ async function resolveAttachments(
     maxUniqueResources:
       options.maxUniqueResources ?? FEISHU_MAX_UNIQUE_RESOURCES,
   };
-  for (const resource of resources) {
-    const identity = attachmentIdentity(resource);
-    if (byIdentity.has(identity)) continue;
-    if (out.length >= budget.maxUniqueResources) {
-      byIdentity.set(identity, notDownloaded(resource, 'resource_limit'));
-      continue;
-    }
-    const resolved = await resolveAttachment(
-      event.messageId,
-      resource,
-      options,
-      work,
-      budget,
-    );
-    out.push(resolved);
-    byIdentity.set(identity, resolved);
+  for (const resource of event.resources) {
+    out.push(out.length >= budget.maxUniqueResources
+      ? { ...attachmentBase(resource), reason: 'resource_limit' }
+      : await resolveAttachment(
+          event.messageId,
+          resource,
+          options,
+          work,
+          budget,
+        ));
   }
-  return { attachments: out, byIdentity };
-}
-
-interface AttachmentResolution {
-  attachments: FormattedFeishuAttachment[];
-  byIdentity: Map<string, FormattedFeishuAttachment>;
+  return out;
 }
 
 interface AttachmentBudget {
@@ -216,52 +199,12 @@ interface AttachmentBudget {
   maxUniqueResources: number;
 }
 
-function resourcesForEvent(event: FeishuInboundEvent): InboundResource[] {
-  if (event.contentParts !== undefined) {
-    return event.contentParts.flatMap((part) =>
-      part.kind === 'resource' ? [part.resource] : []);
-  }
-  return event.resources ?? [];
-}
-
-function attachmentIdentity(resource: InboundResource): string {
-  return resource.key === undefined || resource.key === ''
-    ? `${resource.type}:missing:${resource.name ?? ''}`
-    : `${resource.type}:${resource.key}`;
-}
-
-function attachmentFor(
-  resource: InboundResource,
-  resolution: AttachmentResolution,
-): FormattedFeishuAttachment {
-  const stableIdentity = attachmentIdentity(resource);
-  const resolved = resolution.byIdentity.get(stableIdentity);
-  if (resolved !== undefined) {
-    return {
-      ...resolved,
-      ...(resource.name !== undefined ? { name: resource.name } : {}),
-    };
-  }
-  return {
-    ...notDownloaded(
-      resource,
-      resource.key === undefined || resource.key === ''
-        ? 'no_key'
-        : 'api_error',
-    ),
-  };
-}
-
-function notDownloaded(
-  resource: InboundResource,
-  reason: FeishuAttachmentReason,
-): FormattedFeishuAttachment {
+function attachmentBase(resource: InboundResource): FormattedFeishuAttachment {
   return {
     type: resource.type,
     ...(resource.name !== undefined ? { name: resource.name } : {}),
-    ...(resource.key !== undefined ? { key: resource.key } : {}),
+    key: resource.key,
     status: 'not_downloaded',
-    reason,
   };
 }
 
@@ -272,16 +215,7 @@ async function resolveAttachment(
   work: FeishuInboundWorkContext,
   budget: AttachmentBudget,
 ): Promise<FormattedFeishuAttachment> {
-  const base: FormattedFeishuAttachment = {
-    type: resource.type,
-    ...(resource.name !== undefined ? { name: resource.name } : {}),
-    ...(resource.key !== undefined ? { key: resource.key } : {}),
-    status: 'not_downloaded',
-  };
-
-  if (resource.key === undefined || resource.key === '') {
-    return { ...base, reason: 'no_key' };
-  }
+  const base = attachmentBase(resource);
   if (options.cacheDir === undefined || options.resourceFetcher === undefined) {
     return { ...base, reason: 'unsupported_type' };
   }
@@ -331,7 +265,7 @@ async function resolveAttachment(
       work,
       () => options.resourceFetcher?.fetchMessageResource({
         messageId,
-        fileKey: resource.key ?? '',
+        fileKey: resource.key,
         type: resource.type,
       }) ?? Promise.reject(new Error('Feishu resource fetcher unavailable')),
       resourceDeadline,
@@ -397,8 +331,7 @@ async function resolveAttachment(
 }
 
 function attachmentPath(cacheRoot: string, resource: InboundResource): string {
-  const key = resource.key ?? 'missing-key';
-  const digest = createHash('sha256').update(key).digest('hex').slice(0, 16);
+  const digest = createHash('sha256').update(resource.key).digest('hex').slice(0, 16);
   const displayName = sanitizeFileName(resource.name ?? `${resource.type}.bin`);
   const path = resolve(cacheRoot, `${resource.type}-${digest}-${displayName}`);
   if (!isInside(cacheRoot, path)) throw new CachePathError();

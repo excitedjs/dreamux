@@ -46,13 +46,20 @@ the same change that touches it.
   send failures expose the operation, available HTTP status, Feishu code,
   reason, and log ID in logs and the MCP failure without copying request data.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
-- **Existing peer message formats remain readable.** Text placeholders,
-  structured mentions, native-post Markdown, and legacy card Markdown share
-  one ordered mention representation. The model reads actual mentions as
-  `<at user_id="...">`; code examples and plain-text lookalikes stay literal.
-  Native-post readback prefers its richer content projection. Changing outgoing
-  replies does not change the raw-event mention gate for peer-bot admission.
-  (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **Inbound messages read as one text body.** Text, rich posts, cards, and
+  attachments reach the model as one `<content>` body whose mentions are
+  written exactly as the `reply` tool takes them, `<at user_id="...">Name</at>`,
+  so what the model reads is what it writes back. Only a mention the platform's
+  own mention records name is substituted; text that merely looks like one
+  stays literal. A rich post is read from its native `content_v2` projection.
+  A card contributes its visible text and its images and files, read from the
+  event alone, plus a `<refs>` row naming the message as a rich card the model
+  can pull in full with lark-cli; layout, controls, and link targets are not
+  reconstructed. Images and files anywhere in a message are downloaded, cached,
+  and budgeted the same way and rendered as `<attachment>` where they stood.
+  Changing outgoing replies does not change the raw-event mention gate for
+  peer-bot admission.
+  (Task: [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md).)
 - **A question the agent cannot answer becomes a card, and the turn ends.**
   When an agent is blocked on a decision only the user can make, the built-in
   Feishu channel posts an interactive question card — 1-4 single-select

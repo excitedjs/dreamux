@@ -2,7 +2,7 @@
  * `@excitedjs/feishu-transport` — the Feishu platform-I/O core.
  *
  * The single owner of the `@larksuiteoapi/node-sdk` import: connect / receive /
- * send / auth / parse (Feishu content → ordered parts). Stateless and
+ * send / auth / parse (Feishu content → one text body). Stateless and
  * routing-agnostic — it knows nothing about engine threads, sessions, or
  * drop/deliver decisions; those live in the channel layer.
  *
@@ -14,18 +14,14 @@
 export type { Mention } from './contract/types.js'
 export type { OutboundTarget } from './contract/outbound.js'
 
-// ── parse/ — Feishu content → forwardable text + comment-event decode ──
+// ── parse/ — Feishu content → one text body + comment-event decode ──
 export {
   parseInbound,
-  mergeInteractiveInbound,
   narrowMetaFromEvent,
-  toChannelInbound,
   type InboundMessage,
   type ParsedInbound,
-  type ChannelInbound,
   type InboundResource,
   type InboundResourceType,
-  type InboundContentPart,
 } from './parse/content.js'
 export {
   normalizeBotMemberAddedEvent,
@@ -68,7 +64,6 @@ export {
   type FeishuMessageResourceType,
   type FeishuMessageReader,
   type FeishuMessageReadItem,
-  type FeishuMessageReadMode,
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,
   type InboundRoutes,

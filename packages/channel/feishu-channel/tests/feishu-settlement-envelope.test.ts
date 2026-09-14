@@ -112,7 +112,7 @@ function cardSitsIn(
   messageId: string,
   place: { chatId: string; threadId?: string },
 ): void {
-  bot.setMessageRead(messageId, 'default', {
+  bot.setMessageRead(messageId, {
     items: [{
       messageId,
       messageType: 'interactive',
@@ -321,7 +321,7 @@ describe('the ask-card settlement envelope', () => {
     const { delivery, delivered } = capturingDelivery();
     const bot = createFakeFeishuBot();
     const h = handle(delivery, bot);
-    bot.setMessageRead('om_card', 'default', read);
+    bot.setMessageRead('om_card', read);
 
     await expireAskUserQuestion(h, {
       settlement: {

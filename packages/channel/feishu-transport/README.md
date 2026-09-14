@@ -10,12 +10,12 @@ place that imports the Feishu SDK.
   `fetchDocMeta` / bot open_id resolution / auth via the
   `@larksuiteoapi/node-sdk` SDK, plus the serialized message-`content`
   encoding and its size budget.
-- **parse** — Feishu message content → ordered content parts, including:
-  - inbound text / post / interactive / image / file events
+- **parse** — Feishu message content → one text body, including:
+  - inbound text / post / interactive / image / file / audio / media events
   - `doc.comment` reply events → normalized comment shape
   - bot member-added events → normalized added-event shape
-  - mention resolution across text placeholders, structured `at` nodes, and
-    inline Markdown `<at>` tags
+  - mentions left as the `@_user_N` placeholders the message's `mentions`
+    records name, whichever form the sender used
 
 ## WebSocket lifecycle
 
@@ -37,17 +37,17 @@ success/error handling uniform.
 
 One pure utility boundary sits above the SDK layer, with no host dependency:
 
-- **`parse/`** — decode Feishu JSON into ordered content parts and metadata.
-  Use `parseInbound` for messages and `toChannelInbound` to project into the
-  channel-agnostic envelope shape. Mentions are resolved once, against the
-  message's own `mentions` records, whichever form the sender used: `@_user_N`
-  placeholders, structured `at` nodes, native post `<at user_id="…">`, or card
-  Markdown `<at id="…">`. The two inline spellings are read only where the
-  source states its value is Markdown; a plain text node or `plain_text` field
-  keeps whatever it contains literal, as do escaped and code-spanned examples.
-  `normalizeCommentEvent` /
-  `normalizeBotMemberAddedEvent` do the same for comment and bot-added inbound
-  events.
+- **`parse/`** — decode Feishu JSON into one text body plus metadata. Use
+  `parseInbound` for messages and `narrowMetaFromEvent` for the event
+  envelope. The body is written in Feishu's own vocabulary: a mention stands
+  as the placeholder its record names — a `@_user_N` in text, a structured
+  `at` node, or an `<at>` tag inside native post or card Markdown all become
+  that placeholder — and an image or file stands as its resource key, with the
+  resources listed beside the text. Resolving a placeholder to a person, and a
+  key to a download, is the caller's job. A card is read from the event alone,
+  as its `content`/`text` strings and its image and file components.
+  `normalizeCommentEvent` / `normalizeBotMemberAddedEvent` do the same for
+  comment and bot-added inbound events.
 
 ## Outgoing message content
 
@@ -62,7 +62,7 @@ chooses it, so it is not part of the exported surface.
 
 ## Events
 
-The normalized inbound events produced by `parse/` are platform-specific but
+The normalized inbound bodies produced by `parse/` are platform-specific but
 host-agnostic. Each host is responsible for:
 
 - routing a normalized inbound into its engine / dispatcher turn model,
