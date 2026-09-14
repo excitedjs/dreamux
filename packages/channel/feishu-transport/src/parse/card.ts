@@ -9,8 +9,8 @@ import { readInlineMarkdown } from './inline.js'
  * current schema, the outer object for an older one. Every `content` / `text`
  * string the card holds is one line of the body, in document order, and
  * every image or file component is a resource at its position. Layout,
- * controls, callback values, and link targets are not read; a template card
- * carries no readable text at all.
+ * controls beyond their labels, callback values, and link targets are not
+ * read; a template card carries no readable text at all.
  */
 export function parseCardContent(
   outer: Record<string, unknown>,
