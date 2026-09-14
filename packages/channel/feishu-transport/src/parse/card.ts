@@ -3,6 +3,17 @@ import { createBody, type ParsedInbound } from './body.js'
 import { readInlineMarkdown } from './inline.js'
 
 /**
+ * The keys a card displays its children under: the card body and header, the
+ * header's title and subtitle, the containers, and the strings a control
+ * shows as its label, placeholder, and option labels. `i18n_elements` is
+ * handled apart because it is keyed by locale.
+ */
+const DISPLAY_KEYS = new Set([
+  'body', 'header', 'title', 'subtitle', 'elements', 'columns', 'fields',
+  'actions', 'rows', 'cells', 'extra', 'text', 'placeholder', 'options',
+])
+
+/**
  * Read a card as the text it displays and the resources it embeds.
  *
  * A card event carries the whole card: `user_dsl` for a card authored in the
@@ -10,23 +21,11 @@ import { readInlineMarkdown } from './inline.js'
  * string the walk reaches is one line of the body, in document order, and
  * every image or file component is a resource at its position. The walk
  * descends only through the keys a card displays its children under, so
- * layout, controls beyond their labels, callback payloads (`value`,
+ * layout, controls beyond the strings they show, callback payloads (`value`,
  * `behaviors`), and link targets are never reached: a card another bot
  * authored cannot put text in front of the model that the client does not
  * show. A template card carries no readable text at all.
  */
-
-/**
- * The keys a card displays its children under: the card body and header, the
- * header's title and subtitle, the containers, and the `text` object that
- * wraps a control's label. `i18n_elements` is handled apart because it is
- * keyed by locale.
- */
-const DISPLAY_KEYS = new Set([
-  'body', 'header', 'title', 'subtitle', 'elements', 'columns', 'fields',
-  'actions', 'rows', 'cells', 'extra', 'text',
-])
-
 export function parseCardContent(
   outer: Record<string, unknown>,
   mentions: Mention[] | undefined,

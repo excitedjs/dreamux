@@ -38,12 +38,15 @@ cache; the Channel never re-reads a raw body.
   a document-order walk that descends only through the keys a card displays
   its children under (`body`, `header` and its `title`/`subtitle`,
   `elements`, every locale of `i18n_elements`, `columns`, `fields`,
-  `actions`, `rows`, `cells`, `extra`, and the `text` object wrapping a
-  control's label), turns every `img`/`image`/`file` component it reaches
-  into a resource and every `content`/`text` string leaf into one line read
-  through the inline reader. A control's `value`/`behaviors` payload is never
-  reached, so text whoever authored the card hid there cannot enter the body;
-  the first review of the pull request caught a generic walk that read it.
+  `actions`, `rows`, `cells`, `extra`, and a control's `text`,
+  `placeholder`, and `options`), turns every `img`/`image`/`file` component
+  it reaches into a resource and every `content`/`text` string leaf into one
+  line read through the inline reader. A control's `value`/`behaviors`
+  payload is never reached, so text whoever authored the card hid there
+  cannot enter the body; the first review of the pull request caught a
+  generic walk that read it. A select's placeholder and option labels are
+  display strings, read as plain lines like a button's label; the walker on
+  `next` read them too, as one `[select: …; options: …]` line.
 - `parse/content.ts` — the per-type switch and `narrowMetaFromEvent`.
 - `transport/message-read.ts` — `readMessage({ messageId })`; the
   `user_card_content` mode is gone because nothing reads a card.
@@ -118,6 +121,9 @@ Cases added for the capture: `@_user_1` before `9:00`; `@_user_1` and
 ## Known limits
 
 - A card with `i18n_elements` contributes every locale's text.
+- A header title carried only as a locale map (`title.i18n` with no
+  `content`) is not read; the walker on `next` read one locale of it. The
+  capture holds no such card, so nothing was added for it.
 - A body over the budget is split from the lexer's block `raw` values, which
   normalize CRLF to LF; a body that fits is sent as written. Pinned by a test,
   not fixed: the agent writes LF.

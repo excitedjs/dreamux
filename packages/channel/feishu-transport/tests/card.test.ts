@@ -82,6 +82,20 @@ describe('card text', () => {
     expect(parsed.resources).toEqual([])
   })
 
+  test('a select contributes its placeholder and option labels, not their values', () => {
+    const parsed = parseInbound(dslCard([
+      {
+        tag: 'select_static',
+        placeholder: { tag: 'plain_text', content: '选择环境' },
+        options: [
+          { text: { tag: 'plain_text', content: '预发' }, value: 'staging' },
+          { text: { tag: 'plain_text', content: '生产' }, value: 'prod' },
+        ],
+      },
+    ]))
+    expect(parsed.text).toBe('选择环境\n预发\n生产')
+  })
+
   test('the header title and every locale of i18n_elements are read', () => {
     const parsed = parseInbound(card({
       header: { title: { tag: 'plain_text', content: 'Release' }, subtitle: { tag: 'plain_text', content: 'v2' } },

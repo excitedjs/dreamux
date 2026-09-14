@@ -54,6 +54,14 @@ reproduced against the same build (a 30 KiB CRLF body came back with no
 carriage return; a body that fits keeps them) and is pinned by a test, not
 fixed.
 
+The display-key fix as first pushed also stopped reading a select's
+placeholder and option labels, which both `next` and the generic walk had
+read; the follow-up commit adds `placeholder` and `options` to the display
+keys, with a test that a `select_static` yields its placeholder and option
+labels and nothing from their `value`s. A title carried only as a locale map
+is the one thing `next` read that this walk does not; the design lists it as
+a known limit.
+
 ## Gates
 
 `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass on the
