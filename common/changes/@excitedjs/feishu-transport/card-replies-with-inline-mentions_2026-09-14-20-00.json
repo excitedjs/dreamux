@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Replies stay interactive cards, now one `markdown` element per card carrying the authored Markdown: the renderer that lifted a leading heading into the card title, turned a rule into an `hr`, and a GFM table into a native table element is removed, and an authored `<at user_id=\"...\">Name</at>` mention goes into the card as written, replacing the old `<@ou_...>` shorthand and its rewrite. A body whose serialized `content` would exceed the 28 KiB budget is split into ordered cards along block, fence, table-row, line, and grapheme seams, each piece measured at its JSON-escaped length. Message create and reply now share one send primitive, and a platform refusal is rethrown as one description naming the operation, HTTP status, Feishu code, reason, and `log_id`, with the original error as its cause; a resolved nonzero business code is a failed send rather than an empty receipt. Removed `editText` along with `renderMarkdownToCards`, `cardToContent`, `cardContentBytes`, `splitMarkdownByBytes`, `RenderedCard`, `textMessageContent`, `applyMentions`, `mentionName`, `extractPostText`, and the card element/column/cell constants; `FEISHU_CARD_CONTENT_SAFE_BYTES` is gone: one content budget covers rendered and raw cards alike, and it belongs to the package rather than to its callers, so it is not exported. `OutboundTarget` drops `mentionUserIds` and `conversationKey`. Raw `sendCard` / `editCard` and native chain-of-thought I/O are unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

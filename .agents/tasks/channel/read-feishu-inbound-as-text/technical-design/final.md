@@ -77,14 +77,32 @@ Attachment resolution (`feishu-message.ts`) is unchanged except that a
 resource always has a key, so the `no_key` reason is gone, and the dead
 `FEISHU_SKILL_FALLBACK_NOTE` export is removed.
 
+## Outbound
+
+`transport.send` keeps #414's path: `transport/message-content.ts` serializes
+the body and splits it when it is oversized, `transport/outbound-message.ts`
+sends each piece. What changes is the message: the content is a v2 card,
+`{ schema: '2.0', config: { update_multi: true }, body: { elements: [{ tag:
+'markdown', content }] } }`, sent as `interactive`, and the send primitive
+loses its message-type parameter because every message it sends is a card.
+The body goes in as written: card Markdown renders the authored
+`<at user_id="…">Name</at>` tag as a mention (live card in a direct chat,
+2026-09-14), so
+transport neither parses nor rewrites the agent's text. The block splitter,
+its JSON-escaped measurement, and the byte guard for raw cards are #414's,
+unchanged.
+
+The Channel changes only the `reply` tool's `text` description.
+
 ## Tests
 
-Transport: `content.test.ts` (per-type bodies, unparseable content, envelope
-metadata, message-read mention identity), `post.test.ts`, `card.test.ts`,
-`inline` cases inside those. Channel: enrichment without the card branch,
-render and budget cases rewritten onto `text`/`resources`, the mention
-serialization cases, and the export inventories in both packages plus the
-Dreamux boundary guard.
+Transport: `transport.test.ts` send cases rewritten onto the card shape, with
+the authored mention tag asserted verbatim in the content; `content.test.ts`
+(per-type bodies, unparseable content, envelope metadata, message-read
+mention identity), `post.test.ts`, `card.test.ts`, `inline` cases inside
+those. Channel: enrichment without the card branch, render and budget cases
+rewritten onto `text`/`resources`, the mention serialization cases, and the
+export inventories in both packages plus the Dreamux boundary guard.
 
 Cases added for the capture: `@_user_1` before `9:00`; `@_user_1` and
 `@_user_10` in one message; a card Markdown `<at id=… mention_key=…>` whose

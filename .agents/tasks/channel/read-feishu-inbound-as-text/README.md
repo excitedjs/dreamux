@@ -2,14 +2,14 @@
 
 ## Current state
 
-- Goal: Deliver every inbound Feishu message to the model as one text body whose mentions use the outbound reply syntax, with cards reduced to their text and attachments plus a lark-cli pointer.
+- Goal: Deliver every inbound Feishu message to the model as one text body whose mentions use the outbound reply syntax, with cards reduced to their text and attachments plus a lark-cli pointer, and send replies as Markdown cards again.
 - State: `done`
 - Requirement: [Confirmed requirement](/.agents/tasks/channel/read-feishu-inbound-as-text/requirement.md).
 - Final solution: [Implementation design](/.agents/tasks/channel/read-feishu-inbound-as-text/technical-design/final.md).
 - Solution review Issue: None. The operator ruled on each open design point in the working session and assigned the implementation directly; see Development authorization.
 - Verification: [Evidence](/.agents/tasks/channel/read-feishu-inbound-as-text/verification.md).
 - Pull request: [#424](https://github.com/excitedjs/dreamux/pull/424).
-- Related tasks: supersedes the inbound half of [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md) (its PR #414 and the parts-only rework #422 were closed in favour of this task); builds-on the outbound half of that task, which this pull request carries unchanged as its first commit.
+- Related tasks: supersedes the inbound half of [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md) (its PR #414 and the parts-only rework #422 were closed in favour of this task); builds-on the outbound half of that task, which this pull request carries as its first commit and then returns from native posts to Markdown cards under the outbound ruling below.
 
 The submitted implementation replaces the ordered-parts inbound model with one
 string per message. Transport flattens every message type into Feishu's own
@@ -23,6 +23,16 @@ attachments plus a `<refs>` row that says the message is a rich card the model
 can pull with lark-cli; the two card reads, the read merge, the Markdown lexer,
 the card layout reconstruction, the typed XML serialization, and the
 `user_card_content` read mode are gone.
+
+Outbound, the pull request first carries #414's native-post presentation and
+then sends each reply as an interactive card holding one `markdown` element,
+because a card shows text in the client's compact size and a native post does
+not. #414's send path, splitter, reply tool signature, send-error reporting,
+and provisioning identity stay; the card renderer #414 deleted (title, rule,
+native table elements) is not brought back. The authored
+`<at user_id="…">Name</at>` tag goes into the card as written: a live card
+sent to the operator's direct chat on 2026-09-14 showed card Markdown
+renders it as a mention, so no outbound rewrite exists.
 
 Knowledge owners updated in the same change:
 
@@ -56,6 +66,37 @@ After the card discussion the operator ruled:
 While the implementation was being planned the operator added:
 
 > 等等，卡片里的图和文件走和附件相同的逻辑
+
+After the pull request was opened and reported, the operator ruled on the
+outbound presentation:
+
+> 出站那边还是改一下,改成最开始的那个富文本卡片，里面挂 Markdown。现在这种POST的接口，它输出的文字要比原来那个大一点，信息密度就会变低。
+
+The leader first read this as restoring the whole pre-#414 card renderer and
+pushed that; the operator corrected it:
+
+> 你理解错了，不是让你全量恢复，只是把最终发送的消息改回原本那个卡片而已
+
+The restore was reverted. The leader's reading of the correction, stated to
+the operator before the redo, is: keep #414's send path and change only the
+message sent, to an interactive card holding one `markdown` element. "One
+`markdown` element per card" is the leader's reading, not the operator's
+words. This supersedes the 2026-09-11 choice of native `post + md` recorded in
+[simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/requirement.md)
+("不，还是用富文本吧").
+
+The first redo also rewrote the authored mention tag into the card's
+`<at id="…"></at>` on the assumption that card Markdown needs that form; the
+operator asked for a probe:
+
+> 你确定吗？你发一个探针给我看看
+
+One card carrying both forms on two lines went to the operator's direct
+chat, and the operator reported:
+
+> A 行也正常 at 出来了
+
+so the rewrite was removed and the tag goes out as written.
 
 Item 5 ("你来做") is the development assignment. Item 3 is the delivery shape:
 close #414 and #422, open one new pull request from `next` that carries the

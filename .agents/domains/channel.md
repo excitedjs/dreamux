@@ -160,11 +160,16 @@ not change the existing notification path.
 
 #### `reply`
 
-`reply(chat_id, message_id?, text)` sends native `post` content containing one
-`md` node. The authored body goes through unchanged, including native
-`<at user_id="...">` tags. No mention array, shorthand rewrite, card renderer,
-or card fallback remains. The transport package serves this repository; its
-unused Markdown-to-card exports and `editText` API are retired. Explicit
+`reply(chat_id, message_id?, text)` sends one interactive card whose body is
+a single `markdown` element carrying the authored Markdown as written. The
+inline `<at user_id="...">Name</at>` tag, the form the inbound body shows the
+model, renders as a mention in card Markdown (verified with a live card in
+a direct chat on 2026-09-14), so the model reads and writes one syntax and no mention array,
+shorthand, or rewrite exists. A card was chosen over a native
+`post` because the client shows card text in its compact size (the 2026-09-14
+ruling in the task record). The Markdown-to-card renderer that lifted a
+heading into the card title and a table into a native table element, its
+public exports, and the `editText` API stay retired. Explicit
 `sendCard`/`editCard` and native COT retain their real callers.
 
 `channelOutboundToFeishuTarget` still maps conversation and reply-message IDs.
@@ -176,7 +181,7 @@ message receipt is observed before the next part; later failure does not retract
 created messages. Raw cards retain the same serialized-byte guard.
 
 `transport/outbound-message.ts` uses one SDK `client.request` send boundary for
-create/reply addressing and raw-card/native-post payloads. It describes rejected
+create/reply addressing; every message it sends is `interactive`. It describes rejected
 Feishu response envelopes and resolved nonzero business codes with the operation,
 available HTTP status, code, message, and log ID. Existing channel logs and Core
 MCP failure text preserve that description; Core does not parse Feishu errors.

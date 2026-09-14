@@ -201,17 +201,18 @@ function sentRequests(stub: ReturnType<typeof stubClient>): SentRequest[] {
     .map(([payload]) => payload)
 }
 
-/** The authored Markdown inside each native post that was sent, in order. */
-function postBodies(stub: ReturnType<typeof stubClient>): string[] {
+/** The Markdown inside each card that was sent, in order. */
+function cardBodies(stub: ReturnType<typeof stubClient>): string[] {
   return sentRequests(stub).map((sent) => {
-    const content = JSON.parse(sent.data.content) as {
-      zh_cn: { content: Array<Array<{ tag: string; text: string }>> }
+    expect(sent.data.msg_type).toBe('interactive')
+    const card = JSON.parse(sent.data.content) as {
+      schema: string
+      body: { elements: Array<{ tag: string; content: string }> }
     }
-    const rows = content.zh_cn.content
-    expect(rows.length).toBe(1)
-    expect(rows[0]?.length).toBe(1)
-    expect(rows[0]?.[0]?.tag).toBe('md')
-    return rows[0]?.[0]?.text ?? ''
+    expect(card.schema).toBe('2.0')
+    expect(card.body.elements.length).toBe(1)
+    expect(card.body.elements[0]?.tag).toBe('markdown')
+    return card.body.elements[0]?.content ?? ''
   })
 }
 
@@ -231,7 +232,7 @@ function buildTransport(stub: ReturnType<typeof stubClient>) {
 }
 
 describe('createFeishuTransport — send', () => {
-  test('sends the authored body as native post Markdown, verbatim', async () => {
+  test('sends the authored body as one Markdown card', async () => {
     const stub = stubClient()
     const transport = buildTransport(stub)
     const body = [
@@ -253,9 +254,14 @@ describe('createFeishuTransport — send', () => {
     expect(sent?.method).toBe('POST')
     expect(sent?.params).toEqual({ receive_id_type: 'chat_id' })
     expect(sent?.data.receive_id).toBe('oc_chat')
-    expect(sent?.data.msg_type).toBe('post')
+    expect(sent?.data.msg_type).toBe('interactive')
     expect(JSON.parse(sent?.data.content ?? '{}')).toEqual({
-      zh_cn: { content: [[{ tag: 'md', text: body }]] },
+      schema: '2.0',
+      config: { update_multi: true },
+      body: {
+        // The mention tag goes out as written: card Markdown renders it.
+        elements: [{ tag: 'markdown', content: body }],
+      },
     })
   })
 
@@ -276,7 +282,7 @@ describe('createFeishuTransport — send', () => {
     const sent = sentRequests(stub)[0]
     expect(sent?.url).toBe('/open-apis/im/v1/messages/om%2Fsource/reply')
     expect(sent?.data.receive_id).toBeUndefined()
-    expect(postBodies(stub)).toEqual(['done'])
+    expect(cardBodies(stub)).toEqual(['done'])
   })
 
   test('returns empty messageIds when Feishu omits message_id', async () => {
@@ -297,10 +303,10 @@ describe('createFeishuTransport — send', () => {
     await transport.send({ chatId: 'oc_chat' }, body)
 
     expect(stub.request).toHaveBeenCalledTimes(1)
-    expect(postBodies(stub)).toEqual([body])
+    expect(cardBodies(stub)).toEqual([body])
   })
 
-  test('splits an oversized mixed document into ordered posts that lose nothing', async () => {
+  test('splits an oversized mixed document into ordered cards that lose nothing', async () => {
     const stub = stubClient()
     const transport = buildTransport(stub)
     // Headings, prose, a list, a table and fenced code, so the split runs over
@@ -325,7 +331,7 @@ describe('createFeishuTransport — send', () => {
 
     const result = await transport.send({ chatId: 'oc_chat' }, body)
 
-    const bodies = postBodies(stub)
+    const bodies = cardBodies(stub)
     expect(bodies.length).toBeGreaterThan(1)
     expect(bodies.join('')).toBe(body)
     expect(result.messageIds.length).toBe(bodies.length)
@@ -344,7 +350,7 @@ describe('createFeishuTransport — send', () => {
 
     await transport.send({ chatId: 'oc_chat' }, body)
 
-    expect(postBodies(stub).join('')).toBe(body)
+    expect(cardBodies(stub).join('')).toBe(body)
     for (const sent of sentRequests(stub)) {
       expect(Buffer.byteLength(sent.data.content, 'utf8'))
         .toBeLessThanOrEqual(FEISHU_MESSAGE_CONTENT_SAFE_BYTES)
@@ -358,7 +364,7 @@ describe('createFeishuTransport — send', () => {
 
     await transport.send({ chatId: 'oc_chat' }, body)
 
-    const bodies = postBodies(stub)
+    const bodies = cardBodies(stub)
     expect(bodies.length).toBeGreaterThan(1)
     expect(bodies.join('')).toBe(body)
     for (const piece of bodies) {
@@ -375,7 +381,7 @@ describe('createFeishuTransport — send', () => {
 
     await transport.send({ chatId: 'oc_chat' }, body)
 
-    const bodies = postBodies(stub)
+    const bodies = cardBodies(stub)
     expect(bodies.length).toBeGreaterThan(1)
     for (const piece of bodies) {
       expect(piece.startsWith('```ts\n')).toBe(true)
@@ -400,7 +406,7 @@ describe('createFeishuTransport — send', () => {
 
     await transport.send({ chatId: 'oc_chat' }, body)
 
-    const bodies = postBodies(stub)
+    const bodies = cardBodies(stub)
     expect(bodies.length).toBeGreaterThan(2)
     for (const piece of bodies) expect(piece.trim()).not.toBe('')
     expect(bodies
@@ -419,7 +425,7 @@ describe('createFeishuTransport — send', () => {
 
     await transport.send({ chatId: 'oc_chat' }, body)
 
-    const bodies = postBodies(stub)
+    const bodies = cardBodies(stub)
     expect(bodies.length).toBeGreaterThan(1)
     for (const sent of sentRequests(stub)) {
       expect(Buffer.byteLength(sent.data.content, 'utf8'))
@@ -442,7 +448,7 @@ describe('createFeishuTransport — send', () => {
 
     await transport.send({ chatId: 'oc_chat' }, body)
 
-    const bodies = postBodies(stub)
+    const bodies = cardBodies(stub)
     expect(bodies.length).toBeGreaterThan(1)
     for (const piece of bodies) expect(piece.startsWith(header)).toBe(true)
     expect(bodies.map((piece) => piece.slice(header.length)).join(''))

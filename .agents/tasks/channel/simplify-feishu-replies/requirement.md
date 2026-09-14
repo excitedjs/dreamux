@@ -50,6 +50,11 @@ selected below. Successful card rendering is comparative evidence, not a change
 to that product decision or development authorization. Existing cross-format
 inbound requirements remain in force.
 
+Superseded on 2026-09-14: the operator ruled that replies return to the
+Markdown card because the native post renders its text larger; the ruling is
+quoted in
+[read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md).
+
 ## Accepted product decision
 
 On 2026-09-11 the operator selected the following option in response to whether

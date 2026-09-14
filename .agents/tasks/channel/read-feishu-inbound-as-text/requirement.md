@@ -8,6 +8,12 @@ with two mentions, a plain-text mention followed by a time, and a post with a
 code block) and asked for the inbound side to be redone as one new pull
 request: "给他们废弃掉，再开一个新的", "你来做".
 
+After the pull request was opened, the operator ruled that replies go back to
+the Markdown card #414 had replaced with a native post, because the post
+renders its text larger and thins the information out, and then narrowed the
+change to the message sent rather than the renderer. Both messages are quoted
+verbatim in the task README.
+
 ## Confirmed current behavior and evidence
 
 Facts the capture proves directly (the capture itself stays outside the
@@ -82,20 +88,32 @@ says it is a card the model can pull in full with lark-cli.
   `<attachment path="…" />` or `<attachment status="not_downloaded" key="…" />`.
 - The 160,000-character body cap stays; a cut never leaves an unfinished tag or
   entity.
+- Outbound: a reply body is sent as one interactive card holding a single
+  `markdown` element with the authored Markdown, as ordered `interactive`
+  messages when the body must split. The authored `<at user_id="…">Name</at>`
+  tag, the same form the inbound body shows, goes into the card as written;
+  card Markdown renders it as a mention. #414's send path,
+  splitter, reply tool signature (`chat_id`, `message_id?`, `text`),
+  send-error description, and provisioning identity text are unchanged. The
+  card title, rule, and native table routing of the renderer #414 removed are
+  not brought back.
 
 ## Scope
 
 - `@excitedjs/feishu-transport` parse layer and its message-read seam.
 - `@excitedjs/feishu-channel` inbound event shape, enrichment, rendering, and
-  attachment resolution.
+  attachment resolution; the `reply` tool's `text` description.
+- `@excitedjs/feishu-transport` `transport/message-content.ts`,
+  `transport/outbound-message.ts`, and the `send` path.
 - Their tests, the export inventories, the knowledge base, and change files.
 - Closing #414 and #422; carrying the #414 outbound commit as the first commit
   of the new pull request.
 
 ## Non-goals
 
-- Outbound behavior (#414's reply, split, and error reporting) is carried
-  unchanged.
+- #414's reply tool signature, send-error reporting, and provisioning identity
+  are carried unchanged; only the message type and its envelope change.
+  `editText`, the mention list, and the public render exports stay removed.
 - Access, routing, slash commands, sender naming, group-bot baseline, the
   parent-type probe, and the `nonsupport` re-read are unchanged.
 - No new lookup of message content for cards, and no download of anything a
@@ -104,7 +122,8 @@ says it is a card the model can pull in full with lark-cli.
 ## Constraints and invariants
 
 - Inbound mention syntax is byte-identical to the outbound `reply` syntax
-  (ruling 1).
+  (ruling 1). The outbound path converts that syntax on the way out; the
+  model-facing form does not move with the presentation.
 - Identity comes only from the message's `mentions` records; nothing in a body
   is trusted as an identifier.
 - Untrusted text is escaped exactly once, at the Channel boundary, before any
@@ -120,6 +139,9 @@ says it is a card the model can pull in full with lark-cli.
   message read for the card.
 - A card with an image component renders one `<attachment>` and one download,
   and the card `<refs>` row is present.
+- A reply body is sent as `interactive` cards whose single `markdown` element
+  carries the body as written, `<at user_id="…">Name</at>` included; a body
+  whose escaped size exceeds one card splits into cards that each fit.
 - `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass;
   `.agents/scripts/check.sh` passes.
 
@@ -149,6 +171,19 @@ says it is a card the model can pull in full with lark-cli.
   - A post node tag the flattening does not know is dropped and the body is
     marked incomplete, instead of being rendered as its raw JSON. No ruling
     covers unknown tags.
+  - "原本那个卡片" is read as the interactive card message type with the
+    authored Markdown inside. The implementation puts the whole body in one
+    `markdown` element per card and does not restore the pre-#414 renderer's
+    card title, rule, or native table routing; that reading was stated to the
+    operator before the redo.
+  - No outbound mention rewrite exists. The first redo rewrote the authored
+    tag into the card's `<at id="…"></at>` on the assumption that card
+    Markdown needs that form; a live card sent to the operator's direct chat
+    on 2026-09-14 carrying both forms rendered both as mentions, so the tag
+    goes out as written. A group chat was not probed.
+  - Which other Markdown constructs a card `markdown` element renders
+    (headings, tables) is not verified from this session and is not claimed
+    in the `reply` tool's description.
 - Unknowns the capture cannot settle (handled both ways, not asserted):
   - Whether Feishu rewrites a bot-authored `<at user_id="…">` inside a native
     `md` node to a placeholder before delivery. The inline reader accepts

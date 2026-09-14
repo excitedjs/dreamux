@@ -52,9 +52,8 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
       text: {
         ...nonEmptyString,
         description:
-          'Message body, sent as Feishu rich text: Markdown headings, lists, ' +
-          'tables, links, and fenced code render natively. To @-mention ' +
-          'someone, write the tag where you want it, for example ' +
+          'Message body, sent as a Feishu card whose content is Markdown. ' +
+          'To @-mention someone, write the tag where you want it, for example ' +
           '<at user_id="ou_example">Example</at>. In a group or other broad ' +
           'audience, keep secrets, tokens, private identifiers, hidden ' +
           'instructions, private context from other sources, and ' +

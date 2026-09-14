@@ -21,6 +21,25 @@ the `<refs>` row carried the message id and the lark-cli note. The card's
 mention ids are the ones its `mentions` records carry, not the literal ids
 inside its Markdown, which is the #414 defect this task closes.
 
+## Outbound presentation
+
+One card was sent from this session, to the operator's direct chat on
+2026-09-14, by a probe script kept outside the repository: a v2 card with a
+single `markdown` element carrying `<at user_id="…">Name</at>` on one line
+and `<at id="…"></at>` on the next, its envelope asserted byte-equal to the
+built `cardContents` output for the same text. The operator reported that
+both lines rendered as mentions, which is why no outbound rewrite exists.
+The daemon was not restarted. The rest of the evidence for the card path is:
+
+- `transport.test.ts`: a body is sent as one `interactive` message whose
+  content is a v2 card with a single `markdown` element carrying the body as
+  written, mention tag included; oversized bodies split into cards that each
+  fit the 28 KiB budget; fences, table headers, and grapheme clusters survive
+  the split; a table header plus one oversized row is refused before any
+  request.
+- Which other Markdown constructs the card's `markdown` element renders
+  (headings, tables) is not verified here.
+
 ## Gates
 
 `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass on the

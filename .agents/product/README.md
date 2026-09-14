@@ -36,16 +36,26 @@ the same change that touches it.
   needing no orphan governance; a later message on that conversation simply
   creates or selects another Team. Dissolving a Team cancels all bindings that
   point at it.
-- **Replies use Feishu native rich text.** The agent writes Markdown and inline
+- **Replies are Markdown cards.** The agent writes Markdown and inline
   `<at user_id="ou_example">Example</at>` directly in the `reply` body; there is
-  no separate mention-list argument. A supplied `message_id` addresses the
-  original conversation. One body is one message when its serialized content
-  fits 28 KiB; larger bodies split in order, preserving Unicode clusters, code
-  fences, and table headers. An indivisible oversized table row produces a
-  size error. Explicit interactive cards and COT remain available. Platform
-  send failures expose the operation, available HTTP status, Feishu code,
-  reason, and log ID in logs and the MCP failure without copying request data.
-  (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+  no separate mention-list argument. The body is sent as one interactive card
+  holding a single Markdown element, because a card shows text in the client's
+  compact size where a native post shows it larger and thins the information
+  out. A leading heading is no longer lifted into a card title and a table is
+  no longer a native table element; the Markdown goes into the card as
+  written, the mention tag included, and the card renders that tag as a
+  mention (verified in a direct chat), so the model reads and writes one
+  syntax. A supplied `message_id`
+  addresses the original conversation. One body is one card when its
+  serialized content fits 28 KiB; larger bodies split in order, preserving
+  Unicode clusters, code fences, and table headers. An indivisible oversized
+  table row produces a size error. Explicit interactive cards and COT remain
+  available. Platform send failures expose the operation, available HTTP
+  status, Feishu code, reason, and log ID in logs and the MCP failure without
+  copying request data.
+  (Task: [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md),
+  superseding the native-post presentation of
+  [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
 - **Inbound messages read as one text body.** Text, rich posts, cards, and
   attachments reach the model as one `<content>` body whose mentions are
   written exactly as the `reply` tool takes them, `<at user_id="...">Name</at>`,

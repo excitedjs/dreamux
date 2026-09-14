@@ -2,10 +2,11 @@
  * Feishu message `content`: how an authored body becomes one, and how big one
  * may be.
  *
- * A reply is native rich text — one `md` node carrying the authored Markdown
- * verbatim, so Feishu's own client renders headings, tables, code, links, and
- * `<at user_id="…">` mentions where they were written. Nothing here rewrites
- * Markdown into another presentation.
+ * A reply is an interactive card holding one `markdown` element with the
+ * authored Markdown as written. A card is the presentation because the
+ * client shows card text in its compact size; a native post shows the same
+ * text larger. Card Markdown renders the authored `<at user_id="…">Name</at>`
+ * mention tag as it is, so nothing here rewrites the body.
  *
  * The only reason a body is ever cut is size. The budget is measured on the
  * serialized `content` string, JSON escaping included, because that is what
@@ -15,32 +16,36 @@
 import { marked, type Token } from 'marked'
 
 /**
- * The operator-selected serialized-content budget for one message, under the
- * platform's documented 30 KB ceiling. One budget covers native posts and raw
- * cards alike: they are the same `content` field.
+ * The serialized-content budget for one message, under the platform's
+ * documented 30 KB ceiling. One budget covers rendered and raw cards alike:
+ * they are the same `content` field.
  */
 export const FEISHU_MESSAGE_CONTENT_SAFE_BYTES = 28 * 1024
 
-/** Serialize one authored body as a native `post` message content string. */
-export function nativePostContent(body: string): string {
-  return JSON.stringify({ zh_cn: { content: [[{ tag: 'md', text: body }]] } })
+/** Serialize one Markdown body as an interactive card message content string. */
+function cardContent(markdown: string): string {
+  return JSON.stringify({
+    schema: '2.0',
+    config: { update_multi: true },
+    body: { elements: [{ tag: 'markdown', content: markdown }] },
+  })
 }
 
-const POST_ENVELOPE_BYTES = Buffer.byteLength(nativePostContent(''), 'utf8')
+const CARD_ENVELOPE_BYTES = Buffer.byteLength(cardContent(''), 'utf8')
 
 /**
- * Serialize one authored body into the native `post` contents to send, in
- * order. The whole body is tried first: a body that fits is one message no
- * matter how many Markdown blocks it holds.
+ * Serialize one authored body into the card contents to send, in order. The
+ * whole body is tried first: a body that fits is one message no matter how
+ * many Markdown blocks it holds.
  */
-export function nativePostContents(body: string): string[] {
-  const whole = nativePostContent(body)
+export function cardContents(body: string): string[] {
+  const whole = cardContent(body)
   if (Buffer.byteLength(whole, 'utf8') <= FEISHU_MESSAGE_CONTENT_SAFE_BYTES) {
     return [whole]
   }
-  const budget = FEISHU_MESSAGE_CONTENT_SAFE_BYTES - POST_ENVELOPE_BYTES
+  const budget = FEISHU_MESSAGE_CONTENT_SAFE_BYTES - CARD_ENVELOPE_BYTES
   return splitMarkdownBody(body, budget).map((piece) => {
-    const content = nativePostContent(piece)
+    const content = cardContent(piece)
     assertMessageContentFits(content)
     return content
   })
@@ -60,9 +65,9 @@ function contentTooLarge(bytes: number): string {
   )
 }
 
-/** What one Markdown fragment would cost as a whole native-post `content`. */
-function postContentBytes(body: string): number {
-  return Buffer.byteLength(nativePostContent(body), 'utf8')
+/** What one Markdown fragment would cost as a whole card `content`. */
+function contentBytes(markdown: string): number {
+  return Buffer.byteLength(cardContent(markdown), 'utf8')
 }
 
 /**
@@ -135,7 +140,7 @@ function splitFencedCode(raw: string, budget: number): string[] {
   const frame = `${open}\n${close}`
   const inner = budget - escapedBytes(frame)
   if (inner <= 0) {
-    throw new Error(contentTooLarge(postContentBytes(frame)))
+    throw new Error(contentTooLarge(contentBytes(frame)))
   }
   return packSegments(lines.slice(1, -1), inner).map((piece) =>
     `${open}${piece.endsWith('\n') ? piece : `${piece}\n`}${close}`)
@@ -157,7 +162,7 @@ function splitTableRows(raw: string, budget: number): string[] {
     : rows.find((row) => escapedBytes(row) > rowBudget)
   if (oversized !== undefined) {
     throw new Error(
-      `${contentTooLarge(postContentBytes(`${header}${oversized}`))} A table ` +
+      `${contentTooLarge(contentBytes(`${header}${oversized}`))} A table ` +
         'header plus a single data row already exceeds it, so the table ' +
         'cannot be split by row. Shorten the row, or send the data as a ' +
         'fenced code block.',

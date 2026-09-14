@@ -51,14 +51,16 @@ One pure utility boundary sits above the SDK layer, with no host dependency:
 
 ## Outgoing message content
 
-`transport.send` serializes the authored body as one native `post` message —
-`{"zh_cn":{"content":[[{"tag":"md","text":"…"}]]}}` — so the Feishu client
-renders the Markdown as written, mention tags included. Nothing converts
-Markdown into another presentation. A body whose serialized `content` would
-exceed the platform content budget is split into several ordered
-messages along block seams; raw cards passed to `sendCard` / `editCard` are
-measured against the same budget. That budget is the package's own — no caller
-chooses it, so it is not part of the exported surface.
+`transport.send` serializes the authored body as one v2 interactive card
+holding a single `markdown` element — `{"schema":"2.0","config":
+{"update_multi":true},"body":{"elements":[{"tag":"markdown","content":"…"}]}}`
+— sent as an `interactive` message. The body goes in as written, an
+authored `<at user_id="…">Name</at>` mention included; nothing is rewritten.
+A body whose serialized `content` would exceed the platform content budget is
+split into several ordered cards along block seams; raw cards passed to
+`sendCard` / `editCard` are measured against the same budget. That budget is
+the package's own — no caller chooses it, so it is not part of the exported
+surface.
 
 ## Events
 

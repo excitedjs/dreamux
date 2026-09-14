@@ -12,7 +12,10 @@
 - Inbound investigation: [Source and platform evidence](/.agents/tasks/channel/simplify-feishu-replies/inbound-analysis.md).
 - Related tasks: the inbound half of this task is superseded by
   [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md),
-  whose pull request carries this task's outbound commit unchanged.
+  whose pull request carries this task's outbound commit and then, under a
+  2026-09-14 ruling recorded there, returns the reply presentation from native
+  posts to Markdown cards; the reply tool signature, send-error reporting, and
+  identity guidance from this task stand.
 
 The submitted implementation uses native `post + md`, removes the separate mention
 parameters and unused Markdown-to-card APIs, and retains explicit cards and COT.

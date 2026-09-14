@@ -2,9 +2,6 @@ import type * as lark from '@larksuiteoapi/node-sdk'
 
 import type { OutboundTarget } from '../contract/outbound.js'
 
-/** The message types this transport sends: native rich text, and raw cards. */
-export type FeishuMessageType = 'post' | 'interactive'
-
 export interface MessageSendResponse {
   code?: number
   msg?: string
@@ -13,7 +10,7 @@ export interface MessageSendResponse {
 }
 
 /**
- * Send one already-serialized message body.
+ * Send one already-serialized card as an `interactive` message.
  *
  * Create versus reply is the only addressing distinction the platform makes
  * here, so it is the only branch: an AbortSignal rides along with either.
@@ -28,7 +25,6 @@ export interface MessageSendResponse {
 export async function sendFeishuMessage(
   client: lark.Client,
   target: OutboundTarget,
-  msgType: FeishuMessageType,
   content: string,
   signal?: AbortSignal,
 ): Promise<MessageSendResponse> {
@@ -39,12 +35,12 @@ export async function sendFeishuMessage(
       url: '/open-apis/im/v1/messages',
       method: 'POST' as const,
       params: { receive_id_type: 'chat_id' },
-      data: { receive_id: target.chatId, msg_type: msgType, content },
+      data: { receive_id: target.chatId, msg_type: 'interactive', content },
     }
     : {
       url: `/open-apis/im/v1/messages/${encodeURIComponent(replyTo)}/reply`,
       method: 'POST' as const,
-      data: { msg_type: msgType, content },
+      data: { msg_type: 'interactive', content },
     }
 
   let res: MessageSendResponse

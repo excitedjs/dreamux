@@ -5,7 +5,7 @@ import type { OutboundTarget } from '../contract/outbound.js'
 import { sendFeishuMessage } from './outbound-message.js'
 import {
   assertMessageContentFits,
-  nativePostContents,
+  cardContents,
 } from './message-content.js'
 import {
   connectionErrorLogLine,
@@ -398,8 +398,8 @@ export function createFeishuTransport(
       options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
     ): Promise<FeishuSendResult> {
       const messageIds: string[] = []
-      for (const content of nativePostContents(text)) {
-        const res = await sendFeishuMessage(client, target, 'post', content)
+      for (const content of cardContents(text)) {
+        const res = await sendFeishuMessage(client, target, content)
         const id = res.data?.message_id
         if (id) {
           const ordinal = messageIds.length
@@ -417,13 +417,7 @@ export function createFeishuTransport(
     ): Promise<FeishuSendResult> {
       const content = JSON.stringify(card)
       assertMessageContentFits(content)
-      const res = await sendFeishuMessage(
-        client,
-        target,
-        'interactive',
-        content,
-        options?.signal,
-      )
+      const res = await sendFeishuMessage(client, target, content, options?.signal)
       const id = res.data?.message_id
       return { messageIds: id ? [id] : [] }
     },
