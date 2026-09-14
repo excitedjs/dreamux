@@ -7,11 +7,26 @@ import { readInlineMarkdown } from './inline.js'
  *
  * A card event carries the whole card: `user_dsl` for a card authored in the
  * current schema, the outer object for an older one. Every `content` / `text`
- * string the card holds is one line of the body, in document order, and
- * every image or file component is a resource at its position. Layout,
- * controls beyond their labels, callback values, and link targets are not
- * read; a template card carries no readable text at all.
+ * string the walk reaches is one line of the body, in document order, and
+ * every image or file component is a resource at its position. The walk
+ * descends only through the keys a card displays its children under, so
+ * layout, controls beyond their labels, callback payloads (`value`,
+ * `behaviors`), and link targets are never reached: a card another bot
+ * authored cannot put text in front of the model that the client does not
+ * show. A template card carries no readable text at all.
  */
+
+/**
+ * The keys a card displays its children under: the card body and header, the
+ * header's title and subtitle, the containers, and the `text` object that
+ * wraps a control's label. `i18n_elements` is handled apart because it is
+ * keyed by locale.
+ */
+const DISPLAY_KEYS = new Set([
+  'body', 'header', 'title', 'subtitle', 'elements', 'columns', 'fields',
+  'actions', 'rows', 'cells', 'extra', 'text',
+])
+
 export function parseCardContent(
   outer: Record<string, unknown>,
   mentions: Mention[] | undefined,
@@ -39,7 +54,9 @@ export function parseCardContent(
     for (const [name, child] of Object.entries(node)) {
       if ((name === 'content' || name === 'text') && typeof child === 'string') {
         body.line(readInlineMarkdown(child, mentions, body))
-      } else {
+      } else if (name === 'i18n_elements') {
+        for (const locale of Object.values(asRecord(child) ?? {})) walk(locale)
+      } else if (DISPLAY_KEYS.has(name)) {
         walk(child)
       }
     }

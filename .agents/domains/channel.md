@@ -512,10 +512,11 @@ event, resolves/downloads resources, and owns the model-facing XML.
 
 The access gate runs before any message read or resource fetch. A card is read
 from the event alone: `user_dsl` when present, the outer card otherwise; every
-`content`/`text` string it carries is one line, in document order, and every
-image or file component is a resource at its position. Layout, controls,
-callback values, and link targets are not reconstructed, and no message read
-is issued for a card. `nonsupport` events adopt a matching root's authoritative
+`content`/`text` string reached through the keys a card displays its children
+under is one line, in document order, and every image or file component is a
+resource at its position. Layout, controls beyond their labels, callback
+payloads, and link targets are never reached, and no message read is issued
+for a card. `nonsupport` events adopt a matching root's authoritative
 type/content through one read. Merged-forward messages deliberately perform no
 current-message read or child-resource fetch. The Channel emits an empty
 `<content />` plus `<refs><merged-forward message_id="..."/></refs>`; a card

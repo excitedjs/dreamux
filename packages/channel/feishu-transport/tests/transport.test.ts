@@ -265,6 +265,21 @@ describe('createFeishuTransport — send', () => {
     })
   })
 
+  test('an oversized body loses its carriage returns in the split', async () => {
+    // The split tiles the lexer's block `raw` values, which normalize CRLF
+    // to LF; a body that fits is sent as written. Pinned rather than fixed:
+    // the agent writes LF.
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+    const body = 'line one\r\nline two\r\n\r\n'.repeat(2000)
+
+    await transport.send({ chatId: 'oc_chat' }, body)
+
+    const bodies = cardBodies(stub)
+    expect(bodies.length).toBeGreaterThan(1)
+    expect(bodies.join('')).toBe(body.replace(/\r\n/g, '\n'))
+  })
+
   test('threads a reply under the source message', async () => {
     const stub = stubClient()
     stub.request.mockResolvedValueOnce({

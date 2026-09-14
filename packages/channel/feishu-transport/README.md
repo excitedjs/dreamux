@@ -45,7 +45,8 @@ One pure utility boundary sits above the SDK layer, with no host dependency:
   that placeholder — and an image or file stands as its resource key, with the
   resources listed beside the text. Resolving a placeholder to a person, and a
   key to a download, is the caller's job. A card is read from the event alone,
-  as its `content`/`text` strings and its image and file components.
+  as the `content`/`text` strings under its display keys and its image and
+  file components; a control's callback payload is never walked.
   `normalizeCommentEvent` / `normalizeBotMemberAddedEvent` do the same for
   comment and bot-added inbound events.
 

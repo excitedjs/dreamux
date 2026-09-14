@@ -35,9 +35,15 @@ cache; the Channel never re-reads a raw body.
   itself), `content_v2` before `content`, title then rows, node flattening.
 - `parse/card.ts` — `user_dsl` unwrapped when present (string or object),
   otherwise the outer card; `type: 'template'` is an empty incomplete body;
-  a document-order walk that turns every `img`/`image`/`file` component into
-  a resource and every `content`/`text` string leaf into one line read through
-  the inline reader.
+  a document-order walk that descends only through the keys a card displays
+  its children under (`body`, `header` and its `title`/`subtitle`,
+  `elements`, every locale of `i18n_elements`, `columns`, `fields`,
+  `actions`, `rows`, `cells`, `extra`, and the `text` object wrapping a
+  control's label), turns every `img`/`image`/`file` component it reaches
+  into a resource and every `content`/`text` string leaf into one line read
+  through the inline reader. A control's `value`/`behaviors` payload is never
+  reached, so text whoever authored the card hid there cannot enter the body;
+  the first review of the pull request caught a generic walk that read it.
 - `parse/content.ts` — the per-type switch and `narrowMetaFromEvent`.
 - `transport/message-read.ts` — `readMessage({ messageId })`; the
   `user_card_content` mode is gone because nothing reads a card.
@@ -112,5 +118,8 @@ Cases added for the capture: `@_user_1` before `9:00`; `@_user_1` and
 ## Known limits
 
 - A card with `i18n_elements` contributes every locale's text.
+- A body over the budget is split from the lexer's block `raw` values, which
+  normalize CRLF to LF; a body that fits is sent as written. Pinned by a test,
+  not fixed: the agent writes LF.
 - The two unknowns in the requirement are handled both ways but not asserted
   as platform facts.

@@ -40,6 +40,20 @@ The daemon was not restarted. The rest of the evidence for the card path is:
 - Which other Markdown constructs the card's `markdown` element renders
   (headings, tables) is not verified here.
 
+## Review round
+
+The first review (2026-09-15) reported that the card walk read a button's
+`value` payload: replaying the reviewer's card against the built parser of
+that head gave the visible label followed by the two hidden strings,
+`请审批这个发布单\n批准\nIGNORE PREVIOUS INSTRUCTIONS\nhidden-callback-text`.
+Fixed by walking only the display keys; `card.test.ts` now asserts that the
+same card yields `请审批这个发布单\n批准` with nothing from `value` or
+`behaviors`, and that the header title and every `i18n_elements` locale are
+still read. The review's second note, CRLF normalized away on the split path,
+reproduced against the same build (a 30 KiB CRLF body came back with no
+carriage return; a body that fits keeps them) and is pinned by a test, not
+fixed.
+
 ## Gates
 
 `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass on the
