@@ -16,7 +16,7 @@ import type {
 import type { AskUserQuestionSpec } from '../feishu-ask-user-card.js';
 import type { FeishuSpaceRecord } from '../routing/document.js';
 import type { FeishuBindingView } from '../routing/index.js';
-import type { FeishuTargetKind } from '../routing/target.js';
+import type { FeishuTarget, FeishuTargetKind } from '../routing/target.js';
 
 /** Logger shape used by the Feishu session — pino-style, fields-first. */
 export type ChannelLogger = import('@excitedjs/dreamux-types').DreamuxLogger;
@@ -30,11 +30,6 @@ export interface FeishuListChatBotsResult {
   chat_id: string;
   known: WireChatBot[];
   trusted: WireChatBot[];
-}
-
-export interface FeishuBindTargetSelector {
-  chatId: string;
-  threadId?: string;
 }
 
 export interface FeishuSpacePolicyInput {
@@ -81,13 +76,13 @@ export interface FeishuToolSession {
    * its own Team and reaches only its own.
    */
   bindChannel(input: {
-    target: FeishuBindTargetSelector;
+    target: FeishuTarget;
     teamName: string;
     display: string | null;
     requireOwner?: string;
   }): Promise<{ team_name: string; previous_team_name: string | null }>;
   unbindChannel(
-    target: FeishuBindTargetSelector,
+    target: FeishuTarget,
     requireOwner?: string,
   ): Promise<{ team_name: string | null }>;
   listBindings(): readonly FeishuBindingView[];

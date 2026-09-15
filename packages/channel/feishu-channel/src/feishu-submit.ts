@@ -13,7 +13,7 @@ import type {
 
 import type { VisibleMessageAnchor } from './feishu-cot-state.js';
 import type {
-  FeishuSlashCommand,
+  FeishuSlashCommandInvocation,
   FeishuSlashCommandReply,
 } from './feishu-slash-commands.js';
 import type { FeishuTarget } from './routing/target.js';
@@ -119,7 +119,7 @@ export function errorMessage(error: unknown): string {
 
 export interface FeishuInboundDelivery {
   command(input: {
-    command: FeishuSlashCommand;
+    command: FeishuSlashCommandInvocation;
     target: FeishuTarget;
     containerChatId: string | null;
   }): Promise<FeishuSlashCommandReply>;

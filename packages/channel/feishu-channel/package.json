@@ -6,7 +6,7 @@
     "url": "git+https://github.com/excitedjs/dreamux.git",
     "directory": "packages/channel/feishu-channel"
   },
-  "description": "Built-in Feishu ChannelProvider package for Dreamux (alias builtin:feishu). Owns Feishu channel session logic, inbound normalization, access/trust, and MCP tool backing on top of @excitedjs/feishu-transport; depends on @excitedjs/dreamux-types + @excitedjs/feishu-transport only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
+  "description": "Built-in Feishu ChannelProvider package for Dreamux (alias builtin:feishu). Owns Feishu channel session logic, inbound normalization, access/trust, and MCP tool backing on top of @excitedjs/feishu-transport; uses yargs-parser for slash-command arguments and never depends on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -39,11 +39,13 @@
   "dependencies": {
     "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/dreamux-utils": "workspace:*",
-    "@excitedjs/feishu-transport": "workspace:*"
+    "@excitedjs/feishu-transport": "workspace:*",
+    "yargs-parser": "^21.1.1"
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",
     "@types/node": "^22.10.0",
+    "@types/yargs-parser": "^21.0.3",
     "eslint": "^9.39.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

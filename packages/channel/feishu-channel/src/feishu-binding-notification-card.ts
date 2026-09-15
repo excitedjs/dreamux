@@ -23,6 +23,7 @@ export function bindingBoundCard(input: {
   leaderName: string;
   agentRuntime: string;
   runtimeCwd: string;
+  previousTeamName?: string;
 }): unknown {
   const targetDisplay = input.display ?? describeTarget(input.target);
   const binding = input.target.kind === 'topic' ? 'topic' : 'group';
@@ -50,6 +51,9 @@ export function bindingBoundCard(input: {
           ['Target', targetDisplay],
           ['TeamLeader', input.leaderName],
           ['Agent Runtime', input.agentRuntime],
+        ]),
+        ...(input.previousTeamName === undefined ? [] : [
+          textBlock(`Previous Team: ${input.previousTeamName}`, 'normal', 'grey'),
         ]),
         detailPanel(
           "**<font color='green'>Runtime cwd</font>**",

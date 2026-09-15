@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add Feishu /bind and /help commands with yargs-parser arguments. Bind the whole chat, announce in the requesting conversation without moving a Team anchor across targets, and show Previous Team when rebinding.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

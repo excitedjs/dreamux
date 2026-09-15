@@ -10,13 +10,8 @@
  * ordering is asserted by recording the sequence of side effects (Core ask,
  * disk state, card send) rather than by inspecting internals.
  *
- * `bindChannel`'s `isBindableTarget` p2p guard is not exercised here: its own
- * `FeishuBindTargetSelector` input has no `kind` field, and `selectorTarget`
- * always maps a bare `chatId` to a `group` target, so a p2p target can never
- * reach this method through its public surface. The actual, reachable
- * enforcement that a direct-message chat never routes to a Team is
- * `FeishuRouting.plan()` answering `dispatcher`/`not_bindable`, covered in
- * `feishu-routing.test.ts`.
+ * A direct-message target is refused by the binding operation before Core is
+ * queried or a row can be written.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,7 +25,7 @@ import { teamSummary } from './helpers/team-status.js';
 
 import { FeishuRouting } from '../src/routing/index.js';
 import { FeishuRoutingStore } from '../src/routing/store.js';
-import { chatTarget } from '../src/routing/target.js';
+import { chatTarget, topicTarget } from '../src/routing/target.js';
 import { FeishuBindingOperations } from '../src/feishu-session-bindings.js';
 import type { FeishuCotSessionSeam } from '../src/feishu-cot-session.js';
 
@@ -122,10 +117,60 @@ async function harness(readStatus?: (teamName: string) => Promise<TeamSummary>):
 }
 
 describe('FeishuBindingOperations — manual bind synchronous validation', () => {
+  it('refuses direct messages before querying Core or writing any binding row', async () => {
+    const h = await harness();
+    await expect(h.ops.bindChannel({
+      target: chatTarget('oc_dm', 'p2p'), teamName: 'team-a', display: null,
+    })).rejects.toThrow('A Feishu direct message chat cannot be bound to a Team.');
+    expect(h.routing.listBindings()).toEqual([]);
+    expect(h.calls).toEqual([]);
+    expect(h.cotCalls).toEqual([]);
+  });
+
+  it('announces the displaced Team on a rebind, but not on first or same-Team binds', async () => {
+    const h = await harness();
+    h.setStatus('team-a', 'running');
+    h.setStatus('team-b', 'running');
+    const target = chatTarget('oc_rebind', 'group');
+    await h.ops.bindChannel({ target, teamName: 'team-a', display: null });
+    expect(JSON.stringify(h.notifications[0]!.card)).not.toContain('Previous Team');
+    const result = await h.ops.bindChannel({ target, teamName: 'team-b', display: null });
+    expect(result).toEqual({ team_name: 'team-b', previous_team_name: 'team-a' });
+    expect(h.routing.bindingFor(target)?.team_name).toBe('team-b');
+    expect(h.notifications[1]).toMatchObject({ target, anchorTeamName: 'team-b' });
+    expect(JSON.stringify(h.notifications[1]!.card)).toContain('Previous Team: team-a');
+    await h.ops.bindChannel({ target, teamName: 'team-b', display: null });
+    expect(JSON.stringify(h.notifications[2]!.card)).not.toContain('Previous Team');
+    expect(h.cotCalls).toEqual([
+      { op: 'claimed', teamName: 'team-a' },
+      { op: 'released', teamName: 'team-a' },
+      { op: 'claimed', teamName: 'team-b' },
+      { op: 'claimed', teamName: 'team-b' },
+    ]);
+  });
+
+  it('announces in a separately bound topic without giving its card to the new Team as an anchor', async () => {
+    const h = await harness();
+    h.setStatus('team-a', 'running');
+    h.setStatus('team-b', 'running');
+    const target = chatTarget('oc_group', 'group');
+    const topic = topicTarget('oc_group', 'omt_a');
+    await h.ops.bindChannel({ target: topic, teamName: 'team-a', display: null });
+    await h.ops.bindChannel({ target, teamName: 'team-b', display: null, announceIn: topic });
+    expect(h.routing.plan(topic, null)).toMatchObject({ kind: 'bound', teamName: 'team-a' });
+    expect(h.routing.plan(target, null)).toMatchObject({ kind: 'bound', teamName: 'team-b' });
+    expect(h.notifications[1]).toMatchObject({ target: topic, anchorTeamName: null });
+    expect(JSON.stringify(h.notifications[1]!.card)).toContain('Dreamux group bound');
+    expect(h.cotCalls).toEqual([
+      { op: 'claimed', teamName: 'team-a' },
+      { op: 'claimed', teamName: 'team-b' },
+    ]);
+  });
+
   it('asks Core team.status before persisting the binding and before rendering the card', async () => {
     const h = await harness();
     h.setStatus('team-open', 'running');
-    const target = { chatId: 'oc_group', threadId: undefined };
+    const target = chatTarget('oc_group', 'group');
 
     await h.ops.bindChannel({
       target,
@@ -146,7 +191,7 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
     let resolveStatus!: (answer: TeamSummary) => void;
     const h = await harness(() => new Promise((resolve) => { resolveStatus = resolve; }));
     const bind = vi.spyOn(h.routing, 'bind');
-    const pending = h.ops.bindChannel({ target: { chatId: 'chat-a' }, teamName: 'team-a', display: null });
+    const pending = h.ops.bindChannel({ target: chatTarget('chat-a', 'group'), teamName: 'team-a', display: null });
     expect(bind).not.toHaveBeenCalled();
     expect(h.notifications).toEqual([]);
     resolveStatus(teamSummary('team-a'));
@@ -164,7 +209,7 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
       ...teamSummary('team-a'),
       leader_state: null,
     }));
-    await expect(h.ops.bindChannel({ target: { chatId: 'chat-a' }, teamName: 'team-a', display: null }))
+    await expect(h.ops.bindChannel({ target: chatTarget('chat-a', 'group'), teamName: 'team-a', display: null }))
       .rejects.toThrow('no readable TeamLeader identity');
     expect(h.routing.bindingFor(chatTarget('chat-a', 'group'))).toBeUndefined();
     expect(h.notifications).toEqual([]);
@@ -173,7 +218,7 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
 
   it('a bind to a nonexistent Team never becomes durable and never renders a card', async () => {
     const h = await harness();
-    const target = { chatId: 'oc_ghost', threadId: undefined };
+    const target = chatTarget('oc_ghost', 'group');
 
     await expect(
       h.ops.bindChannel({ target, teamName: 'ghost-team', display: null }),
@@ -187,7 +232,7 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
   it('a bind to a closed Team never becomes durable and never renders a card', async () => {
     const h = await harness();
     h.setStatus('closed-team', 'closed');
-    const target = { chatId: 'oc_closed', threadId: undefined };
+    const target = chatTarget('oc_closed', 'group');
 
     await expect(
       h.ops.bindChannel({ target, teamName: 'closed-team', display: null }),
@@ -203,7 +248,7 @@ describe('FeishuBindingOperations — unbind, and closed-Team cleanup announceme
   it('unbindChannel releases the COT route and sends the unbound card only when something was actually removed', async () => {
     const h = await harness();
     h.setStatus('team-open', 'running');
-    const target = { chatId: 'oc_group', threadId: undefined };
+    const target = chatTarget('oc_group', 'group');
     await h.ops.bindChannel({ target, teamName: 'team-open', display: null });
     h.notifications.length = 0;
     h.cotCalls.length = 0;
@@ -217,7 +262,7 @@ describe('FeishuBindingOperations — unbind, and closed-Team cleanup announceme
 
   it('unbindChannel on an unrouted target is a no-op: no COT release, no card', async () => {
     const h = await harness();
-    const result = await h.ops.unbindChannel({ chatId: 'oc_never', threadId: undefined });
+    const result = await h.ops.unbindChannel(chatTarget('oc_never', 'group'));
     expect(result.team_name).toBeNull();
     expect(h.cotCalls).toEqual([]);
     expect(h.notifications).toEqual([]);

@@ -25,8 +25,8 @@ import {
   unbindChannelDef,
 } from '../src/tools/routing-tools.js';
 import type { FeishuBindingView } from '../src/routing/index.js';
+import type { FeishuTarget } from '../src/routing/target.js';
 import type {
-  FeishuBindTargetSelector,
   FeishuToolContext,
   FeishuToolSession,
 } from '../src/tools/types.js';
@@ -39,13 +39,13 @@ const teamLeader: ChannelMcpCaller = {
 const dispatcher: ChannelMcpCaller = { kind: 'dispatcher' };
 
 interface RecordedBind {
-  target: FeishuBindTargetSelector;
+  target: FeishuTarget;
   teamName: string;
   display: string | null;
   requireOwner?: string;
 }
 interface RecordedUnbind {
-  target: FeishuBindTargetSelector;
+  target: FeishuTarget;
   requireOwner?: string;
 }
 
@@ -107,6 +107,18 @@ function ctx(caller: ChannelMcpCaller, session: FeishuToolSession): FeishuToolCo
 }
 
 describe('bind_channel — Dispatcher vs TeamLeader are disjoint definitions', () => {
+  it.each([null, '', 'omt_topic'])('converts the wire thread id %s directly into the same bind and unbind target', async (threadId) => {
+    const session = fakeSession();
+    const raw = { chat_id: 'oc_target', thread_id: threadId, team_name: 'team-a' };
+    await bindChannelDef.handle(ctx(dispatcher, session), bindChannelDef.parse(raw));
+    await unbindChannelDef.handle(ctx(dispatcher, session), unbindChannelDef.parse(raw));
+    const target = threadId === null || threadId === ''
+      ? { kind: 'group', chatId: 'oc_target' }
+      : { kind: 'topic', chatId: 'oc_target', threadId };
+    expect(session.binds[0]!.target).toEqual(target);
+    expect(session.unbinds[0]!.target).toEqual(target);
+  });
+
   it('the TeamLeader input schema has no team_name property at all', () => {
     const props = (leaderBindChannelDef.inputSchema as { properties: Record<string, unknown> })
       .properties;
@@ -125,7 +137,7 @@ describe('bind_channel — Dispatcher vs TeamLeader are disjoint definitions', (
 
     expect(session.binds).toEqual([
       {
-        target: { chatId: 'oc_own' },
+        target: { kind: 'group', chatId: 'oc_own' },
         teamName: 'my-team',
         display: null,
         requireOwner: 'my-team',
@@ -143,7 +155,7 @@ describe('bind_channel — Dispatcher vs TeamLeader are disjoint definitions', (
 
     expect(session.binds).toEqual([
       {
-        target: { chatId: 'oc_any' },
+        target: { kind: 'group', chatId: 'oc_any' },
         teamName: 'arbitrary-team',
         display: null,
       },
@@ -172,7 +184,7 @@ describe('unbind_channel — TeamLeader self-release', () => {
     await leaderUnbindChannelDef.handle(ctx(teamLeader, session), input);
 
     expect(session.unbinds).toEqual([
-      { target: { chatId: 'oc_mine' }, requireOwner: 'my-team' },
+      { target: { kind: 'group', chatId: 'oc_mine' }, requireOwner: 'my-team' },
     ]);
   });
 
@@ -182,7 +194,7 @@ describe('unbind_channel — TeamLeader self-release', () => {
     await unbindChannelDef.handle(ctx(dispatcher, session), input);
 
     expect(session.unbinds).toEqual([
-      { target: { chatId: 'oc_anyones' }, requireOwner: undefined },
+      { target: { kind: 'group', chatId: 'oc_anyones' }, requireOwner: undefined },
     ]);
   });
 });

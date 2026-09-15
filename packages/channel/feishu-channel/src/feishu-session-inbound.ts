@@ -40,7 +40,7 @@ import {
 } from './introduce.js';
 import {
   detectFeishuSlashCommand,
-  type FeishuSlashCommand,
+  type FeishuSlashCommandInvocation,
 } from './feishu-slash-commands.js';
 import {
   PAIRING_TTL_MS,
@@ -365,7 +365,7 @@ export async function onMessage(
 async function deliverAcceptedMessage(
   h: SessionHandle,
   acceptedEvent: FeishuInboundEvent,
-  command: FeishuSlashCommand | null,
+  command: FeishuSlashCommandInvocation | null,
 ): Promise<void> {
   const work = createFeishuInboundWork(h.sessionFence);
   try {

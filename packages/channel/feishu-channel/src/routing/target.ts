@@ -29,6 +29,11 @@ export function topicTarget(chatId: string, threadId: string): FeishuTarget {
   return { kind: 'topic', chatId, threadId };
 }
 
+/** The chat a target lives in: a topic's parent group, or the target itself. */
+export function containingChat(target: FeishuTarget): FeishuTarget {
+  return target.kind === 'topic' ? chatTarget(target.chatId, 'group') : target;
+}
+
 /**
  * The identity a binding row is keyed by. Injective over the three kinds: a
  * chat id cannot contain `\0`, so no group key can spell a topic key.

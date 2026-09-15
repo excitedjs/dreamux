@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   ChannelCorePort,
+  ChannelCoreEvent,
   ChannelEventSubscription,
   DreamuxLogger,
   JsonValue,
@@ -16,12 +17,15 @@ import { FeishuChannelSession } from '../src/feishu-channel.js';
 import {
   detectFeishuSlashCommand,
   dispatchFeishuSlashCommand,
+  type FeishuSlashCommandName,
 } from '../src/feishu-slash-commands.js';
 import { trustIntroducedBots } from '../src/chat-bots-store.js';
 import { defaultDispatcherAccessState, saveDispatcherAccess } from '../src/feishu-gate.js';
-import { chatTarget } from '../src/routing/target.js';
+import { chatTarget, topicTarget, type FeishuTarget } from '../src/routing/target.js';
+import { bindChannelDef } from '../src/tools/routing-tools.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import { createFakeCotClient } from './helpers/fake-feishu-cot.js';
+import { teamSummary } from './helpers/team-status.js';
 
 const mention: Mention = {
   key: '@_user_10',
@@ -48,17 +52,37 @@ function detect(input: {
 }
 
 describe('Feishu slash command recognition', () => {
+  it.each(['MyTeam', '123', '1e5', '0x1f', '2.50', '10.00', '1.', '12.', '0.0'])(
+    'preserves the exact bind argument %s', (name) => {
+      expect(detect({ text: `/BIND ${name}` })).toEqual({ name: 'bind', args: { _: [name] } });
+    },
+  );
+
+  it.each(['--foo', '-abc', '--', '---', '--a=b', '-', '\\'])(
+    'parses %s without throwing outside command dispatch', (argument) => {
+      expect(() => detect({ text: `/bind ${argument}` })).not.toThrow();
+      expect(detect({ text: `/bind ${argument}` })?.name).toBe('bind');
+    },
+  );
+
+  it('matches whole command tokens only', () => {
+    expect(detect({ text: '/binding alpha' })).toBeNull();
+    expect(detect({ text: '/helpful' })).toBeNull();
+  });
+
   it('recognizes a mention-prefixed command longest-key-first', () => {
     expect(detect({
       text: '@_user_10 /stop',
       chatType: 'group',
       botMentioned: true,
       mentions: [{ ...mention, key: '@_user_1' }, mention],
-    })).toBe('stop');
+    })).toEqual({ name: 'stop', args: { _: [] } });
   });
 
-  it('ignores trailing text and matches case-insensitively', () => {
-    expect(detect({ text: '/STOP now please' })).toBe('stop');
+  it('parses trailing text and matches the command name case-insensitively', () => {
+    expect(detect({ text: '/STOP now please' })).toEqual({
+      name: 'stop', args: { _: ['now', 'please'] },
+    });
   });
 
   it('does not recognize a command in the middle of a message', () => {
@@ -74,7 +98,7 @@ describe('Feishu slash command recognition', () => {
   });
 
   it('recognizes a direct-message command without a mention', () => {
-    expect(detect({ text: '/dissolve' })).toBe('dissolve');
+    expect(detect({ text: '/dissolve' })).toEqual({ name: 'dissolve', args: { _: [] } });
   });
 
   it('leaves a trusted bot command-shaped message on ordinary delivery', () => {
@@ -95,17 +119,52 @@ describe('Feishu slash command recognition', () => {
  */
 type DispatchContext = Parameters<typeof dispatchFeishuSlashCommand>[1];
 function dispatch(
-  command: Parameters<typeof dispatchFeishuSlashCommand>[0],
-  context: Omit<DispatchContext, 'resolveChatName'> &
-    Partial<Pick<DispatchContext, 'resolveChatName'>>,
+  command: FeishuSlashCommandName,
+  context: Pick<DispatchContext, 'plan' | 'invoke' | 'bindings'> & Partial<DispatchContext>,
+  trailing = 'now please',
 ) {
-  return dispatchFeishuSlashCommand(command, {
+  const invocation = detect({ text: `/${command} ${trailing}` });
+  if (invocation === null) throw new Error(`unrecognized command /${command}`);
+  return dispatchFeishuSlashCommand(invocation, {
+    target: chatTarget('oc_command', 'group'),
+    spaceContainer: null,
+    bindChannel: async () => { throw new Error('unexpected bind'); },
     resolveChatName: async () => undefined,
     ...context,
   });
 }
 
 describe('Feishu slash command dispatch', () => {
+  it('shows its own usage for a bind with no argument and does not bind', async () => {
+    const bindChannel = vi.fn<DispatchContext['bindChannel']>();
+    const reply = await dispatch('bind', {
+      plan: { kind: 'dispatcher', reason: 'no_binding' },
+      bindings: [], invoke: async () => ({}), bindChannel,
+    }, '');
+    expect(reply).toEqual({ kind: 'text', text: 'Usage: /bind <team_name>' });
+    expect(bindChannel).not.toHaveBeenCalled();
+  });
+
+  it('lists every command with its English usage and summary', async () => {
+    const reply = await dispatch('help', {
+      plan: { kind: 'dispatcher', reason: 'no_binding' },
+      bindings: [], invoke: async () => { throw new Error('help must not call Core'); },
+    });
+    const expected: Record<FeishuSlashCommandName, string> = {
+      bind: '- `/bind <team_name>` — Route this group to a Team.',
+      dissolve: '- `/dissolve` — Dissolve this conversation\'s bound Team.',
+      help: '- `/help` — Show this list.',
+      stop: '- `/stop` — Interrupt the current turn in this conversation.',
+      teams: '- `/teams` — List running Teams.',
+    };
+    expect(reply).toEqual({
+      kind: 'text', text: ['**Dreamux commands**', ...Object.values(expected)].join('\n'),
+    });
+    for (const name of Object.keys(expected)) {
+      expect(detect({ text: `/${name}` })?.name).toBe(name);
+    }
+  });
+
   it('targets a bound Team for stop and renders idle distinctly', async () => {
     const calls: Array<{ command: string; payload: JsonValue }> = [];
     const reply = await dispatch('stop', {
@@ -335,7 +394,7 @@ describe('Feishu slash command routing side effects', () => {
     });
 
     const reply = await session.command({
-      command,
+      command: { name: command, args: { _: [] } },
       target,
       containerChatId: null,
     });
@@ -393,7 +452,7 @@ describe('Feishu slash command routing side effects', () => {
     });
 
     const reply = await session.command({
-      command: 'teams',
+      command: { name: 'teams', args: { _: [] } },
       target,
       containerChatId: null,
     });
@@ -574,5 +633,206 @@ describe('Feishu slash command inbound placement', () => {
     expect(calls[0]!.command).toBe('team.submit');
     expect(calls[0]!.payload).not.toHaveProperty('team_name');
     await session.close();
+  });
+});
+
+/** Exercise recognition, inbound gates, real binding storage, and outbound placement together. */
+async function bindHarness(target = chatTarget('oc_bind', 'group')) {
+  const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-bind-state-'));
+  const attachmentCacheDir = mkdtempSync(join(tmpdir(), 'dreamux-bind-cache-'));
+  tempDirs.push(stateDir, attachmentCacheDir);
+  const bot = createFakeFeishuBot('bind');
+  if (target.kind === 'topic') bot.setChatMode(target.chatId, 'topic');
+  const cot = createFakeCotClient();
+  bot.setCot(cot);
+  await saveDispatcherAccess(stateDir, {
+    ...defaultDispatcherAccessState(),
+    allow_users: ['ou_human'],
+    group: { policy: 'allowlist', allow_chats: [target.chatId], require_mention: true },
+  });
+  const calls: Array<{ command: string; payload: JsonValue }> = [];
+  let status: 'running' | 'closed' | 'missing' = 'running';
+  const listeners: Array<(event: ChannelCoreEvent) => void | Promise<void>> = [];
+  const session = new FeishuChannelSession({
+    dispatcherId: 'disp', channelId: 'channel', appId: 'app', appSecret: '',
+    stateDir, attachmentCacheDir, log: silentLog, botFactory: () => bot,
+  });
+  await session.initialize({
+    invoke: {
+      invoke: async (command, payload) => {
+        calls.push({ command, payload });
+        if (command === 'team.list') return { teams: [] };
+        if (command !== 'team.status') throw new Error(`unexpected ${command}`);
+        const teamName = (payload as { team_name: string }).team_name;
+        if (status === 'missing') {
+          throw Object.assign(new Error(`Team ${JSON.stringify(teamName)} does not exist`), {
+            code: 'TEAM_NOT_FOUND',
+          });
+        }
+        return JSON.parse(JSON.stringify(teamSummary(teamName, status))) as JsonValue;
+      },
+    },
+    events: {
+      subscribe(listener) {
+        listeners.push(listener);
+        return { unsubscribe: () => undefined };
+      },
+    },
+  });
+  await session.start();
+  const command = vi.spyOn(session, 'command');
+  let ordinal = 0;
+  return {
+    session, bot, cot, calls, command,
+    setStatus(value: typeof status) { status = value; },
+    async seed(bound: FeishuTarget, teamName: string) {
+      await session.routing.bind({ target: bound, teamName, display: null, origin: 'manual', spaceId: null });
+    },
+    async inject(text: string) {
+      const messageId = `om_bind_${++ordinal}`;
+      await bot.inject({
+        messageId, chatId: target.chatId,
+        chatType: target.kind === 'p2p' ? 'p2p' : 'group',
+        ...(target.threadId === undefined ? {} : { threadId: target.threadId }),
+        senderId: 'ou_human', senderType: 'user', senderName: 'Human',
+        messageType: 'text', rawContent: JSON.stringify({ text: `@_user_1 ${text}` }),
+        text: `@_user_1 ${text}`, resources: [],
+        mentions: [{ key: '@_user_1', name: 'Dreamux', id: { open_id: bot.botOpenId } }],
+        createTime: String(ordinal), raw: {},
+      });
+      return messageId;
+    },
+    async speak(teamName: string) {
+      // A fake send is recorded before its result reaches notification bookkeeping.
+      const messageId = bot.sentCards.at(-1)!.messageIds[0]!;
+      await vi.waitFor(() => expect(session.handle.targetRouter.targetForMessage(messageId)).toBeDefined());
+      for (const listener of listeners) await listener({
+        schema_version: 1, kind: 'teammate.activity', occurred_at: 1,
+        role: 'team_leader', team_name: teamName, teammate_name: `${teamName}-leader`,
+        activity: { kind: 'assistant.message', event_id: `event-${teamName}`, content: 'Hello', redacted: false },
+      });
+    },
+  };
+}
+
+describe('/bind through ordinary Feishu inbound', () => {
+  it('binds the group and sends exactly the existing binding card, with a silent command result', async () => {
+    const h = await bindHarness();
+    await h.inject('/bind alpha');
+    await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
+    expect(h.session.routing.listBindings()).toMatchObject([{
+      target_kind: 'group', chat_id: 'oc_bind', thread_id: null, team_name: 'alpha',
+    }]);
+    expect(h.bot.sentCards[0]!.target).toEqual({ chatId: 'oc_bind' });
+    expect(h.bot.sentMessages).toEqual([]);
+    expect(await h.command.mock.results[0]!.value).toEqual({ kind: 'silent' });
+    expect(h.calls).toEqual([{ command: 'team.status', payload: { team_name: 'alpha' } }]);
+    await h.session.close();
+  });
+
+  it.each(['MyTeam', '123', '1e5', '0x1f', '2.50', '10.00', '1.', '12.', '0.0'])(
+    'binds the exact Team name %s', async (name) => {
+      const h = await bindHarness();
+      await h.inject(`/bind ${name}`);
+      expect(h.session.routing.listBindings()[0]?.team_name).toBe(name);
+      expect(h.calls).toEqual([{ command: 'team.status', payload: { team_name: name } }]);
+      await h.session.close();
+    },
+  );
+
+  it.each([false, true])('binds the whole chat and announces in the requesting topic (topic already bound: %s)', async (bound) => {
+    const topic = topicTarget('oc_topic_group', 'omt_topic');
+    const group = chatTarget(topic.chatId, 'group');
+    const h = await bindHarness(topic);
+    if (bound) await h.seed(topic, 'team-a');
+    const messageId = await h.inject('/bind team-b');
+    await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
+    expect(h.session.routing.bindingFor(group)?.team_name).toBe('team-b');
+    expect(h.session.routing.bindingFor(topic)?.team_name).toBe(bound ? 'team-a' : undefined);
+    expect(h.bot.sentCards[0]!.target).toEqual({ chatId: topic.chatId, replyToMessageId: messageId });
+    expect(h.bot.sentMessages).toEqual([]);
+    expect(await h.command.mock.results[0]!.value).toEqual({ kind: 'silent' });
+    await h.speak('team-b');
+    expect(h.session.handle.targetRouter.targetForMessage(h.bot.sentCards[0]!.messageIds[0]!)).toEqual(topic);
+    await h.session.close();
+    expect(h.cot.cards).toEqual([]);
+  });
+
+  it.each(['group', 'topic'] as const)('refuses a registered Collaboration Space from a %s target without changing routing', async (kind) => {
+    const target = kind === 'topic' ? topicTarget('oc_space_bind', 'omt_topic') : chatTarget('oc_space_bind', 'group');
+    const h = await bindHarness(target);
+    await h.session.routing.bindSpace({
+      spaceName: 'space', containerChatId: target.chatId, display: null,
+      leaderAgentRuntime: 'codex', identity: null, repo: null,
+    });
+    await h.seed(target, 'team-a');
+    const before = h.session.routing.listBindings();
+    await h.inject('/bind team-b');
+    expect(h.bot.sentMessages[0]?.text).toBe(
+      'This chat is a Collaboration Space, which gives each of its topics ' +
+      'its own Team. Bind a chat that is not a Collaboration Space.',
+    );
+    expect(h.session.routing.listBindings()).toEqual(before);
+    expect(h.calls).toEqual([]);
+    expect(h.bot.sentCards).toEqual([]);
+    await h.session.close();
+  });
+
+  it('rebinds directly and names the displaced Team on the sole notification', async () => {
+    const h = await bindHarness();
+    await h.seed(chatTarget('oc_bind', 'group'), 'team-a');
+    await h.inject('/bind team-b');
+    await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
+    expect(h.session.routing.listBindings()[0]?.team_name).toBe('team-b');
+    expect(JSON.stringify(h.bot.sentCards[0]!.card)).toContain('Previous Team: team-a');
+    expect(h.bot.sentMessages).toEqual([]);
+    await h.session.close();
+  });
+
+  it.each([
+    ['missing', 'Team "unavailable" does not exist'],
+    ['closed', 'Team "unavailable" is closed and can no longer answer here. Bind an open Team instead.'],
+  ] as const)('reports the owning layer\'s %s error and preserves routing', async (status, message) => {
+    const h = await bindHarness();
+    await h.seed(chatTarget('oc_bind', 'group'), 'team-a');
+    const before = h.session.routing.listBindings();
+    h.setStatus(status);
+    await h.inject('/bind unavailable');
+    expect(h.bot.sentMessages[0]?.text).toBe(`Command /bind failed: ${message}`);
+    expect(h.session.routing.listBindings()).toEqual(before);
+    expect(h.bot.sentCards).toEqual([]);
+    await h.session.close();
+  });
+
+  it('refuses a direct message without writing a row or calling Core', async () => {
+    const h = await bindHarness(chatTarget('oc_dm', 'p2p'));
+    await h.inject('/bind alpha');
+    expect(h.session.routing.listBindings()).toEqual([]);
+    expect(h.calls).toEqual([]);
+    expect(h.bot.sentCards).toEqual([]);
+    expect(h.bot.sentMessages[0]?.text).toBe(
+      'Command /bind failed: A Feishu direct message chat cannot be bound to a Team. ' +
+      'Bind a group, or a topic inside one.',
+    );
+    await h.session.close();
+  });
+
+  it('keeps MCP notifications in the bound target and supplies a fallback anchor there', async () => {
+    const topic = topicTarget('oc_mcp_group', 'omt_topic');
+    const h = await bindHarness(topic);
+    await h.inject('/help');
+    const group = chatTarget(topic.chatId, 'group');
+    await h.seed(group, 'team-a');
+    const caller = { kind: 'dispatcher' } as const;
+    const result = await bindChannelDef.handle({ caller, session: h.session.toolSession(caller) },
+      bindChannelDef.parse({ chat_id: group.chatId, team_name: 'team-b' }));
+    await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
+    expect(result['previous_team_name']).toBe('team-a');
+    expect(h.bot.sentCards[0]!.target).toEqual({ chatId: group.chatId });
+    expect(JSON.stringify(h.bot.sentCards[0]!.card)).toContain('Previous Team: team-a');
+    await h.speak('team-b');
+    await vi.waitFor(() => expect(h.cot.cards).toHaveLength(1));
+    expect(h.cot.cards[0]!.originMessageId).toBe(h.bot.sentCards[0]!.messageIds[0]);
+    await h.session.close();
   });
 });

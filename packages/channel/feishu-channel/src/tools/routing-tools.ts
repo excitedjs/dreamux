@@ -25,8 +25,8 @@
  * nobody answers in.
  */
 import type { FeishuBindingView } from '../routing/index.js';
+import { chatTarget, topicTarget, type FeishuTarget } from '../routing/target.js';
 import type {
-  FeishuBindTargetSelector,
   FeishuToolContext,
   FeishuToolDef,
   FeishuToolResult,
@@ -101,11 +101,11 @@ function parseTarget(obj: Record<string, unknown>): TargetInput {
   };
 }
 
-function selector(input: TargetInput): FeishuBindTargetSelector {
-  return {
-    chatId: input.chatId,
-    ...(input.threadId !== null ? { threadId: input.threadId } : {}),
-  };
+function bindTarget(input: TargetInput): FeishuTarget {
+  // The MCP wire input has no chat kind; only inbound projection can identify a DM.
+  return input.threadId === null
+    ? chatTarget(input.chatId, 'group')
+    : topicTarget(input.chatId, input.threadId);
 }
 
 /**
@@ -130,7 +130,7 @@ async function runBind(
   requireOwner?: string,
 ): Promise<FeishuToolResult> {
   const result = await ctx.session.bindChannel({
-    target: selector(input),
+    target: bindTarget(input),
     teamName: input.teamName,
     display: input.display,
     ...(requireOwner !== undefined ? { requireOwner } : {}),
@@ -148,7 +148,7 @@ async function runUnbind(
   input: TargetInput,
   requireOwner?: string,
 ): Promise<FeishuToolResult> {
-  const result = await ctx.session.unbindChannel(selector(input), requireOwner);
+  const result = await ctx.session.unbindChannel(bindTarget(input), requireOwner);
   return {
     chat_id: input.chatId,
     thread_id: input.threadId,
@@ -269,7 +269,7 @@ export const leaderUnbindChannelDef: FeishuToolDef<TargetInput> = {
  *
  * `p2p` is left out because a direct chat is not a place a Team can be
  * published to (`isBindableTarget`), and both installers keep that rule: the
- * bind tools build their target with `selectorTarget`, which spells only these
+ * bind tools build their target with `bindTarget`, which spells only these
  * two, and automatic provisioning is reached only through `FeishuRouting.plan`,
  * which answers `dispatcher` for a direct chat before a provision plan exists.
  * `FeishuTargetRecord` still types the kind, so this is the product rule rather

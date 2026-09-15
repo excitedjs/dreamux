@@ -30,11 +30,10 @@ import type {
 import {
   chatTarget,
   isBindableTarget,
-  topicTarget,
+  sameTarget,
   type FeishuTarget,
 } from './routing/target.js';
 import type {
-  FeishuBindTargetSelector,
   FeishuSpacePolicyInput,
 } from './tools/types.js';
 
@@ -58,13 +57,15 @@ export class FeishuBindingOperations {
   constructor(private readonly opts: FeishuBindingOperationsOptions) {}
 
   async bindChannel(input: {
-    target: FeishuBindTargetSelector;
+    target: FeishuTarget;
     teamName: string;
     display: string | null;
+    /** Announce in the conversation that requested the bind, when provided. */
+    announceIn?: FeishuTarget;
     /** Set when the caller may only claim free or already-own routes. */
     requireOwner?: string;
   }): Promise<{ team_name: string; previous_team_name: string | null }> {
-    const target = selectorTarget(input.target);
+    const target = input.target;
     if (!isBindableTarget(target)) {
       throw new PublicInvokeFailure(
         'A Feishu direct message chat cannot be bound to a Team. Bind a ' +
@@ -101,12 +102,14 @@ export class FeishuBindingOperations {
         ? { requireOwner: input.requireOwner }
         : {}),
     });
-    if (previousTeamName !== null && previousTeamName !== input.teamName) {
+    const displaced = previousTeamName !== null && previousTeamName !== input.teamName;
+    if (displaced) {
       this.opts.cot.onRouteReleased({ teamName: previousTeamName, target });
     }
     this.opts.cot.onRouteClaimed({ teamName: input.teamName, target });
+    const announce = input.announceIn ?? target;
     this.opts.notify(
-      target,
+      announce,
       bindingBoundCard({
         target,
         display: input.display,
@@ -114,17 +117,18 @@ export class FeishuBindingOperations {
         leaderName: team['leader_name'],
         agentRuntime: team['leader_agent_runtime'],
         runtimeCwd: team['runtime_cwd'],
+        ...(displaced ? { previousTeamName } : {}),
       }),
-      input.teamName,
+      // A receipt in another target must not become this Team's COT anchor.
+      sameTarget(announce, target) ? input.teamName : null,
     );
     return { team_name: input.teamName, previous_team_name: previousTeamName };
   }
 
   async unbindChannel(
-    selector: FeishuBindTargetSelector,
+    target: FeishuTarget,
     requireOwner?: string,
   ): Promise<{ team_name: string | null }> {
-    const target = selectorTarget(selector);
     const display = this.opts.routing.bindingFor(target)?.display ?? null;
     const teamName = await this.opts.routing.unbind(target, requireOwner);
     if (teamName === null) return { team_name: null };
@@ -215,12 +219,4 @@ export class FeishuBindingOperations {
       input.teamName,
     );
   }
-}
-
-export function selectorTarget(
-  selector: FeishuBindTargetSelector,
-): FeishuTarget {
-  return selector.threadId === undefined || selector.threadId === ''
-    ? chatTarget(selector.chatId, 'group')
-    : topicTarget(selector.chatId, selector.threadId);
 }

@@ -53,7 +53,7 @@ import {
 import { FeishuBindingOperations } from './feishu-session-bindings.js';
 import {
   dispatchFeishuSlashCommand,
-  type FeishuSlashCommand,
+  type FeishuSlashCommandInvocation,
   type FeishuSlashCommandReply,
 } from './feishu-slash-commands.js';
 import {
@@ -375,16 +375,18 @@ export class FeishuChannelSession {
 
   /** Execute a recognized command after route projection, without submission. */
   command(input: {
-    command: FeishuSlashCommand;
+    command: FeishuSlashCommandInvocation;
     target: FeishuTarget;
     containerChatId: string | null;
   }): Promise<FeishuSlashCommandReply> {
     const plan = this.routing.plan(input.target, input.containerChatId);
     return dispatchFeishuSlashCommand(input.command, {
       plan,
+      target: input.target,
+      spaceContainer: this.routing.spaceForContainer(input.target.chatId) ?? null,
+      bindChannel: (input) => this.bindings.bindChannel(input),
       bindings: this.routing.listBindings(),
-      // A command runs one Command and answers for it; it does not also
-      // correct this Channel's routing document. A rejected command is not
+      // A rejected Core command does not reconcile this Channel's routing. It is not
       // proof the route is finished — `TEAM_CLOSED` is raised for a dissolve
       // that is still only pending, and a dissolve that then fails lowers the
       // fence and leaves the Team open again (`TeamService.runDissolve`). The

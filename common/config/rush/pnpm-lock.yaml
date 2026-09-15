@@ -80,6 +80,9 @@ importers:
       '@excitedjs/feishu-transport':
         specifier: workspace:*
         version: link:../feishu-transport
+      yargs-parser:
+        specifier: ^21.1.1
+        version: 21.1.1
     devDependencies:
       '@excitedjs/eslint-config':
         specifier: workspace:*
@@ -87,6 +90,9 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
+      '@types/yargs-parser':
+        specifier: ^21.0.3
+        version: 21.0.3
       eslint:
         specifier: ^9.39.0
         version: 9.39.4

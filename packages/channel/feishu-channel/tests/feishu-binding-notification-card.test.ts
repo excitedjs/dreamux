@@ -77,6 +77,14 @@ const cards = [
 ];
 
 describe('selected route notification cards', () => {
+  it('renders the optional Previous Team line as literal text', () => {
+    const card = bindingBoundCard({ target, display, ...team, previousTeamName: '*previous* _team_' });
+    expect(nodes(card)).toContainEqual(expect.objectContaining({
+      tag: 'plain_text', content: 'Previous Team: *previous* _team_',
+    }));
+    expect(JSON.stringify(bindingBoundCard({ target, display, ...team }))).not.toContain('Previous Team');
+  });
+
   it.each(cards)('$name preserves the selected config, English summary, icon and state tag', ({
     card, summary, title, color, icon, status, statusColor,
   }) => {

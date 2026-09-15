@@ -4,8 +4,9 @@ This package is the built-in Feishu `ChannelProvider` for Dreamux (alias
 `builtin:feishu`, issue #209 slice 5). It sits between
 `@excitedjs/feishu-transport` and `@excitedjs/dreamux`, implements the neutral
 `@excitedjs/dreamux-types` `ChannelProvider`/`ChannelSession` contract, and
-depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`, and
-`@excitedjs/feishu-transport` **only** — never on `@excitedjs/dreamux` core.
+depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`,
+`@excitedjs/feishu-transport`, and `yargs-parser` for slash-command arguments —
+never on `@excitedjs/dreamux` core.
 
 ## Responsibilities
 
@@ -29,10 +30,12 @@ depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`, and
   public failure and mutates no routing state. A dissolved Team's routes are
   invalidated from the `team.closed` event.
 - Own the Feishu slash-command surface. A human message whose leading text
-  (after mentions) starts with a known `/command` token is executed here as one
-  Command against Core and answered as a receipt; it is never delivered to any
-  agent runtime, and no agent is asked to render the reply. Commands live in one
-  table in `feishu-slash-commands.ts`; adding one must not add a dispatch site.
+  (after mentions) starts with a known `/command` token is executed here; it is
+  never delivered to any agent runtime, and no agent is asked to render the
+  reply. Commands live in one table in `feishu-slash-commands.ts`, with parsed
+  arguments, usage, and a summary; `/help` renders that table. `/bind` routes the
+  containing chat and lets the binding operation announce in the requesting
+  conversation. Adding a command must not add a dispatch site.
   A group message must @-mention the bot to count as a command, and only the
   ordinary delivery authorization gates it — there is no separate command
   permission.
@@ -56,8 +59,9 @@ depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`, and
 - Do not import the Lark SDK directly. Use `@excitedjs/feishu-transport` for
   platform calls. Do not import `@excitedjs/dreamux` core.
 - Allowed upstream deps: `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`,
-  and `@excitedjs/feishu-transport`. Pure neutral helpers (atomic writes, OS
-  primitives, config validation) go to `@excitedjs/dreamux-utils` — channel
+  `@excitedjs/feishu-transport`, and `yargs-parser` for slash-command argument
+  parsing. Pure neutral helpers (atomic writes, OS primitives, config
+  validation) go to `@excitedjs/dreamux-utils` — channel
   source may import from there but may not add new host-owned path/layout/socket
   contracts into dreamux-utils (see `dreamux-utils/src/os.ts` header for the
   primitives-vs-contracts boundary).
