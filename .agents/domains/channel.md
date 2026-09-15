@@ -390,10 +390,20 @@ Source:
 
 ### Slash commands
 
-The Feishu Channel answers `/stop`, `/teams`, and `/dissolve` itself. They are
-one command table, not three special cases, and nothing about them reaches a
-model: a recognized command is consumed, so no submission is built, no turn is
-created, and no COT anchor is opened for it.
+The Feishu Channel answers `/bind`, `/dissolve`, `/help`, `/stop`, and `/teams`
+itself. They are one command table, not five special cases, and nothing about
+them reaches a model: a recognized command is consumed, so no submission is
+built, no turn is created, and no COT anchor is opened for it. `/bind` can
+still leave a binding card behind that becomes a Team's fallback anchor, which
+is the binding operation's doing rather than the command's — see *Card
+placement* below.
+
+A table row is `usage`, `summary`, and `execute`. The first two exist so `/help`
+renders the table rather than a second list that can drift from it: a row the
+Channel can run is a row `/help` names, guaranteed by the table's own
+`Record<FeishuSlashCommandName, …>` rather than by remembering. There is no
+per-row failure label either — dispatch builds `Command /<name> failed` from the
+key it looked the row up by.
 
 Recognition, which reuses `/introduce`'s decoder rather than adding a second
 one:
@@ -403,8 +413,16 @@ one:
   an `@`-prefixed command still matches;
 - the remaining text must *start* with the token, followed by whitespace or end
   of message, so a command quoted mid-sentence never fires;
-- matching is case-insensitive, and everything after the token is ignored
-  entirely — no command takes an argument;
+- matching is case-insensitive, and what follows the token is the command's
+  argument. Recognition parses it once, with `yargs-parser`, and hands the row
+  a parsed invocation; a row that reads no argument ignores it, which is why
+  trailing words after `/stop` still change nothing. The remainder is sliced
+  from the original text, not from the lowercased copy used for matching, so
+  `/bind MyTeam` binds `MyTeam`. `parse-positional-numbers` is off: left on, the
+  parser turns legal Team names into numbers that cannot be turned back —
+  `1e5` into `100000`, `2.50` into `2.5`, `1.` into `1`. There is no option
+  surface; no row reads a named flag, and the parser is present for the
+  positional argument and for whatever a later row needs;
 - in a group or topic the bot must be @-mentioned, even where ordinary delivery
   needs no mention. A direct message has no mention to require;
 - only a human sender's message is a command. The gate admits a trusted peer bot
@@ -417,7 +435,25 @@ sender allowlist and no confirmation step; the operator ruled that explicitly.
 
 Dispatch happens after the route is projected and before anything is submitted,
 so each command reads the same `bound` / `provision` / `dispatcher` plan the
-delivery path would have used:
+delivery path would have used, along with the projected target itself, whether
+that target's chat is a registered Collaboration Space, and the binding
+operation:
+
+- **`/bind <team_name>`** binds `containingChat` of the projected target — a
+  topic resolves to its group, a group stays itself, a direct message stays a
+  direct message — so it always routes the whole chat. It is the one command
+  that changes routing. It validates nothing itself: a malformed or missing
+  Team name is refused by Core's own `validateTeamId` and `team.status` through
+  `bindChannel`, and a direct message is refused by `isBindableTarget`, each in
+  the owning layer's words. That guard became reachable only when the binding
+  operation started taking a `FeishuTarget`; before that a bare chat id was
+  always made into a `group` target and the guard was dead code. A chat whose
+  `spaceForContainer` finds a Space is refused by the command, because a
+  Collaboration Space already gives each topic a Team. Naming no Team answers
+  with the row's own `usage`. A successful bind answers `silent` for
+  `/dissolve`'s reason, and the reason holds because the binding card is
+  delivered into the conversation that asked.
+- **`/help`** renders the table: every row's `usage` and `summary`, in English.
 
 - **`/stop`** invokes `team.interrupt`, naming the bound Team or omitting the
   name to reach the Dispatcher Agent, exactly as `team.submit` addresses. It
@@ -450,8 +486,10 @@ delivery path would have used:
   two outcomes the conversation cannot learn any other way — no bound Team, and
   refused by Core — are still reported in words.
 
-A command answers for the one Command it ran and touches no routing state. Only
-two proofs remove a route, and they meet in one capability,
+A command that runs a Core Command answers for that one Command. `/bind` is the
+exception that writes routing state, and it writes it through the same
+`bindChannel` the MCP tool uses rather than through a path of its own. No
+command *removes* a route: only two proofs do that, and they meet in one capability,
 `FeishuRouteReconciliation`, because they commit the same durable rows: Core's
 final `team.state` closed event, and a delivery this Channel already routed
 coming back rejected. A rejected command is not a third proof — `TEAM_CLOSED` is
@@ -646,7 +684,21 @@ Binding a conversation to a Team is the Channel's own decision, made with that
 Channel's own tools. Team MCP has no `bind_channel` and no `transfer_back`: only
 Feishu knows what a chat, a topic, and a parent group are, so only Feishu can say
 which of them a Team answers in. Rebinding is `bind_channel` with a different
-`team_name`, and the previous owner is reported back.
+`team_name`. The previous owner comes back in the tool's own
+`previous_team_name` result field, and — since the operator ruled it — also
+appears on the binding card as a `Previous Team` line, on every path that binds
+rather than only this tool's. The two are separate facts about the same rebind,
+and reading one as the other is a mistake this sentence used to invite.
+
+The binding operations take a `FeishuTarget`. They used to take a
+`{ chatId, threadId? }` selector and convert it, which meant a bare chat id
+always became a `group` target and `isBindableTarget`'s direct-message guard
+could never fire; the selector type is gone and the tools build a target
+directly. What the conversion could not know, the tool still cannot: an MCP
+caller supplies a bare `chat_id` with no kind, so `bind_channel` still reads one
+as a group. Only inbound projection knows a chat's kind, which is why a
+slash-command bind — which carries the projected target — is the path where the
+guard actually engages.
 
 Authorization is the caller-scoped catalog itself, not a check inside a shared
 handler. `bind_channel` and `unbind_channel` are registered twice, once per caller
@@ -824,12 +876,31 @@ rendering prompts or raw errors. The repository path is deliberately visible
 to the members of the bound conversation; the user-visible half of that disclosure is
 [`/.agents/product/README.md`](/.agents/product/README.md).
 
-Where a card goes follows the target. A route card for a topic replies under the
-newest message this session has seen in that topic, and falls back to the parent
-chat when it has seen none — the operator who just bound it is in that chat. A
-route card for a group is sent to the group. Collaboration Space cards always
-send a fresh top-level card to the container chat, which in a Feishu topic group
+Where a card goes follows the target, except that a bind may say otherwise. A
+route card for a topic replies under the newest message this session has seen in
+that topic, and falls back to the parent chat when it has seen none. A route
+card for a group is sent to the group. Collaboration Space cards always send a
+fresh top-level card to the container chat, which in a Feishu topic group
 creates a new topic.
+
+`bindChannel` takes an optional `announceIn`, defaulting to the target it bound.
+A `/bind` supplies the conversation the command was typed in, which is how an
+operator who types it inside a topic hears back in that topic instead of
+watching the card open a topic of its own; an MCP-initiated bind supplies
+nothing, because a tool call has no conversation to answer into. What the card
+*describes* is always the bound target, and route release and claim always use
+the bound target too — only the destination moves.
+
+A card sent somewhere other than the target it announces is a receipt, not an
+anchor, and is sent with no anchor Team. This is load-bearing rather than tidy:
+a topic can hold a binding row of its own in an ordinary chat, so a `/bind`
+typed in a topic that another Team answers would otherwise seat the newly bound
+Team's COT fallback anchor inside that other Team's conversation.
+`LeaderLifecycleFence.blocksAnchor` does not catch it — it fences a closed
+leader, or a target a leader released, and a fence one Team raised says nothing
+about another. The address half still moves with the card: the message is
+observed as the newest one seen in the target it was actually sent to, which is
+simply true.
 
 Delivery is best-effort and live-session-only. The send is never awaited by the
 operation that caused it, so a card that does not arrive leaves the routing

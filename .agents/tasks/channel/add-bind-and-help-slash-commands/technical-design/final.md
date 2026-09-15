@@ -1,8 +1,8 @@
 # Technical solution (final) — Feishu `/bind` and `/help`
 
 Reviewed on [issue #426](https://github.com/excitedjs/dreamux/issues/426); the
-adjudication of every finding is in the last section. The reviewed draft is kept
-beside this file as `draft.md`.
+adjudication of every finding is in the last section, which is also the record
+of what the draft got wrong — the draft itself is not kept.
 
 Requirement: [requirement.md](/.agents/tasks/channel/add-bind-and-help-slash-commands/requirement.md).
 
