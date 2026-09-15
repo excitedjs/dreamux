@@ -598,3 +598,113 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     expect(routing.bindingFor(target)?.team_name).toBe('space-team');
   });
 });
+
+describe('FeishuRouting — document subscriptions', () => {
+  it('keys a subscription on (file_token, recipient), so two recipients hold two rows', async () => {
+    const routing = await makeRouting();
+
+    await routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: 'team-a',
+    });
+    await routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: null,
+    });
+
+    expect(
+      routing.subscribersFor('doc_tok').map((row) => row.team_name).sort(),
+    ).toEqual([null, 'team-a']);
+    expect(routing.listSubscriptions('team-a')).toHaveLength(1);
+    expect(routing.listSubscriptions(null)).toHaveLength(1);
+    expect(routing.listSubscriptions('team-b')).toEqual([]);
+  });
+
+  it('re-subscribing reports the row was already there and does not duplicate it', async () => {
+    const routing = await makeRouting();
+
+    const first = await routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: 'team-a',
+    });
+    const second = await routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: 'team-a',
+    });
+
+    expect(first.alreadySubscribed).toBe(false);
+    expect(second.alreadySubscribed).toBe(true);
+    expect(routing.subscribersFor('doc_tok')).toHaveLength(1);
+  });
+
+  it('unsubscribe removes only the caller\'s own row', async () => {
+    const routing = await makeRouting();
+    await routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: 'team-a',
+    });
+    await routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: null,
+    });
+
+    await expect(routing.unsubscribe('doc_tok', 'team-a')).resolves.toBe(true);
+
+    expect(routing.subscribersFor('doc_tok').map((row) => row.team_name))
+      .toEqual([null]);
+  });
+
+  it('unsubscribing a document nobody followed is an answer, not a failure', async () => {
+    const routing = await makeRouting();
+    await expect(routing.unsubscribe('doc_tok', 'team-a')).resolves.toBe(false);
+  });
+
+  it('forgetTeam drops bindings and subscriptions in one commit, reported separately', async () => {
+    const routing = await makeRouting();
+    await routing.bind({
+      target: chatTarget('oc_g', 'group'),
+      teamName: 'closing-team',
+      display: null,
+      origin: 'manual',
+      spaceId: null,
+    });
+    await routing.subscribe({
+      fileToken: 'doc_closing',
+      fileType: 'docx',
+      teamName: 'closing-team',
+    });
+    await routing.subscribe({
+      fileToken: 'doc_closing',
+      fileType: 'docx',
+      teamName: 'other-team',
+    });
+
+    const { removed, subscriptions } = await routing.forgetTeam('closing-team');
+
+    expect(removed).toHaveLength(1);
+    expect(subscriptions.map((row) => row.file_token)).toEqual(['doc_closing']);
+    expect(routing.subscribersFor('doc_closing').map((row) => row.team_name))
+      .toEqual(['other-team']);
+  });
+
+  it('forgetTeam commits for a Team that holds only subscriptions', async () => {
+    const routing = await makeRouting('chan-subs-only');
+    await routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: 'closing-team',
+    });
+
+    const { removed, subscriptions } = await routing.forgetTeam('closing-team');
+
+    expect(removed).toEqual([]);
+    expect(subscriptions).toHaveLength(1);
+    expect(routing.subscribersFor('doc_tok')).toEqual([]);
+  });
+});

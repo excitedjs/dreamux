@@ -165,6 +165,7 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
       target: chatTarget('oc_closed', 'group'),
       containerChatId: null,
       submission: {
+        kind: 'chat',
         attrs: {},
         text: 'hi',
         reminder: '',
@@ -216,6 +217,7 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
       target: chatTarget('oc_stale', 'group'),
       containerChatId: null,
       submission: {
+        kind: 'chat',
         attrs: {},
         text: 'hi',
         reminder: '',
@@ -257,6 +259,7 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
       target: chatTarget('oc_ambiguous', 'group'),
       containerChatId: null,
       submission: {
+        kind: 'chat',
         attrs: {},
         text: 'hi',
         reminder: '',
@@ -462,6 +465,7 @@ describe('FeishuChannelSession.submit — session liveness fence', () => {
     void port;
 
     const outcome = await session.submit(null, {
+      kind: 'chat',
       attrs: {},
       text: 'hi',
       reminder: '',
@@ -469,5 +473,55 @@ describe('FeishuChannelSession.submit — session liveness fence', () => {
       anchor: { chatId: 'oc_z', messageId: 'm', target: chatTarget('oc_z', 'group') },
     });
     expect(outcome).toEqual({ status: 'error', message: 'Feishu session is not live' });
+  });
+});
+
+/**
+ * The document-comment route end to end, because every part of it is wiring
+ * the unit tests cannot cross: the event reaches the session's own handler,
+ * the comment's text is read through the bot the session was built with, and
+ * the submission takes the anchorless branch — a chain-of-thought card opened
+ * here would have no visible message to hang under.
+ */
+describe('FeishuChannelSession — a document comment reaches Core', () => {
+  it('carries the comment text read through the bot, and opens no card', async () => {
+    const bot = createFakeFeishuBot();
+    const session = await newSession(bot, 'chan-doc-comment');
+    const port = fakePort(async () => ({ status: 'submitted', turn_id: 'turn-doc-1' }));
+    await session.initialize(port.port);
+    await session.start();
+    await session.routing.subscribe({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      teamName: 'team-a',
+    });
+    bot.setDocCommentText('rpl_1', {
+      quote: 'the paragraph in question',
+      text: 'please rework this',
+    });
+
+    await bot.injectDocComment({
+      fileToken: 'doc_tok',
+      fileType: 'docx',
+      commentId: 'cmt_1',
+      replyId: 'rpl_1',
+      commenterId: 'ou_commenter',
+      mentionedBot: true,
+      timestamp: 1757894400000,
+    });
+
+    expect(bot.commentTextReads).toEqual([
+      { fileToken: 'doc_tok', commentId: 'cmt_1', replyId: 'rpl_1' },
+    ]);
+    expect(port.calls).toHaveLength(1);
+    const payload = port.calls[0]!.payload as Record<string, unknown>;
+    expect(port.calls[0]!.command).toBe('team.submit');
+    expect(payload['team_name']).toBe('team-a');
+    expect(payload['source_id']).toBe('doc_tok:cmt_1:rpl_1');
+    expect(payload['text']).toContain('<content>\nplease rework this\n</content>');
+    expect(payload['text']).toContain('the paragraph in question');
+    expect(bot.sentCards).toHaveLength(0);
+
+    await session.close();
   });
 });

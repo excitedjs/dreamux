@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "`fetchDocMeta` now answers a discriminated result — `visible` with the metadata, `invisible` when Feishu reports the token in `failed_list`, or `unsupported_type` — and a failed request rejects instead of resolving. It used to return `null` for all three, so a caller using it as a permission proof could report a timeout as missing permission. `resolveWikiNode(token)` is new: it answers the document a wiki node holds, or `null` when this app cannot see the node, and throws on a non-zero Feishu business code rather than reading it as invisibility. `parseFeishuDocumentRef` reads a document share URL or a bare token into `{ token, type }`, mapping Feishu's URL words (`docs`, `sheets`, `base`, `mindnotes`) to the types its APIs take and passing anything else through. `FeishuCommentEvent` now carries the event's `timestamp`. `fetchDocCommentText(request)` replaces `fetchDocComment`: it reads the text of the single comment an event names — the reply `reply_id` names, or the head of the thread when it is empty — plus the document text that comment is anchored to, and answers `null` whenever the thread does not hold it. The old call returned a whole thread of raw Feishu content elements; `commentFromBatchQuery` and the `FeishuDocComment` / `FeishuDocCommentReply` types are removed with it.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

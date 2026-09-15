@@ -44,6 +44,8 @@ import {
   runFeishuBoundedOperation,
 } from './feishu-bounded-operation.js';
 import { createAskUserRegistry } from './feishu-ask-user.js';
+import { isTrustedDispatcherUser } from './feishu-gate-io.js';
+import { FeishuDocumentComments } from './feishu-document-comments.js';
 import { FeishuCotSessionSeam } from './feishu-cot-session.js';
 import { FeishuProvisioning } from './feishu-provisioning.js';
 import {
@@ -61,6 +63,7 @@ import {
   errorMessage,
   submissionProvesNoAdmission,
   submitOutcome,
+  type FeishuChatSubmission,
   type FeishuSubmission,
   type FeishuSubmitOutcome,
 } from './feishu-submit.js';
@@ -135,6 +138,7 @@ export class FeishuChannelSession {
   private readonly bindings: FeishuBindingOperations;
   private readonly routeReconciliation: FeishuRouteReconciliation;
   private readonly provisioning: FeishuProvisioning;
+  private readonly docComments: FeishuDocumentComments;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
   private readonly askUser = createAskUserRegistry({
@@ -196,6 +200,19 @@ export class FeishuChannelSession {
       submitter: { submit: (team, input) => this.submit(team, input) },
       invoke: (command, payload) => this.invoke(command, payload),
       announce: (input) => this.bindings.announceProvisioned(input),
+    });
+    this.docComments = new FeishuDocumentComments({
+      dispatcherId: opts.dispatcherId,
+      channelId: opts.channelId,
+      log: opts.log,
+      routing: this.routing,
+      submit: (team, submission) => this.submit(team, submission),
+      fetchDocMeta: (token, type) => this.bot.fetchDocMeta(token, type),
+      resolveWikiNode: (token) => this.bot.resolveWikiNode(token),
+      fetchDocCommentText: (request) => this.bot.fetchDocCommentText(request),
+      resolveUserName: (openId) =>
+        this.bot.resolveUserName?.(openId) ?? Promise.resolve(undefined),
+      isTrustedUser: (openId) => isTrustedDispatcherUser(opts.stateDir, openId),
     });
   }
 
@@ -273,6 +290,10 @@ export class FeishuChannelSession {
           if (!lifecycle.fence.isCurrent()) return {};
           return this.track(lifecycle, this.onCardAction(event));
         },
+        onDocComment: async (event) => {
+          if (!lifecycle.fence.isCurrent()) return;
+          await this.track(lifecycle, this.docComments.deliver(event));
+        },
       });
       if (!lifecycle.fence.isCurrent()) {
         await this.bot.close();
@@ -343,11 +364,15 @@ export class FeishuChannelSession {
     if (this.lifecycle?.fence.isCurrent() !== true) {
       return { status: 'error', message: 'Feishu session is not live' };
     }
-    const inbound = this.cot.beginInboundSubmission(
-      teamName,
-      submission.anchor,
-      submission.sourceId,
-    );
+    // Only a chat submission has a visible message to hang a card under; a
+    // document comment opens none, and registers no correlation to suppress.
+    const inbound = submission.kind === 'chat'
+      ? this.cot.beginInboundSubmission(
+          teamName,
+          submission.anchor,
+          submission.sourceId,
+        )
+      : null;
     try {
       const raw = await this.invoke('team.submit', {
         ...(teamName !== null ? { team_name: teamName } : {}),
@@ -406,7 +431,7 @@ export class FeishuChannelSession {
   async deliver(input: {
     target: FeishuTarget;
     containerChatId: string | null;
-    submission: FeishuSubmission;
+    submission: FeishuChatSubmission;
   }): Promise<FeishuSubmitOutcome> {
     const plan = this.routing.plan(input.target, input.containerChatId);
     const { submission } = input;
@@ -477,6 +502,10 @@ export class FeishuChannelSession {
       unbindSpace: (spaceName) => this.bindings.unbindSpace(spaceName),
       getSpace: (spaceName) => this.routing.spaceByName(spaceName),
       listSpaces: () => this.routing.listSpaces(),
+      subscribeDocument: (input) => this.docComments.subscribe(input),
+      unsubscribeDocument: (input) => this.docComments.unsubscribe(input),
+      listSubscriptions: (teamName) =>
+        this.docComments.listSubscriptions(teamName),
     };
   }
 

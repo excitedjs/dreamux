@@ -18,6 +18,7 @@ import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import type { FeishuRoutingStore } from './store.js';
 import type {
   FeishuBindingRecord,
+  FeishuDocSubscriptionRecord,
   FeishuSpaceRecord,
   FeishuSpaceRepoPolicy,
   FeishuTargetRecord,
@@ -275,7 +276,8 @@ export class FeishuRouting {
   }
 
   /**
-   * Forget every route to a Team.
+   * Forget everything that reaches a Team: its routes and the documents it
+   * followed, in one commit.
    *
    * Two kinds of evidence lead here — Core said the Team closed, or a
    * submission was rejected before admission — and both go through this one
@@ -286,19 +288,33 @@ export class FeishuRouting {
    */
   async forgetTeam(teamName: string): Promise<{
     removed: readonly FeishuRemovedRoute[];
+    subscriptions: readonly FeishuDocSubscriptionRecord[];
   }> {
     const removed: FeishuRemovedRoute[] = [];
+    const subscriptions: FeishuDocSubscriptionRecord[] = [];
     await this.opts.store.update((document) => {
       const kept = document.bindings.filter((row) => {
         if (row.team_name !== teamName) return true;
         removed.push({ target: fromRecord(row.target), display: row.display });
         return false;
       });
-      if (kept.length === document.bindings.length) return false;
+      const keptSubscriptions = document.subscriptions.filter((row) => {
+        if (row.team_name !== teamName) return true;
+        subscriptions.push(row);
+        return false;
+      });
+      const changed =
+        kept.length !== document.bindings.length ||
+        keptSubscriptions.length !== document.subscriptions.length;
+      if (!changed) return false;
       document.bindings = kept;
+      document.subscriptions = keptSubscriptions;
       return true;
     });
-    return { removed };
+    // Reported apart from `removed` rather than folded into it: a removed route
+    // is announced back into the conversation it named, and a subscription has
+    // no conversation to announce into.
+    return { removed, subscriptions };
   }
 
   listBindings(): readonly FeishuBindingView[] {
@@ -318,6 +334,84 @@ export class FeishuRouting {
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
+  }
+
+  // ── Document subscriptions ─────────────────────────────────────────────
+
+  /**
+   * Follow one document for one recipient, and say whether it was already
+   * followed.
+   *
+   * The row a recipient may write is its own and only its own, because
+   * `teamName` is the caller's identity rather than an argument. Re-subscribing
+   * changes nothing and writes nothing — the row already says what it would
+   * say, and `created_at` is when the following started.
+   */
+  async subscribe(input: {
+    fileToken: string;
+    fileType: string;
+    teamName: string | null;
+  }): Promise<{ alreadySubscribed: boolean }> {
+    const existing = { found: false };
+    await this.opts.store.update((document) => {
+      const row = document.subscriptions.find(
+        (candidate) =>
+          candidate.file_token === input.fileToken &&
+          candidate.team_name === input.teamName,
+      );
+      if (row !== undefined) {
+        existing.found = true;
+        return false;
+      }
+      document.subscriptions.push({
+        file_token: input.fileToken,
+        file_type: input.fileType,
+        team_name: input.teamName,
+        created_at: Date.now(),
+      });
+      return true;
+    });
+    return { alreadySubscribed: existing.found };
+  }
+
+  /**
+   * Stop following one document, for one recipient.
+   *
+   * Two things reach here and both mean the same row: the recipient asked, or
+   * a delivery to it was refused before admission. A document nobody was
+   * following is not a failure — there is simply nothing to release.
+   */
+  async unsubscribe(
+    fileToken: string,
+    teamName: string | null,
+  ): Promise<boolean> {
+    const removed = { any: false };
+    await this.opts.store.update((document) => {
+      const kept = document.subscriptions.filter(
+        (row) => row.file_token !== fileToken || row.team_name !== teamName,
+      );
+      if (kept.length === document.subscriptions.length) return false;
+      document.subscriptions = kept;
+      removed.any = true;
+      return true;
+    });
+    return removed.any;
+  }
+
+  /** Every recipient a comment on this document must reach. */
+  subscribersFor(fileToken: string): readonly FeishuDocSubscriptionRecord[] {
+    return this.opts.store.current.subscriptions.filter(
+      (row) => row.file_token === fileToken,
+    );
+  }
+
+  /** The rows one recipient owns — what it may see, and what it may remove. */
+  listSubscriptions(
+    teamName: string | null,
+  ): readonly FeishuDocSubscriptionRecord[] {
+    return this.opts.store.current.subscriptions.filter(
+      (row) => row.team_name === teamName,
+    );
   }
 
   // ── Collaboration Space policy ─────────────────────────────────────────

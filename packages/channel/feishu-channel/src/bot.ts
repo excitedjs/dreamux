@@ -23,11 +23,18 @@
 
 import {
   BOT_MEMBER_ADDED_EVENT_TYPE,
+  DOC_COMMENT_EVENT_TYPE,
   createFeishuTransport,
   narrowMetaFromEvent,
   normalizeBotMemberAddedEvent,
+  normalizeCommentEvent,
   parseInbound,
   type FeishuBotMemberAddedEvent,
+  type FeishuCommentEvent,
+  type FeishuDocCommentRequest,
+  type FeishuDocCommentText,
+  type FeishuDocMetaResult,
+  type FeishuWikiNode,
   type FeishuMessageResourceFetcher,
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,
@@ -115,14 +122,23 @@ export type CardActionHandler = (
   event: FeishuCardActionEvent,
 ) => unknown | Promise<unknown>;
 
+export type DocCommentHandler = (
+  event: FeishuCommentEvent,
+) => void | Promise<void>;
+
 /**
  * The typed event-route seam (issue #62 Phase 1). `start` takes one handler per
  * Feishu event type instead of a single message handler, so a new event type is
  * wired by adding a field here and a transport route, without growing branches
- * in `Server`. This is a small typed seam, not yet a generic
- * `eventType -> handler` registry; if a third event type lands, promote this to
- * a map. Each route still awaits its handler before the SDK acks
+ * in `Server`. Each route still awaits its handler before the SDK acks
  * (queue-before-ACK).
+ *
+ * This file used to say a third event type should promote the seam to a generic
+ * `eventType -> handler` map. It stays typed instead, and knowingly: every route
+ * carries a *different* payload type and its own normalizer, so one map value
+ * type would have to be `(raw: unknown) => …` and each handler would re-narrow
+ * what the seam exists to have narrowed already. The `Record` the table is built
+ * into below is the transport's wire shape, not this contract.
  */
 export interface FeishuInboundRoutes {
   /** `im.message.receive_v1` — a chat message. */
@@ -131,6 +147,8 @@ export interface FeishuInboundRoutes {
   onBotMemberAdded?: BotMemberAddedHandler;
   /** `card.action.trigger` — the user clicked an interactive card component. */
   onCardAction?: CardActionHandler;
+  /** `drive.notice.comment_add_v1` — a comment or reply on a document. */
+  onDocComment?: DocCommentHandler;
 }
 
 export interface FeishuSendResult {
@@ -169,6 +187,14 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   resolveUserName?(openId: string): Promise<string | undefined>;
   /** Optional lookup of a chat's current Feishu name. */
   resolveChatName?(chatId: string): Promise<string | undefined>;
+  /** Read a document's metadata — the proof that this app can see it. */
+  fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMetaResult>;
+  /** Resolve a wiki node to the document it holds, or `null` if unseen. */
+  resolveWikiNode(token: string): Promise<FeishuWikiNode | null>;
+  /** Read the text of one comment, or `null` when the thread does not hold it. */
+  fetchDocCommentText(
+    request: FeishuDocCommentRequest,
+  ): Promise<FeishuDocCommentText | null>;
   /**
    * Optional Feishu COT surface. A fake or externally supplied bot that omits
    * it simply presents no chain-of-thought card; nothing else changes.
@@ -260,6 +286,14 @@ export function createFeishuBot(
             opts.logger,
           );
       }
+      if (routes.onDocComment !== undefined) {
+        const onDocComment = routes.onDocComment;
+        table[DOC_COMMENT_EVENT_TYPE] = async (raw: unknown) => {
+          const event = normalizeCommentEvent(raw);
+          if (event === null) return;
+          await onDocComment(event);
+        };
+      }
       await transport.start(table);
     },
 
@@ -297,6 +331,23 @@ export function createFeishuBot(
       request: FeishuMessageResourceRequest,
     ): Promise<FeishuMessageResourceResponse> {
       return transport.fetchMessageResource(request);
+    },
+
+    fetchDocMeta(
+      fileToken: string,
+      fileType: string,
+    ): Promise<FeishuDocMetaResult> {
+      return transport.fetchDocMeta(fileToken, fileType);
+    },
+
+    resolveWikiNode(token: string): Promise<FeishuWikiNode | null> {
+      return transport.resolveWikiNode(token);
+    },
+
+    fetchDocCommentText(
+      request: FeishuDocCommentRequest,
+    ): Promise<FeishuDocCommentText | null> {
+      return transport.fetchDocCommentText(request);
     },
 
     ...(transport.readMessage !== undefined

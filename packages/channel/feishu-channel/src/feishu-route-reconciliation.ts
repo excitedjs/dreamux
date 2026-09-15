@@ -43,7 +43,8 @@ export class FeishuRouteReconciliation {
   }) {}
 
   /**
-   * Commit the removal of every route to a Team, and say what it removed.
+   * Commit the removal of everything that reaches a Team — its routes and the
+   * documents it followed — and say what it removed.
    *
    * All reasons reach the same durable change, so they share the one commit
    * path the store owns rather than growing a second authority beside it. A
@@ -67,11 +68,19 @@ export class FeishuRouteReconciliation {
       reason: notice,
     };
     try {
-      const { removed } = await this.opts.routing.forgetTeam(teamName);
-      if (removed.length === 0) return;
+      const { removed, subscriptions } = await this.opts.routing.forgetTeam(
+        teamName,
+      );
+      if (removed.length === 0 && subscriptions.length === 0) return;
       this.opts.log.info(
-        { ...scope, targets: removed.map((row) => describeTarget(row.target)) },
-        'removed Feishu bindings for a Team that can no longer answer',
+        {
+          ...scope,
+          targets: removed.map((row) => describeTarget(row.target)),
+          // Logged rather than announced: a dropped subscription has no
+          // conversation to announce into.
+          document_tokens: subscriptions.map((row) => row.file_token),
+        },
+        'removed Feishu routes for a Team that can no longer answer',
       );
       // Past the commit: the rows are gone from disk, and what follows is
       // presentation over what they said.
@@ -81,7 +90,7 @@ export class FeishuRouteReconciliation {
     } catch (error) {
       this.opts.log.warn(
         { ...scope, err: { message: errorMessage(error) } },
-        'could not commit the removal of Feishu bindings',
+        'could not commit the removal of Feishu routes',
       );
     }
   }

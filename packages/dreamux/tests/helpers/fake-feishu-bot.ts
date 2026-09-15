@@ -38,6 +38,11 @@ type FeishuMessageResourceResponse = Awaited<
   ReturnType<FeishuBot['fetchMessageResource']>
 >;
 type FeishuAppOwnerIdentity = Awaited<ReturnType<FeishuBot['resolveAppOwner']>>;
+type FeishuDocMetaResult = Awaited<ReturnType<FeishuBot['fetchDocMeta']>>;
+type FeishuWikiNode = Awaited<ReturnType<FeishuBot['resolveWikiNode']>>;
+type FeishuDocCommentText = Awaited<
+  ReturnType<FeishuBot['fetchDocCommentText']>
+>;
 
 export interface FakeFeishuBot extends FeishuBot {
   readonly sentMessages: Array<{
@@ -117,6 +122,18 @@ export function createFakeFeishuBot(appId = 'fake-bot'): FakeFeishuBot {
       _request: FeishuMessageResourceRequest,
     ): Promise<FeishuMessageResourceResponse> {
       throw new Error('no fake Feishu message resources configured');
+    },
+
+    async fetchDocMeta(): Promise<FeishuDocMetaResult> {
+      throw new Error('no fake Feishu document metadata configured');
+    },
+
+    async resolveWikiNode(): Promise<FeishuWikiNode> {
+      throw new Error('no fake Feishu wiki nodes configured');
+    },
+
+    async fetchDocCommentText(): Promise<FeishuDocCommentText> {
+      throw new Error('no fake Feishu comment text configured');
     },
 
     async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {

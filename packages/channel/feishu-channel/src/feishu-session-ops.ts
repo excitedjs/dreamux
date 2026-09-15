@@ -415,6 +415,7 @@ async function deliverAskUserSettlement(
       target,
       containerChatId: route.containerChatId,
       submission: {
+        kind: 'chat',
         attrs: {
           // Same provenance the inbound envelope carries, in the same place:
           // an answer arrives as a channel message and reads like one.

@@ -6,13 +6,16 @@ place that imports the Feishu SDK.
 ## Scope
 
 - **transport** — connect / receive / send / `addReaction` /
-  chain-of-thought message I/O / `getChatMode` / `fetchDocComment` /
-  `fetchDocMeta` / bot open_id resolution / auth via the
-  `@larksuiteoapi/node-sdk` SDK, plus the serialized message-`content`
+  chain-of-thought message I/O / `getChatMode` / `fetchDocMeta` /
+  `resolveWikiNode` / `fetchDocCommentText` / bot open_id resolution / auth via
+  the `@larksuiteoapi/node-sdk` SDK, plus the serialized message-`content`
   encoding and its size budget.
 - **parse** — Feishu message content → one text body, including:
   - inbound text / post / interactive / image / file / audio / media events
-  - `doc.comment` reply events → normalized comment shape
+  - `doc.comment` reply events → normalized comment shape (identifying fields
+    only: the payload carries no comment text and no document title, which is
+    why the transport offers `fetchDocCommentText` beside it)
+  - document share URLs and bare tokens → `{ token, type }`
   - bot member-added events → normalized added-event shape
   - mentions left as the `@_user_N` placeholders the message's `mentions`
     records name, whichever form the sender used
@@ -27,11 +30,24 @@ into the `parse/`-normalized shapes before being forwarded.
 
 Outbound and lookup calls (`transport.send`, `transport.addReaction`,
 `transport.cot`, `transport.getChatMode`, `transport.fetchDocMeta`,
-`transport.fetchDocComment`, `transport.downloadMessageResource`) are thin
-wrappers around the corresponding Lark SDK endpoints. They accept platform-native
+`transport.resolveWikiNode`, `transport.fetchDocCommentText`,
+`transport.downloadMessageResource`) are thin wrappers around the corresponding
+Lark SDK endpoints. They accept platform-native
 parameters (Feishu `chat_id`, `message_id`, `file_key`, …) and return
 platform-native results with the minimum of re-shaping required to make
 success/error handling uniform.
+
+`fetchDocMeta` is the one exception to "minimum re-shaping", and deliberately:
+a caller uses it as a permission proof, so it answers `visible` / `invisible` /
+`unsupported_type` rather than one nullable value. Only `invisible` — Feishu
+reporting the token in `failed_list` — establishes that this app cannot see the
+document; a failed request rejects, because it establishes nothing.
+
+`fetchDocCommentText` answers one nullable value for the opposite reason: it
+reads the text of the single comment a `drive.notice.comment_add_v1` event
+names, and every way of not finding it means the same thing to a caller — there
+is no text to show. A non-zero business code still rejects, because that is a
+failed request and not an absent comment.
 
 ## Parse helpers
 

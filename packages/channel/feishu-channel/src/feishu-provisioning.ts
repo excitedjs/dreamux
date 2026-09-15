@@ -38,7 +38,7 @@ import {
 } from './routing/target.js';
 import {
   errorMessage,
-  type FeishuSubmission,
+  type FeishuChatSubmission,
   type FeishuSubmitOutcome,
   type FeishuTeamSubmitter,
 } from './feishu-submit.js';
@@ -66,7 +66,7 @@ interface ProvisioningRequest {
   readonly space: FeishuSpaceRecord;
   readonly target: FeishuTarget;
   readonly display: string | null;
-  readonly submission: FeishuSubmission;
+  readonly submission: FeishuChatSubmission;
 }
 
 export class FeishuProvisioning {
@@ -184,7 +184,7 @@ export class FeishuProvisioning {
   /** A message that arrived while a run was live, delivered once it is done. */
   private async deliverAfterRun(input: {
     target: FeishuTarget;
-    submission: FeishuSubmission;
+    submission: FeishuChatSubmission;
   }): Promise<FeishuSubmitOutcome> {
     const binding = this.opts.routing.bindingFor(input.target);
     if (binding === undefined) {

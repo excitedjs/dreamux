@@ -91,6 +91,21 @@ export async function saveDispatcherAccess(
   await writeAtomic(stateDir, 'access.json', payload, 0o600);
 }
 
+/**
+ * Whether this sender is one of the Dispatcher's trusted humans.
+ *
+ * Read-only, and deliberately not under the access mutex: the mutex exists to
+ * serialize the gate's *writes*, and asking who is trusted mutates nothing. It
+ * lives here rather than at a caller because `allow_users` is the gate's fact,
+ * and a second reader spelling out the field would be a second owner of it.
+ */
+export async function isTrustedDispatcherUser(
+  stateDir: string,
+  openId: string,
+): Promise<boolean> {
+  return (await readDispatcherAccess(stateDir)).allow_users.includes(openId);
+}
+
 // Alias retained so the session's `loadDispatcherAccess` import still
 // compiles through a rename. Prefer the explicit `readDispatcherAccess` in
 // new code.

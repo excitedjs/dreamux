@@ -167,12 +167,26 @@ function validated(
       `${path}: routing state is missing a section. ${INCOMPATIBLE}`,
     );
   }
+  // `subscriptions` is the one section a released build may not have written.
+  // Absent loses no fact, so it reads as empty; present but not a list is the
+  // same corruption as the two beside it and fails the same way. It is
+  // materialized here rather than left undefined, because this reconstruction
+  // is what every reader sees.
+  if (
+    document.subscriptions !== undefined &&
+    !Array.isArray(document.subscriptions)
+  ) {
+    throw new Error(
+      `${path}: routing state is missing a section. ${INCOMPATIBLE}`,
+    );
+  }
   return {
     version: FEISHU_ROUTING_DOCUMENT_VERSION,
     dispatcher_id: opts.dispatcherId,
     channel_id: opts.channelId,
     bindings: document.bindings,
     spaces: document.spaces,
+    subscriptions: document.subscriptions ?? [],
     updated_at: typeof document.updated_at === 'number'
       ? document.updated_at
       : Date.now(),

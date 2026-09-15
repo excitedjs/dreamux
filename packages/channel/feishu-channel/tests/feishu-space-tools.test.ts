@@ -64,6 +64,15 @@ function fakeSession(
     async listKnownChatBots() {
       throw new Error('not used');
     },
+    async subscribeDocument() {
+      throw new Error('not used');
+    },
+    async unsubscribeDocument() {
+      throw new Error('not used');
+    },
+    listSubscriptions() {
+      return [];
+    },
     async bindChannel() {
       throw new Error('not used');
     },

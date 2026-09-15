@@ -2,7 +2,12 @@ import type {
   FeishuAppOwnerIdentity,
   FeishuBotMemberAddedEvent,
   FeishuChatMode,
+  FeishuCommentEvent,
   FeishuCotClient,
+  FeishuDocCommentRequest,
+  FeishuDocCommentText,
+  FeishuDocMetaResult,
+  FeishuWikiNode,
   FeishuMessageResourceRequest,
   FeishuMessageResourceResponse,
   FeishuMessageReadRequest,
@@ -48,7 +53,19 @@ export interface FakeFeishuBot extends FeishuBot {
   readonly chatNameRequests: string[];
   readonly messageReadRequests: FeishuMessageReadRequest[];
   readonly messageResourceRequests: FeishuMessageResourceRequest[];
+  /** Every comment-text read a delivered event made, in order. */
+  readonly commentTextReads: Array<{
+    fileToken: string;
+    commentId: string;
+    replyId: string;
+  }>;
   inject(event: FeishuInboundEvent): Promise<void>;
+  injectDocComment(event: FeishuCommentEvent): Promise<void>;
+  /** Keyed on the reply id an event names, so a thread can hold several. */
+  setDocCommentText(
+    replyId: string,
+    text: FeishuDocCommentText | null | Error,
+  ): void;
   injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
   injectCardAction(event: FeishuCardActionEvent): Promise<unknown>;
   setAppOwner(owner: FeishuAppOwnerIdentity): void;
@@ -109,6 +126,8 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const openId: string | undefined = `fake-open-id-${appId}`;
   const displayName = `Fake ${appId}`;
   const editedCards: FakeFeishuBot['editedCards'] = [];
+  const commentTextReads: FakeFeishuBot['commentTextReads'] = [];
+  const commentTexts = new Map<string, FeishuDocCommentText | null | Error>();
   const reactions: FakeFeishuBot['reactions'] = [];
   const reactionOps: FakeFeishuBot['reactionOps'] = [];
   let cotClient: FeishuCotClient | undefined;
@@ -201,6 +220,24 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       if (response instanceof Error) throw response;
       return response;
     },
+    async fetchDocMeta(): Promise<FeishuDocMetaResult> {
+      throw new Error('no fake Feishu document metadata configured');
+    },
+    async resolveWikiNode(): Promise<FeishuWikiNode | null> {
+      throw new Error('no fake Feishu wiki nodes configured');
+    },
+    async fetchDocCommentText(
+      request: FeishuDocCommentRequest,
+    ): Promise<FeishuDocCommentText | null> {
+      commentTextReads.push({
+        fileToken: request.fileToken,
+        commentId: request.commentId,
+        replyId: request.replyId,
+      });
+      const text = commentTexts.get(request.replyId);
+      if (text instanceof Error) throw text;
+      return text ?? null;
+    },
     async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return appOwner;
     },
@@ -242,6 +279,19 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     async injectCardAction(event: FeishuCardActionEvent): Promise<unknown> {
       if (routes === null) throw new Error('fake bot not started');
       return routes.onCardAction?.(event);
+    },
+    async injectDocComment(event: FeishuCommentEvent): Promise<void> {
+      if (routes === null) throw new Error('fake bot not started');
+      await routes.onDocComment?.(event);
+    },
+    get commentTextReads() {
+      return commentTextReads;
+    },
+    setDocCommentText(
+      replyId: string,
+      text: FeishuDocCommentText | null | Error,
+    ): void {
+      commentTexts.set(replyId, text);
     },
     setAppOwner(owner: FeishuAppOwnerIdentity): void {
       appOwner = owner;

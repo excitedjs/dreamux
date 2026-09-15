@@ -107,7 +107,7 @@ provider is still unique within the set of servers one agent sees.
 `channels[].id` is unaffected: it keeps its separate meaning for
 dispatcher-local channel binding, `sessionMcp` lookups, logs, and events.
 
-The Feishu package owns its tool names and JSON schemas. Thirteen definitions
+The Feishu package owns its tool names and JSON schemas. Sixteen definitions
 are registered, and the served surface is caller-scoped:
 
 - messaging (both callers): `reply`, `react`, `list_chat_bots`,
@@ -117,6 +117,14 @@ are registered, and the served surface is caller-scoped:
 - Dispatcher Collaboration Space: `bind_collaboration_space`,
   `unbind_collaboration_space`, `get_collaboration_space`,
   `list_collaboration_spaces`
+- document subscriptions (both callers, one definition each):
+  `subscribe_document`, `unsubscribe_document`, `list_subscriptions`
+
+The document tools are the other way to be caller-scoped and are worth reading
+beside the routing pair: they need no second definition because none of them
+takes a recipient at all. The caller *is* the recipient — a TeamLeader's own
+Team, the Dispatcher Agent for the Dispatcher — so a caller cannot name
+another's rows, create them, remove them, or list them.
 
 A name appearing twice with different authority is the authorization model, not
 a duplicate: Core asks the provider's `ChannelMcpCapability` to `describe` a
@@ -388,6 +396,101 @@ Source:
 - `/packages/dreamux/src/service/channel-submission.ts`
 - `/packages/dreamux/src/service/submission-sources.ts`
 
+### Feishu event routes
+
+`FeishuBot.start` takes one typed handler per Feishu event type rather than one
+message handler, and each route awaits its handler before the SDK acks
+(queue-before-ACK). Four are registered:
+
+- `im.message.receive_v1` — a chat message;
+- `im.chat.member.bot.added_v1` — the bot was added to a chat;
+- `card.action.trigger` — a card component was clicked;
+- `drive.notice.comment_add_v1` — a comment or reply on a document.
+
+The seam stays typed rather than becoming a generic `eventType -> handler` map,
+which its own note used to call for at a third event type. Every route carries a
+different payload type and its own normalizer, so one map value type would have
+to be `(raw: unknown) => …` and each handler would re-narrow exactly what the
+seam exists to have narrowed.
+
+### Document comments
+
+`drive.notice.comment_add_v1` is a *notification* event, not a document feed.
+Feishu delivers it to an app only when the bot itself would be notified: the
+comment or reply @-mentions the bot **and** the app has permission on the
+document, or the reply lands in a thread the bot has already replied in. `view`
+permission is enough. The file-level `POST /drive/v1/files/:token/subscribe` API
+does not widen this and is not called; the user-identity subscription API needs
+a `user_access_token` this channel does not hold. All of that is probed, in the
+subscribe-document-comments task record.
+
+Delivery is the chat path's shape with three deliberate differences:
+
+- **No access gate on a subscribed document.** The gate's question is whether a
+  chat *sender* may make this Channel interpret a message. For a subscribed
+  document the subscription is already that decision, made by the recipient
+  itself; visibility was proven when the row was written, and Feishu re-proves
+  it by pushing the event.
+- **Proofs act per subscriber.** One event fans out to every subscriber
+  concurrently and independently. A `TEAM_CLOSED` / `TEAM_NOT_FOUND` rejection
+  removes that one `(file_token, team_name)` row and leaves every other
+  subscriber's submission alone — the same proof, and the same commit path, that
+  removes a stale binding. A subscriber whose Team refused the delivery loses
+  its row; its event is not handed to the Dispatcher instead.
+- **An unclaimed event splits on the mention.** Feishu only ever delivers two
+  kinds, so the split is exact. A comment that @-mentions the bot in a document
+  nobody follows is the cold open, and chat already answers that by routing an
+  unrouted conversation to the Dispatcher Agent — but only when the commenter is
+  in the Dispatcher's `allow_users`, because the "the subscription is already the
+  authorization" reason does not exist when nobody subscribed. An unknown
+  commenter's mention is dropped and logged: a document has no chat window to
+  send a pairing card into. A comment that does *not* mention the bot can only be
+  the tail of a removed subscription — Feishu would not have sent it unless the
+  bot had replied in that thread — and is dropped and logged too. That Dispatcher
+  delivery writes no subscription row, so a rejection on it removes nothing.
+
+  One consequence is named rather than left to be discovered: a document whose
+  Team closed loses its row, so a later trusted @-mention on it reaches the
+  Dispatcher. Distinguishing "never subscribed" from "subscription removed"
+  would mean persisting removed subscriptions, which nobody asked for.
+
+The submission is anchorless: `FeishuSubmission` is a discriminated union whose
+`doc_comment` variant carries no `anchor` field at all, so no caller can open a
+chain-of-thought card with nowhere to hang it. Its `source_id` is
+`${file_token}:${comment_id}:${reply_id}`, because `comment_id` names a whole
+thread and every reply repeats it — a source id of the comment id alone would
+have Core's ledger answer `duplicate` to every reply after the first.
+
+Its body is one `<doc-comment file_token file_type comment_id reply_id
+notice_type mentioned note>` element. The event payload carries no text, so the
+delivered path reads it: one `drive.fileComment.batchQuery` call per *delivered*
+event picks the item the event names — the reply `reply_id` names, or the head
+of the thread when it is empty — and its text becomes the element's `<content>`,
+escaped the way a chat body's is, with the document text the comment is anchored
+to beside it as `<quote>`. That read shares one bounded deadline with the
+commenter's name lookup, so the inbound route's worst case is what it already
+was, and it never costs the event: a failed or empty read logs and delivers the
+self-closing element, whose ids still address the thread. No title is carried and
+no thread history is: that is what lark-cli is for.
+
+Its reminder is the Channel's second one, and it names both paths a recipient
+actually has. No tool here writes a document comment, so answering *in the
+thread* means lark-cli and the reply must be posted `--as bot` — Feishu keeps
+delivering later replies in a thread only once this bot has replied in it. The
+`reply` tool still reaches the recipient's own bound chat if it has one, but not
+this document, and the commenter is not in that chat. It is offered as an option
+and not as a lookup: `list_bindings` is the Dispatcher's tool, so a TeamLeader
+has none that answers which chat it is bound to.
+
+Source:
+
+- `/packages/channel/feishu-channel/src/bot.ts`
+- `/packages/channel/feishu-channel/src/feishu-document-comments.ts`
+- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
+- `/packages/channel/feishu-channel/src/tools/document-tools.ts`
+- `/packages/channel/feishu-transport/src/parse/comment.ts`
+- `/packages/channel/feishu-transport/src/parse/document-ref.ts`
+
 ### Slash commands
 
 The Feishu Channel answers `/bind`, `/dissolve`, `/help`, `/stop`, and `/teams`
@@ -652,13 +755,21 @@ Source:
 
 The Feishu document lives at
 `~/.dreamux/state/<dispatcher-id>/feishu-routing.<channel-slug>.<digest>.json`,
-one file per configured channel id, written `0600`. It holds two sections in one
-consistency domain: `bindings[]`, the target routes actually installed, each
+one file per configured channel id, written `0600`. It holds three sections in
+one consistency domain: `bindings[]`, the target routes actually installed, each
 carrying its Team name, its `manual` or `space` origin, and its optional space
-id; and `spaces[]`, the registered Collaboration Space policies with their
-creation facts. A space policy is what entitles a binding to be installed, and a
-Team closing removes the bindings that named it, so splitting the two would only
-invent a cross-file transaction.
+id; `spaces[]`, the registered Collaboration Space policies with their creation
+facts; and `subscriptions[]`, the documents a recipient follows, each a
+`(file_token, file_type, team_name, created_at)` row whose `team_name` is `null`
+for the Dispatcher Agent. A space policy is what entitles a binding to be
+installed, and a Team closing removes the bindings that named it *and* the
+documents it followed in one commit, so splitting them would only invent a
+cross-file transaction.
+
+The `(file_token, team_name)` key is what makes "a recipient writes only its own
+row" structural rather than a check, and two recipients following one document
+hold two rows. No title is stored: the metadata read at subscribe time exists to
+prove permission, and its answer is not persisted.
 
 Work in flight is deliberately absent. Disk commit is the authority: every change
 is queued on one tail, prepared on an isolated copy of the last committed
@@ -669,7 +780,10 @@ drains the tail so no queued commit is abandoned.
 
 There is no migration path. A malformed document, an unsupported version, a
 foreign `channel_id`, or a missing section fails loud, and the operator recreates
-the rows through `bind_channel` / `bind_collaboration_space`. Core's own removed
+the rows through `bind_channel` / `bind_collaboration_space`. `subscriptions` is
+the one section a document may legitimately lack — a file written before it
+existed loses no fact, so it reads as `[]` and the version stays `1` — while a
+present-but-malformed one fails loud like the two beside it. Core's own removed
 routing state is detected, not read: `channel-bindings.json` and
 `collaboration-spaces.json` at the dispatcher root fail loud as old state.
 

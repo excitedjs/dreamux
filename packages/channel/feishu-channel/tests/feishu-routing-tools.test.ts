@@ -74,6 +74,15 @@ function fakeSession(): FeishuToolSession & {
     async listKnownChatBots() {
       throw new Error('not used');
     },
+    async subscribeDocument() {
+      throw new Error('not used');
+    },
+    async unsubscribeDocument() {
+      throw new Error('not used');
+    },
+    listSubscriptions() {
+      return [];
+    },
     async bindChannel(input) {
       binds.push(input);
       return { team_name: input.teamName, previous_team_name: null };

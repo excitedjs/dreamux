@@ -14,6 +14,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AskUserQuestionSpec } from '../feishu-ask-user-card.js';
+import type { FeishuDocumentSubscriptionView } from '../feishu-document-comments.js';
 import type { FeishuSpaceRecord } from '../routing/document.js';
 import type { FeishuBindingView } from '../routing/index.js';
 import type { FeishuTarget } from '../routing/target.js';
@@ -90,6 +91,27 @@ export interface FeishuToolSession {
   unbindSpace(spaceName: string): Promise<FeishuSpaceRecord | null>;
   getSpace(spaceName: string): FeishuSpaceRecord | undefined;
   listSpaces(): readonly FeishuSpaceRecord[];
+  /**
+   * `teamName` is the calling recipient — a TeamLeader's own Team, or `null`
+   * for the Dispatcher Agent. It is derived from the caller, never named in an
+   * argument, so all three of these reach the caller's own rows and no others.
+   */
+  subscribeDocument(input: {
+    document: string;
+    type: string | null;
+    teamName: string | null;
+  }): Promise<{
+    file_token: string;
+    file_type: string;
+    already_subscribed: boolean;
+  }>;
+  unsubscribeDocument(input: {
+    document: string;
+    teamName: string | null;
+  }): Promise<{ file_token: string; unsubscribed: boolean }>;
+  listSubscriptions(
+    teamName: string | null,
+  ): readonly FeishuDocumentSubscriptionView[];
 }
 
 export interface FeishuToolContext {

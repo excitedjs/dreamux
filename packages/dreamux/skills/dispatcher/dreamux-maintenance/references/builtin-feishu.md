@@ -9,20 +9,24 @@ There are no credential defaults and no other built-in Feishu config fields.
 
 ## Feishu-Owned Routing State
 
-The built-in Feishu Channel owns which conversation reaches which Team, and its
-collaboration-space provisioning policy. Both live in one server-owned document
-per configured channel at
+The built-in Feishu Channel owns which conversation reaches which Team, its
+collaboration-space provisioning policy, and which documents' comments reach
+which recipient. All three live in one server-owned document per configured
+channel at
 `~/.dreamux/state/<dispatcher-id>/feishu-routing.<channel-slug>.<digest>.json`,
 where the slug and digest are both derived from the configured channel `id`.
 
 - It is fully server-owned. Do not edit, copy over, synthesize, or delete it as
   an operational repair, and do not hand-write a binding into it.
 - Change it only through the Channel's own MCP tools: `bind_channel` /
-  `unbind_channel` for one conversation, and `bind_collaboration_space` /
-  `unbind_collaboration_space` for provisioning policy. `list_bindings`,
-  `get_collaboration_space`, and `list_collaboration_spaces` read it.
+  `unbind_channel` for one conversation, `bind_collaboration_space` /
+  `unbind_collaboration_space` for provisioning policy, and
+  `subscribe_document` / `unsubscribe_document` for a document whose comments
+  reach the caller. `list_bindings`, `get_collaboration_space`,
+  `list_collaboration_spaces`, and `list_subscriptions` read it.
 - A bind names an existing, open Team; Dreamux refuses a bind to a missing or
-  closed Team and writes nothing. Dissolving a Team invalidates its routes.
+  closed Team and writes nothing. Dissolving a Team invalidates its routes and
+  drops its document subscriptions, in the same commit.
 - A chat carries either a whole-chat binding or a collaboration space, never
   both, because a whole-chat binding answers for every topic under it and would
   leave a space's new topics without a Team of their own. `bind_channel` refuses
@@ -35,6 +39,15 @@ where the slug and digest are both derived from the configured channel `id`.
   way it has been — every topic under it answers to the whole-chat Team and new
   topics get no Team of their own — until the whole-chat binding is released.
   Nothing has to be rebuilt or hand-edited.
+- A document subscription belongs to whoever created it — a Team, or the
+  Dispatcher Agent. Neither recipient can create or remove another's, and
+  `list_subscriptions` shows the caller's own rows only. Subscribing refuses a
+  document the bot cannot see, and nothing is written for it.
+- A comment on a document nobody follows reaches the Dispatcher Agent when it
+  @-mentions the bot and the commenter is in the gate's `allow_users`; it is
+  dropped and logged otherwise. That delivery writes no subscription row, so it
+  changes nothing in this file — adding the commenter to `allow_users` is an
+  access-state change, made through the pairing flow, not here.
 - A document this Dreamux version cannot read fails loud at channel start,
   naming the file. Recreate the bindings through those tools rather than
   editing it.

@@ -15,24 +15,28 @@ never on `@excitedjs/dreamux` core.
   read/written under a host-supplied state dir), and provider-local
   message-to-target ownership tracking.
 - Own the Feishu MCP tool surface and its caller-scoped catalogs: `reply`,
-  `react`, `list_chat_bots`, the routing tools (`bind_channel`,
-  `unbind_channel`, `list_bindings`), and the collaboration-space policy tools,
-  plus their parsing and handlers. A name may appear twice with different
-  authority — the Dispatcher's `bind_channel` names any Team, a TeamLeader's
-  names none and reaches only its own Team — because the catalog a caller is
-  offered *is* the authorization. Core owns only the stdio transport; see
-  Boundaries.
+  `react`, `list_chat_bots`, `ask_user_question`, the routing tools
+  (`bind_channel`, `unbind_channel`, `list_bindings`), the collaboration-space
+  policy tools, and the document-subscription tools (`subscribe_document`,
+  `unsubscribe_document`, `list_subscriptions`), plus their parsing and
+  handlers. A name may appear twice with different authority — the Dispatcher's
+  `bind_channel` names any Team, a TeamLeader's names none and reaches only its
+  own Team — because the catalog a caller is offered *is* the authorization. The
+  document tools need no second definition for the same reason: none of them
+  takes a recipient, so the caller is the recipient and can reach nobody else's
+  rows. Core owns only the stdio transport; see Boundaries.
 - Own where a Feishu conversation is routed: the durable per-channel binding
   document, hierarchy and fallback, stale-binding cleanup, and the automatic
   collaboration-space provisioning that composes ordinary `team.create` and
-  `team.submit` Commands. Validate a manual bind against Core through the
-  injected `invoke` port first: a missing or closed Team is refused with a
-  public failure and mutates no routing state. The routing document holds one
-  invariant of its own — a chat carries either a whole-chat binding or a
-  Collaboration Space, never both — stated on `FeishuRoutingDocument` and
-  refused at both writes that could break it, each inside its own commit, so
-  every caller meets it. Binding a single topic is unaffected, which is what
-  provisioning installs.
+  `team.submit` Commands. The same document holds which documents' comments
+  reach which recipient, because a Team closing removes both in one commit.
+  Validate a manual bind against Core through the injected `invoke` port first:
+  a missing or closed Team is refused with a public failure and mutates no
+  routing state. The routing document holds one invariant of its own — a chat
+  carries either a whole-chat binding or a Collaboration Space, never both —
+  stated on `FeishuRoutingDocument` and refused at both writes that could break
+  it, each inside its own commit, so every caller meets it. Binding a single
+  topic is unaffected, which is what provisioning installs.
   A dissolved Team's routes are invalidated from the `team.closed` event.
 - Own the Feishu slash-command surface. A human message whose leading text
   (after mentions) starts with a known `/command` token is executed here; it is
@@ -45,6 +49,16 @@ never on `@excitedjs/dreamux` core.
   ordinary delivery authorization gates it — there is no separate command
   permission.
 - Normalize inbound Feishu content into agent-facing channel results.
+- Own document-comment delivery: one submission per subscriber, fanned out
+  concurrently. The event payload carries no text, so a delivered event reads
+  the comment it names once — its own text and the document text it is anchored
+  to — under the same bounded deadline as the commenter's name lookup; a failed
+  or empty read delivers the ids alone rather than dropping the event. A subscribed document runs no access gate — the subscription is
+  already the recipient's own authorization — and a subscriber whose Team is
+  proven gone loses its own row and nobody else's. A comment no subscription
+  claims splits on the mention: an @-mention from a commenter in the gate's
+  `allow_users` reaches the Dispatcher Agent and writes no row, and everything
+  else is dropped and logged.
 - Download inbound attachments after the host access gate allows delivery.
 - Own attachment cache layout, path sanitization, permissions, retention, and
   cleanup policy.

@@ -242,6 +242,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     });
 
     await session.submit(null, {
+      kind: 'chat',
       attrs: {},
       text: 'hello',
       reminder: '',
@@ -288,6 +289,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     });
 
     await session.submit(null, {
+      kind: 'chat',
       attrs: {},
       text: 'body 1',
       reminder: '',
@@ -303,6 +305,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
 
     await session.submit(null, {
+      kind: 'chat',
       attrs: {},
       text: 'body 2',
       reminder: '',
@@ -342,6 +345,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       return { status: 'submitted', turn_id: 'turn-original' };
     });
     const submission = {
+      kind: 'chat',
       attrs: {},
       text: 'hello',
       reminder: '',
@@ -404,6 +408,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       target: chatTarget('oc_group', 'group'),
       containerChatId: null,
       submission: {
+        kind: 'chat',
         attrs: {},
         text: 'hello',
         reminder: '',
@@ -457,6 +462,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       );
 
       const outcome = await session.submit('alpha', {
+        kind: 'chat',
         attrs: {},
         text: 'hello',
         reminder: '',
@@ -490,6 +496,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     );
 
     const outcome = await session.submit(null, {
+      kind: 'chat',
       attrs: {},
       text: 'hello',
       reminder: '',
@@ -517,6 +524,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     });
 
     const outcome = await session.submit(null, {
+      kind: 'chat',
       attrs: {},
       text: 'hello',
       reminder: '',
@@ -550,6 +558,7 @@ describe('FeishuChannelSession COT — a Reply never touches the anchor', () => 
     });
 
     await session.submit('alpha', {
+      kind: 'chat',
       attrs: {},
       text: 'hello',
       reminder: '',
@@ -615,6 +624,7 @@ describe('FeishuChannelSession COT — a bot without a COT surface', () => {
     await session.initialize(port.port);
 
     const outcome = await session.submit(null, {
+      kind: 'chat',
       attrs: {},
       text: 'hello',
       reminder: '',

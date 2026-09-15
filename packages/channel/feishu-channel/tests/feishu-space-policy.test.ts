@@ -25,7 +25,7 @@ import { FeishuProvisioning } from '../src/feishu-provisioning.js';
 import { FeishuRouting } from '../src/routing/index.js';
 import { FeishuRoutingStore } from '../src/routing/store.js';
 import { topicTarget } from '../src/routing/target.js';
-import type { FeishuSubmission, FeishuSubmitOutcome } from '../src/feishu-submit.js';
+import type { FeishuChatSubmission, FeishuSubmitOutcome } from '../src/feishu-submit.js';
 
 let dir: string;
 
@@ -55,8 +55,9 @@ async function makeRouting(): Promise<FeishuRouting> {
   return new FeishuRouting({ dispatcherId: 'disp-1', channelId: 'chan-1', store });
 }
 
-function submission(sourceId: string): FeishuSubmission {
+function submission(sourceId: string): FeishuChatSubmission {
   return {
+    kind: 'chat',
     attrs: {},
     text: 'hi',
     reminder: '',

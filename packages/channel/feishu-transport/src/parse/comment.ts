@@ -8,9 +8,11 @@
  * decoder lives in core; a host's comment handler calls it instead of importing
  * the lark SDK itself (claudemux#155 §六.2 / dreamux#25 §7.1).
  *
- * The decode is pure: no I/O, never throws. Enriching the comment (fetching its
- * text and the document title) is the transport's `fetchDocComment` /
- * `fetchDocMeta`; shaping the notification body is the host handler's job.
+ * The decode is pure: no I/O, never throws. The payload carries no comment text
+ * and no document title: the identifying fields below are all of it. A host
+ * that wants the text reads it separately, with the transport's
+ * `fetchDocCommentText`, and the rest of the thread with lark-cli. Shaping the
+ * notification body is the host handler's job.
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
@@ -34,6 +36,8 @@ export interface FeishuCommentEvent {
   commenterId: string
   /** True when the comment @-mentions the bot. */
   mentionedBot: boolean
+  /** Millisecond timestamp of the event, as the SDK resolved it. */
+  timestamp: number
 }
 
 /**
@@ -65,5 +69,6 @@ export function normalizeCommentEvent(raw: unknown): FeishuCommentEvent | null {
     replyId: decoded.replyId ?? '',
     commenterId: decoded.operator.openId,
     mentionedBot: decoded.mentionedBot,
+    timestamp: decoded.timestamp,
   }
 }

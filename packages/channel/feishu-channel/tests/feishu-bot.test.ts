@@ -10,8 +10,9 @@ import type {
   FeishuCreateGroupInput,
   FeishuCreateGroupResult,
   FeishuChatMode,
-  FeishuDocComment,
-  FeishuDocMeta,
+  FeishuDocCommentText,
+  FeishuDocMetaResult,
+  FeishuWikiNode,
   FeishuInviteMembersInput,
   FeishuInviteMembersResult,
   FeishuMessageResourceRequest,
@@ -74,11 +75,15 @@ class FakeTransport implements FeishuTransport {
     throw new Error('unused in this test');
   }
 
-  async fetchDocComment(): Promise<FeishuDocComment | null> {
+  async fetchDocMeta(): Promise<FeishuDocMetaResult> {
     throw new Error('unused in this test');
   }
 
-  async fetchDocMeta(): Promise<FeishuDocMeta | null> {
+  async resolveWikiNode(): Promise<FeishuWikiNode | null> {
+    throw new Error('unused in this test');
+  }
+
+  async fetchDocCommentText(): Promise<FeishuDocCommentText | null> {
     throw new Error('unused in this test');
   }
 

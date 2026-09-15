@@ -4,16 +4,17 @@
  * Core supplies a per-dispatcher state root and nothing else: the filename,
  * the schema, and what counts as a valid document are this Channel's to
  * decide. What it holds is final product fact only — the Collaboration Space
- * policies an operator registered, and the target bindings that were actually
- * installed. Work in flight is deliberately absent: automatic provisioning is
+ * policies an operator registered, the target bindings that were actually
+ * installed, and the documents a recipient asked to follow. Work in flight is
+ * deliberately absent: automatic provisioning is
  * process-local and may be lost outright, and after a restart a target no
  * binding claims is simply an unmatched target, which reaches the Dispatcher
  * Agent like any other.
  *
- * The two sections share one file because they are one consistency domain — a
+ * The three sections share one file because they are one consistency domain — a
  * space policy is what entitles a binding to be installed, and a Team closing
- * removes the bindings that named it. Splitting them would only invent a
- * cross-file transaction.
+ * removes the bindings that named it and the documents it followed in the same
+ * commit. Splitting them would only invent a cross-file transaction.
  *
  * There is no migration path. A document from an incompatible version fails
  * loud and the operator recreates the bindings through the Channel's own MCP
@@ -74,7 +75,27 @@ export interface FeishuSpaceRecord {
 }
 
 /**
- * The one rule the two sections owe each other.
+ * One recipient following one document's comments.
+ *
+ * `team_name` is `null` for the Dispatcher Agent, the same way a submission
+ * omits the target to reach it. The pair `(file_token, team_name)` is the key:
+ * it is what makes "a recipient only ever writes its own row" structural rather
+ * than a check, and two recipients following one document hold two rows.
+ *
+ * No title is stored. What the metadata read at subscribe time establishes is
+ * permission, and the document's own name is something the agent reads with the
+ * same lark-cli call that gets it the comment.
+ */
+export interface FeishuDocSubscriptionRecord {
+  file_token: string;
+  file_type: string;
+  /** The Team that receives it, or null for the Dispatcher Agent. */
+  team_name: string | null;
+  created_at: number;
+}
+
+/**
+ * The one rule the binding and space sections owe each other.
  *
  * **A chat that a Collaboration Space is registered on carries no `group`
  * binding row, and a chat carrying a `group` binding row has no Collaboration
@@ -99,6 +120,7 @@ export interface FeishuRoutingDocument {
   channel_id: string;
   bindings: FeishuBindingRecord[];
   spaces: FeishuSpaceRecord[];
+  subscriptions: FeishuDocSubscriptionRecord[];
   updated_at: number;
 }
 
@@ -113,6 +135,7 @@ export function emptyRoutingDocument(input: {
     channel_id: input.channelId,
     bindings: [],
     spaces: [],
+    subscriptions: [],
     updated_at: input.now,
   };
 }

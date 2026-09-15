@@ -240,3 +240,64 @@ describe('FeishuRoutingStore — commit authority', () => {
     expect(onDisk.bindings.map((b) => b.team_name)).toEqual(['team-r']);
   });
 });
+
+describe('FeishuRoutingStore — the subscriptions section', () => {
+  it('reads a document written before the section existed as an empty list, not undefined', async () => {
+    const channelId = 'chan-no-subscriptions';
+    writeFileSync(
+      join(dir, routingDocumentFilename(channelId)),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'disp-1',
+        channel_id: channelId,
+        bindings: [],
+        spaces: [],
+        updated_at: 1,
+      }),
+    );
+    const store = newStore(channelId);
+    await store.load();
+
+    expect(store.current.subscriptions).toEqual([]);
+  });
+
+  it('a present-but-malformed subscriptions section fails loud like the two beside it', async () => {
+    const channelId = 'chan-bad-subscriptions';
+    writeFileSync(
+      join(dir, routingDocumentFilename(channelId)),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'disp-1',
+        channel_id: channelId,
+        bindings: [],
+        spaces: [],
+        subscriptions: { doc_tok: 'team-a' },
+        updated_at: 1,
+      }),
+    );
+    const store = newStore(channelId);
+
+    await expect(store.load()).rejects.toThrow(/missing a section/);
+  });
+
+  it('a committed subscription survives a store round-trip', async () => {
+    const channelId = 'chan-subscription-roundtrip';
+    const store = newStore(channelId);
+    await store.load();
+    await store.update((doc) => {
+      doc.subscriptions.push({
+        file_token: 'doc_tok',
+        file_type: 'docx',
+        team_name: null,
+        created_at: 7,
+      });
+      return true;
+    });
+
+    const reloaded = newStore(channelId);
+    await reloaded.load();
+    expect(reloaded.current.subscriptions).toEqual([
+      { file_token: 'doc_tok', file_type: 'docx', team_name: null, created_at: 7 },
+    ]);
+  });
+});

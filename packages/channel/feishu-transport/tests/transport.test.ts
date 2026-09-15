@@ -9,97 +9,9 @@
 import * as lark from '@larksuiteoapi/node-sdk'
 import { Readable } from 'node:stream'
 import { describe, expect, test, vi } from 'vitest'
-import { commentFromBatchQuery, createFeishuTransport } from '../src/transport/feishu'
+import { createFeishuTransport } from '../src/transport/feishu'
 import { FEISHU_MESSAGE_CONTENT_SAFE_BYTES } from '../src/transport/message-content'
 import type { TransportLogger } from '../src/transport/diagnostics'
-
-/**
- * One `drive.v1.fileComment.batchQuery` response item, in the exact shape the
- * live API returns — a local-selection comment (`is_whole: false`) anchored to
- * a quote, with one reply. Captured from a real `batch_query` response.
- */
-function batchQueryItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    comment_id: 'cmt_1',
-    is_whole: false,
-    quote: 'the target sentence the comment is anchored to',
-    reply_list: {
-      replies: [
-        {
-          reply_id: 'rpl_1',
-          user_id: 'ou_commenter',
-          content: { elements: [{ type: 'text_run', text_run: { text: 'please take a look' } }] },
-        },
-      ],
-    },
-    ...overrides,
-  }
-}
-
-describe('commentFromBatchQuery', () => {
-  test('decodes a local-selection comment with its quote and reply text', () => {
-    const comment = commentFromBatchQuery([batchQueryItem()], 'cmt_1')
-
-    expect(comment).toEqual({
-      isWhole: false,
-      quote: 'the target sentence the comment is anchored to',
-      replies: [
-        {
-          replyId: 'rpl_1',
-          authorId: 'ou_commenter',
-          elements: [{ type: 'text_run', text_run: { text: 'please take a look' } }],
-        },
-      ],
-    })
-  })
-
-  test('picks the requested comment out of a multi-item response', () => {
-    const items = [
-      batchQueryItem({ comment_id: 'cmt_other', quote: 'a different anchor' }),
-      batchQueryItem({ comment_id: 'cmt_1', quote: 'the wanted anchor' }),
-    ]
-    expect(commentFromBatchQuery(items, 'cmt_1')?.quote).toBe('the wanted anchor')
-  })
-
-  test('returns null when the response carries no comment with that id', () => {
-    expect(commentFromBatchQuery([batchQueryItem({ comment_id: 'cmt_other' })], 'cmt_1')).toBeNull()
-  })
-
-  test('returns null for an empty response', () => {
-    expect(commentFromBatchQuery([], 'cmt_1')).toBeNull()
-  })
-
-  test('a whole-document comment decodes with isWhole true and an empty quote', () => {
-    const comment = commentFromBatchQuery(
-      [batchQueryItem({ is_whole: true, quote: '' })],
-      'cmt_1',
-    )
-    expect(comment?.isWhole).toBe(true)
-    expect(comment?.quote).toBe('')
-  })
-
-  test('defaults isWhole to true and quote to empty when the API omits them', () => {
-    const comment = commentFromBatchQuery(
-      [{ comment_id: 'cmt_1', reply_list: { replies: [] } }],
-      'cmt_1',
-    )
-    expect(comment).toEqual({ isWhole: true, quote: '', replies: [] })
-  })
-
-  test('a comment with no reply list decodes to an empty reply array', () => {
-    const comment = commentFromBatchQuery([{ comment_id: 'cmt_1' }], 'cmt_1')
-    expect(comment?.replies).toEqual([])
-  })
-
-  test('a reply missing its ids and content decodes to empty fields', () => {
-    const comment = commentFromBatchQuery(
-      [{ comment_id: 'cmt_1', reply_list: { replies: [{}] } }],
-      'cmt_1',
-    )
-    expect(comment?.replies).toEqual([{ replyId: '', authorId: '', elements: [] }])
-  })
-})
-
 
 /**
  * Build a stub `lark.Client` that exposes only the methods this module calls.
@@ -153,6 +65,9 @@ function stubClient() {
     code: 0,
     data: { user: { name: 'Ada' } },
   }))
+  const metaBatchQuery = vi.fn(async () => ({ data: { metas: [] } }))
+  const wikiGetNode = vi.fn(async () => ({ data: { node: undefined } }))
+  const commentBatchQuery = vi.fn(async () => ({ data: { items: [] } }))
   const stub = {
     im: {
       v1: {
@@ -164,8 +79,11 @@ function stubClient() {
       chat: { create: chatCreate, get: chatGet, members: { create: memberCreate } },
     },
     drive: {
-      fileComment: { batchQuery: vi.fn(async () => ({ data: { items: [] } })) },
-      meta: { batchQuery: vi.fn(async () => ({ data: { metas: [] } })) },
+      meta: { batchQuery: metaBatchQuery },
+      fileComment: { batchQuery: commentBatchQuery },
+    },
+    wiki: {
+      v2: { space: { getNode: wikiGetNode } },
     },
     contact: {
       v3: { user: { get: contactUserGet } },
@@ -175,6 +93,9 @@ function stubClient() {
   }
   return {
     client: stub as unknown as lark.Client,
+    metaBatchQuery,
+    wikiGetNode,
+    commentBatchQuery,
     patch,
     reactionCreate,
     reactionDelete,
@@ -1204,26 +1125,350 @@ describe('createFeishuTransport — injected logger safety boundary (#74)', () =
     const stub = stubClient()
     const transport = createFeishuTransport(
       { appId: 'app', appSecret: SECRET },
-      { client: stub.client, logger },
+      {
+        client: stub.client,
+        logger,
+        webSocketRegistration: {
+          open: async () => undefined,
+          close: () => {
+            throw new Error('the socket was already gone')
+          },
+        },
+      },
     )
 
-    // Send a real body (no log on success), then force the doc-comment fetch to
-    // fail so the best-effort `diagnostic()` sink actually runs.
+    // Send a real body (no log on success), then fail the close so the
+    // best-effort `diagnostic()` sink actually runs.
     await transport.send({ chatId: 'oc_chat' }, BODY)
-    const drive = (
-      stub.client as unknown as {
-        drive: { fileComment: { batchQuery: ReturnType<typeof vi.fn> } }
-      }
-    ).drive
-    drive.fileComment.batchQuery.mockRejectedValueOnce(new Error('network down'))
-    const comment = await transport.fetchDocComment('tok', 'docx', 'cmt')
+    await transport.close()
 
-    expect(comment).toBeNull()
     // The diagnostic path ran (so the assertion below is not vacuous)…
     expect(calls.length).toBeGreaterThan(0)
     // …yet neither sentinel appears anywhere in what the logger received.
     const haystack = JSON.stringify(calls)
     expect(haystack).not.toContain(SECRET)
     expect(haystack).not.toContain(BODY)
+  })
+})
+
+/**
+ * The metadata read is a *permission proof*, so what it cannot establish must
+ * not look like what it can. These three cases used to collapse into one
+ * `null`, which is how a 5xx could be reported to an operator as "add the bot
+ * as a collaborator".
+ */
+describe('createFeishuTransport — fetchDocMeta discriminates its answers', () => {
+  test('a token Feishu returns metadata for is visible, and carries it', async () => {
+    const stub = stubClient()
+    stub.metaBatchQuery.mockResolvedValueOnce({
+      data: {
+        metas: [
+          { doc_token: 'doc_tok', title: 'Design', url: 'https://example.invalid/d' },
+        ],
+      },
+    } as never)
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.fetchDocMeta('doc_tok', 'docx')).resolves.toEqual({
+      kind: 'visible',
+      meta: { title: 'Design', url: 'https://example.invalid/d' },
+    })
+  })
+
+  test('a token in failed_list is invisible — the one answer a refusal may quote', async () => {
+    const stub = stubClient()
+    stub.metaBatchQuery.mockResolvedValueOnce({
+      data: { metas: [], failed_list: [{ token: 'doc_tok', code: 970003 }] },
+    } as never)
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.fetchDocMeta('doc_tok', 'docx')).resolves.toEqual({
+      kind: 'invisible',
+    })
+  })
+
+  test('a type the metadata API does not take is its own answer, not invisibility', async () => {
+    const stub = stubClient()
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.fetchDocMeta('doc_tok', 'minutes')).resolves.toEqual({
+      kind: 'unsupported_type',
+    })
+    expect(stub.metaBatchQuery).not.toHaveBeenCalled()
+  })
+
+  test('a failed request propagates instead of being reported as invisible', async () => {
+    const stub = stubClient()
+    stub.metaBatchQuery.mockRejectedValueOnce(new Error('network down'))
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.fetchDocMeta('doc_tok', 'docx')).rejects.toThrow(
+      'network down',
+    )
+  })
+
+  test('a response claiming the token in neither list throws rather than guessing', async () => {
+    const stub = stubClient()
+    stub.metaBatchQuery.mockResolvedValueOnce({
+      code: 1061045,
+      msg: 'rate limited',
+      data: { metas: [] },
+    } as never)
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.fetchDocMeta('doc_tok', 'docx')).rejects.toThrow(
+      /1061045/,
+    )
+  })
+})
+
+describe('createFeishuTransport — resolveWikiNode', () => {
+  test('answers the object the node holds, which is what the comment event names', async () => {
+    const stub = stubClient()
+    stub.wikiGetNode.mockResolvedValueOnce({
+      data: { node: { node_token: 'wik_tok', obj_token: 'doc_tok', obj_type: 'docx' } },
+    } as never)
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.resolveWikiNode('wik_tok')).resolves.toEqual({
+      objToken: 'doc_tok',
+      objType: 'docx',
+    })
+    expect(stub.wikiGetNode).toHaveBeenCalledWith({ params: { token: 'wik_tok' } })
+  })
+
+  test('a successful response with no node means this bot cannot see it', async () => {
+    const stub = stubClient()
+    stub.wikiGetNode.mockResolvedValueOnce({ code: 0, data: {} } as never)
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.resolveWikiNode('wik_tok')).resolves.toBeNull()
+  })
+
+  test('a non-zero business code throws rather than reading as "cannot see"', async () => {
+    const stub = stubClient()
+    stub.wikiGetNode.mockResolvedValueOnce({
+      code: 1061045,
+      msg: 'rate limited',
+      data: {},
+    } as never)
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(transport.resolveWikiNode('wik_tok')).rejects.toThrow(/1061045/)
+  })
+})
+
+
+/**
+ * The delivered body carries what the commenter wrote, so this read picks the
+ * one item the event names out of the thread Feishu answers with. Every way of
+ * not finding it is one answer — `null`, which the caller turns into a
+ * delivery without text rather than a dropped event.
+ */
+describe('createFeishuTransport — fetchDocCommentText', () => {
+  const thread = (replies: unknown[], quote?: string): unknown => ({
+    data: {
+      items: [
+        {
+          comment_id: 'cmt_1',
+          quote,
+          reply_list: { replies },
+        },
+      ],
+    },
+  })
+
+  const textReply = (replyId: string, text: string): unknown => ({
+    reply_id: replyId,
+    content: { elements: [{ type: 'text_run', text_run: { text } }] },
+  })
+
+  test('an empty reply id reads the comment at the head of the thread', async () => {
+    const stub = stubClient()
+    stub.commentBatchQuery.mockResolvedValueOnce(
+      thread(
+        [textReply('rep_1', 'please rework this'), textReply('rep_2', 'agreed')],
+        'the paragraph in question',
+      ) as never,
+    )
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: '',
+      }),
+    ).resolves.toEqual({
+      quote: 'the paragraph in question',
+      text: 'please rework this',
+    })
+    expect(stub.commentBatchQuery).toHaveBeenCalledWith({
+      path: { file_token: 'doc_tok' },
+      params: { file_type: 'docx', user_id_type: 'open_id' },
+      data: { comment_ids: ['cmt_1'] },
+    })
+  })
+
+  test('a reply id reads that reply and not the head of the thread', async () => {
+    const stub = stubClient()
+    stub.commentBatchQuery.mockResolvedValueOnce(
+      thread([
+        textReply('rep_1', 'please rework this'),
+        textReply('rep_2', 'agreed'),
+      ]) as never,
+    )
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: 'rep_2',
+      }),
+    ).resolves.toEqual({ quote: '', text: 'agreed' })
+  })
+
+  test('mentions and links read as what they name, in place', async () => {
+    const stub = stubClient()
+    stub.commentBatchQuery.mockResolvedValueOnce(
+      thread([
+        {
+          reply_id: 'rep_1',
+          content: {
+            elements: [
+              { type: 'person', person: { user_id: 'ou_bot' } },
+              { type: 'text_run', text_run: { text: ' see ' } },
+              { type: 'docs_link', docs_link: { url: 'https://example.invalid/x' } },
+            ],
+          },
+        },
+      ]) as never,
+    )
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: 'rep_1',
+      }),
+    ).resolves.toEqual({
+      quote: '',
+      text: '@ou_bot see https://example.invalid/x',
+    })
+  })
+
+  test('a thread without the named comment answers null', async () => {
+    const stub = stubClient()
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: '',
+      }),
+    ).resolves.toBeNull()
+  })
+
+  test('a thread without the named reply answers null', async () => {
+    const stub = stubClient()
+    stub.commentBatchQuery.mockResolvedValueOnce(
+      thread([textReply('rep_1', 'please rework this')]) as never,
+    )
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: 'rep_9',
+      }),
+    ).resolves.toBeNull()
+  })
+
+  test('a type the comment API does not take is answered without a call', async () => {
+    const stub = stubClient()
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'mindnote',
+        commentId: 'cmt_1',
+        replyId: '',
+      }),
+    ).resolves.toBeNull()
+    expect(stub.commentBatchQuery).not.toHaveBeenCalled()
+  })
+
+  test('a non-zero business code throws rather than reading as "no such comment"', async () => {
+    const stub = stubClient()
+    stub.commentBatchQuery.mockResolvedValueOnce({
+      code: 1061045,
+      msg: 'rate limited',
+      data: {},
+    } as never)
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: '',
+      }),
+    ).rejects.toThrow(/1061045/)
   })
 })

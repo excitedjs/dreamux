@@ -25,6 +25,11 @@ import type {
 
 import { askUserQuestionDef } from './ask-user-question.js';
 import {
+  listSubscriptionsDef,
+  subscribeDocumentDef,
+  unsubscribeDocumentDef,
+} from './document-tools.js';
+import {
   listChatBotsDef,
   reactDef,
   replyDef,
@@ -58,6 +63,9 @@ export const FEISHU_TOOLS: readonly FeishuToolDef[] = [
   unbindSpaceDef,
   getSpaceDef,
   listSpacesDef,
+  subscribeDocumentDef,
+  unsubscribeDocumentDef,
+  listSubscriptionsDef,
 ];
 
 export function feishuToolsFor(

@@ -30,14 +30,56 @@ import type { FeishuTarget } from './routing/target.js';
 export const CHANNEL_REMINDER =
   'The user in this chat sees only what you send through the reply tool; your assistant text is not shown to them.';
 
-export interface FeishuSubmission {
+/**
+ * The standing note for a turn a document comment woke.
+ *
+ * The chat reminder would mislead here, and so would its opposite. Two paths
+ * exist and they reach different people: the thread, which only lark-cli can
+ * write into because no tool on this Channel writes a document comment, and
+ * the recipient's own bound chat, which the `reply` tool reaches but the
+ * person who commented will not see.
+ *
+ * `--as bot` is the load-bearing part, and it is stated as narrowly as it was
+ * probed: Feishu keeps pushing later replies in a thread once *this bot* has
+ * replied in it, so a reply posted under any other identity gets one turn and
+ * then silence. The bound chat is offered as an option and not as a lookup —
+ * `list_bindings` is the Dispatcher's tool, so a TeamLeader has none that
+ * answers which chat it is bound to.
+ */
+export const DOC_COMMENT_REMINDER =
+  'This turn came from a Feishu document comment. None of the Feishu tools here writes a document comment: ' +
+  'to answer in the thread, use lark-cli, and post the reply with `--as bot` — Feishu keeps delivering later ' +
+  'replies in a thread only once this bot has replied in it, so a reply posted under any other identity ends ' +
+  'the conversation after one turn. The reply tool still reaches your own bound chat if you have one, but it ' +
+  'does not reach this document, and the person who commented will not see it there.';
+
+interface FeishuSubmissionBase {
   readonly attrs: Readonly<Record<string, string>>;
   readonly text: string;
   readonly reminder: string;
-  /** The Feishu message id: the identity Core deduplicates a repeat on. */
+  /** The identity Core deduplicates a repeat on. */
   readonly sourceId: string;
-  readonly anchor: VisibleMessageAnchor;
 }
+
+/**
+ * One submission, in one of the two shapes this Channel can produce.
+ *
+ * It is a union rather than one shape with a nullable anchor because the anchor
+ * is not optional information — it is what separates a turn the operator can
+ * already see in a chat from one that happened in a document. A nullable field
+ * would let a later caller forget the branch and open a chain-of-thought card
+ * with nowhere to hang it; a union does not compile.
+ */
+export type FeishuSubmission =
+  | (FeishuSubmissionBase & {
+      readonly kind: 'chat';
+      /** The visible Feishu message this turn's presentation hangs under. */
+      readonly anchor: VisibleMessageAnchor;
+    })
+  | (FeishuSubmissionBase & { readonly kind: 'doc_comment' });
+
+/** A submission that came from a chat, and therefore carries a visible anchor. */
+export type FeishuChatSubmission = Extract<FeishuSubmission, { kind: 'chat' }>;
 
 export type FeishuSubmitOutcome =
   | { readonly status: 'submitted'; readonly turnId: string | null }
@@ -136,6 +178,6 @@ export interface FeishuInboundDelivery {
   deliver(input: {
     target: FeishuTarget;
     containerChatId: string | null;
-    submission: FeishuSubmission;
+    submission: FeishuChatSubmission;
   }): Promise<FeishuSubmitOutcome>;
 }

@@ -60,8 +60,8 @@ import {
 } from './feishu-session-ops.js';
 import {
   CHANNEL_REMINDER,
+  type FeishuChatSubmission,
   type FeishuSubmitOutcome,
-  type FeishuSubmission,
 } from './feishu-submit.js';
 import type { FeishuTarget } from './routing/target.js';
 
@@ -441,7 +441,7 @@ async function buildSubmission(
   work: FeishuInboundWorkContext,
   target: FeishuTarget,
 ): Promise<{
-  submission: FeishuSubmission;
+  submission: FeishuChatSubmission;
   clearBaseline: (() => Promise<void>) | null;
 }> {
   const namedEvent = await enrichSenderName(h, acceptedEvent, work);
@@ -470,6 +470,7 @@ async function buildSubmission(
       : null;
   return {
     submission: {
+      kind: 'chat',
       attrs: Object.fromEntries(formatted.attrs),
       text: formatted.body,
       reminder: CHANNEL_REMINDER,

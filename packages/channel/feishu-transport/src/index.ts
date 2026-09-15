@@ -14,7 +14,8 @@
 export type { Mention } from './contract/types.js'
 export type { OutboundTarget } from './contract/outbound.js'
 
-// ── parse/ — Feishu content → one text body + comment-event decode ──
+// ── parse/ — Feishu content → one text body, plus the comment-event and
+//    document-reference decodes ──
 export {
   parseInbound,
   narrowMetaFromEvent,
@@ -34,6 +35,10 @@ export {
   type FeishuCommentEvent,
 } from './parse/comment.js'
 export {
+  parseFeishuDocumentRef,
+  type FeishuDocumentRef,
+} from './parse/document-ref.js'
+export {
   isBotMentioned,
   isBotSenderType,
 } from './parse/mentions.js'
@@ -41,7 +46,6 @@ export {
 // ── transport/ — the Feishu SDK boundary (the only lark importer) ──
 export {
   createFeishuTransport,
-  commentFromBatchQuery,
   FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
   type FeishuTransport,
   type FeishuCredentials,
@@ -55,9 +59,11 @@ export {
   type FeishuInviteMembersInput,
   type FeishuInviteMembersResult,
   type FeishuChatMode,
-  type FeishuDocComment,
-  type FeishuDocCommentReply,
+  type FeishuDocCommentRequest,
+  type FeishuDocCommentText,
   type FeishuDocMeta,
+  type FeishuDocMetaResult,
+  type FeishuWikiNode,
   type FeishuMessageResourceFetcher,
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,

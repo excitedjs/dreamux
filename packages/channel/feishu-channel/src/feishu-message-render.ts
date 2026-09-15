@@ -232,11 +232,13 @@ function truncate(value: string, budget: number): string {
   return kept;
 }
 
-function escapeXmlAttribute(value: string): string {
+/** Shared with the document-comment body, which writes the same attribute form. */
+export function escapeXmlAttribute(value: string): string {
   return escapeXmlText(value).replaceAll('"', '&quot;');
 }
 
-function escapeXmlText(value: string): string {
+/** Shared with the document-comment body, whose comment text is element content. */
+export function escapeXmlText(value: string): string {
   return value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')

@@ -25,7 +25,7 @@ import { FeishuProvisioning } from '../src/feishu-provisioning.js';
 import { FeishuRouting } from '../src/routing/index.js';
 import { FeishuRoutingStore, routingDocumentFilename } from '../src/routing/store.js';
 import { topicTarget } from '../src/routing/target.js';
-import type { FeishuSubmission, FeishuSubmitOutcome } from '../src/feishu-submit.js';
+import type { FeishuChatSubmission, FeishuSubmitOutcome } from '../src/feishu-submit.js';
 
 let dir: string;
 
@@ -45,8 +45,9 @@ const silentLog: DreamuxLogger = {
   trace: () => undefined,
 };
 
-function submission(sourceId: string): FeishuSubmission {
+function submission(sourceId: string): FeishuChatSubmission {
   return {
+    kind: 'chat',
     attrs: {},
     text: 'hello',
     reminder: '',
@@ -345,7 +346,7 @@ describe('FeishuProvisioning — interrupted run leaves at most an accepted orph
 });
 
 describe('FeishuProvisioning — no persisted saga/outbox/cursor', () => {
-  it('the on-disk routing document key set never grows beyond {version, dispatcher_id, channel_id, bindings, spaces, updated_at}', async () => {
+  it('the on-disk routing document key set never grows beyond {version, dispatcher_id, channel_id, bindings, spaces, subscriptions, updated_at}', async () => {
     const h = await harness();
     const spaceRecord = await h.routing.bindSpace(space());
     await h.provisioning.provisionForInbound({
@@ -358,7 +359,7 @@ describe('FeishuProvisioning — no persisted saga/outbox/cursor', () => {
     const filename = routingDocumentFilename('chan-1');
     const onDisk = JSON.parse(readFileSync(join(dir, filename), 'utf8')) as Record<string, unknown>;
     expect(Object.keys(onDisk).sort()).toEqual(
-      ['bindings', 'channel_id', 'dispatcher_id', 'spaces', 'updated_at', 'version'].sort(),
+      ['bindings', 'channel_id', 'dispatcher_id', 'spaces', 'subscriptions', 'updated_at', 'version'].sort(),
     );
     // And no binding row carries any provisioning-progress field beyond the
     // final product shape.
