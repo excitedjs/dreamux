@@ -121,13 +121,31 @@ option labels were the TeamLeader's; the choice is his.
   holds; the invariant is proven at `FeishuRouting` directly, which is the layer
   both paths share.
 
-**Still open, and deliberately not fixed: the reverse order.** `bindSpace`
-checks only `document.spaces`, for a duplicate space name. Binding a group to a
-Team first and registering a Collaboration Space on that chat afterwards leaves
-the group row in place and reproduces the identical shadowing — measured with a
-throwaway probe, not inferred: `bindSpace` succeeds and a fresh topic then plans
-`bound` rather than `provision`. Closing it changes `bind_collaboration_space`,
-a surface the operator has not ruled on. **Open question for the operator.**
+**The reverse order, found while closing the first and ruled on the same day.**
+Registering a Collaboration Space on a chat that already carried a group binding
+reproduced the identical shadowing from the other side — found by reading
+`bindSpace`, then confirmed with a throwaway probe rather than left as an
+inference: `bindSpace` returned a `space_id` and a fresh topic then planned
+`bound` instead of `provision`. It went back as its own question card; the
+operator chose **"堵，拒绝注册"**.
+
+`bindSpace` now refuses a container chat carrying a `group` row, inside its own
+commit, and names the Team that holds it — `bind_collaboration_space` is
+Dispatcher-only, so which Team owns a route is a read that caller is entitled
+to, unlike the `requireOwner` refusal next door, which deliberately withholds it.
+
+With both writes guarded the two checks stopped being two rules. The invariant —
+**a chat carries either a whole-chat binding or a Collaboration Space, never
+both** — is stated once on `FeishuRoutingDocument` in `routing/document.ts`, the
+type that declares `bindings` and `spaces` together and whose header already
+says they are one consistency domain. Each method's comment points at it instead
+of restating it. A shared predicate was considered and rejected: the two sides
+query different collections and would need a direction parameter, which is a
+mechanism added while both checks survive.
+
+Topic rows never conflict, so a Space whose topics are already provisioned can
+still be renamed or repolicied — covered by its own test, because that is the
+case a careless version of this rule would break.
 
 ### Knowledge closeout
 
@@ -138,6 +156,6 @@ a surface the operator has not ruled on. **Open question for the operator.**
 | `.agents/domains/channel.md` | Slash-command section: the five-row table, `usage`/`summary`, the single `yargs-parser` recognition seam and why `parse-positional-numbers` is off, `/bind`'s behavior, and the correction that a command may now change routing. Card placement: `announceIn`, and why a card sent away from its target carries no anchor Team. Routing tools: the binding operations take a `FeishuTarget`, the selector type is gone, and the MCP wire input still cannot tell a direct message from a group. |
 | `packages/channel/feishu-channel/CLAUDE.md` | Dependency boundary admits `yargs-parser`; slash-command responsibility restated. |
 | `package.json` | `yargs-parser` runtime dependency, `@types/yargs-parser` dev dependency, and the description's dependency claim. |
-| Rush change file | Two, both `@excitedjs/feishu-channel` type `minor` with ordinary notes: the command surface, and the Collaboration Space container refusal. The second is a separate file rather than an edit of the first, because `rush change --verify` counts only added files. No persisted file shape changed, so no `BREAKING:` and no `Rebuild:`. |
-| `dreamux-maintenance` | N/A. No config or persisted-state shape, validation, default, ownership, or meaning changed. |
+| Rush change file | Three, all `@excitedjs/feishu-channel` type `minor` with ordinary notes: the command surface, the Collaboration Space container refusal, and the reverse-order refusal in `bind_collaboration_space`. Each is a separate added file rather than an edit of the last, because `rush change --verify` counts only added files. No persisted file shape changed, so no `BREAKING:` and no `Rebuild:`. |
+| `dreamux-maintenance` | `references/builtin-feishu.md`, the owning reference for the Feishu routing document: a chat carries either a whole-chat binding or a collaboration space, never both, and which tool refuses which. The shape did not change; the meaning of a valid document did. |
 | `.agents/root.md` | N/A. No routing entry point moved. |

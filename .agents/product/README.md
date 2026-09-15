@@ -123,12 +123,16 @@ the same change that touches it.
   a topic hears back in that topic. Naming no Team answers with the command's
   usage.
   (Task: [add-bind-and-help-slash-commands](/.agents/tasks/channel/add-bind-and-help-slash-commands/README.md).)
-- **The chat a collaboration space sits on cannot be bound to a Team.** Routing
-  a Space's own chat to one Team would quietly take over every topic in it and
-  stop new topics from getting a Team of their own, with nothing said. Any
-  attempt is refused and changes nothing — typed as `/bind`, or asked for by an
-  agent through `bind_channel`. A single topic inside the Space can still be
-  bound, which is what the Space itself does when it provisions one.
+- **A chat is either bound to one Team or run as a collaboration space, never
+  both.** Routing a Space's own chat to a single Team would quietly take over
+  every topic in it and stop new topics from getting a Team of their own, with
+  nothing said. Both ways of reaching that state are refused and change nothing:
+  binding the chat of an existing Space — typed as `/bind`, or asked for by an
+  agent through `bind_channel` — and registering a Space on a chat that is
+  already bound, which says which Team holds it so the operator knows what to
+  release first. Binding a single topic is untouched, which is what the Space
+  itself does when it provisions one, so a Space with topics already running can
+  still be reconfigured.
   (Task: [add-bind-and-help-slash-commands](/.agents/tasks/channel/add-bind-and-help-slash-commands/README.md).)
 - **A rebind names the Team it displaced.** The card announcing a binding shows
   a `Previous Team` line whenever the conversation was answered by a different

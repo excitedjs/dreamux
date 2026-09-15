@@ -73,6 +73,26 @@ export interface FeishuSpaceRecord {
   updated_at: number;
 }
 
+/**
+ * The one rule the two sections owe each other.
+ *
+ * **A chat that a Collaboration Space is registered on carries no `group`
+ * binding row, and a chat carrying a `group` binding row has no Collaboration
+ * Space registered on it.** A `group` row answers resolution for every topic
+ * under that chat — a topic falls back to its parent group before anything is
+ * provisioned — so the two together mean the Space silently stops giving new
+ * topics their own Team, and nothing reports it.
+ *
+ * Only `group` rows do this. A `topic` row answers for its own topic and
+ * nothing else, which is exactly the row automatic provisioning installs, so
+ * a Space and its provisioned topics coexist by design.
+ *
+ * Both writes that could break the rule refuse instead, each inside its own
+ * commit: `FeishuRouting.bind` for the binding side, `FeishuRouting.bindSpace`
+ * for the space side. Neither can be reached without passing the other's
+ * check, which is why the invariant is stated here once rather than in either
+ * of them.
+ */
 export interface FeishuRoutingDocument {
   version: typeof FEISHU_ROUTING_DOCUMENT_VERSION;
   dispatcher_id: string;

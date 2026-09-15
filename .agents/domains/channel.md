@@ -713,15 +713,20 @@ inside the Space stays an ordinary bindable target, which is exactly what
 automatic provisioning installs (`feishu-provisioning.ts`, `origin: 'space'`).
 Refusing topics too would break the mechanism the rule exists to protect.
 
-**Known hole: the reverse order is still open.** `bindSpace` checks only
-`document.spaces`, for a duplicate space *name*; it never looks at
-`document.bindings`. So binding a group to a Team first and registering a
-Collaboration Space on that same chat afterwards leaves the group row in place
-and reproduces the identical shadowing — measured, not inferred: `bindSpace`
-succeeds and a fresh topic then plans `bound` instead of `provision`. Closing it
-means a matching `document.bindings` check inside `bindSpace`'s commit, which
-changes the behavior of `bind_collaboration_space`; that is the operator's call
-and not a cleanup.
+**The reverse order is refused too.** `bindSpace` used to check only
+`document.spaces`, for a duplicate space *name*, so registering a Space on a
+chat that already carried a group binding left that row in place and reproduced
+the identical shadowing from the other side. It now refuses a container chat
+that carries a `group` row, inside its own commit, naming the Team that holds
+it so the operator knows what to unbind. Topic rows never conflict, which is
+what lets a Space with live provisioned topics still be renamed or repolicied.
+
+The rule is one invariant, not two checks that happen to agree: **a chat carries
+either a whole-chat binding or a Collaboration Space, never both.** It is stated
+once on `FeishuRoutingDocument` in `routing/document.ts` — the type that
+declares `bindings` and `spaces` together, and whose header already explains
+that they are one consistency domain — and enforced at the only two writes that
+could break it. Neither write can be reached without passing the other's check.
 
 Authorization is the caller-scoped catalog itself, not a check inside a shared
 handler. `bind_channel` and `unbind_channel` are registered twice, once per caller

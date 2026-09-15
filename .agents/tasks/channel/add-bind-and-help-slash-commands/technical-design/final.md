@@ -499,11 +499,13 @@ Two notes came back non-blocking, and both are settled here:
   `group` target is refused, because a topic bind inside the Space is what
   provisioning itself installs.
 
-  One direction remains open and is deliberately not fixed here. `bindSpace`
-  checks only `document.spaces`, so registering a Collaboration Space on a chat
-  that already carries a group binding reproduces the same shadowing from the
-  other side — measured: `bindSpace` succeeds, and a fresh topic then plans
-  `bound` rather than `provision`. It is recorded in
-  [`channel.md`](/.agents/domains/channel.md) under *Team binding and
-  authorization* and is the operator's call, since it changes
-  `bind_collaboration_space`.
+  The reverse order was found while closing this one and went back as its own
+  question card the same day: registering a Collaboration Space on a chat that
+  already carried a group binding reproduced the identical shadowing from the
+  other side — measured with a throwaway probe, not inferred. The operator
+  answered **"堵，拒绝注册"**, so `bindSpace` now refuses a container chat that
+  carries a `group` row and names the Team holding it. With both writes guarded
+  the rule became one invariant rather than two agreeing checks, and it is
+  stated once on `FeishuRoutingDocument` — the type that declares `bindings` and
+  `spaces` together — rather than in either method. Topic rows never conflict,
+  so a Space with live provisioned topics can still be renamed.

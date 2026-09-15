@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Refuse to register a collaboration space on a chat already bound as a whole to a Team. A whole-chat binding answers routing for every topic under it, so the space would never provision a Team for a new topic and nothing would report it. This is the same invariant bind_channel already enforces from the other side; binding a single topic is unaffected.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

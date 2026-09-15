@@ -186,12 +186,9 @@ export class FeishuRouting {
           (row) => row.container_chat_id === input.target.chatId,
         )
       ) {
-        // A group row on a Space's container answers `plan` for every topic
-        // in that Space — a topic resolves to its parent group before
-        // `provision` is ever reached — so the Space would silently stop
-        // giving new topics their own Team. Only the whole chat does this;
-        // one topic inside the Space is still an ordinary bindable target,
-        // which is exactly what provisioning itself installs.
+        // The binding side of the document invariant stated on
+        // `FeishuRoutingDocument`. A topic inside the Space is unaffected and
+        // stays bindable — that is the row provisioning itself installs.
         throw new PublicInvokeFailure(
           'This Feishu chat is a Collaboration Space, which gives each of ' +
             'its topics its own Team. Binding the chat itself would take ' +
@@ -352,6 +349,23 @@ export class FeishuRouting {
           `Collaboration space ${JSON.stringify(input.spaceName)} is ` +
             'already bound to another Feishu chat. Choose another name, or ' +
             'unbind that space first.',
+        );
+      }
+      // The space side of the document invariant stated on
+      // `FeishuRoutingDocument`. Only a whole-chat row conflicts; the topic
+      // rows a Space installs as it provisions do not, so re-registering a
+      // Space that already has live topics keeps working.
+      const wholeChat = document.bindings.find(
+        (row) =>
+          row.target.kind === 'group' &&
+          row.target.chat_id === input.containerChatId,
+      );
+      if (wholeChat !== undefined) {
+        throw new PublicInvokeFailure(
+          `This Feishu chat is bound as a whole to Team ` +
+            `${JSON.stringify(wholeChat.team_name)}, which would answer for ` +
+            'every topic in it and leave new topics without a Team of their ' +
+            'own. Unbind the chat first, then register the space.',
         );
       }
       if (existing === undefined) {

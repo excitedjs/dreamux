@@ -108,6 +108,11 @@ The operator asked for three things, verbatim:
   written by the TeamLeader; what is his is the choice. This extends the ruling
   above to a surface it did not name, which is why it was asked rather than
   inferred.
+- **The reverse order is refused as well (2026-09-15).** Asked on a further
+  question card whether `bindSpace` should refuse a chat already bound as a
+  whole, the operator chose **"堵，拒绝注册"** over the alternative of silently
+  clearing the existing binding. Same provenance: his is the choice, not the
+  wording.
 
 ### Assumptions (labelled, not yet confirmed)
 

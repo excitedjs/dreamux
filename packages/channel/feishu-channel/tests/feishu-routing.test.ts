@@ -408,6 +408,79 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     });
   });
 
+  /**
+   * The same invariant from the other side. Without this, an operator could
+   * reach the identical silent shadowing simply by doing the two steps in the
+   * other order, and nothing would say so.
+   */
+  it('refuses to register a space on a chat already bound as a whole, and commits nothing', async () => {
+    const routing = await makeRouting();
+    await routing.bind({
+      target: chatTarget('oc_space', 'group'),
+      teamName: 'team-a',
+      display: null,
+      origin: 'manual',
+      spaceId: null,
+    });
+    await expect(
+      routing.bindSpace({
+        spaceName: 'space',
+        containerChatId: 'oc_space',
+        display: null,
+        leaderAgentRuntime: 'codex',
+        identity: null,
+        repo: null,
+      }),
+    ).rejects.toThrow(/bound as a whole to Team "team-a"/);
+    expect(routing.listSpaces()).toEqual([]);
+    // Unbind the chat and the registration goes through, which is what the
+    // refusal tells the operator to do.
+    await routing.unbind(chatTarget('oc_space', 'group'));
+    await routing.bindSpace({
+      spaceName: 'space',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    expect(routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space')).toMatchObject({
+      kind: 'provision',
+    });
+  });
+
+  it('re-registers a space whose topics are already provisioned, because topic rows never conflict', async () => {
+    const routing = await makeRouting();
+    const space = await routing.bindSpace({
+      spaceName: 'space',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await routing.bind({
+      target: topicTarget('oc_space', 'omt_one'),
+      teamName: 'team-a',
+      display: null,
+      origin: 'space',
+      spaceId: space.space_id,
+    });
+    const renamed = await routing.bindSpace({
+      spaceName: 'space-renamed',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    expect(renamed.space_name).toBe('space-renamed');
+    expect(routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space')).toMatchObject({
+      kind: 'bound',
+      teamName: 'team-a',
+    });
+  });
+
   it('unbindSpace removes only the space policy; nothing about existing bindings changes', async () => {
     const routing = await makeRouting();
     await routing.bindSpace({
