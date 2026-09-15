@@ -20,7 +20,7 @@ away. It starts returning what it recognized:
 ```ts
 export interface FeishuSlashCommandInvocation {
   readonly name: FeishuSlashCommandName;
-  readonly args: yargsParser.Arguments;
+  readonly args: parser.Arguments;
 }
 ```
 
@@ -451,3 +451,33 @@ before being accepted; none was taken on the reviewer's word alone.
 | 8 | Section 8 missed `channel.md`'s "Where a card goes follows the target" invariant | Accepted, verified in the file | Section 8 |
 | 9 | `usage`/`summary` plus removing `defineCommand` is a real entropy reduction | Accepted; no change | — |
 | 10 | Section 6 said "three fields" while listing four; 4b still returned `BIND_RECEIPT` after 4c settled on `silent` | Accepted | Both corrected |
+
+
+## 11. Implementation review (PR #428)
+
+Approved. The reviewer re-checked the one adjudication that had overruled its
+own earlier proposal and withdrew that proposal: splitting the card's
+destination from the anchor is right, and the gate it had suggested would have
+sent the card back to the chat in exactly the sub-case the change exists to fix.
+It added a second reason for the split that this document had not made — a
+finer gate also ages badly, because a topic later rebound to another Team would
+strand the first Team's anchor in a topic that no longer routes to it, and
+`blocksAnchor` would not reclaim that either. Passing no anchor Team avoids the
+whole class. The cost is bounded and accepted: a newly bound Team's unprompted
+card has no anchor until the next inbound message in the conversation
+establishes one.
+
+Two notes came back non-blocking, and both are settled here:
+
+- Section 1 of this document named the parsed-argument type
+  `yargsParser.Arguments` while the code imports it as `parser.Arguments`.
+  Documentation only; corrected above.
+- An expected refusal reaches the conversation differently depending on who
+  owns the rule. A direct message or a bad Team name is refused by the binding
+  layer or by Core, so it arrives with the dispatch wrapper's
+  `Command /bind failed:` prefix; a Collaboration Space is refused by the
+  command itself, so it arrives as its own sentence. **This is deliberate.**
+  Removing the asymmetry would mean the command re-deriving `isBindableTarget`
+  and `validateTeamId`, which is the copy-that-drifts this design refused. The
+  prefix is also honest: the command did fail. The Space rule has no other
+  owner, which is why it alone is stated in the command.
