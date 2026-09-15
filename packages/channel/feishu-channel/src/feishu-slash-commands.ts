@@ -12,7 +12,6 @@ import type {
   FeishuBindingView,
   FeishuRoutingPlan,
 } from './routing/index.js';
-import type { FeishuSpaceRecord } from './routing/document.js';
 import { containingChat, type FeishuTarget } from './routing/target.js';
 import type { FeishuBindingOperations } from './feishu-session-bindings.js';
 
@@ -20,7 +19,16 @@ export type FeishuSlashCommandName = 'bind' | 'dissolve' | 'help' | 'stop' | 'te
 
 export interface FeishuSlashCommandInvocation {
   readonly name: FeishuSlashCommandName;
-  readonly args: parser.Arguments;
+  /**
+   * The positional arguments, in order.
+   *
+   * The parser's own result type is `{ _: Array<string | number>; [flag: string]: any }`,
+   * and this seam is crossed by `FeishuInboundDelivery`, a pinned public export.
+   * Narrowing here keeps the `any` and the library's type out of both, and the
+   * narrowing is honest: `parse-positional-numbers` is off, so every positional
+   * is already a string. A row that wants a named flag adds a typed field.
+   */
+  readonly args: readonly string[];
 }
 
 const PARSER_CONFIG = {
@@ -41,9 +49,9 @@ export type FeishuSlashCommandReply =
   | { readonly kind: 'silent' };
 
 interface CommandContext {
-  readonly args: parser.Arguments;
+  readonly args: readonly string[];
   readonly target: FeishuTarget;
-  readonly spaceContainer: FeishuSpaceRecord | null;
+  readonly inSpaceContainer: boolean;
   readonly bindChannel: FeishuBindingOperations['bindChannel'];
   readonly plan: FeishuRoutingPlan;
   readonly invoke: (command: string, payload: JsonValue) => Promise<JsonValue>;
@@ -62,11 +70,11 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
     usage: '/bind <team_name>',
     summary: 'Route this group to a Team.',
     async execute(context) {
-      const [first] = context.args._;
-      if (first === undefined) {
+      const [teamName] = context.args;
+      if (teamName === undefined) {
         return { kind: 'text', text: `Usage: ${COMMANDS.bind.usage}` };
       }
-      if (context.spaceContainer !== null) {
+      if (context.inSpaceContainer) {
         return {
           kind: 'text',
           text:
@@ -76,7 +84,7 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       }
       await context.bindChannel({
         target: containingChat(context.target),
-        teamName: String(first),
+        teamName,
         display: null,
         announceIn: context.target,
       });
@@ -178,7 +186,8 @@ export function detectFeishuSlashCommand(input: {
   });
   return name === undefined ? null : {
     name,
-    args: parser(text.slice(name.length + 1), PARSER_CONFIG),
+    args: parser(text.slice(name.length + 1), PARSER_CONFIG)._
+      .map((value) => String(value)),
   };
 }
 

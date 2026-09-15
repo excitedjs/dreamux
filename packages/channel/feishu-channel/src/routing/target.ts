@@ -54,9 +54,7 @@ export function targetKey(target: FeishuTarget): string {
 export function resolutionChain(
   target: FeishuTarget,
 ): readonly FeishuTarget[] {
-  return target.kind === 'topic'
-    ? [target, chatTarget(target.chatId, 'group')]
-    : [target];
+  return target.kind === 'topic' ? [target, containingChat(target)] : [target];
 }
 
 export function sameTarget(left: FeishuTarget, right: FeishuTarget): boolean {

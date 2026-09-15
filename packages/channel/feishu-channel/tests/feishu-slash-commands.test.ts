@@ -51,10 +51,19 @@ function detect(input: {
   });
 }
 
+/**
+ * Names the parser would rewrite if `parse-positional-numbers` were left on,
+ * and each one is a legal Team id. Both the recognition test and the
+ * end-to-end bind test read this list, so neither can drift from the other.
+ */
+const NUMERIC_LOOKING_TEAM_NAMES = [
+  'MyTeam', '123', '1e5', '0x1f', '2.50', '10.00', '1.', '12.', '0.0',
+];
+
 describe('Feishu slash command recognition', () => {
-  it.each(['MyTeam', '123', '1e5', '0x1f', '2.50', '10.00', '1.', '12.', '0.0'])(
+  it.each(NUMERIC_LOOKING_TEAM_NAMES)(
     'preserves the exact bind argument %s', (name) => {
-      expect(detect({ text: `/BIND ${name}` })).toEqual({ name: 'bind', args: { _: [name] } });
+      expect(detect({ text: `/BIND ${name}` })).toEqual({ name: 'bind', args: [name] });
     },
   );
 
@@ -76,12 +85,12 @@ describe('Feishu slash command recognition', () => {
       chatType: 'group',
       botMentioned: true,
       mentions: [{ ...mention, key: '@_user_1' }, mention],
-    })).toEqual({ name: 'stop', args: { _: [] } });
+    })).toEqual({ name: 'stop', args: [] });
   });
 
   it('parses trailing text and matches the command name case-insensitively', () => {
     expect(detect({ text: '/STOP now please' })).toEqual({
-      name: 'stop', args: { _: ['now', 'please'] },
+      name: 'stop', args: ['now', 'please'],
     });
   });
 
@@ -98,7 +107,7 @@ describe('Feishu slash command recognition', () => {
   });
 
   it('recognizes a direct-message command without a mention', () => {
-    expect(detect({ text: '/dissolve' })).toEqual({ name: 'dissolve', args: { _: [] } });
+    expect(detect({ text: '/dissolve' })).toEqual({ name: 'dissolve', args: [] });
   });
 
   it('leaves a trusted bot command-shaped message on ordinary delivery', () => {
@@ -127,7 +136,7 @@ function dispatch(
   if (invocation === null) throw new Error(`unrecognized command /${command}`);
   return dispatchFeishuSlashCommand(invocation, {
     target: chatTarget('oc_command', 'group'),
-    spaceContainer: null,
+    inSpaceContainer: false,
     bindChannel: async () => { throw new Error('unexpected bind'); },
     resolveChatName: async () => undefined,
     ...context,
@@ -394,7 +403,7 @@ describe('Feishu slash command routing side effects', () => {
     });
 
     const reply = await session.command({
-      command: { name: command, args: { _: [] } },
+      command: { name: command, args: [] },
       target,
       containerChatId: null,
     });
@@ -452,7 +461,7 @@ describe('Feishu slash command routing side effects', () => {
     });
 
     const reply = await session.command({
-      command: { name: 'teams', args: { _: [] } },
+      command: { name: 'teams', args: [] },
       target,
       containerChatId: null,
     });
@@ -730,7 +739,7 @@ describe('/bind through ordinary Feishu inbound', () => {
     await h.session.close();
   });
 
-  it.each(['MyTeam', '123', '1e5', '0x1f', '2.50', '10.00', '1.', '12.', '0.0'])(
+  it.each(NUMERIC_LOOKING_TEAM_NAMES)(
     'binds the exact Team name %s', async (name) => {
       const h = await bindHarness();
       await h.inject(`/bind ${name}`);
@@ -820,6 +829,8 @@ describe('/bind through ordinary Feishu inbound', () => {
   it('keeps MCP notifications in the bound target and supplies a fallback anchor there', async () => {
     const topic = topicTarget('oc_mcp_group', 'omt_topic');
     const h = await bindHarness(topic);
+    // Give the topic a message this session has seen and answered in, so the
+    // bound group is not the only place the card and the anchor could land.
     await h.inject('/help');
     const group = chatTarget(topic.chatId, 'group');
     await h.seed(group, 'team-a');

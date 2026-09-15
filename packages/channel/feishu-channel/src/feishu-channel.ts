@@ -383,8 +383,8 @@ export class FeishuChannelSession {
     return dispatchFeishuSlashCommand(input.command, {
       plan,
       target: input.target,
-      spaceContainer: this.routing.spaceForContainer(input.target.chatId) ?? null,
-      bindChannel: (input) => this.bindings.bindChannel(input),
+      inSpaceContainer: this.routing.spaceForContainer(input.target.chatId) !== undefined,
+      bindChannel: (bind) => this.bindings.bindChannel(bind),
       bindings: this.routing.listBindings(),
       // A rejected Core command does not reconcile this Channel's routing. It is not
       // proof the route is finished — `TEAM_CLOSED` is raised for a dissolve

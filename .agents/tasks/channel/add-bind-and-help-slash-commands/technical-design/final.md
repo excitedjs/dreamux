@@ -104,9 +104,16 @@ Dependency shape:
   is for. This is the Knowledge Delta trigger for this task: a package boundary
   moved.
 
-Only `args._` is read. `Arguments` carries an `[argName: string]: any` index
-signature, so reading a named flag would hand `any` to the lint gates — no row
-reads one, and none may without revisiting this.
+Only the positionals are read, and only they cross the seam. `Arguments`
+carries an `[argName: string]: any` index signature, and the invocation is
+handed through `FeishuInboundDelivery` — a pinned public export of this package
+— so carrying `Arguments` would have put both that `any` and a devDependency's
+type into the published `.d.ts`. `detectFeishuSlashCommand` converts once, and
+`FeishuSlashCommandInvocation.args` is `readonly string[]`. The conversion is
+free of information loss for the same reason the setting below exists: with
+`parse-positional-numbers` off every positional is already a string. A row that
+wants a named flag adds a typed field, and the compiler asks for it instead of
+a comment asking the next author to remember.
 
 ## 3. The table row gains its own description
 
@@ -126,11 +133,10 @@ duplicated as a string in five places:
 ```ts
 export async function dispatchFeishuSlashCommand(
   invocation: FeishuSlashCommandInvocation,
-  context: CommandContext,
+  context: Omit<CommandContext, 'args'>,
 ): Promise<FeishuSlashCommandReply> {
-  const command = COMMANDS[invocation.name];
   try {
-    return await command.execute({ ...context, args: invocation.args });
+    return await COMMANDS[invocation.name].execute({ ...context, args: invocation.args });
   } catch (error) {
     return {
       kind: 'text',
@@ -220,11 +226,11 @@ bind: {
   usage: '/bind <team_name>',
   summary: 'Route this group to a Team.',
   async execute(context) {
-    const [first] = context.args._;
-    if (first === undefined) {
+    const [teamName] = context.args;
+    if (teamName === undefined) {
       return { kind: 'text', text: `Usage: ${COMMANDS.bind.usage}` };
     }
-    if (context.spaceContainer !== null) {
+    if (context.inSpaceContainer) {
       return {
         kind: 'text',
         text:
@@ -234,8 +240,9 @@ bind: {
     }
     await context.bindChannel({
       target: containingChat(context.target),
-      teamName: String(first),
+      teamName,
       display: null,
+      announceIn: context.target,
     });
     return { kind: 'silent' };
   },
@@ -250,13 +257,13 @@ What it deliberately does **not** do:
 - It does not check whether the chat is already bound. The operator ruled
   rebinding is ordinary, and `bindChannel` already moves the route.
 
-  **Correction.** An earlier revision of this file said `bindChannel` "reports
-  the previous Team on its card". It does not. `bindChannel` reads
-  `previousTeamName`, uses it to release the old Team's COT route, and returns
-  it to the caller; `bindingBoundCard` has no parameter for it and renders no
-  such line. The false claim came from `routing-tools.ts`'s header — "the
-  previous owner is reported back" — which is about the MCP tool's
-  `previous_team_name` result field, not about the card.
+  `bindChannel` did not report the displaced Team anywhere a person could see
+  it: it read `previousTeamName`, used it to release the old Team's COT route,
+  and returned it to the caller, while `bindingBoundCard` had no parameter for
+  it. `routing-tools.ts`'s header — "the previous owner is reported back" —
+  is about the MCP tool's `previous_team_name` result field, and reading it as
+  card rendering is the mistake that produced an unsatisfiable acceptance
+  criterion here.
 
   Raised with the operator as the product decision it is, the answer was "加一行
   Previous Team". So `bindingBoundCard` gains an optional previous-Team input
@@ -388,7 +395,7 @@ Because it reads the table, a new row appears in `/help` with no second edit.
 | --- | --- |
 | `args` | the invocation, merged in at dispatch |
 | `target` | `input.target`, already a parameter of `command()` |
-| `spaceContainer` | `this.routing.spaceForContainer(input.target.chatId)`, `?? null` |
+| `inSpaceContainer` | `this.routing.spaceForContainer(input.target.chatId) !== undefined` — a fact, not the record: no row reads a field of it |
 | `bindChannel` | `this.bindings.bindChannel(...)`, already wired for the MCP tools; its signature changes under 4a |
 
 No new plumbing, no new seam.
@@ -398,7 +405,7 @@ No new plumbing, no new seam.
 Unit tests in `packages/channel/feishu-channel/tests/feishu-slash-commands.test.ts`
 (existing file) covering each acceptance criterion:
 
-- recognition of `/bind x` yields `{ name: 'bind', args: { _: ['x'] } }`;
+- recognition of `/bind x` yields `{ name: 'bind', args: ['x'] }`;
 - `123`, `1e5`, `0x1f` survive as strings;
 - `/bind` with no argument answers the usage line and does not call
   `bindChannel`;
@@ -479,5 +486,18 @@ Two notes came back non-blocking, and both are settled here:
   command itself, so it arrives as its own sentence. **This is deliberate.**
   Removing the asymmetry would mean the command re-deriving `isBindableTarget`
   and `validateTeamId`, which is the copy-that-drifts this design refused. The
-  prefix is also honest: the command did fail. The Space rule has no other
-  owner, which is why it alone is stated in the command.
+  prefix is also honest: the command did fail.
+
+  The stated reason for the Space rule's placement — that it has no other owner
+  — is wrong, and a later review pass established it. `FeishuRouting.bind`
+  already enforces a cross-row precondition (`requireOwner`) inside its
+  `store.update` commit, and the routing document holds `bindings` and `spaces`
+  together, so the invariant does have a home one layer down. The rule stays in
+  the command anyway, for a different and narrower reason: the operator's words
+  were "如果话题群已经被绑定成协作空间，**/bind** 就给它报错", and pushing the
+  refusal into `FeishuRouting.bind` would make MCP `bind_channel` start refusing
+  too — a user-visible change to a surface he did not rule on. The consequence
+  is a real hole, recorded in
+  [`channel.md`](/.agents/domains/channel.md) under *Team binding and
+  authorization*: `bind_channel` can bind a Space container and silently stop
+  its topics from being provisioned. Closing it is the operator's call.

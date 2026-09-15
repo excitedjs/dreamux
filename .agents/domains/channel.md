@@ -415,14 +415,17 @@ one:
   of message, so a command quoted mid-sentence never fires;
 - matching is case-insensitive, and what follows the token is the command's
   argument. Recognition parses it once, with `yargs-parser`, and hands the row
-  a parsed invocation; a row that reads no argument ignores it, which is why
-  trailing words after `/stop` still change nothing. The remainder is sliced
-  from the original text, not from the lowercased copy used for matching, so
-  `/bind MyTeam` binds `MyTeam`. `parse-positional-numbers` is off: left on, the
-  parser turns legal Team names into numbers that cannot be turned back —
-  `1e5` into `100000`, `2.50` into `2.5`, `1.` into `1`. There is no option
-  surface; no row reads a named flag, and the parser is present for the
-  positional argument and for whatever a later row needs;
+  the positional arguments as `readonly string[]`; a row that reads no argument
+  ignores them, which is why trailing words after `/stop` still change nothing.
+  The remainder is sliced from the original text, not from the lowercased copy
+  used for matching, so `/bind MyTeam` binds `MyTeam`. `parse-positional-numbers`
+  is off: left on, the parser turns legal Team names into numbers that cannot be
+  turned back — `1e5` into `100000`, `2.50` into `2.5`, `1.` into `1`. The
+  narrowing to strings is what that setting makes true, and it is why the
+  parser's own result type — whose index signature is `any` — stops at the one
+  function that calls the parser instead of riding the invocation through
+  `FeishuInboundDelivery`, a pinned public export of this package. A row that
+  wants a named flag adds a typed field and the compiler asks for it;
 - in a group or topic the bot must be @-mentioned, even where ordinary delivery
   needs no mention. A direct message has no mention to require;
 - only a human sender's message is a command. The gate admits a trusted peer bot
@@ -437,7 +440,8 @@ Dispatch happens after the route is projected and before anything is submitted,
 so each command reads the same `bound` / `provision` / `dispatcher` plan the
 delivery path would have used, along with the projected target itself, whether
 that target's chat is a registered Collaboration Space, and the binding
-operation:
+operation. The Space question reaches the row as a boolean: it is asked once at
+the wiring site and nothing in the command table reads a field of the record:
 
 - **`/bind <team_name>`** binds `containingChat` of the projected target — a
   topic resolves to its group, a group stays itself, a direct message stays a
@@ -445,11 +449,10 @@ operation:
   that changes routing. It validates nothing itself: a malformed or missing
   Team name is refused by Core's own `validateTeamId` and `team.status` through
   `bindChannel`, and a direct message is refused by `isBindableTarget`, each in
-  the owning layer's words. That guard became reachable only when the binding
-  operation started taking a `FeishuTarget`; before that a bare chat id was
-  always made into a `group` target and the guard was dead code. A chat whose
-  `spaceForContainer` finds a Space is refused by the command, because a
-  Collaboration Space already gives each topic a Team. Naming no Team answers
+  the owning layer's words. A chat whose `spaceForContainer` finds a Space is
+  refused by the command, because a Collaboration Space already gives each topic
+  a Team — and by the command alone, which is a known hole: see *Team binding
+  and authorization* below. Naming no Team answers
   with the row's own `usage`. A successful bind answers `silent` for
   `/dissolve`'s reason, and the reason holds because the binding card is
   delivered into the conversation that asked.
@@ -690,15 +693,23 @@ appears on the binding card as a `Previous Team` line, on every path that binds
 rather than only this tool's. The two are separate facts about the same rebind,
 and reading one as the other is a mistake this sentence used to invite.
 
-The binding operations take a `FeishuTarget`. They used to take a
-`{ chatId, threadId? }` selector and convert it, which meant a bare chat id
-always became a `group` target and `isBindableTarget`'s direct-message guard
-could never fire; the selector type is gone and the tools build a target
-directly. What the conversion could not know, the tool still cannot: an MCP
-caller supplies a bare `chat_id` with no kind, so `bind_channel` still reads one
-as a group. Only inbound projection knows a chat's kind, which is why a
-slash-command bind — which carries the projected target — is the path where the
-guard actually engages.
+The binding operations take a `FeishuTarget`, so the kind is the caller's to
+state rather than something the operation guesses. An MCP caller cannot state
+it — the wire input is a bare `chat_id` with no kind, and `bind_channel` reads
+one as a group. Only inbound projection knows a chat's kind, which is why a
+slash-command bind, carrying the projected target, is the path where
+`isBindableTarget`'s direct-message guard actually engages.
+
+**Known hole: a Collaboration Space container can be bound through MCP.**
+`FeishuRouting.bind` enforces `requireOwner` but knows nothing about `spaces`,
+so `bind_channel` with a Space container's `chat_id` writes an ordinary group
+row — and `plan`'s resolution chain then matches that row for every topic in
+the Space before `provision` is reached, so the Space silently stops creating
+per-topic Teams. `/bind` is the only path that refuses it, because the
+operator's ruling named `/bind` and nothing else. Closing this means refusing a
+`group` bind onto a container inside `FeishuRouting.bind`'s commit, next to
+`requireOwner`, and mirroring it in `bindSpace` for the reverse order; that
+changes MCP behavior, so it is the operator's call and not a cleanup.
 
 Authorization is the caller-scoped catalog itself, not a check inside a shared
 handler. `bind_channel` and `unbind_channel` are registered twice, once per caller

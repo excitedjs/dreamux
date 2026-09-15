@@ -16,7 +16,7 @@ import type {
 import type { AskUserQuestionSpec } from '../feishu-ask-user-card.js';
 import type { FeishuSpaceRecord } from '../routing/document.js';
 import type { FeishuBindingView } from '../routing/index.js';
-import type { FeishuTarget, FeishuTargetKind } from '../routing/target.js';
+import type { FeishuTarget } from '../routing/target.js';
 
 /** Logger shape used by the Feishu session — pino-style, fields-first. */
 export type ChannelLogger = import('@excitedjs/dreamux-types').DreamuxLogger;
@@ -111,10 +111,4 @@ export interface FeishuToolDef<TInput = unknown> {
   parse(raw: unknown): TInput;
   handle(ctx: FeishuToolContext, input: TInput): Promise<FeishuToolResult>;
   successText?(result: FeishuToolResult): string | undefined;
-}
-
-export interface FeishuTargetSelectorFields {
-  kind: FeishuTargetKind;
-  chat_id: string;
-  thread_id: string | null;
 }
