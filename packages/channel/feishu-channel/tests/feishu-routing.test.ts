@@ -9,14 +9,15 @@
  * the store, because the fallback-chain and ownership rules are meaningful
  * only in terms of what the document actually holds after a commit.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FeishuRouting } from '../src/routing/index.js';
-import { FeishuRoutingStore } from '../src/routing/store.js';
+import { FeishuRoutingStore, routingDocumentFilename } from '../src/routing/store.js';
+import { spaceId as deriveSpaceId } from '../src/routing/naming.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
 
 let dir: string;
@@ -479,6 +480,96 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       kind: 'bound',
       teamName: 'team-a',
     });
+  });
+
+  /**
+   * A document written before the two refusals existed can hold the
+   * coexistence they now prevent, and neither API can reproduce it any more —
+   * so it is seeded on disk, which is exactly what such a document is.
+   *
+   * This pins the decision that the refusal sits above the create/update fork
+   * rather than only on creation. Such a document is already malfunctioning:
+   * its fresh topics resolve to the whole-chat Team and never get one of their
+   * own. Exempting the update path would let an operator keep editing policy
+   * on top of that and never learn; failing the one write that names the
+   * entity surfaces it while they are holding it.
+   */
+  it('refuses to re-register a space whose chat a legacy document also binds as a whole', async () => {
+    const containerChatId = 'oc_space';
+    const space_id = deriveSpaceId({
+      dispatcherId: 'disp-1',
+      channelId: 'chan-1',
+      containerChatId,
+    });
+    writeFileSync(
+      join(dir, routingDocumentFilename('chan-1')),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'disp-1',
+        channel_id: 'chan-1',
+        bindings: [{
+          target: { kind: 'group', chat_id: containerChatId },
+          display: null,
+          team_name: 'team-a',
+          origin: 'manual',
+          space_id: null,
+          created_at: 1,
+          updated_at: 1,
+        }],
+        spaces: [{
+          space_id,
+          space_name: 'space',
+          container_chat_id: containerChatId,
+          display: null,
+          generation: 1,
+          leader_agent_runtime: 'codex',
+          identity: null,
+          repo: null,
+          created_at: 1,
+          updated_at: 1,
+        }],
+        updated_at: 1,
+      }),
+    );
+    const routing = await makeRouting();
+
+    // It loads: validation is shape-only, so this cannot block a channel start.
+    expect(routing.listSpaces()).toHaveLength(1);
+    // And it is broken in exactly the way the refusals exist to prevent.
+    expect(routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId))
+      .toMatchObject({ kind: 'bound', teamName: 'team-a' });
+
+    await expect(
+      routing.bindSpace({
+        spaceName: 'space-renamed',
+        containerChatId,
+        display: null,
+        leaderAgentRuntime: 'codex',
+        identity: null,
+        repo: null,
+      }),
+    ).rejects.toThrow(/bound as a whole to Team "team-a"/);
+    expect(routing.spaceByName('space')?.space_name).toBe('space');
+
+    // The refusal's own instruction is the repair, and it works.
+    await routing.unbind(chatTarget(containerChatId, 'group'));
+    const renamed = await routing.bindSpace({
+      spaceName: 'space-renamed',
+      containerChatId,
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    expect(renamed.space_name).toBe('space-renamed');
+    // Still one row, same id, same policy snapshot — so the call that was
+    // refused above was the *update* branch, not a creation that happened to
+    // hit the same guard. That is the distinction this test exists to pin.
+    expect(routing.listSpaces()).toHaveLength(1);
+    expect(renamed.space_id).toBe(space_id);
+    expect(renamed.generation).toBe(1);
+    expect(routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId))
+      .toMatchObject({ kind: 'provision' });
   });
 
   it('unbindSpace removes only the space policy; nothing about existing bindings changes', async () => {

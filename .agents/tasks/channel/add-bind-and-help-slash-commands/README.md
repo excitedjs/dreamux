@@ -148,6 +148,35 @@ Topic rows never conflict, so a Space whose topics are already provisioned can
 still be renamed or repolicied — covered by its own test, because that is the
 case a careless version of this rule would break.
 
+**The refusal sits above the create/update fork, and that is now pinned.** The
+re-review (Devbox, 2026-09-15, approved on `20604ba1`) observed that the
+decision to refuse the rename path as well — the one question this task put to
+the reviewer — had no test holding it, and that the placement is exactly what a
+later "helpful" change would relax. A document holding the coexistence can no
+longer be produced through either API, so the test seeds one on disk, which is
+what a pre-rule document actually is. It asserts the document still loads
+(validation is shape-only, so this cannot block a channel start), that it plans
+`bound` for a fresh topic — the malfunction the rule prevents — that renaming
+the space is refused, and that unbinding the chat then lets the rename through
+and restores `provision`. The rename assertions check one row, the same
+`space_id`, and an unchanged `generation`, so the refused call is provably the
+update branch rather than a creation that hit the same guard. Verified
+discriminating by removing the guard: the test fails.
+
+**Operator check: an existing conflict must not stop the daemon (2026-09-15).**
+Asked to approve the merge, the operator raised this instead, in his words:
+"这个MCP工具的冲突和本地工具的冲突，它在运行时可以处理，但是如果磁盘上已经有已经
+冲突的部分了，这部分还是不要让daemon完全起不来才对". Verified rather than
+answered from the design: `validated` is envelope-only — object, version,
+channel id, two arrays — and never inspects a row; `initialize` loads and
+subscribes, `start` wires the bot, and the only event-driven routing write is
+`forgetTeamRoutes`, which removes rows. No startup path reaches either refusal.
+A session test now seeds a coexistence document, runs a real
+`FeishuChannelSession` through `initialize` and `start`, and asserts it comes up
+with both rows intact and `plan` unchanged. The property is stated in
+`channel.md` and in the maintenance reference, so the next person to consider
+tightening validation sees why it is shape-only.
+
 ### Knowledge closeout
 
 | Owner | Result |
@@ -157,6 +186,6 @@ case a careless version of this rule would break.
 | `.agents/domains/channel.md` | Slash-command section: the five-row table, `usage`/`summary`, the single `yargs-parser` recognition seam and why `parse-positional-numbers` is off, `/bind`'s behavior, and the correction that a command may now change routing. Card placement: `announceIn`, and why a card sent away from its target carries no anchor Team. Routing tools: the binding operations take a `FeishuTarget`, the selector type is gone, and the MCP wire input still cannot tell a direct message from a group. |
 | `packages/channel/feishu-channel/CLAUDE.md` | Dependency boundary admits `yargs-parser`; slash-command responsibility restated. |
 | `package.json` | `yargs-parser` runtime dependency, `@types/yargs-parser` dev dependency, and the description's dependency claim. |
-| Rush change file | Three, all `@excitedjs/feishu-channel` type `minor` with ordinary notes: the command surface, the Collaboration Space container refusal, and the reverse-order refusal in `bind_collaboration_space`. Each is a separate added file rather than an edit of the last, because `rush change --verify` counts only added files. No persisted file shape changed, so no `BREAKING:` and no `Rebuild:`. |
-| `dreamux-maintenance` | `references/builtin-feishu.md`, the owning reference for the Feishu routing document: a chat carries either a whole-chat binding or a collaboration space, never both, and which tool refuses which. The shape did not change; the meaning of a valid document did. |
+| Rush change file | Four. Three are `@excitedjs/feishu-channel` type `minor` with ordinary notes: the command surface, the Collaboration Space container refusal, and the reverse-order refusal in `bind_collaboration_space`. The fourth is `@excitedjs/dreamux` type `none` for the maintenance-reference update — that reference lives inside `packages/dreamux`, so mirroring the rule there makes the package count as changed even though none of its code moved, and CI's declaration check fails without it. No persisted file shape changed, so no `BREAKING:` and no `Rebuild:`. |
+| `dreamux-maintenance` | `references/builtin-feishu.md`, the owning reference for the Feishu routing document: a chat carries either a whole-chat binding or a collaboration space, never both, and which tool refuses which. The shape did not change; the meaning of a valid document did. Carries its own `@excitedjs/dreamux` change file, since the reference ships inside that package. |
 | `.agents/root.md` | N/A. No routing entry point moved. |

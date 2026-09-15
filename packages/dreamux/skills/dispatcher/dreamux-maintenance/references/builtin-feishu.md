@@ -30,6 +30,11 @@ where the slug and digest are both derived from the configured channel `id`.
   already bound as a whole; each names the conflict and writes nothing. Unbind
   the one you do not want first. Binding a single topic is unaffected — that is
   the row a space installs as it provisions.
+- A document that already holds both still loads and the channel still starts;
+  the rule is enforced on writes, not at startup. Such a chat keeps routing the
+  way it has been — every topic under it answers to the whole-chat Team and new
+  topics get no Team of their own — until the whole-chat binding is released.
+  Nothing has to be rebuilt or hand-edited.
 - A document this Dreamux version cannot read fails loud at channel start,
   naming the file. Recreate the bindings through those tools rather than
   editing it.

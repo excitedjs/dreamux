@@ -9,7 +9,7 @@
  * tail (the routing-document write) settles before `close()` returns, and no
  * presentation callback fires after the session's own fence is aborted.
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,6 +26,7 @@ import type {
 
 import { FeishuChannelSession } from '../src/feishu-channel.js';
 import { routingDocumentFilename } from '../src/routing/store.js';
+import { spaceId as deriveSpaceId } from '../src/routing/naming.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
 import { createFakeFeishuBot, type FakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
@@ -380,6 +381,74 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
     // aborted this session's fence, and notify() refuses to run past that
     // point. No presentation callback fires after final close.
     expect(bot.sentCards).toHaveLength(0);
+  });
+});
+
+/**
+ * A routing document written before `bind`/`bindSpace` refused the
+ * binding/space coexistence can still hold it on disk. Those refusals guard
+ * writes, and a write is a deliberate act an operator is present for; startup
+ * is not. A channel that would not come up because of state it already has is
+ * strictly worse than one that comes up and keeps behaving as it did — the
+ * operator would lose every other conversation this channel serves in order to
+ * be told about one misconfigured chat.
+ *
+ * So document validation stays shape-only and nothing on the startup path
+ * writes: `initialize` loads and subscribes, `start` wires the bot, and the
+ * only event-driven routing write removes rows. This test holds that open.
+ */
+describe('FeishuChannelSession — a routing document predating the binding/space exclusion', () => {
+  it('still starts, and keeps routing exactly as it did', async () => {
+    const bot = createFakeFeishuBot();
+    const channelId = 'chan-legacy';
+    const containerChatId = 'oc_legacy';
+    writeFileSync(
+      join(dir, routingDocumentFilename(channelId)),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'disp-1',
+        channel_id: channelId,
+        bindings: [{
+          target: { kind: 'group', chat_id: containerChatId },
+          display: null,
+          team_name: 'team-a',
+          origin: 'manual',
+          space_id: null,
+          created_at: 1,
+          updated_at: 1,
+        }],
+        spaces: [{
+          space_id: deriveSpaceId({
+            dispatcherId: 'disp-1',
+            channelId,
+            containerChatId,
+          }),
+          space_name: 'legacy-space',
+          container_chat_id: containerChatId,
+          display: null,
+          generation: 1,
+          leader_agent_runtime: 'codex',
+          identity: null,
+          repo: null,
+          created_at: 1,
+          updated_at: 1,
+        }],
+        updated_at: 1,
+      }),
+    );
+    const session = await newSession(bot, channelId);
+
+    // The whole point: neither of these throws.
+    await session.initialize(fakePort(async () => ({})).port);
+    await session.start();
+
+    expect(session.routing.listSpaces()).toHaveLength(1);
+    expect(session.routing.listBindings()).toHaveLength(1);
+    // Routing is unchanged for such a document — the conflict is reported by
+    // the next write that touches it, not by refusing to serve the channel.
+    expect(session.routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId))
+      .toMatchObject({ kind: 'bound', teamName: 'team-a' });
+    await session.close();
   });
 });
 

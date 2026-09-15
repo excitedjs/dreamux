@@ -726,7 +726,21 @@ either a whole-chat binding or a Collaboration Space, never both.** It is stated
 once on `FeishuRoutingDocument` in `routing/document.ts` — the type that
 declares `bindings` and `spaces` together, and whose header already explains
 that they are one consistency domain — and enforced at the only two writes that
-could break it. Neither write can be reached without passing the other's check.
+could break it. Each write is guarded by a scan of the collection it does not
+itself modify.
+
+**The rule guards writes, never startup.** A document written before the rule
+existed can still hold the coexistence, and it loads: `validated` checks the
+envelope — object, version, channel id, both sections present as arrays — and
+never inspects a row. Nothing on the startup path writes, either: `initialize`
+loads the document and subscribes, `start` wires the bot callbacks, and the only
+event-driven routing write is `forgetTeamRoutes`, which removes rows. So neither
+refusal can be reached while the channel comes up. `plan` keeps answering for
+such a document exactly as it did, and the conflict is reported by the next
+write that names the chat. This is deliberate: a write is an act an operator is
+present for, while a channel that refused to start over state it already had
+would take down every other conversation it serves to report one misconfigured
+chat.
 
 Authorization is the caller-scoped catalog itself, not a check inside a shared
 handler. `bind_channel` and `unbind_channel` are registered twice, once per caller

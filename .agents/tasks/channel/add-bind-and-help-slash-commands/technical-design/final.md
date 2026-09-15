@@ -230,14 +230,6 @@ bind: {
     if (teamName === undefined) {
       return { kind: 'text', text: `Usage: ${COMMANDS.bind.usage}` };
     }
-    if (context.inSpaceContainer) {
-      return {
-        kind: 'text',
-        text:
-          'This chat is a Collaboration Space, which gives each of its topics ' +
-          'its own Team. Bind a chat that is not a Collaboration Space.',
-      };
-    }
     await context.bindChannel({
       target: containingChat(context.target),
       teamName,
@@ -256,6 +248,10 @@ What it deliberately does **not** do:
   words. A second grammar in the Channel would be a copy that can drift.
 - It does not check whether the chat is already bound. The operator ruled
   rebinding is ordinary, and `bindChannel` already moves the route.
+- It does not check for a Collaboration Space. An earlier revision of this
+  document put that refusal here; §11 records why it moved into
+  `FeishuRouting.bind`'s commit and what that closed. The row states intent and
+  every refusal arrives as a thrown failure from the layer that owns the fact.
 
   `bindChannel` did not report the displaced Team anywhere a person could see
   it: it read `previousTeamName`, used it to release the old Team's COT route,
