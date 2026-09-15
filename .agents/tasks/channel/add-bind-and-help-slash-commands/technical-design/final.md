@@ -248,7 +248,25 @@ What it deliberately does **not** do:
   `team.status`, and Core's `validateTeamId` rejects a malformed name in its own
   words. A second grammar in the Channel would be a copy that can drift.
 - It does not check whether the chat is already bound. The operator ruled
-  rebinding is ordinary; `bindChannel` reports the previous Team on its card.
+  rebinding is ordinary, and `bindChannel` already moves the route.
+
+  **Correction.** An earlier revision of this file said `bindChannel` "reports
+  the previous Team on its card". It does not. `bindChannel` reads
+  `previousTeamName`, uses it to release the old Team's COT route, and returns
+  it to the caller; `bindingBoundCard` has no parameter for it and renders no
+  such line. The false claim came from `routing-tools.ts`'s header — "the
+  previous owner is reported back" — which is about the MCP tool's
+  `previous_team_name` result field, not about the card.
+
+  Raised with the operator as the product decision it is, the answer was "加一行
+  Previous Team". So `bindingBoundCard` gains an optional previous-Team input
+  and renders a `Previous Team` line from it, and `bindChannel` supplies it
+  under the condition it already computes for releasing the old route:
+  `previousTeamName !== null && previousTeamName !== input.teamName`. Rebinding
+  a chat to the Team that already holds it therefore renders no line, because
+  nothing was displaced. This applies to every caller of `bindChannel`, so an
+  MCP-initiated rebind shows the line too — the operator was told that before
+  ruling.
 
 ### 4c. Where the binding card goes
 

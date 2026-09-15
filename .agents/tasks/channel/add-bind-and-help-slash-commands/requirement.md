@@ -73,8 +73,10 @@ The operator asked for three things, verbatim:
 2. `/bind` typed inside a topic binds the topic's chat, not the topic.
 3. `/bind` in a chat registered as a Collaboration Space container answers with
    a refusal and changes no routing.
-4. `/bind B` in a chat already bound to Team A rebinds to B, and the
-   notification card names A as the previous Team.
+4. `/bind B` in a chat already bound to Team A rebinds the chat to B, and the
+   binding notification card names A as the previous Team. This holds on every
+   bind path, not only the command's: an MCP-initiated rebind shows the line
+   too.
 5. `/bind` with no argument answers with its own usage line.
 6. `/bind` naming a missing or closed Team answers with the binding layer's own
    sentence, and nothing changes.
@@ -123,6 +125,12 @@ The operator asked for three things, verbatim:
   recommendation and its data are kept in the solution so the trade-off stays
   legible; the ruling stands.
 
+- **The binding card names the displaced Team (2026-09-15).** The developer
+  stopped on acceptance criterion 4 and was right to: `bindingBoundCard` took no
+  previous-Team parameter and `bindChannel` never passed one, so a rebind
+  announced the new Team and said nothing about the one it displaced. Told that
+  adding the line changes an existing card on every bind path including
+  MCP-initiated ones, the operator ruled, verbatim: "加一行 Previous Team".
 - **Where the binding card goes (2026-09-15).** Offered three receipt shapes for
   a successful `/bind`, the operator asked instead: "不能把原本发卡的逻辑调整
   正确吗". The card is made to land in the conversation that asked for the bind,
@@ -139,5 +147,4 @@ The operator asked for three things, verbatim:
 
 ### Blocking unknowns
 
-- None. Q5 was resolved by the operator's counter-question rather than by one of
-  the offered options — see the decision below.
+- None.
