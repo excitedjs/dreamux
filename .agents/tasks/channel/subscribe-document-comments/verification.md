@@ -7,10 +7,11 @@ reading the summary lines rather than the exit code:
 
 | Gate | Result |
 | --- | --- |
-| `rush build` | `SKIPPED: 6` / `SUCCESS: 2`, no `FAILURE` |
-| `rush lint` | `SUCCESS: 7` |
-| `rush test` | `SUCCESS: 4` / `SUCCESS WITH WARNINGS: 3`, no `FAILURE` |
-| `rush typecheck:tests` | `SUCCESS: 7` |
+| `rush build` | `SKIPPED: 8`, no `FAILURE` — every package a cache hit |
+| `rush lint` | `SUCCESS: 7` / `NO OP: 1` |
+| `rush test` | `SUCCESS: 4` / `SUCCESS WITH WARNINGS: 3` / `NO OP: 1`, no `FAILURE` |
+| `rush typecheck:tests` | `SUCCESS: 7` / `NO OP: 1` |
+| `.agents/scripts/check.sh` | `Task records OK: 41 checked` / `KB OK (262 files)` |
 
 The three warning operations are the codex and claude-code runtime suites
 writing to stderr while asserting error paths; they predate this change and do
@@ -44,6 +45,15 @@ further facts the implementation depends on were probed against the live app:
 - **A whole-document comment carries no `quote`.** The same response returned
   `quote` absent, which is why an empty quote renders no block rather than an
   empty one.
+- **Ownership, not permission, decides how much arrives.** A third probe round
+  created a docx under the *bot* identity and commented on it from a user
+  identity with no mention at all: a whole-document comment, a block-anchored
+  comment, and a reply in a thread the bot had never replied in were all
+  delivered. Read against the round-1 row where a `full_access` collaborator on
+  a user-owned document received nothing, the discriminator is ownership. This
+  closed a fact the design had got wrong twice over — it had claimed the
+  unclaimed non-mention event could only be a residue, and then that the set of
+  delivery cases could be enumerated at all.
 
 ## Not verifiable before deployment
 
@@ -57,10 +67,17 @@ Both need the new code running against Feishu, so they are post-merge:
   @-mention the bot, and confirm the event reaches the subscriber; the new
   route logs the token. If the inference is wrong, wiki subscriptions never
   fire.
-- **`--as bot` keeps a thread alive.** Probe rows F1/F2 establish that Feishu
-  resumes pushing a thread's replies once this bot has replied in it. That the
-  reminder's instruction produces that state — a lark-cli reply posted
-  `--as bot` arming later delivery — has not been walked end to end.
+- **A comment on a bot-authored document reaches its subscriber.** Round 3
+  proved the platform delivers the event; that the channel then routes it to the
+  Team that subscribed the document, with the comment text and anchor quote on
+  the envelope, needs the new code running. This is the feature's main line and
+  the first thing to exercise after deployment.
+
+The `--as bot` item that stood here is **withdrawn**, not deferred. It asked
+whether the reminder's instruction produced the state rows F1/F2 describe; the
+reminder no longer carries that instruction, or any instruction, so there is no
+longer a claim of ours to walk. The platform fact itself stands and is recorded
+in [`requirement.md`](./requirement.md).
 
 ## Reviewed by the TeamLeader
 

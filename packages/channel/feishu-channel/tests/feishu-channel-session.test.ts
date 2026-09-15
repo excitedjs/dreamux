@@ -497,7 +497,7 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
     });
     bot.setDocCommentText('rpl_1', {
       quote: 'the paragraph in question',
-      text: 'please rework this',
+      segments: [{ kind: 'text', text: 'please rework this' }],
     });
 
     await bot.injectDocComment({
@@ -518,6 +518,12 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
     expect(port.calls[0]!.command).toBe('team.submit');
     expect(payload['team_name']).toBe('team-a');
     expect(payload['source_id']).toBe('doc_tok:cmt_1:rpl_1');
+    expect(payload['attrs']).toMatchObject({
+      source: 'feishu',
+      file_token: 'doc_tok',
+      comment_id: 'cmt_1',
+      reply_id: 'rpl_1',
+    });
     expect(payload['text']).toContain('<content>\nplease rework this\n</content>');
     expect(payload['text']).toContain('the paragraph in question');
     expect(bot.sentCards).toHaveLength(0);

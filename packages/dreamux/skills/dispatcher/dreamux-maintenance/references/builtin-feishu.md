@@ -43,6 +43,11 @@ where the slug and digest are both derived from the configured channel `id`.
   Dispatcher Agent. Neither recipient can create or remove another's, and
   `list_subscriptions` shows the caller's own rows only. Subscribing refuses a
   document the bot cannot see, and nothing is written for it.
+- A row stores the document's own token, so a wiki page subscribed by its URL is
+  stored as the document that node holds. If the bot's access to the node is
+  later revoked, that URL can no longer name the row and `unsubscribe_document`
+  refuses it; pass the `file_token` `list_subscriptions` shows instead. Do not
+  hand-edit the row out.
 - A comment on a document nobody follows reaches the Dispatcher Agent when it
   @-mentions the bot and the commenter is in the gate's `allow_users`; it is
   dropped and logged otherwise. That delivery writes no subscription row, so it

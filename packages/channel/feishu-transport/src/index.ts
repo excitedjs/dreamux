@@ -59,6 +59,7 @@ export {
   type FeishuInviteMembersInput,
   type FeishuInviteMembersResult,
   type FeishuChatMode,
+  type FeishuCommentSegment,
   type FeishuDocCommentRequest,
   type FeishuDocCommentText,
   type FeishuDocMeta,

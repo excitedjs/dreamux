@@ -44,10 +44,14 @@ reporting the token in `failed_list` — establishes that this app cannot see th
 document; a failed request rejects, because it establishes nothing.
 
 `fetchDocCommentText` answers one nullable value for the opposite reason: it
-reads the text of the single comment a `drive.notice.comment_add_v1` event
-names, and every way of not finding it means the same thing to a caller — there
-is no text to show. A non-zero business code still rejects, because that is a
-failed request and not an absent comment.
+reads the single comment a `drive.notice.comment_add_v1` event names, and every
+way of not finding it means the same thing to a caller — there is nothing to
+show. A non-zero business code still rejects, because that is a failed request
+and not an absent comment. What it answers with is the comment as ordered
+`FeishuCommentSegment`s — text, or a mention carrying an open_id — rather than
+one string: the element a model reads a mention as is an agent-facing body
+format, and this package does not assemble those. A `docs_link` is text, because
+it is a URL the commenter typed.
 
 ## Parse helpers
 

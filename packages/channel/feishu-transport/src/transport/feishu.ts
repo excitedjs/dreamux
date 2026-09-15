@@ -169,7 +169,18 @@ export interface FeishuWikiNode {
 }
 
 /**
- * The one comment a `drive.notice.comment_add_v1` event names, as text.
+ * One piece of a comment's body.
+ *
+ * A mention stays a mention rather than being flattened into text here,
+ * because the element a model reads it as is an agent-facing body format and
+ * this package does not assemble those. The caller decides how to write it.
+ */
+export type FeishuCommentSegment =
+    | { readonly kind: 'text'; readonly text: string }
+    | { readonly kind: 'mention'; readonly openId: string }
+
+/**
+ * The one comment a `drive.notice.comment_add_v1` event names.
  *
  * The event payload carries identifying ids only, so a caller that wants to
  * show a person what was written has to read the thread. Only the named item
@@ -181,8 +192,8 @@ export interface FeishuDocCommentText {
      * whole document. It is what says which part of the document is discussed.
      */
     quote: string
-    /** What the commenter wrote, with a mention standing as the open_id it names. */
-    text: string
+    /** What the commenter wrote, in order. */
+    segments: readonly FeishuCommentSegment[]
 }
 
 /** The one comment to read: a thread, and the item inside it. */
@@ -255,22 +266,25 @@ interface RawCommentElement {
 }
 
 /**
- * One comment's elements as the text a person reads. A mention stands as the
- * open_id it names — the same id form the event's own commenter field carries,
- * so the two can be compared without a second lookup.
+ * One comment's elements, in order, as the two kinds of thing they can be.
+ *
+ * A `docs_link` is text: it is a URL the commenter typed and reads as one. A
+ * `person` is not, because the caller writes it as the same mention element an
+ * inbound chat message's mention becomes, and only the caller owns that form.
+ *
+ * Each element's payload is optional in Feishu's own types even when `type`
+ * names it, so an element that carries nothing contributes nothing.
  */
-function commentElementsText(elements: readonly RawCommentElement[]): string {
-  return elements.map(commentElementText).join('')
-}
-
-function commentElementText(element: RawCommentElement): string {
+function commentElementSegment(element: RawCommentElement): FeishuCommentSegment {
   switch (element.type) {
     case 'text_run':
-      return element.text_run?.text ?? ''
+      return { kind: 'text', text: element.text_run?.text ?? '' }
     case 'docs_link':
-      return element.docs_link?.url ?? ''
+      return { kind: 'text', text: element.docs_link?.url ?? '' }
     case 'person':
-      return element.person === undefined ? '' : `@${element.person.user_id}`
+      return element.person === undefined
+        ? { kind: 'text', text: '' }
+        : { kind: 'mention', openId: element.person.user_id }
   }
 }
 
@@ -598,7 +612,7 @@ export function createFeishuTransport(
       if (!reply) return null
       return {
         quote: item.quote ?? '',
-        text: commentElementsText(reply.content.elements),
+        segments: reply.content.elements.map(commentElementSegment),
       }
     },
 

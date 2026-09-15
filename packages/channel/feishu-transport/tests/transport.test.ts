@@ -1329,7 +1329,7 @@ describe('createFeishuTransport — fetchDocCommentText', () => {
       }),
     ).resolves.toEqual({
       quote: 'the paragraph in question',
-      text: 'please rework this',
+      segments: [{ kind: 'text', text: 'please rework this' }],
     })
     expect(stub.commentBatchQuery).toHaveBeenCalledWith({
       path: { file_token: 'doc_tok' },
@@ -1358,10 +1358,13 @@ describe('createFeishuTransport — fetchDocCommentText', () => {
         commentId: 'cmt_1',
         replyId: 'rep_2',
       }),
-    ).resolves.toEqual({ quote: '', text: 'agreed' })
+    ).resolves.toEqual({
+      quote: '',
+      segments: [{ kind: 'text', text: 'agreed' }],
+    })
   })
 
-  test('mentions and links read as what they name, in place', async () => {
+  test('a mention stays a mention, and a docs_link is text', async () => {
     const stub = stubClient()
     stub.commentBatchQuery.mockResolvedValueOnce(
       thread([
@@ -1391,7 +1394,11 @@ describe('createFeishuTransport — fetchDocCommentText', () => {
       }),
     ).resolves.toEqual({
       quote: '',
-      text: '@ou_bot see https://example.invalid/x',
+      segments: [
+        { kind: 'mention', openId: 'ou_bot' },
+        { kind: 'text', text: ' see ' },
+        { kind: 'text', text: 'https://example.invalid/x' },
+      ],
     })
   })
 

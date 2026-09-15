@@ -136,10 +136,30 @@ propagates as an ordinary retryable tool failure, and an unsupported type is its
 own answer. The probe's observation — that today's `null` happens to mean
 invisible — holds only because the code swallows the other two cases.
 
-The tool description states the delivery rule the probe established, so the
-model does not promise a user something Feishu will not do: only a comment or
-reply that @-mentions this bot arrives, plus later replies in a thread this bot
-has itself replied in.
+The tool description states the delivery rule, so the model does not promise a
+user something Feishu will not do. The rule is that a comment reaches this bot
+exactly when the bot would itself be notified about it; what satisfies that is
+the platform's to decide and is not a list this repo holds. An earlier wording
+enumerated the two cases known before the ownership rows were probed and closed
+with "anything else is never delivered", which a document the bot owns
+falsifies — it is a rule with examples now, and the examples are named as
+observations.
+
+**(operator)** The same description carries the ownership case, and what a
+subscription does *not* do:「你可以在 Subscribe 工具的 Description 里边写一下，
+只有 Bot 身份写的文档才可以收到所有评论内容。」 Three facts in order: the rule;
+that a document written under this bot's identity delivers every comment on it
+while a collaborator on someone else's document receives none of that even with
+full access, so the discriminator is ownership and not a permission level; and
+that subscribing widens none of it — until the tool is called nothing Feishu
+pushes for that document reaches a recipient at all, bar a trusted commenter's
+mention, which reaches the Dispatcher Agent.
+
+The third is the operative one. A per-repository development skill is planned
+that has a model author documents under the bot's identity and subscribe
+immediately afterwards, and this description is where that model reads why
+neither half works alone: authoring without subscribing delivers every comment
+to nobody, and subscribing someone else's document cannot widen what arrives.
 
 ## Transport additions
 
@@ -267,31 +287,79 @@ The submission:
   a source id with `inboundCorrelations`, which is how a chat message the
   operator can already see is *suppressed* in the COT card. A document comment
   is not visible in the chat, so not registering it is correct — `onInput` shows
-  the `<doc-comment>` body, which is how the operator learns a document comment
-  woke that agent.
-- `attrs` = `source=feishu`, the commenter's `sender_id` and best-effort
-  `sender_name` (the same bounded lookup the chat path uses), and `create_time`.
-- `text` = one ref element, the shape `<merged-forward>` and `<reply-to>`
-  already established:
+  the envelope, which is how the operator learns a document comment woke that
+  agent.
+- **(operator)** The delivered envelope has one shape, the inbound chat one.
+  Raised after the walkthrough —「现在 channel 入站不是 dreamux 层自己拼接的 XML
+  格式吗？它外边应该有一个统一的 channel 标签才对」— and settled by a card
+  answered `拍平`. There is no `<doc-comment>` wrapper: every fact that addresses
+  the comment is an attribute of the envelope Core renders, exactly as a chat
+  message's `chat_id` and `message_id` are, and the comment's own blocks are its
+  direct children the way a chat message's `<content>` is.
+- `attrs` = `source=feishu`, then `file_token`, `file_type`, `comment_id`,
+  `reply_id`, `notice_type`, `mentioned`, then the commenter's `sender_id` and
+  best-effort `sender_name` (the same bounded lookup the chat path uses) and
+  `create_time`. An empty value is dropped, as the chat path drops one: a
+  top-level comment carries no `reply_id`, and `notice_type` is what says so.
+  Core escapes each value, so the Channel passes them unescaped.
+- `text` = the blocks a chat body is made of:
 
   ```xml
-  <doc-comment file_token="…" file_type="docx" comment_id="…" reply_id="…"
-               notice_type="add_reply" mentioned="true"
-               note="pull the comment thread with lark-cli" />
+  <quote note="the document text this comment is anchored to">
+  …the anchored document text…
+  </quote>
+  <content>
+  <at user_id="ou_…"></at> …what the commenter wrote…
+  </content>
   ```
 
-  No title, by the operator ruling above. The agent learns which document it is
-  reading from the same lark-cli call that gets it the comment text.
-- `reminder` — a second Channel-owned reminder beside `CHANNEL_REMINDER`: this
-  turn came from a document comment, there is no chat to reply into, and
-  lark-cli is how the thread is read and answered. The standing chat reminder
-  would be a lie here, because there is no `reply` target.
+  `<quote>` appears only when Feishu answered with one — a comment on the whole
+  document has none. Its note is the one thing nothing else says: without it
+  `quote` reads just as easily as text quoted from an earlier reply. There is no
+  `note` pointing at lark-cli: the reminder already says that, and a second copy
+  is a second place to keep true.
 
-  The reminder must say **`--as bot`**. The delivery rule the tool description
-  promises includes "later replies in a thread this bot has itself replied in",
-  and that only arms when the *bot identity* posted the reply. lark-cli's
-  default identity is the human operator's, so a model that answers a comment
-  with a plain lark-cli call never arms it and the promise cannot be cashed.
+  `<content>` is always written, self-closing when there is nothing to put in
+  it. Two reasons agree: it is what the chat path renders for a message with no
+  text, and `team.submit` validates `text` as a non-empty string, so a body
+  omitted entirely would turn a comment Feishu answered nothing for into a
+  *failed* delivery — the one outcome this path exists to avoid.
+
+  No title, by the operator ruling above. The agent learns which document it is
+  reading from the same lark-cli call that gets it the rest of the thread.
+- **(operator)** A mention inside a comment is normalized:
+  「评论里的艾特还是要归一化成和消息入站一致的格式」. It reaches the model as the
+  same `<at user_id="…">` element an inbound chat mention becomes, not as the
+  `@<open_id>` Feishu's `person` element literally names. The label is empty
+  because the comment API carries no display name, which is already what the
+  chat renderer produces for a mention record without one.
+
+  The transport must not write that element — assembling an agent-facing body
+  format is outside its boundary, which is why the chat path renders mentions in
+  the channel layer. So `fetchDocCommentText` answers the comment as ordered
+  `FeishuCommentSegment`s — text, or a mention carrying an open_id — and the
+  channel writes them. `docs_link` stays text: it is a URL the commenter typed.
+  One function in `feishu-message-render.ts` writes `<at …>` for both paths, so
+  the two cannot drift.
+- **(operator)** `reminder` — a second Channel-owned reminder beside
+  `CHANNEL_REMINDER`, stating one fact rather than a procedure: this turn came
+  from a comment on a document and not from a chat, the `reply` tool does not
+  reach that document, and lark-cli is what reads and writes document comments.
+  The standing chat reminder would be false here, because there is no `reply`
+  target at all.
+
+  An earlier draft walked the model through lark-cli, `--as bot`, and
+  subscribing. The operator stopped it, verbatim:「总的来说，就是我们需要让收到
+  这条消息的 agent 知道发生了什么，然后后面怎么处理就可以了」. The receiving agent is
+  told what happened, and what to do about it is that agent's business. Every other fact
+  about the comment is already on the envelope, so nothing else belongs in the
+  reminder, and the `--as bot` instruction is dropped rather than reworded.
+
+  The cold-open delivery carries one more sentence — nothing is subscribed to
+  this document, and the mention is why it arrived — because that is the fact
+  the Dispatcher Agent is otherwise missing. It is a statement, not an
+  instruction. Which of the two a submission carries is a parameter of
+  `documentCommentSubmission`, not a second delivery path.
 
 ## The unclaimed event
 
@@ -299,15 +367,23 @@ An event no subscription claims is **not** uniformly dropped. Operator ruling,
 superseding his own earlier「直接丢弃，只记日志」:「在文档里面 at bot 的时候，这个
 文档又没有人订阅，这个时候投递给 dispatcher」.
 
-The split is exact rather than a compromise, because Feishu only ever delivers
-two kinds of unclaimed event:
+The split is on the one fact the event itself carries, `mentionedBot`:
 
-- **`mentionedBot` is true.** A person addressed this bot in a document nobody
-  follows. That is the cold open, and chat already answers it the same way: an
-  unrouted conversation reaches the Dispatcher Agent.
-- **`mentionedBot` is false.** Feishu would not have sent it unless the bot had
-  already replied in that thread, so it is the tail of a subscription that was
-  removed. Dropped and logged.
+- **true.** A person addressed this bot in a document nobody follows. That is
+  the cold open, and chat already answers it the same way: an unrouted
+  conversation reaches the Dispatcher Agent.
+- **false.** Something about this bot's relation to the document made Feishu
+  notify it, and the event says nothing about which recipient would want to read
+  it. Dropped and logged.
+
+The second branch was first justified by an enumeration — Feishu would not have
+sent it unless the bot had replied in that thread, so it could only be the tail
+of a removed subscription — and that reasoning is retracted. Rows K–M in the
+requirement show every comment on a document the bot owns arriving whether or not
+anyone follows it, so the shape is ordinary rather than residual, and the set of
+ways to be notified is not ours to enumerate. What such an event *should* do is
+open, and the requirement records it as open. Dropping it is what ships: a
+decision to revisit, not a rule the platform proves.
 
 An unclaimed mention is admitted only when the commenter is in the Dispatcher's
 `allow_users`. Operator ruling, asked as a card and answered `查 allow_users`.
@@ -330,8 +406,8 @@ A Dispatcher delivery of an unclaimed mention creates no subscription, and a
 One consequence worth naming rather than discovering later: a document whose
 Team closed loses its row, so a later trusted @-mention on that same document
 reaches the Dispatcher. That does not contradict「不要再投递给 Dispatcher 了」,
-which is about a closed Team's traffic being *redirected*; the non-mentioning
-replies that make up that traffic are still dropped. Distinguishing "never
+which is about a closed Team's traffic being *redirected*; everything that
+document keeps pushing without a mention is still dropped. Distinguishing "never
 subscribed" from "subscription removed" would mean remembering removed
 subscriptions, a persisted fact nobody asked for.
 
@@ -345,9 +421,11 @@ These three are the TeamLeader's, not the stated requirement. Each was played
 back to the operator individually before the authorization card was settled, and
 he kept all three:「这三个都ok，可以做」.
 
-- The `<doc-comment>` element carries `notice_type` and `mentioned`. The event
-  carries them and they cost one attribute each; the requirement said only
-  "necessary information".
+- The envelope carries `notice_type` and `mentioned`. The event carries them and
+  they cost one attribute each; the requirement said only "necessary
+  information". `mentioned` survives the mention normalization above, because a
+  model does not know its own open_id and cannot derive the platform's verdict
+  on whether this bot was addressed.
 - The metadata permission check is a *refusal*, not a warning. It makes
   `subscribe_document` a multi-call tool. The alternative is to write the row
   blindly and let a silent never-firing subscription be the operator's problem.

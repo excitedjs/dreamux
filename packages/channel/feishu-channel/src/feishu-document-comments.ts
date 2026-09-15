@@ -6,10 +6,11 @@
  * follows it.
  *
  * Feishu pushes these events on the bot's own notification rule, not as a
- * document feed: a comment or reply that @-mentions this bot, plus later
- * replies in a thread this bot has itself replied in. Those two are the *only*
- * shapes an event can take, which is what makes the rules below exact rather
- * than a compromise.
+ * document feed: one arrives exactly when this bot would itself be notified
+ * about the comment. What satisfies that rule is the platform's to decide and
+ * is not a closed set, so nothing below may rest on having enumerated it —
+ * least of all on an event proving that some recipient here once followed the
+ * document it came from.
  *
  * A **subscribed** document is answered by its subscribers, and by nothing
  * else. No access gate runs: the gate's question is whether a chat sender may
@@ -29,9 +30,9 @@
  *   Dispatcher's trusted-human set is the authority instead. An unknown
  *   commenter is dropped and logged — a document has no chat window to send a
  *   pairing card into, and no way to answer one.
- * - It does not: Feishu would not have sent it unless the bot had already
- *   replied in that thread, so it is the tail of a subscription that was
- *   removed. Dropped and logged.
+ * - It does not: something about this bot's relation to the document made
+ *   Feishu notify it, and nothing in the event says which recipient would want
+ *   to read it. Dropped and logged.
  *
  * A Dispatcher delivery of an unclaimed mention writes no row, so a rejection
  * on it has nothing to remove.
@@ -41,6 +42,7 @@ import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import {
   parseFeishuDocumentRef,
   type FeishuCommentEvent,
+  type FeishuCommentSegment,
   type FeishuDocCommentRequest,
   type FeishuDocCommentText,
   type FeishuDocMetaResult,
@@ -52,8 +54,10 @@ import {
   escapeXmlAttribute,
   escapeXmlText,
   formatFeishuCreateTime,
+  renderFeishuMention,
 } from './feishu-message-render.js';
 import {
+  DOC_COMMENT_COLD_OPEN_REMINDER,
   DOC_COMMENT_REMINDER,
   errorMessage,
   type FeishuSubmission,
@@ -70,8 +74,6 @@ import type { FeishuDocSubscriptionRecord } from './routing/document.js';
  * route's worst case where it already was.
  */
 const ENRICHMENT_TIMEOUT_MS = 2_000;
-
-const DOC_COMMENT_NOTE = 'read the thread and the document with lark-cli';
 
 const DOC_COMMENT_QUOTE_NOTE = 'the document text this comment is anchored to';
 
@@ -176,6 +178,14 @@ export class FeishuDocumentComments {
    * with is the string it will unsubscribe with, and the row holds the object
    * token. No metadata read: removing a row proves nothing and needs nothing
    * proven.
+   *
+   * One consequence is intended rather than overlooked: if the bot's access to
+   * the wiki node is revoked, that resolution fails and the wiki URL can no
+   * longer remove its own row. The row stores the object token alone, so there
+   * is nothing else to match the URL against; the refusal names the node and
+   * the recipient can still unsubscribe by passing that object token, which is
+   * what `list_subscriptions` shows. Storing the node token beside it to close
+   * this would add a persisted fact for a case that already has an answer.
    */
   async unsubscribe(input: {
     document: string;
@@ -238,7 +248,7 @@ export class FeishuDocumentComments {
       await this.deliverUnclaimed(event);
       return;
     }
-    const submission = await this.submissionFor(event);
+    const submission = await this.submissionFor({ event, subscribed: true });
     await Promise.all(
       subscribers.map((row) => this.deliverTo(row, event, submission)),
     );
@@ -250,15 +260,22 @@ export class FeishuDocumentComments {
    * They run only here, so they run once per *delivered* event: a drop never
    * spends a platform call on a comment nobody will read.
    */
-  private async submissionFor(
-    event: FeishuCommentEvent,
-  ): Promise<FeishuSubmission> {
+  private async submissionFor(input: {
+    event: FeishuCommentEvent;
+    subscribed: boolean;
+  }): Promise<FeishuSubmission> {
+    const { event } = input;
     const deadlineAt = Date.now() + ENRICHMENT_TIMEOUT_MS;
     const [senderName, comment] = await Promise.all([
       this.senderName(event.commenterId, deadlineAt),
       this.commentText(event, deadlineAt),
     ]);
-    return documentCommentSubmission(event, senderName, comment);
+    return documentCommentSubmission({
+      event,
+      senderName,
+      comment,
+      subscribed: input.subscribed,
+    });
   }
 
   /**
@@ -284,7 +301,7 @@ export class FeishuDocumentComments {
       );
       return;
     }
-    const submission = await this.submissionFor(event);
+    const submission = await this.submissionFor({ event, subscribed: false });
     // No row is written and none is removed: this delivery is a cold open, not
     // a subscription, so a rejection on it has nothing to reconcile.
     const outcome = await this.opts.submit(null, submission);
@@ -399,61 +416,84 @@ export class FeishuDocumentComments {
  * token is carried too, so the id needs no assumption about comment ids being
  * unique across documents. The recipient is already part of Core's ledger key,
  * so one id reaching two subscribers is two keys and both are admitted.
+ *
+ * `subscribed` chooses the reminder and nothing else. A cold open reaches a
+ * recipient that never asked for this document, and that — not any of the
+ * comment's own facts, which are all on the envelope — is what the two
+ * deliveries differ by.
  */
-export function documentCommentSubmission(
-  event: FeishuCommentEvent,
-  senderName: string,
-  comment: FeishuDocCommentText | null,
-): FeishuSubmission {
-  const attrs: Record<string, string> = {
-    source: 'feishu',
-    sender_id: event.commenterId,
-  };
-  if (senderName !== '') attrs['sender_name'] = senderName;
-  const createTime = formatFeishuCreateTime(String(event.timestamp));
-  if (createTime !== '') attrs['create_time'] = createTime;
+export function documentCommentSubmission(input: {
+  event: FeishuCommentEvent;
+  senderName: string;
+  comment: FeishuDocCommentText | null;
+  subscribed: boolean;
+}): FeishuSubmission {
+  const { event } = input;
   return {
     kind: 'doc_comment',
-    attrs,
-    text: documentCommentBody(event, comment),
-    reminder: DOC_COMMENT_REMINDER,
+    attrs: documentCommentAttrs(event, input.senderName),
+    text: documentCommentBody(input.comment),
+    reminder: input.subscribed
+      ? DOC_COMMENT_REMINDER
+      : DOC_COMMENT_COLD_OPEN_REMINDER,
     sourceId: `${event.fileToken}:${event.commentId}:${event.replyId}`,
   };
 }
 
 /**
- * One element: the ids that address the comment, and what it says.
+ * The envelope's own attributes, in the shape a chat message already uses:
+ * where it happened, which item it is, then who wrote it and when. Core
+ * escapes each value and renders them on the `<channel>` start tag, so a model
+ * reads one envelope whichever inbound path woke the turn.
  *
- * The text is element content rather than an attribute, escaped exactly once
- * the way a chat message's `<content>` is, so a comment reaches the model as
- * written. The anchor quote sits beside it because a comment on a selection is
- * about that selection, and without it the model is told a document is being
- * discussed but not which part — it carries a note because `quote` alone reads
- * just as easily as text quoted from an earlier reply.
- *
- * Neither is invented when Feishu did not answer with it: the element falls
- * back to the ids alone, which still address the thread.
+ * An empty value is dropped rather than rendered, exactly as the chat path
+ * drops one — a top-level comment has no `reply_id`, and `notice_type` is what
+ * says so.
  *
  * `notice_type` is not read off the payload. The SDK's decoder does not surface
  * it, and it is not independent of what is here: Feishu sends `add_comment`
  * only with an empty `reply_id` and `add_reply` only with a non-empty one.
+ *
+ * `mentioned` stays even though a mention now shows in the body: the model does
+ * not know its own open_id, so it cannot derive the platform's own verdict on
+ * whether this bot was addressed.
  */
-function documentCommentBody(
+function documentCommentAttrs(
   event: FeishuCommentEvent,
-  comment: FeishuDocCommentText | null,
-): string {
-  const attributes: Array<[string, string]> = [
+  senderName: string,
+): Record<string, string> {
+  const pairs: Array<[string, string]> = [
+    ['source', 'feishu'],
     ['file_token', event.fileToken],
     ['file_type', event.fileType],
     ['comment_id', event.commentId],
     ['reply_id', event.replyId],
     ['notice_type', event.replyId === '' ? 'add_comment' : 'add_reply'],
     ['mentioned', event.mentionedBot ? 'true' : 'false'],
-    ['note', DOC_COMMENT_NOTE],
+    ['sender_id', event.commenterId],
+    ['sender_name', senderName],
+    ['create_time', formatFeishuCreateTime(String(event.timestamp))],
   ];
-  const rendered = attributes
-    .map(([name, value]) => `${name}="${escapeXmlAttribute(value)}"`)
-    .join(' ');
+  return Object.fromEntries(pairs.filter(([, value]) => value !== ''));
+}
+
+/**
+ * The body: the same blocks a chat message's body is made of.
+ *
+ * `<content>` is always written, self-closing when there is nothing to put in
+ * it, for two reasons that agree. It is what the chat path renders for a
+ * message with no text, so the two bodies stay one shape; and `team.submit`
+ * refuses an empty `text`, so a body omitted entirely would turn a comment
+ * Feishu answered nothing for into a failed delivery — the one outcome this
+ * path exists to avoid. An empty `<content />` here means Feishu did not answer
+ * with the comment's text, and the envelope's ids still address it.
+ *
+ * `<quote>` carries the document text the comment is anchored to, and only
+ * appears when there is one — a comment on the whole document has none. Its
+ * note is the one thing nothing else says: without it `quote` reads just as
+ * easily as text quoted from an earlier reply.
+ */
+function documentCommentBody(comment: FeishuDocCommentText | null): string {
   const blocks: string[] = [];
   if (comment !== null && comment.quote !== '') {
     blocks.push(
@@ -461,9 +501,25 @@ function documentCommentBody(
         `${escapeXmlText(comment.quote)}\n</quote>`,
     );
   }
-  if (comment !== null && comment.text !== '') {
-    blocks.push(`<content>\n${escapeXmlText(comment.text)}\n</content>`);
-  }
-  if (blocks.length === 0) return `<doc-comment ${rendered} />`;
-  return `<doc-comment ${rendered}>\n${blocks.join('\n')}\n</doc-comment>`;
+  const content = comment === null ? '' : renderCommentSegments(comment.segments);
+  blocks.push(content === '' ? '<content />' : `<content>\n${content}\n</content>`);
+  return blocks.join('\n');
+}
+
+/**
+ * Write what the commenter wrote. Text is escaped once, exactly as a chat
+ * body's is, and a mention becomes the element every inbound path writes.
+ *
+ * The label is empty because Feishu's comment API carries no display name for
+ * a `person` element. That is not a degraded mention: it is what the chat
+ * renderer already produces for a mention record that carries no name.
+ */
+function renderCommentSegments(
+  segments: readonly FeishuCommentSegment[],
+): string {
+  return segments
+    .map((segment) => segment.kind === 'text'
+      ? escapeXmlText(segment.text)
+      : renderFeishuMention(segment.openId, ''))
+    .join('');
 }

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Three new MCP tools let a caller follow one Feishu document's comments: `subscribe_document`, `unsubscribe_document`, and `list_subscriptions`. Each is offered to both the Dispatcher and a TeamLeader with no recipient argument — the caller is the recipient — so a caller can only create, list, and remove its own rows. Subscribing takes a document URL or a token plus its `type`, resolves a wiki URL to the document the node holds, and refuses when Feishu proves this bot cannot see the document. Subscriptions live in a third `subscriptions` section of the channel's existing routing document, which stays readable as it is: a file written before this release reads the section as empty. A received comment event produces one submission per subscriber, in the same envelope an inbound chat message uses: the facts that address the comment are attributes on it, and its body is the `<content>` the commenter wrote — with a mention rendered as the same `<at user_id=\"…\">` element a chat mention becomes — beside a `<quote>` holding the document text the comment is anchored to. The comment is read once per delivered event and its absence never costs the event. A comment nobody subscribed to reaches the Dispatcher Agent when it @-mentions the bot and the commenter is already one of the dispatcher's trusted users, and is dropped and logged otherwise; that delivery creates no subscription. A subscriber whose Team is closed or gone loses its own subscription and no one else's, and dissolving a Team drops its subscriptions alongside its bindings. Feishu delivers these events on the bot's own notification rule: a document written under this bot's identity delivers every comment on it, while on a document someone else wrote only a comment that @-mentions this bot or a reply in a thread this bot has already replied in arrives. Subscribing widens none of that; the subscribe tool's description states the rule so a caller can decide who should write a document in the first place.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -21,7 +21,12 @@ import {
   FeishuDocumentComments,
   type FeishuDocumentCommentsOptions,
 } from '../src/feishu-document-comments.js';
-import type { FeishuSubmission, FeishuSubmitOutcome } from '../src/feishu-submit.js';
+import {
+  DOC_COMMENT_COLD_OPEN_REMINDER,
+  DOC_COMMENT_REMINDER,
+  type FeishuSubmission,
+  type FeishuSubmitOutcome,
+} from '../src/feishu-submit.js';
 import { FeishuRouting } from '../src/routing/index.js';
 import { FeishuRoutingStore } from '../src/routing/store.js';
 
@@ -305,6 +310,29 @@ describe('document comment delivery', () => {
     expect(h.submissions.map((call) => call.teamName)).toEqual(['team-a']);
   });
 
+  /**
+   * The only thing the two deliveries differ by: a cold open reaches a
+   * recipient that never asked for this document, and nothing on the envelope
+   * says so.
+   */
+  it('tells a cold open that nothing follows this document, and says no such thing to a subscriber', async () => {
+    const h = await harness();
+    h.trusted.add('ou_commenter');
+
+    await h.comments.deliver(commentEvent({ mentionedBot: true }));
+    await h.comments.subscribe({
+      document: 'doc_tok',
+      type: 'docx',
+      teamName: 'team-a',
+    });
+    await h.comments.deliver(commentEvent({ mentionedBot: true }));
+
+    expect(h.submissions.map((call) => call.submission.reminder)).toEqual([
+      DOC_COMMENT_COLD_OPEN_REMINDER,
+      DOC_COMMENT_REMINDER,
+    ]);
+  });
+
   it('submits once per subscriber, and never falls back to the Dispatcher Agent', async () => {
     const h = await harness();
     await h.comments.subscribe({
@@ -371,7 +399,7 @@ describe('document comment delivery', () => {
     ]);
   });
 
-  it('builds one anchorless submission whose body is a single doc-comment element', async () => {
+  it('puts every fact that addresses the comment on the envelope, as a chat message does', async () => {
     const h = await harness();
     await h.comments.subscribe({
       document: 'doc_tok',
@@ -386,16 +414,43 @@ describe('document comment delivery', () => {
     expect(submission).not.toHaveProperty('anchor');
     expect(submission.attrs).toEqual({
       source: 'feishu',
+      file_token: 'doc_tok',
+      file_type: 'docx',
+      comment_id: 'cmt_1',
+      reply_id: 'rpl_1',
+      notice_type: 'add_reply',
+      mentioned: 'true',
       sender_id: 'ou_commenter',
       sender_name: 'Commenter',
       create_time: expect.stringContaining('2025'),
     });
-    expect(submission.text).toBe(
-      '<doc-comment file_token="doc_tok" file_type="docx" comment_id="cmt_1" ' +
-        'reply_id="rpl_1" notice_type="add_reply" mentioned="true" ' +
-        'note="read the thread and the document with lark-cli" />',
-    );
-    expect(submission.reminder).toContain('--as bot');
+    expect(Object.keys(submission.attrs)).toEqual([
+      'source',
+      'file_token',
+      'file_type',
+      'comment_id',
+      'reply_id',
+      'notice_type',
+      'mentioned',
+      'sender_id',
+      'sender_name',
+      'create_time',
+    ]);
+    expect(submission.text).toBe('<content />');
+  });
+
+  it('drops an empty reply_id rather than rendering it, the way a chat attr is dropped', async () => {
+    const h = await harness();
+    await h.comments.subscribe({
+      document: 'doc_tok',
+      type: 'docx',
+      teamName: 'team-a',
+    });
+
+    await h.comments.deliver(commentEvent());
+
+    expect(h.submissions[0]!.submission.attrs).not.toHaveProperty('reply_id');
+    expect(h.submissions[0]!.submission.attrs['notice_type']).toBe('add_comment');
   });
 
   it('carries what the commenter wrote, and the document text it is anchored to', async () => {
@@ -407,23 +462,22 @@ describe('document comment delivery', () => {
     });
     h.comment.value = {
       quote: 'the paragraph in question',
-      text: '@ou_bot please rework this',
+      segments: [
+        { kind: 'mention', openId: 'ou_bot' },
+        { kind: 'text', text: ' please rework this' },
+      ],
     };
 
     await h.comments.deliver(commentEvent({ replyId: 'rpl_1' }));
 
     expect(h.commentReads).toEqual(['doc_tok:cmt_1:rpl_1']);
     expect(h.submissions[0]!.submission.text).toBe(
-      '<doc-comment file_token="doc_tok" file_type="docx" comment_id="cmt_1" ' +
-        'reply_id="rpl_1" notice_type="add_reply" mentioned="true" ' +
-        'note="read the thread and the document with lark-cli">\n' +
-        '<quote note="the document text this comment is anchored to">\n' +
+      '<quote note="the document text this comment is anchored to">\n' +
         'the paragraph in question\n' +
         '</quote>\n' +
         '<content>\n' +
-        '@ou_bot please rework this\n' +
-        '</content>\n' +
-        '</doc-comment>',
+        '<at user_id="ou_bot"></at> please rework this\n' +
+        '</content>',
     );
   });
 
@@ -434,7 +488,10 @@ describe('document comment delivery', () => {
       type: 'docx',
       teamName: 'team-a',
     });
-    h.comment.value = { quote: '', text: 'looks good' };
+    h.comment.value = {
+      quote: '',
+      segments: [{ kind: 'text', text: 'looks good' }],
+    };
 
     await h.comments.deliver(commentEvent());
 
@@ -450,7 +507,10 @@ describe('document comment delivery', () => {
       type: 'docx',
       teamName: 'team-a',
     });
-    h.comment.value = { quote: 'a & b', text: 'use <at> & not <b>' };
+    h.comment.value = {
+      quote: 'a & b',
+      segments: [{ kind: 'text', text: 'use <at> & not <b>' }],
+    };
 
     await h.comments.deliver(commentEvent());
 
@@ -471,11 +531,10 @@ describe('document comment delivery', () => {
     await h.comments.deliver(commentEvent({ replyId: 'rpl_1' }));
 
     expect(h.submissions).toHaveLength(1);
-    expect(h.submissions[0]!.submission.text).toBe(
-      '<doc-comment file_token="doc_tok" file_type="docx" comment_id="cmt_1" ' +
-        'reply_id="rpl_1" notice_type="add_reply" mentioned="true" ' +
-        'note="read the thread and the document with lark-cli" />',
-    );
+    // Not an omitted body: `team.submit` refuses an empty text, so a comment
+    // Feishu answered nothing for would become a failed delivery instead.
+    expect(h.submissions[0]!.submission.text).toBe('<content />');
+    expect(h.submissions[0]!.submission.attrs['comment_id']).toBe('cmt_1');
   });
 
   it('reads the text once for an event with several subscribers', async () => {
@@ -509,7 +568,10 @@ describe('document comment delivery', () => {
   it('an unfollowed mention reaching the Dispatcher carries the text too', async () => {
     const h = await harness();
     h.trusted.add('ou_commenter');
-    h.comment.value = { quote: '', text: 'who owns this?' };
+    h.comment.value = {
+      quote: '',
+      segments: [{ kind: 'text', text: 'who owns this?' }],
+    };
 
     await h.comments.deliver(commentEvent({ mentionedBot: true }));
 
@@ -530,8 +592,8 @@ describe('document comment delivery', () => {
     await h.comments.deliver(commentEvent());
     await h.comments.deliver(commentEvent({ replyId: 'rpl_1' }));
 
-    expect(h.submissions[0]!.submission.text).toContain('notice_type="add_comment"');
-    expect(h.submissions[1]!.submission.text).toContain('notice_type="add_reply"');
+    expect(h.submissions[0]!.submission.attrs['notice_type']).toBe('add_comment');
+    expect(h.submissions[1]!.submission.attrs['notice_type']).toBe('add_reply');
   });
 
   it('delivers a subscribed comment that does not mention the bot, recording what Feishu said', async () => {
@@ -545,7 +607,7 @@ describe('document comment delivery', () => {
     await h.comments.deliver(commentEvent({ mentionedBot: false }));
 
     expect(h.submissions).toHaveLength(1);
-    expect(h.submissions[0]!.submission.text).toContain('mentioned="false"');
+    expect(h.submissions[0]!.submission.attrs['mentioned']).toBe('false');
   });
 
   it('a sender-name lookup that fails still delivers, without the name', async () => {

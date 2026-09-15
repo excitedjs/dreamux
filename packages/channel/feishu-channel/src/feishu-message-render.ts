@@ -151,16 +151,26 @@ function substituteTokens(text: string, table: Map<string, string>): string {
 }
 
 function renderMention(record: Mention): string {
-  const name = escapeXmlText(record.name ?? '');
   const id = nonEmpty(record.id?.open_id) ??
     nonEmpty(record.id?.union_id) ??
     nonEmpty(record.id?.user_id);
   // An application record carries no user identity; nothing can reply to it,
   // so it reads as the name it displays.
-  if (id === undefined) return `@${name}`;
-  // The same syntax the reply tool takes, so a mention read here can be
-  // written straight back.
-  return `<at user_id="${escapeXmlAttribute(id)}">${name}</at>`;
+  if (id === undefined) return `@${escapeXmlText(record.name ?? '')}`;
+  return renderFeishuMention(id, record.name ?? '');
+}
+
+/**
+ * The one mention element every inbound path writes.
+ *
+ * It is the same syntax the reply tool takes, so a mention read here can be
+ * written straight back — which is also why a chat message and a document
+ * comment must not each spell it: one of the two would drift. `name` is
+ * whatever the source carried, and a source that carries none renders an
+ * empty label rather than inventing one.
+ */
+export function renderFeishuMention(openId: string, name: string): string {
+  return `<at user_id="${escapeXmlAttribute(openId)}">${escapeXmlText(name)}</at>`;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

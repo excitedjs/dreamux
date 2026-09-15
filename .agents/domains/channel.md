@@ -416,13 +416,23 @@ seam exists to have narrowed.
 ### Document comments
 
 `drive.notice.comment_add_v1` is a *notification* event, not a document feed.
-Feishu delivers it to an app only when the bot itself would be notified: the
-comment or reply @-mentions the bot **and** the app has permission on the
-document, or the reply lands in a thread the bot has already replied in. `view`
-permission is enough. The file-level `POST /drive/v1/files/:token/subscribe` API
-does not widen this and is not called; the user-identity subscription API needs
-a `user_access_token` this channel does not hold. All of that is probed, in the
-subscribe-document-comments task record.
+Feishu delivers it to an app exactly when the bot itself would be notified —
+that is the whole rule, and it is the platform's own wording. What satisfies it
+is not a closed list, so treat the probed cases as examples rather than as the
+set. The ones that are known: a document **the bot owns** delivers every comment
+on it, mention or not, anchored or not, in any thread, the same way a human
+owner is notified about their own document; on a document someone else owns, a
+comment or reply that @-mentions the bot while the app has permission on it, or
+a reply in a thread the bot has already replied in. A `full_access` collaborator
+on someone else's document receives nothing otherwise, so among those the
+discriminator is ownership rather than permission level, and `view` is enough
+permission for the mention case. The operator has also named a case this repo
+has not probed: a passage authored by the bot inside someone else's document
+delivers the comments anchored to that passage. The file-level
+`POST /drive/v1/files/:token/subscribe` API does not widen any of it and is not
+called; the user-identity subscription API needs a `user_access_token` this
+channel does not hold. The probes are in the subscribe-document-comments task
+record.
 
 Delivery is the chat path's shape with three deliberate differences:
 
@@ -437,17 +447,20 @@ Delivery is the chat path's shape with three deliberate differences:
   subscriber's submission alone — the same proof, and the same commit path, that
   removes a stale binding. A subscriber whose Team refused the delivery loses
   its row; its event is not handed to the Dispatcher instead.
-- **An unclaimed event splits on the mention.** Feishu only ever delivers two
-  kinds, so the split is exact. A comment that @-mentions the bot in a document
-  nobody follows is the cold open, and chat already answers that by routing an
-  unrouted conversation to the Dispatcher Agent — but only when the commenter is
-  in the Dispatcher's `allow_users`, because the "the subscription is already the
-  authorization" reason does not exist when nobody subscribed. An unknown
-  commenter's mention is dropped and logged: a document has no chat window to
-  send a pairing card into. A comment that does *not* mention the bot can only be
-  the tail of a removed subscription — Feishu would not have sent it unless the
-  bot had replied in that thread — and is dropped and logged too. That Dispatcher
-  delivery writes no subscription row, so a rejection on it removes nothing.
+- **An unclaimed event splits on the mention.** A comment that @-mentions the
+  bot in a document nobody follows is the cold open, and chat already answers
+  that by routing an unrouted conversation to the Dispatcher Agent — but only
+  when the commenter is in the Dispatcher's `allow_users`, because the "the
+  subscription is already the authorization" reason does not exist when nobody
+  subscribed. An unknown commenter's mention is dropped and logged: a document
+  has no chat window to send a pairing card into. A comment that does *not*
+  mention the bot is dropped and logged, and a rejection on a cold-open delivery
+  removes nothing, because there is no row. Since the delivery rule is not a
+  closed list, neither is what reaches that drop: the tail of a removed
+  subscription, the next human reply after a cold open the Dispatcher answered
+  (that delivery writes no subscription row), and every comment on a document
+  the bot owns that nobody has subscribed — the last of which the ownership rule
+  makes ordinary rather than residual.
 
   One consequence is named rather than left to be discovered: a document whose
   Team closed loses its row, so a later trusted @-mention on it reaches the
@@ -461,32 +474,55 @@ chain-of-thought card with nowhere to hang it. Its `source_id` is
 thread and every reply repeats it — a source id of the comment id alone would
 have Core's ledger answer `duplicate` to every reply after the first.
 
-Its body is one `<doc-comment file_token file_type comment_id reply_id
-notice_type mentioned note>` element. The event payload carries no text, so the
-delivered path reads it: one `drive.fileComment.batchQuery` call per *delivered*
-event picks the item the event names — the reply `reply_id` names, or the head
-of the thread when it is empty — and its text becomes the element's `<content>`,
-escaped the way a chat body's is, with the document text the comment is anchored
-to beside it as `<quote>`. That read shares one bounded deadline with the
-commenter's name lookup, so the inbound route's worst case is what it already
-was, and it never costs the event: a failed or empty read logs and delivers the
-self-closing element, whose ids still address the thread. No title is carried and
-no thread history is: that is what lark-cli is for.
+**The envelope has one shape, the inbound chat one.** There is no
+`<doc-comment>` wrapper: the facts that address the comment — `file_token`,
+`file_type`, `comment_id`, `reply_id`, `notice_type`, `mentioned` — are `attrs`
+on the `<channel>` start tag Core renders, exactly as a chat message's `chat_id`
+and `message_id` are, followed by `sender_id` / `sender_name` / `create_time`.
+An empty value is dropped the way the chat path drops one, so a top-level
+comment carries no `reply_id` and `notice_type` is what says so.
 
-Its reminder is the Channel's second one, and it names both paths a recipient
-actually has. No tool here writes a document comment, so answering *in the
-thread* means lark-cli and the reply must be posted `--as bot` — Feishu keeps
-delivering later replies in a thread only once this bot has replied in it. The
-`reply` tool still reaches the recipient's own bound chat if it has one, but not
-this document, and the commenter is not in that chat. It is offered as an option
-and not as a lookup: `list_bindings` is the Dispatcher's tool, so a TeamLeader
-has none that answers which chat it is bound to.
+The body is the blocks a chat body is made of. The event payload carries no
+text, so the delivered path reads it: one `drive.fileComment.batchQuery` call per
+*delivered* event picks the item the event names — the reply `reply_id` names, or
+the head of the thread when it is empty — and it becomes `<content>`, escaped the
+way a chat body's is, with the document text the comment is anchored to above it
+as `<quote note="…">`. A mention inside the comment is normalized to the same
+`<at user_id="…">` element an inbound chat mention becomes, with an empty label
+because Feishu's comment API carries no display name — which is what the chat
+renderer already produces for a mention record without one. One function writes
+that element for both paths so they cannot drift, which is also why the transport
+answers the comment as ordered segments rather than one string: assembling an
+agent-facing body format is outside its boundary.
+
+`<content>` is always written, self-closing when there is nothing to put in it.
+That is what the chat path renders for a message with no text, and it is also
+required: `team.submit` validates `text` as a non-empty string, so omitting the
+body would turn a comment Feishu answered nothing for into a failed delivery. The
+read shares one bounded deadline with the commenter's name lookup, so the inbound
+route's worst case is what it already was, and it never costs the event: a failed
+or empty read logs and delivers `<content />`, with the envelope's ids still
+addressing the thread. No title is carried and no thread history is: that is what
+lark-cli is for.
+
+Its reminder is the Channel's second one, and it carries one fact and no
+procedure. Everything else about the comment is already on the envelope, so the
+reminder states only what the envelope cannot: the turn came from a document
+rather than a chat, the `reply` tool does not reach that document, and lark-cli
+is what reads and writes document comments. A cold open carries one more
+sentence — nothing is subscribed to this document, and the mention is why it
+arrived — because that is the fact the Dispatcher Agent is otherwise missing. It
+is a statement and not an instruction: what to do about a comment is the
+receiving agent's decision, so nothing here names a tool to call next. Which of
+the two a submission carries is a parameter of the one submission builder, not a
+second delivery path.
 
 Source:
 
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-channel/src/feishu-document-comments.ts`
 - `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
+- `/packages/channel/feishu-channel/src/feishu-message-render.ts`
 - `/packages/channel/feishu-channel/src/tools/document-tools.ts`
 - `/packages/channel/feishu-transport/src/parse/comment.ts`
 - `/packages/channel/feishu-transport/src/parse/document-ref.ts`

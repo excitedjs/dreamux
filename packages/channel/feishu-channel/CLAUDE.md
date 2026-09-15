@@ -51,9 +51,14 @@ never on `@excitedjs/dreamux` core.
 - Normalize inbound Feishu content into agent-facing channel results.
 - Own document-comment delivery: one submission per subscriber, fanned out
   concurrently. The event payload carries no text, so a delivered event reads
-  the comment it names once — its own text and the document text it is anchored
+  the comment it names once — its own body and the document text it is anchored
   to — under the same bounded deadline as the commenter's name lookup; a failed
-  or empty read delivers the ids alone rather than dropping the event. A subscribed document runs no access gate — the subscription is
+  or empty read delivers `<content />` rather than dropping the event. A comment
+  delivers in the same envelope shape a chat message does: the facts that
+  address it are `attrs` Core renders on the start tag, and the body is the
+  `<quote>` / `<content>` blocks alone. A mention inside a comment renders as the
+  same `<at user_id="…">` element a chat mention does — one function in
+  `feishu-message-render.ts` writes it for both, so the two cannot drift. A subscribed document runs no access gate — the subscription is
   already the recipient's own authorization — and a subscriber whose Team is
   proven gone loses its own row and nobody else's. A comment no subscription
   claims splits on the mention: an @-mention from a commenter in the gate's

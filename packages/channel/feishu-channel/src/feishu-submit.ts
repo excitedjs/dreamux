@@ -33,25 +33,28 @@ export const CHANNEL_REMINDER =
 /**
  * The standing note for a turn a document comment woke.
  *
- * The chat reminder would mislead here, and so would its opposite. Two paths
- * exist and they reach different people: the thread, which only lark-cli can
- * write into because no tool on this Channel writes a document comment, and
- * the recipient's own bound chat, which the `reply` tool reaches but the
- * person who commented will not see.
- *
- * `--as bot` is the load-bearing part, and it is stated as narrowly as it was
- * probed: Feishu keeps pushing later replies in a thread once *this bot* has
- * replied in it, so a reply posted under any other identity gets one turn and
- * then silence. The bound chat is offered as an option and not as a lookup —
- * `list_bindings` is the Dispatcher's tool, so a TeamLeader has none that
- * answers which chat it is bound to.
+ * The chat reminder would be false here: the `reply` tool has no target in a
+ * document, and no tool on this Channel writes a comment. That consequence is
+ * the whole of it. Everything else about the comment is already on the
+ * envelope Core renders, and what to do with it is the receiving agent's
+ * decision, not a procedure this Channel teaches.
  */
 export const DOC_COMMENT_REMINDER =
-  'This turn came from a Feishu document comment. None of the Feishu tools here writes a document comment: ' +
-  'to answer in the thread, use lark-cli, and post the reply with `--as bot` — Feishu keeps delivering later ' +
-  'replies in a thread only once this bot has replied in it, so a reply posted under any other identity ends ' +
-  'the conversation after one turn. The reply tool still reaches your own bound chat if you have one, but it ' +
-  'does not reach this document, and the person who commented will not see it there.';
+  'This turn came from a comment on a Feishu document, not from a chat. ' +
+  'The reply tool does not reach that document; lark-cli reads and writes document comments.';
+
+/**
+ * The same note for a comment no subscription claims.
+ *
+ * It adds the one fact a cold open has and a subscribed delivery does not:
+ * nothing here follows this document, so the recipient has no standing reason
+ * to be reading it and the mention is the whole of why it was delivered here.
+ * The sentence is only true on the path that checks `mentionedBot`, which is
+ * the only path that carries it.
+ */
+export const DOC_COMMENT_COLD_OPEN_REMINDER =
+  `${DOC_COMMENT_REMINDER} ` +
+  'No recipient is subscribed to this document; it reached you because the comment @-mentioned this bot.';
 
 interface FeishuSubmissionBase {
   readonly attrs: Readonly<Record<string, string>>;
