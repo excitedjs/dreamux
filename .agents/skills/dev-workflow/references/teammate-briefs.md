@@ -22,8 +22,7 @@ because it leaves room for judgment, not because prompts have a word limit.
 ## Good case: an approved implementation
 
 The operator accepted this concise COT handoff after requesting a fresh Claude
-developer: "你这次下发的不是很好吗？" (2026-09-10).
-The following is an English rendering of the task prompt; the role
+developer. The following is an English rendering of the task prompt; the role
 and repository-write boundaries were supplied separately in `identity`.
 
 ```text
