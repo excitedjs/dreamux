@@ -14,7 +14,7 @@ import {
   unsubscribeDocumentDef,
 } from '../src/tools/document-tools.js';
 import { findFeishuTool } from '../src/tools/registry.js';
-import type { FeishuDocumentSubscriptionView } from '../src/feishu-document-comments.js';
+import type { FeishuDocumentSubscriptionView } from '../src/routing/index.js';
 import type { FeishuToolContext, FeishuToolSession } from '../src/tools/types.js';
 
 const dispatcher: ChannelMcpCaller = { kind: 'dispatcher' };

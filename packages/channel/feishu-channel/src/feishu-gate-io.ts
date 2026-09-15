@@ -94,10 +94,15 @@ export async function saveDispatcherAccess(
 /**
  * Whether this sender is one of the Dispatcher's trusted humans.
  *
- * Read-only, and deliberately not under the access mutex: the mutex exists to
- * serialize the gate's *writes*, and asking who is trusted mutates nothing. It
- * lives here rather than at a caller because `allow_users` is the gate's fact,
- * and a second reader spelling out the field would be a second owner of it.
+ * Read-only, and deliberately not under the access mutex: the mutex serializes
+ * the gate's *writes*, and asking who is trusted mutates nothing. The state is
+ * written by rename, so a read racing a write sees one whole version or the
+ * other.
+ *
+ * It answers here rather than at its caller because a caller outside the gate
+ * has no other reason to hold an access state — not because the field has a
+ * single reader. The gate tests `allow_users` inline against state it already
+ * loaded, and routing those through a second read would only add one.
  */
 export async function isTrustedDispatcherUser(
   stateDir: string,

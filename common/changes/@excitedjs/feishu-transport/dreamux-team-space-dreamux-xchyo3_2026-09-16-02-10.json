@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Review: The transport's document-comment surface is replaced. `commentFromBatchQuery` and the `FeishuDocComment` / `FeishuDocCommentReply` types are removed, and `fetchDocComment` is now `fetchDocCommentText`, which reads the one comment an event names and answers with the document text it is anchored to plus the comment's body as ordered segments — a mention stays a mention, because the element a model reads it as is an agent-facing body format this package does not assemble. `fetchDocMeta` answers a discriminated result instead of a row or `null`, and the exported `FeishuDocMeta` type is removed with it: a Feishu metadata read on a document the app cannot see succeeds and reports the token in `failed_list`, so one `null` could not tell an invisible document from a request error or an unsupported type, and a caller refusing on it would accuse the wrong thing. The only question a caller asks of that read is whether this bot can see the document, so the result answers that and carries nothing else — the title and URL the old row held have no reader, and the request no longer asks Feishu for the URL. `resolveWikiNode` is added, answering the document a wiki node holds, because every comment API and the comment event itself name the object inside the node rather than the node. No rebuild is needed.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -62,7 +62,6 @@ export {
   type FeishuCommentSegment,
   type FeishuDocCommentRequest,
   type FeishuDocCommentText,
-  type FeishuDocMeta,
   type FeishuDocMetaResult,
   type FeishuWikiNode,
   type FeishuMessageResourceFetcher,

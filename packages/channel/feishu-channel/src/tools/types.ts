@@ -14,9 +14,11 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AskUserQuestionSpec } from '../feishu-ask-user-card.js';
-import type { FeishuDocumentSubscriptionView } from '../feishu-document-comments.js';
 import type { FeishuSpaceRecord } from '../routing/document.js';
-import type { FeishuBindingView } from '../routing/index.js';
+import type {
+  FeishuBindingView,
+  FeishuDocumentSubscriptionView,
+} from '../routing/index.js';
 import type { FeishuTarget } from '../routing/target.js';
 
 /** Logger shape used by the Feishu session — pino-style, fields-first. */

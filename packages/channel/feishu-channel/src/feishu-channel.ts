@@ -504,8 +504,7 @@ export class FeishuChannelSession {
       listSpaces: () => this.routing.listSpaces(),
       subscribeDocument: (input) => this.docComments.subscribe(input),
       unsubscribeDocument: (input) => this.docComments.unsubscribe(input),
-      listSubscriptions: (teamName) =>
-        this.docComments.listSubscriptions(teamName),
+      listSubscriptions: (teamName) => this.routing.listSubscriptions(teamName),
     };
   }
 

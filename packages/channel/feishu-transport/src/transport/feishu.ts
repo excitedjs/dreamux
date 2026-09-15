@@ -143,11 +143,6 @@ async function fetchUserName(client: lark.Client, openId: string):
   return typeof name === 'string' && name !== '' ? name : undefined
 }
 
-export interface FeishuDocMeta {
-    title: string
-    url: string
-}
-
 /**
  * What a metadata read actually established.
  *
@@ -158,7 +153,7 @@ export interface FeishuDocMeta {
  * at all — so it is not an answer here, it is a rejected promise.
  */
 export type FeishuDocMetaResult =
-  | { readonly kind: 'visible'; readonly meta: FeishuDocMeta }
+  | { readonly kind: 'visible' }
   | { readonly kind: 'invisible' }
   | { readonly kind: 'unsupported_type' }
 
@@ -566,11 +561,10 @@ export function createFeishuTransport(
       const dt = asMetaDocType(fileType)
       if (!dt) return { kind: 'unsupported_type' }
       const res = await client.drive.meta.batchQuery({
-        data: { request_docs: [{ doc_token: fileToken, doc_type: dt }], with_url: true },
+        data: { request_docs: [{ doc_token: fileToken, doc_type: dt }] },
       })
-      const meta = res.data?.metas?.find((row) => row.doc_token === fileToken)
-      if (meta) {
-        return { kind: 'visible', meta: { title: meta.title ?? '', url: meta.url ?? '' } }
+      if (res.data?.metas?.some((row) => row.doc_token === fileToken)) {
+        return { kind: 'visible' }
       }
       if (res.data?.failed_list?.some((row) => row.token === fileToken)) {
         return { kind: 'invisible' }

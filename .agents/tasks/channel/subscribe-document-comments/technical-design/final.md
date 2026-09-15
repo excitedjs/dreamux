@@ -358,8 +358,8 @@ The submission:
   The cold-open delivery carries one more sentence — nothing is subscribed to
   this document, and the mention is why it arrived — because that is the fact
   the Dispatcher Agent is otherwise missing. It is a statement, not an
-  instruction. Which of the two a submission carries is a parameter of
-  `documentCommentSubmission`, not a second delivery path.
+  instruction. Which of the two a submission carries is the reminder text the
+  delivery passes to the one submission builder, not a second delivery path.
 
 ## The unclaimed event
 

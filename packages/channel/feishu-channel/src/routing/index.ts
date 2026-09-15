@@ -65,6 +65,16 @@ export type FeishuRoutingPlan =
   | FeishuRoutingPlanProvision
   | FeishuRoutingPlanDispatcher;
 
+/**
+ * One subscription as its owner may see it. `team_name` is absent because the
+ * read is already scoped to one recipient: every row it can return is its own.
+ */
+export interface FeishuDocumentSubscriptionView {
+  readonly file_token: string;
+  readonly file_type: string;
+  readonly created_at: number;
+}
+
 export interface FeishuBindingView {
   readonly target_kind: FeishuTargetRecord['kind'];
   readonly chat_id: string;
@@ -408,10 +418,14 @@ export class FeishuRouting {
   /** The rows one recipient owns — what it may see, and what it may remove. */
   listSubscriptions(
     teamName: string | null,
-  ): readonly FeishuDocSubscriptionRecord[] {
-    return this.opts.store.current.subscriptions.filter(
-      (row) => row.team_name === teamName,
-    );
+  ): readonly FeishuDocumentSubscriptionView[] {
+    return this.opts.store.current.subscriptions
+      .filter((row) => row.team_name === teamName)
+      .map((row) => ({
+        file_token: row.file_token,
+        file_type: row.file_type,
+        created_at: row.created_at,
+      }));
   }
 
   // ── Collaboration Space policy ─────────────────────────────────────────

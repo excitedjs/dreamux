@@ -77,12 +77,6 @@ const ENRICHMENT_TIMEOUT_MS = 2_000;
 
 const DOC_COMMENT_QUOTE_NOTE = 'the document text this comment is anchored to';
 
-export interface FeishuDocumentSubscriptionView {
-  readonly file_token: string;
-  readonly file_type: string;
-  readonly created_at: number;
-}
-
 export interface FeishuDocumentCommentsOptions {
   readonly dispatcherId: string;
   readonly channelId: string;
@@ -102,9 +96,9 @@ export interface FeishuDocumentCommentsOptions {
   /** Best-effort display name for the commenter; may answer `undefined`. */
   resolveUserName(openId: string): Promise<string | undefined>;
   /**
-   * Whether this commenter is one of the Dispatcher's trusted humans. Read-only
-   * and injected, so this module learns no access-state layout and the gate
-   * keeps its single owner.
+   * Whether this commenter is one of the Dispatcher's trusted humans. Injected
+   * rather than read here, so this module learns no access-state layout and no
+   * path to it.
    */
   isTrustedUser(openId: string): Promise<boolean>;
 }
@@ -199,16 +193,6 @@ export class FeishuDocumentComments {
     return { file_token: resolved.token, unsubscribed };
   }
 
-  listSubscriptions(
-    teamName: string | null,
-  ): readonly FeishuDocumentSubscriptionView[] {
-    return this.opts.routing.listSubscriptions(teamName).map((row) => ({
-      file_token: row.file_token,
-      file_type: row.file_type,
-      created_at: row.created_at,
-    }));
-  }
-
   private async resolveDocument(
     document: string,
     declaredType: string | null,
@@ -248,7 +232,10 @@ export class FeishuDocumentComments {
       await this.deliverUnclaimed(event);
       return;
     }
-    const submission = await this.submissionFor({ event, subscribed: true });
+    const submission = await this.submissionFor({
+      event,
+      reminder: DOC_COMMENT_REMINDER,
+    });
     await Promise.all(
       subscribers.map((row) => this.deliverTo(row, event, submission)),
     );
@@ -262,7 +249,7 @@ export class FeishuDocumentComments {
    */
   private async submissionFor(input: {
     event: FeishuCommentEvent;
-    subscribed: boolean;
+    reminder: string;
   }): Promise<FeishuSubmission> {
     const { event } = input;
     const deadlineAt = Date.now() + ENRICHMENT_TIMEOUT_MS;
@@ -274,7 +261,7 @@ export class FeishuDocumentComments {
       event,
       senderName,
       comment,
-      subscribed: input.subscribed,
+      reminder: input.reminder,
     });
   }
 
@@ -301,7 +288,10 @@ export class FeishuDocumentComments {
       );
       return;
     }
-    const submission = await this.submissionFor({ event, subscribed: false });
+    const submission = await this.submissionFor({
+      event,
+      reminder: DOC_COMMENT_COLD_OPEN_REMINDER,
+    });
     // No row is written and none is removed: this delivery is a cold open, not
     // a subscription, so a rejection on it has nothing to reconcile.
     const outcome = await this.opts.submit(null, submission);
@@ -325,9 +315,16 @@ export class FeishuDocumentComments {
       );
       return;
     }
-    // The same proof, and the same commit path, that removes a stale binding:
-    // Core resolved the recipient and refused before creating anything. It
-    // removes this subscriber's row and no other.
+    // The same proof that retires a stale binding: Core resolved the recipient
+    // and refused before creating anything. It commits through the same store
+    // path, and removes this subscriber's row and no other.
+    //
+    // Deliberately narrower than what the chat path does with that proof:
+    // `forgetTeamRoutes` drops every row reaching the closed Team and announces
+    // the end into its bound chats, which a document event has no standing to
+    // trigger. The cost is that this Team's other subscriptions come off one
+    // comment at a time, and a subscription on a document nobody comments on
+    // again outlives its owner.
     try {
       await this.opts.routing.unsubscribe(event.fileToken, row.team_name);
       this.opts.log.info(
@@ -417,25 +414,22 @@ export class FeishuDocumentComments {
  * unique across documents. The recipient is already part of Core's ledger key,
  * so one id reaching two subscribers is two keys and both are admitted.
  *
- * `subscribed` chooses the reminder and nothing else. A cold open reaches a
- * recipient that never asked for this document, and that — not any of the
- * comment's own facts, which are all on the envelope — is what the two
- * deliveries differ by.
+ * The reminder arrives as itself rather than as a flag that picks it: it is the
+ * only thing the two deliveries differ by — every fact about the comment is on
+ * the envelope either way — and each caller already knows which one it is.
  */
-export function documentCommentSubmission(input: {
+function documentCommentSubmission(input: {
   event: FeishuCommentEvent;
   senderName: string;
   comment: FeishuDocCommentText | null;
-  subscribed: boolean;
+  reminder: string;
 }): FeishuSubmission {
   const { event } = input;
   return {
     kind: 'doc_comment',
     attrs: documentCommentAttrs(event, input.senderName),
     text: documentCommentBody(input.comment),
-    reminder: input.subscribed
-      ? DOC_COMMENT_REMINDER
-      : DOC_COMMENT_COLD_OPEN_REMINDER,
+    reminder: input.reminder,
     sourceId: `${event.fileToken}:${event.commentId}:${event.replyId}`,
   };
 }

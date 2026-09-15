@@ -1158,14 +1158,10 @@ describe('createFeishuTransport — injected logger safety boundary (#74)', () =
  * as a collaborator".
  */
 describe('createFeishuTransport — fetchDocMeta discriminates its answers', () => {
-  test('a token Feishu returns metadata for is visible, and carries it', async () => {
+  test('a token Feishu returns a metadata row for is visible', async () => {
     const stub = stubClient()
     stub.metaBatchQuery.mockResolvedValueOnce({
-      data: {
-        metas: [
-          { doc_token: 'doc_tok', title: 'Design', url: 'https://example.invalid/d' },
-        ],
-      },
+      data: { metas: [{ doc_token: 'doc_tok', title: 'Design' }] },
     } as never)
     const transport = createFeishuTransport(
       { appId: 'app', appSecret: 's' },
@@ -1174,7 +1170,6 @@ describe('createFeishuTransport — fetchDocMeta discriminates its answers', () 
 
     await expect(transport.fetchDocMeta('doc_tok', 'docx')).resolves.toEqual({
       kind: 'visible',
-      meta: { title: 'Design', url: 'https://example.invalid/d' },
     })
   })
 
