@@ -31,7 +31,7 @@
 
 ## Delivery
 
-- Pull request: Opened against `next`; see the branch's pull request.
+- Pull request: [PR #428](https://github.com/excitedjs/dreamux/pull/428).
 - Implementation: one developer TeamMate, one writer, 17 files. It stopped once
   mid-task to report that acceptance criterion 4 was unsatisfiable, which was
   correct — see the correction recorded in `requirement.md` and section 4b of
