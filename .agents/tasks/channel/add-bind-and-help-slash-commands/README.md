@@ -6,8 +6,8 @@
 - State: `solution`
 - Requirement: [Current requirement](/.agents/tasks/channel/add-bind-and-help-slash-commands/requirement.md)
 - Final solution: [Draft under external review](/.agents/tasks/channel/add-bind-and-help-slash-commands/technical-design/draft.md)
-- Solution review Issue: Not created.
-- Blockers: None. Requirement converged 2026-09-15; the solution draft is out for review.
+- Solution review Issue: [#426](https://github.com/excitedjs/dreamux/issues/426)
+- Blockers: None. Requirement converged 2026-09-15; the solution draft is under external review on issue #426.
 - Next action: Adjudicate the solution review, write `technical-design/final.md`, then send the development-authorization card.
 - Related tasks: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md) built the command table this task extends.
 
