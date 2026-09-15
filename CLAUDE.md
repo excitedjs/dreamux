@@ -205,6 +205,15 @@ it applies only when the upgraded daemon or CLI cannot start until the operator
 performs that migration by hand. Dreamux 0.x handles those by fail-loud plus
 manual rebuild, never by silent migration.
 
+That policy exists because the Dispatcher reads the changelog at startup and
+migrates configuration itself — not because compatibility is the operator's
+problem. That mechanism sometimes misses, and a human then repairs the install
+by hand, so do not lean on it: a change must not offload compatibility onto the
+upgrading Dispatcher when it could simply leave existing files readable and
+behaving as they did. A new rule that only refuses future writes needs no
+migration at all. Full policy and the ordering to apply:
+[`state-config-and-files.md`](.agents/domains/state-config-and-files.md).
+
 Everything else is an ordinary change note. API, MCP, and CLI tool contract
 changes, and behavior or semantic changes that leave persisted files readable
 as they are, do not block an upgrade: describe them plainly and never use

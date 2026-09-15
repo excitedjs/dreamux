@@ -473,6 +473,47 @@ Rules:
   changes that leave persisted files readable as they are — is an ordinary
   change note that must never use `BREAKING:`, `Rebuild:`, or `Review:`.
 
+#### Why there is no migration code, and the limit on leaning on it
+
+The policy is not "the operator will cope". It exists because the upgrade is
+attended: at startup the Dispatcher reads the changelog and performs the
+configuration migration itself. Migration lives in an agent reading change
+notes rather than in code paths every reader must carry forever.
+
+That mechanism is not reliable enough to design against, and its failures are
+not self-announcing. The operator, on 2026-09-15: "这个也不是每次都好使的，历史上
+也出过几次，doctor 跑过了，但是起不来的问题。这个时候就只能人去修了。" So
+`dreamux doctor` reporting ok is not evidence that an upgrade landed: it has
+passed on installs that then would not start, and a human repaired them by
+hand. Do not treat a green doctor run as the migration's acceptance test, and
+do not write a change note that leans on one.
+
+So the absence of migration code is **not** a licence to turn every change into
+an upgrade task. In his words: "原则是原则，但是我们不能基于这个原则，加码把所有的
+兼容都丢给负责升级的 dispatcher。" A change author owes the upgrade the cheapest
+correct outcome, in this order:
+
+1. **Leave existing files readable and behaving as they did.** Then there is no
+   migration and no Dispatcher action, and the change note says so plainly. A
+   new rule that only refuses future writes belongs here: the write is an act
+   an operator is present for, while an upgrade is not. The 2026-09-15
+   binding/space exclusion is the worked example — `bind` and `bindSpace` refuse
+   a new conflict, every document already on disk keeps loading and routing
+   exactly as before, and the operator ruled: "这种程度的变更，我判断是不需要
+   Dispatcher 升级时需做迁移".
+2. **Make the new reader accept the old shape** when the fact is still there to
+   read, rather than asking anyone to convert it.
+3. **`BREAKING:` + `Rebuild:` only when the upgraded daemon genuinely cannot
+   start.** That is the one case where handing work to the operator is
+   unavoidable, and it is why `BREAKING:` marks nothing else.
+
+Adding a validation that rejects a document a previous build wrote moves a
+change from (1) to (3) — check that the rejection is earning its cost before
+writing it. The removed-field rule under *Invariants* draws the same line for
+one field: rejection is earned only when accepting would silently discard a
+fact the reader cannot otherwise see, because each rejection costs the operator
+a rebuild.
+
 Any change to the shape, validation, default, ownership, or meaning of a config
 or persisted state file also updates
 `/packages/dreamux/skills/dispatcher/dreamux-maintenance/` in the same change.
