@@ -38,6 +38,15 @@ export interface WorkflowRunRecord {
   team_id: string | null;
   caller_kind: WorkflowCallerKind;
   script_hash: string;
+  /**
+   * The `meta.name` / `meta.description` the submitted script declared.
+   *
+   * Null only on a record written before the run carried its own words; a run
+   * created by this build always has both, because the submitting scope reads
+   * them before the record exists.
+   */
+  name: string | null;
+  description: string | null;
   status: WorkflowRunStatus;
   max_concurrency: number;
   phase: string | null;
@@ -128,6 +137,8 @@ export function workflowRunResult(record: WorkflowRunRecord): WorkflowRunRecord 
     team_id: record.team_id,
     caller_kind: record.caller_kind,
     script_hash: record.script_hash,
+    name: record.name,
+    description: record.description,
     status: record.status,
     max_concurrency: record.max_concurrency,
     phase: record.phase,

@@ -609,10 +609,14 @@ describe('TeammateService.prepareCompletion: completion delivery defaults to the
         source: 'workflow' as const,
         runId: 'wf-1',
         status: 'completed' as const,
-        result: 'the run is done',
+        description: 'the run',
+        error: null,
+        agents: { total: 1, succeeded: 1, failed: 0 },
+        outputPath: '/runs/wf-1/output.json',
+        journalPath: '/runs/wf-1/journal.jsonl',
       },
       notice: { kind: 'workflow_completion' },
-      says: 'Workflow wf-1 has completed.',
+      says: '<task-id>wf-1</task-id>',
     },
   ])('tells the display which producer reported when $what finished', async (
     { fact, notice, says },
@@ -626,7 +630,7 @@ describe('TeammateService.prepareCompletion: completion delivery defaults to the
     // Every provenance name here is the same `task-notification`, so the
     // producer is stated as a fact rather than read back out of the prose.
     expect(inputs[1]?.notice).toEqual(notice);
-    // The model still gets the whole notification body it always got.
+    // The model still gets the whole notification body its producer renders.
     expect(inputs[1]?.text).toContain(says);
     expect(h.submittedInputs[1]?.text).toContain(says);
   });

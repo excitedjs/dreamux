@@ -404,6 +404,17 @@ export function workflowRunJournalPath(input: WorkflowRunPathInput): string {
 }
 
 /**
+ * `<run-dir>/output.json` — the terminal result the caller is pointed at.
+ *
+ * The completion notification names this path instead of inlining the result,
+ * so it has to survive as long as the run does: state beside the record and the
+ * journal, not a cache a sweep may remove between the notification and the read.
+ */
+export function workflowRunOutputPath(input: WorkflowRunPathInput): string {
+  return join(workflowRunDir(input), 'output.json');
+}
+
+/**
  * `<entity-dir>/identity.json` — durable identity and runtime association.
  *
  * The entity directory arrives already resolved from the owner that

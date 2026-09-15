@@ -78,9 +78,15 @@ runtime app-server readiness, and same-version restart cautions.
   `~/.dreamux/state/<dispatcher-id>/workflow/<run-id>/`; TeamLeader-scoped
   Workflow state lives under
   `~/.dreamux/state/<dispatcher-id>/team/<team-id>/workflow/<run-id>/`. Each
-  run's `record.json` and append-only `journal.jsonl` are fully server-owned. Do
-  not edit, truncate, copy over, synthesize, or delete either file as a repair
-  action.
+  run's `record.json`, append-only `journal.jsonl`, and terminal `output.json`
+  are fully server-owned. Do not edit, truncate, copy over, synthesize, or
+  delete any of the three as a repair action.
+- `record.json` carries the `name` and `description` the submitted script
+  declared; both are null on a record written by a build that did not record
+  them. `output.json` is written at every terminal and holds that run's status,
+  result, error, and Agent names. The run's completion notification names the
+  `output.json` path rather than carrying the result, so treat the file as the
+  supported way to read a finished run's result.
 - Use `workflow_status` and `workflow_list` in the original caller scope for
   public run inspection. Treat `record.json` and `journal.jsonl` as narrow
   diagnostics only when the supported surfaces are insufficient; sanitize
@@ -89,10 +95,12 @@ runtime app-server readiness, and same-version restart cautions.
   Do not change durable state to override that bound. A run can start at most
   1000 agents across its complete lifecycle; `parallel()` accepts at most 4096
   functions and `pipeline()` accepts at most 4096 items per call.
-- A returned `{ run_id }` is a durable acceptance receipt, not proof that script
-  compilation, metadata validation, runtime execution, completion delivery,
-  or visible Channel delivery succeeded. Inspect the run's terminal state and
-  then the delivery boundary separately.
+- A script that declares no valid `meta` is rejected by `workflow_run` itself,
+  before a run id exists; there is no durable record to inspect for that case.
+  A returned `{ run_id }` is a durable acceptance receipt, not proof that script
+  compilation, runtime execution, completion delivery, or visible Channel
+  delivery succeeded. Inspect the run's terminal state and then the delivery
+  boundary separately.
 - A run stopped by `workflow_stop`, Team dissolve, or host stop converges its
   record and journal to `stopped` and pushes no terminal completion to the
   Agent that started it; a run whose completed or failed terminal was selected

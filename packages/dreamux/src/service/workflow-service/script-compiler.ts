@@ -14,6 +14,29 @@ interface WorkflowMetaExport {
   initializer: Expression;
 }
 
+/** The identity a workflow script declares about itself. */
+export interface WorkflowMeta {
+  name: string;
+  description: string;
+}
+
+/**
+ * Read the declared identity without compiling.
+ *
+ * The scope that creates a run needs the script's own words before the runner
+ * child exists, so the durable record carries them from the moment the run is
+ * created. Validation lives in one place, so what this accepts and what the
+ * compiler accepts cannot drift.
+ */
+export function readWorkflowMeta(source: string): WorkflowMeta {
+  const program = parseWorkflowScript(source);
+  const metaExport = workflowMetaExport(program.body[0]);
+  if (metaExport === null) {
+    throw new Error('workflow script must start with export const meta');
+  }
+  return validateWorkflowMeta(readPlainLiteralObject(metaExport.initializer));
+}
+
 /**
  * Compile the single public Workflow dialect into one private async closure.
  * The metadata source range is replaced with syntax + whitespace that preserves
@@ -200,18 +223,21 @@ function plainPropertyName(property: Property): string {
   throw new Error('workflow meta object keys must be non-computed literals');
 }
 
-function validateWorkflowMeta(meta: Record<string, unknown>): void {
-  if (typeof meta.name !== 'string' || typeof meta.description !== 'string') {
+function validateWorkflowMeta(meta: Record<string, unknown>): WorkflowMeta {
+  const { name, description } = meta;
+  if (typeof name !== 'string' || typeof description !== 'string') {
     throw new Error('workflow meta must include string name and description');
   }
   if (meta.whenToUse !== undefined && typeof meta.whenToUse !== 'string') {
     throw new Error('workflow meta whenToUse must be a string');
   }
-  if (meta.phases === undefined) return;
-  if (!Array.isArray(meta.phases)) {
-    throw new Error('workflow meta phases must be an array of objects');
+  if (meta.phases !== undefined) {
+    if (!Array.isArray(meta.phases)) {
+      throw new Error('workflow meta phases must be an array of objects');
+    }
+    for (const phase of meta.phases) validateWorkflowPhase(phase);
   }
-  for (const phase of meta.phases) validateWorkflowPhase(phase);
+  return { name, description };
 }
 
 function validateWorkflowPhase(phase: unknown): void {

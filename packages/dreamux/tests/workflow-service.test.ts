@@ -14,12 +14,17 @@ import type { CompletionDeliveryPolicy } from '../src/service/completion-router/
 import {
   workflowRunDir,
   workflowRunJournalPath,
+  workflowRunOutputPath,
   workflowRunRecordPath,
 } from '../src/platform/paths.js';
 import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/agent-policy.js';
 import { WorkflowService } from '../src/service/workflow-service/index.js';
 import { WorkflowRun } from '../src/service/workflow-service/run.js';
-import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js';
+import {
+  workflowRunResult,
+  type WorkflowRunRecord,
+} from '../src/service/workflow-service/types.js';
+import { teammateToolDescriptors } from '../src/service/teammate-collection/mcp-tool-descriptors.js';
 import type { LockedTeammate } from '../src/service/teammate-service/types.js';
 import {
   beginWorkflowRoot,
@@ -36,6 +41,16 @@ import {
   waitUntil,
   type WorkflowRootState,
 } from './helpers/workflow-harness.js';
+
+/**
+ * The smallest script the submission path accepts.
+ *
+ * A run is created with the words its own script declares, so `WorkflowService`
+ * reads `meta` before the record exists; a script without one never reaches the
+ * runner these tests fake.
+ */
+const SCRIPT =
+  "export const meta = { name: 'noop', description: 'noop run' };";
 
 let root: WorkflowRootState;
 
@@ -55,6 +70,10 @@ function recordPath(runId: string): string {
 
 function journalPath(runId: string): string {
   return workflowRunJournalPath({ ...SCOPE, runId });
+}
+
+function outputPath(runId: string): string {
+  return workflowRunOutputPath({ ...SCOPE, runId });
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -81,6 +100,8 @@ function baseRecord(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunReco
     team_id: SCOPE.teamId,
     caller_kind: 'dispatcher',
     script_hash: 'hash',
+    name: null,
+    description: null,
     status: 'running',
     max_concurrency: 4,
     phase: null,
@@ -156,6 +177,17 @@ describe('WorkflowService.start() reads committed durable facts only', () => {
     // Durably written, not only held in memory.
     const onDisk = JSON.parse(await readFile(recordPath('run-a'), 'utf8')) as WorkflowRunRecord;
     expect(onDisk.status).toBe('stopped');
+
+    // A recovered run notifies nobody, so nothing else would ever write its
+    // output file — and the maintenance skill sends an operator to that file
+    // for any finished run's result. Every terminal has one, this one included.
+    expect(JSON.parse(await readFile(outputPath('run-a'), 'utf8'))).toEqual({
+      run_id: 'run-a',
+      status: 'stopped',
+      result: null,
+      error: onDisk.error,
+      agents: [{ index: 0, name: 'agent-1' }],
+    });
 
     const journalLines = (await readFile(journalPath('run-a'), 'utf8'))
       .trim()
@@ -276,7 +308,7 @@ describe('journal + terminal settlement: exactly one terminal outcome', () => {
     });
 
     await service.start();
-    const accepted = await service.run({ script: 'noop' });
+    const accepted = await service.run({ script: SCRIPT });
     expect(accepted.run_id).toBe('run-a');
 
     const stopped = await service.stop({ run_id: 'run-a' });
@@ -300,6 +332,118 @@ describe('journal + terminal settlement: exactly one terminal outcome', () => {
     expect(terminalRows).toHaveLength(1);
     expect(terminalRows[0]?.status).toBe('stopped');
     expect(delivery.delivered).toEqual([]);
+  });
+});
+
+describe('the report a terminal run leaves behind', () => {
+  function serviceWith(
+    runnerFactory: ReturnType<typeof fakeWorkflowRunnerFactory>,
+    delivery: ReturnType<typeof fakeCompletionDelivery>,
+  ): WorkflowService {
+    return new WorkflowService({
+      ...SCOPE,
+      callerKind: 'dispatcher',
+      teammates: fakeTeammateFactory(() => {
+        throw new Error('no agents in this script');
+      }),
+      completionDelivery: delivery.policy,
+      completionInitiator: () => fakeCompletionInitiator(),
+      log: silentLog(),
+      createRunner: runnerFactory.factory,
+      generateRunId: fixedRunIds('run-a'),
+    });
+  }
+
+  it('records the words its script declared, and refuses a script declaring none', async () => {
+    const service = serviceWith(
+      fakeWorkflowRunnerFactory(),
+      fakeCompletionDelivery(),
+    );
+    await service.start();
+    await service.run({ script: SCRIPT });
+
+    const record = JSON.parse(
+      await readFile(recordPath('run-a'), 'utf8'),
+    ) as WorkflowRunRecord;
+    expect(record.name).toBe('noop');
+    expect(record.description).toBe('noop run');
+
+    // A run reports itself in its script's own words, so a script that declares
+    // none is refused at submission, where the caller still hears why.
+    await expect(service.run({ script: 'return 1;' })).rejects.toThrow(
+      /must start with export const meta/u,
+    );
+  });
+
+  it('publishes the result beside the record and points the caller at it', async () => {
+    const runnerFactory = fakeWorkflowRunnerFactory();
+    const delivery = fakeCompletionDelivery();
+    const service = serviceWith(runnerFactory, delivery);
+    await service.start();
+    await service.run({ script: SCRIPT });
+
+    runnerFactory.runners[0]!.emit({
+      type: 'run_result',
+      status: 'completed',
+      result: { ok: true },
+    });
+    await waitUntil(() => delivery.delivered.length >= 1);
+
+    expect(delivery.delivered[0]).toMatchObject({
+      kind: 'workflow',
+      status: 'completed',
+      description: 'noop run',
+      error: null,
+      agents: { total: 0, succeeded: 0, failed: 0 },
+      outputPath: outputPath('run-a'),
+      journalPath: journalPath('run-a'),
+    });
+    // The result itself never rides along: the caller is told where it is.
+    expect(delivery.delivered[0]).not.toHaveProperty('result');
+    expect(JSON.parse(await readFile(outputPath('run-a'), 'utf8'))).toEqual({
+      run_id: 'run-a',
+      status: 'completed',
+      result: { ok: true },
+      error: null,
+      agents: [],
+    });
+  });
+
+  it('reads a record written before runs carried their own words', async () => {
+    const legacy: Record<string, unknown> = {
+      ...baseRecord({ run_id: 'run-old', status: 'completed' }),
+    };
+    delete legacy['name'];
+    delete legacy['description'];
+    await writeJson(recordPath('run-old'), legacy);
+
+    const service = serviceWith(
+      fakeWorkflowRunnerFactory(),
+      fakeCompletionDelivery(),
+    );
+    await service.start();
+
+    await expect(service.status({ run_id: 'run-old' })).resolves.toMatchObject({
+      name: null,
+      description: null,
+      status: 'completed',
+    });
+  });
+
+  it('publishes output.json for a terminal nobody is notified about', async () => {
+    const delivery = fakeCompletionDelivery();
+    const service = serviceWith(fakeWorkflowRunnerFactory(), delivery);
+    await service.start();
+    await service.run({ script: SCRIPT });
+
+    await service.stop({ run_id: 'run-a' });
+
+    expect(delivery.delivered).toEqual([]);
+    expect(JSON.parse(await readFile(outputPath('run-a'), 'utf8'))).toMatchObject({
+      run_id: 'run-a',
+      status: 'stopped',
+      result: null,
+    });
   });
 });
 
@@ -334,7 +478,7 @@ describe('owner-side exact-instance eviction', () => {
     });
     await service.start();
 
-    const acceptedA = await service.run({ script: 'noop' });
+    const acceptedA = await service.run({ script: SCRIPT });
     expect(acceptedA.run_id).toBe('run-x');
     const runnerA = runnerFactory.runners[0]!;
     runnerA.emit({ type: 'run_result', status: 'completed', result: null });
@@ -345,7 +489,7 @@ describe('owner-side exact-instance eviction', () => {
 
     await rm(workflowRunDir({ ...SCOPE, runId: 'run-x' }), { recursive: true, force: true });
 
-    const acceptedB = await service.run({ script: 'noop' });
+    const acceptedB = await service.run({ script: SCRIPT });
     expect(acceptedB.run_id).toBe('run-x');
     // B has not reached run_result — it is still live, status 'running'.
     // Delete B's own durable record so the only place a correct answer can
@@ -403,7 +547,7 @@ describe('Workflow terminal delivery across stop races', () => {
       generateRunId: fixedRunIds('run-a'),
     });
     await service.start();
-    await service.run({ script: 'noop' });
+    await service.run({ script: SCRIPT });
 
     const runner = runnerFactory.runners[0]!;
     runner.emit({ type: 'agent_start', index: 0, prompt: 'do it', options: {} });
@@ -444,14 +588,18 @@ describe('Workflow terminal delivery across stop races', () => {
       generateRunId: fixedRunIds('run-a'),
     });
     await service.start();
-    await service.run({ script: 'noop' });
+    await service.run({ script: SCRIPT });
 
     const runner = runnerFactory.runners[0]!;
     runner.emit({ type: 'run_result', status: 'failed', error: 'boom' });
     await waitUntil(() => delivery.delivered.length >= 1);
 
-    expect(delivery.delivered[0]).toMatchObject({ kind: 'workflow', status: 'failed' });
-    expect(String(delivery.delivered[0]?.result)).toContain('boom');
+    expect(delivery.delivered[0]).toMatchObject({
+      kind: 'workflow',
+      status: 'failed',
+      error: 'boom',
+      description: 'noop run',
+    });
     expect(delivery.deliverRuntimeCalls).toBe(0);
   });
 
@@ -471,7 +619,7 @@ describe('Workflow terminal delivery across stop races', () => {
       generateRunId: fixedRunIds('run-a'),
     });
     await service.start();
-    await service.run({ script: 'noop' });
+    await service.run({ script: SCRIPT });
 
     const runner = runnerFactory.runners[0]!;
     const stopEntered = gate();
@@ -519,7 +667,7 @@ describe('Workflow terminal delivery across stop races', () => {
       generateRunId: fixedRunIds('run-a'),
     });
     await service.start();
-    await service.run({ script: 'noop' });
+    await service.run({ script: SCRIPT });
 
     const runner = runnerFactory.runners[0]!;
     const stopEntered = gate();
@@ -573,7 +721,7 @@ describe('Workflow terminal delivery across stop races', () => {
       generateRunId: fixedRunIds('run-a'),
     });
     await service.start();
-    await service.run({ script: 'noop' });
+    await service.run({ script: SCRIPT });
 
     runnerFactory.runners[0]!.emit({
       type: 'run_result',
@@ -631,7 +779,7 @@ describe('team-scoped Workflow member creation: a narrow createLocked capability
       generateRunId: fixedRunIds('run-a'),
     });
     await service.start();
-    await service.run({ script: 'noop' });
+    await service.run({ script: SCRIPT });
 
     const runner = runnerFactory.runners[0]!;
     runner.emit({
@@ -678,7 +826,7 @@ describe('team-scoped Workflow member creation: a narrow createLocked capability
       generateRunId: fixedRunIds('run-a'),
     });
     await service.start();
-    await service.run({ script: 'noop', max_concurrency: 4 });
+    await service.run({ script: SCRIPT, max_concurrency: 4 });
     const runner = runnerFactory.runners[0]!;
 
     const schema = { type: 'object', properties: {} } as const;
@@ -749,8 +897,8 @@ describe('WorkflowService.stopAll() owns shutdown convergence', () => {
       generateRunId: fixedRunIds('run-a', 'run-b'),
     });
     await service.start();
-    await service.run({ script: 'noop' });
-    await service.run({ script: 'noop' });
+    await service.run({ script: SCRIPT });
+    await service.run({ script: SCRIPT });
     expect(runnerFactory.runners).toHaveLength(2);
 
     await service.stopAll();
@@ -791,7 +939,7 @@ describe('WorkflowService.stopAll() owns shutdown convergence', () => {
         await originalInitialize.call(this);
       });
     try {
-      const creating = service.run({ script: 'noop' });
+      const creating = service.run({ script: SCRIPT });
       await initializeEntered.promise;
 
       service.closeAdmission();
@@ -807,5 +955,28 @@ describe('WorkflowService.stopAll() owns shutdown convergence', () => {
       allowInitialize.release();
       initializeSpy.mockRestore();
     }
+  });
+});
+
+describe('the shape a run is advertised in', () => {
+  // A record field is projected verbatim by `workflowRunResult`, and the
+  // `workflow_status` / `workflow_list` output schema is closed
+  // (`additionalProperties: false`) around the keys it lists. So a field added
+  // to the record reaches the wire while the schema still forbids it, and the
+  // SDK rejects the result of every read — a total outage of both tools that
+  // build, lint, test, and typecheck:tests all stay green through, because
+  // nothing else compares the two. This is that comparison.
+  it('declares exactly the keys a run projects', () => {
+    const status = teammateToolDescriptors('dispatcher').find(
+      (tool) => tool.name === 'workflow_status',
+    );
+    const schema = status?.outputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    const projected = Object.keys(workflowRunResult(baseRecord())).sort();
+
+    expect(Object.keys(schema.properties).sort()).toEqual(projected);
+    expect([...schema.required].sort()).toEqual(projected);
   });
 });
