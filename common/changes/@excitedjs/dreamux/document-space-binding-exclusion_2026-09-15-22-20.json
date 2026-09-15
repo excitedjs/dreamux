@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Document in the maintenance reference that a Feishu chat carries either a whole-chat binding or a collaboration space, never both, and which tool refuses each side.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -75,12 +75,13 @@ Not applied, and why:
 - **`announceIn` stays on `bindChannel`.** The alternative — answering through
   `FeishuSlashCommandReply.card` — either double-messages a `/bind` typed in an
   ordinary group or reintroduces the same `sameTarget` condition one layer up.
-- **`bindHarness` is the fifth copy of the `FeishuChannelSession` bootstrap.**
-  Four more sit inline in the same test file and two in sibling files. Only the
-  `invoke` stub, the access policy, and whether `start()` runs actually vary.
-  Extracting a helper for the new copy alone would add a mechanism while every
-  original survived; the honest fix is one `tests/helpers/` session factory that
-  replaces all of them, which is its own change. **Cleanup trail.**
+- **The repeated `FeishuChannelSession` bootstrap in tests stays as it is.**
+  Eight construction sites across four test files share one field set, varying
+  only in the `invoke` stub, the access policy, and whether `start()` runs.
+  Offered as a `tests/helpers/` session factory replacing all eight, the
+  operator chose **"不做"** on a question card dated 2026-09-15: a test that
+  spells out its own setup reads better than one that delegates it. This is a
+  ruling, not an unpaid cleanup — do not re-propose it.
 
 ### Closing the Collaboration Space container hole
 
