@@ -64,8 +64,12 @@ The operator asked for three things, verbatim:
 ## Acceptance criteria
 
 1. `/bind <team_name>` typed in an ordinary group binds that chat to the named
-   Team. The binding notification card `bindChannel` already sends is the only
-   announcement; the command itself answers `silent`.
+   Team. The binding notification card is the only announcement; the command
+   itself answers `silent`.
+1a. The binding notification card is delivered into the conversation the
+   command was typed in, including when that is a topic. A bind requested
+   through the MCP tool, which has no such conversation, still announces into
+   the bound target.
 2. `/bind` typed inside a topic binds the topic's chat, not the topic.
 3. `/bind` in a chat registered as a Collaboration Space container answers with
    a refusal and changes no routing.
@@ -119,6 +123,11 @@ The operator asked for three things, verbatim:
   recommendation and its data are kept in the solution so the trade-off stays
   legible; the ruling stands.
 
+- **Where the binding card goes (2026-09-15).** Offered three receipt shapes for
+  a successful `/bind`, the operator asked instead: "不能把原本发卡的逻辑调整
+  正确吗". The card is made to land in the conversation that asked for the bind,
+  which makes a receipt unnecessary; `/bind` answers `silent` in every case.
+
 ### More assumptions (labelled, not yet confirmed)
 
 - `/help` renders as a Markdown list rather than a hand-built structured card.
@@ -130,9 +139,5 @@ The operator asked for three things, verbatim:
 
 ### Blocking unknowns
 
-- **Q5, open.** What a successful `/bind` answers. The first assumption was
-  `silent`, on `/dissolve`'s ground that `bindChannel` already announces itself.
-  That ground was then checked and does not hold everywhere: `notificationTarget`
-  sends a non-topic notification with no `replyTo`, which in a topic-mode group
-  opens a new topic, so a `/bind` typed inside a topic gets no answer where it
-  was typed. See `technical-design/draft.md` section 4c.
+- None. Q5 was resolved by the operator's counter-question rather than by one of
+  the offered options — see the decision below.

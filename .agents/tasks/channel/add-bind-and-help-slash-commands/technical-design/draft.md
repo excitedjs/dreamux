@@ -220,28 +220,64 @@ What it deliberately does **not** do:
 - It does not check whether the chat is already bound. The operator ruled
   rebinding is ordinary; `bindChannel` reports the previous Team on its card.
 
-### 4c. Open question Q5 — what a successful `/bind` answers
+### 4c. Where the binding card goes
 
-The draft first assumed `silent`, borrowing `/dissolve`'s reason: `bindChannel`
-already sends `bindingBoundCard`, so a receipt would be the second message about
-one event. Checking where that card lands showed the reason does not transfer
-everywhere. `notificationTarget` returns `{ conversationId: chatId }` with no
-`replyTo` for any non-topic target, and in a topic-mode group a message with no
-`replyTo` opens a **new topic**.
+The draft first assumed a `silent` answer, borrowing `/dissolve`'s reason:
+`bindChannel` already sends `bindingBoundCard`, so a receipt would be the second
+message about one event. Checking where that card lands showed the reason did
+not transfer: `notificationTarget` returns `{ conversationId: chatId }` with no
+`replyTo` for any non-topic target, and the knowledge base states the
+consequence plainly — a fresh top-level card to a container chat "in a Feishu
+topic group creates a new topic"
+([`channel.md`](/.agents/domains/channel.md)). A `/bind` typed inside a topic
+would announce itself in a new topic and leave the operator's own topic silent.
 
-So for `/bind` typed inside a topic of an ordinary (non-Space) topic group:
+Offered three receipt shapes, the operator asked instead whether the card logic
+could simply be made correct. It can, and the fix is smaller than any of them.
 
-- the card announcing the bind appears as a new topic, not in the topic the
-  command was typed in;
-- and if that topic has a binding row of its own, `resolutionChain` keeps
-  routing it to its old Team, so the conversation the operator typed in is
-  unchanged.
+`bindChannel` learns where to announce, defaulting to today's behavior:
 
-Under `silent` that operator sees no answer at all. This is a consequence of the
-"永远绑整个群" ruling rather than a reason to revisit it, and it is on a
-clarification card to the operator. The three answers are: a text line only when
-the command was typed somewhere other than the chat it bound; always silent;
-always a text line.
+```ts
+async bindChannel(input: {
+  target: FeishuTarget;
+  teamName: string;
+  display: string | null;
+  /** Announce here instead of into the bound target: the conversation that
+      asked for the bind, when a conversation asked at all. */
+  announceIn?: FeishuTarget;
+  requireOwner?: string;
+})
+```
+
+and the one line that sends becomes:
+
+```ts
+this.opts.notify(input.announceIn ?? target, card, input.teamName);
+```
+
+`/bind` passes `announceIn: context.target` — the topic or group it was typed
+in. Everything else already works:
+
+- `notificationTarget` already replies under the newest message seen in a topic,
+  and `projectInbound` already recorded the command's own message as that
+  newest message, so the card lands in the operator's topic with no change to
+  the router;
+- the COT fences (`onRouteReleased` / `onRouteClaimed`) keep using the **bound**
+  target, because what was bound did not change;
+- an MCP-initiated bind passes no `announceIn` and behaves exactly as today.
+  There is nothing to fix there: a tool call has no conversation to reply into,
+  and a topic-mode group has no non-topic area to post to.
+
+Two knock-on effects, because the sent card is also bookkeeping. `onNotificationSent`
+records the message as an address for the announce target and sets it as the
+newly bound Team's fallback anchor. With the fix both now point at the topic the
+bind was requested from, so that Team's first unprompted card lands there
+instead of opening a topic of its own. That is a behavior change beyond the
+card's location, and it is the better one: the bind was asked for there.
+
+**This removes the question.** Once the card reaches the conversation that asked,
+`/dissolve`'s reason holds everywhere again, so a successful `/bind` answers
+`silent` in every case and the conditional receipt is not needed.
 
 ## 5. `/help`
 
