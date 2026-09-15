@@ -347,6 +347,67 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     ).rejects.toThrow(/already bound to another Feishu chat/);
   });
 
+  /**
+   * The container refusal is the whole of what keeps a Space provisioning.
+   * A group row on the container answers `plan` for every topic under it —
+   * a topic resolves to its parent group before `provision` is reached — so
+   * without this the Space stops handing out Teams and says nothing. The
+   * pair matters together: refusing the chat must not refuse a topic, because
+   * a topic bind is exactly what provisioning installs.
+   */
+  it('refuses to bind the whole chat a space is registered on, and commits nothing', async () => {
+    const routing = await makeRouting();
+    await routing.bindSpace({
+      spaceName: 'space',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await expect(
+      routing.bind({
+        target: chatTarget('oc_space', 'group'),
+        teamName: 'team-a',
+        display: null,
+        origin: 'manual',
+        spaceId: null,
+      }),
+    ).rejects.toThrow(/Collaboration Space/);
+    expect(routing.listBindings()).toEqual([]);
+    expect(routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space')).toMatchObject({
+      kind: 'provision',
+    });
+  });
+
+  it('still binds one topic inside a registered space, which is how provisioning installs a Team', async () => {
+    const routing = await makeRouting();
+    const space = await routing.bindSpace({
+      spaceName: 'space',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await routing.bind({
+      target: topicTarget('oc_space', 'omt_one'),
+      teamName: 'team-a',
+      display: null,
+      origin: 'space',
+      spaceId: space.space_id,
+    });
+    expect(routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space')).toMatchObject({
+      kind: 'bound',
+      teamName: 'team-a',
+    });
+    // The sibling topic is untouched: one provisioned topic never speaks for
+    // the rest of the Space, which is what binding the chat itself would do.
+    expect(routing.plan(topicTarget('oc_space', 'omt_two'), 'oc_space')).toMatchObject({
+      kind: 'provision',
+    });
+  });
+
   it('unbindSpace removes only the space policy; nothing about existing bindings changes', async () => {
     const routing = await makeRouting();
     await routing.bindSpace({

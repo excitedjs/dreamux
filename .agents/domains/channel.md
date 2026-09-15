@@ -438,21 +438,19 @@ sender allowlist and no confirmation step; the operator ruled that explicitly.
 
 Dispatch happens after the route is projected and before anything is submitted,
 so each command reads the same `bound` / `provision` / `dispatcher` plan the
-delivery path would have used, along with the projected target itself, whether
-that target's chat is a registered Collaboration Space, and the binding
-operation. The Space question reaches the row as a boolean: it is asked once at
-the wiring site and nothing in the command table reads a field of the record:
+delivery path would have used, along with the projected target itself and the
+binding operation. Nothing in the table knows Collaboration Spaces exist; the
+rows state intent and let the owning layer refuse:
 
 - **`/bind <team_name>`** binds `containingChat` of the projected target — a
   topic resolves to its group, a group stays itself, a direct message stays a
   direct message — so it always routes the whole chat. It is the one command
   that changes routing. It validates nothing itself: a malformed or missing
   Team name is refused by Core's own `validateTeamId` and `team.status` through
-  `bindChannel`, and a direct message is refused by `isBindableTarget`, each in
-  the owning layer's words. A chat whose `spaceForContainer` finds a Space is
-  refused by the command, because a Collaboration Space already gives each topic
-  a Team — and by the command alone, which is a known hole: see *Team binding
-  and authorization* below. Naming no Team answers
+  `bindChannel`, a direct message is refused by `isBindableTarget`, and a chat a
+  Collaboration Space is registered on is refused inside `FeishuRouting.bind`'s
+  commit — each in the owning layer's words, and each reaching the sender
+  through the same `Command /bind failed: …` wrapper. Naming no Team answers
   with the row's own `usage`. A successful bind answers `silent` for
   `/dissolve`'s reason, and the reason holds because the binding card is
   delivered into the conversation that asked.
@@ -700,16 +698,30 @@ one as a group. Only inbound projection knows a chat's kind, which is why a
 slash-command bind, carrying the projected target, is the path where
 `isBindableTarget`'s direct-message guard actually engages.
 
-**Known hole: a Collaboration Space container can be bound through MCP.**
-`FeishuRouting.bind` enforces `requireOwner` but knows nothing about `spaces`,
-so `bind_channel` with a Space container's `chat_id` writes an ordinary group
-row — and `plan`'s resolution chain then matches that row for every topic in
-the Space before `provision` is reached, so the Space silently stops creating
-per-topic Teams. `/bind` is the only path that refuses it, because the
-operator's ruling named `/bind` and nothing else. Closing this means refusing a
-`group` bind onto a container inside `FeishuRouting.bind`'s commit, next to
-`requireOwner`, and mirroring it in `bindSpace` for the reverse order; that
-changes MCP behavior, so it is the operator's call and not a cleanup.
+**Binding the whole chat a Collaboration Space sits on is refused.** A `group`
+row on a Space's container answers `plan` for every topic under it — a topic
+resolves to its parent group before `provision` is reached — so such a row makes
+the Space silently stop giving new topics their own Team. `FeishuRouting.bind`
+refuses it inside the same commit that enforces `requireOwner`, and for the same
+reason: a precondition read outside the commit is a precondition about a document
+that has moved on. Because the rule lives at the routing document rather than at
+one entry point, `bind_channel` and `/bind` are refused identically, and no
+caller can reach the document without passing it.
+
+The rule is deliberately narrow. Only `kind: 'group'` is refused; one topic
+inside the Space stays an ordinary bindable target, which is exactly what
+automatic provisioning installs (`feishu-provisioning.ts`, `origin: 'space'`).
+Refusing topics too would break the mechanism the rule exists to protect.
+
+**Known hole: the reverse order is still open.** `bindSpace` checks only
+`document.spaces`, for a duplicate space *name*; it never looks at
+`document.bindings`. So binding a group to a Team first and registering a
+Collaboration Space on that same chat afterwards leaves the group row in place
+and reproduces the identical shadowing — measured, not inferred: `bindSpace`
+succeeds and a fresh topic then plans `bound` instead of `provision`. Closing it
+means a matching `document.bindings` check inside `bindSpace`'s commit, which
+changes the behavior of `bind_collaboration_space`; that is the operator's call
+and not a cleanup.
 
 Authorization is the caller-scoped catalog itself, not a check inside a shared
 handler. `bind_channel` and `unbind_channel` are registered twice, once per caller

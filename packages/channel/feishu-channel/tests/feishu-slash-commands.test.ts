@@ -136,7 +136,6 @@ function dispatch(
   if (invocation === null) throw new Error(`unrecognized command /${command}`);
   return dispatchFeishuSlashCommand(invocation, {
     target: chatTarget('oc_command', 'group'),
-    inSpaceContainer: false,
     bindChannel: async () => { throw new Error('unexpected bind'); },
     resolveChatName: async () => undefined,
     ...context,
@@ -767,6 +766,11 @@ describe('/bind through ordinary Feishu inbound', () => {
     expect(h.cot.cards).toEqual([]);
   });
 
+  // `/bind` binds the containing chat from either place, so both invocations
+  // reach `FeishuRouting.bind` with the same group target and are refused by
+  // the routing document rather than by this command. The Team is live, so a
+  // green assertion here cannot be the closed/missing-Team refusal wearing
+  // the Space refusal's name.
   it.each(['group', 'topic'] as const)('refuses a registered Collaboration Space from a %s target without changing routing', async (kind) => {
     const target = kind === 'topic' ? topicTarget('oc_space_bind', 'omt_topic') : chatTarget('oc_space_bind', 'group');
     const h = await bindHarness(target);
@@ -774,15 +778,20 @@ describe('/bind through ordinary Feishu inbound', () => {
       spaceName: 'space', containerChatId: target.chatId, display: null,
       leaderAgentRuntime: 'codex', identity: null, repo: null,
     });
-    await h.seed(target, 'team-a');
+    // A topic inside the Space, which is what provisioning installs and the
+    // one thing binding the chat itself would have taken over. Seeding the
+    // container group is no longer possible — that is the rule under test.
+    await h.seed(topicTarget(target.chatId, 'omt_provisioned'), 'team-a');
     const before = h.session.routing.listBindings();
     await h.inject('/bind team-b');
     expect(h.bot.sentMessages[0]?.text).toBe(
-      'This chat is a Collaboration Space, which gives each of its topics ' +
-      'its own Team. Bind a chat that is not a Collaboration Space.',
+      'Command /bind failed: This Feishu chat is a Collaboration Space, ' +
+      'which gives each of its topics its own Team. Binding the chat itself ' +
+      'would take over every topic in it and stop new ones from getting a ' +
+      'Team. Bind a chat that is not a Collaboration Space.',
     );
     expect(h.session.routing.listBindings()).toEqual(before);
-    expect(h.calls).toEqual([]);
+    expect(h.calls).toEqual([{ command: 'team.status', payload: { team_name: 'team-b' } }]);
     expect(h.bot.sentCards).toEqual([]);
     await h.session.close();
   });

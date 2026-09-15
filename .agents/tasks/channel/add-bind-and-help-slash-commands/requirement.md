@@ -71,8 +71,10 @@ The operator asked for three things, verbatim:
    through the MCP tool, which has no such conversation, still announces into
    the bound target.
 2. `/bind` typed inside a topic binds the topic's chat, not the topic.
-3. `/bind` in a chat registered as a Collaboration Space container answers with
-   a refusal and changes no routing.
+3. Binding the whole chat a Collaboration Space is registered on is refused and
+   changes no routing, on every path that reaches the routing document —
+   `/bind` and MCP `bind_channel` alike. A topic inside that Space stays
+   bindable, which is what automatic provisioning installs.
 4. `/bind B` in a chat already bound to Team A rebinds the chat to B, and the
    binding notification card names A as the previous Team. This holds on every
    bind path, not only the command's: an MCP-initiated rebind shows the line
@@ -100,14 +102,22 @@ The operator asked for three things, verbatim:
   or in the group's main area.
 - **Collaboration-space refusal (2026-09-15).** The operator's words, verbatim:
   "如果话题群已经被绑定成协作空间，/bind 就给它报错。"
+- **The refusal covers MCP too (2026-09-15).** Asked on a question card whether
+  to close the matching hole in `bind_channel`, the operator chose
+  **"现在堵，进 #428"**. The option labels and descriptions on that card were
+  written by the TeamLeader; what is his is the choice. This extends the ruling
+  above to a surface it did not name, which is why it was asked rather than
+  inferred.
 
 ### Assumptions (labelled, not yet confirmed)
 
-- The collaboration-space refusal is read in code as: the current chat is a
-  registered Collaboration Space container — `spaceForContainer(chatId) !==
-  undefined`. The operator said "话题群"; whether a chat that is a space
+- The collaboration-space refusal is read in code as: the bind's target is the
+  whole chat (`kind: 'group'`) and some registered Space names that chat as its
+  container. The operator said "话题群"; whether a chat that is a space
   container could also not be topic-mode is not separately checked, because the
-  space registration is the fact the refusal is about.
+  space registration is the fact the refusal is about. Restricting it to
+  `group` is not a narrowing of his words but the mechanism: a group row is the
+  one that shadows every topic under it.
 - A successful `/bind` answers `silent`, on the same ground `/dissolve` does:
   `bindChannel` already sends `bindingBoundCard` into the target, so a text
   receipt would be the second message about one event. A refusal still answers

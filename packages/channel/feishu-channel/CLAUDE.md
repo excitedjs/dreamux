@@ -27,8 +27,11 @@ never on `@excitedjs/dreamux` core.
   collaboration-space provisioning that composes ordinary `team.create` and
   `team.submit` Commands. Validate a manual bind against Core through the
   injected `invoke` port first: a missing or closed Team is refused with a
-  public failure and mutates no routing state. A dissolved Team's routes are
-  invalidated from the `team.closed` event.
+  public failure and mutates no routing state. The routing document refuses a
+  bind of the whole chat a Collaboration Space is registered on, inside the same
+  commit that enforces route ownership, so every caller meets the rule; one
+  topic inside that Space stays bindable, which is what provisioning installs.
+  A dissolved Team's routes are invalidated from the `team.closed` event.
 - Own the Feishu slash-command surface. A human message whose leading text
   (after mentions) starts with a known `/command` token is executed here; it is
   never delivered to any agent runtime, and no agent is asked to render the

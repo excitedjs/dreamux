@@ -72,13 +72,6 @@ request. Applied, all behavior-preserving and re-verified on all four gates:
 
 Not applied, and why:
 
-- **The Collaboration Space refusal stays in the command.** Pushing it into
-  `FeishuRouting.bind` would close a real hole — `bind_channel` can bind a
-  Space container and silently stop its topics from being provisioned — but it
-  changes MCP behavior, and the operator's ruling named `/bind`. Recorded in
-  `channel.md` under *Team binding and authorization*, and in section 11 of the
-  final solution, where the original justification for the placement was wrong
-  and has been corrected. **Open question for the operator.**
 - **`announceIn` stays on `bindChannel`.** The alternative — answering through
   `FeishuSlashCommandReply.card` — either double-messages a `/bind` typed in an
   ordinary group or reintroduces the same `sameTarget` condition one layer up.
@@ -89,15 +82,62 @@ Not applied, and why:
   original survived; the honest fix is one `tests/helpers/` session factory that
   replaces all of them, which is its own change. **Cleanup trail.**
 
+### Closing the Collaboration Space container hole
+
+The one item the simplification pass escalated instead of fixing. Asked as a
+question card on 2026-09-15; the operator chose **"现在堵，进 #428"**. The
+option labels were the TeamLeader's; the choice is his.
+
+- **The defect.** A `group` binding row on a Collaboration Space's container
+  answers `plan` for every topic under it, because a topic resolves to its
+  parent group before `provision` is reached. The Space then stops giving new
+  topics their own Team and says nothing. `/bind` refused it; MCP
+  `bind_channel` did not, and no layer between the tool and the document read
+  `spaces` at all.
+- **The fix.** `FeishuRouting.bind` refuses a `kind: 'group'` target whose chat
+  is some Space's container, inside the same `store.update` commit that
+  enforces `requireOwner` and for the same stated reason. Putting it at the
+  routing document rather than at an entry point is what makes it hold for
+  every caller, present and future.
+- **Narrow on purpose.** Only the whole chat is refused. A topic inside the
+  Space stays bindable — that is precisely the bind automatic provisioning
+  installs, so refusing topics would break the mechanism the rule protects.
+- **What the command lost.** `/bind`'s own Space branch, `CommandContext`'s
+  `inSpaceContainer`, and the `spaceForContainer` call that fed it. The command
+  table no longer knows Collaboration Spaces exist, and every `/bind` refusal
+  now reaches the sender through the one `Command /bind failed: …` wrapper
+  instead of one row having its own sentence.
+- **Two behavior deltas, neither asked about because neither is a choice.** The
+  Space refusal now carries that prefix; and a `/bind` naming a missing Team in
+  a Space chat reports the Team error rather than the Space error, because the
+  Space check now sits below `team.status`.
+- **Tests.** Two direct `FeishuRouting` cases — the container group is refused
+  and commits nothing, a topic inside the Space still binds and its sibling
+  still plans `provision` — plus the existing end-to-end `/bind` refusal, which
+  now runs against a live Team so a green result cannot be the closed-Team
+  refusal wearing the Space refusal's name. The MCP tool tests
+  (`feishu-routing-tools.test.ts`) drive a `fakeSession` whose `bindChannel` is
+  a recording stub, so they prove the tool forwards, not that the invariant
+  holds; the invariant is proven at `FeishuRouting` directly, which is the layer
+  both paths share.
+
+**Still open, and deliberately not fixed: the reverse order.** `bindSpace`
+checks only `document.spaces`, for a duplicate space name. Binding a group to a
+Team first and registering a Collaboration Space on that chat afterwards leaves
+the group row in place and reproduces the identical shadowing — measured with a
+throwaway probe, not inferred: `bindSpace` succeeds and a fresh topic then plans
+`bound` rather than `provision`. Closing it changes `bind_collaboration_space`,
+a surface the operator has not ruled on. **Open question for the operator.**
+
 ### Knowledge closeout
 
 | Owner | Result |
 | --- | --- |
 | `.agents/tasks/**` | This record, `requirement.md`, `technical-design/final.md`. |
-| `.agents/product/README.md` | The slash-command entry now names five commands and states that a command may take an argument; three entries added — `/bind`'s behavior, the `Previous Team` line on every bind path, and `/help` rendering the table. |
+| `.agents/product/README.md` | The slash-command entry now names five commands and states that a command may take an argument; four entries added — `/bind`'s behavior, the refusal to bind a Collaboration Space's own chat on any path, the `Previous Team` line on every bind path, and `/help` rendering the table. |
 | `.agents/domains/channel.md` | Slash-command section: the five-row table, `usage`/`summary`, the single `yargs-parser` recognition seam and why `parse-positional-numbers` is off, `/bind`'s behavior, and the correction that a command may now change routing. Card placement: `announceIn`, and why a card sent away from its target carries no anchor Team. Routing tools: the binding operations take a `FeishuTarget`, the selector type is gone, and the MCP wire input still cannot tell a direct message from a group. |
 | `packages/channel/feishu-channel/CLAUDE.md` | Dependency boundary admits `yargs-parser`; slash-command responsibility restated. |
 | `package.json` | `yargs-parser` runtime dependency, `@types/yargs-parser` dev dependency, and the description's dependency claim. |
-| Rush change file | `@excitedjs/feishu-channel`, type `minor`, ordinary note. No persisted file shape changed, so no `BREAKING:` and no `Rebuild:`. |
+| Rush change file | Two, both `@excitedjs/feishu-channel` type `minor` with ordinary notes: the command surface, and the Collaboration Space container refusal. The second is a separate file rather than an edit of the first, because `rush change --verify` counts only added files. No persisted file shape changed, so no `BREAKING:` and no `Rebuild:`. |
 | `dreamux-maintenance` | N/A. No config or persisted-state shape, validation, default, ownership, or meaning changed. |
 | `.agents/root.md` | N/A. No routing entry point moved. |

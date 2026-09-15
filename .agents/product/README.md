@@ -114,16 +114,21 @@ the same change that touches it.
 - **`/bind <team_name>` routes the whole group from inside the conversation.**
   An operator can point a Feishu group at a Team by typing, without asking an
   agent to call a tool. It always binds the whole chat, so typing it inside a
-  topic routes the group rather than that topic. A chat registered as a
-  Collaboration Space is refused, because a Space already gives each of its
-  topics a Team of its own. A chat already answered by another Team is rebound
-  without ceremony, and the Team that lost it is named on the card. A direct
-  message is refused, a missing or closed Team is refused, and a refused bind
-  changes no routing. A successful bind has no receipt of its own: the binding
+  topic routes the group rather than that topic. A chat already answered by
+  another Team is rebound without ceremony, and the Team that lost it is named
+  on the card. A direct message is refused, a missing or closed Team is refused,
+  and a refused bind changes no routing. A successful bind has no receipt of its own: the binding
   card is the answer, and it is delivered into the conversation the command was
   typed in rather than into the chat it bound — so an operator who typed it in
   a topic hears back in that topic. Naming no Team answers with the command's
   usage.
+  (Task: [add-bind-and-help-slash-commands](/.agents/tasks/channel/add-bind-and-help-slash-commands/README.md).)
+- **The chat a collaboration space sits on cannot be bound to a Team.** Routing
+  a Space's own chat to one Team would quietly take over every topic in it and
+  stop new topics from getting a Team of their own, with nothing said. Any
+  attempt is refused and changes nothing — typed as `/bind`, or asked for by an
+  agent through `bind_channel`. A single topic inside the Space can still be
+  bound, which is what the Space itself does when it provisions one.
   (Task: [add-bind-and-help-slash-commands](/.agents/tasks/channel/add-bind-and-help-slash-commands/README.md).)
 - **A rebind names the Team it displaced.** The card announcing a binding shows
   a `Previous Team` line whenever the conversation was answered by a different

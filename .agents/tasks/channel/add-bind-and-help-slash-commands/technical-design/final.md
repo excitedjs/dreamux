@@ -388,14 +388,13 @@ Because it reads the table, a new row appears in `/help` with no second edit.
 
 ## 6. Context additions
 
-`CommandContext` gains four fields, all already held by the
+`CommandContext` gains three fields, all already held by the
 `FeishuChannelSession` that builds the context in `feishu-channel.ts`:
 
 | field | source |
 | --- | --- |
 | `args` | the invocation, merged in at dispatch |
 | `target` | `input.target`, already a parameter of `command()` |
-| `inSpaceContainer` | `this.routing.spaceForContainer(input.target.chatId) !== undefined` — a fact, not the record: no row reads a field of it |
 | `bindChannel` | `this.bindings.bindChannel(...)`, already wired for the MCP tools; its signature changes under 4a |
 
 No new plumbing, no new seam.
@@ -479,25 +478,32 @@ Two notes came back non-blocking, and both are settled here:
 - Section 1 of this document named the parsed-argument type
   `yargsParser.Arguments` while the code imports it as `parser.Arguments`.
   Documentation only; corrected above.
-- An expected refusal reaches the conversation differently depending on who
-  owns the rule. A direct message or a bad Team name is refused by the binding
-  layer or by Core, so it arrives with the dispatch wrapper's
-  `Command /bind failed:` prefix; a Collaboration Space is refused by the
-  command itself, so it arrives as its own sentence. **This is deliberate.**
-  Removing the asymmetry would mean the command re-deriving `isBindableTarget`
-  and `validateTeamId`, which is the copy-that-drifts this design refused. The
-  prefix is also honest: the command did fail.
+- Every refusal `/bind` can produce is now owned one layer down and reaches the
+  conversation through the same `Command /bind failed: …` wrapper: a direct
+  message from `isBindableTarget`, a bad or closed Team from Core through
+  `bindChannel`, a route another Team holds from `requireOwner`, and a
+  Collaboration Space container from `FeishuRouting.bind`. The command
+  re-derives none of them. The prefix is honest — the command did fail — and
+  uniform, so no reader has to learn which refusal is the one-off.
 
-  The stated reason for the Space rule's placement — that it has no other owner
-  — is wrong, and a later review pass established it. `FeishuRouting.bind`
-  already enforces a cross-row precondition (`requireOwner`) inside its
-  `store.update` commit, and the routing document holds `bindings` and `spaces`
-  together, so the invariant does have a home one layer down. The rule stays in
-  the command anyway, for a different and narrower reason: the operator's words
-  were "如果话题群已经被绑定成协作空间，**/bind** 就给它报错", and pushing the
-  refusal into `FeishuRouting.bind` would make MCP `bind_channel` start refusing
-  too — a user-visible change to a surface he did not rule on. The consequence
-  is a real hole, recorded in
+  The Space rule reached that layer in a second pass. This document had placed
+  it in the command on the ground that it had no other owner, which was wrong:
+  `FeishuRouting.bind` already enforces a cross-row precondition (`requireOwner`)
+  inside its `store.update` commit, and the routing document holds `bindings`
+  and `spaces` together. Moving it there also closed a real hole — MCP
+  `bind_channel` could bind a Space container and silently stop its topics from
+  being provisioned, because a group row on the container answers `plan` for
+  every topic under it before `provision` is reached. That was a user-visible
+  MCP change, so it went to the operator as a question card on 2026-09-15; he
+  answered **"现在堵，进 #428"**. The rule is narrow by construction: only a
+  `group` target is refused, because a topic bind inside the Space is what
+  provisioning itself installs.
+
+  One direction remains open and is deliberately not fixed here. `bindSpace`
+  checks only `document.spaces`, so registering a Collaboration Space on a chat
+  that already carries a group binding reproduces the same shadowing from the
+  other side — measured: `bindSpace` succeeds, and a fresh topic then plans
+  `bound` rather than `provision`. It is recorded in
   [`channel.md`](/.agents/domains/channel.md) under *Team binding and
-  authorization*: `bind_channel` can bind a Space container and silently stop
-  its topics from being provisioned. Closing it is the operator's call.
+  authorization* and is the operator's call, since it changes
+  `bind_collaboration_space`.

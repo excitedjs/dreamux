@@ -51,7 +51,6 @@ export type FeishuSlashCommandReply =
 interface CommandContext {
   readonly args: readonly string[];
   readonly target: FeishuTarget;
-  readonly inSpaceContainer: boolean;
   readonly bindChannel: FeishuBindingOperations['bindChannel'];
   readonly plan: FeishuRoutingPlan;
   readonly invoke: (command: string, payload: JsonValue) => Promise<JsonValue>;
@@ -74,14 +73,10 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       if (teamName === undefined) {
         return { kind: 'text', text: `Usage: ${COMMANDS.bind.usage}` };
       }
-      if (context.inSpaceContainer) {
-        return {
-          kind: 'text',
-          text:
-            'This chat is a Collaboration Space, which gives each of its topics ' +
-            'its own Team. Bind a chat that is not a Collaboration Space.',
-        };
-      }
+      // Every way this bind can be refused — a direct chat, a missing or
+      // closed Team, the chat a Collaboration Space is registered on — is
+      // stated by the layer that owns the fact and arrives here as a thrown
+      // failure. This row adds no precondition of its own.
       await context.bindChannel({
         target: containingChat(context.target),
         teamName,

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Refuse to bind the whole chat a Collaboration Space is registered on. A group row on a Space's container answered routing for every topic under it, so the Space silently stopped giving new topics their own Team. bind_channel and /bind are both refused now; a topic inside the Space is still bindable, which is what provisioning installs.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

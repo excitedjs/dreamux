@@ -158,9 +158,10 @@ export class FeishuRouting {
    *
    * The previous team is read inside the change rather than before it, because
    * the change is what the commit serializes: reading first would answer from
-   * a document another commit may already have replaced. `requireOwner` is
-   * checked in the same place and for the same reason — a precondition read
-   * outside the commit is a precondition about a document that has moved on.
+   * a document another commit may already have replaced. `requireOwner` and
+   * the Collaboration Space refusal are checked in the same place and for the
+   * same reason — a precondition read outside the commit is a precondition
+   * about a document that has moved on.
    */
   async bind(input: {
     target: FeishuTarget;
@@ -179,6 +180,25 @@ export class FeishuRouting {
     await this.opts.store.update((document) => {
       const key = targetKey(input.target);
       const now = Date.now();
+      if (
+        input.target.kind === 'group' &&
+        document.spaces.some(
+          (row) => row.container_chat_id === input.target.chatId,
+        )
+      ) {
+        // A group row on a Space's container answers `plan` for every topic
+        // in that Space — a topic resolves to its parent group before
+        // `provision` is ever reached — so the Space would silently stop
+        // giving new topics their own Team. Only the whole chat does this;
+        // one topic inside the Space is still an ordinary bindable target,
+        // which is exactly what provisioning itself installs.
+        throw new PublicInvokeFailure(
+          'This Feishu chat is a Collaboration Space, which gives each of ' +
+            'its topics its own Team. Binding the chat itself would take ' +
+            'over every topic in it and stop new ones from getting a Team. ' +
+            'Bind a chat that is not a Collaboration Space.',
+        );
+      }
       const existing = document.bindings.find(
         (row) => targetKey(fromRecord(row.target)) === key,
       );
