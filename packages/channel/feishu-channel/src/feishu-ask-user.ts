@@ -41,13 +41,12 @@ const REQUEST_ID_BYTES = 8;
 /**
  * How long a question card stays answerable.
  *
- * Feishu stops accepting interaction on a card 15 minutes after it is sent, so
- * a round has to close itself before that: past the platform's cutoff the card
- * still looks live but every click is dropped, and the model would wait for an
- * answer that can no longer be given. Closing a minute early leaves room for
- * the repaint to land while the card is still writable.
+ * Close an unanswered card and tell the model rather than leave the round
+ * open indefinitely. The expiry repaint uses im.message.patch, so the timer
+ * must stay inside Feishu's 14-day message-patch window. At 24 hours, delivery
+ * before the repaint has about 13 days of room; no extra margin is needed.
  */
-export const ASK_USER_CARD_TTL_MS = 14 * 60 * 1000;
+export const ASK_USER_CARD_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** The timer seam, so tests can expire a round without waiting for one. */
 export interface AskUserTimers {
@@ -132,7 +131,10 @@ export interface AskUserRegistry {
    * that threw leave a question behind with no card, and its TTL would later
    * report an unanswered question to a model whose user was never asked one.
    */
-  open(questions: readonly AskUserQuestionSpec[]): AskUserOpened;
+  open(input: {
+    text?: string;
+    questions: readonly AskUserQuestionSpec[];
+  }): AskUserOpened;
   apply(event: FeishuCardActionEvent): AskUserApplyResult;
   /** Drop every open round; their cards report the round as gone on next click. */
   abandonAll(): void;
@@ -140,6 +142,7 @@ export interface AskUserRegistry {
 
 interface OpenRound {
   readonly requestId: string;
+  readonly text?: string;
   readonly questions: readonly AskUserQuestionSpec[];
   readonly answers: Map<number, AskUserAnswer>;
   messageId?: string;
@@ -194,7 +197,7 @@ function cancelledText(): string {
   ].join('\n');
 }
 
-/** The body for a round nobody answered before the card stopped accepting clicks. */
+/** The body for an unanswered round that ran out of time. */
 function expiredText(): string {
   return [
     'The question card expired with no answer from the user.',
@@ -281,7 +284,7 @@ export function createAskUserRegistry(
           data:
             outcome === 'submitted'
               ? buildAskUserSubmittedCard(view)
-              : buildAskUserClosedCard('cancelled'),
+              : buildAskUserClosedCard('cancelled', round.text),
         },
       },
       settlement,
@@ -289,10 +292,11 @@ export function createAskUserRegistry(
   }
 
   return {
-    open(questions): AskUserOpened {
+    open({ text, questions }): AskUserOpened {
       const requestId = newRequestId();
       const round: OpenRound = {
         requestId,
+        ...(text !== undefined ? { text } : {}),
         questions,
         answers: new Map(),
       };
@@ -309,7 +313,7 @@ export function createAskUserRegistry(
             if (rounds.get(requestId) !== round) return;
             options.onExpire?.({
               settlement: closeRound(round, 'expired'),
-              card: buildAskUserClosedCard('expired'),
+              card: buildAskUserClosedCard('expired', round.text),
             });
           }, ttlMs);
         },

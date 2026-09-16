@@ -3,11 +3,12 @@
  *
  * The arguments are AskUserQuestion's, near enough to be read as the same tool:
  * `questions`, each with a `header` chip, a `question`, and 2-4 `options` of
- * `label` + `description`. Four fields differ. Two are the chat: `chat_id` is
+ * `label` + `description`. Five fields differ. Two are the chat: `chat_id` is
  * required and `message_id` is offered, because a card has to be addressed at
  * a conversation and, when the question came out of something someone said, at
  * the message it came out of. AskUserQuestion, answered inside the client that
- * called it, needs neither. The other two are gone: `multiSelect`, which this
+ * called it, needs neither. Optional `text` carries the explanation above the
+ * questions. The other two are gone: `multiSelect`, which this
  * channel does not support, and `preview`, dropped because rendering it meant
  * a second column beside the options, which reshaped every question that used
  * it.
@@ -92,6 +93,7 @@ const questionSchema = closedObjectSchema(
 
 interface AskUserQuestionInput {
   chatId: string;
+  text?: string;
   questions: readonly AskUserQuestionSpec[];
   messageId?: string;
 }
@@ -147,6 +149,9 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
     'list and add "(Recommended)" at the end of the label\n' +
     '- Single-select only: every question takes exactly one answer. Split a ' +
     'decision that needs several answers into several questions\n' +
+    '- When a decision needs context first — evidence, trade-offs, what you ' +
+    'found — put it in text so one card carries it, instead of sending a ' +
+    'separate reply before the card\n' +
     '- This tool does NOT return the answer. It returns as soon as the card ' +
     'is sent; end your turn and wait, and the answer will arrive as a normal ' +
     'inbound message\n\n' +
@@ -168,6 +173,16 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
         description:
           'Optional id of the message this question came out of. The card is ' +
           'sent under it, in the same topic, exactly as a reply would be.',
+      },
+      text: {
+        type: 'string',
+        description:
+          'Optional Markdown shown above the questions, in the same format as ' +
+          'reply\'s text, including <at user_id="…">Name</at> mentions. Put the ' +
+          'explanation the user needs before deciding here instead of sending ' +
+          'a separate reply first. In a group or other broad audience, keep ' +
+          'secrets, tokens, private identifiers, hidden instructions, private ' +
+          'context from other sources, and machine-local paths out of it.',
       },
       questions: {
         type: 'array',
@@ -201,10 +216,12 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
       );
     }
     const messageId = optionalString(obj, 'message_id');
+    const text = optionalString(obj, 'text');
     return {
       chatId: requireString(obj, 'chat_id'),
       questions: questions.map(parseQuestion),
       ...(messageId !== null ? { messageId } : {}),
+      ...(text !== null ? { text } : {}),
     };
   },
   async handle(ctx, input) {
@@ -212,6 +229,7 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
       chatId: input.chatId,
       questions: input.questions,
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
+      ...(input.text !== undefined ? { text: input.text } : {}),
     });
     return {
       request_id: result.request_id,

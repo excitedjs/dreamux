@@ -61,6 +61,7 @@ export type AskUserAnswer =
 /** Everything a repaint reads. The card is a pure function of this. */
 export interface AskUserRequestView {
   readonly requestId: string;
+  readonly text?: string;
   readonly questions: readonly AskUserQuestionSpec[];
   readonly answers: ReadonlyMap<number, AskUserAnswer>;
 }
@@ -238,6 +239,7 @@ export function buildAskUserCard(view: AskUserRequestView): unknown {
       padding: '12px 12px 20px 12px',
       vertical_spacing: '16px',
       elements: [
+        ...(view.text !== undefined ? [markdown(view.text)] : []),
         ...view.questions.map((question, index) =>
           questionPanel(view, index, question, index === openIndex),
         ),
@@ -318,12 +320,15 @@ export function buildAskUserSubmittedCard(view: AskUserRequestView): unknown {
     body: {
       padding: '12px 12px 20px 12px',
       vertical_spacing: '12px',
-      elements: view.questions.map((question, index) =>
-        markdown(
-          `**${question.header}** · ${question.question}\n> ` +
-            (answerLabel(question, view.answers.get(index)) ?? '未作答'),
+      elements: [
+        ...(view.text !== undefined ? [markdown(view.text)] : []),
+        ...view.questions.map((question, index) =>
+          markdown(
+            `**${question.header}** · ${question.question}\n> ` +
+              (answerLabel(question, view.answers.get(index)) ?? '未作答'),
+          ),
         ),
-      ),
+      ],
     },
   };
 }
@@ -333,9 +338,13 @@ export type AskUserClosedReason = 'cancelled' | 'expired';
 
 /**
  * The closed card. A sent card cannot be deleted, so the nearest thing to
- * taking the question back is collapsing it to a single line with no header.
+ * taking the question back is dropping the questions and controls, keeping
+ * the explanation and a status line with no header.
  */
-export function buildAskUserClosedCard(reason: AskUserClosedReason): unknown {
+export function buildAskUserClosedCard(
+  reason: AskUserClosedReason,
+  text?: string,
+): unknown {
   const line =
     reason === 'cancelled'
       ? '已取消这轮提问，直接说你的想法就行。'
@@ -351,7 +360,10 @@ export function buildAskUserClosedCard(reason: AskUserClosedReason): unknown {
     },
     body: {
       padding: '12px 12px 12px 12px',
-      elements: [markdown(`<font color='grey'>${line}</font>`)],
+      elements: [
+        ...(text !== undefined ? [markdown(text)] : []),
+        markdown(`<font color='grey'>${line}</font>`),
+      ],
     },
   };
 }

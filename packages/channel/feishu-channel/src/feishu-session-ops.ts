@@ -490,11 +490,12 @@ export async function askUserQuestion(
   h: SessionHandle,
   input: {
     chatId: string;
+    text?: string;
     questions: readonly AskUserQuestionSpec[];
     messageId?: string;
   },
 ): Promise<{ request_id: string }> {
-  const opened = h.askUser.open(input.questions);
+  const opened = h.askUser.open(input);
   const sent = await sendCard(h, {
     target: {
       conversationId: input.chatId,
