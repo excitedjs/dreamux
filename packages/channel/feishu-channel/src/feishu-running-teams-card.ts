@@ -57,17 +57,16 @@ function repoName(team: RunningTeamRow): string {
  * the thread position — rather than a subset no client is known to accept.
  */
 function bindingLink(binding: FeishuBindingView): string {
-  if (binding.target_kind === 'topic' && binding.thread_id !== null) {
-    const query = new URLSearchParams({
-      open_chat_id: binding.chat_id,
-      open_thread_id: binding.thread_id,
-      openchatid: binding.chat_id,
-      openthreadid: binding.thread_id,
-      thread_position: '-1',
-    });
-    return `https://applink.feishu.cn/client/thread/open?${query}`;
-  }
-  return `https://applink.feishu.cn/client/chat/open?openChatId=${encodeURIComponent(binding.chat_id)}`;
+  const [path, query] = binding.target_kind === 'topic' && binding.thread_id !== null
+    ? ['thread', {
+        open_chat_id: binding.chat_id,
+        open_thread_id: binding.thread_id,
+        openchatid: binding.chat_id,
+        openthreadid: binding.thread_id,
+        thread_position: '-1',
+      }]
+    : ['chat', { openChatId: binding.chat_id }];
+  return `https://applink.feishu.cn/client/${path}/open?${new URLSearchParams(query)}`;
 }
 
 function escapeMarkdown(value: string): string {
