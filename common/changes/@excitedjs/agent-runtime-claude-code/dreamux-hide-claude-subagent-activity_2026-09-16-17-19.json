@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A Claude Code agent's live activity no longer includes its native subagents: a subagent's words, tool calls, and tool results are not reported. The agent's own `Agent` tool call and its result are still shown.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
