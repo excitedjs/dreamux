@@ -203,7 +203,8 @@ never includes the outbound body, credentials, or SDK request configuration.
 The arguments deliberately mirror Claude Code's own AskUserQuestion, down to the
 field descriptions, so a model reads the two as one tool: 1-4 `questions`, each
 with a `header` chip, a `question`, and 2-4 `options` of `label` +
-`description`. Four fields differ, and two of them are the chat. A `chat_id` is
+`description`. Five fields differ: two are the chat, one is added, and two are
+gone. A `chat_id` is
 required, because a chat tool needs a destination and AskUserQuestion has no
 such concept; a `message_id` is optional. When supplied, that exact id addresses
 an interactive-card reply, just as it does for `reply`, without an observed-message
@@ -222,7 +223,20 @@ This adds one message query per settlement. The existing Feishu message reader
 exposes chat/topic metadata alongside content; Core and runtime providers acquire
 no Feishu-specific fields or routing responsibilities.
 
-The other two fields are gone. There is no `multiSelect`: the operator ruled
+The added field is `text`: optional Markdown shown above the questions, in
+`reply`'s format and including `<at user_id="…">` mentions. It exists because an
+agent that had to explain before asking sent a `reply` and then the card — two
+tool calls for one decision — and the tool description tells the model to use
+it instead. The explanation is one `markdown` element prepended to the card body,
+the same element a `reply` card holds. The round keeps it, so every repaint and
+the submitted, cancelled, and expired cards show it above the answers or the
+status line, and a card without `text` is byte-identical to one sent before the
+field existed. The answer delivered to the model does not repeat it: the model
+wrote it. A question card is still one message, so an explanation that pushes the
+card over the 28 KiB content budget fails the call before anything is sent, with
+the transport's size message, and leaves no round behind.
+
+The last two fields are gone. There is no `multiSelect`: the operator ruled
 multi-select out of this channel, so every question takes exactly one answer.
 And there is no `preview`: it was first drawn as a column beside the options,
 and the operator removed it on sight — "这个 preview 有点复杂了，给他去掉，
@@ -267,13 +281,33 @@ and a round settles exactly once: spending that settlement to tell the model
 every question was left unanswered is worse than saying nothing. A partial
 answer still submits, and the questions nobody answered are reported as such.
 
-A round closes itself after `ASK_USER_CARD_TTL_MS`, which is under the 15
-minutes after which Feishu stops accepting clicks on a card. Past that cutoff
-the card still looks live but every click is dropped, so an unanswered round
-repaints the card as closed and tells the model no answer came and to stand
-still until the user's next message. Rounds live in memory: a session teardown
-abandons them, and a later click reports the round as gone rather than
+A round closes itself after `ASK_USER_CARD_TTL_MS`, 24 hours, the operator's
+ruling for how long a person may take to answer. An unanswered round repaints
+the card as closed and tells the model no answer came and to stand still until
+the user's next message. The one platform bound on the value is that repaint: it
+patches the sent message, and Feishu patches only messages sent within the last
+14 days (`230031`), so the lifetime must stay inside that window. Rounds live in
+memory: a session teardown abandons them without repainting their cards or
+telling the model, and a later click reports the round as gone rather than
 answering nothing.
+
+A late settlement is routed like any message in the card's conversation. If the
+asking Team has closed by then, its routes are gone and the settlement goes
+wherever that conversation now routes: in a Collaboration Space topic nothing
+else binds, a newly provisioned Team; in an unbound chat, the Dispatcher Agent.
+A 24-hour lifetime makes that more likely than the earlier 14 minutes did;
+delivering to the asker instead is
+[#434](https://github.com/excitedjs/dreamux/issues/434).
+
+Regression Trap: the lifetime was once 14 minutes because a comment said Feishu
+stops accepting clicks on a card 15 minutes after it is sent. That was never
+observed live, Feishu's documentation states no such cutoff, and a comparable
+callback card kept accepting clicks for two hours; the claim still set the
+timer, a test, this page, and the product catalog. Check a platform limit
+against Feishu's documentation or a live observation before a timer is built on
+it.
+
+(Task: [refine-ask-user-question-card](/.agents/tasks/channel/refine-ask-user-question-card/README.md).)
 
 Source:
 

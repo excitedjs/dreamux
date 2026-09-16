@@ -3,12 +3,12 @@
 ## Current state
 
 - Goal: Keep a question card answerable for 24 hours, and let one card carry the explanation that precedes its questions
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/refine-ask-user-question-card/requirement.md)
 - Final solution: [Final solution](/.agents/tasks/channel/refine-ask-user-question-card/technical-design/final.md)
 - Solution review Issue: [#435](https://github.com/excitedjs/dreamux/issues/435)
 - Blockers: None.
-- Next action: External implementation review of the pushed branch, then adjudicate each finding.
+- Next action: None.
 - Verification: [verification.md](/.agents/tasks/channel/refine-ask-user-question-card/verification.md)
 - Related tasks: [Keep question-card replies in their topic](/.agents/tasks/channel/fix-question-card-topic-routing/README.md) owns where a settlement is routed; this task changes how long a round stays open and what its card shows. Follow-up: [#434](https://github.com/excitedjs/dreamux/issues/434) delivers settlements to the asker instead of through conversation routing.
 
@@ -46,5 +46,14 @@ The fourth was approved.
 
 ## Delivery
 
-- Pull request: Not opened.
-- Knowledge closeout: Pending.
+- Implementation review: external review of the pushed branch approved it with
+  no blocking finding; adjudication in
+  [verification.md](/.agents/tasks/channel/refine-ask-user-question-card/verification.md).
+- Pull request: Opened against `next` from this task's branch.
+- Knowledge closeout: `.agents/domains/channel.md` (`ask_user_question`: the
+  added `text` field, the 24-hour lifetime and its 14-day bound, late-settlement
+  routing until #434, and a Regression Trap for the unobserved 15-minute cutoff)
+  and `.agents/product/README.md` (the question-card entry). Directory
+  `CLAUDE.md` files, the glossary, `root.md`, and the maintenance skill: N/A —
+  none states the question-card lifetime or arguments, and no config or
+  persisted state changed.

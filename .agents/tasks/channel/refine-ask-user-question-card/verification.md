@@ -44,6 +44,31 @@ Finding sent back to the developer: the change-file note did not name
 names the tool and argument, the rendering, the finished cards, and that the
 model's answer does not repeat the explanation.
 
+## Independent implementation review (2026-09-16)
+
+External review of the pushed branch (commit `2f05d1c6` on `next` `0b35a6a8`),
+used in place of the workflow review for this group's tasks. Verdict: approved,
+no blocking code finding
+([comment](https://github.com/excitedjs/dreamux/issues/435#issuecomment-5697040277)).
+Beyond reading the diff, the reviewer ran the card builders from `next` and the
+branch side by side and compared serialized JSON for the live (partly answered),
+submitted (including unanswered), cancelled, and expired cards without `text`:
+identical. Through the real registry it checked the explanation is exactly one
+prepended `markdown` element on seven card states and is absent, mention
+included, from all three settlement texts.
+
+| Finding | Verdict | Reason | Conflicts with an operator ruling |
+| --- | --- | --- | --- |
+| Knowledge updates from final.md §4 are not in the commit and must ride the same PR | Accept | Planned closeout; done in `channel.md` and the product catalog before the PR, with `check.sh` | No |
+| Optional: `askUserQuestion` passes the whole input (with `chatId`, `messageId`) to `registry.open` instead of `{ text, questions }` | Reject | The registry's declared parameter type is the boundary and it destructures only `text` and `questions`; there is no behavior difference and no failure scenario, and the reviewer marked it optional | No |
+
+## Knowledge closeout checks
+
+| Command | Result |
+| --- | --- |
+| `.agents/scripts/check.sh` | Task records OK: 43 checked; KB OK (270 files reachable from root.md) |
+| `git diff --check` | Clean |
+
 ## Not covered locally
 
 - Feishu client rendering of `text` (heading, list, mention) and whether a

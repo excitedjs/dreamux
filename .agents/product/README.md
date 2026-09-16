@@ -82,9 +82,13 @@ the same change that touches it.
   Answers and expiry notices follow the card's actual conversation, obtained
   from message details. A failed lookup does not redirect them to the parent
   chat. Follow-up questions addressed to the card stay in its existing topic.
-  Dismissing the card tells the agent to stop asking and talk it through instead;
-  a card nobody answers closes itself before Feishu stops accepting clicks and
-  tells the agent to stand still rather than wait forever.
+  The agent can put the explanation that precedes the decision on the card,
+  above the questions, instead of sending it as a separate message; it stays on
+  the card once the card is answered, dismissed, or expired. Dismissing the card
+  tells the agent to stop asking and talk it through instead; a card nobody
+  answers stays answerable for 24 hours, then closes itself and tells the agent
+  to stand still rather than wait forever. A restart drops open questions
+  without telling the agent; a later click says the question is gone.
   (Domain: [channel](/.agents/domains/channel.md).)
 - **A message that starts with a known slash command is executed, not
   delivered.** In the built-in Feishu channel a human message whose leading
