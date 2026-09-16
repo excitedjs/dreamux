@@ -657,6 +657,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'FeishuAppOwnerIdentity',
         'FeishuBotMemberAddedEvent',
         'FeishuChatMode',
+        'FeishuCommentAnchor',
         'FeishuCommentEvent',
         'FeishuCommentSegment',
         'FeishuCotApiError',

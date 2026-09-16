@@ -75,7 +75,15 @@ import type { FeishuDocSubscriptionRecord } from './routing/document.js';
  */
 const ENRICHMENT_TIMEOUT_MS = 2_000;
 
-const DOC_COMMENT_QUOTE_NOTE = 'the document text this comment is anchored to';
+/**
+ * What `<quote>` is, said in the one place a reader meets it. Without this the
+ * block reads as the anchored passage itself, which it is not: Feishu derives
+ * it and cuts it at a length of its own, and the envelope's `anchor_id` is what
+ * names the content the passage came from.
+ */
+const DOC_COMMENT_QUOTE_NOTE =
+  'a preview of the anchored content, as Feishu shortens it; ' +
+  'anchor_id on this envelope names the content itself';
 
 export interface FeishuDocumentCommentsOptions {
   readonly dispatcherId: string;
@@ -427,7 +435,7 @@ function documentCommentSubmission(input: {
   const { event } = input;
   return {
     kind: 'doc_comment',
-    attrs: documentCommentAttrs(event, input.senderName),
+    attrs: documentCommentAttrs(event, input.senderName, input.comment),
     text: documentCommentBody(input.comment),
     reminder: input.reminder,
     sourceId: `${event.fileToken}:${event.commentId}:${event.replyId}`,
@@ -451,11 +459,22 @@ function documentCommentSubmission(input: {
  * `mentioned` stays even though a mention now shows in the body: the model does
  * not know its own open_id, so it cannot derive the platform's own verdict on
  * whether this bot was addressed.
+ *
+ * `anchor` says what the comment is about, and carrying it is the reason an
+ * unread comment is no longer indistinguishable from a comment on the whole
+ * document: the attribute is absent exactly when the comment could not be read.
+ * `anchor_id` names the content for a reader that wants it in full — the
+ * channel does not fetch it, because one anchored part can be far larger than
+ * every comment on it. `anchor_deleted` appears only when Feishu says the
+ * content is gone; a response that does not raise it is not a denial, so
+ * nothing is written for one.
  */
 function documentCommentAttrs(
   event: FeishuCommentEvent,
   senderName: string,
+  comment: FeishuDocCommentText | null,
 ): Record<string, string> {
+  const anchor = comment?.anchor;
   const pairs: Array<[string, string]> = [
     ['source', 'feishu'],
     ['file_token', event.fileToken],
@@ -463,6 +482,9 @@ function documentCommentAttrs(
     ['comment_id', event.commentId],
     ['reply_id', event.replyId],
     ['notice_type', event.replyId === '' ? 'add_comment' : 'add_reply'],
+    ['anchor', anchor === undefined ? '' : anchor.kind],
+    ['anchor_id', anchor?.kind === 'content' ? anchor.anchorId : ''],
+    ['anchor_deleted', anchor?.kind === 'content' && anchor.deleted ? 'true' : ''],
     ['mentioned', event.mentionedBot ? 'true' : 'false'],
     ['sender_id', event.commenterId],
     ['sender_name', senderName],
@@ -482,17 +504,19 @@ function documentCommentAttrs(
  * path exists to avoid. An empty `<content />` here means Feishu did not answer
  * with the comment's text, and the envelope's ids still address it.
  *
- * `<quote>` carries the document text the comment is anchored to, and only
- * appears when there is one — a comment on the whole document has none. Its
- * note is the one thing nothing else says: without it `quote` reads just as
- * easily as text quoted from an earlier reply.
+ * `<quote>` appears only for a comment anchored to content Feishu previewed:
+ * one on the whole document has no preview to show, and neither has one whose
+ * anchor Feishu returned without any text. Its note is the one thing nothing
+ * else says — without it the block reads as the anchored passage, or as text
+ * quoted from an earlier reply.
  */
 function documentCommentBody(comment: FeishuDocCommentText | null): string {
   const blocks: string[] = [];
-  if (comment !== null && comment.quote !== '') {
+  const anchor = comment?.anchor;
+  if (anchor?.kind === 'content' && anchor.preview !== '') {
     blocks.push(
       `<quote note="${escapeXmlAttribute(DOC_COMMENT_QUOTE_NOTE)}">\n` +
-        `${escapeXmlText(comment.quote)}\n</quote>`,
+        `${escapeXmlText(anchor.preview)}\n</quote>`,
     );
   }
   const content = comment === null ? '' : renderCommentSegments(comment.segments);

@@ -482,12 +482,29 @@ and `message_id` are, followed by `sender_id` / `sender_name` / `create_time`.
 An empty value is dropped the way the chat path drops one, so a top-level
 comment carries no `reply_id` and `notice_type` is what says so.
 
+Three more attributes say what the comment is about. `anchor` is
+`whole_document` or `content`, read from Feishu's own `is_whole`; it is absent
+exactly when the comment could not be read, which is what keeps "the commenter
+commented on the document" distinct from "we have no text". `anchor_id` is
+Feishu's id for the anchored content, present when the response named one —
+for a docx it is the block id, so a recipient that wants the passage in full
+reads it with lark-cli, and the channel spends no call fetching a block that
+can be far larger than every comment on it. `anchor_deleted` appears only when
+Feishu says the anchored content is gone; a response that stays silent is not a
+denial, so nothing is written for one. What an anchor id names follows the
+document type, and a selection spanning several parts records only the one it
+starts at — Feishu keeps no record of the rest.
+
 The body is the blocks a chat body is made of. The event payload carries no
 text, so the delivered path reads it: one `drive.fileComment.batchQuery` call per
 *delivered* event picks the item the event names — the reply `reply_id` names, or
 the head of the thread when it is empty — and it becomes `<content>`, escaped the
-way a chat body's is, with the document text the comment is anchored to above it
-as `<quote note="…">`. A mention inside the comment is normalized to the same
+way a chat body's is, with a preview of the anchored content above it as
+`<quote note="…">`. The note is what stops the preview being read as the passage
+itself: Feishu derives it and shortens it to a length of its own, saying neither
+that it cut anything nor how long the original was, and `anchor_id` is what
+names the content the preview came from. A comment on the whole document has no
+preview, and neither has one whose anchor Feishu returned without text. A mention inside the comment is normalized to the same
 `<at user_id="…">` element an inbound chat mention becomes, with an empty label
 because Feishu's comment API carries no display name — which is what the chat
 renderer already produces for a mention record without one. One function writes
@@ -525,6 +542,7 @@ Source:
 - `/packages/channel/feishu-channel/src/feishu-message-render.ts`
 - `/packages/channel/feishu-channel/src/tools/document-tools.ts`
 - `/packages/channel/feishu-transport/src/parse/comment.ts`
+- `/packages/channel/feishu-transport/src/transport/doc-comment.ts`
 - `/packages/channel/feishu-transport/src/parse/document-ref.ts`
 
 ### Slash commands

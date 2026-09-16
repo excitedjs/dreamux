@@ -496,7 +496,12 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
       teamName: 'team-a',
     });
     bot.setDocCommentText('rpl_1', {
-      quote: 'the paragraph in question',
+      anchor: {
+        kind: 'content',
+        anchorId: 'blk_1',
+        preview: 'the paragraph in question',
+        deleted: false,
+      },
       segments: [{ kind: 'text', text: 'please rework this' }],
     });
 
@@ -523,6 +528,8 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
       file_token: 'doc_tok',
       comment_id: 'cmt_1',
       reply_id: 'rpl_1',
+      anchor: 'content',
+      anchor_id: 'blk_1',
     });
     expect(payload['text']).toContain('<content>\nplease rework this\n</content>');
     expect(payload['text']).toContain('the paragraph in question');

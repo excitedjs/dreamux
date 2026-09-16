@@ -1285,13 +1285,14 @@ describe('createFeishuTransport — resolveWikiNode', () => {
  * delivery without text rather than a dropped event.
  */
 describe('createFeishuTransport — fetchDocCommentText', () => {
-  const thread = (replies: unknown[], quote?: string): unknown => ({
+  const thread = (replies: unknown[], item: Record<string, unknown> = {}): unknown => ({
     data: {
       items: [
         {
           comment_id: 'cmt_1',
-          quote,
+          is_whole: false,
           reply_list: { replies },
+          ...item,
         },
       ],
     },
@@ -1307,7 +1308,10 @@ describe('createFeishuTransport — fetchDocCommentText', () => {
     stub.commentBatchQuery.mockResolvedValueOnce(
       thread(
         [textReply('rep_1', 'please rework this'), textReply('rep_2', 'agreed')],
-        'the paragraph in question',
+        {
+          quote: 'the paragraph in question',
+          extra: { content_anchor_id: 'blk_1' },
+        },
       ) as never,
     )
     const transport = createFeishuTransport(
@@ -1323,13 +1327,18 @@ describe('createFeishuTransport — fetchDocCommentText', () => {
         replyId: '',
       }),
     ).resolves.toEqual({
-      quote: 'the paragraph in question',
+      anchor: {
+        kind: 'content',
+        anchorId: 'blk_1',
+        preview: 'the paragraph in question',
+        deleted: false,
+      },
       segments: [{ kind: 'text', text: 'please rework this' }],
     })
     expect(stub.commentBatchQuery).toHaveBeenCalledWith({
       path: { file_token: 'doc_tok' },
       params: { file_type: 'docx', user_id_type: 'open_id' },
-      data: { comment_ids: ['cmt_1'] },
+      data: { comment_ids: ['cmt_1'], need_relation: true },
     })
   })
 
@@ -1354,7 +1363,7 @@ describe('createFeishuTransport — fetchDocCommentText', () => {
         replyId: 'rep_2',
       }),
     ).resolves.toEqual({
-      quote: '',
+      anchor: { kind: 'content', anchorId: '', preview: '', deleted: false },
       segments: [{ kind: 'text', text: 'agreed' }],
     })
   })
@@ -1388,12 +1397,69 @@ describe('createFeishuTransport — fetchDocCommentText', () => {
         replyId: 'rep_1',
       }),
     ).resolves.toEqual({
-      quote: '',
+      anchor: { kind: 'content', anchorId: '', preview: '', deleted: false },
       segments: [
         { kind: 'mention', openId: 'ou_bot' },
         { kind: 'text', text: ' see ' },
         { kind: 'text', text: 'https://example.invalid/x' },
       ],
+    })
+  })
+
+  test('a comment on the whole document is anchored to it, not to nothing', async () => {
+    const stub = stubClient()
+    stub.commentBatchQuery.mockResolvedValueOnce(
+      thread([textReply('rep_1', 'the whole thing needs work')], {
+        is_whole: true,
+      }) as never,
+    )
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: '',
+      }),
+    ).resolves.toEqual({
+      anchor: { kind: 'whole_document' },
+      segments: [{ kind: 'text', text: 'the whole thing needs work' }],
+    })
+  })
+
+  test('the anchored content is reported deleted when Feishu says so', async () => {
+    const stub = stubClient()
+    stub.commentBatchQuery.mockResolvedValueOnce(
+      thread([textReply('rep_1', 'please rework this')], {
+        quote: 'the paragraph in question',
+        extra: { content_anchor_id: 'blk_1' },
+        relation: { content_deleted: true },
+      }) as never,
+    )
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 's' },
+      { client: stub.client },
+    )
+
+    await expect(
+      transport.fetchDocCommentText({
+        fileToken: 'doc_tok',
+        fileType: 'docx',
+        commentId: 'cmt_1',
+        replyId: '',
+      }),
+    ).resolves.toEqual({
+      anchor: {
+        kind: 'content',
+        anchorId: 'blk_1',
+        preview: 'the paragraph in question',
+        deleted: true,
+      },
+      segments: [{ kind: 'text', text: 'please rework this' }],
     })
   })
 

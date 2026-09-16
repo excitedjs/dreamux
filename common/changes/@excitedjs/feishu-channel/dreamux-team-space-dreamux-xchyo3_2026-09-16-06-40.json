@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A delivered document comment now says what it is about. Three attributes join the envelope: `anchor`, which is `whole_document` or `content` and is absent exactly when the comment could not be read — so a comment the commenter put on the whole document is no longer indistinguishable from one with no text; `anchor_id`, Feishu's id for the anchored content, which for a docx is the block id lark-cli reads back in full; and `anchor_deleted`, written only when Feishu says the anchored content is gone. The `<quote>` block is unchanged in shape but no longer described as the document text the comment is anchored to: its note now says it is a preview Feishu shortens, and points at `anchor_id` for the content itself. The channel fetches no anchored content of its own — one anchored part can be far larger than every comment on it, and the recipient decides whether it wants the passage.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

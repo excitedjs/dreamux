@@ -51,12 +51,17 @@ never on `@excitedjs/dreamux` core.
 - Normalize inbound Feishu content into agent-facing channel results.
 - Own document-comment delivery: one submission per subscriber, fanned out
   concurrently. The event payload carries no text, so a delivered event reads
-  the comment it names once — its own body and the document text it is anchored
-  to — under the same bounded deadline as the commenter's name lookup; a failed
-  or empty read delivers `<content />` rather than dropping the event. A comment
-  delivers in the same envelope shape a chat message does: the facts that
-  address it are `attrs` Core renders on the start tag, and the body is the
-  `<quote>` / `<content>` blocks alone. A mention inside a comment renders as the
+  the comment it names once — its own body, and where in the document it is
+  anchored — under the same bounded deadline as the commenter's name lookup; a
+  failed or empty read delivers `<content />` rather than dropping the event. A
+  comment delivers in the same envelope shape a chat message does: the facts
+  that address it are `attrs` Core renders on the start tag, and the body is the
+  `<quote>` / `<content>` blocks alone. Where the comment is anchored is on the
+  envelope, not fetched: `anchor` (Feishu's own `is_whole`, absent when the
+  comment could not be read at all), `anchor_id`, and `anchor_deleted` only when
+  Feishu says the content is gone. `<quote>` is the preview Feishu shortens, and
+  its note says so — the anchored content itself is `anchor_id` and lark-cli's
+  to read, because one anchored part can be larger than every comment on it. A mention inside a comment renders as the
   same `<at user_id="…">` element a chat mention does — one function in
   `feishu-message-render.ts` writes it for both, so the two cannot drift. A subscribed document runs no access gate — the subscription is
   already the recipient's own authorization — and a subscriber whose Team is

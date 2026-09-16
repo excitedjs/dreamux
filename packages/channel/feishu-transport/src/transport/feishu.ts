@@ -24,6 +24,11 @@ import {
   type FeishuMessageReadResponse,
 } from './message-read.js'
 import {
+  readDocComment,
+  type FeishuDocCommentRequest,
+  type FeishuDocCommentText,
+} from './doc-comment.js'
+import {
   createFeishuCotClient,
   type FeishuCotClient,
 } from './cot.js'
@@ -42,6 +47,12 @@ export type {
   FeishuMessageReadResponse,
   FeishuMessageReader,
 } from './message-read.js'
+export type {
+  FeishuCommentAnchor,
+  FeishuCommentSegment,
+  FeishuDocCommentRequest,
+  FeishuDocCommentText,
+} from './doc-comment.js'
 
 const WS_HANDSHAKE_TIMEOUT_MS = 15_000
 const WS_STARTUP_GRACE_MS = 30_000
@@ -163,43 +174,6 @@ export interface FeishuWikiNode {
     objType: string
 }
 
-/**
- * One piece of a comment's body.
- *
- * A mention stays a mention rather than being flattened into text here,
- * because the element a model reads it as is an agent-facing body format and
- * this package does not assemble those. The caller decides how to write it.
- */
-export type FeishuCommentSegment =
-    | { readonly kind: 'text'; readonly text: string }
-    | { readonly kind: 'mention'; readonly openId: string }
-
-/**
- * The one comment a `drive.notice.comment_add_v1` event names.
- *
- * The event payload carries identifying ids only, so a caller that wants to
- * show a person what was written has to read the thread. Only the named item
- * is returned: a whole thread is what lark-cli is for.
- */
-export interface FeishuDocCommentText {
-    /**
-     * The document text the comment is anchored to, empty for a comment on the
-     * whole document. It is what says which part of the document is discussed.
-     */
-    quote: string
-    /** What the commenter wrote, in order. */
-    segments: readonly FeishuCommentSegment[]
-}
-
-/** The one comment to read: a thread, and the item inside it. */
-export interface FeishuDocCommentRequest {
-    fileToken: string
-    fileType: string
-    commentId: string
-    /** Empty names the thread's own top-level comment. */
-    replyId: string
-}
-
 export type FeishuMessageResourceType = 'file' | 'image'
 
 export interface FeishuMessageResourceRequest {
@@ -237,50 +211,6 @@ function asMetaDocType(fileType: string): MetaDocType | undefined {
   return (META_DOC_TYPES as readonly string[]).includes(fileType)
     ? (fileType as MetaDocType)
     : undefined
-}
-
-/**
- * The document types the comment API takes, intersected with the types a
- * comment event can name. It is narrower than the metadata API's list, so the
- * two conversions cannot share one.
- */
-const COMMENT_FILE_TYPES = ['doc', 'docx', 'sheet', 'bitable', 'slides', 'file'] as const
-type CommentFileType = (typeof COMMENT_FILE_TYPES)[number]
-
-function asCommentFileType(fileType: string): CommentFileType | undefined {
-  return (COMMENT_FILE_TYPES as readonly string[]).includes(fileType)
-    ? (fileType as CommentFileType)
-    : undefined
-}
-
-interface RawCommentElement {
-  type: 'text_run' | 'docs_link' | 'person'
-  text_run?: { text: string }
-  docs_link?: { url: string }
-  person?: { user_id: string }
-}
-
-/**
- * One comment's elements, in order, as the two kinds of thing they can be.
- *
- * A `docs_link` is text: it is a URL the commenter typed and reads as one. A
- * `person` is not, because the caller writes it as the same mention element an
- * inbound chat message's mention becomes, and only the caller owns that form.
- *
- * Each element's payload is optional in Feishu's own types even when `type`
- * names it, so an element that carries nothing contributes nothing.
- */
-function commentElementSegment(element: RawCommentElement): FeishuCommentSegment {
-  switch (element.type) {
-    case 'text_run':
-      return { kind: 'text', text: element.text_run?.text ?? '' }
-    case 'docs_link':
-      return { kind: 'text', text: element.docs_link?.url ?? '' }
-    case 'person':
-      return element.person === undefined
-        ? { kind: 'text', text: '' }
-        : { kind: 'mention', openId: element.person.user_id }
-  }
 }
 
 export type RouteHandler = (raw: unknown) => Promise<unknown>
@@ -580,34 +510,7 @@ export function createFeishuTransport(
     async fetchDocCommentText(
       request: FeishuDocCommentRequest,
     ): Promise<FeishuDocCommentText | null> {
-      const ct = asCommentFileType(request.fileType)
-      if (!ct) return null
-      const res = await client.drive.fileComment.batchQuery({
-        path: { file_token: request.fileToken },
-        params: { file_type: ct, user_id_type: 'open_id' },
-        data: { comment_ids: [request.commentId] },
-      })
-      // A non-zero business code arrives on a successful HTTP response, so a
-      // revoked scope would otherwise read as "this thread holds no such item".
-      if (res.code !== undefined && res.code !== 0) {
-        throw new Error(
-          `Feishu comment read for ${request.commentId} failed ` +
-            `(code ${res.code}: ${res.msg ?? ''})`,
-        )
-      }
-      const item = res.data?.items?.find((row) => row.comment_id === request.commentId)
-      if (!item) return null
-      // An empty reply id names the thread's own comment, which the API
-      // carries as the first entry of the same `reply_list` its replies are in.
-      const replies = item.reply_list?.replies ?? []
-      const reply = request.replyId === ''
-        ? replies[0]
-        : replies.find((row) => row.reply_id === request.replyId)
-      if (!reply) return null
-      return {
-        quote: item.quote ?? '',
-        segments: reply.content.elements.map(commentElementSegment),
-      }
+      return readDocComment(client, request)
     },
 
     async resolveWikiNode(token: string): Promise<FeishuWikiNode | null> {

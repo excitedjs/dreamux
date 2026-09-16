@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A document comment now answers where it is anchored instead of a single quote string. `FeishuDocCommentText.quote` is replaced by `anchor`, which is either `{ kind: 'whole_document' }` or `{ kind: 'content', anchorId, preview, deleted }`: Feishu's own `is_whole` decides which, `anchorId` is the id Feishu gives the anchored content (for a docx, its block id), `preview` is the text Feishu shortens from it, and `deleted` is what Feishu says about the content still existing. The read asks for `need_relation` so that last fact is answered, in the same call and the same response as before. The old `quote` field was described as the document text the comment is anchored to and is not: Feishu derives it and cuts it at a length of its own, without saying that it cut anything or how long the original was. Reading one comment moves out of `transport/feishu.ts` into its own `transport/doc-comment.ts`, which owns the comment types, the segment normalization, and the anchor; `FeishuCommentAnchor` joins the package's exported types and every other export keeps its name and path.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
