@@ -14,8 +14,8 @@
  * to curate that: it never sees a Feishu error type, because none crosses.
  *
  * An exception still means nobody decided anything. It leaves here unchanged,
- * is logged on both sides, and reaches the model as Core's fixed sanitized
- * error.
+ * is logged on both sides, and reaches the model with the error's own code
+ * and message.
  */
 import type {
   ChannelMcpCall,

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "An `ask_user_question` card now stays answerable for 24 hours instead of 14 minutes. The tool gains an optional `text` argument: Markdown, including `<at user_id=\"ou_example\">Example</at>` mentions, shown above the questions so one card can carry the explanation and the decision. The explanation remains on submitted, cancelled, and expired cards. The answer delivered to the model does not repeat it.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

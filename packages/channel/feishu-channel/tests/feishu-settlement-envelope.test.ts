@@ -154,6 +154,24 @@ async function answers(delivered: Delivered[], count: number): Promise<void> {
 }
 
 describe('sending the question card', () => {
+  it('sends the explanation above the questions', async () => {
+    const bot = createFakeFeishuBot();
+    const h = handle(capturingDelivery().delivery, bot);
+    const text = '# Context\n\n- Compare both options.';
+
+    await askUserQuestion(h, { chatId: 'oc_room', text, questions: QUESTIONS });
+
+    expect(bot.sentCards[0]?.card).toMatchObject({
+      body: {
+        elements: [
+          { tag: 'markdown', content: text },
+          { tag: 'collapsible_panel' },
+          { tag: 'column_set' },
+        ],
+      },
+    });
+  });
+
   it('replies to the message the model named, seen before or not', async () => {
     const bot = createFakeFeishuBot();
     const h = handle(capturingDelivery().delivery, bot);

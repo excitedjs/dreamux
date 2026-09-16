@@ -70,6 +70,7 @@ export interface FeishuToolSession {
    */
   askUserQuestion(input: {
     chatId: string;
+    text?: string;
     questions: readonly AskUserQuestionSpec[];
     messageId?: string;
   }): Promise<{ request_id: string }>;
