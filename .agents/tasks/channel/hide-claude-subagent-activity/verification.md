@@ -56,3 +56,22 @@ all succeeded.
 - The Feishu card was not observed with the change.
 - Nested subagents were not probed; the documentation states they carry
   `parent_tool_use_id` at every depth, and the filter does not depend on depth.
+
+## Independent implementation review (2026-09-17)
+
+External review of the pushed branch (commit `e50dfe70` on `next` `bc7d769d`),
+used in place of the workflow review for this group's tasks. Verdict: approved,
+no finding.
+
+- The reviewer placed the filter in the envelope-meaning owner, confirmed that
+  compaction, interruption, usage, and `turn.ended` never reach it, and that the
+  RPC still feeds every line to `TurnAggregator`, so the recorded
+  `lastAssistantText` non-goal is unchanged.
+- The reviewer independently ran `rush build`, the full `rush test`, `eslint`,
+  and `tsc -p tsconfig.tests.json`, all passing, and repeated the mutation
+  check: with the filter line removed the new test fails (30 passed, 1 failed);
+  restored, 31 pass.
+- The only remaining item it named was the in-flight task state failing
+  `.agents/scripts/check.sh`, resolved by setting `done` at closeout.
+
+TeamLeader adjudication: nothing to fix.

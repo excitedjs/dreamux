@@ -3,13 +3,13 @@
 ## Current state
 
 - Goal: Report only the main agent's activity from the Claude Code runtime; a subagent's envelopes produce no runtime activity
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/hide-claude-subagent-activity/requirement.md), revision 2026-09-17.
 - Final solution: [Envelope-level subagent filter](/.agents/tasks/channel/hide-claude-subagent-activity/technical-design/final.md).
 - Solution workflow: Operator selected the minimal-change fast path on 2026-09-17.
 - Solution review Issue: Omitted under the selected fast path.
 - Blockers: None.
-- Next action: Independent review of the pushed branch.
+- Next action: None.
 - Verification: [Wire evidence, checks, and coverage limits](/.agents/tasks/channel/hide-claude-subagent-activity/verification.md).
 - Related tasks: Settles deferred row 4 of [claude-code-stream-json-protocol](/.agents/research/claude-code-stream-json-protocol.md); builds on [Feishu COT cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md).
 
@@ -33,5 +33,15 @@
 
 ## Delivery
 
-- Pull request: Not opened.
-- Knowledge closeout: Pending.
+- Implementation review: external review of the pushed branch approved it with
+  no finding; adjudication in
+  [verification.md](/.agents/tasks/channel/hide-claude-subagent-activity/verification.md).
+- Knowledge closeout: `.agents/domains/provider-runtime.md` (the display-line
+  section states that subagent envelopes are dropped, and the deferred list no
+  longer carries them), `.agents/product/README.md` (a new "Observing agents"
+  entry), and `.agents/research/claude-code-stream-json-protocol.md` (row 4
+  promoted and fixed, with the background-subagent text divergence). Directory
+  `CLAUDE.md` files, the glossary, `root.md`, and the maintenance skill: N/A —
+  none describes which stream envelopes reach the display, and no config or
+  persisted state changed.
+- Release note: a patch change file for `@excitedjs/agent-runtime-claude-code`.
