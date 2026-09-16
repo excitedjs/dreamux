@@ -36,6 +36,7 @@
 - Implementation review: external review of the pushed branch approved it with
   no finding; adjudication in
   [verification.md](/.agents/tasks/channel/hide-claude-subagent-activity/verification.md).
+- Pull request: [#438](https://github.com/excitedjs/dreamux/pull/438)
 - Knowledge closeout: `.agents/domains/provider-runtime.md` (the display-line
   section states that subagent envelopes are dropped, and the deferred list no
   longer carries them), `.agents/product/README.md` (a new "Observing agents"
