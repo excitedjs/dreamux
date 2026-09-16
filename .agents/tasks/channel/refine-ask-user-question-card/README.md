@@ -49,7 +49,7 @@ The fourth was approved.
 - Implementation review: external review of the pushed branch approved it with
   no blocking finding; adjudication in
   [verification.md](/.agents/tasks/channel/refine-ask-user-question-card/verification.md).
-- Pull request: Opened against `next` from this task's branch.
+- Pull request: [#437](https://github.com/excitedjs/dreamux/pull/437)
 - Knowledge closeout: `.agents/domains/channel.md` (`ask_user_question`: the
   added `text` field, the 24-hour lifetime and its 14-day bound, late-settlement
   routing until #434, and a Regression Trap for the unobserved 15-minute cutoff)
