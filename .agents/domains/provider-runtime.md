@@ -660,7 +660,14 @@ is not echoed back (Dreamux does not pass `--replay-user-messages`), so a text
 block there is context the CLI injected into its conversation — observed on
 2.1.259, the `Skill` tool's result is only `Launching skill: <name>` and the
 whole SKILL.md body follows as a separate `user` line with no field marking it
-as injected. None of that text is displayed. Every other stdout line — `init`,
+as injected. None of that text is displayed. A subagent's envelopes are not
+displayed at all: every `assistant` and `user` line a subagent produces names
+the spawning `Agent` call in `parent_tool_use_id` (main-agent lines carry
+`null`), and the display projection drops the whole envelope — its text, its
+tool calls, and their results. The main agent's own `Agent` call and its result
+are the main agent's and stay. Observed on 2.1.272, a background subagent's text
+arrives without `--forward-subagent-text`, which the documentation says it
+needs. Every other stdout line — `init`,
 `command_lifecycle`, control traffic, every other `system` notice,
 `stream_event`, `rate_limit_event` — is excluded from Core display activity.
 RPC still uses protocol events for lifecycle, session setup and control handling,
@@ -678,9 +685,10 @@ Source:
 
 History: the 2026-09-03 ruling 「所有的 user 消息都隐藏即可」 in
 [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md);
+the 2026-09-16 ruling 「在 Provider 这层，Subagent 的 Activity 完全不需要上报」 in
+[hide-claude-subagent-activity](/.agents/tasks/channel/hide-claude-subagent-activity/requirement.md);
 the wire evidence and the deferred divergences (Remote Control response field
-names, a subagent's tool calls shown as the agent's own, unconsumed `system` subtypes)
-are frozen in
+names, unconsumed `system` subtypes) are frozen in
 [claude-code-stream-json-protocol](/.agents/research/claude-code-stream-json-protocol.md).
 
 Provider-native history formats, session discovery, cursor envelopes, and typed
