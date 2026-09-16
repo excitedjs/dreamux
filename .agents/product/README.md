@@ -330,6 +330,13 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   the body the operator can already see in the chat.
   (Ruling: 「所有的 user 消息都隐藏即可」, 2026-09-03, in
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
+- **A subagent is not the agent speaking either.** When a Claude Code agent
+  delegates to a native subagent, the card shows the agent's own `Agent` call
+  and what it returned, and nothing the subagent said or did inside it — not
+  its words, its tool calls, or their results.
+  (Ruling: 「预期只需要渲染 main agent 的Activity。在 Provider 这层，Subagent 的 Activity 完全不需要上报。」,
+  2026-09-16, in
+  [hide-claude-subagent-activity](/.agents/tasks/channel/hide-claude-subagent-activity/requirement.md).)
 - **Tool details use the runtime's facts.** Tool rows retain the fixed
   Read/List/Search/Edit action words before a summary, with the matching action
   name when no summary exists. The run action uses its summary directly or Bash

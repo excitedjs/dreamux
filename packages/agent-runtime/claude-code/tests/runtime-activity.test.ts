@@ -240,6 +240,27 @@ describe('handleProtocolEvent live activity', () => {
     });
     expect(h.activityEvents.some((activity) => activity.kind === 'assistant.message')).toBe(false);
   });
+
+  it('reports none of a subagent\'s envelopes, and keeps the main agent\'s own Agent call', () => {
+    const h = makeHarness();
+    // Observed on the wire (Claude Code 2.1.272): every envelope a subagent
+    // produces carries the spawning Agent call's id in `parent_tool_use_id`,
+    // and a background subagent's text arrives too, after the main result.
+    const subagent = (kind: 'assistant' | 'user', content: unknown[]): ClaudeProtocolEvent => {
+      const raw = { type: kind, parent_tool_use_id: 'agent-call', message: { role: kind, content } };
+      return { kind: 'stream', line: kind === 'assistant' ? { kind, text: '', sessionId: 'thread-1', raw } : { kind, raw } };
+    };
+    h.fire(streamToolUse('agent-call', 'Agent', { description: 'Run the probe', prompt: 'echo probe' }));
+    h.fire(subagent('user', [{ type: 'text', text: 'echo probe' }]));
+    h.fire(subagent('assistant', [{ type: 'tool_use', id: 'sub-call', name: 'Bash', input: { command: 'echo probe' } }]));
+    h.fire(subagent('user', [{ type: 'tool_result', tool_use_id: 'sub-call', content: 'probe', is_error: false }]));
+    h.fire(subagent('assistant', [{ type: 'text', text: 'ok' }]));
+    h.fire(streamToolResult('agent-call', 'ok', false, 'msg-main'));
+    expect(h.activityEvents).toEqual([
+      expect.objectContaining({ kind: 'tool.call', callId: 'agent-call', toolName: 'Agent', status: 'started' }),
+      expect.objectContaining({ kind: 'tool.call', callId: 'agent-call', toolName: 'Agent', status: 'completed', result: 'ok' }),
+    ]);
+  });
 });
 
 /**

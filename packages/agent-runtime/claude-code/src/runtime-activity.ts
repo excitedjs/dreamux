@@ -97,6 +97,12 @@ export function handleProtocolEvent(
  * just loaded, hook output, reminders. None of that text is the agent's, and
  * none of it is the operator's (stdin is never echoed back), so it is not
  * displayed at all: every `user` envelope is hidden.
+ *
+ * A subagent's conversation is not this agent's either. Every `assistant` and
+ * `user` envelope a subagent produces names the `Agent` call that spawned it in
+ * `parent_tool_use_id`, and none of it is reported: not its words, its tool
+ * calls, or their results. The main agent's own `Agent` call and that call's
+ * result are the main agent's, and stay.
  */
 function emitStreamActivity(
   line: ClaudeActivityLine,
@@ -106,6 +112,7 @@ function emitStreamActivity(
     emitActivity(compactedActivity(activityState), activitySink);
     return;
   }
+  if (line.raw['parent_tool_use_id'] != null) return;
   const message = recordValue(line.raw['message']) ?? line.raw;
   const messageId = stringValue(message['id']) ?? `stream-${activityState.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
