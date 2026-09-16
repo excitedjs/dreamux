@@ -460,8 +460,17 @@ describe('Feishu inbound resource budgets', () => {
   });
 
   it('bounds a hanging resource stream by the per-message deadline', async () => {
+    // Deterministic clocks. With real timers a congested CI runner could
+    // fire the work deadline while the cold-cache mkdir/stat are still in
+    // flight, so the fetcher never ran, the stream was never acquired, and
+    // the synchronous `stream.destroyed` assertion raced. Pin the clock and
+    // advance it only after the fetcher has handed back the hanging stream.
+    vi.useFakeTimers();
+    const startedAt = new Date('2026-07-22T00:00:00.000Z').getTime();
+    vi.setSystemTime(startedAt);
+    const fetchEntered = deferred<void>();
     const stream = new Readable({ read() {} });
-    const result = await formatFeishuMessageForRuntime(event({
+    const resultPromise = formatFeishuMessageForRuntime(event({
       resources: [{ type: 'file', key: 'slow-stream' }],
     }), {
       cacheDir: cacheDir(),
@@ -469,10 +478,15 @@ describe('Feishu inbound resource budgets', () => {
       timeoutMs: 100,
       resourceFetcher: {
         async fetchMessageResource() {
+          fetchEntered.resolve(undefined);
           return { stream, headers: {} };
         },
       },
     });
+    await fetchEntered.promise;
+
+    await vi.advanceTimersByTimeAsync(25);
+    const result = await resultPromise;
 
     expect(result.attachments[0]).toMatchObject({
       status: 'not_downloaded',
@@ -482,8 +496,15 @@ describe('Feishu inbound resource budgets', () => {
   });
 
   it('uses the operation deadline for a hanging resource stream', async () => {
+    // Deterministic clocks, see the per-message deadline case above: the
+    // 20ms resource timeout must fire against an already acquired hanging
+    // stream instead of racing the cold-cache setup under real timers.
+    vi.useFakeTimers();
+    const startedAt = new Date('2026-07-22T00:00:00.000Z').getTime();
+    vi.setSystemTime(startedAt);
+    const fetchEntered = deferred<void>();
     const stream = new Readable({ read() {} });
-    const result = await formatFeishuMessageForRuntime(event({
+    const resultPromise = formatFeishuMessageForRuntime(event({
       resources: [{ type: 'file', key: 'resource-timeout' }],
     }), {
       cacheDir: cacheDir(),
@@ -491,10 +512,15 @@ describe('Feishu inbound resource budgets', () => {
       timeoutMs: 20,
       resourceFetcher: {
         async fetchMessageResource() {
+          fetchEntered.resolve(undefined);
           return { stream, headers: {} };
         },
       },
     });
+    await fetchEntered.promise;
+
+    await vi.advanceTimersByTimeAsync(20);
+    const result = await resultPromise;
 
     expect(result.attachments[0]).toMatchObject({
       status: 'not_downloaded',
