@@ -104,7 +104,8 @@ the same change that touches it.
   running is reported idle rather than started in order to be interrupted. `/teams` posts a card of
   every running Team on the dispatcher — not only the ones this conversation
   can reach — grouped by repository, each with its TeamLeader runtime, its
-  intent, and links to the chats bound to it; listing them all is an operator
+  intent, and links to the chats and topics bound to it, a topic link opening
+  that topic rather than its group; listing them all is an operator
   ruling by code size, not an oversight. `/dissolve` dissolves the Team bound
   to this conversation with a generated note and never forces; when it is
   accepted the conversation gets no receipt, because the Team's close already

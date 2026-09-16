@@ -48,8 +48,26 @@ function repoName(team: RunningTeamRow): string {
   return team.source_repo === null ? 'No repository' : basename(team.source_repo);
 }
 
-function chatLink(chatId: string): string {
-  return `https://applink.feishu.cn/client/chat/open?openChatId=${encodeURIComponent(chatId)}`;
+/**
+ * Where a binding entry opens: the topic for a topic binding, the chat for a
+ * group binding.
+ *
+ * The topic form copies the `message_app_link` Feishu itself returns for a
+ * message in a topic, parameter for parameter — both spellings of each id and
+ * the thread position — rather than a subset no client is known to accept.
+ */
+function bindingLink(binding: FeishuBindingView): string {
+  if (binding.target_kind === 'topic' && binding.thread_id !== null) {
+    const query = new URLSearchParams({
+      open_chat_id: binding.chat_id,
+      open_thread_id: binding.thread_id,
+      openchatid: binding.chat_id,
+      openthreadid: binding.thread_id,
+      thread_position: '-1',
+    });
+    return `https://applink.feishu.cn/client/thread/open?${query}`;
+  }
+  return `https://applink.feishu.cn/client/chat/open?openChatId=${encodeURIComponent(binding.chat_id)}`;
 }
 
 function escapeMarkdown(value: string): string {
@@ -82,7 +100,7 @@ function teamItem(input: {
         const suffix = binding.target_kind === 'topic' && binding.thread_id !== null
           ? ` <font color='grey'>· ${escapeMarkdown(binding.thread_id)}</font>`
           : '';
-        return `[📍 ${escapeMarkdown(binding.chatName)}](${chatLink(binding.chat_id)})${suffix}`;
+        return `[📍 ${escapeMarkdown(binding.chatName)}](${bindingLink(binding)})${suffix}`;
       }).join('  \n');
   return {
     tag: 'interactive_container',

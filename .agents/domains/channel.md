@@ -631,8 +631,9 @@ rows state intent and let the owning layer refuse:
   same repository and the same agent runtime always render the same colour
   without a name-to-colour table; a repository's colour is also its tiles' border,
   which is why that palette holds only colours with a `-100` border token. A tile
-  carries the runtime tag and name, the intent, and every bound chat as its own
-  link, and is free to be as tall as that makes it: Feishu lays a two-column
+  carries the runtime tag and name, the intent, and every binding as its own
+  link — a topic binding opens that topic, a group binding its chat — and is
+  free to be as tall as that makes it: Feishu lays a two-column
   `column_set` out as a waterfall, so a tall tile lengthens its own column and
   never stretches the one beside it. Only this Channel's own bindings appear —
   bindings are Channel-owned and Core holds no cross-channel registry to read.

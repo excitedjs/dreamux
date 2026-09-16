@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "On the `/teams` card, a topic binding's link now opens that topic in Feishu rather than the group it lives in. The link is built in the same shape as the `message_app_link` Feishu returns for a topic message. A group binding's link is unchanged and still opens the chat.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

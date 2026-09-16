@@ -346,6 +346,51 @@ describe('Feishu slash command dispatch', () => {
     expect(tile.elements[1]!.content).not.toContain('</text_tag>*intent*_');
     expect(panel.header.title.content).toContain('\\<unsafe\\>');
   });
+
+  it('links a topic binding to its topic and a group binding to its chat', async () => {
+    const binding = {
+      chat_id: 'oc_group',
+      display: null,
+      team_name: 'alpha',
+      origin: 'space' as const,
+      space_name: 'space',
+      created_at: 1,
+      updated_at: 1,
+    };
+    const reply = await dispatch('teams', {
+      plan: { kind: 'dispatcher', reason: 'no_binding' },
+      bindings: [
+        { ...binding, target_kind: 'group', thread_id: null },
+        { ...binding, target_kind: 'topic', thread_id: 'omt_topic' },
+      ],
+      resolveChatName: async () => 'Topic group',
+      invoke: async () => ({
+        teams: [{
+          team_name: 'alpha', status: 'running', intent: null,
+          source_repo: null, leader_agent_runtime: 'codex',
+        }],
+      }),
+    });
+    if (reply.kind !== 'card') throw new Error('expected card reply');
+    const card = reply.card as {
+      body: {
+        elements: Array<{
+          elements: Array<{
+            columns: Array<{ elements: Array<{ elements: Array<{ content: string }> }> }>;
+          }>;
+        }>;
+      };
+    };
+    const tile = card.body.elements[0]!.elements[0]!.columns[0]!.elements[0]!;
+
+    expect(tile.elements[2]!.content.split('  \n')).toEqual([
+      '[📍 Topic group](https://applink.feishu.cn/client/chat/open?openChatId=oc_group)',
+      '[📍 Topic group](https://applink.feishu.cn/client/thread/open' +
+        '?open_chat_id=oc_group&open_thread_id=omt_topic' +
+        '&openchatid=oc_group&openthreadid=omt_topic&thread_position=-1)' +
+        ' <font color=\'grey\'>· omt\\_topic</font>',
+    ]);
+  });
 });
 
 const tempDirs: string[] = [];
