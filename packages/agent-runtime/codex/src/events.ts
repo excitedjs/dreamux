@@ -369,6 +369,7 @@ export async function submitTurnStart(
   prompt: string,
   cwd: string | null,
   outputSchema?: Record<string, unknown>,
+  effort?: string,
 ): Promise<TurnStartResponse> {
   const input: UserInput[] = [
     { type: 'text', text: prompt, text_elements: [] },
@@ -376,6 +377,7 @@ export async function submitTurnStart(
   const params: Record<string, unknown> = { threadId, input };
   if (cwd !== null) params.cwd = cwd;
   if (outputSchema !== undefined) params.outputSchema = outputSchema;
+  if (effort !== undefined) params.effort = effort;
   return client.request<TurnStartResponse>('turn/start', params);
 }
 

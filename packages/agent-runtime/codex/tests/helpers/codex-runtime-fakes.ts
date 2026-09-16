@@ -30,6 +30,14 @@ export interface RecordedRequest {
 }
 
 export interface FakeCodexWsClientOptions {
+  model?: string;
+  reasoningEffort?: string | null;
+  configuredEffort?: string | null;
+  models?: Array<{
+    model: string;
+    defaultReasoningEffort: string;
+    supportedReasoningEfforts: Array<{ reasoningEffort: string }>;
+  }>;
   /** Thread id `thread/start` answers with when no script says otherwise. */
   freshThreadId?: string;
   /** Script `thread/resume` to fail with this error instead of succeeding. */
@@ -174,7 +182,11 @@ export class FakeCodexWsClient {
     }
     if (method === 'thread/start') {
       const id = this.options.freshThreadId ?? 'fresh-thread-1';
-      return { thread: { id, path: `/fake/sessions/${id}.jsonl` } } as R;
+      return {
+        thread: { id, path: `/fake/sessions/${id}.jsonl` },
+        model: this.options.model ?? 'test-model',
+        reasoningEffort: this.options.reasoningEffort === undefined ? 'low' : this.options.reasoningEffort,
+      } as R;
     }
     if (method === 'thread/resume') {
       if (this.options.failResumeWith !== undefined) {
@@ -183,7 +195,22 @@ export class FakeCodexWsClient {
       const threadId = (params as { threadId: string }).threadId;
       return {
         thread: { id: threadId, path: `/fake/sessions/${threadId}.jsonl` },
+        model: this.options.model ?? 'test-model',
+        reasoningEffort: this.options.reasoningEffort === undefined ? 'low' : this.options.reasoningEffort,
       } as R;
+    }
+    if (method === 'model/list') {
+      return {
+        data: this.options.models ?? [{
+          model: 'test-model',
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map((reasoningEffort) => ({ reasoningEffort })),
+        }],
+        nextCursor: null,
+      } as R;
+    }
+    if (method === 'config/read') {
+      return { config: { model_reasoning_effort: this.options.configuredEffort ?? null } } as R;
     }
     if (method === 'turn/start') {
       const p = params as {

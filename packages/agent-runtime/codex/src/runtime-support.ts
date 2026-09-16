@@ -16,16 +16,21 @@ export function codexProcessEnv(
   return { ...globalThis.process.env, ...injectEnv, ...extraEnv };
 }
 
-export function renderCodexSystemPromptAppend(
-  append: readonly string[],
-): string {
-  return append
+export function codexThreadInstructions(options: {
+  systemPromptReplace?: string;
+  systemPromptAppend?: readonly string[];
+}): { baseInstructions?: string; developerInstructions?: string } {
+  if (options.systemPromptReplace !== undefined) {
+    return { baseInstructions: options.systemPromptReplace };
+  }
+  const developerInstructions = (options.systemPromptAppend ?? [])
     .filter((prompt) => prompt !== '')
     .map(
       (prompt) =>
         `<developer-reminder>\n${escapeXmlText(prompt)}\n</developer-reminder>`,
     )
     .join('\n\n');
+  return developerInstructions === '' ? {} : { developerInstructions };
 }
 
 function escapeXmlText(text: string): string {

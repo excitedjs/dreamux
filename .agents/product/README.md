@@ -252,6 +252,24 @@ the same change that touches it.
   materialized into a live object by startup, queries, or cleanup; the one door
   back is an explicit `send` that reopens a member.
 
+## Codex reasoning effort
+
+A submission containing `ultrathink`, matched as a case-insensitive substring,
+requests the current Codex model's highest supported effort. All submission
+sources use the same rule. Original text stays intact; marked submissions append
+a short English explanation that the runtime handles the effort setting.
+History, files, and tool results are not independently scanned.
+
+The next ordinary submission explicitly restores ordinary effort. Busy input
+still submits without waiting and follows native merging and setting timing.
+There is no guarantee of immediate escalation or continued elevation of a
+merged native turn after ordinary input. Cold resume uses effective Codex
+configuration or the model default for ordinary effort. Global configuration
+and other threads are unaffected.
+
+Decision: [Issue #430](https://github.com/excitedjs/dreamux/issues/430).
+Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasoning-effort).
+
 ## Background work and completion delivery
 
 - **Background work survives the requested turn.** A Claude teammate may keep

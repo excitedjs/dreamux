@@ -7,6 +7,7 @@ import {
   type TurnCollector,
 } from './events.js';
 import type { CodexOutputSchemaCodec } from './output-schema-codec.js';
+import type { CodexReasoningEffort } from './reasoning-effort.js';
 import type { CodexWsClient } from './rpc.js';
 import { toolDisplay } from './tool-display.js';
 import type { ThreadItem, ThreadTokenUsage } from './types.js';
@@ -46,6 +47,7 @@ export interface TurnManagerOptions {
    * or negotiate it.
    */
   codec: CodexOutputSchemaCodec | null;
+  reasoning: CodexReasoningEffort;
   activitySink: AgentRuntimeActivitySink;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   onTurnCompleted?: (turn: CollectedTurn) => void;
@@ -127,6 +129,14 @@ export class TurnManager {
     if (this.protocolFailure !== null) return { status: 'failed', error: this.protocolFailure };
     const threadId = this.opts.getThreadId();
     if (threadId === null) return { status: 'failed', error: new Error('input submitted without thread_id') };
+    let prepared: Awaited<ReturnType<CodexReasoningEffort['prepare']>>;
+    try {
+      prepared = await this.opts.reasoning.prepare(text);
+    } catch (error) {
+      return { status: 'failed', error: asError(error) };
+    }
+    if (this.stopped) return { status: 'stopped' };
+    if (this.protocolFailure !== null) return { status: 'failed', error: this.protocolFailure };
     const deferred = createRuntimeSubmission();
     this.ensureCollector(threadId);
     const admissionId = this.nextNativeAdmission++;
@@ -136,9 +146,10 @@ export class TurnManager {
       response = await submitTurnStart(
         this.opts.client,
         threadId,
-        text,
+        prepared.text,
         this.opts.turnCwd ?? null,
         this.opts.codec?.wireSchema,
+        prepared.effort,
       );
     } catch (error) {
       const normalized = asError(error);

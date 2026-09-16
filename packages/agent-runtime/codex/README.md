@@ -33,6 +33,23 @@ The package logs through the optional `DreamuxLogger` the host passes in. With
 no logger it falls back to a minimal `console.error`-backed sink for standalone
 use and tests.
 
+## Ultrathink
+
+Include `ultrathink` anywhere in a submission to request the current model's
+highest supported reasoning effort. Matching is case-insensitive and includes
+quoted text in that submission. The provider preserves the original text and
+appends a short explanation of the keyword. It does not scan history or tools.
+
+The next ordinary submission explicitly restores the original effort. Busy
+submissions use the same rule without waiting for completion; Codex owns input
+merging and when the setting takes effect. This does not guarantee immediate
+escalation or keep a merged native turn elevated after ordinary input.
+
+On cold resume, ordinary effort comes from the effective Codex configuration,
+or the resumed model's default when unset. A temporary effort saved by Codex
+does not become the ordinary baseline. No global config or other thread is
+modified. The feature uses stock `turn/start` parameters without a proxy.
+
 ## Standalone use
 
 External callers can register this provider directly:

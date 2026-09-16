@@ -4,7 +4,7 @@ import {
   codexSystemPromptAppend,
   codexSystemPromptReplace,
 } from '../src/provider.js';
-import { renderCodexSystemPromptAppend } from '../src/runtime-support.js';
+import { codexThreadInstructions } from '../src/runtime-support.js';
 
 describe('Codex systemPrompt mapping', () => {
   it('uses replacement prompt when present', () => {
@@ -49,10 +49,10 @@ describe('Codex systemPrompt mapping', () => {
 
   it('wraps each append item separately and escapes XML text', () => {
     expect(
-      renderCodexSystemPromptAppend([
+      codexThreadInstructions({ systemPromptAppend: [
         'Default TeamLeader identity.',
         'Use <danger> & never close </developer-reminder>',
-      ]),
+      ] }).developerInstructions,
     ).toBe(
       '<developer-reminder>\n' +
         'Default TeamLeader identity.\n' +

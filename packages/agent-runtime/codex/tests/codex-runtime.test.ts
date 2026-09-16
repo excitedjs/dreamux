@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 
 import { CodexRuntime } from '../src/runtime.js';
 import { TurnManager } from '../src/turn-manager.js';
+import { CodexReasoningEffort } from '../src/reasoning-effort.js';
 import {
   createCodexAgentRuntimeProvider,
   codexRuntimeArgsForMcpServers,
@@ -152,7 +153,7 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     const { deps, client } = makeDeps({
       systemPromptReplace: 'complete replacement prompt',
       // A provider constructing deps by hand could (incorrectly) set both;
-      // CodexRuntime's own threadInstructionParams() must still prefer
+      // codexThreadInstructions() must still prefer
       // replace and drop append — this is the two-slot resolution this
       // package owns (see codexSystemPromptReplace/Append in provider.ts).
     });
@@ -680,6 +681,8 @@ describe('CodexRuntime usage summary', () => {
     const manager = new TurnManager({
       dispatcherId: 'agent-1', getThreadId: () => threadId,
       client: client as unknown as CodexWsClient, codec: null,
+      reasoning: new CodexReasoningEffort(client as unknown as CodexWsClient,
+        { model: 'test-model', reasoningEffort: 'low' }, false, '/fake/cwd'),
       activitySink: (fact) => { activity.push(fact); },
     });
     const first = requireSubmitted(await manager.submitInput({ text: 'first' }));

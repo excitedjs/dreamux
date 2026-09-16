@@ -55,6 +55,8 @@ export interface ThreadStartParams {
 
 export interface ThreadStartResponse {
   thread: { id: string; path?: string | null };
+  model: string;
+  reasoningEffort: string | null;
   [k: string]: unknown;
 }
 
@@ -68,6 +70,8 @@ export interface ThreadResumeParams {
 
 export interface ThreadResumeResponse {
   thread: { id: string; path?: string | null };
+  model: string;
+  reasoningEffort: string | null;
   [k: string]: unknown;
 }
 

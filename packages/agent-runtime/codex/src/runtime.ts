@@ -32,10 +32,11 @@ import type {
 } from '@excitedjs/dreamux-types';
 import {
   codexProcessEnv,
-  renderCodexSystemPromptAppend,
+  codexThreadInstructions,
 } from './runtime-support.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
 import type { CodexRuntimeDeps } from './runtime-deps.js';
+import { CodexReasoningEffort } from './reasoning-effort.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -239,7 +240,7 @@ export class CodexRuntime implements AgentRuntime {
     await this.applySkillExtraRoots();
     this.assertGeneration(generation);
 
-    await this.resolveThread(generation, options);
+    const thread = await this.resolveThread(generation, options);
     this.assertGeneration(generation);
 
     this.turnManager = new TurnManager({
@@ -249,6 +250,7 @@ export class CodexRuntime implements AgentRuntime {
       codec: this.deps.codec,
       log: this.log,
       activitySink: this.deps.activitySink,
+      reasoning: new CodexReasoningEffort(this.client, thread, this.threadResumed, this.deps.cwd),
     });
   }
 
@@ -273,10 +275,10 @@ export class CodexRuntime implements AgentRuntime {
   private async resolveThread(
     generation: number,
     options: { allowFreshFallback: boolean },
-  ): Promise<void> {
+  ): Promise<ThreadStartResponse> {
     if (this.client === null) throw new Error('client not initialized');
     this.threadResumed = false;
-    const threadInstructions = this.threadInstructionParams();
+    const threadInstructions = codexThreadInstructions(this.deps);
     const existing = this.threadId ?? this.identity.sessionId;
     if (existing === null) {
       const params: ThreadStartParams = {
@@ -295,7 +297,7 @@ export class CodexRuntime implements AgentRuntime {
       this.assertGeneration(generation);
       this.threadId = candidateThreadId;
       this.log('info', `started fresh thread ${this.threadId}`);
-      return;
+      return res;
     }
     let resumed: ThreadResumeResponse;
     try {
@@ -336,7 +338,7 @@ export class CodexRuntime implements AgentRuntime {
       });
       this.assertGeneration(generation);
       this.threadId = replacementThreadId;
-      return;
+      return res;
     }
     this.assertGeneration(generation);
     const resumedThreadId = resumed.thread.id;
@@ -348,25 +350,7 @@ export class CodexRuntime implements AgentRuntime {
     this.threadId = resumedThreadId;
     this.threadResumed = true;
     this.log('info', `resumed thread ${this.threadId}`);
-  }
-
-  private threadInstructionParams(): Pick<
-    ThreadStartParams,
-    'baseInstructions' | 'developerInstructions'
-  > {
-    const params: Pick<
-      ThreadStartParams,
-      'baseInstructions' | 'developerInstructions'
-    > = {};
-    if (this.deps.systemPromptReplace !== undefined) {
-      params.baseInstructions = this.deps.systemPromptReplace;
-      return params;
-    }
-    if (this.deps.systemPromptAppend !== undefined) {
-      const rendered = renderCodexSystemPromptAppend(this.deps.systemPromptAppend);
-      if (rendered !== '') params.developerInstructions = rendered;
-    }
-    return params;
+    return resumed;
   }
 
   async submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
@@ -377,8 +361,8 @@ export class CodexRuntime implements AgentRuntime {
     if (turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
-    // The text is already the complete model-facing message: this runtime
-    // renders no envelope and never branches on where the turn came from.
+    // Submission text is source-neutral; Codex-specific effort selection stays
+    // inside the provider and never branches on where the text came from.
     return turnManager.submitInput(input);
   }
 

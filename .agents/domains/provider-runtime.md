@@ -436,6 +436,32 @@ Source:
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
+### Codex reasoning effort
+
+The Codex provider applies the submission rule in
+[the product catalog](../product/README.md#codex-reasoning-effort).
+`CodexReasoningEffort` reads model metadata through `model/list`, including
+hidden entries and pagination. It selects a known actual effort, excluding
+Ultra and non-reasoning modes, and rejects an unresolvable maximum before
+submitting input. It never scans conversation history.
+
+Fresh runtimes retain the ordinary effort returned by `thread/start`, using the
+model default when unset. A resumed runtime reads effective configuration via
+`config/read` because native persisted metadata can contain the last temporary
+high effort. It passes that configured effort, or the resumed model default,
+on ordinary submissions. The provider keeps only in-memory effort values;
+there is no new state file or recovery ledger.
+
+Preparation runs inside the existing admission ordering, before `turn/start`.
+Metadata failure is a proven pre-admission failure. Native submission errors
+remain ambiguous. Busy input does not wait for completion and no per-turn
+escalation state exists. The keyword explanation is appended only after matching
+the original submission, never to thread instructions.
+
+Source: `/packages/agent-runtime/codex/src/reasoning-effort.ts`,
+`/packages/agent-runtime/codex/src/turn-manager.ts`,
+`/packages/agent-runtime/codex/src/runtime.ts`.
+
 ### Turn Interruption
 
 `AgentRuntime.interrupt()` ends the turn a runtime is running right now and

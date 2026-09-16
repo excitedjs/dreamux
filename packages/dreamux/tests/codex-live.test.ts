@@ -76,6 +76,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import {
   CodexProcess,
@@ -466,6 +467,70 @@ describe('codex live integration', () => {
       }
     },
     30_000,
+  );
+
+  (runModelGate ? it : it.skip)(
+    'applies ultrathink effort and restores ordinary effort across turns and cold resume',
+    async () => {
+      const previousCodexHome = process.env['CODEX_HOME'];
+      const dir = mkdtempSync(join(homedir(), '.dreamux-effort-live-'));
+      process.env['CODEX_HOME'] = createIsolatedCodexHome(dir);
+      const clients: RecordingCodexWsClient[] = [];
+      const provider = createCodexAgentRuntimeProvider({
+        codexHomeDoctor: () => undefined,
+        codexClientFactory: (socketPath) => {
+          const client = new RecordingCodexWsClient({ socketPath });
+          clients.push(client);
+          return client;
+        },
+      });
+      const context = (sessionId: string | null): AgentRuntimeCreateContext<DispatcherCodexConfig> => ({
+        identity: { runtimeId: 'effort-live', sessionId },
+        config: { ...directCodexConfig(), extra_args: ['-c', 'model_reasoning_effort="low"'] },
+        cwd: join(dir, 'cwd'), mcpServers: [], skillSources: [], disabledFeatures: [],
+        paths: runtimePaths(dir), state: recordingStateSink().sink,
+      });
+      const fresh = await provider.createRuntime(context(null));
+      let resumed: Awaited<ReturnType<typeof provider.createRuntime>> | undefined;
+      try {
+        await fresh.start();
+        const client = clients[0]!;
+        const started = client.requests.find((request) => request.method === 'thread/start')!.result as ThreadStartResponse;
+        for (const text of ['ultrathink. Reply only ok.', 'Reply only ok.', 'ultrathink. Reply only ok.']) {
+          const admission = await fresh.submit({ text });
+          expect(admission.status).toBe('submitted');
+          if (admission.status !== 'submitted') throw new Error(`Unexpected admission: ${admission.status}`);
+          expect(await admission.submission.settled).toMatchObject({ kind: 'completion', completion: { status: 'completed' } });
+        }
+        const efforts = turnStartRequests(client).map((request) => (request.params as { effort: string }).effort);
+        expect(['high', 'xhigh', 'max']).toContain(efforts[0]);
+        expect(efforts).toEqual([efforts[0], 'low', efforts[0]]);
+        await fresh.stop();
+
+        resumed = await provider.createRuntime(context(started.thread.id));
+        expect(await resumed.start()).toEqual({ continuity: 'resumed' });
+        const admission = await resumed.submit({ text: 'Reply only ok.' });
+        expect(admission.status).toBe('submitted');
+        if (admission.status !== 'submitted') throw new Error(`Unexpected admission: ${admission.status}`);
+        expect(await admission.submission.settled).toMatchObject({ kind: 'completion', completion: { status: 'completed' } });
+        expect(turnStartRequests(clients[1]!)[0]?.params).toMatchObject({ effort: 'low' });
+        await resumed.stop();
+
+        // Native turn contexts prove Codex consumed the effort, beyond RPC receipts.
+        const rollout = await readFile(started.thread.path!, 'utf8');
+        const contexts = rollout.trim().split('\n').map((line) => JSON.parse(line) as {
+          type: string; payload: { effort?: string };
+        }).filter((item) => item.type === 'turn_context');
+        expect(contexts.map((item) => item.payload.effort)).toEqual([...efforts, 'low']);
+      } finally {
+        await fresh.stop();
+        await resumed?.stop();
+        if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+        else process.env['CODEX_HOME'] = previousCodexHome;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
   );
 
   // Empirically NOT a structural-only case (verified against real codex
