@@ -30,13 +30,27 @@ import {
 import { FeishuRouting } from '../src/routing/index.js';
 import { FeishuRoutingStore } from '../src/routing/store.js';
 
-const silentLogger = {
-  error: () => undefined,
-  warn: () => undefined,
-  info: () => undefined,
-  debug: () => undefined,
-  trace: () => undefined,
-};
+/** One log line, as the level it was written at and what it said. */
+type LoggedLine = { level: string; fields: Record<string, unknown>; message: string };
+
+function recordingLogger(lines: LoggedLine[]) {
+  const at = (level: string) =>
+    (fields: unknown, message?: unknown): undefined => {
+      lines.push({
+        level,
+        fields: (fields ?? {}) as Record<string, unknown>,
+        message: String(message ?? ''),
+      });
+      return undefined;
+    };
+  return {
+    error: at('error'),
+    warn: at('warn'),
+    info: at('info'),
+    debug: at('debug'),
+    trace: at('trace'),
+  };
+}
 
 let dir: string;
 
@@ -62,6 +76,8 @@ interface Harness {
   readonly commentReads: string[];
   /** What that read answers with; `null` is "Feishu holds no text for it". */
   readonly comment: { value: FeishuDocCommentText | Error | null };
+  /** Every line this delivery logged, in order. */
+  readonly logged: LoggedLine[];
 }
 
 async function harness(
@@ -84,10 +100,11 @@ async function harness(
   const trusted = new Set<string>();
   const commentReads: string[] = [];
   const comment: Harness['comment'] = { value: null };
+  const logged: LoggedLine[] = [];
   const comments = new FeishuDocumentComments({
     dispatcherId: 'disp-1',
     channelId: 'chan-1',
-    log: silentLogger,
+    log: recordingLogger(logged),
     routing,
     async submit(teamName, submission) {
       submissions.push({ teamName, submission });
@@ -125,6 +142,7 @@ async function harness(
     trusted,
     commentReads,
     comment,
+    logged,
   };
 }
 
@@ -352,6 +370,77 @@ describe('document comment delivery', () => {
       'team-a',
       'team-b',
     ]);
+  });
+
+  it('a failed submission is logged as a failure, not as a delivery', async () => {
+    const h = await harness();
+    await h.comments.subscribe({
+      document: 'doc_tok',
+      type: 'docx',
+      teamName: 'team-a',
+    });
+    // What a submission after the session's fence closed answers with.
+    h.outcomeFor.set('team-a', {
+      status: 'error',
+      message: 'Feishu session is not live',
+    });
+
+    await h.comments.deliver(commentEvent());
+
+    // The delivery report is the last thing each path logs.
+    const line = h.logged.at(-1);
+    expect(line?.level).toBe('error');
+    expect(line?.message).toBe('failed to deliver a feishu document comment');
+    expect(line?.fields['err']).toEqual({ message: 'Feishu session is not live' });
+    expect(line?.fields['team_name']).toBe('team-a');
+  });
+
+  it('a comment Core declines to admit is logged as not admitted', async () => {
+    const h = await harness();
+    await h.comments.subscribe({
+      document: 'doc_tok',
+      type: 'docx',
+      teamName: 'team-a',
+    });
+    h.outcomeFor.set('team-a', { status: 'duplicate' });
+
+    await h.comments.deliver(commentEvent());
+
+    // The delivery report is the last thing each path logs.
+    const line = h.logged.at(-1);
+    expect(line?.level).toBe('info');
+    expect(line?.message).toBe('feishu document comment was not admitted');
+  });
+
+  it('a delivered comment carries the turn it opened', async () => {
+    const h = await harness();
+    await h.comments.subscribe({
+      document: 'doc_tok',
+      type: 'docx',
+      teamName: 'team-a',
+    });
+
+    await h.comments.deliver(commentEvent());
+
+    // The delivery report is the last thing each path logs.
+    const line = h.logged.at(-1);
+    expect(line?.level).toBe('info');
+    expect(line?.message).toBe('feishu document comment delivered');
+    expect(line?.fields['turn_id']).toBe('t-1');
+  });
+
+  it('a cold open to the Dispatcher Agent reports under a null team', async () => {
+    const h = await harness();
+    h.trusted.add('ou_commenter');
+    h.outcomeFor.set(null, { status: 'error', message: 'core said no' });
+
+    await h.comments.deliver(commentEvent({ mentionedBot: true }));
+
+    // The delivery report is the last thing each path logs.
+    const line = h.logged.at(-1);
+    expect(line?.level).toBe('error');
+    expect(line?.message).toBe('failed to deliver a feishu document comment');
+    expect(line?.fields['team_name']).toBeNull();
   });
 
   it('a rejected subscriber loses its own row while the other still receives its submission', async () => {

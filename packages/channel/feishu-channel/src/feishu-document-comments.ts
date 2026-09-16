@@ -303,10 +303,7 @@ export class FeishuDocumentComments {
     // No row is written and none is removed: this delivery is a cold open, not
     // a subscription, so a rejection on it has nothing to reconcile.
     const outcome = await this.opts.submit(null, submission);
-    this.opts.log.info(
-      { ...this.scope(event), status: outcome.status },
-      'delivered an unfollowed Feishu document mention to the Dispatcher Agent',
-    );
+    this.reportDelivery({ ...this.scope(event), team_name: null }, outcome);
   }
 
   private async deliverTo(
@@ -317,10 +314,7 @@ export class FeishuDocumentComments {
     const scope = { ...this.scope(event), team_name: row.team_name };
     const outcome = await this.opts.submit(row.team_name, submission);
     if (outcome.status !== 'rejected') {
-      this.opts.log.info(
-        { ...scope, status: outcome.status },
-        'feishu document comment delivered',
-      );
+      this.reportDelivery(scope, outcome);
       return;
     }
     // The same proof that retires a stale binding: Core resolved the recipient
@@ -344,6 +338,49 @@ export class FeishuDocumentComments {
         { ...scope, err: { message: errorMessage(error) } },
         'could not commit the removal of a Feishu document subscription',
       );
+    }
+  }
+
+  /**
+   * Say what became of one delivery, at the level its outcome earns.
+   *
+   * Only `submitted` leaves a turn that will answer the comment. `duplicate`
+   * and `stopped` are Core declining to open one, which is its decision and
+   * not a fault here. Everything else is a delivery that did not happen, and
+   * this said "delivered" for all of them — which hid the two failures this
+   * path can actually take: a submission refused because the session's fence
+   * had already closed, and a body Core would not admit.
+   *
+   * The recipient is in the scope rather than the message: `team_name` is the
+   * subscriber's, or `null` for the cold open the Dispatcher Agent answers.
+   */
+  private reportDelivery(
+    scope: Record<string, unknown>,
+    outcome: FeishuSubmitOutcome,
+  ): void {
+    switch (outcome.status) {
+      case 'submitted':
+        this.opts.log.info(
+          { ...scope, turn_id: outcome.turnId },
+          'feishu document comment delivered',
+        );
+        return;
+      case 'duplicate':
+      case 'stopped':
+        this.opts.log.info(
+          { ...scope, status: outcome.status },
+          'feishu document comment was not admitted',
+        );
+        return;
+      default:
+        this.opts.log.error(
+          {
+            ...scope,
+            status: outcome.status,
+            err: { message: outcomeFailure(outcome) },
+          },
+          'failed to deliver a feishu document comment',
+        );
     }
   }
 
@@ -409,6 +446,19 @@ export class FeishuDocumentComments {
       return null;
     }
   }
+}
+
+/**
+ * What a failed outcome says went wrong.
+ *
+ * The union carries the reason under two different names — a `ChannelCommandError`
+ * where Core answered one, a plain string where the Channel itself is the one
+ * with something to say — and a log line wants whichever is there.
+ */
+function outcomeFailure(outcome: FeishuSubmitOutcome): string {
+  if ('error' in outcome) return outcome.error?.message ?? 'unknown';
+  if ('message' in outcome) return outcome.message;
+  return outcome.status;
 }
 
 /**

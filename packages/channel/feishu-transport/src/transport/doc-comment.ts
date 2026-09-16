@@ -129,10 +129,6 @@ interface UndeclaredCommentFields {
   relation?: { content_deleted?: boolean }
 }
 
-function undeclaredCommentFields(item: unknown): UndeclaredCommentFields {
-  return item as UndeclaredCommentFields
-}
-
 /**
  * Read where a comment is anchored, from the item that carries it.
  *
@@ -142,7 +138,7 @@ function undeclaredCommentFields(item: unknown): UndeclaredCommentFields {
  */
 function commentAnchor(item: { is_whole?: boolean; quote?: string }): FeishuCommentAnchor {
   if (item.is_whole === true) return { kind: 'whole_document' }
-  const undeclared = undeclaredCommentFields(item)
+  const undeclared = item as unknown as UndeclaredCommentFields
   return {
     kind: 'content',
     anchorId: undeclared.extra?.content_anchor_id ?? '',

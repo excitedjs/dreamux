@@ -43,6 +43,15 @@
   `transport/doc-comment.ts`. The anchor pushed that file past the 700-line
   source limit, and the comment reader was the one whole concept inside it that
   nothing else in the file touches.
+- Added on the operator's instruction 「2 和 3 可以做一下」, answering two items
+  raised alongside the four: the doc path's delivery log now says what actually
+  happened — only an admitted submission is "delivered", a duplicate or stopped
+  Team is "not admitted", and every failure is an error with its reason — and
+  the still-unreleased `@excitedjs/feishu-transport` change file from the
+  subscription task lost its `BREAKING: Review:` framing, which the changelog
+  policy reserves for a migration the daemon cannot start without. Its wording
+  also claimed the read answers "the document text it is anchored to", the
+  claim this task exists to retire.
 - Left alone deliberately: `DOC_COMMENT_REMINDER`. The `<quote>` note is written
   exactly when there is a preview to warn about, and the reminder is sent for
   every comment including the ones with no preview at all; a sentence about
@@ -56,4 +65,12 @@
 - Rush change files: `@excitedjs/feishu-transport` and
   `@excitedjs/feishu-channel` as `minor` with plain notes — no persisted file
   changes shape, so nothing here is upgrade-blocking — plus `@excitedjs/dreamux`
-  as `none` for the knowledge page and the boundary-guard pin.
+  as `none` for the knowledge page and the boundary-guard pin. The review asked
+  for `BREAKING: Review:` on the transport note, for consistency with the
+  subscription task's. The policy owner
+  ([`state-config-and-files.md`](/.agents/domains/state-config-and-files.md))
+  answers the other way: `BREAKING:` marks an upgrade-blocking migration and
+  nothing else, and an API contract change "must never use `BREAKING:`,
+  `Rebuild:`, or `Review:`". A changed exported type cannot stop a daemon
+  starting. The operator settled the inconsistency in the same direction, so
+  the earlier note was corrected rather than this one matched to it.
