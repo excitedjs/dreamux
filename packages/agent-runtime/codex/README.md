@@ -37,8 +37,9 @@ use and tests.
 
 Include `ultrathink` anywhere in a submission to request the current model's
 highest supported reasoning effort. Matching is case-insensitive and includes
-quoted text in that submission. The provider preserves the original text and
-appends a short explanation of the keyword. It does not scan history or tools.
+quoted text in that submission. The provider only picks the `turn/start` effort
+parameter: submission text is passed through unchanged, with no explanation
+appended. It does not scan history or tools.
 
 The next ordinary submission explicitly restores the original effort. Busy
 submissions use the same rule without waiting for completion; Codex owns input

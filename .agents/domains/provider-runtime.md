@@ -455,8 +455,9 @@ there is no new state file or recovery ledger.
 Preparation runs inside the existing admission ordering, before `turn/start`.
 Metadata failure is a proven pre-admission failure. Native submission errors
 remain ambiguous. Busy input does not wait for completion and no per-turn
-escalation state exists. The keyword explanation is appended only after matching
-the original submission, never to thread instructions.
+escalation state exists. The provider chooses a `turn/start` parameter and never
+rewrites submission text, so nothing is appended to a submission or to thread
+instructions.
 
 Source: `/packages/agent-runtime/codex/src/reasoning-effort.ts`,
 `/packages/agent-runtime/codex/src/turn-manager.ts`,

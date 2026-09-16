@@ -30,9 +30,7 @@ describe('Codex ultrathink submissions', () => {
       const requests = client.requests.filter((request) => request.method === 'turn/start');
       expect(requests.map((request) => (request.params as { effort?: string }).effort))
         .toEqual([undefined, 'xhigh', 'low']);
-      expect(requests[1]?.params).toMatchObject({
-        input: [{ text: expect.stringMatching(/^请ultrathink一下\n\n.+runtime\./s) }],
-      });
+      expect(requests[1]?.params).toMatchObject({ input: [{ text: '请ultrathink一下' }] });
       expect(requests[2]?.params).toMatchObject({ input: [{ text: 'next task' }] });
     } finally {
       await runtime.stop();
@@ -47,7 +45,7 @@ describe('Codex ultrathink submissions', () => {
       try {
         expect((await runtime.submit({ text })).status).toBe('submitted');
         const params = client.requests.find((request) => request.method === 'turn/start')?.params;
-        expect(params).toMatchObject({ effort: 'xhigh', input: [{ text: expect.stringContaining(`${text}\n\n`) }] });
+        expect(params).toMatchObject({ effort: 'xhigh', input: [{ text }] });
       } finally {
         await runtime.stop();
       }

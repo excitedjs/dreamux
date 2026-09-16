@@ -256,9 +256,10 @@ the same change that touches it.
 
 A submission containing `ultrathink`, matched as a case-insensitive substring,
 requests the current Codex model's highest supported effort. All submission
-sources use the same rule. Original text stays intact; marked submissions append
-a short English explanation that the runtime handles the effort setting.
-History, files, and tool results are not independently scanned.
+sources use the same rule. The keyword selects a request parameter and nothing
+else: the submission reaches the model byte for byte as it was assembled, with
+no explanation appended. History, files, and tool results are not independently
+scanned.
 
 The next ordinary submission explicitly restores ordinary effort. Busy input
 still submits without waiting and follows native merging and setting timing.

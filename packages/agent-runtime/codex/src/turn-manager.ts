@@ -129,9 +129,9 @@ export class TurnManager {
     if (this.protocolFailure !== null) return { status: 'failed', error: this.protocolFailure };
     const threadId = this.opts.getThreadId();
     if (threadId === null) return { status: 'failed', error: new Error('input submitted without thread_id') };
-    let prepared: Awaited<ReturnType<CodexReasoningEffort['prepare']>>;
+    let effort: string | undefined;
     try {
-      prepared = await this.opts.reasoning.prepare(text);
+      effort = await this.opts.reasoning.effortFor(text);
     } catch (error) {
       return { status: 'failed', error: asError(error) };
     }
@@ -146,10 +146,10 @@ export class TurnManager {
       response = await submitTurnStart(
         this.opts.client,
         threadId,
-        prepared.text,
+        text,
         this.opts.turnCwd ?? null,
         this.opts.codec?.wireSchema,
-        prepared.effort,
+        effort,
       );
     } catch (error) {
       const normalized = asError(error);

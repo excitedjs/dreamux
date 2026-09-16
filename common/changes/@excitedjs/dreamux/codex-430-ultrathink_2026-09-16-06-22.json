@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Support ultrathink through native Codex effort parameters, restore ordinary effort on the next ordinary submission, and explain the keyword only when matched. Busy input follows native Codex timing.",
+      "comment": "Support ultrathink through native Codex effort parameters, restore ordinary effort on the next ordinary submission, and pass submission text through unchanged. Busy input follows native Codex timing.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

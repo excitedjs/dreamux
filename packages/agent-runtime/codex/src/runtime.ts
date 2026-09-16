@@ -361,8 +361,8 @@ export class CodexRuntime implements AgentRuntime {
     if (turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
-    // Submission text is source-neutral; Codex-specific effort selection stays
-    // inside the provider and never branches on where the text came from.
+    // The text is already the complete model-facing message: this runtime
+    // renders no envelope and never branches on where the turn came from.
     return turnManager.submitInput(input);
   }
 
