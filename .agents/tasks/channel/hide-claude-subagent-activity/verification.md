@@ -63,7 +63,7 @@ External review of the pushed branch (commit `e50dfe70` on `next` `bc7d769d`),
 used in place of the workflow review for this group's tasks. Verdict: approved,
 no finding.
 
-- The reviewer placed the filter in the envelope-meaning owner, confirmed that
+- The reviewer confirmed the filter sits in the envelope-meaning owner, that
   compaction, interruption, usage, and `turn.ended` never reach it, and that the
   RPC still feeds every line to `TurnAggregator`, so the recorded
   `lastAssistantText` non-goal is unchanged.
