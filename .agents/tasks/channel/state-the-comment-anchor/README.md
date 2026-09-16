@@ -45,13 +45,19 @@
   nothing else in the file touches.
 - Added on the operator's instruction 「2 和 3 可以做一下」, answering two items
   raised alongside the four: the doc path's delivery log now says what actually
-  happened — only an admitted submission is "delivered", a duplicate or stopped
-  Team is "not admitted", and every failure is an error with its reason — and
-  the still-unreleased `@excitedjs/feishu-transport` change file from the
-  subscription task lost its `BREAKING: Review:` framing, which the changelog
-  policy reserves for a migration the daemon cannot start without. Its wording
-  also claimed the read answers "the document text it is anchored to", the
-  claim this task exists to retire.
+  happened, and the still-unreleased `@excitedjs/feishu-transport` change file
+  from the subscription task lost its `BREAKING: Review:` framing, which the
+  changelog policy reserves for a migration the daemon cannot start without.
+  Its wording also claimed the read answers "the document text it is anchored
+  to", the claim this task exists to retire.
+- The log fix landed twice. The first attempt replaced "everything is
+  delivered" with "everything that is not admitted failed", which review caught
+  as the same lie pointed the other way: `ambiguous` proves nothing about
+  whether a turn exists. The classification now lives once, beside
+  `FeishuSubmitOutcome`, and both delivery paths read it — the chat path told
+  all five kinds apart already, and keeping two switches is what let them
+  drift. Each path keeps only its own wording. The chat path's log lines are
+  unchanged except that its failure lines now also carry the outcome `status`.
 - Left alone deliberately: `DOC_COMMENT_REMINDER`. The `<quote>` note is written
   exactly when there is a preview to warn about, and the reminder is sent for
   every comment including the ones with no preview at all; a sentence about

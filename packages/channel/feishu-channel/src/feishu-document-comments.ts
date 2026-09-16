@@ -59,9 +59,11 @@ import {
 import {
   DOC_COMMENT_COLD_OPEN_REMINDER,
   DOC_COMMENT_REMINDER,
+  describeSubmitOutcome,
   errorMessage,
   type FeishuSubmission,
   type FeishuSubmitOutcome,
+  type SubmitOutcomeMessages,
 } from './feishu-submit.js';
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuDocSubscriptionRecord } from './routing/document.js';
@@ -342,14 +344,11 @@ export class FeishuDocumentComments {
   }
 
   /**
-   * Say what became of one delivery, at the level its outcome earns.
+   * Say what became of one delivery, in this path's words.
    *
-   * Only `submitted` leaves a turn that will answer the comment. `duplicate`
-   * and `stopped` are Core declining to open one, which is its decision and
-   * not a fault here. Everything else is a delivery that did not happen, and
-   * this said "delivered" for all of them — which hid the two failures this
-   * path can actually take: a submission refused because the session's fence
-   * had already closed, and a body Core would not admit.
+   * It said "delivered" for every outcome but a proven rejection, which hid
+   * the two this path can actually take: a submission refused because the
+   * session's fence had already closed, and a body Core would not admit.
    *
    * The recipient is in the scope rather than the message: `team_name` is the
    * subscriber's, or `null` for the cold open the Dispatcher Agent answers.
@@ -358,30 +357,11 @@ export class FeishuDocumentComments {
     scope: Record<string, unknown>,
     outcome: FeishuSubmitOutcome,
   ): void {
-    switch (outcome.status) {
-      case 'submitted':
-        this.opts.log.info(
-          { ...scope, turn_id: outcome.turnId },
-          'feishu document comment delivered',
-        );
-        return;
-      case 'duplicate':
-      case 'stopped':
-        this.opts.log.info(
-          { ...scope, status: outcome.status },
-          'feishu document comment was not admitted',
-        );
-        return;
-      default:
-        this.opts.log.error(
-          {
-            ...scope,
-            status: outcome.status,
-            err: { message: outcomeFailure(outcome) },
-          },
-          'failed to deliver a feishu document comment',
-        );
-    }
+    const report = describeSubmitOutcome(outcome);
+    this.opts.log[report.level](
+      { ...scope, ...report.fields },
+      DOC_COMMENT_DELIVERY_MESSAGES[report.kind],
+    );
   }
 
   private scope(event: FeishuCommentEvent): Record<string, unknown> {
@@ -449,17 +429,18 @@ export class FeishuDocumentComments {
 }
 
 /**
- * What a failed outcome says went wrong.
+ * The document path's words for each outcome.
  *
- * The union carries the reason under two different names — a `ChannelCommandError`
- * where Core answered one, a plain string where the Channel itself is the one
- * with something to say — and a log line wants whichever is there.
+ * `rejected` belongs to the cold open alone: a subscriber's rejection is
+ * answered above by retiring its row, and never reaches here.
  */
-function outcomeFailure(outcome: FeishuSubmitOutcome): string {
-  if ('error' in outcome) return outcome.error?.message ?? 'unknown';
-  if ('message' in outcome) return outcome.message;
-  return outcome.status;
-}
+const DOC_COMMENT_DELIVERY_MESSAGES: SubmitOutcomeMessages = {
+  submitted: 'feishu document comment delivered',
+  not_admitted: 'feishu document comment was not admitted',
+  rejected: 'feishu document comment was rejected before admission',
+  ambiguous: 'feishu document comment admission was ambiguous; not replaying',
+  failed: 'failed to deliver a feishu document comment',
+};
 
 /**
  * The one submission a comment event produces, shared by every subscriber.

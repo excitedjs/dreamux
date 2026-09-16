@@ -60,8 +60,10 @@ import {
 } from './feishu-session-ops.js';
 import {
   CHANNEL_REMINDER,
+  describeSubmitOutcome,
   type FeishuChatSubmission,
   type FeishuSubmitOutcome,
+  type SubmitOutcomeMessages,
 } from './feishu-submit.js';
 import type { FeishuTarget } from './routing/target.js';
 
@@ -503,45 +505,21 @@ function reportDelivery(
     sender_id: event.senderId,
     message_id: event.messageId,
   };
-  switch (outcome.status) {
-    case 'submitted':
-      log(h).info(
-        { ...scope, turn_id: outcome.turnId },
-        'feishu inbound submitted',
-      );
-      return;
-    case 'duplicate':
-    case 'stopped':
-      log(h).info(
-        { ...scope, status: outcome.status },
-        'feishu inbound not admitted',
-      );
-      return;
-    case 'rejected':
-      log(h).warn(
-        { ...scope, code: outcome.code, err: { message: outcome.message } },
-        'feishu inbound was rejected before admission',
-      );
-      return;
-    case 'ambiguous':
-      log(h).error(
-        { ...scope, err: { message: outcome.error?.message ?? 'unknown' } },
-        'feishu inbound admission was ambiguous; not replaying',
-      );
-      return;
-    case 'failed':
-      log(h).error(
-        { ...scope, err: { message: outcome.error?.message ?? 'unknown' } },
-        'failed to submit feishu inbound',
-      );
-      return;
-    default:
-      log(h).error(
-        { ...scope, err: { message: outcome.message } },
-        'failed to submit feishu inbound',
-      );
-  }
+  const report = describeSubmitOutcome(outcome);
+  log(h)[report.level](
+    { ...scope, ...report.fields },
+    INBOUND_DELIVERY_MESSAGES[report.kind],
+  );
 }
+
+/** The chat path's words for each outcome. The classification is shared. */
+const INBOUND_DELIVERY_MESSAGES: SubmitOutcomeMessages = {
+  submitted: 'feishu inbound submitted',
+  not_admitted: 'feishu inbound not admitted',
+  rejected: 'feishu inbound was rejected before admission',
+  ambiguous: 'feishu inbound admission was ambiguous; not replaying',
+  failed: 'failed to submit feishu inbound',
+};
 
 async function enrichSenderName(
   h: SessionHandle,

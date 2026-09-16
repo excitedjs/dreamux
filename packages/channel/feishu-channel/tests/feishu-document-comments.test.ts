@@ -395,6 +395,27 @@ describe('document comment delivery', () => {
     expect(line?.fields['team_name']).toBe('team-a');
   });
 
+  it('an ambiguous admission is not reported as a failed delivery', async () => {
+    const h = await harness();
+    await h.comments.subscribe({
+      document: 'doc_tok',
+      type: 'docx',
+      teamName: 'team-a',
+    });
+    // Core may already have opened a turn for this comment. Calling that a
+    // failed delivery is exactly as false as calling it a delivered one.
+    h.outcomeFor.set('team-a', { status: 'ambiguous', error: null });
+
+    await h.comments.deliver(commentEvent());
+
+    // The delivery report is the last thing each path logs.
+    const line = h.logged.at(-1);
+    expect(line?.level).toBe('error');
+    expect(line?.message).toBe(
+      'feishu document comment admission was ambiguous; not replaying',
+    );
+  });
+
   it('a comment Core declines to admit is logged as not admitted', async () => {
     const h = await harness();
     await h.comments.subscribe({

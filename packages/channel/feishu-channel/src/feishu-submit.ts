@@ -119,6 +119,78 @@ export type FeishuSubmitOutcome =
    */
   | { readonly status: 'error'; readonly message: string };
 
+/**
+ * What one outcome is, once the question is what a log line owes it.
+ *
+ * Five kinds and not seven statuses, because three pairs answer the same
+ * question: `duplicate` and `stopped` are both Core declining to open a turn,
+ * and `failed` / `unsubmitted` / `error` are all a submission that did not
+ * happen, carrying its reason under two different field names. The two that
+ * stay alone are the two a reader would otherwise get wrong. `rejected` is a
+ * decision Core made before admitting anything, not a fault of this delivery.
+ * `ambiguous` proves nothing about whether a turn exists — which is why
+ * `submissionProvesNoAdmission` excludes it — so reporting it as a failed
+ * delivery is exactly as false as reporting it as a delivered one.
+ *
+ * It lives beside the union because the classification is one fact about the
+ * union, and the two delivery paths that render it had already drifted: the
+ * chat path told all five apart, while the document path called everything but
+ * a rejection a success. What belongs at each path is its wording, and nothing
+ * else.
+ */
+export interface SubmitOutcomeReport {
+  readonly kind: 'submitted' | 'not_admitted' | 'rejected' | 'ambiguous' | 'failed';
+  readonly level: 'info' | 'warn' | 'error';
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
+/** The message each kind is written with, in one path's own words. */
+export type SubmitOutcomeMessages = Readonly<
+  Record<SubmitOutcomeReport['kind'], string>
+>;
+
+export function describeSubmitOutcome(
+  outcome: FeishuSubmitOutcome,
+): SubmitOutcomeReport {
+  switch (outcome.status) {
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        level: 'info',
+        fields: { turn_id: outcome.turnId },
+      };
+    case 'duplicate':
+    case 'stopped':
+      return {
+        kind: 'not_admitted',
+        level: 'info',
+        fields: { status: outcome.status },
+      };
+    case 'rejected':
+      return {
+        kind: 'rejected',
+        level: 'warn',
+        fields: { code: outcome.code, err: { message: outcome.message } },
+      };
+    case 'ambiguous':
+    case 'failed':
+      return {
+        kind: outcome.status === 'ambiguous' ? 'ambiguous' : 'failed',
+        level: 'error',
+        fields: {
+          status: outcome.status,
+          err: { message: outcome.error?.message ?? 'unknown' },
+        },
+      };
+    default:
+      return {
+        kind: 'failed',
+        level: 'error',
+        fields: { status: outcome.status, err: { message: outcome.message } },
+      };
+  }
+}
+
 export interface FeishuTeamSubmitter {
   submit(
     teamName: string,
