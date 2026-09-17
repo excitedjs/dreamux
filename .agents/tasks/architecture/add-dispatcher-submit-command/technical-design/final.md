@@ -281,5 +281,6 @@ External review by Devbox on Issue #443, against `next` after #440 merged.
   `BREAKING:` for upgrade-blocking migrations and forbids `BREAKING:`,
   `Rebuild:`, and `Review:` on Command contract changes that leave persisted
   files readable. The cited `dispatcher.stop` note shipped in 0.23.0, before
-  #399 narrowed `BREAKING:` to upgrade-blocking migrations.
+  #399 narrowed `BREAKING:` to upgrade-blocking migrations. Devbox withdrew the
+  finding after checking the current rule text.
 
