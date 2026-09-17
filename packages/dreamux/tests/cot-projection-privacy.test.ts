@@ -38,7 +38,7 @@ const HOME = '/home/operator';
 
 function harness(overrides: { hasSources?: boolean } = {}) {
   const publisher = createCapturingPublisher(overrides.hasSources ?? true);
-  const { logger, warnCalls } = createCapturingLogger();
+  const { logger } = createCapturingLogger();
   const projection = createConversationProjection({
     coreEvents: publisher,
     log: logger,
@@ -46,7 +46,7 @@ function harness(overrides: { hasSources?: boolean } = {}) {
   });
   const identity = makeIdentity({ team_id: 'alpha', name: 'scout', cwd: CWD });
   const agent: ProjectedAgent = { identity, role: 'teammate' };
-  return { publisher, warnCalls, projection, agent };
+  return { publisher, projection, agent };
 }
 
 /** The one `teammate.input` this projection published. */
@@ -509,21 +509,6 @@ describe('conversation projection: token.usage', () => {
       context: null,
       redacted: false,
     });
-  });
-});
-
-describe('conversation projection: unknown activity kinds', () => {
-  it('drops a fact a newer provider emitted but this Core cannot project, with a warning', () => {
-    const { publisher, warnCalls, projection, agent } = harness();
-    const future = {
-      kind: 'token.usage.v2',
-      occurredAt: Date.now(),
-      id: 'turn-1:usage',
-      tokens: 1,
-    } as unknown as RuntimeActivity;
-    projection.projectActivity(agent, future);
-    expect(publisher.published).toHaveLength(0);
-    expect(warnCalls.some((call) => call.message === 'Dropping an activity this Core build cannot project')).toBe(true);
   });
 });
 

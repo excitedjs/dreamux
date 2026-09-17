@@ -117,24 +117,11 @@ export function createConversationProjection(input: {
       const scope = actorScope(agent);
       if (scope === null || input.coreEvents.hasSources?.() === false) return;
       guarded(agent, 'activity', () => {
-        const projected = projectedActivity(activity, identity.cwd, input.homePathPrefixes);
-        if (projected === null) {
-          input.log.warn(
-            {
-              dispatcher_id: identity.dispatcher_id,
-              agent_name: identity.name,
-              role: agent.role,
-              kind: activity.kind,
-            },
-            'Dropping an activity this Core build cannot project',
-          );
-          return;
-        }
         const event: TeammateActivityEvent = {
           ...scope,
           kind: 'teammate.activity',
           occurred_at: activity.occurredAt,
-          activity: projected,
+          activity: projectedActivity(activity, identity.cwd, input.homePathPrefixes),
         };
         input.coreEvents.publish(identity.dispatcher_id, event);
       });
@@ -171,18 +158,12 @@ function actorScope(agent: ProjectedAgent) {
   return null;
 }
 
-/**
- * Map one runtime fact into the projected vocabulary. Returns `null` for a
- * fact this build does not know: an independently upgraded provider can emit
- * a newer activity kind, and publishing it would hand every listener an
- * `activity: undefined` payload it cannot read. The caller drops the fact
- * with a warning instead.
- */
+/** Map one runtime fact into the projected vocabulary, keeping the runtime's own vocabulary. */
 function projectedActivity(
   activity: RuntimeActivity,
   cwd: string,
   homePathPrefixes: readonly string[],
-): TeammateActivity | null {
+): TeammateActivity {
   switch (activity.kind) {
     case 'assistant.message': {
       const content = redactText(activity.text, cwd, homePathPrefixes);
@@ -247,14 +228,13 @@ function projectedActivity(
       };
     }
     default: {
-      // Reached at run time only when a newer provider talks to this older
-      // Core and names a kind this build never compiled against. Drop the
-      // fact instead of projecting `undefined` into listeners. The
-      // assignment is the compile-time exhaustiveness check for the kinds
-      // this build does know.
+      // Compile-time exhaustiveness only. Core, the runtimes, and the
+      // channels ship in one monorepo release pinned through workspace
+      // dependencies, so a runtime kind this build does not know cannot
+      // reach a deployed process; adding a case here without a projection
+      // arm is a compile error, not a run-time condition to defend against.
       const exhaustive: never = activity;
-      void exhaustive;
-      return null;
+      return exhaustive;
     }
   }
 }

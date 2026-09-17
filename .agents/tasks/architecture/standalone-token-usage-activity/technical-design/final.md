@@ -47,7 +47,7 @@ The type doc is the contract and states all of it:
 | `@excitedjs/dreamux-types` | Add the two union members with the cumulative/live-only contract doc. |
 | `@excitedjs/agent-runtime-codex` (`turn-manager.ts`) | Replace the terminal synthetic message with `tokenUsageActivity(turnId, snapshot)`; delete `usageSummary()` and the package's `formatTokenCount()`. Context is emitted only with a positive window; the latest snapshot is consumed at the terminal (and still replaced per notification and cleared on a collector thread change). |
 | `@excitedjs/agent-runtime-claude-code` (`runtime-activity.ts`) | The `result`/`interrupted` branch emits `token.usage` from `outcome.tokenUsage`, with `context = contextTokens == null ? null : {usedTokens: contextTokens, windowTokens: null}`; delete the package's `formatTokenCount()`. `stream.ts` parsing is untouched. |
-| `@excitedjs/dreamux` (`conversation-projection.ts`) | New `case 'token.usage'` projects camelCase to snake_case, verbatim numbers, `redacted: false`. A compile-time `never` check plus a run-time `default` drops an unknown newer kind with a warning instead of publishing `activity: undefined`. |
+| `@excitedjs/dreamux` (`conversation-projection.ts`) | New `case 'token.usage'` projects camelCase to snake_case, verbatim numbers, `redacted: false`. The switch keeps a compile-time `never` exhaustiveness check; there is no run-time unknown-kind arm because Core, runtimes, and channels are pinned through workspace dependencies and ship in one release. |
 | `@excitedjs/feishu-channel` | `feishu-cot-adapter.ts` routes the kind to a new `acceptTokenUsage()` under a `never`-exhaustive switch; `feishu-cot-activity.ts` exports `tokenUsageSummary()` and owns `formatTokenCount()`, moved down from the runtimes; `feishu-cot-token-usage.test.ts` owns the rendering table, and `feishu-cot-delivery.test.ts` owns the activity-to-card path. |
 | Tests | Both runtime test suites' usage sections rewritten from text assertions to exact structured-object assertions; projection, card-delivery, null-window/zero-window, and stale-snapshot cases added. |
 | Rush changes | Minor change files for all five packages: the activity union is additive. |
@@ -100,19 +100,23 @@ routing. No old member, field, id convention, or emission changed; the only
 deletion is the provider-internal prose assembly, whose output the channel
 now reproduces from the new fact.
 
-The "unknown kind is ignored" guarantee holds at two boundaries and is
-narrower at a third:
+The "unknown kind is ignored" guarantee needs no run-time arm in this
+repository:
 
-- an older **channel listener** behind an upgraded Core never sees the kind
-  it does not subscribe to, and the Feishu adapter's exhaustive switch makes a
-  missing dispatch arm a compile error;
-- an older **Core** behind an independently upgraded provider no longer
-  publishes it as `activity: undefined`: the projection's run-time default
-  drops the fact with a warning. The fact is silently absent for that Core,
-  never malformed;
-- this repository ships Core and providers in one monorepo release, so the
-  independently-upgraded-provider case is defensive rather than a supported
-  deployment matrix.
+- Core, the runtimes, and the built-in Feishu channel ship in one monorepo
+  release: `@excitedjs/dreamux` pins every runtime and the channel with
+  `workspace:*`, and the runtimes/channel pin `@excitedjs/dreamux-types` the
+  same way. A deployed process cannot contain a provider and a Core compiled
+  against different activity unions, so projection can never meet an in-process
+  kind it does not know. Its `default` and the built-in adapter's `default`
+  are compile-time `never` checks: adding a union member without a projection
+  or dispatch arm fails the build;
+- the only independently installed consumers an upgraded Core can face are
+  external channel packages loaded through the `npm:` loader (the loader
+  exists; no such provider does yet). They consume the tagged union in their
+  own code and simply have no case for a member newer than their pinned
+  `dreamux-types` — a fact their build never compiled against, not something
+  this Core must detect or drop.
 
 ## 6. As built
 
@@ -141,6 +145,12 @@ narrower at a third:
      turn with no usage update re-emitted the previous totals under a new id.
      The snapshot is now cleared with the terminal; notifications always
      precede their own terminal, so no live update is lost.
-  3. The projection and the adapter both gained compile-time exhaustiveness;
-     the projection additionally drops a run-time unknown kind.
+  3. The projection and the adapter both gained compile-time exhaustiveness.
+     The first cut also added a run-time `default` that dropped an unknown
+     kind with a warning; that arm was removed the same day on the operator's
+     ruling that the scenario cannot occur — Core pins all runtimes and the
+     built-in channel through `workspace:*` and they ship in one release, so
+     an independently upgraded in-process provider is not a deployment that
+     exists. Only independently installed external channel packages can lag,
+     and they ignore the tagged member in their own code.
   4. Card-level delivery tests pin that the dispatch arm actually exists.

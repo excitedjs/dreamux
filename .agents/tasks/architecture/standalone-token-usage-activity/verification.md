@@ -46,10 +46,11 @@ The assertions pin the contract end to end, not just the shape:
   asserted as exact objects, so the rendered line stays the historical `n/a`;
   claude's background-result path likewise reports `context: null`, and its
   windowless used-context case stays `{usedTokens, windowTokens: null}`.
-- **Unknown-kind projection.** A newer provider kind an older Core cannot
-  project publishes nothing and writes the drop warning.
 - **Projection.** The dreamux suite covers the camelCase to snake_case member
-  with `redacted: false` as whole-object assertions.
+  with `redacted: false` as a whole-object assertion. Projection coverage for a
+  not-yet-known kind is deliberately compile-time only: the switch's `never`
+  default fails the build when a new member lacks an arm, and no run-time test
+  exists because the pinned monorepo release cannot produce such an input.
 - **Rendering.** `feishu-cot-token-usage.test.ts` pins the exact line for the
   percentage, compact-count, and `n/a` cases and the compact-number table from
   0 through 1.3b, so the channel-owning formatter reproduces the old
@@ -61,10 +62,10 @@ The assertions pin the contract end to end, not just the shape:
 
 ## Non-live suite
 
-The repository's non-live suite passes in the author's sandbox: 1,076 tests in
-73 files for the `@excitedjs/dreamux` project (including the exact-object
-projection tests and the unknown-kind drop test added here), 51 codex
-non-live tests, 238 claude-code tests, and 636 feishu-channel tests. The `codex-live.test.ts` tests require a reachable model API and are
+The repository's non-live suite passes in the author's sandbox: 1,075 tests in
+73 files for the `@excitedjs/dreamux` project (including the whole-object
+projection assertion added here), 51 codex non-live tests, 238 claude-code
+tests, and 636 feishu-channel tests. The `codex-live.test.ts` tests require a reachable model API and are
 not part of the sandbox result: each of the six times out on this branch and
 identically on a clean base checkout, so they carry no signal here. The pull
 request's CI runs the gates in a connected environment.
