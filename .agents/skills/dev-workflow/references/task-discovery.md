@@ -16,7 +16,7 @@ prevents unrelated history from filling the context window.
 
 If one candidate matches, ask whether it is the task to continue. If several match,
 summarize the meaningful differences and ask the operator to choose. If none match,
-ask whether to create a new task. Put that choice on an `ask_human_question`
+ask whether to create a new task. Put that choice on an `ask_user_question`
 card, and do not create or select a task implicitly.
 
 After the operator confirms a new task, have the TeamLeader run:

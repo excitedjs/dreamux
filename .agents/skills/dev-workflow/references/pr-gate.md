@@ -35,6 +35,6 @@ does not reopen implementation review.
 ## Merge
 
 Merge only with operator authority and the repository's normal squash-merge rules.
-When that authority has to be requested, request it on an `ask_human_question` card.
+When that authority has to be requested, request it on an `ask_user_question` card.
 Confirm the resulting commit on `next`. Do not add another implementation-review
 round for the pushed commit or the merge result.
