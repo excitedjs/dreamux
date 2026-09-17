@@ -55,12 +55,16 @@ neither schema declares `dispatcher_id`.
   `teamNameParam`; `execute` calls `interruptTeamLeader(teamName)`.
 - A missing `team_name` is rejected by schema validation as `BAD_REQUEST`
   before any Agent is reached.
+- The module header ("all seven definitions", and the `attrs` / `source_id` /
+  bare-`text` fields "only a Channel-facing caller sends") is rewritten: those
+  fields now belong to the shared reader below.
 
-`packages/dreamux-types/src/team.ts`: `TeamSubmitCommand.team_name` becomes
-required. A `DispatcherSubmitCommand` type (`attrs`, `text`, `reminder`,
-`source_id`) is exported beside it, because the Command's parsed input is that
-shape and `@excitedjs/dreamux-types` is where a Channel provider reads Command
-input shapes from.
+`packages/dreamux-types/src/team.ts`: a `DispatcherSubmitCommand` type
+(`attrs`, `text`, `reminder`, `source_id`, with the field docs that today sit
+on `TeamSubmitCommand`) is exported, and `TeamSubmitCommand` extends it with a
+required `team_name` and the optional `intent`, so the four shared fields are
+declared once. Its doc drops "Omitting `team_name` targets the Dispatcher
+Agent". The type stays in `team.ts` beside the payload it is the base of.
 
 ### DispatcherService
 
@@ -87,10 +91,20 @@ rewritten, not added beside: it becomes the one owner of the Channel-facing
 submission payload — the schema properties, the parse into
 `DispatcherSubmitCommand`, and the projection to `TeammateSubmitInput` with
 `CHANNEL_SOURCE`. `team.submit` composes it with `team_name` and `intent`;
-`dispatcher.submit` uses it as is. `submission-envelope.test.ts` and
-`channel-input-format.test.ts` retarget from the dead ordered-pair adapter to
-this reader, keeping their behavioral assertions (provenance is `channel`,
-attributes reach the envelope, an empty source id disables deduplication).
+`dispatcher.submit` uses it as is. Two rules carry over exactly:
+
+- `attrs` stays declared as `OBJECT` in the schema while the parse enforces
+  safe start-tag names and string values — the validator cannot state that
+  contract, so the split is kept.
+- The `source_id` bound is stated once, as the schema's `boundedString(512)`.
+  The registry validates the schema before `parse` runs, so the hand-written
+  length check in today's `team.submit` parse is a second copy and is not
+  carried over.
+
+`submission-envelope.test.ts` and `channel-input-format.test.ts` retarget from
+the dead ordered-pair adapter to this reader, keeping their behavioral
+assertions (provenance is `channel`, attributes reach the envelope, an empty
+source id disables deduplication).
 
 `submission-sources.ts` `CHANNEL_SOURCE` comment names both Commands.
 
@@ -125,20 +139,31 @@ command receipts under the accepted message with `sendReply`, sends the notice
 the same way when the outcome is `unsubmitted` or `rejected`:
 
 ```
-Could not start a Team for this conversation: <outcome message>
+Could not start a Team for this conversation. The reason is in the Dreamux log.
 ```
 
-English, matching the other Channel-authored receipts; the reason is the
-outcome's own message, the same way `/bind` failures carry Core's message. The
-delivery log line is unchanged.
+English, matching the other Channel-authored receipts. The notice carries no
+reason: `unsubmitted` takes its message from a catch-all `errorMessage(err)`, so
+any failure text reaches it — for example a failed route-document write whose
+message names the absolute state path on the host, posted into a group chat.
+The reason is already on the delivery log line `reportDelivery` writes for the
+same outcome, which is unchanged.
+
+The notice condition is exactly `unsubmitted` or `rejected`. `failed`,
+`ambiguous`, and `error` keep today's handling — logged, no notice, no
+fallback.
 
 Every exit listed in the requirement reaches this notice: a throwing
 `team.create` (including the idempotency conflict), a replayed closed Team, an
 empty Team name, a failed route bind, a concurrent waiter that finds no route,
 and a `rejected` submission to the just-provisioned Team.
 
-The `unsubmitted` variant's comment in `feishu-submit.ts` and the provisioning
-module header drop "delivered to the Dispatcher Agent" and state the notice.
+Comments that become false are rewritten in the same change: the
+`unsubmitted` and `rejected` variant comments and the `deliver` contract comment
+in `feishu-submit.ts` ("every accepted message reaches a recipient … whose
+provisioning never produced a Team"), the provisioning module header, the
+replayed-closed-Team comment in `run`, and the idempotency-conflict comment in
+`createTeam` in `feishu-provisioning.ts`.
 
 ### `/stop`
 
@@ -171,7 +196,12 @@ module header drop "delivered to the Dispatcher Agent" and state the notice.
 
 ## Compatibility and change notes
 
-No config or persisted state changes. Ordinary change notes (no `BREAKING:`):
+No config or persisted state changes, so every note is an ordinary change note.
+The repository rule is explicit that a Command contract change is not
+upgrade-blocking: "API, MCP, and CLI tool contract changes, and behavior or
+semantic changes that leave persisted files readable as they are, do not block
+an upgrade: describe them plainly and never use `BREAKING:`, `Rebuild:`, or
+`Review:`." All three are type `minor`:
 
 - `@excitedjs/dreamux` (minor): adds `dispatcher.submit` and
   `dispatcher.interrupt`; `team.submit` and `team.interrupt` now require
@@ -207,6 +237,49 @@ No config or persisted state changes. Ordinary change notes (no `BREAKING:`):
   and a document-comment cold open invoke `dispatcher.submit`; `/stop` invokes
   `dispatcher.interrupt` unbound and `team.interrupt` bound; each provisioning
   failure exit posts the notice under the triggering message and invokes no
-  `dispatcher.submit`.
+  `dispatcher.submit`; `failed` / `ambiguous` / `error` post no notice.
+- Tests that must change with the contract (found in review):
+  - `core-command-registry.test.ts` `FROZEN_NAMESPACE_TABLE` gains both names;
+  - `core-command-adapters.test.ts` "team.interrupt: both adapters preserve
+    optional Team addressing" is replaced by required-name and
+    `dispatcher.interrupt` cases; `helpers/command-harness.ts` fakes
+    `interruptAgent` / `interruptTeamLeader` instead of `interrupt(teamId|null)`;
+  - every new `BAD_REQUEST` case also asserts the Agent fake was not called;
+  - `feishu-slash-commands.test.ts` (unbound `/stop`),
+    `feishu-channel-session.test.ts` (the two fallback cases' second call is
+    `dispatcher.submit`), `feishu-cot-delivery.test.ts` and
+    `feishu-document-comments.test.ts` command guards;
+  - `dreamux-types/tests/team-teammate-contract.test.ts` "omitting team_name
+    targets the Dispatcher Agent" no longer type-checks once `team_name` is
+    required; it becomes a `DispatcherSubmitCommand` / `TeamSubmitCommand`
+    shape case.
 - Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
   `.agents/scripts/check.sh`.
+
+## Review adjudication
+
+External review by Devbox on Issue #443, against `next` after #440 merged.
+
+- Accepted: the provisioning-only claim for `unsubmitted` / `rejected` holds,
+  and the notice must not widen to `failed` / `ambiguous` / `error` — stated in
+  the notice section.
+- Accepted: the notice would carry raw exception text. Resolved by a fixed
+  notice with the reason left on the existing log line, which removes code
+  rather than adding a message filter.
+- Accepted: additional comments that become false (`deliver` contract, two
+  provisioning comments) — listed.
+- Accepted: carry the `attrs` schema/parse split over as is, and do not carry
+  the duplicate `source_id` length check — stated in the reader section.
+- Accepted: the missing test and doc inventory (registry name table, harness
+  interrupt fake, adapter interrupt case, Feishu command guards, the
+  `dreamux-types` type test that stops compiling, the `TeamSubmitCommand` doc,
+  the Team commands module header) — listed.
+- Accepted nit, resolved without moving the file: `TeamSubmitCommand` extends
+  `DispatcherSubmitCommand`, so the base sits beside its extension.
+- Rejected: marking the `@excitedjs/dreamux` and `@excitedjs/dreamux-types`
+  notes `BREAKING:` with `Review:`. The repository's changelog rule reserves
+  `BREAKING:` for upgrade-blocking migrations and forbids `BREAKING:`,
+  `Rebuild:`, and `Review:` on Command contract changes that leave persisted
+  files readable. The cited `dispatcher.stop` note shipped in 0.23.0, before
+  #399 narrowed `BREAKING:` to upgrade-blocking migrations.
+
