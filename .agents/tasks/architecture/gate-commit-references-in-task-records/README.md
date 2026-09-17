@@ -25,7 +25,7 @@
 
 ## Delivery
 
-- Pull request: Not opened.
+- Pull request: [#440](https://github.com/excitedjs/dreamux/pull/440).
 - Scope delivered: the commit-citation rule in `check-all`, over every file of
   the task tree; its statement in `task-records.md`; full history and every pull
   request head for the `kb` job; and the rewrite of all 188 citations the rule
