@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Project the new token.usage activity through the conversation projection as numeric counters with nothing to redact.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

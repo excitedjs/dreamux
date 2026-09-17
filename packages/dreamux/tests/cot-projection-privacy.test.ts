@@ -38,7 +38,7 @@ const HOME = '/home/operator';
 
 function harness(overrides: { hasSources?: boolean } = {}) {
   const publisher = createCapturingPublisher(overrides.hasSources ?? true);
-  const { logger, warnCalls } = createCapturingLogger();
+  const { logger } = createCapturingLogger();
   const projection = createConversationProjection({
     coreEvents: publisher,
     log: logger,
@@ -46,7 +46,7 @@ function harness(overrides: { hasSources?: boolean } = {}) {
   });
   const identity = makeIdentity({ team_id: 'alpha', name: 'scout', cwd: CWD });
   const agent: ProjectedAgent = { identity, role: 'teammate' };
-  return { publisher, warnCalls, projection, agent };
+  return { publisher, projection, agent };
 }
 
 /** The one `teammate.input` this projection published. */
@@ -467,6 +467,48 @@ describe('conversation projection: content visible after redaction is unchanged,
     projection.projectActivity(agent, assistantActivity(text));
     const message = activityOf(publisher);
     expect(message.kind === 'assistant.message' && message.content).toBe(text);
+  });
+});
+
+describe('conversation projection: token.usage', () => {
+  it('maps the cumulative counters verbatim with redacted:false', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'token.usage',
+      occurredAt: Date.now(),
+      id: 'turn-1:usage',
+      inputTokens: 28_568,
+      outputTokens: 69,
+      context: { usedTokens: 14_500, windowTokens: 29_000 },
+    });
+    expect(activityOf(publisher)).toEqual({
+      kind: 'token.usage',
+      event_id: 'turn-1:usage',
+      input_tokens: 28_568,
+      output_tokens: 69,
+      context: { used_tokens: 14_500, window_tokens: 29_000 },
+      redacted: false,
+    });
+  });
+
+  it('carries a null context through as null', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'token.usage',
+      occurredAt: Date.now(),
+      id: 'stream-0:usage',
+      inputTokens: 10,
+      outputTokens: 5,
+      context: null,
+    });
+    expect(activityOf(publisher)).toEqual({
+      kind: 'token.usage',
+      event_id: 'stream-0:usage',
+      input_tokens: 10,
+      output_tokens: 5,
+      context: null,
+      redacted: false,
+    });
   });
 });
 

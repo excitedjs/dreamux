@@ -46,6 +46,7 @@ import {
 import {
   acceptAssistantMessage,
   acceptInputMessage,
+  acceptTokenUsage,
   acceptToolCallActivity,
   type CotActivitySink,
 } from './feishu-cot-activity.js';
@@ -250,9 +251,19 @@ export class FeishuCotAdapter {
       case 'tool.call':
         acceptToolCallActivity(this.activity, found.key, found.state, event.activity);
         return;
+      case 'token.usage':
+        acceptTokenUsage(this.activity, found.key, found.state, event.activity);
+        return;
       case 'turn.ended':
         this.finishCard(found.key, found.state, event.activity);
         return;
+      default: {
+        // Compile-time exhaustiveness: every projected activity kind needs a
+        // dispatch arm, or its fact silently never reaches a card.
+        const exhaustive: never = event.activity;
+        void exhaustive;
+        return;
+      }
     }
   }
 

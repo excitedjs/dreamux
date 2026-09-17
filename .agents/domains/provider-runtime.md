@@ -760,45 +760,61 @@ Source:
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/codex/tests/codex-events.test.ts`
 
-### Native Turn Usage Display
+### Native Turn Usage Activity
 
-Usage is provider-local native data, emitted as one ordinary `assistant.message`
-immediately before the native terminal's `turn.ended`, after an interruption
-marker when present. There is no new neutral field, Core/Channel formatting,
-query, transcript read, persistent ledger, or completion-text mutation. Generic
-teardown does not emit another usage line.
+Usage is provider-local native data, emitted as a dedicated `token.usage`
+activity once per native turn immediately before the native terminal's
+`turn.ended`, after an interruption marker when present. The runtime never
+assembles usage prose; a display layer renders the structured counters
+itself. There is no Core/Channel computation, query, transcript read,
+persistent ledger, or completion-text mutation. Generic teardown does not
+emit another usage activity.
 
+- The payload carries `inputTokens`/`outputTokens` — the native runtime's
+  cumulative session totals — plus optional context
+  `{usedTokens, windowTokens}`. Values pass through verbatim; the runtime
+  differences nothing and keeps no history. A consumer derives a turn delta
+  by differencing consecutive snapshots for the same agent.
 - Codex's collector forwards matching-thread `thread/tokenUsage/updated`.
-  TurnManager replaces one latest snapshot and clears it on a collector/thread
-  change. Input/output come from `total.inputTokens` and `total.outputTokens`;
-  cached input and reasoning output are already included. Context is
-  `round(last.totalTokens / modelContextWindow * 100)` for a positive window,
-  deliberately not the TUI's baseline-adjusted calculation.
+  TurnManager replaces one latest snapshot, consumes it at the turn's
+  terminal, and clears it both there and on a collector/thread change.
+  Input/output come from `total.inputTokens` and `total.outputTokens`; cached
+  input and reasoning output are already included. Context is included only
+  when `last.totalTokens` and a *positive* `modelContextWindow` are both
+  present; otherwise the activity carries `context: null` and a display layer
+  renders `n/a` — the historical line — rather than a used count that would
+  be indistinguishable from a runtime that structurally lacks a window.
 - Claude's stream parser sums the current result's `modelUsage` entries:
   input includes `inputTokens`, `cacheReadInputTokens` and
   `cacheCreationInputTokens`; output is `outputTokens`. These are native
   resident-query cumulative values, not per-turn `result.usage` and not totals
-  guaranteed across process restarts. Context is the latest main assistant's
-  `message.usage` input plus cache-read/cache-creation input, excluding output
-  and sub-agent envelopes. Result consumption and consumed cancellation clear
-  that per-turn context. Native result and interrupted-result callbacks carry
-  the measurements before settlement; an interrupted callback's outcome remains
-  optional for custom session factories that supply no usage.
+  guaranteed across process restarts. Context used is the latest main
+  assistant's `message.usage` input plus cache-read/cache-creation input,
+  excluding output and sub-agent envelopes; the native envelope gives no
+  window, so `windowTokens` is `null`. Result consumption and consumed
+  cancellation clear that per-turn context. Native result and
+  interrupted-result callbacks carry the measurements before settlement; an
+  interrupted callback's outcome remains optional for custom session
+  factories that supply no usage.
 
-Each runtime formats total as input plus output and uses the presentation in the
-[product catalog](../product/README.md#observing-agents). Missing cumulative
-metrics omit the row; missing context alone produces `n/a`. Formatting stays
-local to each runtime rather than adding a shared presentation dependency.
+Missing cumulative metrics omit the activity; missing context alone produces
+`context: null`. The activity is live-only: the cold activity reader never
+replays it, and a dropped snapshot is not reconstructed. The Feishu CoT layer
+renders the presentation in the
+[product catalog](../product/README.md#observing-agents); other consumers can
+read the counters without parsing prose.
 
-**Regression trap:** cumulative snapshots are replaced, never added to previous
-snapshots. Doing so double-counts usage; reconstructing missing process history
-would also violate this feature's native-data-only scope.
+**Regression trap:** cumulative snapshots are replaced, never added to
+previous snapshots and never differenced inside a runtime. Adding or
+subtracting double-counts usage; reconstructing missing process history would
+also violate this feature's native-data-only scope.
 
 Source: `/packages/agent-runtime/codex/src/events.ts`,
 `/packages/agent-runtime/codex/src/turn-manager.ts`,
 `/packages/agent-runtime/claude-code/src/stream.ts`,
 `/packages/agent-runtime/claude-code/src/runtime-activity.ts`,
 `/packages/agent-runtime/claude-code/src/rpc.ts`.
+Task: [standalone-token-usage-activity](/.agents/tasks/architecture/standalone-token-usage-activity/README.md).
 
 ### Activity Reads And Scheduling
 
@@ -814,9 +830,12 @@ Dreamux submissions into one native turn, so an activity cannot honestly name
 the submission that caused it, and inventing one made a display pick an
 arbitrary member — and, when no member could be picked, drop the fact entirely.
 The agent is the subject, and it is known before any submission binds. The union
-has three members: `assistant.message`, `tool.call`, and `turn.ended` — the
-runtime stopped producing, with a completed, failed or interrupted status and
-its own reason text when it has one. A context compaction is published through
+has four members: `assistant.message`, `tool.call`, `token.usage`, and
+`turn.ended` — the runtime stopped producing, with a completed, failed or
+interrupted status and its own reason text when it has one. `token.usage` is
+the one member that is not conversation content: it carries the turn's
+cumulative counters (see [Native Turn Usage Activity](#native-turn-usage-activity))
+and is live-only. A context compaction is published through
 the same union as an `assistant.message` reading `COMPACTED SESSION` — Claude
 Code on its `system`/`compact_boundary` envelope, Codex on the completion of
 its `contextCompaction` item — and the summary is not: Claude Code puts it on

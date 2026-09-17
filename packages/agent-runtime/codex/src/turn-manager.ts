@@ -222,15 +222,13 @@ export class TurnManager {
     const interrupted =
       !(terminal instanceof Error) && terminal.status === 'interrupted';
     if (interrupted) this.emitActivity(interruptedActivity(turnId));
-    const summary = usageSummary(this.tokenUsage);
-    if (summary !== null) {
-      this.emitActivity({
-        kind: 'assistant.message',
-        occurredAt: Date.now(),
-        id: `${turnId}:usage`,
-        text: summary,
-      });
-    }
+    const usage = tokenUsageActivity(turnId, this.tokenUsage);
+    // Consume the snapshot with the turn it was observed for. A tokenUsage
+    // notification always precedes that turn's terminal, so the next native
+    // turn either replaces this field with its own snapshot or, receiving no
+    // update, emits no usage instead of repeating the previous turn's totals.
+    this.tokenUsage = null;
+    if (usage !== null) this.emitActivity(usage);
     // The display line ends here, on codex's own terminal. The collector
     // reports each turn's terminal once, so this is the one end the turn gets
     // from its stream: nothing below it — the record's own bookkeeping, the
@@ -585,32 +583,38 @@ function restoreCollectedTurn(turn: CollectedTurn, codec: CodexOutputSchemaCodec
   return { ...turn, items };
 }
 
-function usageSummary(usage: ThreadTokenUsage | null): string | null {
+/**
+ * Map codex's latest cumulative snapshot for the turn to the neutral
+ * token.usage activity. Snapshot values are the app-server's session totals;
+ * the runtime differences nothing and keeps no usage history.
+ */
+function tokenUsageActivity(turnId: string, usage: ThreadTokenUsage | null): RuntimeActivity | null {
   const input = usage?.total?.inputTokens;
   const output = usage?.total?.outputTokens;
   if (!isTokenCount(input) || !isTokenCount(output)) return null;
-  const context = usage?.last?.totalTokens;
-  const window = usage?.modelContextWindow;
-  const contextUsage = isTokenCount(context) && isTokenCount(window) && window > 0
-    ? `${Math.round(context / window * 100)}%`
-    : 'n/a';
-  return `Context usage ${contextUsage} | Token usage: total=${formatTokenCount(input + output)} input=${formatTokenCount(input)} output=${formatTokenCount(output)}`;
+  const contextUsed = usage?.last?.totalTokens;
+  const contextWindow = usage?.modelContextWindow;
+  // A context percentage exists only when the app-server gives both the used
+  // footprint and a positive window. Without a window the historical line is
+  // `n/a`, which the display layer renders from `context: null`; emitting the
+  // used count here would make it indistinguishable from runtimes whose window
+  // is structurally always absent.
+  const hasContext =
+    isTokenCount(contextUsed) && isTokenCount(contextWindow) && contextWindow > 0;
+  return {
+    kind: 'token.usage',
+    occurredAt: Date.now(),
+    id: `${turnId}:usage`,
+    inputTokens: input,
+    outputTokens: output,
+    context: hasContext
+      ? { usedTokens: contextUsed, windowTokens: contextWindow }
+      : null,
+  };
 }
 
 function isTokenCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
-}
-
-function formatTokenCount(count: number): string {
-  if (count < 1_000) return String(count);
-  const units = ['k', 'm', 'b'];
-  let value = count / 1_000;
-  let unit = 0;
-  while (Math.round(value * 10) / 10 >= 1_000 && unit < units.length - 1) {
-    value /= 1_000;
-    unit++;
-  }
-  return `${Math.round(value * 10) / 10}${units[unit]}`;
 }
 
 function asError(error: unknown): Error {

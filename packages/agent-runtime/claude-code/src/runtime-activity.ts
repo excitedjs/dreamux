@@ -61,12 +61,15 @@ export function handleProtocolEvent(
     const usage = event.outcome?.tokenUsage;
     if (usage !== undefined) {
       const contextTokens = event.outcome?.contextTokens;
-      const contextUsage = contextTokens == null ? 'n/a' : formatTokenCount(contextTokens);
       emitActivity({
-        kind: 'assistant.message',
+        kind: 'token.usage',
         occurredAt: Date.now(),
         id: `stream-${context.activity.activitySequence++}:usage`,
-        text: `Context usage ${contextUsage} | Token usage: total=${formatTokenCount(usage.inputTokens + usage.outputTokens)} input=${formatTokenCount(usage.inputTokens)} output=${formatTokenCount(usage.outputTokens)}`,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        context: contextTokens == null
+          ? null
+          : { usedTokens: contextTokens, windowTokens: null },
       }, context.activitySink);
     }
     // `result` is claude's native terminal, and the display line ends on it:
@@ -257,16 +260,4 @@ function toJsonValue(value: unknown): JsonValue | null {
   } catch {
     return String(value);
   }
-}
-
-function formatTokenCount(count: number): string {
-  if (count < 1_000) return String(count);
-  const units = ['k', 'm', 'b'];
-  let value = count / 1_000;
-  let unit = 0;
-  while (Math.round(value * 10) / 10 >= 1_000 && unit < units.length - 1) {
-    value /= 1_000;
-    unit++;
-  }
-  return `${Math.round(value * 10) / 10}${units[unit]}`;
 }

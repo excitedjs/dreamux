@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Render the new token.usage activity on the CoT card as the historical one-line Context/Token usage summary; formatting now lives only in this display layer.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}
