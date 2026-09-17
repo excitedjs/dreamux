@@ -10,7 +10,7 @@ Operator, 2026-09-17, as the second requirement beside
 
 ## Current alignment
 
-- Status: Reopened; the operator widened the direction to a storage infrastructure refactor.
+- Status: Blocked. The Config Service requirement converged; the operator then widened the direction to a storage infrastructure refactor and sequenced this task after the Dispatcher Command task merges.
 - Confirmed current behavior and evidence:
   - No Core Command, Channel, or MCP tool writes `config.json`. The only
     writer is `dreamux onboard` (a plain `writeFile`, not temp + rename). The
@@ -58,6 +58,34 @@ Operator, 2026-09-17, as the second requirement beside
     state.
   - Slash commands have no permission beyond the ordinary authorization to
     deliver a message in that conversation (product catalog).
+  - Persistence inventory for the storage infrastructure direction (read-only
+    survey on 2026-09-17; spot-checked where marked):
+    - No memory-first, asynchronously persisted store exists. Every runtime
+      state write is awaited, and a failure returns to its caller or ends its
+      owner.
+    - Durable-first stores: the live agent identity (`AgentRuntimeStateStore`
+      over `identity.json`, a promise tail that replaces memory after the
+      write), the Team record (`TeamStore`, a keyed queue that merges against
+      the file on disk), and the Feishu routing document (`FeishuRoutingStore`,
+      a promise tail). `WorkflowRun` changes memory first but awaits each write.
+      `cron-jobs.json`, Feishu `access.json`, and `chat-bots.json` keep no
+      in-memory model and re-read the file on every access; `chat-bots.json`
+      writes are not serialized.
+    - `JsonDocumentStore` (`platform/json-document-store.ts`) has two callers,
+      the cron job store and the workflow run store (spot-checked). The
+      service-topology-foundations plan to move the other single-document
+      stores onto it was not carried out.
+    - Atomic replace-write exists as Core `writeFileAtomic` and
+      `@excitedjs/dreamux-utils` `writeAtomic` (used only by the Feishu access
+      and routing stores, spot-checked), plus two inline copies in the Feishu
+      Channel. A Channel package may depend only on `dreamux-types` and
+      `dreamux-utils`, so a store Channels use cannot live in
+      `@excitedjs/dreamux`.
+    - Knowledge drift found on the way: the service-topology-foundations
+      requirement still names removed stores (`ChannelBindingStore`,
+      `TeamMateIdentityStore`, a persisting `DispatcherStore`), and
+      `.agents/domains/service-topology.md` says collections do not build their
+      own identity store while several services do.
 - Desired outcome: A dedicated Config Service owns `config.json` while the
   daemon runs. A Channel reads and replaces the whole configuration through
   new `config` Core Commands; `agents` changes apply immediately, `dispatchers`
@@ -174,6 +202,8 @@ Operator, 2026-09-17, as the second requirement beside
     team identity 这种的，先确保落盘，再改内存值的，一个是易失性存储，就是先改内存值，
     然后再落盘的。" The solution-path card sent before this message was
     dismissed in favor of discussion.
+  - Sequencing: "先把需求1 做了。需求1 改动看起来比较可控。然后需求2 你先记录到 task
+    记录里，1 合入后我们再推进2".
 - Interpretations recorded without objection when they were played back on the
   2026-09-17 card:
   - The caller is a web front end reaching Core through a Channel's Core port.
