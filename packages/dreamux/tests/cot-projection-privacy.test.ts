@@ -470,6 +470,43 @@ describe('conversation projection: content visible after redaction is unchanged,
   });
 });
 
+describe('conversation projection: token.usage', () => {
+  it('maps the cumulative counters verbatim with redacted:false', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'token.usage',
+      occurredAt: Date.now(),
+      id: 'turn-1:usage',
+      inputTokens: 28_568,
+      outputTokens: 69,
+      context: { usedTokens: 14_500, windowTokens: 29_000 },
+    });
+    expect(activityOf(publisher)).toEqual({
+      kind: 'token.usage',
+      event_id: 'turn-1:usage',
+      input_tokens: 28_568,
+      output_tokens: 69,
+      context: { used_tokens: 14_500, window_tokens: 29_000 },
+      redacted: false,
+    });
+  });
+
+  it('carries a null context through as null', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'token.usage',
+      occurredAt: Date.now(),
+      id: 'stream-0:usage',
+      inputTokens: 10,
+      outputTokens: 5,
+      context: null,
+    });
+    const usage = activityOf(publisher);
+    expect(usage.kind === 'token.usage' && usage.context).toBeNull();
+    expect(usage.kind === 'token.usage' && usage.redacted).toBe(false);
+  });
+});
+
 describe('conversation projection: the turn.ended reason', () => {
   function endedActivity(reason: string | null): RuntimeActivity {
     return { kind: 'turn.ended', occurredAt: Date.now(), status: 'failed', reason };

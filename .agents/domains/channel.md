@@ -1196,9 +1196,11 @@ the submission that caused it.
 `teammate.input` is published at the moment of submission, before any runtime
 has accepted it, so a submission that fails is visible together with the text
 that failed. `teammate.activity` carries a nested payload in the runtime's own
-vocabulary (`assistant.message`, `tool.call`, `turn.ended`), so a runtime that
-learns to report something new adds a member and changes no event catalog, no
-seal, and no Channel subscription. `turn.ended` is the display stream's
+vocabulary (`assistant.message`, `tool.call`, `token.usage`, `turn.ended`), so
+a runtime that learns to report something new adds a member and changes no
+event catalog, no seal, and no Channel subscription. `token.usage` carries
+cumulative counters rather than conversation content and is live-only.
+`turn.ended` is the display stream's
 terminal, carrying the producer's own reason when it has one. Core publishes
 that same terminal itself for an input no runtime ever accepted, because such
 an input still opened a surface that nothing else would close.
