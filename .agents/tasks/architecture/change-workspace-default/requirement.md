@@ -15,8 +15,9 @@ Development authorization, 2026-09-11 13:04:
 
 ## Current alignment
 
-- Current source at `2de0689b` defaults workspace isolation to true in the
-  configuration loader, its default lookup, and the new-dispatcher onboarding seed.
+- Current source on `next` after #409 merged defaults workspace isolation to
+  true in the configuration loader, its default lookup, and the new-dispatcher
+  onboarding seed.
 - Required change: Set that default to false. Explicit true and false keep their
   existing meaning and survive configuration round-trips and re-onboarding.
 - Scope is only this default change. No Team creation contract or other behavior

@@ -2,7 +2,7 @@
 
 **Requirement SHA-256:** `4367fcdee10bbe23c5af6a2a3806772fcda3eb57887432552d3b0488e45c264a`
 **Prior final (superseded):** `f687ee0be22090afdbe648a9bbb9d7cedbd22ed63bbccd715a66e8b55c653ca6`
-**Source baseline:** `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`
+**Source baseline:** `next` after #333 merged
 **Review seat:** `lock-native-id-membership`
 **Scope:** (1) entity-owned `TeammateService.lock()` and restricted handle lifetime; (2) object-based in-process Turn lifecycle replacing service-layer turn IDs; (3) confirmed removal of unused Channel `turn.submitted`/`turn.settled` events and every remaining `turn_id` exposure.
 

@@ -19,7 +19,7 @@ stream-json --verbose`, bypass permission mode), not through Dreamux itself:
 
 ## TeamLeader implementation check (2026-09-17)
 
-Baseline: `origin/next` at `bc7d769d`.
+Baseline: `next` after #437 merged.
 
 Diff against the final solution:
 
@@ -59,9 +59,9 @@ all succeeded.
 
 ## Independent implementation review (2026-09-17)
 
-External review of the pushed branch (commit `e50dfe70` on `next` `bc7d769d`),
-used in place of the workflow review for this group's tasks. Verdict: approved,
-no finding.
+External review of the pushed branch (the head of #438 before its closeout
+commits, based on `next` after #437 merged), used in place of the workflow
+review for this group's tasks. Verdict: approved, no finding.
 
 - The reviewer confirmed the filter sits in the envelope-meaning owner, that
   compaction, interruption, usage, and `turn.ended` never reach it, and that the

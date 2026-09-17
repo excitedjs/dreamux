@@ -184,7 +184,8 @@ visibility to the existing task; it does not authorize development.
 
 ## Current source facts
 
-Baseline: `3cac2f7b00a7be159a52bd6aee0a9cdcd43214e1`.
+These facts were read from the source tree of #406 at the revision CI run
+https://github.com/excitedjs/dreamux/actions/runs/34444257607 built and passed.
 
 - `packages/channel/feishu-channel/src/tools/messaging-tools.ts` exposes
   `chat_id`, `message_id`, `text`, and `mention_user_ids` for reply.

@@ -21,7 +21,7 @@
 ## Current alignment
 
 - Status: Clarified; implemented directly with the operator on 2026-09-08.
-- Baseline: `origin/next` at `71316ab93fee0829475d2d41cdfffbed7cbfae2a`.
+- Starting point: `next` after #391 merged.
 - Desired behavior: the bundled `teamwork` skill tells a TeamLeader that a
   member's own judgment is what distinguishes it from a subagent; that the
   brief carries the question the work turns on before the leader's answer,

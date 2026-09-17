@@ -43,7 +43,7 @@ have no remaining current-repository production caller.
 
 ## Evidence
 
-- Source baseline: `3cac2f7b00a7be159a52bd6aee0a9cdcd43214e1`.
+- Source baseline: the source tree at [the CI-verified head of #406](https://github.com/excitedjs/dreamux/actions/runs/34444257607).
 - Tool and channel owners: `packages/channel/feishu-channel/src/tools/messaging-tools.ts`,
   `tools/types.ts`, `feishu-channel.ts`, `feishu-session-ops.ts`, and `bot.ts`.
 - Transport owners: `packages/channel/feishu-transport/src/transport/feishu.ts`,

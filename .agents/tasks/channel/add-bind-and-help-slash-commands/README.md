@@ -149,7 +149,8 @@ still be renamed or repolicied — covered by its own test, because that is the
 case a careless version of this rule would break.
 
 **The refusal sits above the create/update fork, and that is now pinned.** The
-re-review (Devbox, 2026-09-15, approved on `20604ba1`) observed that the
+re-review (Devbox, 2026-09-15,
+[approved](https://github.com/excitedjs/dreamux/pull/428#pullrequestreview-5211338200)) observed that the
 decision to refuse the rename path as well — the one question this task put to
 the reviewer — had no test holding it, and that the placement is exactly what a
 later "helpful" change would relax. A document holding the coexistence can no

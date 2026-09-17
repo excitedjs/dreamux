@@ -1137,7 +1137,7 @@ inverted to assert the emission, with the reason in its name.
 
 ### 7. The display end is the provider's own terminal, on both runtimes
 
-At merge-base `ca30883d` both providers computed a native turn's end from what
+At the merge of #366 both providers computed a native turn's end from what
 the push-back line had made of it. codex called `endNativeTurn` from `finalize`
 with the status of the `RuntimeCompletion` it had just built — including the
 failed one it built when the output-schema codec could not restore the turn's

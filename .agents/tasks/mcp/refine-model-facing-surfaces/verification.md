@@ -2,8 +2,8 @@
 
 Evidence for the implementation of [technical-design/final.md](technical-design/final.md)
 §3, gathered by the TeamLeader on 2026-09-06. Commands ran from the task
-worktree, whose tree is `origin/next` (0d8098f1) plus this task's commits and
-the merge of `origin/pr-369` (59b3614d).
+worktree, whose tree is `next` after #378 merged, plus this task's commits
+and the merge of `origin/pr-369` (#369).
 
 ## Implementation method
 

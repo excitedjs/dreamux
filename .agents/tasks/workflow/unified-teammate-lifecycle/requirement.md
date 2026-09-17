@@ -44,10 +44,9 @@ subscriber.
   pageable Runtime-native transcript query with tool activity, and then added
   the repository-publication red line for one operator-prohibited external
   provider family.
-- Source baseline inspected during clarification:
-  `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`.
-- Reopened implementation baseline inspected:
-  `3badc3a5b7547ff1455843436dbfea88f15a0d86`.
+- Source baseline inspected during clarification: `next` after PR #333 merged.
+- Reopened implementation baseline inspected: the PR #338 revision CI-validated
+  at https://github.com/excitedjs/dreamux/actions/runs/31918101886.
 
 ### Confirmed lineage and current behavior
 

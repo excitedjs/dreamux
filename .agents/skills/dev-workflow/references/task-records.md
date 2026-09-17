@@ -82,6 +82,16 @@ false while the file sits untouched?**
   link. Do not write `(open)`, a CI result, a merge commit, a list of green
   gates, or a merge date: each is a snapshot that GitHub will contradict within
   the day.
+- A pull request, a review, and an Actions run keep their identity; a commit
+  hash does not. The repository merges by squash or rebase, so no commit on a
+  branch reaches `next`; the commit a merge creates does not exist while the
+  record merging with it is written; and a commit that was never pushed resolves
+  in one clone only. Cite the pull request, and where the exact pushed head
+  matters — a review round, a CI result — the GitHub review or Actions run link,
+  which records that head. A trunk commit is no exception: name a baseline as
+  "`next` after #N merged", and let a script that needs the commit resolve it
+  with `gh pr view N --json mergeCommit`. One rule for every commit is a rule
+  the check can apply without knowing which branch a commit is on.
 - A date that records when something happened survives the test — an operator
   approval on a given day stays true forever. A date that stands in for a
   status does not.
@@ -108,12 +118,21 @@ being committed to the trunk may not carry them:
 Write `- Pull request:` with the link, and put durable evidence behind
 `- Verification:` or `- Coverage limit:`, which do not expire.
 
-Two things are exempt. A fenced block is an example, not structure, so the
-check strips it first. And a section under a `## Historical …` heading is a
-snapshot of a past round kept on purpose — it records what was true then, which
-is not a claim about now, so the rule does not reach into it. Do not rewrite
-such a section: if a sentence there sounds live, put it in the past tense rather
-than deleting the round it describes.
+The check also reads every file in the task tree, not only the README, and
+rejects any line containing a hexadecimal token that resolves to a commit of
+this repository. A digest or a hash from another repository resolves to no
+commit here and passes. Only the local object database decides, so an object
+the checkout lacks cannot match; the CI `kb` job fetches full history and every
+pull request head for that reason, and an author's own checkout holds the
+commits no other checkout can see.
+
+Two things are exempt from the label rule. A fenced block is an example, not
+structure, so the check strips it first. And a section under a
+`## Historical …` heading is a snapshot of a past round kept on purpose — it
+records what was true then, which is not a claim about now, so the rule does not
+reach into it. Do not rewrite such a section: if a sentence there sounds live,
+put it in the past tense rather than deleting the round it describes. The commit
+rule exempts only the second: a script pinned to a commit is still a citation.
 
 **Rewrite stale facts in place; do not append change history.** When something
 recorded here is no longer true, edit the line to say what is true now. A record

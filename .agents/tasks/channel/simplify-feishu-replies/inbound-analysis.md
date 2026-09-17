@@ -1,6 +1,6 @@
 # Native post inbound analysis
 
-Source baseline: `3cac2f7b00a7be159a52bd6aee0a9cdcd43214e1`.
+Source baseline: [the CI run](https://github.com/excitedjs/dreamux/actions/runs/34444257607) for PR #406's pushed head.
 Investigation date: 2026-09-11. Findings describe current source, not implemented
 fixes. Private HTTP captures remain outside the repository. The operator confirmed
 that existing peer-bot card mentions already deliver and wake the receiving bot;

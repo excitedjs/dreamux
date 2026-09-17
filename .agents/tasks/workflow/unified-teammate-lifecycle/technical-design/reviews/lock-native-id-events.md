@@ -4,7 +4,7 @@
 
 This review uses only the final clarified requirement at SHA-256
 `4367fcdee10bbe23c5af6a2a3806772fcda3eb57887432552d3b0488e45c264a`
-and source baseline `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`. The existing
+and source baseline `next` after #333 merged. The existing
 `technical-design/final.md` is treated only as superseded evidence of code that
 must not survive into the revised solution.
 

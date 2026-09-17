@@ -6,8 +6,10 @@
 - **Implementation authorization:** Not granted
 - **Requirement:** [`requirement.md`](../requirement.md)
 - **Frozen requirement SHA-256:** `e44f6411914cd1ff5ea49c55f09bbae17ad162f62335123f43d89ea0405208d0`
-- **Original source baseline inspected:** `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`
-- **Reopened implementation baseline inspected:** `3badc3a5b7547ff1455843436dbfea88f15a0d86`
+- **Original source baseline inspected:** `next` after #333 merged
+- **Reopened implementation baseline inspected:** the #338 branch state that
+  passed CI at https://github.com/excitedjs/dreamux/actions/runs/31918101886,
+  before that pull request's later commits
 - **Original focused review inputs:**
   - [`lock-native-id-entity.md`](reviews/lock-native-id-entity.md), SHA-256
     `6e78d2e05eea6f2ec8092ee630d9cfde6e1fc02bb5651cda507f46ef5b4da294`

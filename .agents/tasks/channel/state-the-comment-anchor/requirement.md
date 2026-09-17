@@ -3,7 +3,7 @@
 ## Initial request
 
 The operator opened this task immediately after merging the document-comment
-subscription work (PR #429, `a24f7855`), against the envelope that work ships:
+subscription work (PR #429), against the envelope that work ships:
 
 > 刚才，给你合入了。引用这个地方，确实有很大的风险，单独开一个PR修一下。这个地方
 > 我感觉你可以拿到一些其他的值，比如说飞书给到的一些可以查询到评论段落的属性值

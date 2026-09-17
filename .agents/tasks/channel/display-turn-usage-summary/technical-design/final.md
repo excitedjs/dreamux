@@ -58,7 +58,7 @@ measurements; do not require new fields from factory or session consumers.
    before the usage row when metrics exist, and the stopped settlement. Do not
    alter completion text, error interpretation, attribution, or generic teardown.
 
-The PR base advanced to `2b3d697` during verification. Upstream #384 moved the
+The PR base advanced to the merge of #390 during verification. Upstream #384 moved the
 activity owner from `runtime-submissions.ts` to `runtime-activity.ts`; #379 added
 native interruption display. The integration follows those existing owners,
 resets context in `discard()` (used by both result consumption and cancellation),

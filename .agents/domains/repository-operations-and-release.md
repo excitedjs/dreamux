@@ -151,7 +151,7 @@ Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.tes
 | `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan |
 | `commit-metadata` | Author email must have a domain and must not be machine-local; `*@users.noreply.github.com` always passes; an optional private denylist regex comes from a repo variable, never from a committed file |
 | `shellcheck` | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `packages/dreamux/bin/dreamux` |
-| `kb` | `.agents/scripts/check.sh` — knowledge-base link and orphan check |
+| `kb` | `.agents/scripts/check.sh` — knowledge-base links, orphans, and task records; checks out full history and every `refs/pull/*/head`, because the task-record check resolves commit hashes against the local object database |
 | `rush` | Linux + macOS: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test |
 | `gitleaks` | Full-history `gitleaks git .` with the pinned binary and `.gitleaks.toml` |
 | `internal-content` | `common/scripts/check-internal-content.sh --tree` over every tracked file |

@@ -414,8 +414,8 @@ DELIVERY_STATUS_LABELS = frozenset({
 })
 
 # A section under this heading is a frozen snapshot of a past round, kept on
-# purpose. It records what was true then, which is not a claim about now, so the
-# label rule does not reach into it.
+# purpose. It records what was true then, which is not a claim about now, so
+# neither the label rule nor the commit-citation rule reaches into it.
 #
 # The word boundary is the whole point: a prefix test also matches
 # `## Historically speaking …`, which exempts everything after it. An exemption
@@ -424,6 +424,32 @@ DELIVERY_STATUS_LABELS = frozenset({
 FROZEN_SECTION_RE = re.compile(r"^## Historical\b")
 
 LABEL_RE = re.compile(r"^- ([A-Z][A-Za-z0-9 /-]{0,40}):")
+
+# Copied from the upstream gate this rule is ported from: a run of 7 to 40
+# hexadecimal digits that is not part of a longer word. Most matches are not
+# commits; only the object database decides, so a 64-digit digest never matches
+# and a short digest that is no commit passes.
+COMMIT_CANDIDATE_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{7,40}(?![0-9A-Za-z])")
+
+
+def classified_lines(text: str) -> list[tuple[int, str, bool, bool]]:
+    """Every line with its number, and whether it is fenced or frozen.
+
+    A fence delimiter counts as fenced. A `## ` heading inside a fenced block
+    opens or closes nothing: it is an example, not structure.
+    """
+    lines: list[tuple[int, str, bool, bool]] = []
+    fenced = False
+    frozen = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.startswith("```"):
+            fenced = not fenced
+            lines.append((number, line, True, frozen))
+            continue
+        if not fenced and line.startswith("## "):
+            frozen = FROZEN_SECTION_RE.match(line) is not None
+        lines.append((number, line, fenced, frozen))
+    return lines
 
 
 def unfenced_lines(text: str) -> list[str]:
@@ -434,15 +460,7 @@ def unfenced_lines(text: str) -> list[str]:
     contained a fenced `## Tasks` would be classified as a domain index and skip
     the state rule entirely. Structure is read from these lines only.
     """
-    lines: list[str] = []
-    fenced = False
-    for line in text.splitlines():
-        if line.startswith("```"):
-            fenced = not fenced
-            continue
-        if not fenced:
-            lines.append(line)
-    return lines
+    return [line for _, line, fenced, _ in classified_lines(text) if not fenced]
 
 
 def live_lines(text: str) -> list[str]:
@@ -451,14 +469,11 @@ def live_lines(text: str) -> list[str]:
     Frozen sections are dropped on top of the fenced ones: they describe a past
     round, and a record of what was true then is not a claim about now.
     """
-    lines: list[str] = []
-    frozen = False
-    for line in unfenced_lines(text):
-        if line.startswith("## "):
-            frozen = FROZEN_SECTION_RE.match(line) is not None
-        if not frozen:
-            lines.append(line)
-    return lines
+    return [
+        line
+        for _, line, fenced, frozen in classified_lines(text)
+        if not fenced and not frozen
+    ]
 
 
 def check_delivery_labels(name: str, lines: list[str]) -> None:
@@ -475,6 +490,73 @@ def check_delivery_labels(name: str, lines: list[str]) -> None:
                 f"on purpose belongs under a '## Historical ...' heading, which "
                 f"this check skips."
             )
+
+
+def commit_citations(root: Path, tasks: Path) -> list[str]:
+    """Report every line under the task tree that cites a commit of this repository.
+
+    A record names work by pull request, review, or Actions run, never by
+    commit. The repository merges by squash or rebase, so no commit on a
+    branch reaches `next`; the merge commit does not exist while the record
+    merging with it is written; and a commit that was never pushed resolves in
+    one clone only. Each of those citations reads as evidence and resolves for
+    almost no one later.
+
+    Unlike the label rule, this one reads fenced blocks: a script pinned to a
+    commit is still a citation. Frozen sections stay exempt.
+
+    The object database is the only authority on what a hash names, and an
+    object the checkout lacks cannot match. The knowledge-base CI job fetches
+    full history and every pull request head for that reason. An author's own
+    checkout may be shallow, yet it holds the commits the author just made,
+    which are the ones no other checkout can see.
+    """
+    lines: list[tuple[str, int, str]] = []
+    for path in sorted(tasks.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        for number, line, _, frozen in classified_lines(read(path)):
+            if not frozen:
+                lines.append((relative, number, line))
+    candidates = sorted({
+        match.group(0).lower()
+        for _, _, line in lines
+        for match in COMMIT_CANDIDATE_RE.finditer(line)
+    })
+    if not candidates:
+        return []
+    resolved = subprocess.run(
+        ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        cwd=root,
+        env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
+        input="".join(f"{candidate}\n" for candidate in candidates),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    # An ambiguous prefix names no single object, so it names no commit.
+    commits = {
+        candidate
+        for candidate, result in zip(candidates, resolved)
+        if result.endswith(" commit") and result.startswith(candidate)
+    }
+    failures: list[str] = []
+    for relative, number, line in lines:
+        cited = [
+            match.group(0)
+            for match in COMMIT_CANDIDATE_RE.finditer(line)
+            if match.group(0).lower() in commits
+        ]
+        if cited:
+            failures.append(
+                f"{relative}:{number}: cites commit {', '.join(cited)}. Cite the "
+                f"pull request link instead, and where the exact pushed head "
+                f"matters, the GitHub review or Actions run link. A past round "
+                f"kept on purpose belongs under a '## Historical ...' heading, "
+                f"which this check skips."
+            )
+    return failures
 
 
 def check_record(directory: Path, name: str, text: str, allow_in_flight: bool) -> None:
@@ -547,10 +629,12 @@ def check_all(args: argparse.Namespace) -> int:
                 check_record(directory, name, text, args.allow_in_flight)
         except TaskError as error:
             failures.append(str(error))
+    if not args.allow_in_flight:
+        failures.extend(commit_citations(root, tasks))
     for failure in failures:
         print(f"error: {failure}", file=sys.stderr)
     if failures:
-        print(f"\n{len(failures)} of {records} task records failed.", file=sys.stderr)
+        print(f"\n{len(failures)} problem(s) across {records} task records.", file=sys.stderr)
         return 1
     print(f"Task records OK: {records} checked")
     return 0

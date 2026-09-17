@@ -60,7 +60,7 @@ supported repo inputs, and temporary Git worktree naming/branch behavior.
 
 The starting branch included an unrelated commit not yet on `next`. The reviewed
 patch was preserved there and applied alone to `feature/remove-creation-repo-slug`
-from `next` at `2b3d6971`. Git's stable patch IDs match; the transplant needed no
+from `next` after #390 merged. Git's stable patch IDs match; the transplant needed no
 conflict resolution or code adjustment.
 
 On 2026-09-09, the PR branch passed Rush build (9.98 seconds), lint (4.31 seconds),

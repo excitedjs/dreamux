@@ -202,8 +202,9 @@ whole.
 ## External review adjudication
 
 Reviewer verdict: no blocking findings, layering clean. Each finding was checked
-against `next` (`0b35a6a8`; the files this solution touches are unchanged from
-the draft's base apart from unrelated `channel.md` and product-catalog entries).
+against `next` after #433 merged (the files this solution touches are unchanged
+from the draft's base apart from unrelated `channel.md` and product-catalog
+entries).
 
 1. **`expiredText()` comment restates the old premise.** Accepted. Confirmed at
    `src/feishu-ask-user.ts`: "The body for a round nobody answered before the

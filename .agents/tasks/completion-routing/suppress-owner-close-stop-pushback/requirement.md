@@ -56,9 +56,9 @@
 
 ### Confirmed current behavior and evidence
 
-- Baseline: `origin/next` at `fffc3bd337f8ce28070fb8658fc30893e71730bb`,
-  unchanged between the PR #389 investigation on 2026-09-07 and the redo branch
-  cut from it on 2026-09-08.
+- The baseline for this section is `next` after #386 merged, unchanged between
+  the PR #389 investigation on 2026-09-07 and the redo branch cut from it on
+  2026-09-08.
 - The model-facing `close` tool in
   `packages/dreamux/src/service/teammate-collection/mcp-delegate.ts` calls the
   scoped collection's ordinary `close` method and returns its structured close
@@ -87,22 +87,21 @@
   `packages/dreamux/tests/completion-delivery.test.ts` separately protects the
   general rule that a stopped outcome without a native completion token still
   reaches its recipient.
-- [PR #149](https://github.com/excitedjs/dreamux/pull/149), merged as
-  `eb65592707d42acc9679dc6da5879e91f208fcd6`, introduced reverse completion
-  delivery for completed, failed, and stopped TeamMate turns. Its end-to-end test
-  explicitly retained failed/stop delivery.
-- [PR #338](https://github.com/excitedjs/dreamux/pull/338), merged as
-  `8ed949e236d575c9b27a554aebed7d36ea40a3b2`, later consolidated close-first
-  lifecycle ownership and added the baseline close-induced-stopped test.
+- [PR #149](https://github.com/excitedjs/dreamux/pull/149), merged into `next`,
+  introduced reverse completion delivery for completed, failed, and stopped
+  TeamMate turns. Its end-to-end test explicitly retained failed/stop delivery.
+- [PR #338](https://github.com/excitedjs/dreamux/pull/338), merged into `next`,
+  later consolidated close-first lifecycle ownership and added the baseline
+  close-induced-stopped test.
 - [PR #344](https://github.com/excitedjs/dreamux/pull/344) still recorded the
   intended opposite behavior in a router-only test: close/stop with no native
   result should produce no push. That test did not exercise the entity delivery
   closure and therefore did not protect the real end-to-end behavior.
-- [PR #350](https://github.com/excitedjs/dreamux/pull/350), merged as
-  `2ed5f5ea7006fee7197d39b9de98570db63ee00b`, established the exact baseline
-  rule that every settled entity turn, including a close-induced `stopped`
-  outcome, runs its delivery closure. This is the direct origin of the present
-  regression, while PR #149 is the older ancestry of reverse delivery itself.
+- [PR #350](https://github.com/excitedjs/dreamux/pull/350), merged into `next`,
+  established the exact baseline rule that every settled entity turn, including
+  a close-induced `stopped` outcome, runs its delivery closure. This is the
+  direct origin of the present regression, while PR #149 is the older ancestry
+  of reverse delivery itself.
 - [PR #380](https://github.com/excitedjs/dreamux/pull/380) added the explanatory
   automated-notification sentence to the rendered text; it changed the wording,
   not the existence of the pushed turn.

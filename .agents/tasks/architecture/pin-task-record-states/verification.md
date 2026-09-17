@@ -113,11 +113,11 @@ it would add the mechanism this design exists to avoid.
 ## Counts
 
 The record counts in the design and the pull request description are measured
-by running the gate against `27428f85`, the trunk commit this task was measured
-on. The commit is named rather than written as `origin/next`, which stops
-meaning the pre-change trunk the moment this merges. It reports 7
-state-rejected, 23 label-rejected, and 23 in the union, the seven being a
-subset:
+by running the gate against the merge commit of #412, the trunk commit this
+task was measured on. The script resolves that commit from the pull request
+number at run time rather than writing `origin/next`, which stops meaning the
+pre-change trunk the moment this merges. It reports 7 state-rejected, 23
+label-rejected, and 23 in the union, the seven being a subset:
 
 ```python
 import subprocess, sys
@@ -125,13 +125,16 @@ sys.dont_write_bytecode = True  # a .pyc here embeds an absolute path and cannot
 sys.path.insert(0, '.agents/skills/dev-workflow/scripts')
 import init_task as gate
 
+commit = subprocess.run(
+    ['gh', 'pr', 'view', '412', '--json', 'mergeCommit', '--jq', '.mergeCommit.oid'],
+    capture_output=True, text=True, check=True).stdout.strip()
 state, label = set(), set()
 for path in subprocess.run(
-        ['git', 'ls-tree', '-r', '--name-only', '27428f85', '.agents/tasks'],
+        ['git', 'ls-tree', '-r', '--name-only', commit, '.agents/tasks'],
         capture_output=True, text=True).stdout.split():
     if not path.endswith('README.md'):
         continue
-    text = subprocess.run(['git', 'show', f'27428f85:{path}'],
+    text = subprocess.run(['git', 'show', f'{commit}:{path}'],
                           capture_output=True, text=True).stdout
     if gate.is_domain_index(path, text):
         continue

@@ -9,7 +9,7 @@
 - Approved solution SHA-256:
   `157cb2602c2986d7877ab34085be6b7401c33c5778f9657ec85f4c866c05f300`
 - Baseline `next` commit:
-  `3b74f9bc59437cd234047473321a131658295126`
+  the merge of #336
 - Review target: the complete branch and working-tree change, including every
   tracked modification and every untracked file present when the workflow
   scope was resolved.
@@ -195,10 +195,10 @@ Post-remediation static checks also found:
 
 ### PR CI Canonical-Path Correction
 
-PR #338 first ran against commit
-`c5802be4fdb3ba3a37c1a3ad892bcd0c0de6c840`. Ubuntu Rush and every
-non-Rush gate passed. The macOS Rush test job exposed four test-only
-lexical-path assumptions:
+PR #338's CI run on its native-transcript commit
+(https://github.com/excitedjs/dreamux/actions/runs/31948395253) had
+Ubuntu Rush and every non-Rush gate pass. The macOS Rush test job
+exposed four test-only lexical-path assumptions:
 
 - three Claude transcript assertions expected a temporary path under
   `/var/...`, while the product correctly returned its canonical realpath;
@@ -237,9 +237,8 @@ without changing product code or `.agents/**`; the Codex focused, typecheck,
 lint, full-package, and diff checks passed again. No accepted finding remains
 unresolved.
 
-The correction was committed as
-`e09c64fef47b7afa4c686f403198d18d030b4302` and pushed to PR #338.
-Required CI passed on that exact head:
+The correction was pushed to PR #338. Required CI passed on the corrected head in
+https://github.com/excitedjs/dreamux/actions/runs/31949754412:
 
 - Rush change declaration: passed.
 - Commit author metadata: passed.
@@ -612,7 +611,7 @@ weakened or disabled in source.
 ### Latest `next` Integration
 
 Before PR creation, `origin/next` advanced through PRs #335 and #336. The task
-commit was rebased onto `3b74f9bc59437cd234047473321a131658295126`.
+commit was rebased onto the merge of #336.
 
 - The cron run-now deletion and capability-domain task routing from #335 remain
   authoritative. This task was migrated to `.agents/tasks/workflow/` and does

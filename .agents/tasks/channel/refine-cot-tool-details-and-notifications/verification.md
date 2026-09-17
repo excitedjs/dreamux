@@ -35,9 +35,10 @@ line truncation, and long Unicode arguments/results within the event budget.
 The expectation changed because the operator selected a new visible heading;
 no assertion about output/status ordering or event limits was weakened.
 
-Independent external review approved implementation commit `929f11a6` in
-[PR #405](https://github.com/excitedjs/dreamux/pull/405). The GitHub APPROVED
-review was verified on 2026-09-10, as were all nine successful CI checks.
+Independent external review approved the implementation in
+[PR #405](https://github.com/excitedjs/dreamux/pull/405). The GitHub
+[APPROVED review](https://github.com/excitedjs/dreamux/pull/405#pullrequestreview-5163287620)
+was verified on 2026-09-10, as were all nine successful CI checks.
 The reviewer examined the full diff and reported no findings: text/JSON order,
 empty-output statuses, list-only rows, overflow fallback, and the complete event
 budget retain their existing rules. The TeamLeader accepts that conclusion from
@@ -245,9 +246,9 @@ TeamLeader inspected their complete diff and checked the final combined gate
 logs. Final review of the complete resulting change is assigned to the
 operator-selected external reviewer and was pending at that point.
 
-Implementation started from freshly fetched next commit
-`00b858efa2f9cfdb7fdbf829aac9cfe0856b6915`, before any implementation write. The
-branch has not been rebased; later next commits do not change that starting fact.
+Implementation started from freshly fetched `next` after #398 merged, before
+any implementation write. The branch has not been rebased; later next commits
+do not change that starting fact.
 
 ## Round 1 adjudication and operator rulings
 
@@ -322,8 +323,8 @@ status checks are needed while awaiting its reply.
 
 ## Alpha publication and feedback
 
-PR #401 head `b70d22429b2da7ca73532c90520104a2794299b7` passed all nine
-GitHub CI checks. After the operator explicitly requested publication,
+PR #401's [CI run](https://github.com/excitedjs/dreamux/actions/runs/34355890259)
+passed all nine GitHub CI checks. After the operator explicitly requested publication,
 [release run 34366550601](https://github.com/excitedjs/dreamux/actions/runs/34366550601)
 succeeded and exact npm metadata confirmed
 `@excitedjs/dreamux@0.25.0-alpha.gb70d22429b2d`. The install command and tarball
@@ -346,8 +347,8 @@ pairing lifecycle are unchanged by this follow-up.
 ## Rebase onto refreshed next
 
 The operator corrected the target with "不是 dev，说错了，是 next". After a fresh
-fetch, both task commits replayed without conflicts onto
-`7ed1d886964e520025cbc1e8151c8ff2eefd9a58`. Stable patch IDs for the package and
+fetch, both task commits replayed without conflicts onto `next` after #400
+merged. Stable patch IDs for the package and
 release-declaration diff before and after the rebase match. The first commit's
 range-diff differs only in surrounding product-document context introduced by
 next; the argument-heading removal replays identically. Task metadata records
@@ -358,8 +359,8 @@ typecheck:tests, test (including real Codex integration), and built CLI smoke.
 The test warning operations contain the existing expected stderr. No package
 source adjustment or test assertion change was needed for the rebase.
 
-The rebased head `4a45d478cc7c2a6015a3a6bcf37d9289de3a55fe` also passed all nine
-GitHub CI checks. At the operator's request,
+The rebased head's [CI run](https://github.com/excitedjs/dreamux/actions/runs/34370500351)
+also passed all nine GitHub CI checks. At the operator's request,
 [release run 34372428582](https://github.com/excitedjs/dreamux/actions/runs/34372428582)
 published `@excitedjs/dreamux@0.25.0-alpha.g4a45d478cc7c`; exact npm metadata
 confirmed availability and the operator received the install command and tarball.

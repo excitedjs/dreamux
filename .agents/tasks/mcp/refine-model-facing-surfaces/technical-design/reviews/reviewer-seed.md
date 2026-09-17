@@ -2,15 +2,17 @@
 
 Reviewed: `technical-design/draft.md` (2026-09-06, TeamLeader).
 Authority: `../requirement.md`, rulings R1–R20 verbatim.
-Baseline: PR #369 (`origin/pr-369`, head `5e1a3464`, merge-base `d74142c3`)
-merged onto `origin/next` (`0d8098f1`). The workspace is on `next`; #369 text
-was read with `git show origin/pr-369:<path>`.
+Baseline: PR #369 (`origin/pr-369`, its final pushed revision, which branched
+from `next` after #375 merged) merged onto `origin/next` after #378 merged.
+The workspace is on `next`; #369 text was read with `git show
+origin/pr-369:<path>`.
 
 Method: read the requirement and the draft in full; read every source file the
 draft names, on both branches where the baseline differs; diffed
-`base-prompt.ts` between `d74142c3` and `5e1a3464`; ran `git merge-tree`;
-grepped `tests/` for text locks on the strings the draft changes. I did not
-run the suites — no code exists yet; §7's gate list is reviewed as a plan.
+`base-prompt.ts` between `next` after #375 merged and #369's final pushed
+revision; ran `git merge-tree`; grepped `tests/` for text locks on the
+strings the draft changes. I did not run the suites — no code exists yet;
+§7's gate list is reviewed as a plan.
 
 ## Findings (ordered by outcome impact)
 
@@ -256,10 +258,10 @@ pass-through stays untouched.
   prompt exports, the three dispatch reminders, the spawn/send closing
   sentence, and the workflow tools' "Load the bundled `workflow` skill before
   use." prefix.
-- R19/R20's bullets are byte-identical at #369 (`git diff d74142c3
-  5e1a3464 -- base-prompt.ts` is empty); the R17 baseline interaction is
-  reported correctly (#369 replaced the load sentence with the server map in
-  both variants).
+- R19/R20's bullets are byte-identical at #369 (diffing `base-prompt.ts`
+  between `next` after #375 merged and #369's final pushed revision is
+  empty); the R17 baseline interaction is reported correctly (#369 replaced
+  the load sentence with the server map in both variants).
 - The server name is built in exactly one place
   (`channel-service/mcp-delegate.ts:60,112,140`), is not persisted, and
   leases are in-memory (`mcp/identity-version.ts:21`,

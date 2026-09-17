@@ -20,12 +20,13 @@ the two default owners. Other source edits correct comments describing isolation
   true default. Existing explicit values remain regression guards.
 - Task-record, knowledge, and diff checks passed.
 - [GitHub CI](https://github.com/excitedjs/dreamux/actions/runs/34565609925)
-  passed all nine checks on `a0c1cbd4`, including Linux and macOS Rush pipelines.
+  passed all nine checks on the first pushed revision of #411, including Linux
+  and macOS Rush pipelines.
 - Mandatory commit hooks and Rush change-file verification passed.
 
 ## Independent review
 
-[Review approved `a0c1cbd4`](https://github.com/excitedjs/dreamux/pull/411#pullrequestreview-5175266391)
+[Review approved the first pushed revision of #411](https://github.com/excitedjs/dreamux/pull/411#pullrequestreview-5175266391)
 with no blocking findings. It confirmed the four Boolean replacements, preserved
 explicit policy, corresponding tests, and consistent current documentation.
 Reverting the four values in a temporary probe made the omitted/empty policy and

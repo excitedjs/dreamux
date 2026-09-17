@@ -85,7 +85,7 @@ Earlier gate and live-probe results below certify their stated revisions only.
 
 ## Background-turn repair verification (2026-09-07)
 
-- Baseline: `48882651`; integration target: `next`.
+- Baseline: the head of #378; integration target: `next`.
 - Bootstrap: `node common/scripts/install-run-rush.js update` passed.
 - Native protocol probe: Claude Code 2.1.263, isolated resident stream-json
   process, real background Bash completion, two explicit inputs injected during
@@ -124,7 +124,7 @@ Earlier gate and live-probe results below certify their stated revisions only.
 
 ### Repaired-provider pre-review
 
-- Rebased onto `2575e056` from `origin/next`; the baseline card-spacing commit
+- Rebased onto the release commit for 0.24.0 from `origin/next`; the baseline card-spacing commit
   was already present upstream and was dropped by rebase. No manual conflicts.
 - Corrected pre-review finding: restored the original no-start sequences and
   added positive UUID matching alongside the started group. Developer scoped
@@ -151,7 +151,7 @@ Earlier gate and live-probe results below certify their stated revisions only.
 
 ### Independent review and TeamLeader adjudication
 
-The complete staged repair was reviewed at xhigh against `2575e056`, including
+The complete staged repair was reviewed at xhigh against the release commit for 0.24.0 on `next`, including
 source, tests, owning knowledge, package documentation and the release note.
 Seven finders and nineteen verifier seats completed without workflow failures;
 all eleven reported candidates are adjudicated below. The existing operator
@@ -208,7 +208,7 @@ requirement/verification and dated historical COT annotations. The package
 README also now distinguishes immediate result settlement from request drainage
 and names Core as source-deduplication owner.
 
-The initial repair at `72af66e5` changed five source files and six test/fixture
+The initial repair changed five source files and six test/fixture
 files, all in the Claude package. The public lifecycle observation callback remains intact.
 No existing host was upgraded and no raw native traces were committed. The
 three earlier repaired-provider/Core live probes remain evidence for native
@@ -227,7 +227,7 @@ handoff; merge and deployment require separate operator authority.
 
 ### Alpha and complexity-review follow-up
 
-PR #384 at `72af66e5` passed all nine GitHub CI checks. The authorized alpha
+PR #384's initial-repair CI run (Actions run 34058690987) passed all nine GitHub CI checks. The authorized alpha
 release succeeded in Actions run 34079076397. Registry metadata and packed
 artifacts confirmed Dreamux 0.24.1-alpha.g72af66e58ab3 depends on Claude provider
 0.7.0-alpha.g72af66e58ab3; the repaired code was present and a fixed-version CLI
@@ -259,7 +259,7 @@ plus matching-UUID, no-lifecycle and legacy-envelope cases remain explicit
 compatibility coverage; they are not claimed as new native evidence.
 
 The TeamLeader inspected the entire cleanup source and test diff against
-`72af66e5`, checked all removed-state/default callers, and reviewed changed test
+the initial repair, checked all removed-state/default callers, and reviewed changed test
 sequences against the repair contract. This pass found no behavior change or
 weakened settlement assertion. The public lifecycle callback, positive UUID
 attribution, cancellation/exit handling and existing idle timeout are retained.
@@ -271,7 +271,7 @@ to date; lint, test and test typechecking passed. Full test took 2 minutes
 expected runtime stderr diagnostics.
 No additional live CLI probe was run for this behavior-preserving cleanup.
 
-Relative to `72af66e5`, the cleanup touches six source files and five test/fixture
+Relative to the initial repair, the cleanup touches six source files and five test/fixture
 files. Across the complete repair PR, the totals are six source files and seven
 test/fixture files: runtime-session.ts adds the redundant-expression cleanup,
 and session.test.ts adds the ordinary lifecycle fixture assertion.
@@ -279,7 +279,7 @@ and session.test.ts adds the ordinary lifecycle fixture assertion.
 ### Independent cleanup review and adjudication
 
 The same independent Claude reviewer inspected the complete cleanup against
-`72af66e5` and the enclosing repair. It found no behavior change or weakened
+the initial repair and the enclosing repair. It found no behavior change or weakened
 contract assertion, and reported two low-priority wording findings. The
 operator's explicit instruction to fix style and redundancy covers both.
 
@@ -303,12 +303,12 @@ staged TypeScript and public-content boundary.
 Knowledge closeout retains the existing product/provider contracts and records
 the cleanup in this task's requirement, solution and verification. No new domain,
 configuration, persisted-state, maintenance or routing contract is introduced.
-The already published alpha remains tied to `72af66e5`; this cleanup updates the
+The already published alpha remains tied to the initial repair (Actions run 34079076397); this cleanup updates the
 existing PR without republishing or upgrading an installed host.
 
 ## External review and corrected evidence (2026-09-07)
 
-Eight external PR comments on `6acc6d28` were inspected, followed by an
+Eight external PR comments from review 5128000599 of PR #384 were inspected, followed by an
 independent Fable review against official SDK documentation, the installed
 Claude Code 2.1.263 schema, existing native captures, Core routing and Channel
 display. This was read-only: no GitHub replies or code corrections were made.
@@ -354,7 +354,7 @@ installed CLI schema and private native captures. Raw captures are not committed
 
 ## Resident-session replacement verification (2026-09-07)
 
-- Baseline: `6acc6d28`; PR base remains `2575e056`.
+- Baseline: the cleanup revision of #384; PR base remains the release commit for 0.24.0 on `next`.
 - Development approval and the superseded model are recorded in [rulings](rulings.md).
 - Current solution: [resident-session input and settlement](technical-design/session-submissions.md).
 - Implementation and TeamLeader pre-review: complete. The current replacement
@@ -390,8 +390,8 @@ prove the observed scenarios, not all possible interruption or tool-result order
 
 ### Structural and capability account
 
-Replacement relative to `6acc6d28`: nine source paths (six modified, one added,
-two deleted) and six test paths. The complete PR relative to `2575e056` changes
+Replacement relative to the cleanup revision: nine source paths (six modified, one added,
+two deleted) and six test paths. The complete PR relative to the release commit for 0.24.0 on `next` changes
 ten source paths (seven modified, one added, two deleted) and eight test/fixture
 paths. The package's source file count changes from 29 to 28.
 
@@ -439,7 +439,7 @@ fixtures remain labeled as such; they are not claimed as current native traces.
 
 ## PR failure-handling correction (2026-09-07)
 
-Baseline: `87763c2c`. The operator approved correcting accepted review findings
+Baseline: the resident-session-replacement revision described above. The operator approved correcting accepted review findings
 and pushing the existing PR, then clarified that there is no user cancellation
 entry point. See [rulings R4/R5](rulings.md#r4-correct-the-accepted-pr-findings-and-push)
 and [the correction requirement](pr-review-fixes.md).

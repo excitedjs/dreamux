@@ -8,13 +8,13 @@ implementation with one independent read-only review on 2026-09-09. No state,
 configuration, dependency, routing, or completion-delivery change is introduced.
 
 Requirement: [requirement.md](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).
-Baseline: `dd2fc68`, branch `fix/async-receipt-guidance-cot-label`.
+Work started from `next` after #379 merged, on branch `fix/async-receipt-guidance-cot-label`.
 
 ## Receipt wording
 
-Restore only the three reminder string values from the parent of `dc2b7eb`
-(#380) in `/packages/dreamux/src/service/mcp/dispatch-reminders.ts`. Verified
-with `git show dc2b7eb^:packages/dreamux/src/service/mcp/dispatch-reminders.ts`.
+Restore only the three reminder string values from the version before #380
+changed them, in `/packages/dreamux/src/service/mcp/dispatch-reminders.ts`.
+Verified against the lines #380's diff removed.
 The operator requested the version immediately before the current wording; do
 not invent a stronger or hybrid version. The operator approved development
 against this version on 2026-09-09.

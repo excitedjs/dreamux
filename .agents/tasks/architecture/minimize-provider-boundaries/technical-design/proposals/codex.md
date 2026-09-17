@@ -1131,7 +1131,7 @@ I read the frozen requirement and findings and all three proposal files to EOF,
 including both subsequently appended cross-reviews. The requirement still has
 SHA-256
 `89e95d7fb3fd0dcf5585484becbd529a34d6d425e73aae500a31595210a5433c`;
-the source reviewed is commit `57a2cf8a4d24`. The first-round proposal above is
+the source reviewed is `next` after #347 merged. The first-round proposal above is
 unchanged. Where this section differs from it, this section is my revised
 position.
 

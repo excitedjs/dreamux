@@ -215,7 +215,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # The task-record check resolves commit hashes against the local object
+      # database, where an absent object cannot match. A single-commit checkout
+      # holds almost none of them, and a merged pull request's commits survive
+      # only under refs/pull/*/head once its branch is deleted.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch pull request heads
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/pull/*/head'
       - name: .agents/scripts/check.sh
         run: ./.agents/scripts/check.sh
 

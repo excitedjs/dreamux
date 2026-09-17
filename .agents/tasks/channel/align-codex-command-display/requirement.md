@@ -25,12 +25,12 @@ logic.) The operator subsequently selected a new dedicated task.
   `extract_shell_command`, which recognizes Bash-compatible and PowerShell
   invocations. The existing test at `exec_command.rs:76-79` explicitly covers
   `/usr/bin/zsh -lc`.
-- At the investigation baseline (`305e3fc8`), Dreamux used the raw command for
+- At the time of this investigation, Dreamux used the raw command for
   the run summary and invocation in
   `/packages/agent-runtime/codex/src/tool-display.ts:49-63`. Core only redacted
   these display values; Feishu composed its title and code segment from them.
   The wrapper was not introduced by Feishu.
-- Display ownership follows commit `0c86deab` (#376): provider-specific labels
+- Display ownership follows the merge of #376: provider-specific labels
   belong to the runtime provider, not the Channel.
 
 ## Desired behavior and boundary

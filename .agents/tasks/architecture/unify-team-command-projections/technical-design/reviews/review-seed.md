@@ -3,8 +3,8 @@
 Reviewed: `technical-design/draft.md` (2026-09-07, TeamLeader).
 Authority: `../requirement.md`, the operator's two rulings quoted there
 verbatim.
-Baseline: working tree on `dreamux/unify-team-projections` at `fffc3bd3`
-(`next`). No code exists yet; §7 is reviewed as a plan.
+Baseline: working tree on `dreamux/unify-team-projections`, branched from
+`next` after #386 merged. No code exists yet; §7 is reviewed as a plan.
 
 Method: read the requirement and draft in full; read every source file the
 draft names and every consumer of the three projections it unifies

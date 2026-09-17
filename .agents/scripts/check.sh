@@ -11,7 +11,8 @@
 #   4. every .agents/ path cited by tracked files OUTSIDE .agents/ resolves
 #      (comments, READMEs, tests; generated changelogs are exempt)
 #   5. every task record under .agents/tasks/ carries a well-formed state that
-#      can still be true after its own pull request merges
+#      can still be true after its own pull request merges, and no file there
+#      cites a commit of this repository by hash
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.

@@ -63,8 +63,10 @@ is the one thing `next` read that this walk does not; the design lists it as
 a known limit.
 
 The second review (2026-09-15) reported two shapes a crafted card can use to
-surface text the client never renders, both reproduced against the built
-parser of f54c314f: `i18n_elements` hung on a button (`OK\nINJECT`) and a
+surface text the client never renders, both reproduced against the built parser at
+the head reviewed in
+https://github.com/excitedjs/dreamux/pull/424#pullrequestreview-5201427006:
+`i18n_elements` hung on a button (`OK\nINJECT`) and a
 `text` wrapper carrying both `content` and a string `text`
 (`visible\nINJECT`). The three interactive messages in the capture are all
 schema 2.0 with `body`/`config`/`schema` at the root; none carries a string

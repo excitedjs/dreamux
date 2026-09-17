@@ -18,8 +18,10 @@ and the fast path, not development approval.
 On reviewing the proposed imperatives, the operator said "有点硬了啊，你翻一翻
 前面是怎么写的" (too forceful; check the earlier wording), then clarified
 "就是改成这一版之前的那一版" (the version immediately before this one).
-The relevant historical text is the parent of `dc2b7eb` (#380), verified with
-`git show dc2b7eb^:packages/dreamux/src/service/mcp/dispatch-reminders.ts`.
+The relevant historical text is the version of
+`packages/dreamux/src/service/mcp/dispatch-reminders.ts` on `next` immediately
+before #380 merged (`next` after #378 merged), verified by inspecting that file
+at that point in the `next` history.
 Use that exact three-string version as the revised solution, not newly authored
 all-caps commands or a hybrid of the old and current reminders. The operator
 approved this revised solution on 2026-09-09: "可以，开始开发" (approved;
@@ -65,7 +67,7 @@ with one independent read-only review.
   Independent work and answering the user remain possible.
 - An operator observing a context compaction in a COT card sees exactly
   `COMPACTED SESSION`, without the runtime's summary.
-- At base `dd2fc68`, the three strings in
+- At `next` after #379 merged, the three strings in
   `/packages/dreamux/src/service/mcp/dispatch-reminders.ts` promise notification
   and prohibit predicting results, but contain no explicit no-polling instruction.
   The reported Codex behavior is operator-observed, not independently reproduced.
@@ -80,11 +82,12 @@ with one independent read-only review.
 
 ## Scope and invariants
 
-- Restore the three receipt strings from immediately before `dc2b7eb`, including
-  their existing shared `team.send` consumer. They prohibit polling for completion,
-  explain automatic push delivery, and allow natural turn ending when no other
-  work remains. Restore them exactly rather than retaining the current strings'
-  result-unknown and shared-file cautions or adding new forceful language.
+- Restore the three receipt strings from `next` immediately before #380 merged
+  (`next` after #378 merged), including their existing shared `team.send`
+  consumer. They prohibit polling for completion, explain automatic push
+  delivery, and allow natural turn ending when no other work remains. Restore
+  them exactly rather than retaining the current strings' result-unknown and
+  shared-file cautions or adding new forceful language.
 - Replace the two emitted labels with `COMPACTED SESSION` and align their tests.
 - Preserve receipt attachment conditions, structured results, schemas, tool
   descriptions, role prompts, skills, dispatch behavior, completion delivery,
@@ -103,7 +106,7 @@ with one independent read-only review.
 
 ## Acceptance criteria
 
-1. Applicable successful receipts match the three pre-`dc2b7eb` strings quoted
+1. Applicable successful receipts match the three pre-#380 strings quoted
    in the final solution: normal-case no-polling guidance, automatic completion
    push, and natural turn ending. Do not introduce the rejected all-caps commands.
 2. Idle creation, creation replay, failed admission, and ordinary read results
@@ -129,7 +132,7 @@ with one independent read-only review.
 
 ## Since this was recorded
 
-On 2026-09-09 the branch was rebased onto `next` at `4c45df35`. That base
+On 2026-09-09 the branch was rebased onto `next` after #399 merged. That base
 includes #390's creation projection: MCP `team.create` mints a fresh request
 id, so a successful prompt-bearing call always represents a new submission.
 The earlier replay acceptance case belongs to callers supplying a durable

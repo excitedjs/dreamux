@@ -22,8 +22,7 @@
 
 - Status: Clarified and approved for a minimal documentation-only change on
   2026-09-08.
-- Baseline: `origin/next` at
-  `2c8f4269b32f407bce3a477c0f4ac6b9f35223b5`, including PR #393.
+- Baseline: `next` after #393 merged.
 - The operator explicitly rejected adding a process that tries to prove whether
   the prompt works: “这个效果你自己是观察不出来的。只有我能观察”. Effectiveness
   remains an operator-observed outcome in later real work.

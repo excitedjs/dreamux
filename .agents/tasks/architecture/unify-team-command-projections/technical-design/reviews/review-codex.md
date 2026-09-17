@@ -7,7 +7,7 @@ state, and live/store paths count different things. Resolve findings 1 and 2
 before treating create/list/status as interchangeable summaries. Finding 3
 corrects the audit record; it does not authorize unrelated implementation.
 
-Reviewed source: `fffc3bd337f8ce28070fb8658fc30893e71730bb`.
+Reviewed source: `next` after #386 merged.
 
 - Requirement SHA-256:
   `40ed7f03123c276f7776fedd2a3c0ba9f804b77522bb651be7b0416b13e0f70d`
@@ -57,8 +57,8 @@ use the service it just obtained. Keep the store-only projector for Teams
 without a held service; do not add a registry callback to the store read model,
 materialize a Team, persist runtime status, or invent a provenance field.
 
-This follows the live/store ownership established by commit `2ed5f5ea`
-(YourWildDad, PR #350), whose TeamCollection change introduced this selection.
+This follows the live/store ownership established by the merge of #350
+(YourWildDad), whose TeamCollection change introduced this selection.
 The new requirement extends that rule to the unified list/create surfaces.
 The analogous TeamMate list/status implementation already follows it
 (`packages/dreamux/src/service/teammate-collection/index.ts:263-272`).
@@ -104,8 +104,8 @@ Use the existing Agent collection store authority through its owning
 collection; no new count cache or persisted aggregate is needed. This also
 avoids turning the expanded create result into a full member-status scan.
 
-The occupancy rule was introduced in `read-model.ts` by `2ed5f5ea`
-(YourWildDad, PR #350). Choosing readable identities instead is possible, but
+The occupancy rule was introduced in `read-model.ts` by the merge of #350
+(YourWildDad). Choosing readable identities instead is possible, but
 would knowingly change the current store/list meaning and require documenting
 that choice. Leave `team.history` behavior unchanged as the requirement states.
 

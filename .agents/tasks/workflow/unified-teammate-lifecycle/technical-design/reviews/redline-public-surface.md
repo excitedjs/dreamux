@@ -49,8 +49,8 @@ was adjudicated out of scope and the remaining items are delivery gates.**
 ### F1 — BLOCKER: Task commit trailers name an internal tool and corporate domain; the revised carve-out excludes them from every planned scan
 
 - **Evidence (leak):** `git log origin/next..HEAD --format='%h %s%n%(trailers)'`
-  shows the task's own three commits — `5d8ccd9` (refactor), `2449a1b`
-  (docs), `3badc3a` (docs) — each carrying the harness-required co-author
+  shows the task's own three commits on PR #338 — a refactor commit and
+  two docs commits — each carrying the harness-required co-author
   trailer (co-author identity and corporate address redacted).
 - **Evidence (carve-out):** `final.md:1183-1186` — *"no named
   out-of-repository provider in any tracked/untracked repository artifact or
@@ -116,8 +116,8 @@ was adjudicated out of scope and the remaining items are delivery gates.**
   public head fails the very scan the design mandates, and a green local
   gate would be signing content nobody else can see.
 - **Mitigating fact (does not downgrade severity, bounds the remediation):**
-  both strings are already in `origin/next` history — one via #321
-  (`a2d4755`), the other via #313 (`7bfca29`). They are already public;
+  both strings are already in `origin/next` history — one via #321,
+  the other via #313. They are already public;
   the scrub is about current-tree cleanliness, not unpublishing. No history
   rewrite is warranted or expected.
 - **Failure scenario:** the gate is run against the PR head, finds the
@@ -231,8 +231,9 @@ semantic-change rule in root `CLAUDE.md`.
 ### C4 — Source fingerprints in the artifacts are the task's own content
 
 The SHA-256 digests in `README.md`, `final.md`, and `verification.md` hash
-the task's own files; the commit SHAs (`6b8ec14b…`, `3badc3a5…`) are public
-repository commits. Neither class is an internal identifier.
+the task's own files; the commit references — #333's merge commit and a
+commit on PR #338 — are public repository commits. Neither class is an
+internal identifier.
 
 ### C5 — Task history and consultation artifacts are clean
 

@@ -1,8 +1,10 @@
 # Resident-session input and per-request settlement
 
 Approved through [ruling R2](../rulings.md#r2-implement-the-replacement).
-Baseline: `6acc6d28`, PR #384. This supersedes the request-window retention in
-[the preceding solution](final.md); the Core completion-token design survives.
+Baseline: the PR #384 revision reviewed at
+https://github.com/excitedjs/dreamux/pull/384#pullrequestreview-5128000599. This
+supersedes the request-window retention in [the preceding solution](final.md);
+the Core completion-token design survives.
 
 ## Why replace the model
 
@@ -103,7 +105,9 @@ Use the existing package's breaking minor release note on the 0.x line.
 
 ## Verification and structural acceptance
 
-Review the complete PR against its base, and the replacement against `6acc6d28`.
+Review the complete PR against its base, and the replacement against the
+revision reviewed at
+https://github.com/excitedjs/dreamux/pull/384#pullrequestreview-5128000599.
 Report removed concepts and source files, added concepts with their requirement,
 and the final source-file count and purpose. A wrapper around the old window is
 not completion of this design.

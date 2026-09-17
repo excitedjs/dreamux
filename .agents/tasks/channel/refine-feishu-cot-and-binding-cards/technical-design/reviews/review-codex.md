@@ -12,7 +12,7 @@ The other proposed ownership and presentation changes fit the recorded requireme
   `f82cbf9145700cbdd03023fc6cd8bdf5cc087646db377a7653fbc6918c0a4864`.
 - Reviewed solution: `technical-design/draft.md`, SHA-256
   `1cb87874954d67041167d1d07be9739f560f416bdbec84c6a831a3df86947ba7`.
-- Current source: `48882651ea09acb87ecaf96ba090bdddb829c613`.
+- Current source: [the head of #378, approved in review](https://github.com/excitedjs/dreamux/pull/378#pullrequestreview-5112484543).
 - Applied `.agents/skills/engineering-whitepaper/SKILL.md` and the frontend
   whitepaper's abstraction/layering guidance. History and current knowledge were
   checked as implementation evidence, not additional requirement input.
@@ -111,8 +111,8 @@ new renderer pass.
   session delivers it to the Dispatcher at `feishu-channel.ts:429-456`. The extra
   query adds latency and a pre-bind failure point, but implements the explicitly
   required canonical-context ordering without compensation state.
-- **Channel-local rendering follows the ownership history.** Commit `2ed5f5ea`
-  (author: YourWildDad) removed Core binding-event inputs and the old runtime/cwd
+- **Channel-local rendering follows the ownership history.** #350 (author:
+  YourWildDad) removed Core binding-event inputs and the old runtime/cwd
   card fields. The draft correctly restores the presentation through the existing
   command port instead of restoring Core routing ownership. Keeping the Card 1.0
   status helper for unchanged space cards and constructing the selected route
