@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Remove the repo-root bin/dreamux source-checkout shim; the package launcher at packages/dreamux/bin/dreamux is the only one. No runtime change: the shim was never published.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
