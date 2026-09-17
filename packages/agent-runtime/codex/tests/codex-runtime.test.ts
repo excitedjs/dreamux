@@ -592,14 +592,14 @@ describe('CodexRuntime submit() and settlement', () => {
  * Dreamux submissions settle from that one terminal — and it is still one end,
  * because the fact describes the runtime's turn, not the requests inside it.
  */
-describe('CodexRuntime usage summary', () => {
+describe('CodexRuntime token usage', () => {
   const usage = (inputTokens = 28_568, outputTokens = 69) => ({
     total: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, cachedInputTokens: 10_000, reasoningOutputTokens: 10 },
     last: { totalTokens: 14_500 },
     modelContextWindow: 29_000,
   });
 
-  it('replaces cumulative snapshots and emits usage before the end without changing completion text', async () => {
+  it('keeps only the latest cumulative snapshot and emits it before the end without changing completion text', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
@@ -613,21 +613,28 @@ describe('CodexRuntime usage summary', () => {
     client.emitTokenUsage('foreign-thread', 'turn-other', usage(999_999, 10));
     expect(activity).toEqual([]);
     client.emitCompleted('fresh-thread-1', 'turn-1', 'first answer');
-    expect(activity.map((fact) => fact.kind)).toEqual(['assistant.message', 'assistant.message', 'turn.ended']);
-    expect(activity.at(-2)).toMatchObject({
-      kind: 'assistant.message', text: 'Context usage 50% | Token usage: total=28.6k input=28.6k output=69',
+    expect(activity.map((fact) => fact.kind)).toEqual(['assistant.message', 'token.usage', 'turn.ended']);
+    expect(activity.at(-2)).toEqual({
+      kind: 'token.usage',
+      occurredAt: expect.any(Number),
+      id: 'turn-1:usage',
+      inputTokens: 28_568,
+      outputTokens: 69,
+      context: { usedTokens: 14_500, windowTokens: 29_000 },
     });
     await expect(first.settled).resolves.toMatchObject({ completion: { resultText: 'first answer' } });
 
     const second = requireSubmitted(await runtime.submit({ text: 'second' }));
     client.emitTokenUsage('fresh-thread-1', 'turn-2', usage(40_000, 100));
     client.emitTurnFailed('fresh-thread-1', 'turn-2', 'model failed');
-    expect(activity.at(-2)).toMatchObject({ text: 'Context usage 50% | Token usage: total=40.1k input=40k output=100' });
+    expect(activity.at(-2)).toMatchObject({
+      kind: 'token.usage', id: 'turn-2:usage', inputTokens: 40_000, outputTokens: 100,
+    });
     expect(activity.at(-1)).toMatchObject({ kind: 'turn.ended', status: 'failed', reason: 'model failed' });
     await second.settled;
-    const rowCount = activity.filter((fact) => fact.kind === 'assistant.message').length;
+    const usageCount = activity.filter((fact) => fact.kind === 'token.usage').length;
     await runtime.stop();
-    expect(activity.filter((fact) => fact.kind === 'assistant.message')).toHaveLength(rowCount);
+    expect(activity.filter((fact) => fact.kind === 'token.usage')).toHaveLength(usageCount);
   });
 
   it('preserves the interrupt marker before usage and the native interrupted end', async () => {
@@ -643,7 +650,7 @@ describe('CodexRuntime usage summary', () => {
     client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
     expect(activity).toMatchObject([
       { kind: 'assistant.message', text: '[Request interrupted by user]' },
-      { kind: 'assistant.message', text: 'Context usage 50% | Token usage: total=28.6k input=28.6k output=69' },
+      { kind: 'token.usage', inputTokens: 28_568, outputTokens: 69 },
       { kind: 'turn.ended', status: 'interrupted', reason: null },
     ]);
     await expect(submission.settled).resolves.toMatchObject({
@@ -665,10 +672,10 @@ describe('CodexRuntime usage summary', () => {
     await waitFor(() => client.hasBlocked('turn/start'));
     client.emitTokenUsage('fresh-thread-1', 'turn-early', usage());
     client.emitCompleted('fresh-thread-1', 'turn-early', 'answer');
-    expect(activity.at(-2)).toMatchObject({ id: 'turn-early:usage' });
+    expect(activity.at(-2)).toMatchObject({ kind: 'token.usage', id: 'turn-early:usage' });
     expect(activity.at(-1)).toMatchObject({ kind: 'turn.ended' });
     client.emitCompleted('fresh-thread-1', 'turn-early', 'answer');
-    expect(activity.filter((fact) => fact.kind === 'assistant.message' && fact.id === 'turn-early:usage')).toHaveLength(1);
+    expect(activity.filter((fact) => fact.kind === 'token.usage' && fact.id === 'turn-early:usage')).toHaveLength(1);
     client.release('turn/start', { turn: { id: 'turn-early' } });
     await requireSubmitted(await admission).settled;
     await runtime.stop();
@@ -698,11 +705,7 @@ describe('CodexRuntime usage summary', () => {
     await manager.stop();
   });
 
-  it.each([
-    [0, '0'], [69, '69'], [999, '999'], [1_000, '1k'], [28_637, '28.6k'],
-    [999_949, '999.9k'], [999_950, '1m'], [1_450_000, '1.5m'],
-    [999_950_000, '1b'], [1_250_000_000, '1.3b'],
-  ])('formats %i as %s with unavailable context', async (count, formatted) => {
+  it('reports used context tokens with a null window when codex holds no window size', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
@@ -711,11 +714,14 @@ describe('CodexRuntime usage summary', () => {
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
     const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
-    client.emitTokenUsage('fresh-thread-1', 'turn-1', { ...usage(count, 0), modelContextWindow: null });
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', { ...usage(), modelContextWindow: null });
     client.emitCompleted('fresh-thread-1', 'turn-1', 'answer');
     await submission.settled;
     expect(activity.at(-2)).toMatchObject({
-      text: `Context usage n/a | Token usage: total=${formatted} input=${formatted} output=0`,
+      kind: 'token.usage',
+      inputTokens: 28_568,
+      outputTokens: 69,
+      context: { usedTokens: 14_500, windowTokens: null },
     });
     await runtime.stop();
   });

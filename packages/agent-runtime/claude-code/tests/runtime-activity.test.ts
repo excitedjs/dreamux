@@ -273,46 +273,51 @@ describe('handleProtocolEvent live activity', () => {
  * submission, no turn id — because a folded turn has no single logical owner to
  * name.
  */
-describe('handleProtocolEvent usage summary', () => {
-  it('emits usage immediately before native end and never adds it to teardown', () => {
+describe('handleProtocolEvent token usage', () => {
+  it('emits the cumulative usage snapshot immediately before native end', () => {
     const events: RuntimeActivity[] = [];
     const activitySink = (fact: RuntimeActivity): void => { events.push(fact); };
     const value = outcome({ tokenUsage: { inputTokens: 28_531, outputTokens: 69 }, contextTokens: 14_500 });
     handleProtocolEvent(resultEvent(value), {
       activity: { activitySequence: 0, tools: new Map() }, activitySink,
     });
-    expect(events.map((fact) => fact.kind)).toEqual(['assistant.message', 'turn.ended']);
-    expect(events[0]).toMatchObject({
-      text: 'Context usage 14.5k | Token usage: total=28.6k input=28.5k output=69',
+    expect(events.map((fact) => fact.kind)).toEqual(['token.usage', 'turn.ended']);
+    expect(events[0]).toEqual({
+      kind: 'token.usage',
+      occurredAt: expect.any(Number),
+      id: 'stream-0:usage',
+      inputTokens: 28_531,
+      outputTokens: 69,
+      context: { usedTokens: 14_500, windowTokens: null },
     });
     expect(value.text).toBe('answer');
     endNativeTurn('interrupted', null, activitySink);
-    expect(events.map((fact) => fact.kind)).toEqual(['assistant.message', 'turn.ended', 'turn.ended']);
+    expect(events.map((fact) => fact.kind)).toEqual(['token.usage', 'turn.ended', 'turn.ended']);
   });
 
-  it('shows background result usage without any submitted command', () => {
+  it('reports background result usage without any submitted command and a null context', () => {
     const h = makeHarness();
     h.fire(resultEvent(outcome({ tokenUsage: { inputTokens: 10, outputTokens: 5 }, contextTokens: null }), []));
     expect(h.activityEvents[0]).toMatchObject({
-      text: 'Context usage n/a | Token usage: total=15 input=10 output=5',
+      kind: 'token.usage', inputTokens: 10, outputTokens: 5, context: null,
     });
     expect(h.nativeEnds[0]).toMatchObject({ status: 'completed', reason: null });
   });
 
-  it('emits fresh usage on each result while preserving native failure reasons', () => {
+  it('emits a fresh snapshot on each result, carrying native cumulative counters', () => {
     const h = makeHarness();
     h.fire(resultEvent(outcome({ tokenUsage: { inputTokens: 100, outputTokens: 5 }, contextTokens: 50 })));
     h.fire(resultEvent(outcome({
       tokenUsage: { inputTokens: 200, outputTokens: 10 }, isError: true, errors: ['native failure'],
     })));
-    expect(h.activityEvents.map((fact) => fact.kind === 'assistant.message' ? fact.text : '')).toEqual([
-      'Context usage 50 | Token usage: total=105 input=100 output=5',
-      'Context usage n/a | Token usage: total=210 input=200 output=10',
+    expect(h.activityEvents).toMatchObject([
+      { kind: 'token.usage', inputTokens: 100, outputTokens: 5, context: { usedTokens: 50, windowTokens: null } },
+      { kind: 'token.usage', inputTokens: 200, outputTokens: 10, context: null },
     ]);
     expect(h.nativeEnds.map((fact) => fact.status)).toEqual(['completed', 'failed']);
     expect(h.nativeEnds[1]?.reason).toBe('native failure');
-    const ids = h.activityEvents.flatMap((fact) => fact.kind === 'assistant.message' ? [fact.id] : []);
-    expect(new Set(ids).size).toBe(2);
+    const ids = h.activityEvents.map((fact) => (fact.kind === 'token.usage' ? fact.id : ''));
+    expect(ids).toEqual(['stream-0:usage', 'stream-1:usage']);
   });
 
   it('keeps native interruption markers before usage and the interrupted end', () => {
@@ -322,28 +327,16 @@ describe('handleProtocolEvent usage summary', () => {
     }, { activity: { activitySequence: 0, tools: new Map() }, activitySink: (fact) => { events.push(fact); } });
     expect(events).toMatchObject([
       { kind: 'assistant.message', text: '[Request interrupted by user]' },
-      { kind: 'assistant.message', text: 'Context usage n/a | Token usage: total=105 input=100 output=5' },
+      { kind: 'token.usage', inputTokens: 100, outputTokens: 5, context: null },
       { kind: 'turn.ended', status: 'interrupted', reason: null },
     ]);
   });
 
-  it('adds no usage row when the native result has no metrics', () => {
+  it('emits no usage event when the native result has no metrics', () => {
     const h = makeHarness();
     h.fire(resultEvent(outcome()));
     expect(h.activityEvents).toEqual([]);
     expect(h.nativeEnds).toHaveLength(1);
-  });
-
-  it.each([
-    [0, '0'], [69, '69'], [999, '999'], [1_000, '1k'], [28_637, '28.6k'],
-    [999_949, '999.9k'], [999_950, '1m'], [1_450_000, '1.5m'],
-    [999_950_000, '1b'], [1_250_000_000, '1.3b'],
-  ])('formats %i as %s', (count, formatted) => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome({ tokenUsage: { inputTokens: count, outputTokens: 0 }, contextTokens: count })));
-    expect(h.activityEvents[0]).toMatchObject({
-      text: `Context usage ${formatted} | Token usage: total=${formatted} input=${formatted} output=0`,
-    });
   });
 });
 

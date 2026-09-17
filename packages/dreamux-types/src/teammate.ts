@@ -155,6 +155,23 @@ export type TeammateActivity =
     }
   | {
       /**
+       * The native runtime's cumulative token counters for its live session,
+       * at the turn they were observed for — one per native turn. Values are
+       * session-total, never turn deltas: consumers difference consecutive
+       * snapshots for the same agent. Live-only, never cold-replayed.
+       */
+      readonly kind: 'token.usage';
+      readonly event_id: string;
+      readonly input_tokens: number;
+      readonly output_tokens: number;
+      readonly context: {
+        readonly used_tokens: number;
+        readonly window_tokens: number | null;
+      } | null;
+      readonly redacted: boolean;
+    }
+  | {
+      /**
        * The runtime stopped producing, once per native turn. It is the display
        * stream's terminal: a surface showing this Agent's activity finishes on
        * it. Core publishes the same fact for an input no runtime ever accepted,

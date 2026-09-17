@@ -46,6 +46,7 @@ import {
 import {
   acceptAssistantMessage,
   acceptInputMessage,
+  acceptTokenUsage,
   acceptToolCallActivity,
   type CotActivitySink,
 } from './feishu-cot-activity.js';
@@ -249,6 +250,9 @@ export class FeishuCotAdapter {
         return;
       case 'tool.call':
         acceptToolCallActivity(this.activity, found.key, found.state, event.activity);
+        return;
+      case 'token.usage':
+        acceptTokenUsage(this.activity, found.key, found.state, event.activity);
         return;
       case 'turn.ended':
         this.finishCard(found.key, found.state, event.activity);

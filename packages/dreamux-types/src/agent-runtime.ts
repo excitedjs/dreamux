@@ -247,6 +247,30 @@ export type RuntimeActivity =
     }
   | {
       /**
+       * The native runtime's cumulative token counters for its live session,
+       * at the turn they were observed for. Runners that fold several native
+       * turns into one provider turn emit once on the native terminal with the
+       * latest snapshot, so one activity stands for one turn.
+       *
+       * Values are session-total as the runtime owns them, never turn deltas:
+       * a consumer derives a turn's consumption by differencing against the
+       * previous snapshot for this agent. The runtime keeps no history and
+       * performs no subtraction. Live-only: the cold activity reader never
+       * replays this, and a dropped snapshot simply widens the next delta.
+       */
+      readonly kind: 'token.usage';
+      readonly occurredAt: number;
+      readonly id: string;
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+      /** The last response's context footprint, and the native window when the runtime reports one; `null` when the runtime gives no context signal. */
+      readonly context: {
+        readonly usedTokens: number;
+        readonly windowTokens: number | null;
+      } | null;
+    }
+  | {
+      /**
        * The runtime stopped producing for the turn it was running, whatever
        * that turn contained. `completed` is the runtime's own successful
        * terminal; `failed` is a proven terminal error; `interrupted` is a

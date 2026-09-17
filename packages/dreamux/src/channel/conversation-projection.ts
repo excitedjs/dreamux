@@ -201,6 +201,22 @@ function projectedActivity(
           .some((member) => member?.redacted ?? false),
       };
     }
+    case 'token.usage': {
+      // Numeric counters carry no text to redact.
+      return {
+        kind: 'token.usage',
+        event_id: activity.id,
+        input_tokens: activity.inputTokens,
+        output_tokens: activity.outputTokens,
+        context: activity.context === null
+          ? null
+          : {
+              used_tokens: activity.context.usedTokens,
+              window_tokens: activity.context.windowTokens,
+            },
+        redacted: false,
+      };
+    }
     case 'turn.ended': {
       const reason = activity.reason === null
         ? null

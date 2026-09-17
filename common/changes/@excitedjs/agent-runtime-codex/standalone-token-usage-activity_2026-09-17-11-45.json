@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Emit one cumulative token.usage snapshot per native turn from the app-server thread/tokenUsage/updated totals, keeping no baseline or history; the formatted usage summary is no longer emitted as an assistant message.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

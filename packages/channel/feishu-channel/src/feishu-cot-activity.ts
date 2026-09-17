@@ -14,6 +14,7 @@ import type { CotLogScope } from './feishu-cot-diagnostics.js';
 
 type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
 type CotAssistantMessage = Extract<TeammateActivity, { kind: 'assistant.message' }>;
+type CotTokenUsage = Extract<TeammateActivity, { kind: 'token.usage' }>;
 import {
   textMessageEvents,
   toolCallResultEvents,
@@ -119,6 +120,46 @@ export function acceptAssistantMessage(
 ): void {
   if (!presentable(state)) return;
   acceptDisplayText(sink, key, state, 'assistant', event.event_id, event.content);
+}
+
+/**
+ * The turn's cumulative token counters, on this recipient's card. The card
+ * shows the same one-line summary runtimes used to emit as a message; the
+ * structured counters themselves are not conversation content.
+ */
+export function acceptTokenUsage(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  event: CotTokenUsage,
+): void {
+  if (!presentable(state)) return;
+  acceptDisplayText(sink, key, state, 'assistant', event.event_id, tokenUsageSummary(event));
+}
+
+/** Render cumulative counters in the runtime's historical one-line shape. */
+export function tokenUsageSummary(event: CotTokenUsage): string {
+  const context = event.context;
+  let contextUsage = 'n/a';
+  if (context !== null) {
+    contextUsage = context.window_tokens !== null && context.window_tokens > 0
+      ? `${Math.round(context.used_tokens / context.window_tokens * 100)}%`
+      : formatTokenCount(context.used_tokens);
+  }
+  const total = event.input_tokens + event.output_tokens;
+  return `Context usage ${contextUsage} | Token usage: total=${formatTokenCount(total)} input=${formatTokenCount(event.input_tokens)} output=${formatTokenCount(event.output_tokens)}`;
+}
+
+function formatTokenCount(count: number): string {
+  if (count < 1_000) return String(count);
+  const units = ['k', 'm', 'b'];
+  let value = count / 1_000;
+  let unit = 0;
+  while (Math.round(value * 10) / 10 >= 1_000 && unit < units.length - 1) {
+    value /= 1_000;
+    unit++;
+  }
+  return `${Math.round(value * 10) / 10}${units[unit]}`;
 }
 
 /**

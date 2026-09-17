@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add a neutral, live-only token.usage activity carrying a provider's cumulative session token counters and optional context window usage, replacing the synthetic usage-bearing assistant message.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}
