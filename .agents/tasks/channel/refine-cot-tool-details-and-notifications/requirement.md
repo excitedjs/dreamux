@@ -168,14 +168,14 @@ implementation boundary.
 
 ## Baseline and current evidence
 
-Implementation starts at freshly fetched next commit
-`00b858efa2f9cfdb7fdbf829aac9cfe0856b6915`. Earlier investigation used a different
+Implementation starts at freshly fetched `next` after #398 merged. Earlier
+investigation used a different
 checkout; facts must be checked against this baseline.
 
 The original implementation is superseded. On 2026-09-10 the operator directed
 restoring every non-.agents file to next, restating the requirements, and assigning
 a new developer. The freshly fetched restart baseline is
-`7ed1d886964e520025cbc1e8151c8ff2eefd9a58`; all implementation files and the branch
+`next` after #400 merged; all implementation files and the branch
 HEAD were reset to it, with only .agents records retained. The new developer
 implements these requirements from that source, not by replaying the discarded
 feature patch. Previous Alpha, review, and test evidence is historical.

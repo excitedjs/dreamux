@@ -10,7 +10,7 @@ solution-review Issue or multi-reviewer consultation is required for this task.
 
 The existing common MCP repo schema owns this input restriction. Canonical
 Commands and worktree recovery remain separate consumers with unchanged contracts.
-This deliberately narrows the MCP projection introduced in `2ed5f5ea` without
+This deliberately narrows the MCP projection introduced in #350 without
 changing the full domain request. No new parser, type, compatibility option, or
 runtime branch is necessary.
 

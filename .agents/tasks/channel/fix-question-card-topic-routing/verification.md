@@ -2,7 +2,7 @@
 
 ## Actual-card routing revision
 
-- Integration base: `6bb8a713` (next, including PR #403).
+- Integration base: `next` after #403 merged.
 - Product diff is limited to Feishu transport/channel. The registry no longer
   stores a target; settlement reads the actual card's conversation. Sending uses
   the explicit reply id without consulting the observation ledger.
@@ -38,7 +38,9 @@
 
 ## Earlier minimal patch (superseded)
 
-The earlier `1e011989` revision registered sent cards in the observation ledger.
+The earlier revision (the #402 head approved at
+https://github.com/excitedjs/dreamux/pull/402#pullrequestreview-5161843065)
+registered sent cards in the observation ledger.
 Its two-round regression, local gates, CI and independent Claude review passed,
 with two documentation wraps corrected. It was published as an Alpha. Those
 results describe the earlier patch, not the replacement implementation above.

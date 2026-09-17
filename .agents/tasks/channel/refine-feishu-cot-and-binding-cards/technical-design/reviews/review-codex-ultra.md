@@ -3,7 +3,7 @@
 Verdict: **NOT READY** — one blocking notification-cause mismatch. The other
 proposed mechanisms fit the requirement and current ownership boundaries.
 
-Reviewed source HEAD: `48882651ea09acb87ecaf96ba090bdddb829c613`.
+Reviewed source HEAD: #378 as of [this CI run](https://github.com/excitedjs/dreamux/actions/runs/33867496842).
 The sole requirement and solution inputs were this task's `requirement.md` and
 `technical-design/draft.md`, respectively:
 
@@ -90,7 +90,7 @@ unchanged. Separately assert the selected dissolution card after a closed
   (`packages/dreamux/src/service/team-collection/read-model.ts:77-83,142-151`),
   while a present leader with `runtime_status: null` still carries its cwd.
   The draft's required-facts check addresses an actual producer state. Retaining
-  lazy startup follows commit `d74142c3` by YourWildDad; binding must not activate
+  lazy startup follows the merge of #375 by YourWildDad; binding must not activate
   the runtime merely to populate the card.
 - Reading status between creation and binding fits the existing failure model:
   `packages/channel/feishu-channel/src/feishu-provisioning.ts:113-130,145-179`
@@ -107,8 +107,8 @@ unchanged. Separately assert the selected dissolution card after a closed
   `packages/channel/feishu-channel/src/feishu-cot-events.ts:72-87`. No new state
   or provider behavior is needed.
 - The route-card boundary deliberately follows the Channel ownership introduced
-  by commit `2ed5f5ea` by YourWildDad, while restoring the presentation facts that
-  commit removed. Keeping Card 2.0 construction local avoids changing space-policy
+  by the merge of #350 by YourWildDad, while restoring the presentation facts that
+  merge removed. Keeping Card 2.0 construction local avoids changing space-policy
   cards or the general Card 1.0 helper. The selected client baseline is an
   explicit requirement trade-off and should be visible in the release note.
 

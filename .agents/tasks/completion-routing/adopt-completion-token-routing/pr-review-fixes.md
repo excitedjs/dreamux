@@ -1,6 +1,8 @@
 # PR review corrections to resident-session settlement
 
-Baseline: `87763c2c`, PR #384. This is an in-scope correction to the approved
+Baseline: the head of PR #384 reviewed in
+[this changes-requested round](https://github.com/excitedjs/dreamux/pull/384#pullrequestreview-5129116288).
+This is an in-scope correction to the approved
 [resident-session design](technical-design/session-submissions.md), not a return
 to request windows. Development and push were approved in
 [ruling R4](rulings.md#r4-correct-the-accepted-pr-findings-and-push).

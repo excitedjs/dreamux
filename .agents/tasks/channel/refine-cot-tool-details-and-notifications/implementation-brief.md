@@ -30,7 +30,7 @@ Make Feishu tool details readable and system notifications concise.
 
 ## Boundaries
 
-The starting code is next at `7ed1d886964e520025cbc1e8151c8ff2eefd9a58`.
+The starting code is `next` after #400 merged.
 Keep native tool event timing, argument/result pairing, source-id suppression,
 and state/config formats. The existing tool action is sufficient for code
 language selection; no new provider language-classification field is needed.

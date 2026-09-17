@@ -180,8 +180,8 @@ What the port changed, and what it did not:
   the `endNativeTurn('interrupted', …)` handler that consumes it. This branch
   supplies the emitter and the `[Request interrupted by user]` marker pushed
   ahead of it.
-- The nine original commits were squashed into one for the rebase; they are
-  preserved on `backup/pre-rebase-94e31828`.
+- The nine original commits were squashed into one for the rebase; the
+  pre-squash head is [the head ryanxiang7 approved in this review](https://github.com/excitedjs/dreamux/pull/379#pullrequestreview-5129512424).
 
 Route reconciliation was ported the other way. #386 widened route removal from
 two reasons to three (`team_closed` | `route_ended` | `stale_route`, with

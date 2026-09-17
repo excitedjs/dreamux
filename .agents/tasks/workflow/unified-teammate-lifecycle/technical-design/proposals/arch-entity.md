@@ -1,7 +1,7 @@
 # Architecture Proposal: Unified Teammate Lifecycle (entity/event-owned close)
 
 Author seat: `arch-entity`. First-round independent proposal. Baseline
-inspected: `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`.
+inspected: `next` after #333 merged.
 
 This proposal answers the frozen requirement
 (`requirement.md`, SHA-256 `863d7c8f…5ee9e08`). It designs, does not implement.
@@ -825,7 +825,7 @@ Reviewer seat: `arch-entity`. I read `arch-membership.md`
 (SHA-256 `751bec09…564c39`) and `arch-events.md`
 (SHA-256 `791a0e90…f191d4c`) in full against the frozen `requirement.md`
 (SHA-256 `863d7c8f…5ee9e08`) and re-verified every source anchor below against
-baseline `6b8ec14`. This section is appended; nothing above is rewritten.
+`next` after #333 merged. This section is appended; nothing above is rewritten.
 
 ## A. Points of agreement across all three proposals
 

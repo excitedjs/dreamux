@@ -97,7 +97,7 @@
   "`list` and `history` stay compact") is not overturned. The 2026-09-07
   request unifies the vocabulary — one `status` meaning, one set of field
   names, no third create shape — and does not say that list returns every
-  field. The first push of PR #390 (9e66edd) read it as "list returns the full
+  field. The first push of PR #390 read it as "list returns the full
   summary"; the operator's review below reversed that.
 - Operator review of PR #390 (2026-09-09, verbatim):
   - On the closed (`additionalProperties: false`) output schemas, after the
@@ -108,10 +108,10 @@
   - On what the original challenge was: "我最初挑战的就是他在前几个commit里面那个Omit的继承"
   - Note on the original challenge: it was raised against an `Omit`-derived
     Team projection in early commits of the PR branch. Those commits were
-    squashed into 9e66edd by a force-push; neither the operator's wording at
-    the time nor the code it addressed is preserved anywhere, and this record
-    does not reconstruct either. The sentence above is the operator's own
-    later restatement.
+    squashed into a single commit by a force-push; neither the operator's
+    wording at the time nor the code it addressed is preserved anywhere, and
+    this record does not reconstruct either. The sentence above is the
+    operator's own later restatement.
   - Implementation reading (an inference, confirmed by the operator's
     instruction to fix the PR this way: "那你给修一修吧"): the output schemas go
     back to open objects; `team.create` and `team.status` share `TeamSummary`;

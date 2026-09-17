@@ -11,11 +11,11 @@ and several proposed factual statements contradict ordinary supported paths.
 - Requirement: R1–R20 in [requirement.md](../../requirement.md); rulings take
   precedence over the file's older
   alignment and proposed-change paragraphs.
-- Draft reviewed: `../draft.md`, workspace commit
-  `d709c9ab0b47f7a363eb6536c1fd6b72b6d3b29f`.
-- Delivery baseline: `origin/next` at
-  `0d8098f1d0afee640faef157cc5fab7069e8d4d9`, plus PR #369 at
-  `5e1a346430807db139e46da34a6362f975c98983`. The workspace does not contain
+- Draft reviewed: `../draft.md`, the draft commit on this task's branch
+  (later folded into #380).
+- Delivery baseline: `next` after #378 merged, plus PR #369 at the head
+  [this CI run](https://github.com/excitedjs/dreamux/actions/runs/33852487838)
+  built. The workspace does not contain
   #369's implementation. References marked **369** below were read with
   `git show origin/pr-369:<path>`; other source references are workspace reads.
   The cache, collection, workflow, catalog, and completion-renderer files cited
@@ -53,7 +53,7 @@ load the new skills.
 
 **Instead:** Resolve this item before approving the runtime exclusion. The
 Claude adapter owns its cache and native directory view (already the boundary
-in #350, `2ed5f5ea`, author YourWildDad). Prefer making that owner's cache
+in #350, author YourWildDad). Prefer making that owner's cache
 identity/materialization reflect the actual child-skill inventory. Do not
 smuggle a cache-busting value into Core's role names or add old-name aliases.
 If the chosen solution is an operator cache-clear action instead, record that
@@ -75,7 +75,7 @@ path, not a claim that a particular installed host has already failed.
 channel request; R20 says to retain it and express the consequence. **369**
 `packages/dreamux/src/service/dispatcher-service/base-prompt.ts:32,81` says
 “from an ambiguous channel request.” The same scope is present when #280 added
-the text (`1b9f2712`, author YourWildDad, that file at line 30).
+the text (author YourWildDad, that file at line 30).
 
 **Problem:** “A channel request alone does not authorize changing them” applies
 to a clear, explicit operator request too. The Claude variant drops ambiguity
@@ -137,8 +137,8 @@ collection (`packages/dreamux/src/service/team-service/index.ts:592–602`), but
 their outputs go to the workflow runner as `agent_result`
 (`packages/dreamux/src/service/workflow-service/run.ts:470–495,537–549`).
 `packages/dreamux/src/service/workflow-service/agent-policy.ts:1–7` already
-states this return-value contract; that ownership dates to #338 (`8ed949e2`,
-author YourWildDad).
+states this return-value contract; that ownership dates to #338
+(author YourWildDad).
 
 **Problem:** “Your TeamLeader sees nothing of your turn until it ends” denies
 the supported observation path. For workflow children, the recipient is the

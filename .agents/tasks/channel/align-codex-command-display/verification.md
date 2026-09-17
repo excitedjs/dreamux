@@ -2,8 +2,10 @@
 
 ## Scope and TeamLeader pre-review
 
-- Review baseline: `305e3fc8`; inspect the uncommitted workspace change, not
-  unrelated commits already in that baseline.
+- Review baseline: the workspace commit carrying the not-yet-merged Workflow
+  notification change proposed in [#406](https://github.com/excitedjs/dreamux/pull/406);
+  inspect the uncommitted workspace change, not unrelated commits already in
+  that baseline.
 - The only executable product change is the private display decoder in
   `/packages/agent-runtime/codex/src/tool-display.ts`. No execution, activity
   contract, Core projection, or Feishu rendering implementation changed.
@@ -53,11 +55,15 @@ Codex patch note. The committed-branch check passed before push with
 
 ## Delivery baseline
 
-The original workspace starts at `305e3fc8`, whose Workflow notification change
-is not part of `origin/next`. The original task commit `bac326a8` is preserved on
-its implementation branch. Only that patch was transferred onto `origin/next`
-(`2b3d6971`) as `fix/codex-command-display`, excluding the unrelated change from
-the PR. The only conflict was concurrent task-index additions; both entries are
+The original workspace starts at a commit carrying the not-yet-merged Workflow
+notification change proposed in [#406](https://github.com/excitedjs/dreamux/pull/406),
+which is not part of `origin/next`. The original task commit's Codex
+command-display patch reached merged PR
+[#396](https://github.com/excitedjs/dreamux/pull/396) as its first commit. Only
+that patch was transferred onto `origin/next` after
+[#390](https://github.com/excitedjs/dreamux/pull/390) merged, as
+`fix/codex-command-display`, excluding the unrelated change from the PR. The
+only conflict was concurrent task-index additions; both entries are
 retained. The parser source and its direct tests are byte-identical to the
 reviewed implementation; runtime and Feishu tests applied without content
 conflicts. The checks above describe the original reviewed baseline.
@@ -72,7 +78,7 @@ published as part of this task.
 PR [#396](https://github.com/excitedjs/dreamux/pull/396) targets `next` from the
 isolated branch. All 9 checks in
 [CI run 34288628691](https://github.com/excitedjs/dreamux/actions/runs/34288628691)
-passed for head `1305d36d`, including Linux/macOS Rush and shellcheck, Rush change
+passed for the head that run built, including Linux/macOS Rush and shellcheck, Rush change
 coverage, author metadata, KB, full-history gitleaks, and internal-content scan.
 The working tree was clean after push. GitHub reports `REVIEW_REQUIRED`; no
 merge, deployment, or service restart was performed. Later documentation-only

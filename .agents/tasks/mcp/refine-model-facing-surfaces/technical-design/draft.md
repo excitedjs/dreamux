@@ -8,8 +8,9 @@ judgment the TeamLeader made beyond the rulings' words.
 ## 0. Baseline
 
 All "before" text below is the state after merging PR #369 (`origin/pr-369`,
-head `5e1a3464`, merge-base `d74142c3`) onto `origin/next` (`0d8098f1`).
-`git merge-tree` reports no conflict. The delivery branch is built that way:
+branched from `origin/next` after #375 merged) onto `origin/next` after #378
+merged. `git merge-tree` reports no conflict. The delivery branch is built
+that way:
 branch from `origin/next`, merge `origin/pr-369`, then this task's commits.
 The Team workspace itself is on `next`; the #369 text is readable with
 `git show origin/pr-369:<path>`.
@@ -24,7 +25,7 @@ Rulings made against `next` text and how they land on this baseline:
   removal plus the narrow skill description (§3.5) and the tool pointers
   (§3.5). Reported to the operator on 2026-09-06 before this draft.
 - R19 and R20 name Dispatcher Role bullets that #369 left byte-identical
-  (verified by diffing `base-prompt.ts` between `d74142c3` and `5e1a3464`);
+  (verified against PR #369's diff of `base-prompt.ts`);
   they apply directly.
 - R2 and R5 were ruled on #369's TeamLeader prompt (five sentences); the
   result is §3.1.

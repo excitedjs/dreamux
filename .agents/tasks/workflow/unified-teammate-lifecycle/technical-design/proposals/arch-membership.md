@@ -2,7 +2,7 @@
 
 Requirement: `.agents/tasks/workflow/unified-teammate-lifecycle/requirement.md`
 Frozen SHA-256: `863d7c8faa08f6a344654bd74a093fc5a6e1b13380641a323416a2e085ee9e08`
-Source baseline inspected: `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`
+Source baseline inspected: `next` after #333 merged
 
 ## 1. Problem summary
 

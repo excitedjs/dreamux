@@ -2,8 +2,8 @@
 
 ## Scope
 
-- Base: `origin/next` at merged PR #338 commit
-  `8ed949e236d575c9b27a554aebed7d36ea40a3b2`.
+- Base: `origin/next` after [#338](https://github.com/excitedjs/dreamux/pull/338)
+  merged.
 - Requirement SHA-256:
   `aa1cc7282cd589d2a40e18ec3f386f0f076f0ccab09702aa3d601a47a377f8d4`.
 - Direct solution SHA-256:
@@ -109,10 +109,10 @@ No accepted implementation-review finding remains unresolved.
 ## PR Delivery
 
 - Pull request: [#339](https://github.com/excitedjs/dreamux/pull/339).
-- Reviewed implementation commit:
-  `d2aa0eda1e37275bf31ba38d5451ed0d91c2ef82`.
-- Delivery-record head:
-  `df52ebb7bf771a225d24734efef87cd8329172a5`.
+- Reviewed implementation commit: the head CI passed at
+  https://github.com/excitedjs/dreamux/actions/runs/31961285927.
+- Delivery-record head: the head CI passed at
+  https://github.com/excitedjs/dreamux/actions/runs/31961322164.
 - Required CI passed on the exact delivery-record head:
   - Rush change declaration;
   - commit author metadata;

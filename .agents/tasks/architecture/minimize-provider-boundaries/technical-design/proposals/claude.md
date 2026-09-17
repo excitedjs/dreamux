@@ -4,7 +4,7 @@ Author seat: Claude. Independent first round.
 Frozen requirement revision: `89e95d7fb3fd0dcf5585484becbd529a34d6d425e73aae500a31595210a5433c`
 (verified locally against `requirement.md` with `sha256sum`).
 
-Grounded in current source at `57a2cf8a` on
+Grounded in current source at `next` after #347 merged, on
 `refactor/minimal-agent-runtime-provider`. This proposal changes no product
 code; it specifies the change.
 

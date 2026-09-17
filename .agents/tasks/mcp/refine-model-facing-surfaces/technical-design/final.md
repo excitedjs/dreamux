@@ -1,7 +1,7 @@
 # Technical design (final): refine the model-facing surfaces
 
 State: final, adjudicated by the TeamLeader on 2026-09-06 from
-[`draft.md`](draft.md) (commit `d709c9ab`), the Codex reviewer's file
+[`draft.md`](draft.md) (as written in #380), the Codex reviewer's file
 [`reviews/reviewer-codex.md`](reviews/reviewer-codex.md) (with its
 reconsideration under R21), and the Seed reviewer's file
 [`reviews/reviewer-seed.md`](reviews/reviewer-seed.md). The requirement
@@ -30,14 +30,15 @@ Accepted when:
 
 ## 2. Baseline and confirmed facts
 
-- Baseline: `origin/pr-369` (head `5e1a3464`, merge-base `d74142c3`) merged
-  onto `origin/next` (`0d8098f1`). `git merge-tree --write-tree --name-only
-  origin/next origin/pr-369` exits 0 with no conflicted path (re-run
-  2026-09-06 after the Seed reviewer reported one; §4 Seed F4).
+- Baseline: `origin/pr-369` (the head of #369; merge-base with `next`: the
+  merge of #375) merged onto `origin/next` at the merge of #378. `git
+  merge-tree --write-tree --name-only origin/next origin/pr-369` exits 0 with
+  no conflicted path (re-run 2026-09-06 after the Seed reviewer reported one;
+  §4 Seed F4).
 - R17 has no target on this baseline (#369 already replaced both Dispatcher
   load sentences); its purpose is met by that removal plus §3.5. Reported to
   the operator on 2026-09-06 before the draft. R19/R20 bullets are
-  byte-identical between `d74142c3` and `5e1a3464`.
+  byte-identical between the merge of #375 and the head of #369.
 - Claude Code skill cache (Codex F1, verified): the adapter root is
   `<cache>/claude-code/skills/<key>` where `skillAdapterKey` hashes only each
   source root's name and absolute path (`skill-adapter.ts`); the validator

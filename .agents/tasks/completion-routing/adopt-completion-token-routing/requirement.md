@@ -40,9 +40,9 @@ product requirements.
 
 ## Initial request
 
-Rework turn settlement and completion delivery on top of `next` (head
-`f71cfc3c`, PR #342) so that push-back semantics follow the results providers
-actually produce, and deliver the rework as one PR.
+Rework turn settlement and completion delivery on top of `next` after PR #342
+merged so that push-back semantics follow the results providers actually
+produce, and deliver the rework as one PR.
 
 ## Confirmed current behavior
 

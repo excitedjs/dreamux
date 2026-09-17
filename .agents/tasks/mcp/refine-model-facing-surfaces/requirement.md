@@ -16,7 +16,9 @@
 - Status: clarification in progress. Rulings R1–R3 below are confirmed; the
   "Open decisions" list is what the operator has not yet ruled on.
 - Confirmed current behavior and evidence: see "Evidence" below (traced from
-  the PR #369 head `5e1a3464` and from two live runtimes on 2026-09-05/06).
+  PR #369's final pushed head, whose CI run is
+  https://github.com/excitedjs/dreamux/actions/runs/33852487838, and from two
+  live runtimes on 2026-09-05/06).
 - Desired outcome (operator, R1): the TeamLeader is the role that carries the
   most work; its identity definition carries no constraints; reminders are
   reduced to the necessary minimum and state consequences instead of giving
@@ -208,8 +210,9 @@
 - R24 (2026-09-06 02:55, answers on the second approval card): the Claude
   skill-adapter fix (A) → "并入本 PR"; development approval → "进开发。你自己用
   ultracode 模式一次性搞定。" Approval is bound to requirement R1–R24 and
-  final.md as committed at `a169ac94`; implementation runs through the
-  ultracode workflow driven by this TeamLeader.
+  final.md as committed in #380 at the revision that records R23;
+  implementation runs through the ultracode workflow driven by this
+  TeamLeader.
 
 - R25 (2026-09-06 ~03:00, answer on the member-model card): asked "ultracode
   工作流里的成员用什么模型？", the operator chose "写码 opus、其余 sonnet".
@@ -293,7 +296,8 @@ into #382 before the beta) and the operator ruled (16:16):
 
 ## Evidence
 
-Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
+Everything here is traced from PR #369's final pushed head, whose CI run is
+https://github.com/excitedjs/dreamux/actions/runs/33852487838, unless labeled
 otherwise. Dates are 2026-09-05 unless stated.
 
 ### What a TeamLeader's model sees today (PR head)

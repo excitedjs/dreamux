@@ -12,14 +12,13 @@ it has merged.
 
 ## Confirmed current behavior and evidence
 
-Measured on `next` at `27428f85`, 2026-09-11.
+Measured on `next` after #412 merged, 2026-09-11.
 
 - 7 of 35 task records carry a state that cannot be true on the trunk. Three
   are values outside the supported set entirely — `implemented`, `in-progress`,
   `delivery` — which the existing check would have rejected.
 - Every one of the 7 was delivered. Six were delivered by a merged pull
-  request: #367 (`616a55b7`), #390 (`2b3d6971`), #357 (`2cf21cc6`), #402
-  (`9886af82`), #391 (`71316ab9`), #412 (`27428f85`). The seventh,
+  request: #367, #390, #357, #402, #391, #412. The seventh,
   `mcp/relocate-role-skill-guidance`, referenced #369, which the operator
   closed unmerged on 2026-09-05 after ruling its content ships through #380;
   the record already states this.

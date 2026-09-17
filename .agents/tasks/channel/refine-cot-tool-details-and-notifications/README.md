@@ -15,8 +15,10 @@
 - Verification: [Evidence](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/verification.md).
 - Knowledge owners: Product catalog and Channel documentation.
 - Delivery: [PR #405](https://github.com/excitedjs/dreamux/pull/405). External
-  final review approved implementation commit `929f11a6`; all nine GitHub CI
-  checks passed on that commit. The following closeout changes only task records
+  [final review](https://github.com/excitedjs/dreamux/pull/405#pullrequestreview-5163287620)
+  approved the implementation; [all nine GitHub CI
+  checks](https://github.com/excitedjs/dreamux/actions/runs/34443152195) passed
+  on it. The following closeout changes only task records
   and leaves the reviewed implementation unchanged.
 - Review adjudication: No findings; the TeamLeader accepts the external approval
   after checking the result ordering, status/list paths, and event-budget diff.

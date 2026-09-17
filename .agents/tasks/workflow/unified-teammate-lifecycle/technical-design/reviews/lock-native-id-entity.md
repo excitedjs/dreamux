@@ -4,7 +4,7 @@
 - Authoritative requirement: `requirement.md`, SHA-256
   `be2b1eaf2c9bb6f56033782d282c758b5626cceabcbab783fd19ef9c4dfb723c`
 - Prior final (`technical-design/final.md`) is superseded evidence only.
-- Source baseline inspected: `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`
+- Source baseline inspected: `next` after #333 merged
 - Scope: exactly two simplifications — (1) `TeammateService.lock()` returning a
   restricted Workflow handle in place of external claims/adapter/port roles;
   (2) service-layer **in-process `Turn` objects and captured closures** for

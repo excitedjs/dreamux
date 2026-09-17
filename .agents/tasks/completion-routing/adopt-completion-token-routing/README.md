@@ -31,7 +31,7 @@
 
 ## Background-turn regression repair (2026-09-07)
 
-- Lineage: reopens the regression introduced by PR #344, commit `7fb1b8d3`
+- Lineage: reopens the regression introduced by the merge of PR #344
   (author: YourWildDad). The original delivery remains historical above.
 - Development approval: granted after the operator reviewed the revised
   requirement and solution in the bound conversation on 2026-09-07.
@@ -68,8 +68,8 @@
 
 ## Style and redundancy cleanup (2026-09-07)
 
-- PR #384 was open at `72af66e5`; its alpha was published and verified before the
-  independent Claude complexity review.
+- PR #384's alpha, published in [Actions run 34079076397](https://github.com/excitedjs/dreamux/actions/runs/34079076397),
+  was verified before the independent Claude complexity review.
 - The review found lower complexity and no required correctness correction.
   The operator then explicitly authorized cleaning style and redundant code
   instead of leaving it as optional follow-up. Translation of the instruction:
@@ -103,9 +103,10 @@ retained request window through PR #344 and proposed replacing input-to-settleme
 coordination while preserving unrelated provider capabilities. The operator
 explicitly approved implementation of that proposal; see [rulings](rulings.md).
 
-The current implementation baseline is `6acc6d28`. Earlier repair, cleanup,
-alpha and review results above describe that earlier implementation, not the
-replacement. Its acceptance and evidence are recorded below.
+The current implementation baseline is the revision left by the style and
+redundancy cleanup above. Earlier repair, cleanup, alpha and review results
+above describe that earlier implementation, not the replacement. Its
+acceptance and evidence are recorded below.
 
 ### Replacement knowledge closeout
 

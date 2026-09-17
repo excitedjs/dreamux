@@ -21,7 +21,7 @@
     non-empty value becomes plain text. Both are currently cut only when the
     assembled event would exceed Feishu's 4,096-byte content limit.
   - A route-bound card currently shows target, binding kind, Team, and optional
-    collaboration-space name. Commit `2ed5f5ea` removed the TeamLeader name,
+    collaboration-space name. The merge of #350 removed the TeamLeader name,
     Agent Runtime, and runtime cwd that the prior Core binding-event projection
     supplied. The current product catalog still says a route-bound card names
     the TeamLeader, runtime, and runtime cwd.

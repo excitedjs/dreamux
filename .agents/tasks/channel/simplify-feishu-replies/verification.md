@@ -662,7 +662,7 @@ Workflow-notification commit; only the current task's change is carried onto
 `next`, with the required gates rerun after that integration.
 
 
-The task patch was rebased onto `next` at `27428f85` without carrying the unrelated
+The task patch was rebased onto `next` after #412 merged, without carrying the unrelated
 Workflow commit. The only conflict was two additions to the channel task index;
 both entries are preserved. Range-diff confirms no implementation change.
 
@@ -675,8 +675,8 @@ version or generated changelog was edited.
 
 ## Independent implementation review and disposition
 
-On 2026-09-11 Devbox [approved commit 87dda034](https://github.com/excitedjs/dreamux/pull/414#pullrequestreview-5180205413)
-after reviewing the complete PR against merge base `27428f85`. The review covered
+On 2026-09-11 Devbox [approved the pushed revision](https://github.com/excitedjs/dreamux/pull/414#pullrequestreview-5180205413)
+after reviewing the complete PR against merge base `next` after #412 merged. The review covered
 deletions, native-post splitting, send-error behavior, all incoming message
 forms, identity composition, test changes, and public-safe artifacts. The dated
 review and its associated CI run are the evidence; this record does not mirror
@@ -715,8 +715,9 @@ without broadening the Feishu implementation into a CLI version fix.
 
 ## Task-record baseline integration
 
-The 2026-09-14 rebase onto `7cfd6ce5` reconciles the task-index conflict and retains
+The 2026-09-14 rebase onto `next` after #413 merged reconciles the task-index conflict and retains
 the stricter trunk record checks introduced by PR #413. The index carries goals
 without duplicated states; the task README carries durable approval, scope,
 review-disposition, and knowledge-owner facts with a PR link. Product source,
-tests, manifests, and change notes are byte-identical to reviewed `87dda034`.
+tests, manifests, and change notes are byte-identical to the revision Devbox
+approved in the [first review round](https://github.com/excitedjs/dreamux/pull/414#pullrequestreview-5180205413).

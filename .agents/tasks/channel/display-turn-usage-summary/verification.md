@@ -2,7 +2,7 @@
 
 ## Target and TeamLeader pre-review
 
-- Baseline: `2b3d697` on `next`; the usage implementation is the working diff.
+- Measured on `next` after #390 merged; the usage implementation is the working diff.
 - Scope: both runtime packages, their regression tests, and task/product/runtime
   knowledge. No Core/Channel source, dependency, state, configuration, or prompt
   changes are part of the feature.
@@ -119,13 +119,14 @@ Knowledge validation passed with
 The final `rush smoke-built-cli` also passed. Implementation and knowledge closeout
 are complete; the task's done state does not assert green live verification or
 merge readiness. Delivery is draft-only until the outstanding gate is cleared.
-Commit `6da5210` passed the normal repository pre-commit hook, including staged
-lint, author checks, gitleaks, and the internal-content check. Committed change
-files passed `rush change --verify --target-branch origin/next --no-fetch`; before
-commit Rush did not discover them in its changed-file set. Draft
-[PR #397](https://github.com/excitedjs/dreamux/pull/397) targets `next` and carries
-all validation limits. Normal repository CI was started; no merge, release,
-production restart, or Team dissolution is included in the operator's authority.
+The commit delivering this feature in #397 passed the normal repository pre-commit
+hook, including staged lint, author checks, gitleaks, and the internal-content
+check. Committed change files passed `rush change --verify --target-branch
+origin/next --no-fetch`; before commit Rush did not discover them in its
+changed-file set. Draft [PR #397](https://github.com/excitedjs/dreamux/pull/397)
+targets `next` and carries all validation limits. Normal repository CI was started;
+no merge, release, production restart, or Team dissolution is included in the
+operator's authority.
 
 The two completed live-test runs left six native app-server instances after
 Vitest timeouts. Their exact temporary test socket paths identified the owned

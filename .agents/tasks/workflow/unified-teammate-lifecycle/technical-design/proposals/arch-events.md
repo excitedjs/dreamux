@@ -1,7 +1,7 @@
 # Proposal: entity-owned TeamMate lifecycle with committed fact events
 
 - Proposal seat: `arch-events` (first-round independent proposal)
-- Source baseline: `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`
+- Source baseline: `next` after #333 merged
 - Requirement SHA-256: `863d7c8faa08f6a344654bd74a093fc5a6e1b13380641a323416a2e085ee9e08`
 - Status: proposed architecture
 
@@ -2629,7 +2629,7 @@ The design is complete only when the source graph matches the target graph:
 This section records the cross-review of the frozen first-round proposals
 `arch-entity.md` (`2ee8e9bc...`), `arch-events.md` (`791a0e90...`), and
 `arch-membership.md` (`751bec09...`) against the frozen requirement and source
-baseline `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`. Where this section conflicts
+baseline `next` after #333 merged. Where this section conflicts
 with an earlier part of this proposal, **this section is the revised position**.
 
 The binding test remains the operator's red line: an observer must not be put on

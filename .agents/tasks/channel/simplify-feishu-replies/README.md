@@ -82,7 +82,7 @@ The operator explicitly corrected the final review handoff:
 
 For this task the PR was published before Devbox implementation review. That
 exception changes review ordering; it does not authorize merge. On 2026-09-11,
-Devbox [approved commit 87dda034](https://github.com/excitedjs/dreamux/pull/414#pullrequestreview-5180205413).
+Devbox [approved the pushed revision](https://github.com/excitedjs/dreamux/pull/414#pullrequestreview-5180205413).
 The leader confirmed the one non-blocking, inherited placeholder-prefix finding
 and deferred its correction as a follow-up; see the evidence and disposition in
 [verification](/.agents/tasks/channel/simplify-feishu-replies/verification.md). No product change was dispatched from that nit.

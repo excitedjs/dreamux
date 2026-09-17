@@ -485,8 +485,8 @@ does not imply that the diff is clean.
     statement.** I rewrote the requirement so every Channel input required a
     Team and unbound input was dropped, even though the operator only said that
     a delivery *to a Team* necessarily has a Team or leader name. This error was
-    introduced in commit `4655d6593a90262126c684559800aac1377af9c3` and the
-    documentation correction was committed as `8ba508f3`. Fable must prove that
+    introduced during #350's development, and the documentation correction
+    was made in a later revision before merge. Fable must prove that
     unmatched input reaches the Dispatcher Agent, stale typed Team-route
     rejection removes the stale binding and falls back once, and no silent-drop
     interpretation survives.

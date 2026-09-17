@@ -3,7 +3,7 @@
 ## Implementation review
 
 The complete workspace diff was checked against the approved requirement and
-final technical solution. As first pushed (9e66edd), the implementation had one
+final technical solution. As first pushed in #390, the implementation had one
 public `TeamSummary`, one pure projector, one TeamCollection live/store
 source-selection rule, and one closed schema reused by create, list, and status
 on both Command and MCP surfaces. The old create/list/view DTOs, conversions,

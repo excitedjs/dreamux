@@ -15,7 +15,7 @@
 ## Development approval
 
 - Status: Granted on 2026-09-09 in the operator's direct reply to the exact-restoration development question: "可以，开始开发" (approved; start development).
-- Approved inputs: [requirement.md](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md) and [technical-design/final.md](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/technical-design/final.md), revised to restore the three pre-`dc2b7eb` strings verbatim.
+- Approved inputs: [requirement.md](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md) and [technical-design/final.md](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/technical-design/final.md), revised to restore the three strings from before #380 merged, verbatim.
 - Approved implementation boundary: The three receipt strings, two provider compaction labels, associated tests and adjacent comments, current knowledge owners, patch Rush change files, and task records. Existing schemas, attachment conditions, descriptions, prompts, completion semantics, and rendering mechanisms remain unchanged; no deployment or service operation.
 - Expanded approval on 2026-09-09: "可以，合并做了就行" (approved; implement together), covering the additional Channel success-text carrier, Feishu binding/unbinding messages, associated tests and knowledge, continued direct TeamLeader implementation, and one independent read-only review.
 - Delivery approval on 2026-09-09: "ok，推进到开 pr 出来" (proceed through opening the PR). This authorizes commit, push, and a PR targeting `next`, not merge or deployment.

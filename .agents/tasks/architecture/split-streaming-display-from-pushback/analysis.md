@@ -95,7 +95,7 @@ is separable in principle, because nothing outside display reads it.
 ## 1b. What COT changed in the push-back mechanism itself
 
 Measured per commit, not per range. The COT commits that touch Core or a runtime
-are #347 (`57a2cf8a`), #357 (`2cf21cc6`) and #364 (`56a7e5a5`); #363 and #365
+are #347, #357 and #364; #363 and #365
 touch neither. An earlier measurement of this took the whole range from before
 #347 to HEAD and therefore attributed `admission-ledger.ts` (+129),
 `submission.ts` (+123) and the `completion-router` change (+29) to COT. All
@@ -348,7 +348,7 @@ mechanism's own settlement is `RuntimeSubmission.settled` → `EntityTurn.settle
 completion reaches its caller. The *event* is a different object with a
 different life:
 
-- **#299 (`819c02c6`) invented it** as `turn.settled`, published from
+- **#299 invented it** as `turn.settled`, published from
   `agent-entity/turns-store.ts`.
 - **#338** removed it.
 - **#347 brought it back** and consumed it:

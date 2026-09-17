@@ -117,7 +117,7 @@ local names and small helper shapes within the stated ownership constraints;
 source evidence takes precedence over assumptions from the earlier checkout.
 
 The operator discarded the first implementation on 2026-09-10. A new developer
-starts from next at `7ed1d886964e520025cbc1e8151c8ff2eefd9a58`, with the old writer
+starts from `next` after #400 merged, with the old writer
 closed and all non-.agents files restored to the baseline. Design from these
 requirements and the baseline owners; do not replay the previous implementation.
 Existing domain-page edits are retained design records pending reconciliation,

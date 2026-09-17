@@ -2,7 +2,7 @@
 
 ## TeamLeader pre-review (2026-09-16)
 
-Baseline: `origin/next` at `0b35a6a8`, plus the uncommitted implementation by the
+Baseline: `next` after #433 merged, plus the uncommitted implementation by the
 single developer TeamMate.
 
 Diff inspected against the final solution:
@@ -46,9 +46,9 @@ model's answer does not repeat the explanation.
 
 ## Independent implementation review (2026-09-16)
 
-External review of the pushed branch (commit `2f05d1c6` on `next` `0b35a6a8`),
-used in place of the workflow review for this group's tasks. Verdict: approved,
-no blocking code finding
+External review of the first pushed revision of #437 (branched from `next`
+after #433 merged), used in place of the workflow review for this group's
+tasks. Verdict: approved, no blocking code finding
 ([comment](https://github.com/excitedjs/dreamux/issues/435#issuecomment-5697040277)).
 Beyond reading the diff, the reviewer ran the card builders from `next` and the
 branch side by side and compared serialized JSON for the live (partly answered),

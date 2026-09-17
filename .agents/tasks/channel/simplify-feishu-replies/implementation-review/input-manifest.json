@@ -1,5 +1,5 @@
 {
-  "base_commit": "3cac2f7b00a7be159a52bd6aee0a9cdcd43214e1",
+  "base_commit": "the PR #406 revision built by CI run https://github.com/excitedjs/dreamux/actions/runs/34444257607",
   "scope": "All tracked changes and untracked additions; null hash denotes deletion. The manifest excludes itself.",
   "files_sha256": "e8da7007ff5111c738c0a33273355f086513f719e94a55f9cd638a66fc9423ab",
   "files": [

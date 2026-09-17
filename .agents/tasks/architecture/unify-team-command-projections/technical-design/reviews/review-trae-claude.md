@@ -12,7 +12,7 @@ operation that produced it, which is the exact defect the requirement forbids
 Resolve F1–F3 before treating create/list/status as interchangeable. F4 is an
 audit-accuracy correction; F5 removes entropy the task exists to remove.
 
-Reviewed source: `fffc3bd337f8ce28070fb8658fc30893e71730bb` (working tree on
+Reviewed source: `next` after #386 merged (working tree on
 `dreamux/unify-team-projections`). No code exists yet; §7 is reviewed as a plan.
 
 - Requirement SHA-256:
