@@ -3,7 +3,7 @@
  * `token.usage` activity. Formatting lives only in this display layer: the
  * runtime emits structured cumulative counters and nothing else.
  */
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 
 import type { TeammateActivity } from '@excitedjs/dreamux-types';
 
