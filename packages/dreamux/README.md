@@ -97,13 +97,13 @@ node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
 ```
 
-The bin launchers shell out to plain `node` against compiled `dist/` output;
+The bin launcher shells out to plain `node` against compiled `dist/` output;
 no `tsx` is needed at runtime.
 
 ## Run the server
 
 ```bash
-./bin/dreamux serve
+./packages/dreamux/bin/dreamux serve
 ```
 
 The launcher works from any cwd and via symlinks.
@@ -422,8 +422,8 @@ node common/scripts/install-run-rush.js test
   per-message turn/start inbound submission, process-local dedupe, MCP
   reply-only outbound, thread resume, app-server restart behavior, and
   approval fail-fast.
-- `tests/bin-launcher.test.ts` — real launcher and repo-root shim behavior from
-  arbitrary cwd and through symlinks.
+- `tests/bin-launcher.test.ts` — real launcher behavior from arbitrary cwd and
+  through symlinks.
 - `tests/doctor.test.ts` — standalone doctor checks for config, Codex home,
   services, provider-owned runtime binaries, and dispatcher workspace skill
   state.

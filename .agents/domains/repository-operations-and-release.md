@@ -150,7 +150,7 @@ Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.tes
 |---|---|
 | `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan |
 | `commit-metadata` | Author email must have a domain and must not be machine-local; `*@users.noreply.github.com` always passes; an optional private denylist regex comes from a repo variable, never from a committed file |
-| `shellcheck` | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `bin/dreamux`, `packages/dreamux/bin/dreamux` |
+| `shellcheck` | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `packages/dreamux/bin/dreamux` |
 | `kb` | `.agents/scripts/check.sh` — knowledge-base link and orphan check |
 | `rush` | Linux + macOS: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test |
 | `gitleaks` | Full-history `gitleaks git .` with the pinned binary and `.gitleaks.toml` |
@@ -289,8 +289,7 @@ public bin:
 The `files` allowlist ships `bin`, `dist`, `skills`, `README.md`, `LICENSE`,
 `CHANGELOG.md`, and `CHANGELOG.json`. The single MCP shim is reached through
 Dreamux-managed MCP descriptors and the internal `dreamux mcp` subcommand; it is
-not a separate public npm bin. `/bin/dreamux` at the repo root is a
-source-checkout convenience shim only and is not published.
+not a separate public npm bin.
 
 Test doubles are not package surface. `createFakeFeishuBot` / `FakeFeishuBot`
 were removed from published package API as a breaking cleanup; the double now
@@ -301,7 +300,7 @@ A new test double belongs in `tests/` and must implement a production seam, not
 be exported from a package.
 
 Source: `/packages/dreamux/package.json`, `/packages/dreamux/bin/dreamux`,
-`/bin/dreamux`, `/packages/dreamux/src/cli/commands/mcp.ts`,
+`/packages/dreamux/src/cli/commands/mcp.ts`,
 `/packages/dreamux/tests/helpers/fake-feishu-bot.ts`.
 
 ### Public-Repo Red Line

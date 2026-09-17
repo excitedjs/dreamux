@@ -1106,6 +1106,17 @@ compatibility regression.
 - **Bare `dreamux` starts the server:** rejected. It hides the onboarding and
   daemon management surface behind a server-only default.
 
+### Since this was recorded (2026-09-17)
+
+The repo-root `/bin/dreamux` source-checkout convenience shim kept by the
+Decision above is removed. Asked what the repo-root `bin/` directory was, the
+operator ruled in a Claude Code session, verbatim: "根目录这个删掉" ("delete the
+repo-root one"). The shim only forwarded to `/packages/dreamux/bin/dreamux`,
+which stays the single launcher; a source checkout runs
+`./packages/dreamux/bin/dreamux` directly. The shim's CI shellcheck entry and
+its forwarding case in `/packages/dreamux/tests/bin-launcher.test.ts` were
+removed with it.
+
 ---
 
 ## install-model

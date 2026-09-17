@@ -67,9 +67,6 @@ node common/scripts/install-run-rush.js test
 Full quick start, config reference, and verification paths are in
 [`packages/dreamux/README.md`](packages/dreamux/README.md).
 
-Repo-root `bin/dreamux` is a thin source-checkout shim that forwards to
-`packages/dreamux/bin/dreamux`.
-
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
