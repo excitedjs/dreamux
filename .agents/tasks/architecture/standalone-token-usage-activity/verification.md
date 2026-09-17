@@ -36,24 +36,35 @@ The assertions pin the contract end to end, not just the shape:
 - **Snapshot discipline (codex).** A foreign-thread notification is ignored;
   the latest matching-thread snapshot wins; a collector thread switch clears
   it so the next turn with no usage emits no activity; an early terminal
-  admission carries `turn-early:usage` at most once.
+  admission carries `turn-early:usage` at most once; a same-thread second turn
+  that fails before any update emits **no** `token.usage` (the consumed
+  snapshot is not repeated under a new id).
 - **No counters, no activity.** Both runtimes stay silent when the native
-  terminal carries no usage (failed status / absent envelope).
-- **Null window shapes.** Codex with `modelContextWindow: null` reports the
-  used count; claude's background-result path reports `context: null`.
+  terminal carries no usable totals (failed status / absent envelope).
+- **Null and zero windows are one case (codex).** With `modelContextWindow`
+  null or `0` and used tokens present, the activity carries `context: null`,
+  asserted as exact objects, so the rendered line stays the historical `n/a`;
+  claude's background-result path likewise reports `context: null`, and its
+  windowless used-context case stays `{usedTokens, windowTokens: null}`.
+- **Unknown-kind projection.** A newer provider kind an older Core cannot
+  project publishes nothing and writes the drop warning.
 - **Projection.** The dreamux suite covers the camelCase to snake_case member
-  with `redacted: false`.
+  with `redacted: false` as whole-object assertions.
 - **Rendering.** `feishu-cot-token-usage.test.ts` pins the exact line for the
   percentage, compact-count, and `n/a` cases and the compact-number table from
   0 through 1.3b, so the channel-owning formatter reproduces the old
   provider-emitted text byte for byte.
+- **Activity-to-card delivery.** `feishu-cot-delivery.test.ts` drives a full
+  session and asserts both the percentage line and the `n/a` line actually
+  land on the open COT card in order, so deleting the adapter's dispatch arm
+  fails the suite (the adapter switch is also compile-time exhaustive).
 
 ## Non-live suite
 
-The repository's non-live suite passes in the author's sandbox: 1,075 tests in
-73 files for the `@excitedjs/dreamux` project (including the two exact-object
-projection tests added here), plus the changed runtime and channel packages'
-suites. The `codex-live.test.ts` tests require a reachable model API and are
+The repository's non-live suite passes in the author's sandbox: 1,076 tests in
+73 files for the `@excitedjs/dreamux` project (including the exact-object
+projection tests and the unknown-kind drop test added here), 51 codex
+non-live tests, 238 claude-code tests, and 636 feishu-channel tests. The `codex-live.test.ts` tests require a reachable model API and are
 not part of the sandbox result: each of the six times out on this branch and
 identically on a clean base checkout, so they carry no signal here. The pull
 request's CI runs the gates in a connected environment.

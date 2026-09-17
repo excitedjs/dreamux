@@ -257,6 +257,13 @@ export class FeishuCotAdapter {
       case 'turn.ended':
         this.finishCard(found.key, found.state, event.activity);
         return;
+      default: {
+        // Compile-time exhaustiveness: every projected activity kind needs a
+        // dispatch arm, or its fact silently never reaches a card.
+        const exhaustive: never = event.activity;
+        void exhaustive;
+        return;
+      }
     }
   }
 

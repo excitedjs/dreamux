@@ -315,12 +315,14 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   before the native end, carrying the native runtime's cumulative session
   counters; the Feishu CoT layer renders them as
   `Context usage <value> | Token usage: total=<count> input=<count> output=<count>`.
-  Codex shows context percentage; Claude Code shows its latest main-model input
-  token count, excluding the final response. Counts use decimal lowercase `k`,
-  `m`, and `b`, at most one decimal, and plain numbers below 1,000. Totals are
-  native cumulative measurements, not a Dreamux historical ledger; Claude's
-  cumulative scope is its resident query/process. Missing totals omit the
-  activity; missing context alone shows `n/a`. The counters are not
+  Codex shows context percentage when the app-server supplies a positive
+  window; without one the field is absent and the line shows `n/a`. Claude
+  Code structurally lacks a window, so it shows its latest main-model input
+  token count (excluding the final response) as a compact number. Counts use
+  decimal lowercase `k`, `m`, and `b`, at most one decimal, and plain numbers
+  below 1,000. Totals are native cumulative measurements, not a Dreamux
+  historical ledger; Claude's cumulative scope is its resident query/process.
+  Missing totals omit the activity. The counters are not
   conversation content: the line is display-only, never an answer delivered to
   another agent or inserted into model context, and the activity is live-only
   with no cold-read replay.

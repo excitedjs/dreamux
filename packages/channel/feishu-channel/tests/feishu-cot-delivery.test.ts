@@ -197,6 +197,22 @@ function nativeEnd(
   });
 }
 
+/** A runtime's cumulative token counters, exactly as projection publishes them. */
+function tokenUsage(
+  recipient: 'dispatcher' | 'leader',
+  eventId: string,
+  context: Extract<TeammateActivity, { kind: 'token.usage' }>['context'],
+): TeammateActivityEvent {
+  return activityEvent(recipient, {
+    kind: 'token.usage',
+    event_id: eventId,
+    input_tokens: 28_568,
+    output_tokens: 69,
+    context,
+    redacted: false,
+  });
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -540,6 +556,79 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     await waitFor(() => cot.cards.length === 1);
     expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
     expect(cotTerminal(cot.cards[0]!)).toBeNull();
+
+    await session.close();
+  });
+});
+
+describe('FeishuChannelSession COT — token.usage reaches the open card', () => {
+  it('appends the rendered usage line for a percentage context', async () => {
+    const { session, cot, port } = await harness('chan-cot-usage', async (
+      command,
+      payload,
+      emit,
+    ) => {
+      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
+      return { status: 'submitted', turn_id: 'turn-1' };
+    });
+
+    await session.submit(null, {
+      kind: 'chat',
+      attrs: {},
+      text: 'hello',
+      reminder: '',
+      sourceId: 'om_user_1',
+      anchor: {
+        chatId: 'oc_dm',
+        messageId: 'om_user_1',
+        target: chatTarget('oc_dm', 'p2p'),
+      },
+    });
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
+
+    port.emit(tokenUsage('dispatcher', 'turn-1:usage', { used_tokens: 14_500, window_tokens: 29_000 }));
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
+    expect(cotTexts(cot.cards[0]!)).toContain(
+      'Context usage 50% | Token usage: total=28.6k input=28.6k output=69',
+    );
+
+    port.emit(nativeEnd('dispatcher'));
+    await waitFor(() => cotTerminal(cot.cards[0]!) !== null);
+    expect(cot.cards).toHaveLength(1);
+    await session.close();
+  });
+
+  it('renders n/a when the activity carries no context', async () => {
+    const { session, cot, port } = await harness('chan-cot-usage-na', async (
+      command,
+      payload,
+      emit,
+    ) => {
+      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
+      return { status: 'submitted', turn_id: 'turn-1' };
+    });
+
+    await session.submit(null, {
+      kind: 'chat',
+      attrs: {},
+      text: 'hello',
+      reminder: '',
+      sourceId: 'om_user_2',
+      anchor: {
+        chatId: 'oc_dm',
+        messageId: 'om_user_2',
+        target: chatTarget('oc_dm', 'p2p'),
+      },
+    });
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
+
+    port.emit(tokenUsage('dispatcher', 'turn-1:usage', null));
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
+    expect(cotTexts(cot.cards[0]!)).toContain(
+      'Context usage n/a | Token usage: total=28.6k input=28.6k output=69',
+    );
 
     await session.close();
   });

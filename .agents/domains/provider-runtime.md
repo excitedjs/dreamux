@@ -776,12 +776,14 @@ emit another usage activity.
   differences nothing and keeps no history. A consumer derives a turn delta
   by differencing consecutive snapshots for the same agent.
 - Codex's collector forwards matching-thread `thread/tokenUsage/updated`.
-  TurnManager replaces one latest snapshot and clears it on a collector/thread
-  change. Input/output come from `total.inputTokens` and `total.outputTokens`;
-  cached input and reasoning output are already included. Context used is
-  `last.totalTokens`; the window is `modelContextWindow`, and a display layer
-  computes `round(used / window * 100)` for a positive window, deliberately
-  not the TUI's baseline-adjusted calculation.
+  TurnManager replaces one latest snapshot, consumes it at the turn's
+  terminal, and clears it both there and on a collector/thread change.
+  Input/output come from `total.inputTokens` and `total.outputTokens`; cached
+  input and reasoning output are already included. Context is included only
+  when `last.totalTokens` and a *positive* `modelContextWindow` are both
+  present; otherwise the activity carries `context: null` and a display layer
+  renders `n/a` — the historical line — rather than a used count that would
+  be indistinguishable from a runtime that structurally lacks a window.
 - Claude's stream parser sums the current result's `modelUsage` entries:
   input includes `inputTokens`, `cacheReadInputTokens` and
   `cacheCreationInputTokens`; output is `outputTokens`. These are native

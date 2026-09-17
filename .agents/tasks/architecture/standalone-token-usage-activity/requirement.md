@@ -59,8 +59,15 @@ layers that want the historical line render it themselves.
   consecutive snapshots for the same agent.
 - codex emits it at the existing terminal point from the turn's latest
   `thread/tokenUsage/updated` snapshot; id convention stays `${turnId}:usage`.
-  claude emits it on `result`/`interrupted` from the native result envelope;
-  id convention stays `stream-${seq}:usage`; its window is always `null`.
+  It includes `context` only when both `last.totalTokens` and a *positive*
+  `modelContextWindow` are present; otherwise the field is `null` so the
+  historical line renders `n/a` rather than a used count the old line never
+  showed. The snapshot is consumed with its turn's terminal and cleared, so a
+  later same-thread turn that receives no update emits no usage instead of
+  repeating the previous turn's totals.
+- claude emits it on `result`/`interrupted` from the native result envelope;
+  id convention stays `stream-${seq}:usage`; its window is structurally always
+  `null`, and its used-context compact display is the pre-existing behaviour.
 - Terminal ordering is unchanged: interruption marker, then `token.usage`,
   then `turn.ended`.
 - The conversation projection maps the activity camelCase to snake_case with

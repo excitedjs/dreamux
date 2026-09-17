@@ -705,7 +705,7 @@ describe('CodexRuntime token usage', () => {
     await manager.stop();
   });
 
-  it('reports used context tokens with a null window when codex holds no window size', async () => {
+  it('omits context entirely when codex holds no positive window size, so the line stays n/a', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
@@ -717,12 +717,58 @@ describe('CodexRuntime token usage', () => {
     client.emitTokenUsage('fresh-thread-1', 'turn-1', { ...usage(), modelContextWindow: null });
     client.emitCompleted('fresh-thread-1', 'turn-1', 'answer');
     await submission.settled;
-    expect(activity.at(-2)).toMatchObject({
+    expect(activity.at(-2)).toEqual({
       kind: 'token.usage',
+      occurredAt: expect.any(Number),
+      id: 'turn-1:usage',
       inputTokens: 28_568,
       outputTokens: 69,
-      context: { usedTokens: 14_500, windowTokens: null },
+      context: null,
     });
+    await runtime.stop();
+  });
+
+  it('treats a zero window like a missing one, even with used tokens present', async () => {
+    const activity: RuntimeActivity[] = [];
+    const { deps, client } = makeDeps({
+      client: new FakeCodexWsClient({ autoComplete: false }),
+      activitySink: (fact) => { activity.push(fact); },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', { ...usage(), modelContextWindow: 0 });
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'answer');
+    await submission.settled;
+    const token = activity.at(-2);
+    expect(token?.kind === 'token.usage' && token.context).toBeNull();
+    await runtime.stop();
+  });
+
+  it('does not repeat the previous turn snapshot when the next same-thread turn ends without an update', async () => {
+    const activity: RuntimeActivity[] = [];
+    const { deps, client } = makeDeps({
+      client: new FakeCodexWsClient({ autoComplete: false }),
+      activitySink: (fact) => { activity.push(fact); },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const first = requireSubmitted(await runtime.submit({ text: 'first' }));
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', usage());
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'first answer');
+    await first.settled;
+    expect(activity.filter((fact) => fact.kind === 'token.usage')).toHaveLength(1);
+
+    // Turn 2 fails on the same thread before any tokenUsage notification: its
+    // end must not re-label turn 1's counters as `turn-2:usage`.
+    const second = requireSubmitted(await runtime.submit({ text: 'second' }));
+    client.emitTurnFailed('fresh-thread-1', 'turn-2', 'model failed');
+    await second.settled;
+    expect(activity.map((fact) => fact.kind)).toEqual([
+      'assistant.message', 'token.usage', 'turn.ended',
+      'turn.ended',
+    ]);
+    expect(activity.some((fact) => fact.kind === 'token.usage' && fact.id === 'turn-2:usage')).toBe(false);
     await runtime.stop();
   });
 });

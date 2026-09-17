@@ -501,9 +501,29 @@ describe('conversation projection: token.usage', () => {
       outputTokens: 5,
       context: null,
     });
-    const usage = activityOf(publisher);
-    expect(usage.kind === 'token.usage' && usage.context).toBeNull();
-    expect(usage.kind === 'token.usage' && usage.redacted).toBe(false);
+    expect(activityOf(publisher)).toEqual({
+      kind: 'token.usage',
+      event_id: 'stream-0:usage',
+      input_tokens: 10,
+      output_tokens: 5,
+      context: null,
+      redacted: false,
+    });
+  });
+});
+
+describe('conversation projection: unknown activity kinds', () => {
+  it('drops a fact a newer provider emitted but this Core cannot project, with a warning', () => {
+    const { publisher, warnCalls, projection, agent } = harness();
+    const future = {
+      kind: 'token.usage.v2',
+      occurredAt: Date.now(),
+      id: 'turn-1:usage',
+      tokens: 1,
+    } as unknown as RuntimeActivity;
+    projection.projectActivity(agent, future);
+    expect(publisher.published).toHaveLength(0);
+    expect(warnCalls.some((call) => call.message === 'Dropping an activity this Core build cannot project')).toBe(true);
   });
 });
 

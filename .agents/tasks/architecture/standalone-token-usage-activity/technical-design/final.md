@@ -45,11 +45,11 @@ The type doc is the contract and states all of it:
 | Package | Change |
 | --- | --- |
 | `@excitedjs/dreamux-types` | Add the two union members with the cumulative/live-only contract doc. |
-| `@excitedjs/agent-runtime-codex` (`turn-manager.ts`) | Replace the terminal synthetic message with `tokenUsageActivity(turnId, snapshot)`; delete `usageSummary()` and the package's `formatTokenCount()`. Snapshot plumbing (latest-only replace, thread-change reset, `isTokenCount` guards) is unchanged. |
+| `@excitedjs/agent-runtime-codex` (`turn-manager.ts`) | Replace the terminal synthetic message with `tokenUsageActivity(turnId, snapshot)`; delete `usageSummary()` and the package's `formatTokenCount()`. Context is emitted only with a positive window; the latest snapshot is consumed at the terminal (and still replaced per notification and cleared on a collector thread change). |
 | `@excitedjs/agent-runtime-claude-code` (`runtime-activity.ts`) | The `result`/`interrupted` branch emits `token.usage` from `outcome.tokenUsage`, with `context = contextTokens == null ? null : {usedTokens: contextTokens, windowTokens: null}`; delete the package's `formatTokenCount()`. `stream.ts` parsing is untouched. |
-| `@excitedjs/dreamux` (`conversation-projection.ts`) | New `case 'token.usage'` projects camelCase to snake_case, verbatim numbers, `redacted: false`. |
-| `@excitedjs/feishu-channel` | `feishu-cot-adapter.ts` routes the kind to a new `acceptTokenUsage()`; `feishu-cot-activity.ts` exports `tokenUsageSummary()` and owns `formatTokenCount()`, moved down from the runtimes; `feishu-cot-token-usage.test.ts` owns the rendering table. |
-| Tests | Both runtime test suites' usage sections rewritten from text assertions to exact structured-object assertions; one new channel test file. |
+| `@excitedjs/dreamux` (`conversation-projection.ts`) | New `case 'token.usage'` projects camelCase to snake_case, verbatim numbers, `redacted: false`. A compile-time `never` check plus a run-time `default` drops an unknown newer kind with a warning instead of publishing `activity: undefined`. |
+| `@excitedjs/feishu-channel` | `feishu-cot-adapter.ts` routes the kind to a new `acceptTokenUsage()` under a `never`-exhaustive switch; `feishu-cot-activity.ts` exports `tokenUsageSummary()` and owns `formatTokenCount()`, moved down from the runtimes; `feishu-cot-token-usage.test.ts` owns the rendering table, and `feishu-cot-delivery.test.ts` owns the activity-to-card path. |
+| Tests | Both runtime test suites' usage sections rewritten from text assertions to exact structured-object assertions; projection, card-delivery, null-window/zero-window, and stale-snapshot cases added. |
 | Rush changes | Minor change files for all five packages: the activity union is additive. |
 | Knowledge | Provider-runtime domain, channel domain, and the product catalog now describe the neutral kind; this task's records. |
 
@@ -66,7 +66,11 @@ the historical line from the structured fields:
 - context with a positive window: `round(used / window * 100)%` — the same
   deliberately non-TUI calculation codex used;
 - context without a window (claude): the compact used count;
-- no context at all: `n/a`;
+- `context: null` — a runtime that had no usable context signal: `n/a`. This
+  is the only codex no-window case: codex omits the field unless the
+  app-server gives both a used footprint and a positive window, which keeps
+  its historical `n/a` line distinct from claude's structurally windowless
+  compact count;
 - total is input plus output; counts compact to decimal lowercase `k`/`m`/`b`,
   one decimal max, plain below 1,000.
 
@@ -92,10 +96,23 @@ rejected:
 ## 5. Compatibility
 
 The union member is additive end to end: type union, projection, and channel
-routing. An older consumer's exhaustive switch simply has no case for it. No
-old member, field, id convention, or emission changed; the only deletion is
-the provider-internal prose assembly, whose output the channel now reproduces
-from the new fact.
+routing. No old member, field, id convention, or emission changed; the only
+deletion is the provider-internal prose assembly, whose output the channel
+now reproduces from the new fact.
+
+The "unknown kind is ignored" guarantee holds at two boundaries and is
+narrower at a third:
+
+- an older **channel listener** behind an upgraded Core never sees the kind
+  it does not subscribe to, and the Feishu adapter's exhaustive switch makes a
+  missing dispatch arm a compile error;
+- an older **Core** behind an independently upgraded provider no longer
+  publishes it as `activity: undefined`: the projection's run-time default
+  drops the fact with a warning. The fact is silently absent for that Core,
+  never malformed;
+- this repository ships Core and providers in one monorepo release, so the
+  independently-upgraded-provider case is defensive rather than a supported
+  deployment matrix.
 
 ## 6. As built
 
@@ -112,3 +129,18 @@ from the new fact.
 - **claude's `windowTokens` is always `null`.** The CLI envelope gives no
   window size; used-context compact display was the pre-existing behaviour and
   is preserved.
+- **Review corrections (PR review CHANGES REQUESTED, 2026-09-17).**
+  1. Codex's first cut emitted `{usedTokens, windowTokens: null}` without a
+     window, indistinguishable on the wire from claude's compact-count case,
+     which changed codex's historical `n/a` line into a used count. Codex now
+     omits `context` unless a positive window exists. The distinction between
+     "runtime structurally lacks a window" (claude → count) and "runtime
+     failed to supply one this turn" (codex → n/a) is carried by presence, not
+     a new field.
+  2. Codex consumed a turn's snapshot without clearing it, so a same-thread
+     turn with no usage update re-emitted the previous totals under a new id.
+     The snapshot is now cleared with the terminal; notifications always
+     precede their own terminal, so no live update is lost.
+  3. The projection and the adapter both gained compile-time exhaustiveness;
+     the projection additionally drops a run-time unknown kind.
+  4. Card-level delivery tests pin that the dispatch arm actually exists.

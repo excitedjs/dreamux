@@ -1311,7 +1311,8 @@ policy; the Dispatcher, having no Team, is never fenced. Feishu ignores
 Team-member events explicitly and never routes them through a recipient's state.
 
 Once a recipient has an anchor, Core-projected assistant text, tool calls and
-results, and inputs enter its display. Ordinary inputs retain their bodies.
+results, the token-usage line the Channel renders itself from a `token.usage`
+activity, and inputs enter its display. Ordinary inputs retain their bodies.
 Automated inputs use compact Channel-owned labels: `TEAMMATE CALLBACK` with the
 producer name, `CRON TRIGGERED`, `WORKFLOW FINISHED` without a name, and
 `SYSTEM RESTARTED` for the current Dispatcher system notice. Completion kind and

@@ -223,6 +223,11 @@ export class TurnManager {
       !(terminal instanceof Error) && terminal.status === 'interrupted';
     if (interrupted) this.emitActivity(interruptedActivity(turnId));
     const usage = tokenUsageActivity(turnId, this.tokenUsage);
+    // Consume the snapshot with the turn it was observed for. A tokenUsage
+    // notification always precedes that turn's terminal, so the next native
+    // turn either replaces this field with its own snapshot or, receiving no
+    // update, emits no usage instead of repeating the previous turn's totals.
+    this.tokenUsage = null;
     if (usage !== null) this.emitActivity(usage);
     // The display line ends here, on codex's own terminal. The collector
     // reports each turn's terminal once, so this is the one end the turn gets
@@ -589,14 +594,21 @@ function tokenUsageActivity(turnId: string, usage: ThreadTokenUsage | null): Run
   if (!isTokenCount(input) || !isTokenCount(output)) return null;
   const contextUsed = usage?.last?.totalTokens;
   const contextWindow = usage?.modelContextWindow;
+  // A context percentage exists only when the app-server gives both the used
+  // footprint and a positive window. Without a window the historical line is
+  // `n/a`, which the display layer renders from `context: null`; emitting the
+  // used count here would make it indistinguishable from runtimes whose window
+  // is structurally always absent.
+  const hasContext =
+    isTokenCount(contextUsed) && isTokenCount(contextWindow) && contextWindow > 0;
   return {
     kind: 'token.usage',
     occurredAt: Date.now(),
     id: `${turnId}:usage`,
     inputTokens: input,
     outputTokens: output,
-    context: isTokenCount(contextUsed)
-      ? { usedTokens: contextUsed, windowTokens: isTokenCount(contextWindow) ? contextWindow : null }
+    context: hasContext
+      ? { usedTokens: contextUsed, windowTokens: contextWindow }
       : null,
   };
 }
