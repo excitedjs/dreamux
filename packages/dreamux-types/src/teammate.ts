@@ -132,6 +132,29 @@ export type TeammateActivity =
       readonly redacted: boolean;
     }
   | {
+      /**
+       * The runtime compacted its context. Carries no summary or compaction
+       * metadata. Live-only: the cold activity reader never produces this.
+       */
+      readonly kind: 'context.compacted';
+      readonly event_id: string;
+      /** Always false: this activity carries no text to redact. */
+      readonly redacted: boolean;
+    }
+  | {
+      /**
+       * A display marker, not a terminal: a native turn stopped at an interrupt
+       * request. Reported from the native interrupted terminal, before its
+       * `token.usage` (when available) and paired `turn.ended` with status
+       * `interrupted`. Teardown reports `turn.ended` `interrupted` without this
+       * marker. Live-only: the cold activity reader never produces this.
+       */
+      readonly kind: 'turn.interrupted';
+      readonly event_id: string;
+      /** Always false: this activity carries no text to redact. */
+      readonly redacted: boolean;
+    }
+  | {
       readonly kind: 'tool.call';
       readonly event_id: string;
       readonly call_id: string;
@@ -176,6 +199,7 @@ export type TeammateActivity =
        * stream's terminal: a surface showing this Agent's activity finishes on
        * it. Core publishes the same fact for an input no runtime ever accepted,
        * because such an input still opened a surface that nothing else closes.
+       * A native interrupt also reports `turn.interrupted` before this end.
        */
       readonly kind: 'turn.ended';
       readonly status: 'completed' | 'failed' | 'interrupted';

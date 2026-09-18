@@ -45,6 +45,8 @@ import {
 } from './feishu-cot-events.js';
 import {
   acceptAssistantMessage,
+  acceptContextCompacted,
+  acceptTurnInterrupted,
   acceptInputMessage,
   acceptTokenUsage,
   acceptToolCallActivity,
@@ -245,6 +247,12 @@ export class FeishuCotAdapter {
     const found = this.stateFor(event);
     if (found === null) return;
     switch (event.activity.kind) {
+      case 'context.compacted':
+        acceptContextCompacted(this.activity, found.key, found.state, event.activity);
+        return;
+      case 'turn.interrupted':
+        acceptTurnInterrupted(this.activity, found.key, found.state, event.activity);
+        return;
       case 'assistant.message':
         acceptAssistantMessage(this.activity, found.key, found.state, event.activity);
         return;

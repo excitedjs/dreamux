@@ -96,7 +96,7 @@ function streamUserEnvelope(
 }
 
 describe('handleProtocolEvent live activity', () => {
-  it('shows a compaction as the one line COMPACTED SESSION, never the summary the CLI wrote', () => {
+  it('reports compaction without text or metadata, never the summary the CLI wrote', () => {
     const h = makeHarness();
     h.fire({
       kind: 'stream',
@@ -120,7 +120,7 @@ describe('handleProtocolEvent live activity', () => {
       },
     });
     expect(h.activityEvents).toEqual([
-      expect.objectContaining({ kind: 'assistant.message', text: 'COMPACTED SESSION' }),
+      { kind: 'context.compacted', occurredAt: expect.any(Number), id: 'stream-0:compacted' },
     ]);
   });
 
@@ -325,10 +325,13 @@ describe('handleProtocolEvent token usage', () => {
     handleProtocolEvent({
       kind: 'interrupted', outcome: outcome({ isError: true, tokenUsage: { inputTokens: 100, outputTokens: 5 } }),
     }, { activity: { activitySequence: 0, tools: new Map() }, activitySink: (fact) => { events.push(fact); } });
-    expect(events).toMatchObject([
-      { kind: 'assistant.message', text: '[Request interrupted by user]' },
-      { kind: 'token.usage', inputTokens: 100, outputTokens: 5, context: null },
-      { kind: 'turn.ended', status: 'interrupted', reason: null },
+    expect(events).toEqual([
+      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'stream-0:interrupted' },
+      {
+        kind: 'token.usage', occurredAt: expect.any(Number), id: 'stream-1:usage',
+        inputTokens: 100, outputTokens: 5, context: null,
+      },
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
     ]);
   });
 
@@ -341,19 +344,16 @@ describe('handleProtocolEvent token usage', () => {
 });
 
 describe('handleProtocolEvent native turn end', () => {
-  it('marks an interrupted turn on the card before ending it interrupted', () => {
-    const h = makeHarness();
-    h.fire({ kind: 'interrupted' });
-
-    // The CLI writes this sentence itself, on a `user` envelope whose text
-    // blocks are never displayed, so the provider is what puts it on the card.
-    expect(h.activityEvents).toEqual([
-      expect.objectContaining({
-        kind: 'assistant.message',
-        text: '[Request interrupted by user]',
-      }),
+  it('reports a text-free interrupt marker before the end when no metrics are available', () => {
+    const events: RuntimeActivity[] = [];
+    handleProtocolEvent({ kind: 'interrupted' }, {
+      activity: { activitySequence: 0, tools: new Map() },
+      activitySink: (fact) => { events.push(fact); },
+    });
+    expect(events).toEqual([
+      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'stream-0:interrupted' },
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
     ]);
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
   });
 
   it('emits exactly one ended fact for a turn that folded three commands into one result', () => {

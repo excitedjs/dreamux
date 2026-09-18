@@ -565,6 +565,59 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
   });
 });
 
+describe.each([
+  ['context.compacted', 'COMPACTED SESSION'],
+  ['turn.interrupted', '[Request interrupted by user]'],
+] as const)('FeishuChannelSession COT — %s display identity', (kind, label) => {
+  it.each([false, true])('matches assistant.message card events with an open card: %s', async (open) => {
+    const deliver = async (activity: TeammateActivity) => {
+      const { session, cot, port } = await harness('chan-cot-marker', async (command, payload, emit) => {
+        if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+        emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
+        return { status: 'submitted', turn_id: 'turn-1' };
+      });
+      try {
+        await session.submit(null, {
+          kind: 'chat', attrs: {}, text: 'hello', reminder: '', sourceId: 'om_user_1',
+          anchor: { chatId: 'oc_dm', messageId: 'om_user_1', target: chatTarget('oc_dm', 'p2p') },
+        });
+        port.emit(nativeEnd('dispatcher'));
+        await waitFor(() => cot.cards.length === 1 && cotTerminal(cot.cards[0]!) === 'done');
+
+        if (open) {
+          port.emit(assistantMessage('before', 'dispatcher', 'Before the marker'));
+          await waitFor(() => cot.cards.length === 2 && cotTexts(cot.cards[1]!).length === 1);
+        }
+        expect(cot.cards).toHaveLength(open ? 2 : 1);
+        port.emit(activityEvent('dispatcher', activity));
+        await waitFor(() => cot.cards.length === 2 && cotTexts(cot.cards[1]!).includes(label));
+        const card = cot.cards[1]!;
+        expect(card.originMessageId).toBe('om_user_1');
+        expect(card.chatId).toBe('oc_dm');
+        expect(cotTerminal(card)).toBeNull();
+        port.emit(tokenUsage('dispatcher', 'turn-1:usage', null));
+        port.emit(nativeEnd('dispatcher', kind === 'turn.interrupted' ? 'interrupted' : 'completed'));
+        await waitFor(() => cotTerminal(card) !== null);
+        expect(cot.cards).toHaveLength(2);
+        expect(cotTerminal(card)).toBe(kind === 'turn.interrupted' ? 'interrupted' : 'done');
+        expect(cotTexts(card)).toEqual([
+          ...(open ? ['Before the marker'] : []),
+          label,
+          'Context usage n/a | Token usage: total=28.6k input=28.6k output=69',
+        ]);
+        return card.events.filter((event) => event.eventType.startsWith('TEXT_MESSAGE_'));
+      } finally {
+        await session.close();
+      }
+    };
+    const expected = await deliver({
+      kind: 'assistant.message', event_id: 'native-event', content: label, redacted: false,
+    });
+    const actual = await deliver({ kind, event_id: 'native-event', redacted: false });
+    expect(actual).toEqual(expected);
+  });
+});
+
 describe('FeishuChannelSession COT — token.usage reaches the open card', () => {
   it('appends the rendered usage line for a percentage context', async () => {
     const { session, cot, port } = await harness('chan-cot-usage', async (

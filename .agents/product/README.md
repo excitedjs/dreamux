@@ -153,10 +153,14 @@ the same change that touches it.
 - **An interrupted turn says so on its card.** When a turn is interrupted, the
   card gains the line `[Request interrupted by user]` where the agent's next
   words would have gone, and the card's status reads 任务中断 rather than
-  任务已完成. Both runtimes do both halves; the operator ruled after testing that
-  they must agree. What a stopped turn delivers still differs — Claude Code
-  delivers nothing, Codex delivers what it produced before the stop.
-  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
+  任务已完成. Both runtimes report both halves; the operator ruled after testing
+  that they must agree. The line belongs to an interrupt the runtime itself
+  reports: a card still open when its Team is dissolved or the service stops
+  reads 任务中断 without it. What a stopped turn delivers still differs — Claude
+  Code delivers nothing, Codex delivers what it produced before the stop.
+  (Tasks: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md);
+  the Channel-rendered line and the teardown case,
+  [standalone-compaction-activity](/.agents/tasks/architecture/standalone-compaction-activity/requirement.md).)
 - **The Feishu channel writes its slash-command and introduce text in
   English.** Command receipts, the running-Teams card, and the `/introduce`
   acknowledgement are English by operator ruling. This says nothing about
@@ -390,8 +394,8 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   still suppresses its own already-visible inbound body by source ID.
   (Task: [COT tool details and notifications](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md).)
 - **A compaction is one line.** When the runtime compacts its context, the
-  card shows `COMPACTED SESSION` as an assistant message, and nothing of the
-  summary the runtime wrote for itself. The uppercase label is specified in
+  card shows the line `COMPACTED SESSION`, and nothing of the summary the
+  runtime wrote for itself. The uppercase label is specified in
   [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).
   (Ruling: 「优化一下 COT 的展示效果 … 你需要同时兼顾 claude code 和 codex 这两边
   … 然后在 dreamux 的 activity 的 interface 里，扩展一些字段，最后

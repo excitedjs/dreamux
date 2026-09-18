@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Project context.compacted and turn.interrupted activities with their native ids and no display text.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

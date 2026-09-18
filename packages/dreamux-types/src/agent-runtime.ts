@@ -210,6 +210,27 @@ export type RuntimeActivity =
       readonly text: string;
     }
   | {
+      /**
+       * The runtime compacted its context. Carries no summary or compaction
+       * metadata. Live-only: the cold activity reader never produces this.
+       */
+      readonly kind: 'context.compacted';
+      readonly occurredAt: number;
+      readonly id: string;
+    }
+  | {
+      /**
+       * A display marker, not a terminal: a native turn stopped at an interrupt
+       * request. Reported from the native interrupted terminal, before its
+       * `token.usage` (when available) and paired `turn.ended` with status
+       * `interrupted`. Teardown reports `turn.ended` `interrupted` without this
+       * marker. Live-only: the cold activity reader never produces this.
+       */
+      readonly kind: 'turn.interrupted';
+      readonly occurredAt: number;
+      readonly id: string;
+    }
+  | {
       readonly kind: 'tool.call';
       readonly occurredAt: number;
       readonly id: string;
@@ -277,6 +298,7 @@ export type RuntimeActivity =
        * native turn that ended without either, such as a stop or a protocol
        * loss. `reason` carries the runtime's own explanation when it holds
        * one, so a display can say why rather than only that.
+       * A native interrupt also reports `turn.interrupted` before this end.
        *
        * A provider reports this from the native terminal it observed, and
        * again, without asking whether a turn was open, when it tears down a

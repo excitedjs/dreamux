@@ -122,6 +122,37 @@ export function acceptAssistantMessage(
   acceptDisplayText(sink, key, state, 'assistant', event.event_id, event.content);
 }
 
+/** A compaction is one line, never the summary the runtime wrote for itself. */
+export function acceptContextCompacted(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  event: Extract<TeammateActivity, { kind: 'context.compacted' }>,
+): void {
+  acceptFixedLabel(sink, key, state, event.event_id, 'COMPACTED SESSION');
+}
+
+/** The interrupt line on this recipient's card, in Claude Code's own words. */
+export function acceptTurnInterrupted(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  event: Extract<TeammateActivity, { kind: 'turn.interrupted' }>,
+): void {
+  acceptFixedLabel(sink, key, state, event.event_id, '[Request interrupted by user]');
+}
+
+function acceptFixedLabel(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  eventId: string,
+  label: string,
+): void {
+  if (!presentable(state)) return;
+  acceptDisplayText(sink, key, state, 'assistant', eventId, label);
+}
+
 /**
  * The turn's cumulative token counters, on this recipient's card. The card
  * shows the same one-line summary runtimes used to emit as a message; the

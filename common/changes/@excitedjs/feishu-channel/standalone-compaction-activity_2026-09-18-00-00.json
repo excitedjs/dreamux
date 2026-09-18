@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Render context.compacted and turn.interrupted with the unchanged COMPACTED SESSION and [Request interrupted by user] labels, preserving card placement and opening behavior.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

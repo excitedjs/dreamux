@@ -130,36 +130,29 @@ function emitStreamActivity(
   }
 }
 
-// The compaction summary is too long for a card; display only that compaction happened.
-const COMPACTED_SESSION_MESSAGE = 'COMPACTED SESSION';
-
 function compactedActivity(activityState: NativeActivityState): RuntimeActivity {
   return {
-    kind: 'assistant.message',
+    kind: 'context.compacted',
     occurredAt: Date.now(),
     id: `stream-${activityState.activitySequence++}:compacted`,
-    text: COMPACTED_SESSION_MESSAGE,
   };
 }
 
 /**
- * The one line the card shows for an interrupted turn, in Claude Code's own
- * words. The CLI writes this sentence itself, but as a text block on a `user`
- * envelope, and those blocks are not displayed (see the `user` note above) —
- * an interrupted tool call otherwise leaves only a red tool row saying claude
- * was told not to proceed. So the provider pushes the marker as an assistant
- * message, the same shape used for `COMPACTED SESSION`: no new activity kind,
- * one more assistant message carrying the line. This line reaching the COT is
- * what an interrupt owes the card; the card's terminal status matters less.
+ * The CLI writes the interrupt sentence as a text block on a `user` envelope,
+ * whose text is never displayed (see the `user` note above). Without this
+ * marker, an interrupted tool call leaves only a failed tool row, with no
+ * line saying the turn was stopped.
+ *
+ * Only the native interrupted terminal produces this marker. Teardown can
+ * end an active session without observing an interrupt request, so its end
+ * must not imply that this native event occurred.
  */
-const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
-
 function interruptedActivity(activityState: NativeActivityState): RuntimeActivity {
   return {
-    kind: 'assistant.message',
+    kind: 'turn.interrupted',
     occurredAt: Date.now(),
     id: `stream-${activityState.activitySequence++}:interrupted`,
-    text: INTERRUPTED_MESSAGE,
   };
 }
 

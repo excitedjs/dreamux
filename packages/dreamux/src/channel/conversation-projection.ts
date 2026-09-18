@@ -165,6 +165,13 @@ function projectedActivity(
   homePathPrefixes: readonly string[],
 ): TeammateActivity {
   switch (activity.kind) {
+    case 'context.compacted':
+    case 'turn.interrupted':
+      return {
+        kind: activity.kind,
+        event_id: activity.id,
+        redacted: false,
+      };
     case 'assistant.message': {
       const content = redactText(activity.text, cwd, homePathPrefixes);
       return {

@@ -133,10 +133,12 @@ describe('resident background turns and submitted commands', () => {
     }, { type: 'system', subtype: 'compact_boundary' });
     h.result('background answer');
     expect(h.activity.map((event) => event.kind)).toEqual([
-      'assistant.message', 'tool.call', 'tool.call', 'assistant.message', 'turn.ended',
+      'assistant.message', 'tool.call', 'tool.call', 'context.compacted', 'turn.ended',
     ]);
     expect(h.activity[2]).toMatchObject({ toolName: 'Bash', status: 'completed', result: 'done', arguments: { command: 'pwd' } });
-    expect(h.activity[3]).toMatchObject({ text: 'COMPACTED SESSION' });
+    expect(h.activity[3]).toEqual({
+      kind: 'context.compacted', occurredAt: expect.any(Number), id: 'stream-3:compacted',
+    });
     expect(h.activity[4]).toMatchObject({ status: 'completed' });
 
     const next = await h.submit('next');
@@ -402,12 +404,15 @@ describe('resident background turns and submitted commands', () => {
     expect(await h.completion(next)).toMatchObject({ resultText: 'A answer' });
   });
 
-  it('ignores late native protocol callbacks after stop', async () => {
+  it('reports only an interrupted end on teardown and ignores late native protocol callbacks', async () => {
     const h = await harness();
     h.emit(assistant('background work'));
+    const beforeStop = h.activity.length;
     await h.runtime.stop();
     const beforeLate = [...h.activity];
-    expect(beforeLate.at(-1)).toMatchObject({ kind: 'turn.ended', status: 'interrupted' });
+    expect(beforeLate.slice(beforeStop)).toEqual([
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+    ]);
     h.emit(assistant('late background text'));
     h.result('late background result');
     expect(h.activity).toEqual(beforeLate);

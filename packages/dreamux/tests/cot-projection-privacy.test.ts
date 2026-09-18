@@ -470,6 +470,16 @@ describe('conversation projection: content visible after redaction is unchanged,
   });
 });
 
+describe('conversation projection: text-free markers', () => {
+  it.each(['context.compacted', 'turn.interrupted'] as const)(
+    'projects %s with the same id and redacted:false', (kind) => {
+      const { publisher, projection, agent } = harness();
+      projection.projectActivity(agent, { kind, occurredAt: Date.now(), id: 'native-event' });
+      expect(activityOf(publisher)).toEqual({ kind, event_id: 'native-event', redacted: false });
+    },
+  );
+});
+
 describe('conversation projection: token.usage', () => {
   it('maps the cumulative counters verbatim with redacted:false', () => {
     const { publisher, projection, agent } = harness();

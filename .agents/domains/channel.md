@@ -1211,10 +1211,12 @@ the submission that caused it.
 `teammate.input` is published at the moment of submission, before any runtime
 has accepted it, so a submission that fails is visible together with the text
 that failed. `teammate.activity` carries a nested payload in the runtime's own
-vocabulary (`assistant.message`, `tool.call`, `token.usage`, `turn.ended`), so
-a runtime that learns to report something new adds a member and changes no
-event catalog, no seal, and no Channel subscription. `token.usage` carries
-cumulative counters rather than conversation content and is live-only.
+vocabulary (`assistant.message`, `tool.call`, `token.usage`,
+`context.compacted`, `turn.interrupted`, `turn.ended`), so a runtime that
+learns to report something new adds a member and changes no event catalog, no
+seal, and no Channel subscription. `token.usage` carries cumulative counters
+rather than conversation content and is live-only; `context.compacted` and
+`turn.interrupted` carry no text at all, only the fact and its id.
 `turn.ended` is the display stream's
 terminal, carrying the producer's own reason when it has one. Core publishes
 that same terminal itself for an input no runtime ever accepted, because such
@@ -1326,8 +1328,11 @@ policy; the Dispatcher, having no Team, is never fenced. Feishu ignores
 Team-member events explicitly and never routes them through a recipient's state.
 
 Once a recipient has an anchor, Core-projected assistant text, tool calls and
-results, the token-usage line the Channel renders itself from a `token.usage`
-activity, and inputs enter its display. Ordinary inputs retain their bodies.
+results, the lines the Channel renders itself from text-free activities — the
+token-usage line from `token.usage`, `COMPACTED SESSION` from
+`context.compacted`, and `[Request interrupted by user]` from
+`turn.interrupted`, each as an assistant-role row keyed by the activity's id —
+and inputs enter its display. Ordinary inputs retain their bodies.
 Automated inputs use compact Channel-owned labels: `TEAMMATE CALLBACK` with the
 producer name, `CRON TRIGGERED`, `WORKFLOW FINISHED` without a name, and
 `SYSTEM RESTARTED` for the current Dispatcher system notice. Completion kind and

@@ -409,12 +409,10 @@ describe('CodexRuntime submit() and settlement', () => {
     client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
     await submission.settled;
 
-    expect(activity.map((fact) => fact.kind)).toEqual([
-      'assistant.message',
-      'turn.ended',
+    expect(activity).toEqual([
+      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'turn-1:interrupted' },
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
     ]);
-    expect(activity[0]).toMatchObject({ text: '[Request interrupted by user]' });
-    expect(activity[1]).toMatchObject({ status: 'interrupted', reason: null });
     await runtime.stop();
   });
 
@@ -648,10 +646,14 @@ describe('CodexRuntime token usage', () => {
     const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
     client.emitTokenUsage('fresh-thread-1', 'turn-1', usage());
     client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
-    expect(activity).toMatchObject([
-      { kind: 'assistant.message', text: '[Request interrupted by user]' },
-      { kind: 'token.usage', inputTokens: 28_568, outputTokens: 69 },
-      { kind: 'turn.ended', status: 'interrupted', reason: null },
+    expect(activity).toEqual([
+      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'turn-1:interrupted' },
+      {
+        kind: 'token.usage', occurredAt: expect.any(Number), id: 'turn-1:usage',
+        inputTokens: 28_568, outputTokens: 69,
+        context: { usedTokens: 14_500, windowTokens: 29_000 },
+      },
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
     ]);
     await expect(submission.settled).resolves.toMatchObject({
       kind: 'completion', completion: { status: 'completed', resultText: null },
@@ -1113,13 +1115,13 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
-  it('shows a contextCompaction item as the one line COMPACTED SESSION, on completion only', async () => {
-    const messages: string[] = [];
+  it('reports a text-free context.compacted activity on item completion only', async () => {
+    const events: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
-        if (activity.kind === 'assistant.message') messages.push(activity.text);
+        events.push(activity);
       },
     });
     const runtime = new CodexRuntime(identity(null), deps);
@@ -1127,10 +1129,11 @@ describe('CodexRuntime native turn end', () => {
 
     requireSubmitted(await runtime.submit({ text: 'work' }));
     client.emitItem('fresh-thread-1', 'turn-1', 'started', { type: 'contextCompaction', id: 'compact-1' });
+    expect(events).toEqual([]);
     client.emitItem('fresh-thread-1', 'turn-1', 'completed', { type: 'contextCompaction', id: 'compact-1' });
-    await waitFor(() => messages.length === 1);
-
-    expect(messages).toEqual(['COMPACTED SESSION']);
+    expect(events).toEqual([
+      { kind: 'context.compacted', occurredAt: expect.any(Number), id: 'turn-1:compact-1:completed' },
+    ]);
     await runtime.stop();
   });
 
@@ -1154,13 +1157,13 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
-  it('reports interrupted, exactly once, when stop() tore down a turn mid-flight', async () => {
-    const nativeEnds: NativeTurnEnd[] = [];
+  it('reports only an interrupted end, exactly once, when stop() tears down a turn mid-flight', async () => {
+    const events: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
-        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+        events.push(activity);
       },
     });
     const runtime = new CodexRuntime(identity(null), deps);
@@ -1173,7 +1176,9 @@ describe('CodexRuntime native turn end', () => {
     // so no second end is reported.
     await runtime.stop();
 
-    expect(nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
+    expect(events).toEqual([
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+    ]);
   });
 
   it('reports the teardown end after a turn already completed: the runtime holds no display state', async () => {

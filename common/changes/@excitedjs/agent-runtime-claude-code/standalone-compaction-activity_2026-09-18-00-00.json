@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Report context compaction and native interruption as text-free activities with unchanged ids and order; teardown still reports only an interrupted end.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "053700@gmail.com"
+}
