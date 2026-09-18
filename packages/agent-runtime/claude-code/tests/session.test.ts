@@ -115,7 +115,7 @@ describe('resident session over real pipes', () => {
     // The assistant envelope reports the test child's PID; this is not Claude evidence.
     const childSource = `
       process.stdin.resume();
-      process.stdout.write(JSON.stringify({type:'assistant',message:{content:[
+      process.stdout.write(JSON.stringify({type:'assistant',uuid:'assistant-uuid',message:{content:[
         {type:'text',text:String(process.pid)}
       ]}})+'\\n');
     `;

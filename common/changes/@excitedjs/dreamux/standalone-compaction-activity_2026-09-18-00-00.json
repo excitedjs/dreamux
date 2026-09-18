@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Project RuntimeActivity without reshaping, redacting text and structured JSON payloads while retaining native ids, timestamps, result and error separately. Publish and validate the four Core events with camelCase members and remove unused redacted flags.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

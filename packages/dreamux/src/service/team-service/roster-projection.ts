@@ -48,12 +48,12 @@ export class TeamRosterProjection {
   publish(identity: AgentEntityIdentity, role: TeamContainedRole): void {
     this.remember(identity.name, role, identity.status);
     this.deps.coreEvents?.publish(identity.dispatcher_id, {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'teammate.state',
-      occurred_at: identity.updated_at,
-      teammate_name: identity.name,
+      occurredAt: identity.updated_at,
+      teammateName: identity.name,
       role,
-      team_name: this.deps.teamId,
+      teamName: this.deps.teamId,
       status: identity.status,
     });
     // The aggregate is redundant with the event above by design, so it is
@@ -99,6 +99,6 @@ export class TeamRosterProjection {
     role: TeamContainedRole,
     status: TeammateStatus,
   ): void {
-    this.members.set(name, { teammate_name: name, role, status });
+    this.members.set(name, { teammateName: name, role, status });
   }
 }

@@ -217,8 +217,8 @@ export class TurnManager {
     // An accepted interrupt is not a terminal of its own: codex answers it with
     // an ordinary `turn/completed` whose only mark is `status: "interrupted"`
     // (measured against codex-cli 0.153.4; see `TurnStatus`). Both the marker
-    // and the end below read that status, so an interrupted codex turn carries
-    // the same line and the same end an interrupted Claude Code turn does.
+    // and the end below read that status, so only a native interrupted terminal
+    // produces the marker.
     const interrupted =
       !(terminal instanceof Error) && terminal.status === 'interrupted';
     if (interrupted) this.emitActivity(interruptedActivity(turnId));
@@ -368,7 +368,7 @@ export class TurnManager {
    * and it is known before any submission binds.
    */
   private observeItem(turnId: string, item: ThreadItem, phase: 'started' | 'completed', occurredAt: number): void {
-    const activity = itemActivity(turnId, item, phase, occurredAt);
+    const activity = itemActivity(item, phase, occurredAt);
     if (activity !== null) this.emitActivity(activity);
     const record = this.nativeTurns.get(turnId);
     if (record !== undefined && record.representative !== null) return;
@@ -422,37 +422,23 @@ function createRuntimeSubmission(): SubmissionDeferred {
   return { submission, settle(settlement) { if (settled) return false; settled = true; resolve(settlement); return true; } };
 }
 
-// Compaction summaries stay inside codex-core; display only that compaction happened.
-const COMPACTED_SESSION_MESSAGE = 'COMPACTED SESSION';
-
 /**
- * The one line the card shows for an interrupted turn, in the words Claude
- * Code's own UI uses for the same fact. codex reports an interrupt only as a
- * terminal status on `turn/completed`, and a status is not a card fact, so
- * without this push the card shows an ordinary end and nothing says the turn
- * was stopped rather than answered. codex carries an interrupt marker too,
- * aligned with Claude Code, in the `COMPACTED SESSION` shape: an assistant
- * message from the provider, not a new activity kind.
+ * Codex reports an interrupt only as `turn.status: "interrupted"` on
+ * `turn/completed`. Without this marker the card shows only a terminal status.
  *
- * The end matches the marker: a stopped codex turn must read as interrupted
- * on the card, exactly as Claude Code's does. A card's terminal is
- * `turn.ended.status` verbatim: the Feishu channel maps `completed` to
- * `RUN_FINISHED status: done` and `interrupted` to `status: interrupted`, so
- * the end has to read the same status the marker does.
+ * Only the native interrupted terminal produces this marker. Teardown can
+ * end an active session without observing an interrupt request, so its end
+ * must not imply that this native event occurred.
  */
-const INTERRUPTED_MESSAGE = '[Request interrupted by user]';
-
 function interruptedActivity(turnId: string): RuntimeActivity {
   return {
-    kind: 'assistant.message',
+    kind: 'turn.interrupted',
     occurredAt: Date.now(),
-    id: `${turnId}:interrupted`,
-    text: INTERRUPTED_MESSAGE,
+    id: turnId,
   };
 }
 
 function itemActivity(
-  turnId: string,
   item: ThreadItem,
   phase: 'started' | 'completed',
   occurredAt: number,
@@ -464,17 +450,16 @@ function itemActivity(
     return {
       kind: 'assistant.message',
       occurredAt,
-      id: `${turnId}:${itemId}:completed`,
+      id: itemId,
       text: item.text,
     };
   }
   if (item.type === 'contextCompaction') {
     if (phase !== 'completed') return null;
     return {
-      kind: 'assistant.message',
+      kind: 'context.compacted',
       occurredAt,
-      id: `${turnId}:${itemId}:completed`,
-      text: COMPACTED_SESSION_MESSAGE,
+      id: itemId,
     };
   }
   const toolName = toolNameFor(item);
@@ -485,8 +470,7 @@ function itemActivity(
   return {
     kind: 'tool.call',
     occurredAt,
-    id: `${turnId}:${itemId}:${phase}`,
-    callId: itemId,
+    id: itemId,
     toolName,
     ...toolDisplay(item),
     status: phase === 'started' ? 'started' : failed ? 'failed' : 'completed',
@@ -604,7 +588,7 @@ function tokenUsageActivity(turnId: string, usage: ThreadTokenUsage | null): Run
   return {
     kind: 'token.usage',
     occurredAt: Date.now(),
-    id: `${turnId}:usage`,
+    id: turnId,
     inputTokens: input,
     outputTokens: output,
     context: hasContext

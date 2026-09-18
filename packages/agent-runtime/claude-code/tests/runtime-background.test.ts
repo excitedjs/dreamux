@@ -90,7 +90,7 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
     emit({ type: 'command_lifecycle', command_uuid: uuid, state });
   };
   const result = (text: string, extra: Record<string, unknown> = {}): void => {
-    emit({ type: 'result', subtype: 'success', result: text, ...extra });
+    emit({ type: 'result', uuid: 'result-uuid', subtype: 'success', result: text, ...extra });
   };
   const submit = async (text: string): Promise<RuntimeSubmission> => {
     const admission = await runtime.submit({ text });
@@ -114,7 +114,7 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
 }
 
 const assistant = (text: string): Record<string, unknown> => ({
-  type: 'assistant', message: { content: [{ type: 'text', text }] },
+  type: 'assistant', uuid: 'assistant-uuid', message: { content: [{ type: 'text', text }] },
 });
 
 describe('resident background turns and submitted commands', () => {
@@ -122,22 +122,26 @@ describe('resident background turns and submitted commands', () => {
     const h = await harness();
     h.activity.length = 0;
     h.emit(assistant('background work'), {
-      type: 'assistant',
+      type: 'assistant', uuid: 'tool-envelope-uuid',
       message: { content: [{ type: 'tool_use', id: 'background-tool', name: 'Bash', input: { command: 'pwd' } }] },
     }, {
-      type: 'user',
+      type: 'user', uuid: 'tool-result-envelope-uuid',
       message: { content: [
         { type: 'text', text: 'private injected context' },
         { type: 'tool_result', tool_use_id: 'background-tool', content: 'done' },
       ] },
-    }, { type: 'system', subtype: 'compact_boundary' });
+    }, { type: 'system', subtype: 'compact_boundary', uuid: 'compact-uuid' });
     h.result('background answer');
-    expect(h.activity.map((event) => event.kind)).toEqual([
-      'assistant.message', 'tool.call', 'tool.call', 'assistant.message', 'turn.ended',
+    expect(h.activity).toEqual([
+      { kind: 'assistant.message', occurredAt: expect.any(Number), id: 'assistant-uuid', text: 'background work' },
+      ...['started', 'completed'].map((status) => ({
+        kind: 'tool.call', occurredAt: expect.any(Number), id: 'background-tool',
+        toolName: 'Bash', action: 'run', summary: 'pwd', invocation: 'pwd', items: [],
+        status, arguments: { command: 'pwd' }, result: status === 'completed' ? 'done' : null, error: null,
+      })),
+      { kind: 'context.compacted', occurredAt: expect.any(Number), id: 'compact-uuid' },
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'completed', reason: null },
     ]);
-    expect(h.activity[2]).toMatchObject({ toolName: 'Bash', status: 'completed', result: 'done', arguments: { command: 'pwd' } });
-    expect(h.activity[3]).toMatchObject({ text: 'COMPACTED SESSION' });
-    expect(h.activity[4]).toMatchObject({ status: 'completed' });
 
     const next = await h.submit('next');
     h.lifecycle(h.writes[1]!.uuid, 'started');
@@ -402,12 +406,37 @@ describe('resident background turns and submitted commands', () => {
     expect(await h.completion(next)).toMatchObject({ resultText: 'A answer' });
   });
 
-  it('ignores late native protocol callbacks after stop', async () => {
+  it.each([false, true])('uses the interrupted result envelope uuid with usage: %s', async (withUsage) => {
+    const h = await harness();
+    h.activity.length = 0;
+    const submission = await h.submit('work');
+    const inboundUuid = h.writes.at(-1)!.uuid;
+    h.lifecycle(inboundUuid, 'started');
+    h.result('', {
+      uuid: 'interrupted-result-uuid', user_message_uuid: inboundUuid,
+      subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools',
+      ...(withUsage ? { modelUsage: { main: { inputTokens: 100, outputTokens: 5 } } } : {}),
+    });
+    expect(h.activity).toEqual([
+      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'interrupted-result-uuid' },
+      ...(withUsage ? [{
+        kind: 'token.usage', occurredAt: expect.any(Number), id: 'interrupted-result-uuid',
+        inputTokens: 100, outputTokens: 5, context: null,
+      }] : []),
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+    ]);
+    await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
+  });
+
+  it('reports only an interrupted end on teardown and ignores late native protocol callbacks', async () => {
     const h = await harness();
     h.emit(assistant('background work'));
+    const beforeStop = h.activity.length;
     await h.runtime.stop();
     const beforeLate = [...h.activity];
-    expect(beforeLate.at(-1)).toMatchObject({ kind: 'turn.ended', status: 'interrupted' });
+    expect(beforeLate.slice(beforeStop)).toEqual([
+      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+    ]);
     h.emit(assistant('late background text'));
     h.result('late background result');
     expect(h.activity).toEqual(beforeLate);

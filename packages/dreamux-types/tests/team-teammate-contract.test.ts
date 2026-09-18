@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import type { RuntimeActivity } from '../src/agent-runtime.js';
 import type {
   SubmitCommand,
   TeamCreateCommand,
@@ -232,16 +233,16 @@ describe('TeamStateEvent republishes an aggregate with a bounded teammate summar
     assertType<Equal<TeamStateTeammateSummary['role'], TeamContainedRole>>();
 
     const summary: TeamStateTeammateSummary = {
-      teammate_name: 'agent-1',
+      teammateName: 'agent-1',
       role: 'team_leader',
       status: 'running',
     };
     const event: TeamStateEvent = {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'team.state',
-      occurred_at: 1,
-      team_name: 'team-a',
-      leader_name: 'agent-1',
+      occurredAt: 1,
+      teamName: 'team-a',
+      leaderName: 'agent-1',
       status: 'running',
       teammates: [summary],
     };
@@ -250,27 +251,43 @@ describe('TeamStateEvent republishes an aggregate with a bounded teammate summar
 });
 
 describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
-  it('TeammateStateEvent.team_name is null only for a Dispatcher, which never joins a Team', () => {
+  it('shares RuntimeActivity and spells every event member in camelCase', () => {
+    assertType<Equal<TeammateActivityEvent['activity'], RuntimeActivity>>();
+    assertType<Equal<keyof TeammateActorScope,
+      'schemaVersion' | 'occurredAt' | 'teammateName' | 'role' | 'teamName'>>();
+    assertType<Equal<keyof TeamStateEvent,
+      'schemaVersion' | 'kind' | 'occurredAt' | 'teamName' | 'leaderName' | 'status' | 'teammates'>>();
+    assertType<Equal<keyof TeamStateTeammateSummary, 'teammateName' | 'role' | 'status'>>();
+    assertType<Equal<keyof TeammateStateEvent, keyof TeammateActorScope | 'kind' | 'status'>>();
+    assertType<Equal<keyof Exclude<RuntimeActivity, { kind: 'turn.ended' }>, 'kind' | 'occurredAt' | 'id'>>();
+    assertType<Equal<keyof Extract<RuntimeActivity, { kind: 'tool.call' }>,
+      'kind' | 'occurredAt' | 'id' | 'toolName' | 'action' | 'summary' | 'invocation' | 'items'
+      | 'status' | 'arguments' | 'result' | 'error'>>();
+    assertType<Equal<keyof Extract<RuntimeActivity, { kind: 'turn.ended' }>,
+      'kind' | 'occurredAt' | 'status' | 'reason'>>();
+  });
+
+  it('TeammateStateEvent.teamName is null only for a Dispatcher, which never joins a Team', () => {
     const dispatcherEvent: TeammateStateEvent = {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'teammate.state',
-      occurred_at: 1,
-      teammate_name: 'dispatcher-1',
+      occurredAt: 1,
+      teammateName: 'dispatcher-1',
       role: 'dispatcher',
-      team_name: null,
+      teamName: null,
       status: 'running',
     };
     const teamEvent: TeammateStateEvent = {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'teammate.state',
-      occurred_at: 2,
-      teammate_name: 'agent-2',
+      occurredAt: 2,
+      teammateName: 'agent-2',
       role: 'teammate',
-      team_name: 'team-a',
+      teamName: 'team-a',
       status: 'running',
     };
-    expect(dispatcherEvent.team_name).toBeNull();
-    expect(teamEvent.team_name).toBe('team-a');
+    expect(dispatcherEvent.teamName).toBeNull();
+    expect(teamEvent.teamName).toBe('team-a');
   });
 
   it('teammate.input carries source provenance and the caller id, and no turn identity', () => {
@@ -280,28 +297,26 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
         | keyof TeammateActorScope
         | 'kind'
         | 'source'
-        | 'source_id'
+        | 'sourceId'
         | 'content'
         | 'notice'
-        | 'redacted'
       >
     >();
 
     const input: TeammateInputEvent = {
-      schema_version: 1,
-      occurred_at: 1,
-      teammate_name: 'agent-1',
+      schemaVersion: 1,
+      occurredAt: 1,
+      teammateName: 'agent-1',
       role: 'teammate',
-      team_name: 'team-a',
+      teamName: 'team-a',
       kind: 'teammate.input',
       source: 'feishu',
-      source_id: 'message-fixture',
+      sourceId: 'message-fixture',
       content: 'hello',
       notice: null,
-      redacted: false,
     };
 
-    expect(input.source_id).toBe('message-fixture');
+    expect(input.sourceId).toBe('message-fixture');
     // A caller recognizes its own submission by comparing this against ids it
     // issued. Presence proves nothing: cron fires, task push-backs, and restart
     // notices carry a source id too.
@@ -310,17 +325,16 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
 
   it('names the producer only for the push-backs whose provenance name cannot', () => {
     const callback: TeammateInputEvent = {
-      schema_version: 1,
-      occurred_at: 1,
-      teammate_name: 'agent-1',
+      schemaVersion: 1,
+      occurredAt: 1,
+      teammateName: 'agent-1',
       role: 'teammate',
-      team_name: 'team-a',
+      teamName: 'team-a',
       kind: 'teammate.input',
       source: 'task-notification',
-      source_id: null,
+      sourceId: null,
       content: 'TeamMate tm-1 has finished its task. …',
       notice: { kind: 'teammate_completion', producer: 'tm-1' },
-      redacted: false,
     };
 
     // The body still carries the whole notification the model reads; the
@@ -342,20 +356,20 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
     >();
 
     const scope: TeammateActorScope = {
-      schema_version: 1,
-      occurred_at: 1,
-      teammate_name: 'agent-1',
+      schemaVersion: 1,
+      occurredAt: 1,
+      teammateName: 'agent-1',
       role: 'teammate',
-      team_name: 'team-a',
+      teamName: 'team-a',
     };
     const message: TeammateActivityEvent = {
       ...scope,
       kind: 'teammate.activity',
       activity: {
         kind: 'assistant.message',
-        event_id: 'evt-1',
-        content: 'hello',
-        redacted: false,
+        occurredAt: 1,
+        id: 'evt-1',
+        text: 'hello',
       },
     };
     const toolCall: TeammateActivityEvent = {
@@ -363,17 +377,17 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
       kind: 'teammate.activity',
       activity: {
         kind: 'tool.call',
-        event_id: 'evt-2',
-        call_id: 'call-1',
-        tool_name: 'search',
-        tool_action: 'search',
+        occurredAt: 1,
+        id: 'call-1',
+        toolName: 'search',
+        action: 'search',
         summary: null,
         invocation: null,
         items: [],
         status: 'completed',
-        arguments_json: '{}',
-        result_json: '{}',
-        redacted: false,
+        arguments: {},
+        result: {},
+        error: null,
       },
     };
     const ended: TeammateActivityEvent = {
@@ -381,16 +395,16 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
       kind: 'teammate.activity',
       activity: {
         kind: 'turn.ended',
+        occurredAt: 1,
         status: 'failed',
         reason: 'the agent runtime is not running',
-        redacted: false,
       },
     };
 
     // Every member is addressed by the same actor scope; none carries a turn or
     // submission identity a consumer would have to correlate on.
     for (const event of [message, toolCall, ended]) {
-      expect(event.teammate_name).toBe('agent-1');
+      expect(event.teammateName).toBe('agent-1');
       expect(Object.keys(event.activity)).not.toContain('turn_id');
     }
   });

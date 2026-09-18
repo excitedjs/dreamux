@@ -594,12 +594,12 @@ export class DispatcherService {
     role: 'dispatcher' | 'teammate',
   ): void {
     this.coreEvents.publisher.publish(identity.dispatcher_id, {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'teammate.state',
-      occurred_at: identity.updated_at,
-      teammate_name: identity.name,
+      occurredAt: identity.updated_at,
+      teammateName: identity.name,
       role,
-      team_name: identity.team_id,
+      teamName: identity.team_id,
       status: identity.status,
     });
   }

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add text-free, live-only context.compacted and turn.interrupted activities. Replace TeammateActivity with RuntimeActivity in teammate.activity, retaining occurredAt and structured arguments/result/error payloads. Use native provider ids and remove tool.call.callId; ids may be shared across activity kinds and tool statuses. Remove redacted from activities and teammate.input. Rename members of team.state, teammate.state, teammate.input and teammate.activity (including actor scope and roster entries) to camelCase: schemaVersion, occurredAt, teamName, teammateName, leaderName and sourceId.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import type { TeammateActivity } from '@excitedjs/dreamux-types';
+import type { JsonValue, RuntimeActivity } from '@excitedjs/dreamux-types';
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
 import {
@@ -13,6 +13,7 @@ import {
   nonEmpty,
   preserveSpacing,
   prettyJson,
+  payloadText,
   toolPresentation,
   truncateEscaped,
   TRUNCATION_MARKER,
@@ -40,7 +41,7 @@ const COT_REQUEST_ENCODING_RESERVE_BYTES = 512;
  * produces: a card is open or ended, never held. The omission is deliberate.
  */
 export type FeishuCotTerminal = Extract<
-  TeammateActivity,
+  RuntimeActivity,
   { kind: 'turn.ended' }
 >['status'];
 
@@ -94,13 +95,20 @@ export function runTerminalEvent(
   }
 }
 
+/**
+ * A runtime reports one native id for several facts: a turn's usage and its
+ * interrupt marker share one. A display id therefore combines the row's
+ * namespace with its source. Rows Feishu adds itself — input echoes, opening
+ * receipts, and end reasons — take a random source.
+ */
 export function textMessageEvents(input: {
+  readonly namespace: string;
   readonly sourceId: string;
   readonly role: 'assistant' | 'user';
   readonly content: string;
 }): FeishuCotEventInput[] {
   if (input.content.trim() === '') return [];
-  const messageId = opaqueDisplayId('message', input.sourceId);
+  const messageId = opaqueDisplayId(input.namespace, input.sourceId);
   const start = checkedEvent({
     eventType: 'TEXT_MESSAGE_START',
     content: { messageId, role: input.role },
@@ -121,7 +129,7 @@ export function textMessageEvents(input: {
 }
 
 export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventInput[] {
-  const toolCallId = opaqueDisplayId('call', event.call_id);
+  const toolCallId = opaqueDisplayId('call', event.id);
   const presentation = toolPresentation(event);
   const events = [
     checkedEvent({
@@ -147,8 +155,8 @@ export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventI
 }
 
 export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEventInput[] {
-  const messageId = opaqueDisplayId('result', event.event_id);
-  const toolCallId = opaqueDisplayId('call', event.call_id);
+  const messageId = opaqueDisplayId('result', event.id);
+  const toolCallId = opaqueDisplayId('call', event.id);
   const presentation = toolPresentation(event);
   const failed = event.status === 'failed';
   const statusText = failed ? 'Failed' : 'Completed';
@@ -161,7 +169,7 @@ export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEvent
     : toolResultContent(
       failed,
       presentation.arguments,
-      toolResultOutput(event.result_json),
+      toolResultOutput(failed ? event.error ?? event.result : event.result),
     );
   const projected = {
     eventType: 'TOOL_CALL_RESULT',
@@ -249,8 +257,8 @@ export interface ToolResultOutput {
   readonly text: string;
 }
 
-export function toolResultOutput(resultJson: string | null): ToolResultOutput | null {
-  const text = nonEmpty(resultJson);
+export function toolResultOutput(result: JsonValue): ToolResultOutput | null {
+  const text = nonEmpty(payloadText(result));
   if (text === null) return null;
   const structured = prettyJson(text);
   if (structured !== null) return { kind: 'json', text: structured };

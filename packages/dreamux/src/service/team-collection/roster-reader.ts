@@ -55,10 +55,10 @@ export async function readTeamRoster(input: {
     // Omitted rather than published as something else: `teammates` states the
     // Agents this Team currently contains, and an unaligned identity is not
     // one of them. The Team's designated leader stays visible in the event's
-    // own `leader_name`, which is read from this record.
+    // own `leaderName`, which is read from this record.
     if (leader !== null && alignedWithLeader(leader, record)) {
       roster.push({
-        teammate_name: leader.name,
+        teammateName: leader.name,
         role: 'team_leader',
         status: leader.status,
       });
@@ -70,7 +70,7 @@ export async function readTeamRoster(input: {
     }).list();
     for (const member of members) {
       roster.push({
-        teammate_name: member.name,
+        teammateName: member.name,
         role: 'teammate',
         status: member.status,
       });

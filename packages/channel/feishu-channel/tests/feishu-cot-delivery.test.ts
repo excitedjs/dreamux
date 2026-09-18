@@ -26,7 +26,7 @@ import type {
   ChannelEventSubscription,
   DreamuxLogger,
   JsonValue,
-  TeammateActivity,
+  RuntimeActivity,
   TeammateActivityEvent,
   TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
@@ -126,11 +126,11 @@ function teamClosedError(): Error & { code: string } {
 
 function scopeOf(recipient: 'dispatcher' | 'leader') {
   return {
-    schema_version: 1 as const,
-    teammate_name: recipient === 'dispatcher' ? 'dispatcher-agent' : 'alpha-leader',
+    schemaVersion: 1 as const,
+    teammateName: recipient === 'dispatcher' ? 'dispatcher-agent' : 'alpha-leader',
     role: (recipient === 'dispatcher' ? 'dispatcher' : 'team_leader') as
       'dispatcher' | 'team_leader',
-    team_name: recipient === 'dispatcher' ? null : 'alpha',
+    teamName: recipient === 'dispatcher' ? null : 'alpha',
   };
 }
 
@@ -144,23 +144,22 @@ function inputEvent(
   return {
     ...scopeOf(recipient),
     kind: 'teammate.input',
-    occurred_at: 1_700_000_000_000,
+    occurredAt: 1_700_000_000_000,
     source,
-    source_id: sourceId,
+    sourceId: sourceId,
     content,
     notice: null,
-    redacted: false,
   };
 }
 
 function activityEvent(
   recipient: 'dispatcher' | 'leader',
-  activity: TeammateActivity,
+  activity: RuntimeActivity,
 ): TeammateActivityEvent {
   return {
     ...scopeOf(recipient),
     kind: 'teammate.activity',
-    occurred_at: 1_700_000_000_001,
+    occurredAt: 1_700_000_000_001,
     activity,
   };
 }
@@ -171,16 +170,15 @@ function assistantMessage(
   content: string,
 ): TeammateActivityEvent {
   return activityEvent(recipient, {
-    kind: 'assistant.message',
-    event_id: `event-${eventId}`,
-    content,
-    redacted: false,
+    kind: 'assistant.message', occurredAt: 1,
+    id: `event-${eventId}`,
+    text: content,
   });
 }
 
 function sourceIdOf(payload: JsonValue): string {
   const sourceId = (payload as Record<string, unknown>)['source_id'];
-  if (typeof sourceId !== 'string') throw new Error('missing fixture source_id');
+  if (typeof sourceId !== 'string') throw new Error('missing fixture sourceId');
   return sourceId;
 }
 
@@ -190,10 +188,9 @@ function nativeEnd(
   reason: string | null = null,
 ): TeammateActivityEvent {
   return activityEvent(recipient, {
-    kind: 'turn.ended',
+    kind: 'turn.ended', occurredAt: 1,
     status,
     reason,
-    redacted: false,
   });
 }
 
@@ -201,15 +198,14 @@ function nativeEnd(
 function tokenUsage(
   recipient: 'dispatcher' | 'leader',
   eventId: string,
-  context: Extract<TeammateActivity, { kind: 'token.usage' }>['context'],
+  context: Extract<RuntimeActivity, { kind: 'token.usage' }>['context'],
 ): TeammateActivityEvent {
   return activityEvent(recipient, {
-    kind: 'token.usage',
-    event_id: eventId,
-    input_tokens: 28_568,
-    output_tokens: 69,
+    kind: 'token.usage', occurredAt: 1,
+    id: eventId,
+    inputTokens: 28_568,
+    outputTokens: 69,
     context,
-    redacted: false,
   });
 }
 
@@ -565,6 +561,68 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
   });
 });
 
+describe.each([
+  ['context.compacted', 'COMPACTED SESSION'],
+  ['turn.interrupted', '[Request interrupted by user]'],
+] as const)('FeishuChannelSession COT — %s display identity', (kind, label) => {
+  it.each([false, true])('matches assistant.message card events with an open card: %s', async (open) => {
+    const deliver = async (activity: RuntimeActivity) => {
+      const { session, cot, port } = await harness('chan-cot-marker', async (command, payload, emit) => {
+        if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+        emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
+        return { status: 'submitted', turn_id: 'turn-1' };
+      });
+      try {
+        await session.submit(null, {
+          kind: 'chat', attrs: {}, text: 'hello', reminder: '', sourceId: 'om_user_1',
+          anchor: { chatId: 'oc_dm', messageId: 'om_user_1', target: chatTarget('oc_dm', 'p2p') },
+        });
+        port.emit(nativeEnd('dispatcher'));
+        await waitFor(() => cot.cards.length === 1 && cotTerminal(cot.cards[0]!) === 'done');
+
+        if (open) {
+          port.emit(assistantMessage('before', 'dispatcher', 'Before the marker'));
+          await waitFor(() => cot.cards.length === 2 && cotTexts(cot.cards[1]!).length === 1);
+        }
+        expect(cot.cards).toHaveLength(open ? 2 : 1);
+        port.emit(activityEvent('dispatcher', activity));
+        await waitFor(() => cot.cards.length === 2 && cotTexts(cot.cards[1]!).includes(label));
+        const card = cot.cards[1]!;
+        expect(card.originMessageId).toBe('om_user_1');
+        expect(card.chatId).toBe('oc_dm');
+        expect(cotTerminal(card)).toBeNull();
+        port.emit(tokenUsage('dispatcher', 'native-event', null));
+        port.emit(nativeEnd('dispatcher', kind === 'turn.interrupted' ? 'interrupted' : 'completed'));
+        await waitFor(() => cotTerminal(card) !== null);
+        expect(cot.cards).toHaveLength(2);
+        expect(cotTerminal(card)).toBe(kind === 'turn.interrupted' ? 'interrupted' : 'done');
+        expect(cotTexts(card)).toEqual([
+          ...(open ? ['Before the marker'] : []),
+          label,
+          'Context usage n/a | Token usage: total=28.6k input=28.6k output=69',
+        ]);
+        return card.events.filter((event) => event.eventType.startsWith('TEXT_MESSAGE_'));
+      } finally {
+        await session.close();
+      }
+    };
+    const expected = await deliver({
+      kind: 'assistant.message', occurredAt: 1, id: 'native-event', text: label,
+    });
+    const actual = await deliver({ kind, occurredAt: 1, id: 'native-event' });
+    const withoutMessageId = (events: typeof actual) => events.map((event) => {
+      const { messageId: _messageId, ...content } = event.content as Record<string, unknown>;
+      return { ...event, content };
+    });
+    expect(withoutMessageId(actual)).toEqual(withoutMessageId(expected));
+    const messageIds = actual.filter((event) => event.eventType === 'TEXT_MESSAGE_START')
+      .map((event) => (event.content as { messageId: string }).messageId);
+    expect(new Set(messageIds).size).toBe(open ? 3 : 2);
+    const markerIndex = open ? 3 : 0;
+    expect(actual[markerIndex]!.content).not.toEqual(expected[markerIndex]!.content);
+  });
+});
+
 describe('FeishuChannelSession COT — token.usage reaches the open card', () => {
   it('appends the rendered usage line for a percentage context', async () => {
     const { session, cot, port } = await harness('chan-cot-usage', async (
@@ -591,7 +649,7 @@ describe('FeishuChannelSession COT — token.usage reaches the open card', () =>
     });
     await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
 
-    port.emit(tokenUsage('dispatcher', 'turn-1:usage', { used_tokens: 14_500, window_tokens: 29_000 }));
+    port.emit(tokenUsage('dispatcher', 'turn-1', { usedTokens: 14_500, windowTokens: 29_000 }));
     await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
     expect(cotTexts(cot.cards[0]!)).toContain(
       'Context usage 50% | Token usage: total=28.6k input=28.6k output=69',
@@ -628,7 +686,7 @@ describe('FeishuChannelSession COT — token.usage reaches the open card', () =>
     });
     await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
 
-    port.emit(tokenUsage('dispatcher', 'turn-1:usage', null));
+    port.emit(tokenUsage('dispatcher', 'native-event', null));
     await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
     expect(cotTexts(cot.cards[0]!)).toContain(
       'Context usage n/a | Token usage: total=28.6k input=28.6k output=69',

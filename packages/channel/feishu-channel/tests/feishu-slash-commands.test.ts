@@ -760,9 +760,9 @@ async function bindHarness(target = chatTarget('oc_bind', 'group')) {
       const messageId = bot.sentCards.at(-1)!.messageIds[0]!;
       await vi.waitFor(() => expect(session.handle.targetRouter.targetForMessage(messageId)).toBeDefined());
       for (const listener of listeners) await listener({
-        schema_version: 1, kind: 'teammate.activity', occurred_at: 1,
-        role: 'team_leader', team_name: teamName, teammate_name: `${teamName}-leader`,
-        activity: { kind: 'assistant.message', event_id: `event-${teamName}`, content: 'Hello', redacted: false },
+        schemaVersion: 1, kind: 'teammate.activity', occurredAt: 1,
+        role: 'team_leader', teamName: teamName, teammateName: `${teamName}-leader`,
+        activity: { kind: 'assistant.message', occurredAt: 1, id: `event-${teamName}`, text: 'Hello' },
       });
     },
   };

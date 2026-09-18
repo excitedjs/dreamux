@@ -1,8 +1,6 @@
 import type {
   DreamuxLogger,
-  JsonValue,
   RuntimeActivity,
-  TeammateActivity,
   TeammateActivityEvent,
   TeammateInputEvent,
   TeammateInputNotice,
@@ -98,16 +96,15 @@ export function createConversationProjection(input: {
         const event: TeammateInputEvent = {
           ...scope,
           kind: 'teammate.input',
-          occurred_at: admitted.occurredAt,
+          occurredAt: admitted.occurredAt,
           source: admitted.source,
-          source_id: admitted.sourceId,
+          sourceId: admitted.sourceId,
           content: content.value,
           // The producer is an Agent name this host assigned, from an alphabet
           // (`TEAMMATE_NAME_PATTERN`) with no separator, colon, or space in it:
           // no redaction rule can match one, and the two that could match its
           // *shape* would only mangle a legal name.
           notice: admitted.notice,
-          redacted: content.redacted,
         };
         input.coreEvents.publish(identity.dispatcher_id, event);
       });
@@ -120,7 +117,7 @@ export function createConversationProjection(input: {
         const event: TeammateActivityEvent = {
           ...scope,
           kind: 'teammate.activity',
-          occurred_at: activity.occurredAt,
+          occurredAt: activity.occurredAt,
           activity: projectedActivity(activity, identity.cwd, input.homePathPrefixes),
         };
         input.coreEvents.publish(identity.dispatcher_id, event);
@@ -141,111 +138,61 @@ function actorScope(agent: ProjectedAgent) {
   const { identity, role } = agent;
   if (role !== 'dispatcher' && identity.team_id !== null) {
     return {
-      schema_version: 1 as const,
-      team_name: identity.team_id,
-      teammate_name: identity.name,
+      schemaVersion: 1 as const,
+      teamName: identity.team_id,
+      teammateName: identity.name,
       role,
     };
   }
   if (role === 'dispatcher' && identity.team_id === null) {
     return {
-      schema_version: 1 as const,
-      team_name: null,
-      teammate_name: identity.name,
+      schemaVersion: 1 as const,
+      teamName: null,
+      teammateName: identity.name,
       role,
     };
   }
   return null;
 }
 
-/** Map one runtime fact into the projected vocabulary, keeping the runtime's own vocabulary. */
+/** Redact payloads while preserving the runtime's activity shape and identity. */
 function projectedActivity(
   activity: RuntimeActivity,
   cwd: string,
   homePathPrefixes: readonly string[],
-): TeammateActivity {
+): RuntimeActivity {
+  const redact = (text: string | null): string | null =>
+    text === null ? null : redactText(text, cwd, homePathPrefixes).value;
   switch (activity.kind) {
-    case 'assistant.message': {
-      const content = redactText(activity.text, cwd, homePathPrefixes);
+    case 'context.compacted':
+    case 'turn.interrupted':
+    case 'token.usage':
+      return activity;
+    case 'assistant.message':
+      return { ...activity, text: redactText(activity.text, cwd, homePathPrefixes).value };
+    case 'tool.call':
       return {
-        kind: 'assistant.message',
-        event_id: activity.id,
-        content: content.value,
-        redacted: content.redacted,
+        ...activity,
+        summary: redact(activity.summary),
+        invocation: redact(activity.invocation),
+        items: activity.items.map((item) => redactText(item, cwd, homePathPrefixes).value),
+        // A call's payloads arrive as structure, so they are walked rather
+        // than read as one string: a key that names a secret is answered by
+        // its name, and every string leaf is ordinary text by the time it is
+        // redacted.
+        arguments: redactJson(activity.arguments, cwd, homePathPrefixes).value,
+        result: redactJson(activity.result, cwd, homePathPrefixes).value,
+        error: redact(activity.error),
       };
-    }
-    case 'tool.call': {
-      const redact = (text: string | null) =>
-        text === null ? null : redactText(text, cwd, homePathPrefixes);
-      const summary = redact(activity.summary);
-      const invocation = redact(activity.invocation);
-      const items = activity.items.map((item) => redactText(item, cwd, homePathPrefixes));
-      // A call's payloads arrive as structure, so they are walked rather than
-      // read as one string: a key that names a secret is answered by its name,
-      // and every string leaf is ordinary text by the time it is redacted.
-      const args = redactJson(activity.arguments, cwd, homePathPrefixes);
-      const result = redactJson(activity.error ?? activity.result, cwd, homePathPrefixes);
-      return {
-        kind: 'tool.call',
-        event_id: activity.id,
-        call_id: activity.callId,
-        tool_name: activity.toolName,
-        tool_action: activity.action,
-        summary: summary?.value ?? null,
-        invocation: invocation?.value ?? null,
-        items: items.map((item) => item.value),
-        status: activity.status,
-        arguments_json: jsonText(args.value),
-        result_json: jsonText(result.value),
-        redacted: [summary, invocation, args, result, ...items]
-          .some((member) => member?.redacted ?? false),
-      };
-    }
-    case 'token.usage': {
-      // Numeric counters carry no text to redact.
-      return {
-        kind: 'token.usage',
-        event_id: activity.id,
-        input_tokens: activity.inputTokens,
-        output_tokens: activity.outputTokens,
-        context: activity.context === null
-          ? null
-          : {
-              used_tokens: activity.context.usedTokens,
-              window_tokens: activity.context.windowTokens,
-            },
-        redacted: false,
-      };
-    }
-    case 'turn.ended': {
-      const reason = activity.reason === null
-        ? null : redactText(activity.reason, cwd, homePathPrefixes);
-      return {
-        kind: 'turn.ended',
-        status: activity.status,
-        reason: reason?.value ?? null,
-        redacted: reason?.redacted ?? false,
-      };
-    }
+    case 'turn.ended':
+      return { ...activity, reason: redact(activity.reason) };
     default: {
-      // Compile-time exhaustiveness only. Core, the runtimes, and the
-      // channels ship in one monorepo release pinned through workspace
-      // dependencies, so a runtime kind this build does not know cannot
-      // reach a deployed process; adding a case here without a projection
-      // arm is a compile error, not a run-time condition to defend against.
+      // Every activity kind must pass through this redaction boundary.
+      // The monorepo ships one release pinned through workspace dependencies,
+      // so an unknown kind cannot reach a deployed process. A missing arm is
+      // a compile error, not a runtime condition to defend against.
       const exhaustive: never = activity;
       return exhaustive;
     }
   }
-}
-
-/**
- * A structured value travels as its compact JSON text; a value that already is
- * a string travels as itself. The text is whole, never cut, and it is written
- * after redaction rather than before, so a structured payload is still valid
- * JSON when it arrives.
- */
-function jsonText(value: JsonValue | string | null): string | null {
-  if (value === null) return null;
-  return typeof value === 'string' ? value : JSON.stringify(value);
 }

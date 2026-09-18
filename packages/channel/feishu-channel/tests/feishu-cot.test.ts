@@ -28,7 +28,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   DreamuxLogger,
   TeamStateEvent,
-  TeammateActivity,
+  RuntimeActivity,
   TeammateActivityEvent,
   TeammateRole,
   TeammateInputEvent,
@@ -91,9 +91,9 @@ function anchorAt(
 }
 
 interface RecipientScope {
-  readonly teammate_name: string;
+  readonly teammateName: string;
   readonly role: TeammateRole;
-  readonly team_name: string | null;
+  readonly teamName: string | null;
 }
 
 /**
@@ -110,15 +110,15 @@ interface Recipient {
 const LEADER: Recipient = {
   label: 'TeamLeader',
   scope: {
-    teammate_name: 'alpha-leader',
+    teammateName: 'alpha-leader',
     role: 'team_leader',
-    team_name: 'alpha',
+    teamName: 'alpha',
   },
 };
 
 const DISPATCHER: Recipient = {
   label: 'Dispatcher',
-  scope: { teammate_name: 'dispatcher-agent', role: 'dispatcher', team_name: null },
+  scope: { teammateName: 'dispatcher-agent', role: 'dispatcher', teamName: null },
 };
 
 let sequence = 0;
@@ -131,26 +131,25 @@ function input(
   notice: TeammateInputEvent['notice'] = null,
 ): TeammateInputEvent {
   return {
-    schema_version: 1,
+    schemaVersion: 1,
     kind: 'teammate.input',
-    occurred_at: 1_700_000_000_000 + (sequence += 1),
+    occurredAt: 1_700_000_000_000 + (sequence += 1),
     ...recipient.scope,
     source,
-    source_id: sourceId,
+    sourceId: sourceId,
     content,
     notice,
-    redacted: false,
   };
 }
 
 function activity(
   recipient: Recipient,
-  payload: TeammateActivity,
+  payload: RuntimeActivity,
 ): TeammateActivityEvent {
   return {
-    schema_version: 1,
+    schemaVersion: 1,
     kind: 'teammate.activity',
-    occurred_at: 1_700_000_000_000 + (sequence += 1),
+    occurredAt: 1_700_000_000_000 + (sequence += 1),
     ...recipient.scope,
     activity: payload,
   };
@@ -158,10 +157,9 @@ function activity(
 
 function message(recipient: Recipient, content: string): TeammateActivityEvent {
   return activity(recipient, {
-    kind: 'assistant.message',
-    event_id: `event-${(sequence += 1)}`,
-    content,
-    redacted: false,
+    kind: 'assistant.message', occurredAt: 1,
+    id: `event-${(sequence += 1)}`,
+    text: content,
   });
 }
 
@@ -171,18 +169,17 @@ function toolCall(
   status: 'started' | 'completed' | 'failed',
 ): TeammateActivityEvent {
   return activity(recipient, {
-    kind: 'tool.call',
-    event_id: `event-${(sequence += 1)}`,
-    call_id: callId,
-    tool_name: 'Read',
-    tool_action: 'read',
+    kind: 'tool.call', occurredAt: 1,
+    id: callId,
+    toolName: 'Read',
+    action: 'read',
     summary: null,
     invocation: null,
     items: [],
     status,
-    arguments_json: status === 'started' ? '{"file_path":"/tmp/example"}' : null,
-    result_json: status === 'started' ? null : 'file contents',
-    redacted: false,
+    arguments: status === 'started' ? '{"file_path":"/tmp/example"}' : null,
+    result: status === 'started' ? null : 'file contents',
+    error: null,
   });
 }
 
@@ -192,10 +189,9 @@ function nativeEnd(
   reason: string | null = null,
 ): TeammateActivityEvent {
   return activity(recipient, {
-    kind: 'turn.ended',
+    kind: 'turn.ended', occurredAt: 1,
     status,
     reason,
-    redacted: false,
   });
 }
 
@@ -205,11 +201,11 @@ function teamState(
   status: 'starting' | 'running' | 'closed',
 ): TeamStateEvent {
   return {
-    schema_version: 1,
+    schemaVersion: 1,
     kind: 'team.state',
-    occurred_at: 1_700_000_000_000 + (sequence += 1),
-    team_name: teamName,
-    leader_name: leaderName,
+    occurredAt: 1_700_000_000_000 + (sequence += 1),
+    teamName: teamName,
+    leaderName: leaderName,
     status,
     teammates: [],
   };
@@ -241,7 +237,7 @@ function submitInbound(
   const lease = adapter.beginInboundSubmission({
     teamName: recipient.scope.role === 'dispatcher'
       ? null
-      : recipient.scope.team_name,
+      : recipient.scope.teamName,
     anchor,
     sourceId,
   });
@@ -546,7 +542,7 @@ describe('Feishu COT — the two recipients are independent presentations', () =
     const { adapter, cot } = harness();
     const member: Recipient = {
       label: 'member',
-      scope: { teammate_name: 'alpha-worker', role: 'teammate', team_name: 'alpha' },
+      scope: { teammateName: 'alpha-worker', role: 'teammate', teamName: 'alpha' },
     };
 
     adapter.onInput(input(member, 'member brief', 'task', 'other-source'));
@@ -815,7 +811,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
   ): void {
     const sourceId = `message-${turnId}`;
     const lease = seam.beginInboundSubmission(
-      recipient.scope.role === 'dispatcher' ? null : recipient.scope.team_name,
+      recipient.scope.role === 'dispatcher' ? null : recipient.scope.teamName,
       anchor,
       sourceId,
     );
@@ -921,7 +917,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     await seam.close();
   });
 
-  it('shows an input body whose source_id this session did not send', async () => {
+  it('shows an input body whose sourceId this session did not send', async () => {
     const { seam, cot } = seamHarness();
     const lease = seam.beginInboundSubmission(
       'alpha',

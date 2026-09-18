@@ -341,7 +341,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       disableFeatures: this.deps.disableFeatures,
       outputSchema: this.deps.outputSchema,
     });
-    const activity: NativeActivityState = { activitySequence: 0, tools: new Map() };
+    const activity: NativeActivityState = { tools: new Map() };
     const session = this.deps.sessionFactory({
       bin: this.bin,
       args,

@@ -521,10 +521,10 @@ Each provider maps the neutral call to its own protocol:
   receipt, so a turn that finishes in the gap is still reported `interrupted`.
 
   The CLI also writes `[Request interrupted by user]` itself, as a text block
-  on a `user` envelope. Those blocks are not displayed, so the provider pushes
-  the same sentence as an `assistant.message` — the shape ruled for
-  `COMPACTED SESSION` — and that line, not the card's end status, is what an
-  interrupt owes the operator.
+  on a `user` envelope. Those blocks are not displayed, so the provider reports
+  a text-free `turn.interrupted` activity ahead of the end, and the display
+  layer puts that sentence on the card. That line, not the card's end status,
+  is what an interrupt owes the operator.
 - **Codex** sends `turn/interrupt` with `{ threadId, turnId }` and gets an empty
   response. The method is part of the app-server v2 surface at the declared
   minimum `0.137.0`, so this added no version requirement. An accepted interrupt
@@ -532,9 +532,8 @@ Each provider maps the neutral call to its own protocol:
   `turn/completed` whose only mark is `turn.status: "interrupted"`, with
   `error: null` and no items (measured against codex-cli 0.153.4; `status` is
   required on the wire from `0.137.0`). The provider therefore reads that status
-  rather than inferring the interrupt from having asked for one, and pushes the
-  same `[Request interrupted by user]` assistant message ahead of the end it
-  reports.
+  rather than inferring the interrupt from having asked for one, and reports the
+  same `turn.interrupted` activity ahead of the end it reports.
 
   The end reads the same status. An interrupted turn ends `interrupted` on both
   runtimes, which is what the card shows: a Feishu COT renders `turn.ended`
@@ -654,7 +653,7 @@ Source:
 whose `tool_use` blocks are its tool calls; `user`, whose `tool_result`
 blocks are what those tools returned, correlated to the call by `tool_use_id`;
 and the `system` envelope with subtype `compact_boundary`, which becomes the
-one-line `COMPACTED SESSION` message described below.
+`context.compacted` activity described below.
 A `user` envelope on stdout is the CLI's own, never the operator's: stdin input
 is not echoed back (Dreamux does not pass `--replay-user-messages`), so a text
 block there is context the CLI injected into its conversation — observed on
@@ -764,7 +763,7 @@ Source:
 
 Usage is provider-local native data, emitted as a dedicated `token.usage`
 activity once per native turn immediately before the native terminal's
-`turn.ended`, after an interruption marker when present. The runtime never
+`turn.ended`, after a `turn.interrupted` marker when present. The runtime never
 assembles usage prose; a display layer renders the structured counters
 itself. There is no Core/Channel computation, query, transcript read,
 persistent ledger, or completion-text mutation. Generic teardown does not
@@ -830,26 +829,73 @@ Dreamux submissions into one native turn, so an activity cannot honestly name
 the submission that caused it, and inventing one made a display pick an
 arbitrary member — and, when no member could be picked, drop the fact entirely.
 The agent is the subject, and it is known before any submission binds. The union
-has four members: `assistant.message`, `tool.call`, `token.usage`, and
-`turn.ended` — the runtime stopped producing, with a completed, failed or
-interrupted status and its own reason text when it has one. `token.usage` is
-the one member that is not conversation content: it carries the turn's
-cumulative counters (see [Native Turn Usage Activity](#native-turn-usage-activity))
-and is live-only. A context compaction is published through
-the same union as an `assistant.message` reading `COMPACTED SESSION` — Claude
-Code on its `system`/`compact_boundary` envelope, Codex on the completion of
-its `contextCompaction` item — and the summary is not: Claude Code puts it on
-the wire as a synthetic `user` envelope whose content is one string (dropped
-with every other `user` text), Codex never emits it (its `contextCompaction`
-item carries only an id, and codex-core records the compaction output into
-history without an event). Operator ruling, 2026-09-04: 「我不要正文，正文太长了，
+has six members: `assistant.message`, `tool.call`, `token.usage`,
+`context.compacted`, `turn.interrupted`, and `turn.ended` — the runtime stopped
+producing, with a completed, failed or interrupted status and its own reason
+text when it has one. `token.usage`, `context.compacted`, and
+`turn.interrupted` are not conversation content and carry no display text: the
+display layer owns the line it shows for each.
+
+- `token.usage` carries the turn's cumulative counters (see
+  [Native Turn Usage Activity](#native-turn-usage-activity)).
+- `context.compacted` says the runtime compacted its context — Claude Code on
+  its `system`/`compact_boundary` envelope, Codex on the completion of its
+  `contextCompaction` item. The summary is not carried: Claude Code puts it on
+  the wire as a synthetic `user` envelope whose content is one string (dropped
+  with every other `user` text), Codex never emits it (its `contextCompaction`
+  item carries only an id, and codex-core records the compaction output into
+  history without an event). The Feishu CoT shows it as `COMPACTED SESSION`.
+- `turn.interrupted` is a display marker, not a terminal: a native turn stopped
+  at an interrupt request (see [Turn Interruption](#turn-interruption)). It precedes that
+  terminal's `token.usage` and its `turn.ended` `interrupted`, with which it is
+  always paired. A teardown end reports `turn.ended` `interrupted` without it.
+  The Feishu CoT shows it as `[Request interrupted by user]`.
+
+Every member except `turn.ended` carries `occurredAt` and `id`, one shared
+base shape. `id` is the provider's own id for the object the activity reports,
+taken whole — no prefix, suffix, counter, or composition:
+
+| Activity | Claude Code | Codex |
+| --- | --- | --- |
+| `assistant.message` | the assistant line's `uuid` | agent message item id |
+| `tool.call` (start and result) | `tool_use.id` | tool item id (its `call_id`) |
+| `context.compacted` | the `compact_boundary` line's `uuid` | compaction item id |
+| `token.usage`, `turn.interrupted` | the `result` line's own `uuid` | `turnId` |
+
+So an id is not unique per activity: a call's start and result share one, and
+so do one turn's usage and interrupt marker. A consumer that needs one
+identity per row derives it from the kind (and a call's status) together with
+the id; the Feishu CoT does exactly that. `tool.call` has no separate call id.
+`turn.ended` has no id, because teardown and Core's own end for an input no
+runtime accepted have no native source. Claude Code's `result` id is the
+envelope's `uuid`, not `user_message_uuid`, which names an inbound message. A
+Claude Code line without a `uuid` reports no text or compaction activity, the
+rule a `tool_use` block without an id already follows; the Agent SDK types the
+member as required and every observed line carries one. An assistant line has
+always carried one content block, so one line is one text id. Operator ruling,
+2026-09-18: 「不不不不不,这个ID让飞书来自己造更恶心.但是它拼接成自增ID也很恶心.最好的
+做法是直接用原生 Provider 生成的 ID，比如 toolcall 就用 toolcall ID。」
+
+A Channel receives this same type. `teammate.activity` carries
+`RuntimeActivity` with every text and JSON payload member redacted by Core and
+nothing reshaped; there is no second, channel-shaped activity type (operator,
+2026-09-18: 「这两个类型可以合并吗？」, then 「合并成一份」). See
+[the channel domain](/.agents/domains/channel.md#dispatcher-scoped-core-events).
+
+Operator ruling on what a compaction shows, 2026-09-04: 「我不要正文，正文太长了，
 只显示压缩发生了即可。claude code 的网页上只显示了 Compacted session，我只需要这一
-行字即可。」 and, on the shape, 「我觉得没必要给他单独加一个新的 activity 类型，你直接在
-provider 里，多推一个 assistant message，内容就这一行。」 The current uppercase
-label is specified by
-[strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).
-The sink is
-generation-fenced, synchronous, display-only and fail-open — a write from a
+行字即可。」 The same day the operator ruled the carrier: 「我觉得没必要给他单独加一个新的
+activity 类型，你直接在 provider 里，多推一个 assistant message，内容就这一行。」 That
+carrier ruling is superseded. On 2026-09-18, after `token.usage` left the message
+event: 「上一个pr已经给usage 从 message 事件里拆出来了，我感觉compact 也可以拆出来。」 and
+「interrupted 也一并拆了」; offered either deriving the interrupt line from
+`turn.ended` or a kind of its own that keeps today's trigger set and position,
+the operator answered 「B 独立 activity 类型」. The uppercase label is specified by
+[strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md);
+the carriers, the native ids, and the single type by
+[standalone-compaction-activity](/.agents/tasks/architecture/standalone-compaction-activity/requirement.md).
+
+The sink is generation-fenced, synchronous, display-only and fail-open — a write from a
 revoked generation is dropped, and a throwing consumer never affects
 settlement. That guard is Core's (`createConversationProjection`'s `guarded`
 wrapper); the sink never throws, and a provider calls it bare.

@@ -7,14 +7,14 @@
  * a TeamLeader or the Dispatcher Agent — is decided before this file is
  * reached, and makes no difference once it is.
  */
-import type { TeammateActivity } from '@excitedjs/dreamux-types';
+import type { RuntimeActivity } from '@excitedjs/dreamux-types';
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
 import type { CotLogScope } from './feishu-cot-diagnostics.js';
 
-type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
-type CotAssistantMessage = Extract<TeammateActivity, { kind: 'assistant.message' }>;
-type CotTokenUsage = Extract<TeammateActivity, { kind: 'token.usage' }>;
+type CotToolCallActivity = Extract<RuntimeActivity, { kind: 'tool.call' }>;
+type CotAssistantMessage = Extract<RuntimeActivity, { kind: 'assistant.message' }>;
+type CotTokenUsage = Extract<RuntimeActivity, { kind: 'token.usage' }>;
 import {
   textMessageEvents,
   toolCallResultEvents,
@@ -80,16 +80,16 @@ export function acceptToolCallActivity(
       rememberOpenToolCall(
         state.openCalls,
         state.generation,
-        event.call_id,
+        event.id,
         sink.openToolCallsMax,
       );
     }
     return;
   }
-  const opened = state.openCalls.get(event.call_id);
+  const opened = state.openCalls.get(event.id);
   if (opened === undefined) return;
   if (opened.generation !== state.generation) {
-    state.openCalls.delete(event.call_id);
+    state.openCalls.delete(event.id);
     return;
   }
   const presentation = state.active;
@@ -99,11 +99,11 @@ export function acceptToolCallActivity(
     presentation.closed ||
     presentation.terminalIntent !== null
   ) {
-    state.openCalls.delete(event.call_id);
+    state.openCalls.delete(event.id);
     return;
   }
   const events = toolCallResultEvents(event);
-  state.openCalls.delete(event.call_id);
+  state.openCalls.delete(event.id);
   if (events.length === 0) return;
   if (sink.admitOutbox(state, presentation, events) &&
       presentation.phase === 'writing') {
@@ -119,7 +119,39 @@ export function acceptAssistantMessage(
   event: CotAssistantMessage,
 ): void {
   if (!presentable(state)) return;
-  acceptDisplayText(sink, key, state, 'assistant', event.event_id, event.content);
+  acceptDisplayText(sink, key, state, 'assistant', event.id, event.text, 'message');
+}
+
+/** A compaction is one line, never the summary the runtime wrote for itself. */
+export function acceptContextCompacted(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  event: Extract<RuntimeActivity, { kind: 'context.compacted' }>,
+): void {
+  acceptFixedLabel(sink, key, state, event.id, 'COMPACTED SESSION', 'compacted');
+}
+
+/** The interrupt line on this recipient's card, in Claude Code's own words. */
+export function acceptTurnInterrupted(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  event: Extract<RuntimeActivity, { kind: 'turn.interrupted' }>,
+): void {
+  acceptFixedLabel(sink, key, state, event.id, '[Request interrupted by user]', 'interrupted');
+}
+
+function acceptFixedLabel(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  eventId: string,
+  label: string,
+  namespace: string,
+): void {
+  if (!presentable(state)) return;
+  acceptDisplayText(sink, key, state, 'assistant', eventId, label, namespace);
 }
 
 /**
@@ -134,7 +166,7 @@ export function acceptTokenUsage(
   event: CotTokenUsage,
 ): void {
   if (!presentable(state)) return;
-  acceptDisplayText(sink, key, state, 'assistant', event.event_id, tokenUsageSummary(event));
+  acceptDisplayText(sink, key, state, 'assistant', event.id, tokenUsageSummary(event), 'usage');
 }
 
 /** Render cumulative counters in the runtime's historical one-line shape. */
@@ -142,12 +174,12 @@ export function tokenUsageSummary(event: CotTokenUsage): string {
   const context = event.context;
   let contextUsage = 'n/a';
   if (context !== null) {
-    contextUsage = context.window_tokens !== null && context.window_tokens > 0
-      ? `${Math.round(context.used_tokens / context.window_tokens * 100)}%`
-      : formatTokenCount(context.used_tokens);
+    contextUsage = context.windowTokens !== null && context.windowTokens > 0
+      ? `${Math.round(context.usedTokens / context.windowTokens * 100)}%`
+      : formatTokenCount(context.usedTokens);
   }
-  const total = event.input_tokens + event.output_tokens;
-  return `Context usage ${contextUsage} | Token usage: total=${formatTokenCount(total)} input=${formatTokenCount(event.input_tokens)} output=${formatTokenCount(event.output_tokens)}`;
+  const total = event.inputTokens + event.outputTokens;
+  return `Context usage ${contextUsage} | Token usage: total=${formatTokenCount(total)} input=${formatTokenCount(event.inputTokens)} output=${formatTokenCount(event.outputTokens)}`;
 }
 
 function formatTokenCount(count: number): string {
@@ -176,18 +208,19 @@ export function acceptInputMessage(
   input: { readonly displayId: string; readonly content: string },
 ): void {
   if (!presentable(state)) return;
-  acceptDisplayText(sink, key, state, 'user', input.displayId, input.content);
+  acceptDisplayText(sink, key, state, 'user', input.displayId, input.content, 'input');
 }
 
-function acceptDisplayText(
+export function acceptDisplayText(
   sink: CotActivitySink,
   key: string,
   state: CotState,
   role: 'user' | 'assistant',
   displayId: string,
   content: string,
+  namespace: string,
 ): void {
-  const events = textMessageEvents({ sourceId: displayId, role, content });
+  const events = textMessageEvents({ namespace, sourceId: displayId, role, content });
   if (events.length === 0) {
     sink.debug(
       sink.logScope(state),

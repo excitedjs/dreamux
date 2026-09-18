@@ -193,8 +193,8 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
 
     // The pending non-force dissolve is refused; Core still reports an open Team.
     port.emit({
-      schema_version: 1, kind: 'team.state', occurred_at: Date.now(),
-      team_name: 'closing-team', leader_name: 'leader-1', status: 'running', teammates: [],
+      schemaVersion: 1, kind: 'team.state', occurredAt: Date.now(),
+      teamName: 'closing-team', leaderName: 'leader-1', status: 'running', teammates: [],
     });
     expect(bot.sentCards).toHaveLength(1);
     expect(readBindings(channelId)).toEqual([]);
@@ -334,11 +334,11 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
     });
 
     const closed: TeamStateEvent = {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'team.state',
-      occurred_at: Date.now(),
-      team_name: 'dying-team',
-      leader_name: 'leader-1',
+      occurredAt: Date.now(),
+      teamName: 'dying-team',
+      leaderName: 'leader-1',
       status: 'closed',
       teammates: [],
     };
@@ -383,11 +383,11 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
     });
 
     const closed: TeamStateEvent = {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'team.state',
-      occurred_at: Date.now(),
-      team_name: 'racing-team',
-      leader_name: 'leader-1',
+      occurredAt: Date.now(),
+      teamName: 'racing-team',
+      leaderName: 'leader-1',
       status: 'closed',
       teammates: [],
     };

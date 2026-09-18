@@ -5,13 +5,14 @@
  * one bound a card string has, and the one truncation must follow.
  */
 import type {
+  JsonValue,
   RuntimeToolAction,
-  TeammateActivity,
+  RuntimeActivity,
   TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 
 /** The one activity member this presentation layer renders. */
-export type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
+export type CotToolCallActivity = Extract<RuntimeActivity, { kind: 'tool.call' }>;
 
 /** What the pills of a result's item list may spend before the rest is folded into a `more` pill. */
 export const TOOL_ITEMS_SOFT_MAX_BYTES = 512;
@@ -118,15 +119,15 @@ const ACTION_VERBS: Readonly<Record<RuntimeToolAction, string>> = {
 };
 
 export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
-  const actionName = event.tool_action === null
-    ? event.tool_name
-    : ACTION_TOOL_NAMES[event.tool_action];
+  const actionName = event.action === null
+    ? event.toolName
+    : ACTION_TOOL_NAMES[event.action];
   const title = runtimeToolTitle(event);
   // A call with neither an action nor a label — an MCP tool, today — shows
   // its name behind the generic app icon.
-  const icon: CotToolIcon | undefined = event.tool_action === null
+  const icon: CotToolIcon | undefined = event.action === null
     ? (title === null ? 'app-default_outlined' : undefined)
-    : ACTION_ICONS[event.tool_action];
+    : ACTION_ICONS[event.action];
   return {
     toolCallName: actionName,
     ...(icon === undefined ? {} : { icon }),
@@ -143,7 +144,7 @@ export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
  * the command line, the diff, the prompt handed to a sub-agent — so it wins
  * over the full structured input for every tool: it is what the runtime's own
  * UI would show, and the JSON around it adds nothing a reader wants. Only a
- * call that has none falls back to `arguments_json`, pretty-printed when it is
+ * call that has none falls back to `arguments`, pretty-printed when it is
  * an object or an array and shown as it came otherwise. The notation follows
  * the action the runtime named: a `run` invocation is a shell command line,
  * and nothing else claims to be.
@@ -152,16 +153,22 @@ function argumentCode(event: CotToolCallActivity): CotCodeSegment | null {
   const invocation = nonEmpty(event.invocation);
   if (invocation !== null) {
     return {
-      language: event.tool_action === 'run' ? 'bash' : 'text',
+      language: event.action === 'run' ? 'bash' : 'text',
       code: invocation,
     };
   }
-  const args = nonEmpty(event.arguments_json);
+  const args = nonEmpty(payloadText(event.arguments));
   if (args === null) return null;
   const structured = prettyJson(args);
   return structured === null
     ? { language: 'text', code: args }
     : { language: 'json', code: structured };
+}
+
+/** Objects and scalars become JSON text; runtime strings keep their contents. */
+export function payloadText(value: JsonValue): string | null {
+  if (value === null) return null;
+  return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
 /**
@@ -190,7 +197,7 @@ export function prettyJson(text: string): string | null {
  */
 function itemList(event: CotToolCallActivity): CotItemList | null {
   if (event.items.length === 0) return null;
-  const icon = event.tool_action === null ? undefined : ACTION_ICONS[event.tool_action];
+  const icon = event.action === null ? undefined : ACTION_ICONS[event.action];
   const pill = (text: string): CotListItem => (icon === undefined ? { text } : { text, icon });
   const items: CotListItem[] = [];
   let bytes = 0;
@@ -220,9 +227,9 @@ function runtimeToolTitle(event: CotToolCallActivity): string | null {
   if (event.summary === null) return null;
   const summary = event.summary.trim();
   if (summary === '') return null;
-  return event.tool_action === null
+  return event.action === null
     ? summary
-    : `${ACTION_VERBS[event.tool_action]}${summary}`;
+    : `${ACTION_VERBS[event.action]}${summary}`;
 }
 
 /** A detail the runtime gave, or `null` when it gave none or an empty one. */

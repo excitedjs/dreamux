@@ -244,11 +244,11 @@ export class TeamStore {
     teammates: readonly TeamStateTeammateSummary[],
   ): void {
     this.opts.coreEvents?.publish(team.dispatcher_id, {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'team.state',
-      occurred_at: occurredAt,
-      team_name: team.team_id,
-      leader_name: team.leader_name,
+      occurredAt,
+      teamName: team.team_id,
+      leaderName: team.leader_name,
       status: team.status,
       teammates,
     });
