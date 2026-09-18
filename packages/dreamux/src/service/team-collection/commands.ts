@@ -224,6 +224,12 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       const admission = await dispatcher.submitToTeamLeader({
         ...channelSubmitInput(input.command),
         teamId: input.command.team_name,
+        // `intent` is Team-Command-only: it updates the leader's durable
+        // recovery subject, and `dispatcher.submit` has no such field, so the
+        // shared projection in channel-submission.ts deliberately omits it.
+        ...(input.command.intent !== undefined
+          ? { intent: input.command.intent }
+          : {}),
         // No external submission advances the Dispatcher Agent. Who waits for a
         // leader's completion is a property of the operation, not of the
         // adapter that carried it: an Agent handing work to a Team says so

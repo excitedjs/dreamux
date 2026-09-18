@@ -209,6 +209,49 @@ describe('adapter equivalence — one representative Command per namespace', () 
     expect(submitToTeamLeader).not.toHaveBeenCalled();
   });
 
+  it('team.submit carries the optional intent through to submitToTeamLeader, and omits it when absent', async () => {
+    const submitToTeamLeader = vi.fn(async (_input: unknown) => ({
+      status: 'submitted',
+      turn: { id: 'team-turn-intent' },
+    }));
+    const submitToAgent = vi.fn(async (_input: unknown) => ({
+      status: 'submitted',
+      turn: { id: 'agent-turn-1' },
+    }));
+    const harness = createCommandHarness({
+      dispatcherOverrides: { submitToTeamLeader, submitToAgent },
+    });
+    admin = await startHarnessAdminSocket(harness);
+    const lease = createHarnessChannelInvoker(harness);
+
+    await admin.send('team.submit', {
+      dispatcher_id: 'harness-d1',
+      team_name: 'alpha',
+      text: 'wake the leader',
+      intent: 'the durable recovery subject',
+    });
+    await lease.port.invoke.invoke('team.submit', {
+      team_name: 'alpha',
+      text: 'wake the leader again',
+    });
+
+    // intent updates the leader's durable recovery subject; it is Team-only and
+    // must reach the handler through both adapters exactly as the caller sent
+    // it. An omitted intent is an omitted key, not an empty string.
+    expect(submitToTeamLeader).toHaveBeenCalledTimes(2);
+    const withIntent = submitToTeamLeader.mock.calls[0]![0] as Record<string, unknown>;
+    const withoutIntent = submitToTeamLeader.mock.calls[1]![0] as Record<string, unknown>;
+    expect(withIntent).toMatchObject({
+      teamId: 'alpha',
+      intent: 'the durable recovery subject',
+      deliverCompletionToDispatcher: false,
+    });
+    expect(withIntent['source']).toBe('channel');
+    expect(withoutIntent['teamId']).toBe('alpha');
+    expect('intent' in withoutIntent).toBe(false);
+    expect(submitToAgent).not.toHaveBeenCalled();
+  });
+
   it('teammate.list: identical result via both adapters', async () => {
     const harness = createCommandHarness({
       dispatcherOverrides: { teammates: { list: async () => [{ name: 'mate-1' }] } },

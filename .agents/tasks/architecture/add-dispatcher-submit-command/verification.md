@@ -40,6 +40,31 @@ Findings sent back to the developer and fixed in one round:
   line and no notice. The operator ruled to keep that ("保持现状：只记日志"); the
   reason is recorded in the code at that log line.
 
+## Implementation review
+
+External review on the pull request, against the requirement and the final
+solution. Round one asked for changes and found one defect the four gates could
+not catch, because the field it drops is optional:
+
+- `team.submit` stopped passing `intent`. `parse` still read it, but `execute`
+  composed its input from the shared Channel-facing projection alone, which
+  carries the four shared fields by design. Downstream, a non-empty `intent`
+  is what updates a TeamLeader's durable recovery subject
+  (`TeammateService.submitInput` → `updateIntent`), and the Team MCP delegate
+  still passed it, so one fact reached the same store from one caller and not
+  the other. Fixed where `team.submit` composes its input, with a Command-level
+  test asserting the value reaches `submitToTeamLeader` through both adapters
+  and that an omitted `intent` stays an omitted key. `dispatcher.submit` has no
+  such field.
+- Accepted nit: the `rejected` outcome's comment described the stale-row drop
+  and single Dispatcher delivery without saying that only a `bound` plan does
+  that; a `provision` rejection is answered in place and reconciles no route.
+
+The review confirmed the rest of what it was asked to check: no missing exit in
+the three delivery branches, the notice firing on exactly `unsubmitted` and
+`rejected`, the shared reader carrying the previous validation over unchanged,
+and the tests tightening rather than weakening the contract.
+
 Two files outside the solution's list were accepted as they stand:
 `feishu-route-reconciliation.ts` (the notice helper's parameter narrows to the
 two rejection codes that can still reach it) and `team-service/types.ts` (the

@@ -93,9 +93,10 @@ export type FeishuSubmitOutcome =
     }
   /**
    * A proven pre-admission rejection of a named Team: Core resolved the Team
-   * and refused before creating anything. Because it proves no turn was
-   * accepted, the delivery path drops the stale row and delivers the message
-   * once to the Dispatcher Agent instead.
+   * and refused before creating anything. Under a `bound` plan it proves no
+   * turn was accepted, so that path drops the stale row and delivers the
+   * message once to the Dispatcher Agent instead. Under a `provision` plan it
+   * is answered in place with a failure notice and reconciles no route.
    */
   | {
       readonly status: 'rejected';
