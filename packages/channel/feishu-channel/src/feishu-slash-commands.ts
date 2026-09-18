@@ -122,9 +122,11 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       if (context.plan.kind === 'provision') {
         return { kind: 'text', text: 'This conversation has no bound Team.' };
       }
-      const raw = await context.invoke('team.interrupt', context.plan.kind === 'bound'
-        ? { team_name: context.plan.teamName }
-        : {});
+      const raw = context.plan.kind === 'bound'
+        ? await context.invoke('team.interrupt', {
+            team_name: context.plan.teamName,
+          })
+        : await context.invoke('dispatcher.interrupt', {});
       const result = raw as { status: 'interrupted' | 'idle' };
       return {
         kind: 'text',

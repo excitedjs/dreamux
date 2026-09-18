@@ -529,11 +529,13 @@ function documentCommentAttrs(
  *
  * `<content>` is always written, self-closing when there is nothing to put in
  * it, for two reasons that agree. It is what the chat path renders for a
- * message with no text, so the two bodies stay one shape; and `team.submit`
- * refuses an empty `text`, so a body omitted entirely would turn a comment
- * Feishu answered nothing for into a failed delivery — the one outcome this
- * path exists to avoid. An empty `<content />` here means Feishu did not answer
- * with the comment's text, and the envelope's ids still address it.
+ * message with no text, so the two bodies stay one shape; and every submit
+ * Command a Channel invokes (`team.submit` and `dispatcher.submit`) shares the
+ * schema that requires a non-empty `text`, so a body omitted entirely would
+ * turn a comment Feishu answered nothing for into a failed delivery — the one
+ * outcome this path exists to avoid. An empty `<content />` here means Feishu
+ * did not answer with the comment's text, and the envelope's ids still address
+ * it.
  *
  * `<quote>` appears only for a comment anchored to content Feishu previewed:
  * one on the whole document has no preview to show, and neither has one whose

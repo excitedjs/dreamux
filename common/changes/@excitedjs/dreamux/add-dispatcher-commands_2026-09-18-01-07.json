@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The Dispatcher Agent has its own Commands. `dispatcher.submit` submits one turn to the addressed Dispatcher's own Agent and `dispatcher.interrupt` interrupts it; both address that Dispatcher through the caller context, like every other Command in the namespace, and both are reachable over `admin.sock` and a Channel's in-process port. `team.submit` and `team.interrupt` now require `team_name`: a Team Command names exactly one Team, and a call that omits the name is answered `BAD_REQUEST` by schema validation before any Agent is reached, instead of silently reaching the Dispatcher Agent. A caller that relied on the omission calls the Dispatcher Command instead. The two submit Commands share one reader for the Channel-facing payload (`service/channel-submission.ts`), which owns the attribute, text, reminder, and `source_id` rules once and fixes the `channel` provenance for both, and `DispatcherService.interrupt(teamId | null)` splits into `interruptAgent()` and `interruptTeamLeader(teamId)` to match.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

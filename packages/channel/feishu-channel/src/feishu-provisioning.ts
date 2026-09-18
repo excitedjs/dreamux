@@ -14,9 +14,10 @@
  * route, and neither is compensated for the absence of the other.
  *
  * A run that fails before it invokes `team.submit` answers `unsubmitted`, and
- * the message it was carrying goes to the Dispatcher Agent like any other
- * message this Channel could not hand to a Team. Failing to provision is not a
- * reason to drop what somebody wrote.
+ * the message it was carrying goes nowhere: the inbound path answers the
+ * triggering message with a failure notice instead of handing the turn to the
+ * Dispatcher Agent. Failing to provision is reported in place, not repaired by
+ * a different recipient.
  *
  * The policy is the snapshot captured when the route plan was made. An
  * operator who rebinds or removes the space meanwhile changes what the next
@@ -107,8 +108,9 @@ export class FeishuProvisioning {
    * The caller is the platform's inbound handler; letting a failed Team
    * creation escape into it would look like a transport fault and be retried
    * as one, which is exactly the duplicate this design refuses. Everything
-   * caught here happened before `team.submit`, so the message is still
-   * deliverable and says so.
+   * caught here happened before `team.submit`, so the message demonstrably
+   * reached no recipient and the outcome says `unsubmitted`, which the inbound
+   * path answers with a failure notice.
    */
   private async guarded(
     input: ProvisioningRequest,
@@ -140,7 +142,8 @@ export class FeishuProvisioning {
    *
    * Only the last line reaches Core with this message. Every earlier exit is
    * `unsubmitted`, which is a fact about this run and not a guess: no submission
-   * has been sent yet, so the message is still owed a recipient.
+   * has been sent yet, so the triggering message is answered with a failure
+   * notice rather than delivered anywhere.
    */
   private async run(input: ProvisioningRequest): Promise<FeishuSubmitOutcome> {
     const created = await this.createTeam(input);
@@ -148,10 +151,10 @@ export class FeishuProvisioning {
       // Reachable now that the request id is the message id: it means this
       // exact message was already provisioned once and its Team has since been
       // closed. Core keeps that acceptance permanently, so there is nothing to
-      // retry around — the message is reported unsubmitted and falls back to
-      // the Dispatcher Agent. A *new* message to the same topic carries a new
-      // id and provisions a fresh Team, so a closed Team never strands a
-      // conversation.
+      // retry around — the message is reported unsubmitted and the triggering
+      // conversation gets the in-place failure notice. A *new* message to the
+      // same topic carries a new id and provisions a fresh Team, so a closed
+      // Team never strands a conversation.
       return {
         status: 'unsubmitted',
         message: `team.create replayed closed Team ${created.team_name}`,
@@ -227,8 +230,8 @@ export class FeishuProvisioning {
       //
       // One nuance: a redelivered id whose policy snapshot changed in between
       // hashes differently, so Core raises an idempotency conflict, the run
-      // reports `unsubmitted`, and the message falls back to the Dispatcher
-      // Agent. Loud, and acceptable.
+      // reports `unsubmitted`, and the triggering conversation gets the
+      // in-place failure notice. Loud, and acceptable.
       request_id: input.submission.sourceId,
       name_prefix: teamNamePrefix(input.display ?? space.display),
       intent: targetIntent({

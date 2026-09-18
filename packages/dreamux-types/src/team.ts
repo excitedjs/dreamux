@@ -103,20 +103,15 @@ export interface TeamSummary {
 }
 
 /**
- * Submit one turn to a Team.
+ * One turn submitted from a Channel-facing surface to the addressed
+ * Dispatcher's own Agent.
  *
- * Omitting `team_name` targets the Dispatcher Agent; supplying it submits only
- * to that Team's TeamLeader. Which of the two a caller wants is the caller's
- * own decision — a Channel routes its external conversation and says so by
- * naming a Team or not naming one — and `admin.sock` has exactly the same two
- * targets. Channel and admin adapters share this one flat payload: the caller
- * interprets its own external envelope and supplies the display attributes,
- * the faithful model-facing `text`, and at most one trailing reminder, while
- * Core assembles the provenance envelope around them and never reads what
- * they mean.
+ * Channel and admin adapters share this one flat payload: the caller interprets
+ * its own external envelope and supplies the display attributes, the faithful
+ * model-facing `text`, and at most one trailing reminder, while Core assembles
+ * the provenance envelope around them and never reads what they mean.
  */
-export interface TeamSubmitCommand {
-  readonly team_name?: string;
+export interface DispatcherSubmitCommand {
   /**
    * Unordered display attributes rendered onto the envelope's start tag.
    * Omitting them is exactly the empty set. Names are open but must be safe
@@ -132,7 +127,6 @@ export interface TeamSubmitCommand {
    * empty string is exactly an omitted one; anything else is rendered as given.
    */
   readonly reminder?: string;
-  readonly intent?: string;
   /**
    * Optional stable source identity. Core — not a Provider — deduplicates with
    * it, scoped to the target entity alone, so the owner that chooses the value
@@ -140,6 +134,17 @@ export interface TeamSubmitCommand {
    * deduplication entirely.
    */
   readonly source_id?: string;
+}
+
+/**
+ * Submit one turn to a Team's TeamLeader.
+ *
+ * A Team Command names exactly one Team; a turn meant for the Dispatcher Agent
+ * uses `dispatcher.submit` instead.
+ */
+export interface TeamSubmitCommand extends DispatcherSubmitCommand {
+  readonly team_name: string;
+  readonly intent?: string;
 }
 
 /**

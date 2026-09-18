@@ -8,7 +8,8 @@
  * runtime-neutral layer pre-renders XML any more. `FormatFeishuMessageResult`
  * says so directly ("The channel no longer renders the final XML — each
  * runtime wraps these into its own channel envelope"). The CURRENT owner of
- * that wrap is `channelSubmission` + `renderSubmission`
+ * that wrap is `parseChannelSubmission` + `channelSubmitInput` +
+ * `renderSubmission`
  * (`packages/dreamux/src/service/channel-submission.ts`,
  * `.../teammate-service/submission.ts`); `submission-envelope.test.ts` covers
  * that owner's contract in isolation, so this file's job is narrower: prove a
@@ -32,8 +33,29 @@ import { Readable } from 'node:stream';
 import { formatFeishuMessageForRuntime } from '@excitedjs/feishu-channel';
 import type { FeishuInboundEvent } from '@excitedjs/feishu-channel';
 
-import { channelSubmission } from '../src/service/channel-submission.js';
+import { channelSubmitInput, parseChannelSubmission } from '../src/service/channel-submission.js';
+import { commandPayload } from '../src/command/payload.js';
 import { renderSubmission } from '../src/service/teammate-service/submission.js';
+
+/**
+ * The production pipeline one Command runs: a payload carrying the Channel's
+ * ordered attrs and body is parsed and projected onto the generic submission
+ * input the renderer reads.
+ */
+function channelPipeline(input: {
+  attrs: ReadonlyArray<readonly [string, string]>;
+  text: string;
+  sourceId: string;
+}) {
+  const command = parseChannelSubmission(
+    commandPayload({
+      text: input.text,
+      source_id: input.sourceId,
+      attrs: Object.fromEntries(input.attrs),
+    }),
+  );
+  return renderSubmission(channelSubmitInput(command));
+}
 
 /** The same attribute-value escaping `renderSubmission` applies — asserted independently in submission-envelope.test.ts. */
 function escapeXmlAttr(value: string): string {
@@ -91,18 +113,17 @@ describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () =
   });
 });
 
-describe('the Channel → Core submission pipeline: formatFeishuMessageForRuntime into channelSubmission + renderSubmission', () => {
+describe('the Channel → Core submission pipeline: formatFeishuMessageForRuntime into the shared Command reader + renderSubmission', () => {
   it('carries every Feishu attr through as escaped start-tag attributes, keyed by CHANNEL_SOURCE', async () => {
     const result = await formatFeishuMessageForRuntime(
       inboundEvent({ threadId: 'topic-a' }),
     );
 
-    const submission = channelSubmission({
+    const rendered = channelPipeline({
       sourceId: 'msg-1',
       attrs: result.attrs,
       text: result.body,
     });
-    const rendered = renderSubmission(submission);
 
     // Core's own provenance name, not whatever the Channel calls itself —
     // with the Channel's own `source` among the attributes inside it.
@@ -124,12 +145,11 @@ describe('the Channel → Core submission pipeline: formatFeishuMessageForRuntim
     expect(result.body).toContain('<attachment');
     expect(result.body).toContain('<group_bots');
 
-    const submission = channelSubmission({
+    const rendered = channelPipeline({
       sourceId: 'msg-1',
       attrs: result.attrs,
       text: result.body,
     });
-    const rendered = renderSubmission(submission);
 
     // Every attr the Channel produced (its own concern — including the
     // human-formatted `create_time`, tested in feishu-channel's own suite —
@@ -142,8 +162,14 @@ describe('the Channel → Core submission pipeline: formatFeishuMessageForRuntim
 
   it('bypasses admission dedup for an empty Feishu message id (no source_id key at all)', async () => {
     const result = await formatFeishuMessageForRuntime(inboundEvent());
-    const submission = channelSubmission({ sourceId: '', attrs: result.attrs, text: result.body });
-    expect('sourceId' in submission).toBe(false);
+    const command = parseChannelSubmission(
+      commandPayload({
+        text: result.body,
+        source_id: '',
+        attrs: Object.fromEntries(result.attrs),
+      }),
+    );
+    expect('sourceId' in channelSubmitInput(command)).toBe(false);
   });
 });
 

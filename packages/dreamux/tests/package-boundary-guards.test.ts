@@ -400,6 +400,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'CoreCommandDefinition',
         'CoreCommandRegistry',
         'CoreCommandSource',
+        'DispatcherSubmitCommand',
         'DreamuxEnvironment',
         'DreamuxLogger',
         'JsonInvokeResult',

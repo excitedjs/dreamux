@@ -190,17 +190,17 @@ describe('Feishu slash command dispatch', () => {
     expect(reply).toEqual({ kind: 'text', text: 'No turn is running.' });
   });
 
-  it('omits the Team name for an unbound stop', async () => {
-    const calls: JsonValue[] = [];
+  it('addresses the Dispatcher Agent for an unbound stop', async () => {
+    const calls: Array<{ command: string; payload: JsonValue }> = [];
     await dispatch('stop', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
       bindings: [],
-      invoke: async (_command, payload) => {
-        calls.push(payload);
+      invoke: async (command, payload) => {
+        calls.push({ command, payload });
         return { status: 'interrupted' };
       },
     });
-    expect(calls).toEqual([{}]);
+    expect(calls).toEqual([{ command: 'dispatcher.interrupt', payload: {} }]);
   });
 
   it('answers every Core command failure with one line', async () => {
@@ -683,7 +683,7 @@ describe('Feishu slash command inbound placement', () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.command).toBe('team.submit');
+    expect(calls[0]!.command).toBe('dispatcher.submit');
     expect(calls[0]!.payload).not.toHaveProperty('team_name');
     await session.close();
   });

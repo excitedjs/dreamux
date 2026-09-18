@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Every Dispatcher-addressed delivery now names the Dispatcher Command instead of omitting a Team name: an unbound conversation, the single fallback after a bound Team proved it admitted nothing, and a document-comment cold open invoke `dispatcher.submit`, and `/stop` in an unbound conversation invokes `dispatcher.interrupt`. A Collaboration Space message whose Team could not be provisioned is no longer delivered to the Dispatcher Agent: the Channel replies under the triggering message with `Could not start a Team for this conversation. The reason is in the Dreamux log.` and submits nothing. The notice carries no reason because raw failure text can name host state paths; the reason stays on the delivery log line, which is unchanged. `failed`, `ambiguous`, and `error` are logged with no notice as before, and a settled question-card answer whose topic plans provisioning is dropped with its log line rather than notified or re-routed.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

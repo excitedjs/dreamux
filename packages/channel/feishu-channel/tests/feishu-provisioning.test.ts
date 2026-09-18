@@ -3,8 +3,9 @@
  * into a working Team, and nothing about the run itself is durable
  * (COVERAGE CELL F; TeamLeader failure ledger item 16: no persisted
  * provisioning row, phase, saga, outbox, recovery cursor, or restart-resume
- * scan survives; item 22: deterministic non-admission still reaches the
- * Dispatcher Agent exactly once).
+ * scan survives; a run that never invokes team.submit answers
+ * `unsubmitted`, and the inbound path posts the in-place failure notice
+ * rather than delivering the message to the Dispatcher Agent).
  *
  * These tests drive `FeishuProvisioning` against a real `FeishuRouting` +
  * `FeishuRoutingStore` (so "nothing beyond Space policy and completed

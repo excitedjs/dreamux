@@ -388,12 +388,15 @@ a Team under), or `dispatcher` (`no_binding` or `not_bindable`).
 Core makes no routing decision. The Channel resolves its own target, consults its
 own bindings, and states the recipient in the Command:
 
-- a resolved `team_name` reaches that Team's TeamLeader;
-- omitting it reaches the Dispatcher Agent, which is the recipient for a
-  conversation no binding or Collaboration Space claims.
+- a resolved `team_name` goes to `team.submit`, which requires it, and reaches
+  that Team's TeamLeader;
+- no Team goes to `dispatcher.submit`, which takes no target at all and reaches
+  the addressed Dispatcher's own Agent — the recipient for a conversation no
+  binding or Collaboration Space claims.
 
-Omission *is* the Channel's decision. Both forms are the one generic
-`team.submit` Command, carrying opaque display attributes, faithful body text, an
+Choosing the Command *is* the Channel's decision. The two carry the same
+Channel-facing payload, read by one Core reader: opaque display attributes,
+faithful body text, an
 optional standing reminder, and a stable `source_id` that Core deduplicates a
 repeat on; Core renders the provenance envelope itself. Nothing about chats,
 threads, or topic mode crosses. The returned `turn_id` names the exact turn the
@@ -548,7 +551,7 @@ agent-facing body format is outside its boundary.
 
 `<content>` is always written, self-closing when there is nothing to put in it.
 That is what the chat path renders for a message with no text, and it is also
-required: `team.submit` validates `text` as a non-empty string, so omitting the
+required: both submit Commands validate `text` as a non-empty string, so omitting the
 body would turn a comment Feishu answered nothing for into a failed delivery. The
 read shares one bounded deadline with the commenter's name lookup, so the inbound
 route's worst case is what it already was, and it never costs the event: a failed
@@ -647,8 +650,9 @@ rows state intent and let the owning layer refuse:
   delivered into the conversation that asked.
 - **`/help`** renders the table: every row's `usage` and `summary`, in English.
 
-- **`/stop`** invokes `team.interrupt`, naming the bound Team or omitting the
-  name to reach the Dispatcher Agent, exactly as `team.submit` addresses. It
+- **`/stop`** invokes `team.interrupt` with the bound Team's name, or
+  `dispatcher.interrupt` to reach the Dispatcher Agent, exactly as the submit
+  Commands address. It
   interrupts only the agent this conversation talks to, never the TeamMates that
   agent started. A `provision` plan has no Team yet, so it answers that the
   conversation has no bound Team rather than interrupting the Dispatcher Agent's
@@ -1035,12 +1039,23 @@ it does not rewrite existing or manually created Teams.
 
 The run order is the one that degrades honestly — create the Team, commit the
 route, announce it, deliver the message — and every exit before `team.submit`
-answers `unsubmitted`, so the message it was carrying goes to the Dispatcher
-Agent like any other message this Channel could not hand to a Team. The
+answers `unsubmitted`, which the inbound path answers by replying a fixed notice
+under the triggering message: `Could not start a Team for this conversation. The
+reason is in the Dreamux log.` A submission the just-provisioned Team rejects
+(`rejected`) is answered the same way. There is no Dispatcher fallback on this
+plan — the recipient a Collaboration Space message was routed to is its own
+Team, and a failure to produce one is reported where it was written rather than
+repaired by delivering to somebody else. The reason stays on the delivery log
+line: the raw failure text can name this host's absolute state paths, which do
+not belong in a group chat. `failed`, `ambiguous`, and `error` are logged with
+no notice, as before, because they prove nothing about whether a turn exists.
+One caller of the same delivery entry point is not an inbound message and gets
+no notice: a settled question-card answer whose topic plans provisioning is
+dropped with a log line, since handing an already-settled answer to a different
+recipient risks a second turn for one answer. The
 `team.create` summary carries the Team lifecycle, leader name, configured runtime
 ID, and runtime cwd, so the Channel can render the route card without an
-immediate `team.status` round trip. Failing to provision is not a reason to drop
-what somebody wrote. A failure after `team.create` leaves an ordinary Team
+immediate `team.status` round trip. A failure after `team.create` leaves an ordinary Team
 nothing routes to: an accepted orphan an operator can see and use, deliberately
 not compensated.
 
@@ -1057,15 +1072,15 @@ Idempotency comes from one choice with several consequences: the `team.create`
   message to that topic provisions a fresh Team. A thread-scoped id could not:
   Core keeps a request's acceptance record permanently, so it would replay
   `closed` forever and the topic could never be provisioned again. A replay whose
-  Team has since closed is reported `unsubmitted` and falls back to the
-  Dispatcher Agent.
+  Team has since closed is reported `unsubmitted` and answered with the in-place
+  failure notice.
 - The cost of message scope is that a *different* message arriving after a
   partial failure creates a second Team. That window is knowingly left
   undefended: closing it needs durable per-target request state this design has
   declined to keep.
 - A redelivered id whose policy snapshot changed in between hashes differently,
   so Core raises an idempotency conflict, the run reports `unsubmitted`, and the
-  message falls back to the Dispatcher Agent.
+  triggering message is answered with the in-place failure notice.
 
 Concurrent messages to the same new topic share one in-flight run keyed by target:
 the first supplies the first delivery, and the rest wait for the binding and are

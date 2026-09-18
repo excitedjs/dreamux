@@ -12,13 +12,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { DreamuxLogger, TeamSubmitCommand } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, JsonValue, TeamSubmitCommand } from '@excitedjs/dreamux-types';
 
 import type { RestartIntentConsumer } from '../src/daemon/restart-intent.js';
 import {
-  channelSubmission,
-  type ChannelInboundTurn,
+  channelSubmitInput,
+  parseChannelSubmission,
 } from '../src/service/channel-submission.js';
+import { commandPayload } from '../src/command/payload.js';
 import { injectRestartNoticeIfNeeded } from '../src/service/dispatcher-service/restart-notice.js';
 import {
   AGENT_TASK_SOURCE,
@@ -300,43 +301,46 @@ describe("Core's own producer source names", () => {
   });
 });
 
-describe('channelSubmission: the Channel-adapter and admin.sock ingress boundary', () => {
-  const base: ChannelInboundTurn = { text: 'hello team', sourceId: 'msg-1' };
+describe('parseChannelSubmission + channelSubmitInput: the ingress boundary shared by both submit Commands', () => {
+  /** The production sequence: schema-validated Command payload -> parsed Command -> generic submission input. */
+  function channelInput(payload: JsonValue): TeammateSubmitInput {
+    return channelSubmitInput(parseChannelSubmission(commandPayload(payload)));
+  }
 
-  it('always submits under CHANNEL_SOURCE, never a Channel-chosen name', () => {
-    expect(channelSubmission(base).source).toBe(CHANNEL_SOURCE);
-    expect(channelSubmission({ ...base, sourceId: '' }).source).toBe('channel');
+  const base = { text: 'hello team', source_id: 'msg-1' };
+
+  it('always submits under CHANNEL_SOURCE, never a caller-chosen name', () => {
+    expect(channelInput(base).source).toBe(CHANNEL_SOURCE);
+    expect(channelInput({ ...base, source_id: '' }).source).toBe('channel');
   });
 
-  it('omits attrs entirely when the Channel supplies none, matching renderSubmission’s own omitted-equals-empty rule', () => {
-    const result = channelSubmission(base);
+  it('omits attrs entirely when the caller supplies none, matching renderSubmission’s own omitted-equals-empty rule', () => {
+    const result = channelInput(base);
     expect('attrs' in result).toBe(false);
   });
 
-  it('collapses duplicate attribute names to the last value — duplicates are unrepresentable past this point', () => {
-    const result = channelSubmission({
-      ...base,
-      attrs: [
-        ['title', 'first'],
-        ['title', 'second'],
-      ],
-    });
-    expect(result.attrs).toEqual({ title: 'second' });
-    expect(Object.keys(result.attrs ?? {})).toHaveLength(1);
+  it('omits an empty attrs object identically to one not supplied', () => {
+    const result = channelInput({ ...base, attrs: {} });
+    expect('attrs' in result).toBe(false);
+  });
+
+  it('carries the caller attrs through to the envelope unchanged', () => {
+    const result = channelInput({ ...base, attrs: { title: 'second', chat: 'general' } });
+    expect(result.attrs).toEqual({ title: 'second', chat: 'general' });
   });
 
   it('carries an empty sourceId through as bypassing dedup, never as an empty-string key', () => {
-    const result = channelSubmission({ ...base, sourceId: '' });
+    const result = channelInput({ ...base, source_id: '' });
     expect('sourceId' in result).toBe(false);
   });
 
   it('carries a non-empty sourceId through unchanged', () => {
-    const result = channelSubmission({ ...base, sourceId: 'msg-42' });
+    const result = channelInput({ ...base, source_id: 'msg-42' });
     expect(result.sourceId).toBe('msg-42');
   });
 
-  it('never sets an intent: the Channel-adapter boundary does not touch the recovery subject', () => {
-    const result = channelSubmission(base);
+  it('never sets an intent on the dispatcher-facing projection — that field belongs only to team.submit', () => {
+    const result = channelInput(base);
     expect('intent' in result).toBe(false);
   });
 });

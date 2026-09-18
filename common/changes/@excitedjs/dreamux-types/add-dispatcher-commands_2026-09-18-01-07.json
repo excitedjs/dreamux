@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "`DispatcherSubmitCommand` is exported: the flat Channel-facing submit payload — display attributes, faithful text, an optional trailing reminder, and an optional `source_id` Core deduplicates on — with no recipient in it, because `dispatcher.submit` addresses the Dispatcher through the caller context. `TeamSubmitCommand` extends it with a required `team_name` and the optional `intent`, so omitting the Team name no longer type-checks and no longer means the Dispatcher Agent.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

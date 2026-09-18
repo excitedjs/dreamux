@@ -3,13 +3,14 @@
 ## Current state
 
 - Goal: Give the Dispatcher Agent its own submit and interrupt Commands, make the Team Commands address only Teams, and reply a failure notice in place when Collaboration Space provisioning cannot deliver
-- State: `implementation`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/architecture/add-dispatcher-submit-command/requirement.md)
 - Final solution: [Technical solution](/.agents/tasks/architecture/add-dispatcher-submit-command/technical-design/final.md)
 - Solution review Issue: https://github.com/excitedjs/dreamux/issues/443
 - Blockers: None.
 - Solution path: TeamLeader-authored solution with external Devbox review. Proposed on a 2026-09-17 card that went unanswered; the operator then said "先把需求1 做了" and was told this path is being used.
-- Next action: Enter development — one developer TeamMate on the operator-named `seed` runtime, then TeamLeader pre-review.
+- Verification: [Gates and acceptance evidence](/.agents/tasks/architecture/add-dispatcher-submit-command/verification.md)
+- Next action: Independent implementation review of the pull request.
 - Related tasks: supersedes the Dispatcher addressing of `team.submit` settled in [Minimize Core Provider Boundaries](/.agents/tasks/architecture/minimize-provider-boundaries/README.md); sibling request [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).
 
 ## Solution review
@@ -24,5 +25,15 @@
 
 ## Delivery
 
-- Pull request: Not opened.
-- Knowledge closeout: Pending.
+- Pull request: opened against `next`; the implementation review runs on it.
+- Knowledge closeout: done. `.agents/domains/channel.md` (Command addressing,
+  `/stop`, the provisioning-failure paragraphs and both idempotency exits),
+  `.agents/product/README.md` (the in-place failure notice as its own product
+  entry), `packages/channel/feishu-channel/CLAUDE.md`, and
+  `packages/dreamux/src/service/CLAUDE.md` (the Dispatcher namespace now owns
+  the Agent's submit and interrupt). `.agents/domains/current-architecture.md`
+  needed no change: its Collaboration Space sentence names `team.create` and
+  `team.submit`, which is still what that flow invokes.
+- Change notes: three ordinary `minor` notes (`@excitedjs/dreamux`,
+  `@excitedjs/dreamux-types`, `@excitedjs/feishu-channel`). No persisted file
+  changes shape, so none is upgrade-blocking.

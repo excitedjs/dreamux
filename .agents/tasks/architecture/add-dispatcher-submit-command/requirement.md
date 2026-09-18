@@ -76,6 +76,11 @@ directly to a Dispatcher:
     Team (every exit listed under call site 3), the Channel no longer delivers
     the message to the Dispatcher Agent; it replies a failure notice in place,
     in the conversation of the triggering message.
+  - The notice covers the chat inbound path only. A question-card answer
+    reaches the same delivery entry point, so a card answered in a
+    Collaboration Space topic with no binding also plans provisioning; when
+    that run produces no recipient the answer is dropped with a log line and
+    no notice, as that path already drops `failed`, `ambiguous`, and `error`.
 - Scope: the Core Dispatcher and Team Command definitions, the Feishu Channel
   call sites above, their tests, the knowledge base and product catalog entries
   that describe these behaviors, and change notes.
@@ -128,6 +133,11 @@ directly to a Dispatcher:
     changes too: "一起加 dispatcher.interrupt" — the offered option was to add
     `dispatcher.interrupt`, switch `/stop` to it, and make `team.interrupt`'s
     `team_name` required.
+- Confirmed operator decision (2026-09-18), raised at TeamLeader pre-review
+  after tracing that a question-card answer travels the same delivery entry
+  point and so loses the Dispatcher fallback on a failed provisioning run:
+  "保持现状：只记日志" — the offered option was a log line only, no in-place
+  notice on that path, matching how it already drops other failures.
 - Assumptions: None.
 - Blocking unknowns: None. The failure notice's wording and delivery mechanism
   are solution choices, reviewed at the development-approval playback.

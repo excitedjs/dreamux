@@ -28,8 +28,11 @@ never on `@excitedjs/dreamux` core.
 - Own where a Feishu conversation is routed: the durable per-channel binding
   document, hierarchy and fallback, stale-binding cleanup, and the automatic
   collaboration-space provisioning that composes ordinary `team.create` and
-  `team.submit` Commands. The same document holds which documents' comments
-  reach which recipient, because a Team closing removes both in one commit.
+  `team.submit` Commands. A provisioning run that produces no recipient is
+  answered in the triggering conversation with a fixed failure notice; it is
+  never re-routed to the Dispatcher Agent. The same document holds which
+  documents' comments reach which recipient, because a Team closing removes
+  both in one commit.
   Validate a manual bind against Core through the injected `invoke` port first:
   a missing or closed Team is refused with a public failure and mutates no
   routing state. The routing document holds one invariant of its own — a chat
@@ -77,7 +80,9 @@ never on `@excitedjs/dreamux` core.
   `not_downloaded` status, without embedding a tool command or detailed reason
   in the Channel prompt.
 - Serialize the Channel-owned inner inbound body, including `<attachment>`
-  blocks, and supply display attributes plus faithful text to `team.submit`.
+  blocks, and supply display attributes plus faithful text to whichever submit
+  Command names the recipient — `team.submit` for a bound Team,
+  `dispatcher.submit` for the Dispatcher Agent.
   Core renders the outer `<channel source="feishu" …>` envelope; no agent
   runtime sees a Feishu concept.
 - If the channel ever needs to parse model/channel-specific markup, keep that

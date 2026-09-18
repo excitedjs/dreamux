@@ -134,7 +134,7 @@ function scopeOf(recipient: 'dispatcher' | 'leader') {
   };
 }
 
-/** The `teammate.input` Core publishes while `team.submit` still runs. */
+/** The `teammate.input` Core publishes while a submit Command still runs. */
 function inputEvent(
   recipient: 'dispatcher' | 'leader',
   content: string,
@@ -252,7 +252,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       payload,
       emit,
     ) => {
-      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      if (command !== 'dispatcher.submit') throw new Error(`unexpected ${command}`);
       emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
       return { status: 'submitted', turn_id: 'turn-1' };
     });
@@ -297,7 +297,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       payload,
       emit,
     ) => {
-      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      if (command !== 'dispatcher.submit') throw new Error(`unexpected ${command}`);
       submissionIndex += 1;
       const turnId = `turn-${submissionIndex}`;
       emit(inputEvent('dispatcher', `body ${submissionIndex}`, sourceIdOf(payload)));
@@ -354,7 +354,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       payload,
       emit,
     ): Promise<JsonValue> => {
-      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      if (command !== 'dispatcher.submit') throw new Error(`unexpected ${command}`);
       invocation += 1;
       if (invocation === 2) return { status: 'duplicate' };
       emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
@@ -398,17 +398,21 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
   });
 
   it('carries the same anchor to the Dispatcher when a proven-stale route falls back', async () => {
-    let submitCalls = 0;
+    const submitCommands: string[] = [];
     const { session, cot, port, bot } = await harness('chan-cot-fallback', async (
       command,
       payload,
       emit,
     ) => {
-      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
-      submitCalls += 1;
+      if (command !== 'team.submit' && command !== 'dispatcher.submit') {
+        throw new Error(`unexpected ${command}`);
+      }
+      submitCommands.push(command);
       const p = payload as Record<string, unknown>;
       // The stored route names a Team that is closed: proven no admission.
-      if (p['team_name'] !== undefined) throw teamClosedError();
+      if (command === 'team.submit' && p['team_name'] !== undefined) {
+        throw teamClosedError();
+      }
       emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
       return { status: 'submitted', turn_id: 'turn-fallback' };
     });
@@ -446,7 +450,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       'om_user_1',
     ]);
     expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
-    expect(submitCalls).toBe(2);
+    expect(submitCommands).toEqual(['team.submit', 'dispatcher.submit']);
     expect(JSON.stringify(bot.sentCards[0]!.card)).toContain('Dreamux route ended');
     expect(JSON.stringify(bot.sentCards[0]!.card)).not.toContain('dissolved');
     port.emit(assistantMessage('turn-fallback', 'dispatcher', 'dispatcher answered'));
