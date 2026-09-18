@@ -30,7 +30,7 @@
 
 ## Delivery
 
-- Pull request: Not opened.
+- Pull request: [#446](https://github.com/excitedjs/dreamux/pull/446).
 - Knowledge closeout: Complete. The provider-runtime domain owns the two
   kinds' contract, the per-runtime emission points, and the superseded
   2026-09-04 carrier ruling with the 2026-09-18 words beside it; the channel
