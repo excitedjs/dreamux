@@ -103,28 +103,153 @@ describe('adapter equivalence — one representative Command per namespace', () 
     expect((viaChannel as { teams: unknown[] }).teams).toEqual([row]);
   });
 
-  it('team.interrupt: both adapters preserve optional Team addressing', async () => {
-    const interrupt = vi.fn(async (teamId: string | null) => ({
-      status: teamId === null ? ('idle' as const) : ('interrupted' as const),
+  it('team.interrupt and dispatcher.interrupt: both adapters address the same target the same way', async () => {
+    const interruptAgent = vi.fn(async () => ({ status: 'idle' as const }));
+    const interruptTeamLeader = vi.fn(async (teamId: string) => ({
+      status: teamId === 'alpha' ? ('interrupted' as const) : ('idle' as const),
     }));
     const harness = createCommandHarness({
-      dispatcherOverrides: { interrupt },
+      dispatcherOverrides: { interruptAgent, interruptTeamLeader },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
 
-    const dispatcherResult = await admin.send('team.interrupt', {
+    const agentViaAdmin = await admin.send('dispatcher.interrupt', {
       dispatcher_id: 'harness-d1',
     });
-    const leaderResult = await lease.port.invoke.invoke('team.interrupt', {
+    const agentViaChannel = await lease.port.invoke.invoke('dispatcher.interrupt', {});
+    const leaderViaAdmin = await admin.send('team.interrupt', {
+      dispatcher_id: 'harness-d1',
+      team_name: 'alpha',
+    });
+    const leaderViaChannel = await lease.port.invoke.invoke('team.interrupt', {
       team_name: 'alpha',
     });
 
-    expect(dispatcherResult).toMatchObject({ ok: true, result: { status: 'idle' } });
-    expect(leaderResult).toEqual({ status: 'interrupted' });
-    // The Team name each adapter carried is the whole contract: an omitted
-    // name reaches the one method as `null`, a given one reaches it verbatim.
-    expect(interrupt.mock.calls).toEqual([[null], ['alpha']]);
+    expect(agentViaAdmin).toMatchObject({ ok: true, result: { status: 'idle' } });
+    expect(agentViaChannel).toEqual({ status: 'idle' });
+    expect(leaderViaAdmin).toMatchObject({ ok: true, result: { status: 'interrupted' } });
+    expect(leaderViaChannel).toEqual({ status: 'interrupted' });
+    // Team addressing is now part of the contract, not an omitted-argument
+    // convention: each Command has exactly one recipient and reaches exactly
+    // one method.
+    expect(interruptAgent.mock.calls).toEqual([[], []]);
+    expect(interruptTeamLeader.mock.calls).toEqual([['alpha'], ['alpha']]);
+  });
+
+  it('team.interrupt without team_name and team.submit without team_name are BAD_REQUEST on both adapters, before any handler runs', async () => {
+    const interruptTeamLeader = vi.fn(async () => ({ status: 'idle' as const }));
+    const submitToTeamLeader = vi.fn(async () => ({
+      status: 'submitted',
+      turn: { id: 'harness-turn-1' },
+    }));
+    const submitToAgent = vi.fn(async () => ({
+      status: 'submitted',
+      turn: { id: 'harness-turn-1' },
+    }));
+    const harness = createCommandHarness({
+      dispatcherOverrides: { interruptTeamLeader, submitToTeamLeader, submitToAgent },
+    });
+    admin = await startHarnessAdminSocket(harness);
+    const lease = createHarnessChannelInvoker(harness);
+
+    const interruptResponse = await admin.send('team.interrupt', {
+      dispatcher_id: 'harness-d1',
+    });
+    const submitResponse = await admin.send('team.submit', {
+      dispatcher_id: 'harness-d1',
+      text: 'hello',
+    });
+    await expect(
+      lease.port.invoke.invoke('team.interrupt', {}),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      lease.port.invoke.invoke('team.submit', { text: 'hello' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(interruptResponse.ok).toBe(false);
+    expect((interruptResponse as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+    expect(submitResponse.ok).toBe(false);
+    expect((submitResponse as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+    expect(interruptTeamLeader).not.toHaveBeenCalled();
+    expect(submitToTeamLeader).not.toHaveBeenCalled();
+    // A missing Team name must never fall through to the Dispatcher Agent.
+    expect(submitToAgent).not.toHaveBeenCalled();
+  });
+
+  it('dispatcher.submit reaches the Dispatcher Agent through both adapters', async () => {
+    const submitToAgent = vi.fn(async () => ({
+      status: 'submitted',
+      turn: { id: 'agent-turn-1' },
+    }));
+    const submitToTeamLeader = vi.fn(async () => ({
+      status: 'submitted',
+      turn: { id: 'team-turn-1' },
+    }));
+    const harness = createCommandHarness({
+      dispatcherOverrides: { submitToAgent, submitToTeamLeader },
+    });
+    admin = await startHarnessAdminSocket(harness);
+    const lease = createHarnessChannelInvoker(harness);
+
+    const viaAdmin = await admin.send('dispatcher.submit', {
+      dispatcher_id: 'harness-d1',
+      text: 'wake the dispatcher',
+    });
+    const viaChannel = await lease.port.invoke.invoke('dispatcher.submit', {
+      text: 'wake the dispatcher',
+    });
+
+    expect(viaAdmin).toMatchObject({
+      ok: true,
+      result: { status: 'submitted', turn_id: 'agent-turn-1' },
+    });
+    expect(viaChannel).toEqual({ status: 'submitted', turn_id: 'agent-turn-1' });
+    expect(submitToAgent).toHaveBeenCalledTimes(2);
+    expect(submitToTeamLeader).not.toHaveBeenCalled();
+  });
+
+  it('team.submit carries the optional intent through to submitToTeamLeader, and omits it when absent', async () => {
+    const submitToTeamLeader = vi.fn(async (_input: unknown) => ({
+      status: 'submitted',
+      turn: { id: 'team-turn-intent' },
+    }));
+    const submitToAgent = vi.fn(async (_input: unknown) => ({
+      status: 'submitted',
+      turn: { id: 'agent-turn-1' },
+    }));
+    const harness = createCommandHarness({
+      dispatcherOverrides: { submitToTeamLeader, submitToAgent },
+    });
+    admin = await startHarnessAdminSocket(harness);
+    const lease = createHarnessChannelInvoker(harness);
+
+    await admin.send('team.submit', {
+      dispatcher_id: 'harness-d1',
+      team_name: 'alpha',
+      text: 'wake the leader',
+      intent: 'the durable recovery subject',
+    });
+    await lease.port.invoke.invoke('team.submit', {
+      team_name: 'alpha',
+      text: 'wake the leader again',
+    });
+
+    // intent updates the leader's durable recovery subject; it is Team-only and
+    // must reach the handler through both adapters exactly as the caller sent
+    // it. An omitted intent is an omitted key, not an empty string.
+    expect(submitToTeamLeader).toHaveBeenCalledTimes(2);
+    const withIntent = submitToTeamLeader.mock.calls[0]![0] as Record<string, unknown>;
+    const withoutIntent = submitToTeamLeader.mock.calls[1]![0] as Record<string, unknown>;
+    expect(withIntent).toMatchObject({
+      teamId: 'alpha',
+      intent: 'the durable recovery subject',
+      deliverCompletionToDispatcher: false,
+    });
+    expect(withIntent['source']).toBe('channel');
+    expect(withoutIntent['teamId']).toBe('alpha');
+    expect('intent' in withoutIntent).toBe(false);
+    expect(submitToAgent).not.toHaveBeenCalled();
   });
 
   it('teammate.list: identical result via both adapters', async () => {

@@ -4,6 +4,11 @@ import type {
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
+import {
+  STRING,
+  enumOf,
+  objectSchema,
+} from '../../command/schema.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type { DreamuxConfig } from '../../config/config.js';
@@ -121,6 +126,20 @@ export function teamClosedFact(record: TeamRecord): TeamClosedFact {
     closed_at: record.closed_at ?? Date.now(),
   });
 }
+
+/**
+ * The declared output schema of the submit receipt {@link teamSubmitResult}
+ * projects. Both `team.submit` and `dispatcher.submit` return that one receipt,
+ * so they share this one declaration beside the projection.
+ */
+export const teamSubmitResultOutput = objectSchema(
+  {
+    status: enumOf(['submitted', 'duplicate', 'stopped', 'failed', 'ambiguous']),
+    turn_id: STRING,
+    error: objectSchema({ code: STRING, message: STRING }, ['code', 'message']),
+  },
+  ['status'],
+);
 
 /**
  * The canonical public receipt of one TeamLeader submission.

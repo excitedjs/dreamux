@@ -29,7 +29,10 @@ Team's members are the same pair again, scoped to the Team.
 
 - **`dispatchers/`** — the process-level `Dispatchers` collection: a factory
   plus cache over per-dispatcher `DispatcherService` aggregates, its Commands,
-  and its errors. It owns no teammate/team/channel state; each
+  and its errors. Its `commands.ts` owns the whole Dispatcher namespace:
+  enumeration and lifecycle plus the addressed Dispatcher Agent's own
+  `dispatcher.submit` / `dispatcher.interrupt`. A Team Command names exactly one
+  Team; neither namespace addresses the other's recipient. It owns no teammate/team/channel state; each
   `DispatcherService` builds and owns its own object graph. Shutdown closes the
   factory admission before sweeping the existing aggregates, so no dispatcher
   can materialize after the sweep snapshot.

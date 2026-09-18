@@ -419,6 +419,24 @@ async function deliverAcceptedMessage(
 
     if (!work.isSessionActive()) return;
     reportDelivery(h, acceptedEvent, outcome);
+    if (
+      outcome.status === 'unsubmitted' ||
+      outcome.status === 'rejected'
+    ) {
+      // A Collaboration Space run that never produced a Team, or a submission
+      // the just-provisioned Team refused. No Dispatcher fallback: answer the
+      // triggering message in place. The notice names no reason — the raw
+      // failure text can carry this host's absolute state path, and the reason
+      // is already on reportDelivery's log line.
+      await sendReply(h, {
+        chatId: acceptedEvent.chatId,
+        text:
+          'Could not start a Team for this conversation. ' +
+          'The reason is in the Dreamux log.',
+        messageId: acceptedEvent.messageId,
+      });
+      return;
+    }
     if (outcome.status === 'submitted' && built.clearBaseline !== null) {
       await built.clearBaseline();
     }
@@ -490,9 +508,11 @@ async function buildSubmission(
 /**
  * What this Channel says about a message it accepted.
  *
- * Every accepted message is delivered to someone — a bound Team's TeamLeader,
- * or the Dispatcher Agent — so what is reported here is only how Core
- * answered, never whether the message found a recipient.
+ * Every non-provisioning plan is delivered to someone — a bound Team's
+ * TeamLeader, or the Dispatcher Agent — so what is reported here is only how
+ * Core answered, never whether the message found a recipient. A provisioning
+ * run that produced no recipient is reported here with its reason; the caller
+ * posts the fixed failure notice separately, without echoing that reason.
  */
 function reportDelivery(
   h: SessionHandle,

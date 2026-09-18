@@ -348,10 +348,11 @@ export class FeishuChannelSession {
   /**
    * One turn, to whoever this Channel's routing chose.
    *
-   * A `teamName` reaches that Team's TeamLeader; `null` omits the target and
-   * reaches the Dispatcher Agent, which is the recipient for a conversation
-   * no binding or Collaboration Space claims. Core decides nothing about
-   * which: omission *is* the Channel's decision, stated in the Command.
+   * A `teamName` invokes `team.submit` and reaches that Team's TeamLeader;
+   * `null` invokes `dispatcher.submit` and reaches the addressed Dispatcher's
+   * own Agent, which is the recipient for a conversation no binding or
+   * Collaboration Space claims. Core decides nothing about which: naming a Team
+   * or naming none is the Channel's decision, stated in the Command.
    *
    * The Channel takes its own anchor before invoking Core. The caller-owned
    * source id is retained only to recognize the submitted turn whose body is
@@ -374,7 +375,8 @@ export class FeishuChannelSession {
         )
       : null;
     try {
-      const raw = await this.invoke('team.submit', {
+      const command = teamName !== null ? 'team.submit' : 'dispatcher.submit';
+      const raw = await this.invoke(command, {
         ...(teamName !== null ? { team_name: teamName } : {}),
         attrs: submission.attrs,
         text: submission.text,
@@ -427,7 +429,15 @@ export class FeishuChannelSession {
     });
   }
 
-  /** Deliver one accepted message wherever this Channel routes it. */
+  /**
+   * Deliver one accepted message wherever this Channel routes it.
+   *
+   * `dispatcher` goes to the Dispatcher Agent; `bound` goes to the named Team,
+   * and a pre-admission `TEAM_NOT_FOUND`/`TEAM_CLOSED` drops the stale routes
+   * and falls back once to the Dispatcher Agent; `provision` runs automatic
+   * provisioning and its outcome is final — `unsubmitted`/`rejected` get no
+   * Dispatcher fallback, the inbound path posts a failure notice instead.
+   */
   async deliver(input: {
     target: FeishuTarget;
     containerChatId: string | null;
@@ -438,34 +448,25 @@ export class FeishuChannelSession {
     if (plan.kind === 'dispatcher') {
       return this.submit(null, submission);
     }
-    const outcome = plan.kind === 'bound'
-      ? await this.submit(plan.teamName, submission)
-      : await this.provisioning.provisionForInbound({
-          space: plan.space,
-          target: input.target,
-          display: null,
-          submission,
-        });
-    if (outcome.status !== 'rejected' && outcome.status !== 'unsubmitted') {
-      return outcome;
+    if (plan.kind === 'provision') {
+      return this.provisioning.provisionForInbound({
+        space: plan.space,
+        target: input.target,
+        display: null,
+        submission,
+      });
     }
-    // Nothing was admitted, and it is proven rather than assumed: Core refused
-    // this Team before creating anything, or provisioning never reached a
-    // Command at all. The message still has a recipient — the Dispatcher
-    // Agent, as every conversation this Channel cannot hand to a Team does.
-    //
-    // Exactly once. The fallback is an ordinary submission and its own answer
-    // is final: past that point an ambiguous admission or an unknown failure
-    // proves nothing about whether a turn exists, and nothing is sent twice on
-    // a guess.
-    if (plan.kind === 'bound') {
-      await this.routeReconciliation.forgetTeamRoutes(
-        plan.teamName,
-        rejectedDeliveryNotice(
-          outcome.status === 'rejected' ? outcome.code : null,
-        ),
-      );
-    }
+    const outcome = await this.submit(plan.teamName, submission);
+    if (outcome.status !== 'rejected') return outcome;
+    // Nothing was admitted, so the message is safe to deliver once more: drop
+    // the stale routes and hand it to the Dispatcher Agent, as every
+    // conversation this Channel cannot route is. Past that fallback, an
+    // ambiguous admission or unknown failure proves nothing about a turn, so
+    // nothing is sent twice on a guess.
+    await this.routeReconciliation.forgetTeamRoutes(
+      plan.teamName,
+      rejectedDeliveryNotice(outcome.code),
+    );
     return this.submit(null, submission);
   }
 

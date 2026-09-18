@@ -172,6 +172,15 @@ the same change that touches it.
   offers no other one, and must never omit the reply message ID. Existing Teams
   and the shared space policy are unchanged; identity stays a string.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **A provisioning run that produces no Team answers in place.** When a
+  collaboration space cannot provision the Team a message was routed to, the
+  Channel replies under that message — `Could not start a Team for this
+  conversation. The reason is in the Dreamux log.` — and delivers nothing to
+  the Dispatcher Agent. The notice names no reason, because raw failure text
+  can carry host paths into a group chat. A settled question-card answer on
+  such a topic is dropped with a log line instead, since re-routing an answer
+  already given risks a second turn for it.
+  (Task: [add-dispatcher-submit-command](/.agents/tasks/architecture/add-dispatcher-submit-command/README.md).)
 - **Binding changes are confirmed with a card, and the card names real paths.**
   When a chat, topic, or space binding changes, the built-in Feishu channel
   posts a confirmation card: space-bound shows the space name, TeamLeader

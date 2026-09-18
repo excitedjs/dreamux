@@ -22,10 +22,13 @@ export type RouteRemovalNotice = 'team_closed' | 'route_ended' | 'silent';
  * answer says nothing about routing, so this is the only chance to say the
  * route is gone. `TEAM_CLOSED` also covers a dissolve that is still pending and
  * may yet fail, so it proves only that this route ended — the final
- * `team.state` is what proves the Team closed. Any other rejection is this Channel correcting
- * its own document, which the group did not do and does not need told.
+ * `team.state` is what proves the Team closed. A `TEAM_NOT_FOUND` rejection is
+ * this Channel correcting its own document, which the group did not do and
+ * does not need told.
  */
-export function rejectedDeliveryNotice(code: string | null): RouteRemovalNotice {
+export function rejectedDeliveryNotice(
+  code: 'TEAM_NOT_FOUND' | 'TEAM_CLOSED',
+): RouteRemovalNotice {
   return code === 'TEAM_CLOSED' ? 'route_ended' : 'silent';
 }
 

@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  SubmitCommand,
   TeamCreateCommand,
   TeamCreateRepoRequest,
   TeamStatus,
@@ -148,12 +149,40 @@ describe('TeamCreateCommand carries restart-durable request identity and leader 
   });
 });
 
-describe('TeamSubmitCommand / TeamSubmitResult: the flat, provenance-free submit payload', () => {
-  it('omitting team_name targets the Dispatcher Agent; supplying it targets that Team only', () => {
-    const toDispatcher: TeamSubmitCommand = { text: 'dispatcher-bound text' };
-    const toTeam: TeamSubmitCommand = { team_name: 'team-a', text: 'team-bound text' };
-    expect(toDispatcher.team_name).toBeUndefined();
+describe('SubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared payload, Team name only on the Team Command', () => {
+  it('a Dispatcher-bound submission needs only text and carries no team_name field', () => {
+    const toDispatcher: SubmitCommand = { text: 'dispatcher-bound text' };
+    expect(toDispatcher.text).toBe('dispatcher-bound text');
+    // @ts-expect-error the Dispatcher Command has no team_name: a turn meant for
+    // a Team uses team.submit, which requires it.
+    toDispatcher.team_name;
+  });
+
+  it('a Team-bound submission requires team_name, sharing the other fields verbatim', () => {
+    // @ts-expect-error team_name is required on team.submit; omitting it is the
+    // BAD_REQUEST the schema gate enforces before the handler runs.
+    const missingName: TeamSubmitCommand = { text: 'team-bound text' };
+    // The other fields are still carried; only the absent name makes this an
+    // unconstructable Team Command (compile-time, asserted above).
+    expect(missingName.text).toBe('team-bound text');
+
+    const shared: Pick<TeamSubmitCommand, 'attrs' | 'text' | 'reminder' | 'source_id' | 'intent'> = {
+      attrs: { chat_id: 'chat-1' },
+      text: 'team-bound text',
+      reminder: 'stand up a review',
+      source_id: 'msg-1',
+      intent: 'review this',
+    };
+    const toTeam: TeamSubmitCommand = { team_name: 'team-a', ...shared };
     expect(toTeam.team_name).toBe('team-a');
+    expect(toTeam.attrs).toEqual({ chat_id: 'chat-1' });
+    expect(toTeam.source_id).toBe('msg-1');
+    expect(toTeam.intent).toBe('review this');
+
+    // The shared fields are SubmitCommand's own fields, so a Team Command is
+    // assignable wherever the shared shape is read.
+    const sharedView: SubmitCommand = toTeam;
+    expect(sharedView.text).toBe('team-bound text');
   });
 
   it('TeamSubmitResult status is exactly submitted | duplicate | stopped | failed | ambiguous', () => {

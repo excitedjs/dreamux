@@ -9,16 +9,18 @@
  * What lives here is the other half of that rule — Core has producers too, and
  * they are the owners of their own names. Collecting the five in one place is
  * how two call sites of the same producer family (the Dispatcher scheduler and
- * a Team's scheduler; a routed inbound turn and an explicit `team.submit`)
+ * a Team's scheduler; a routed inbound turn and the two submit Commands)
  * stay spelled identically, which is what a model reading provenance and a
  * Channel filtering on `turn_source` both depend on.
  */
 
 /**
- * Every turn Core accepted from a Channel: a routed inbound message and an
- * explicit `team.submit`, whether the Command arrived over a Channel adapter or
- * `admin.sock`. Core does not name the concrete Channel — which product it was
- * is the Channel's own business, and the model reads the attributes for it.
+ * Every turn Core accepted from a Channel: a routed inbound message, an
+ * explicit `team.submit` to a Team, and an explicit `dispatcher.submit` to the
+ * addressed Dispatcher's own Agent, whether the Command arrived over a Channel
+ * adapter or `admin.sock`. Core does not name the concrete Channel — which
+ * product it was is the Channel's own business, and the model reads the
+ * attributes for it.
  */
 export const CHANNEL_SOURCE = 'channel';
 

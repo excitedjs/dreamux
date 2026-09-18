@@ -446,6 +446,14 @@ async function deliverAskUserSettlement(
         },
       },
     });
+    // An `unsubmitted` (or `rejected`) outcome here means a `provision` plan
+    // produced no recipient. Unlike the inbound chat path, this settlement
+    // posts no in-place failure notice and takes no Dispatcher fallback: this
+    // log line is the whole handling. A settled card answer is not a queued
+    // human message awaiting delivery — handing it to a different recipient
+    // would risk a second turn for one answer, and the human can send it again
+    // as an ordinary message. `failed`, `ambiguous`, and `error` settle on the
+    // same terms.
     log(h).info(
       {
         dispatcher_id: h.opts.dispatcherId,

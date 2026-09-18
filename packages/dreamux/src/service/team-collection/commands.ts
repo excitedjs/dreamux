@@ -12,10 +12,9 @@
  * and its own provenance — so there is no caller-kind selector here, and no tool
  * flattened into a Command. What the two surfaces genuinely share — reading a
  * `team_name`, reading a history query, and the one submission receipt that is
- * more than a copy — belongs to the Team and lives in its own `types.ts`; what
- * stays here is this surface's: the declared payload schema, the caller context,
- * and the `attrs` / `source_id` / bare-`text` fields only a Channel-facing
- * caller sends.
+ * more than a copy — belongs to the Team and lives in its own `types.ts`; the
+ * Channel-facing submission fields both submit Commands share live in
+ * `channel-submission.ts`, and `team.submit` composes them with `team_name`.
  */
 import type {
   AgentRuntimeInterruptOutcome,
@@ -29,7 +28,6 @@ import type {
 
 import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
-import { ValidationError } from '../../command/errors.js';
 import {
   normalizeSkillSources,
   optionalParsedSkillSources,
@@ -42,7 +40,6 @@ import {
   optionalBooleanField,
   optionalNonBlankString,
   optionalString,
-  type CommandPayload,
 } from '../../command/payload.js';
 import {
   REPO_REQUEST_SCHEMA,
@@ -61,15 +58,17 @@ import {
   enumOf,
   objectSchema,
 } from '../../command/schema.js';
-import { CHANNEL_SOURCE } from '../submission-sources.js';
-import { isSafeTagName } from '../teammate-service/submission.js';
+import {
+  CHANNEL_SUBMISSION_PROPERTIES,
+  channelSubmitInput,
+  parseChannelSubmission,
+} from '../channel-submission.js';
 import {
   MAX_REQUEST_ID_LENGTH,
   TEAM_LEADER_REQUIRED_SKILL_SOURCES,
   teamCreatePayloadHash,
 } from './create-request.js';
 import {
-  optionalTeamNameParam,
   teamHistoryQuery,
   teamNameParam,
   type TeamDissolveReceipt,
@@ -77,15 +76,10 @@ import {
   type TeamHistoryResult,
   type TeamListRow,
 } from './types.js';
-import { teamSubmitResult } from '../team-service/types.js';
-
-/**
- * The maximum length of a caller-chosen `source_id`. Core deduplicates with it
- * scoped to the target entity, so it never has to be globally unique — a bound
- * this generous still admits any UUID, message id, or provider-scoped key a
- * Channel actually mints.
- */
-const MAX_SOURCE_ID_LENGTH = 512;
+import {
+  teamSubmitResult,
+  teamSubmitResultOutput,
+} from '../team-service/types.js';
 
 interface TeamCreateInput {
   command: TeamCreateCommand;
@@ -98,7 +92,7 @@ interface TeamSubmitInput {
 }
 
 interface TeamInterruptInput {
-  teamName: string | null;
+  teamName: string;
 }
 
 interface TeamNameInput {
@@ -209,85 +203,41 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     input: objectSchema(
       {
         team_name: NON_EMPTY_STRING,
-        // The one input object whose own keys are not declarable. Attribute
-        // names are open by contract, and this validator's
-        // `additionalProperties` is boolean-only, so no schema here can state
-        // "open names, string values" — let alone start-tag safety. `parse`
-        // owns the precise contract instead, the same split `skill_sources`
-        // already uses. Attribute count and size need no separate cap: every
-        // payload is already bounded by `COMMAND_PAYLOAD_BOUNDS`.
-        attrs: OBJECT,
-        text: NON_EMPTY_STRING,
-        reminder: STRING,
         intent: NON_EMPTY_STRING,
-        source_id: boundedString(MAX_SOURCE_ID_LENGTH),
+        ...CHANNEL_SUBMISSION_PROPERTIES,
       },
-      ['text'],
+      ['text', 'team_name'],
     ),
-    output: objectSchema(
-      {
-        status: enumOf(['submitted', 'duplicate', 'stopped', 'failed', 'ambiguous']),
-        turn_id: STRING,
-        error: objectSchema({ code: STRING, message: STRING }, ['code', 'message']),
-      },
-      ['status'],
-    ),
+    output: teamSubmitResultOutput,
     parse(payload) {
       const params = commandPayload(payload);
-      const teamName = optionalTeamNameParam(params, 'team_name');
-      const attrs = submissionAttrs(params);
-      const reminder = optionalString(params, 'reminder');
       const intent = optionalNonBlankString(params, 'intent');
-      const sourceId = optionalString(params, 'source_id');
-      if (sourceId !== null && sourceId.length > MAX_SOURCE_ID_LENGTH) {
-        throw new ValidationError(
-          `param 'source_id' must be at most ${MAX_SOURCE_ID_LENGTH} characters`,
-        );
-      }
-      return {
-        command: {
-          ...(teamName !== null ? { team_name: teamName } : {}),
-          ...(attrs !== null ? { attrs } : {}),
-          text: mustNonEmptyString(params, 'text'),
-          ...(reminder !== null ? { reminder } : {}),
-          ...(intent !== null ? { intent } : {}),
-          ...(sourceId !== null ? { source_id: sourceId } : {}),
-        },
+      const command: TeamSubmitCommand = {
+        ...parseChannelSubmission(params),
+        team_name: teamNameParam(params, 'team_name'),
+        ...(intent !== null ? { intent } : {}),
       };
+      return { command };
     },
     async execute(context, input) {
       const dispatcher = mustDispatcher(host, context);
-      const { command } = input;
-      const shared = {
-        ...(command.attrs !== undefined ? { attrs: command.attrs } : {}),
-        text: command.text,
-        ...(command.reminder !== undefined ? { reminder: command.reminder } : {}),
-        ...(command.source_id !== undefined && command.source_id !== ''
-          ? { sourceId: command.source_id }
+      const admission = await dispatcher.submitToTeamLeader({
+        ...channelSubmitInput(input.command),
+        teamId: input.command.team_name,
+        // `intent` is Team-Command-only: it updates the leader's durable
+        // recovery subject, and `dispatcher.submit` has no such field, so the
+        // shared projection in channel-submission.ts deliberately omits it.
+        ...(input.command.intent !== undefined
+          ? { intent: input.command.intent }
           : {}),
-        ...(command.intent !== undefined ? { intent: command.intent } : {}),
-      };
-      const admission =
-        command.team_name === undefined
-          ? await dispatcher.submitToAgent({
-              ...shared,
-              source: CHANNEL_SOURCE,
-            })
-          : await dispatcher.submitToTeamLeader({
-              ...shared,
-              teamId: command.team_name,
-              // Every `team.submit` is the Channel-facing surface, whether it
-              // arrived over a Channel adapter or `admin.sock`, so it reaches
-              // the model under one provenance name.
-              source: CHANNEL_SOURCE,
-              // No external submission advances the Dispatcher Agent. Who
-              // waits for a leader's completion is a property of the
-              // operation, not of the adapter that carried it: an Agent
-              // handing work to a Team says so explicitly on the Team MCP
-              // delegate, while an external caller — Channel or `admin.sock`
-              // — is answered by the TeamLeader on its own Channel.
-              deliverCompletionToDispatcher: false,
-            });
+        // No external submission advances the Dispatcher Agent. Who waits for a
+        // leader's completion is a property of the operation, not of the
+        // adapter that carried it: an Agent handing work to a Team says so
+        // explicitly on the Team MCP delegate, while an external caller —
+        // Channel or `admin.sock` — is answered by the TeamLeader on its own
+        // Channel.
+        deliverCompletionToDispatcher: false,
+      });
       return teamSubmitResult(admission);
     },
   };
@@ -299,21 +249,21 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
   > = {
     name: 'team.interrupt',
     version: 1,
-    input: objectSchema({ team_name: NON_EMPTY_STRING }),
+    input: objectSchema(
+      { team_name: NON_EMPTY_STRING },
+      ['team_name'],
+    ),
     output: objectSchema(
       { status: enumOf(['interrupted', 'idle']) },
       ['status'],
     ),
     parse(payload) {
       return {
-        teamName: optionalTeamNameParam(
-          commandPayload(payload),
-          'team_name',
-        ),
+        teamName: teamNameParam(commandPayload(payload), 'team_name'),
       };
     },
     async execute(context, input) {
-      return mustDispatcher(host, context).interrupt(input.teamName);
+      return mustDispatcher(host, context).interruptTeamLeader(input.teamName);
     },
   };
 
@@ -428,44 +378,4 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     history,
     dissolve,
   ] as unknown as readonly AnyCoreCommand[];
-}
-
-/**
- * Read the optional display attributes.
- *
- * Attribute names are open by contract, so no declared schema can check them.
- * The rule that decides whether a name may be written into a start tag belongs
- * to the renderer that writes it and is reused here, at the caller boundary, so
- * a bad name fails as this caller's mistake before anything is resolved,
- * reserved, or started — instead of reaching the renderer, where the same name
- * is an internal defect and would surface as one. An empty object is exactly an
- * omitted one.
- *
- * The record is rebuilt with `Object.fromEntries` rather than by assignment: a
- * canonical payload carries an own `__proto__` key as ordinary data, and
- * assigning that name onto a plain object would reach the inherited setter and
- * silently drop the attribute.
- */
-function submissionAttrs(
-  params: CommandPayload,
-): Readonly<Record<string, string>> | null {
-  const value = params['attrs'];
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new ValidationError("param 'attrs' must be an object");
-  }
-  const entries = Object.entries(value as Record<string, unknown>);
-  for (const [name, entry] of entries) {
-    if (!isSafeTagName(name)) {
-      throw new ValidationError(
-        `param 'attrs' name ${JSON.stringify(name)} is not a safe attribute name`,
-      );
-    }
-    if (typeof entry !== 'string') {
-      throw new ValidationError(`param 'attrs.${name}' must be a string`);
-    }
-  }
-  return entries.length > 0
-    ? (Object.fromEntries(entries) as Record<string, string>)
-    : null;
 }

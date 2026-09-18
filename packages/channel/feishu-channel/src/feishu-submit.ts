@@ -92,10 +92,11 @@ export type FeishuSubmitOutcome =
       readonly error: ChannelCommandError | null;
     }
   /**
-   * A proven pre-admission rejection: Core resolved the Team and refused
-   * before creating anything. Because it proves no turn was accepted, it lets
-   * the Channel drop the stale row and deliver the message once to the
-   * Dispatcher Agent instead.
+   * A proven pre-admission rejection of a named Team: Core resolved the Team
+   * and refused before creating anything. Under a `bound` plan it proves no
+   * turn was accepted, so that path drops the stale row and delivers the
+   * message once to the Dispatcher Agent instead. Under a `provision` plan it
+   * is answered in place with a failure notice and reconciles no route.
    */
   | {
       readonly status: 'rejected';
@@ -106,9 +107,11 @@ export type FeishuSubmitOutcome =
    * Automatic provisioning produced no recipient, and `team.submit` was never
    * invoked for this message.
    *
-   * It proves Core admitted nothing exactly as a typed rejection does, so it
-   * earns the same single delivery to the Dispatcher Agent. The proof is what
-   * matters, not the failure: it exists only while no Command has been sent.
+   * It proves Core admitted nothing, but no Dispatcher fallback follows it: a
+   * Collaboration Space message that cannot be provisioned answers the
+   * triggering message with a failure notice instead. The proof is what makes
+   * the notice honest, not the failure: it exists only while no Command has
+   * been sent.
    */
   | { readonly status: 'unsubmitted'; readonly message: string }
   /**
@@ -199,11 +202,12 @@ export interface FeishuTeamSubmitter {
 }
 
 /**
- * Read Core's answer to `team.submit` as one of this Channel's outcomes.
+ * Read Core's answer to a submit Command as one of this Channel's outcomes.
  *
- * The mapping is the whole of what a submission result means here: some
- * outcomes prove the optimistic Channel anchor must be retired, while an
- * ambiguous result proves nothing and leaves it unchanged.
+ * Both `team.submit` and `dispatcher.submit` return the same receipt, so one
+ * mapping serves both. The mapping is the whole of what a submission result
+ * means here: some outcomes prove the optimistic Channel anchor must be
+ * retired, while an ambiguous result proves nothing and leaves it unchanged.
  */
 export function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
   switch (result.status) {
@@ -243,10 +247,12 @@ export interface FeishuInboundDelivery {
   /**
    * Route one built submission and answer with what Core said.
    *
-   * There is no "not delivered" answer: every accepted message reaches a
-   * recipient, and a target no binding or Collaboration Space claims is the
-   * Dispatcher Agent's conversation — as is one whose route turned out to be
-   * stale or whose provisioning never produced a Team. `containerChatId` is
+   * Every plan except `provision` reaches a recipient: the Dispatcher Agent for
+   * a target no binding or Collaboration Space claims or for a route that
+   * turned out stale, or the bound Team's TeamLeader. A provisioning run that
+   * never produces a Team answers `unsubmitted` (or `rejected` when the
+   * just-provisioned Team refuses the submission), and the inbound path posts a
+   * failure notice under the triggering message instead. `containerChatId` is
    * the parent chat a topic belongs to, which is what a Collaboration Space is
    * keyed by.
    */

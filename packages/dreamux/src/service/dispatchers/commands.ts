@@ -2,13 +2,21 @@
  * The Dispatcher namespace's canonical Commands.
  *
  * The process-level {@link Dispatchers} collection owns dispatcher enumeration
- * and lifecycle, so its Commands live beside it. Each one addresses its target
- * through the caller context; only `dispatcher.list` is process-wide.
+ * and lifecycle, while the addressed Dispatcher's own Agent owns its turn
+ * intake and interrupt, so all five definitions live beside that collection.
+ * Each one addresses its target through the caller context; only
+ * `dispatcher.list` is process-wide.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeInterruptOutcome,
+  CoreCommandDefinition,
+  SubmitCommand,
+  TeamSubmitResult,
+} from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
 import {
+  mustDispatcher,
   mustDispatcherId,
   mustDispatcherRow,
   type CoreCommandHost,
@@ -20,9 +28,23 @@ import {
   OBJECT,
   STRING,
   arrayOf,
+  enumOf,
   objectSchema,
 } from '../../command/schema.js';
+import {
+  CHANNEL_SUBMISSION_PROPERTIES,
+  channelSubmitInput,
+  parseChannelSubmission,
+} from '../channel-submission.js';
+import {
+  teamSubmitResult,
+  teamSubmitResultOutput,
+} from '../team-service/types.js';
 import type { DispatcherSummary } from '../dispatcher-service/types.js';
+
+interface DispatcherSubmitInput {
+  command: SubmitCommand;
+}
 
 interface DispatcherListResult {
   dispatchers: DispatcherSummary[];
@@ -118,5 +140,46 @@ export function dispatcherCommands(
     },
   };
 
-  return [list, status, start] as unknown as readonly AnyCoreCommand[];
+  const submit: CoreCommandDefinition<
+    'dispatcher.submit',
+    DispatcherSubmitInput,
+    TeamSubmitResult
+  > = {
+    name: 'dispatcher.submit',
+    version: 1,
+    input: objectSchema(CHANNEL_SUBMISSION_PROPERTIES, ['text']),
+    output: teamSubmitResultOutput,
+    parse(payload) {
+      return { command: parseChannelSubmission(commandPayload(payload)) };
+    },
+    async execute(context, input) {
+      return teamSubmitResult(
+        await mustDispatcher(host, context).submitToAgent(
+          channelSubmitInput(input.command),
+        ),
+      );
+    },
+  };
+
+  const interrupt: CoreCommandDefinition<
+    'dispatcher.interrupt',
+    void,
+    AgentRuntimeInterruptOutcome
+  > = {
+    name: 'dispatcher.interrupt',
+    version: 1,
+    input: NO_INPUT,
+    output: objectSchema(
+      { status: enumOf(['interrupted', 'idle']) },
+      ['status'],
+    ),
+    parse(payload) {
+      commandPayload(payload);
+    },
+    async execute(context) {
+      return mustDispatcher(host, context).interruptAgent();
+    },
+  };
+
+  return [list, status, start, submit, interrupt] as unknown as readonly AnyCoreCommand[];
 }
