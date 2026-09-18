@@ -1,117 +1,243 @@
-# Final solution: neutral compaction and interrupt activities
+# Final solution: one native activity vocabulary from runtime to Channel
 
 - Requirement: [requirement.md](/.agents/tasks/architecture/standalone-compaction-activity/requirement.md).
 - Builds on [standalone-token-usage-activity](/.agents/tasks/architecture/standalone-token-usage-activity/technical-design/final.md):
   the same move — a runtime reports a fact, the display layer owns its line —
-  applied to the two remaining provider-assembled display strings.
-- Supersedes, for the carrier only, the 2026-09-04 ruling that compaction ride
-  an `assistant.message`, and the interrupt marker's shape that cited it. The
-  rendered lines and their positions do not change.
+  applied to the two remaining provider-assembled display strings, then to the
+  ids and to the type the fact travels in.
+- Supersedes: the 2026-09-04 ruling that compaction ride an
+  `assistant.message`; the id convention the token-usage task kept; the #367
+  decision to keep a reshaped second activity type, whose premise (lossy,
+  type-changing sanitisation) no longer holds.
 
 ## 1. The contract
 
-`RuntimeActivity` (`packages/dreamux-types/src/agent-runtime.ts`) gains two
-members; `TeammateActivity` (`packages/dreamux-types/src/teammate.ts`) gains
-their snake_case counterparts:
+### 1.1 One activity union
+
+`TeammateActivity` is deleted. `RuntimeActivity`
+(`packages/dreamux-types/src/agent-runtime.ts`) is the only activity type, and
+`teammate.activity` carries it. It gains the two text-free kinds, loses
+`callId`, and every member except `turn.ended` shares one base shape:
 
 ```ts
-// RuntimeActivity
-| { kind: 'context.compacted'; occurredAt: number; id: string }
-| { kind: 'turn.interrupted';  occurredAt: number; id: string }
+// Illustrative; the spelling follows the file's own idiom.
+interface NativeActivity<K> { readonly kind: K; readonly occurredAt: number; readonly id: string }
 
-// TeammateActivity
-| { kind: 'context.compacted'; event_id: string; redacted: boolean }
-| { kind: 'turn.interrupted';  event_id: string; redacted: boolean }
+type RuntimeActivity =
+  | NativeActivity<'assistant.message'> & { text }
+  | NativeActivity<'context.compacted'>
+  | NativeActivity<'turn.interrupted'>
+  | NativeActivity<'tool.call'> & { toolName; action; summary; invocation; items;
+                                     status; arguments; result; error }
+  | NativeActivity<'token.usage'> & { inputTokens; outputTokens; context }
+  | { kind: 'turn.ended'; occurredAt; status; reason }
 ```
 
-Neither carries text. The type docs state the contract:
+`turn.ended` has no id because two of its producers have no native source:
+teardown and the end Core publishes for an input no runtime accepted.
 
-- `context.compacted` — the runtime compacted its context. The summary it
-  wrote for itself is not carried; no other compaction metadata is either.
-  Live-only: the cold activity reader never produces it.
-- `turn.interrupted` — a display marker, not a terminal: a native turn stopped
-  at an interrupt request. It is reported from the runtime's own interrupted
-  terminal, ahead of that terminal's `token.usage` and of `turn.ended` with
-  status `interrupted`, and every one is paired with that end. A teardown end
-  (the runtime stopped while a turn may be running) reports `turn.ended`
-  `interrupted` and never this. Live-only: the cold reader never produces it.
-- `redacted` is always `false`: there is nothing to redact. It is kept so every
-  `TeammateActivity` member states the same fact, as `token.usage` does.
+The member docs merge the two types' docs. They keep, verbatim in meaning:
+the `context.compacted` and `turn.interrupted` contracts from the first scope
+(no text; the marker is not a terminal, precedes usage and the paired
+interrupted end, is never on teardown; both live-only), the `token.usage`
+cumulative-counter contract, and the `turn.ended` terminal contract. The union
+doc gains one paragraph: a Channel receives this type with every text and JSON
+payload member already redacted by Core.
 
-## 2. Change inventory
+### 1.2 Ids
+
+`id` is the provider's own id for the object the activity reports, taken
+whole: no prefix, suffix, counter, or composition. It is not unique per
+activity: a tool call's start and result share the call id, and one turn's
+`token.usage` and `turn.interrupted` share that turn's id. A consumer that
+needs one identity per row derives it from the kind (and a tool call's status)
+together with `id`; §4 is the one consumer that does.
+
+| Activity | Claude Code | Codex |
+| --- | --- | --- |
+| `assistant.message` | the assistant line's `uuid` | agent message item `id` |
+| `tool.call` (start and result) | `tool_use.id` / `tool_result.tool_use_id` | tool item `id` (= `call_id`) |
+| `context.compacted` | the `compact_boundary` line's `uuid` | context compaction item `id` |
+| `token.usage` | the `result` line's `uuid` | `turnId` |
+| `turn.interrupted` | the `result` line's `uuid` | `turnId` |
+
+### 1.3 The four Core events, in camelCase
+
+Every member of `TeamStateEvent`, its `TeamStateTeammateSummary`,
+`TeammateStateEvent`, `TeammateActorScope`, `TeammateInputEvent`, and
+`TeammateActivityEvent` is spelled in camelCase: `schemaVersion`,
+`occurredAt`, `teamName`, `teammateName`, `leaderName`, `sourceId`. Values do
+not change (`'team_leader'`, `'teammate_completion'` are values, not member
+names). The seal checks `schemaVersion` and `occurredAt`. No other type
+changes spelling. The package's 13 other snake_case types are left for
+[#447](https://github.com/excitedjs/dreamux/issues/447), as the operator chose
+the smallest scope; four of them change what leaves the process when renamed
+(Team MCP result keys and the persisted Team-create hash), so they need their
+own design.
+
+`TeammateInputEvent` also drops `redacted`, for the same reason as the
+activity members: Core writes it and no production code reads it. This is the
+one ride-along the operator has not yet ruled on; the development-approval
+playback names it.
+
+## 2. Runtimes
+
+### 2.1 Claude Code
+
+- Assistant text takes its line's `uuid`; a tool call and its result take the
+  call id; compaction takes the `compact_boundary` line's `uuid`.
+- The parsed `result` line keeps its `uuid`, and the `result` and
+  `interrupted` protocol events carry it beside `outcome`: it is a fact about
+  the line, and `TurnOutcome` also feeds push-back, which has no use for it.
+  `interrupted.outcome` becomes required; its one producer (`rpc.ts`) always
+  sets it. `token.usage` and `turn.interrupted` take that `uuid`.
+- A missing native id follows the rule the file already applies to a
+  `tool_use` block without an id: that activity is not reported. The Agent SDK
+  types every one of these ids as required, and every line observed carries
+  one; this is the existing narrowing of untyped JSON, not a new fallback.
+  `turn.ended` is emitted as today either way.
+- `NativeActivityState.activitySequence` and the `stream-${seq}` fallback are
+  deleted; the state keeps only the tool map.
+- Recorded limit: an assistant line has carried exactly one content block in
+  every observation, so one text block per line has one id. A line with two
+  text blocks would report two `assistant.message`s with the same id; nothing
+  is added to defend that unobserved shape.
+
+### 2.2 Codex
+
+Every id is already on the item or the turn: `itemActivity` returns `item.id`
+for agent messages, tool calls, and compactions, and `interruptedActivity` and
+`tokenUsageActivity` return `turnId`. The existing rule that an item without an
+id reports nothing stays. Emission points and order do not change.
+
+## 3. Core
+
+- `conversation-projection.ts` stops reshaping. Its per-kind switch returns
+  the same `RuntimeActivity` with payload members redacted in place, keeping
+  the compile-time `never` check: `text`, `summary`, `invocation`, each of
+  `items`, `error`, and `reason` through `redactText`; `arguments` and
+  `result` through `redactJson`, which keeps JSON as JSON. `redacted` results
+  are discarded. Ids, counters, statuses, and `occurredAt` pass through.
+  `jsonText` and the `error ?? result` fold are deleted.
+- The `teammate.activity` envelope takes `occurredAt` from the activity as it
+  does today; the seal needs it on every event, so the value appears twice.
+- The Core producers of the four events (`team-collection/store.ts`,
+  `team-service/roster-projection.ts`, `dispatcher-service/index.ts`,
+  `conversation-projection.ts`) and the internal users of
+  `TeamStateTeammateSummary` (roster reader, runtime registry, team service)
+  move to the camelCase members.
+
+## 4. Feishu
+
+- The CoT layer reads `RuntimeActivity` directly
+  (`Extract<RuntimeActivity, { kind: 'tool.call' }>` and so on) and every
+  member of the four events in camelCase.
+- Display ids. `textMessageEvents` takes the row's display namespace beside
+  its source, so `opaqueDisplayId(namespace, source)` never sees two rows with
+  the same pair: `message` for `assistant.message`, `compacted`,
+  `interrupted`, `usage`, `input` for an input echo, and `end` for an end
+  reason. A tool row keeps `opaqueDisplayId('call', id)`, its result
+  `opaqueDisplayId('result', id)`, and `openCalls` is keyed by `id`. The
+  namespaces are lowercase words, like the three that exist today; no other
+  `messageId` charset has been checked against Feishu.
+- The input echo and end-reason rows keep Feishu's own `randomUUID()` source:
+  no runtime reports them, and the ruling concerns provider ids. The end
+  reason goes straight through the display-text path instead of fabricating
+  an `assistant.message` with a `redacted` flag.
+- Tool payloads arrive as `JsonValue`. An object or array is pretty-printed as
+  JSON; a string follows today's path, including pretty-printing a string that
+  is JSON text; any other scalar shows as its JSON text. A failed call shows
+  `error` when it has one and `result` otherwise — the choice Core made before.
+
+## 5. Change inventory
 
 | Package | Change |
 | --- | --- |
-| `@excitedjs/dreamux-types` | Add the four union members with the contract docs above; the `turn.ended` doc gains one sentence pointing at `turn.interrupted` for the native case. |
-| `@excitedjs/agent-runtime-claude-code` (`src/runtime-activity.ts`) | `compactedActivity` returns `{ kind: 'context.compacted', occurredAt, id: 'stream-<seq>:compacted' }`; `interruptedActivity` returns `{ kind: 'turn.interrupted', occurredAt, id: 'stream-<seq>:interrupted' }`. Delete `COMPACTED_SESSION_MESSAGE` and `INTERRUPTED_MESSAGE`; rewrite the comments that justified the marker by the compaction shape. Emission points and order unchanged. |
-| `@excitedjs/agent-runtime-codex` (`src/turn-manager.ts`) | The `contextCompaction` arm of `itemActivity` returns `{ kind: 'context.compacted', occurredAt, id: '<turnId>:<itemId>:completed' }` on completion only; `interruptedActivity` returns `{ kind: 'turn.interrupted', occurredAt, id: '<turnId>:interrupted' }`. Delete both constants and rewrite the comment block. Emission points and order unchanged. |
-| `@excitedjs/dreamux` (`src/channel/conversation-projection.ts`) | Project both kinds to `{ kind, event_id: activity.id, redacted: false }`. The switch keeps its compile-time `never` check. |
-| `@excitedjs/feishu-channel` | `feishu-cot-activity.ts` owns the two labels, copied character for character from the runtime constants they replace: `COMPACTED SESSION` and `[Request interrupted by user]`. One helper admits a fixed label as an assistant-role display row keyed by the activity's `event_id` through the same `acceptDisplayText` path `acceptAssistantMessage` uses. `feishu-cot-adapter.ts` routes both kinds under its `never`-exhaustive switch. |
-| Tests | Both runtimes' compaction and interrupt tests move from text assertions to exact structured objects (kind, id, order); projection exact-object tests for both kinds; a Feishu delivery test locking each kind's card events deep-equal to the `assistant.message` path's (§5). |
-| Rush changes | `minor` change files for the five packages; the union change is additive, no persisted file changes. |
-| Knowledge | provider-runtime domain: the union enumeration (four members to six), the compaction paragraph rewritten to the current carrier with the 2026-09-04 ruling kept verbatim and marked superseded by the 2026-09-18 words, the two interrupt paragraphs, and the Claude envelope section. Channel domain: the activity vocabulary list and the paragraph listing what enters a card. Product catalog: only the mechanism wording of the compaction and interrupt entries; the card text and the 任务中断 status stay. |
+| `@excitedjs/dreamux-types` | §1: merged union with base shape and id doc, `TeammateActivity` deleted from `teammate.ts` and the index, four events in camelCase, `TeammateInputEvent.redacted` deleted. |
+| `@excitedjs/agent-runtime-claude-code` | §2.1: native ids, `result` `uuid` carried on the protocol events, counter deleted, `interrupted.outcome` required. |
+| `@excitedjs/agent-runtime-codex` | §2.2: native ids. |
+| `@excitedjs/dreamux` | §3: redact-in-place projection, camelCase producers and seal, roster internals. |
+| `@excitedjs/feishu-channel` | §4: `RuntimeActivity` reader, display namespaces, tool payload presentation, end-reason row, camelCase event readers. |
+| Tests | Every exact-object and fixture assertion moves to native ids, camelCase events, and the merged type; the Feishu delivery lock is rewritten (§6, §8). |
+| Rush changes | The five change files on this branch are new (`A` against `next`) and are edited in place: `minor`, plain notes. These are API contract changes to `@excitedjs/dreamux-types` and do not block an upgrade: no persisted file changes. |
+| Knowledge | provider-runtime: the union, base shape, id contract, and per-runtime id sources. Channel: the catalog's member spelling, `teammate.activity` carrying `RuntimeActivity` redacted in place, no `redacted` flag, and the display namespaces. Product catalog: unchanged beyond the first scope. |
 
-Unchanged: stream parsing (`compact_boundary` stays a `ClaudeActivityLine`),
-the app-server item handling, activity ids, emission order, every `turn.ended`
-status including teardown's `interrupted`, the Feishu terminal mapping, the
-cold reader, the seal (`teammate.activity` is already sealed; the new members
-sit inside it), persisted state, and every other activity kind.
+Unchanged: stream parsing beyond the `result` `uuid`, emission points and
+order, every `turn.ended` status, card terminals, label text, the cold readers
+(their `AgentActivityRecord` carries no id or call id), redaction rules and
+coverage, persisted state, and every snake_case type outside the four events.
 
-## 3. Rendering
+## 6. Rendering
 
-The card sees the same bytes it saw before. Both lines were `assistant.message`
-activities rendered by `acceptAssistantMessage` as
-`acceptDisplayText(…, 'assistant', event_id, text)`; the new path calls the
-same function with the same `event_id` and the channel-owned label, so the
-display message id, role, content, and the opening behaviour (a line arriving
-with no card open opens one) are identical. Order is the runtimes' emission
-order, which does not change: an interrupted turn still shows the marker, then
-the usage line, then the 任务中断 terminal.
+Every row carries the same role, content, position, and opening behaviour as
+before; only the opaque display ids change, because their inputs change. They
+are card-local, held in memory only (the CoT state is not persisted), and a
+daemon stop ends open cards before the Channel closes, so no card mixes ids
+from before and after. The compaction and interrupt rows are no longer
+event-for-event equal to an `assistant.message` with the same id — they sit in
+their own namespaces by design — so the delivery lock compares everything but
+`messageId`, and adds the case the namespaces exist for: a usage row and an
+interrupt row with one shared id both appear.
 
-## 4. Rejected alternatives
+## 7. Rejected alternatives
 
-- **Derive the interrupt line from `turn.ended` status `interrupted`.** No new
-  kind, but the line would follow the usage line and appear on teardown ends.
-  The operator chose the separate kind.
-- **One generic kind for both** (for example a notice with an enum). It saves a
-  union member by adding a catch-all whose members have unrelated semantics —
-  a mid-turn context event and a turn-end marker — and every consumer would
-  switch twice.
-- **Carry Claude's `compact_metadata`.** Codex's item has only an id, and no
-  consumer asks for trigger or token counts.
-- **Drop the ids.** The id is the card's display message identity; passing it
-  through is what keeps the card byte-identical.
+- **Runtime-assembled ids, counters, or ids Feishu invents** for runtime rows:
+  the operator's ruling.
+- **Make a native id unique per activity in the runtime** (`${uuid}:usage`):
+  the concatenation the ruling rejects. Per-row uniqueness is a display need,
+  so the display layer derives it.
+- **Keep two types and only drop `call_id`**: superseded by the merge ruling.
+- **A branded "redacted" type** to keep a type-level proof that a Channel sees
+  only redacted activity: a mechanism with no named failure. The projection is
+  the only publisher of `teammate.activity`, and redaction coverage is locked
+  by the projection tests.
+- **Join a line's text blocks into one message** so a line `uuid` can never
+  repeat: defends a shape never observed.
+- **Drop `occurredAt` from the payload** to avoid the duplicate: it would
+  reshape the runtime's fact again, which is what the merge removes.
+- **Derive the interrupt line from `turn.ended`**, **one generic notice kind**,
+  **carry Claude's `compact_metadata`**: rejected in the first scope, for the
+  reasons in §6 below.
 
-## 5. Verification plan
+## 8. Verification plan
 
-- Runtime tests: Claude compaction (live and background) and interrupted
-  ordering, Codex compaction (completion only) and interrupt ordering, all as
-  exact objects; no `assistant.message` carries either label.
-- Projection tests: exact objects for both kinds.
-- Feishu tests: a delivery test asserts that each kind produces a
-  `TEXT_MESSAGE_*` event sequence deep-equal to the one an `assistant.message`
-  with the same `event_id` and the label text produces — display message id
-  included — both onto an open card and when it opens one.
+- Runtime tests, exact objects: Claude assistant text, tool start and result,
+  compaction (live and background), and an interrupted `result` with and
+  without usage, all under native ids from fixture lines that carry `uuid`;
+  Codex the same under item ids and `turnId`; both teardown locks unchanged.
+  No test asserts a counter-shaped id.
+- Projection tests: each kind comes out as the same kind with payloads
+  redacted (a secret in text, arguments, result, and error is rewritten) and
+  ids, counters, and `occurredAt` untouched; the four events in camelCase; the
+  seal accepts `schemaVersion: 1` with a finite `occurredAt` and drops the
+  rest.
+- Feishu tests: compaction and interrupt rows equal an assistant row with the
+  same content and role in every member but `messageId`, onto an open card and
+  when opening one; a usage and an interrupt row sharing one id both land; a
+  tool start and result pair by `id`; a failed call shows its error; an object
+  result, a JSON-text string result, and a plain string result render as
+  before.
 - Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
   `.agents/scripts/check.sh`.
-- Coverage limit: no live Feishu probe; the card bytes are asserted through the
-  shared `acceptDisplayText` path rather than observed in a client.
+- Coverage limit: no live Feishu probe; card behaviour is asserted through the
+  projected events.
 
-## 6. Review adjudication
+## 9. Review adjudication
+
+### Round 1 (first scope)
 
 Solution review: the Devbox reviewer on Issue #445, in place of three
 solution-review TeamMates, as the work group allows. Verdict: no blocking
 issue.
 
-- Accepted: the `turn.interrupted` type doc states the four facts in §1
+- Accepted: the `turn.interrupted` type doc states the four facts in §1.1
   (marker not terminal; before usage and the end, paired; never on teardown;
   live-only), not only the Issue.
-- Accepted: the labels move verbatim, ids and the sequence increment stay in
-  place, and the byte-identity claim is locked by the deep-equal delivery test
-  in §5 rather than by two separate "reached the card" assertions.
+- Accepted: the labels move verbatim, and the rendering claim is locked by a
+  delivery test rather than by two separate "reached the card" assertions.
 - Rejected: a code comment declaring the labels byte-equal to the former
-  runtime constants. The deep-equal test is the lock; a comment naming code
-  that no longer exists describes history.
+  runtime constants. The test is the lock; a comment naming code that no
+  longer exists describes history.
 - Accepted: the channel domain's second paragraph (what enters a card) is
   updated, not only the vocabulary list.
 - Adjusted: the reviewer asked for a dated `Since this was recorded` section
@@ -124,3 +250,13 @@ issue.
   the pull request.
 - Accepted (non-blocking): one fixed-label helper shared by the two new
   acceptors.
+
+First-scope alternatives, kept for §7: deriving the interrupt line from
+`turn.ended` would put it after the usage line and on teardown ends; one
+generic kind would add a catch-all whose members share no semantics and make
+every consumer switch twice; `compact_metadata` has no Codex counterpart and
+no consumer.
+
+### Round 2 (native ids, merged type, camelCase events)
+
+Pending the Devbox reviewer on Issue #445.
