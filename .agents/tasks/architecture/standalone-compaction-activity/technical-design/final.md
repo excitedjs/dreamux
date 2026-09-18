@@ -86,7 +86,9 @@ playback names it.
 
 - Assistant text takes its line's `uuid`; a tool call and its result take the
   call id; compaction takes the `compact_boundary` line's `uuid`.
-- The parsed `result` line keeps its `uuid`, and the `result` and
+- The parsed `result` line keeps its own `uuid` (the envelope's `uuid`
+  member, not `user_message_uuid`, which the parser already reads as
+  `userMessageUuid` and which names an inbound message), and the `result` and
   `interrupted` protocol events carry it beside `outcome`: it is a fact about
   the line, and `TurnOutcome` also feeds push-back, which has no use for it.
   `interrupted.outcome` becomes required; its one producer (`rpc.ts`) always
@@ -135,15 +137,16 @@ id reports nothing stays. Emission points and order do not change.
 - Display ids. `textMessageEvents` takes the row's display namespace beside
   its source, so `opaqueDisplayId(namespace, source)` never sees two rows with
   the same pair: `message` for `assistant.message`, `compacted`,
-  `interrupted`, `usage`, `input` for an input echo, and `end` for an end
-  reason. A tool row keeps `opaqueDisplayId('call', id)`, its result
-  `opaqueDisplayId('result', id)`, and `openCalls` is keyed by `id`. The
-  namespaces are lowercase words, like the three that exist today; no other
-  `messageId` charset has been checked against Feishu.
-- The input echo and end-reason rows keep Feishu's own `randomUUID()` source:
-  no runtime reports them, and the ruling concerns provider ids. The end
-  reason goes straight through the display-text path instead of fabricating
-  an `assistant.message` with a `redacted` flag.
+  `interrupted`, `usage`, `input` for an input echo, `receipt` for the opening
+  label a new card shows, and `end` for an end reason. A tool row keeps
+  `opaqueDisplayId('call', id)`, its result `opaqueDisplayId('result', id)`,
+  and `openCalls` is keyed by `id`. The namespaces are lowercase words, like
+  the three that exist today; no other `messageId` charset has been checked
+  against Feishu.
+- The input echo, opening receipt, and end-reason rows keep Feishu's own
+  `randomUUID()` source: no runtime reports them, and the ruling concerns
+  provider ids. The end reason goes straight through the display-text path
+  instead of fabricating an `assistant.message` with a `redacted` flag.
 - Tool payloads arrive as `JsonValue`. An object or array is pretty-printed as
   JSON; a string follows today's path, including pretty-printing a string that
   is JSON text; any other scalar shows as its JSON text. A failed call shows
@@ -159,7 +162,7 @@ id reports nothing stays. Emission points and order do not change.
 | `@excitedjs/dreamux` | §3: redact-in-place projection, camelCase producers and seal, roster internals. |
 | `@excitedjs/feishu-channel` | §4: `RuntimeActivity` reader, display namespaces, tool payload presentation, end-reason row, camelCase event readers. |
 | Tests | Every exact-object and fixture assertion moves to native ids, camelCase events, and the merged type; the Feishu delivery lock is rewritten (§6, §8). |
-| Rush changes | The five change files on this branch are new (`A` against `next`) and are edited in place: `minor`, plain notes. These are API contract changes to `@excitedjs/dreamux-types` and do not block an upgrade: no persisted file changes. |
+| Rush changes | The five change files on this branch are new (`A` against `next`) and are edited in place: `minor`, plain notes. These are API contract changes to `@excitedjs/dreamux-types` and do not block an upgrade: no persisted file changes. The `dreamux-types` note names each change an external integrator must follow: the camelCase members of the four events, `TeammateActivity` removed in favour of `RuntimeActivity`, `callId` removed, `redacted` removed, and ids now native. |
 | Knowledge | provider-runtime: the union, base shape, id contract, and per-runtime id sources. Channel: the catalog's member spelling, `teammate.activity` carrying `RuntimeActivity` redacted in place, no `redacted` flag, and the display namespaces. Product catalog: unchanged beyond the first scope. |
 
 Unchanged: stream parsing beyond the `result` `uuid`, emission points and
@@ -259,4 +262,24 @@ no consumer.
 
 ### Round 2 (native ids, merged type, camelCase events)
 
-Pending the Devbox reviewer on Issue #445.
+Solution review: the Devbox reviewer on Issue #445 again. Verdict: no blocking
+issue. The reviewer checked the three points it was asked to weigh — the
+missing-id rule, namespaces in place of event identity, redaction-only Core —
+against the code, and independently confirmed that the four events have no
+consumer outside the Feishu CoT adapter and presentation, that Team MCP's
+`TeamSummary` is built from `TeamRecord` and not from the event summary type
+(so the #447 boundary holds), and that `redacted` has no production reader. It
+supports the `teammate.input` `redacted` ride-along.
+
+- Accepted: the opening receipt row (`receipt:${randomUUID()}` in
+  `openReceipt`) was missing from the namespace list; §4 names it.
+- Accepted, corrected: the reviewer warned that the parser already has a
+  `uuid` field for the inbound message. The parsed field is
+  `userMessageUuid` (and `rpc.ts` holds it in a local named `uuid`); the
+  warning stands, and §2.1 names the envelope's own `uuid` explicitly.
+- Rejected: a debug log where an assistant line without a `uuid` is dropped.
+  No such line has been observed and the SDK types the member as required; the
+  existing rule for a `tool_use` block without an id has no log either. A log
+  for an unobserved shape is the defense this repository does not add.
+- Accepted: the rush change notes name every contract change an external
+  integrator must follow (§5).
