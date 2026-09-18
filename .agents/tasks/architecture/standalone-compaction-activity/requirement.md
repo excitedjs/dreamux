@@ -220,8 +220,8 @@ Channel is their only consumer. No record gives a reason for the spelling.
     `TeamSubmitResult` are the JSON keys Agents read from Team MCP tools;
     `TeamCreateCommand` and its repo request feed the persisted Team-create
     idempotency hash).
-- Inferences, labeled: the `redacted` flag on `teammate.input` goes with the
-  one on activities, for the same reason (written, never read). This rides
-  along with the spelling change to that event and is named in the
-  development-approval playback for the operator to keep or strike.
+  - The `redacted` flag on `teammate.input` goes with the one on activities,
+    for the same reason (Core writes it, no production code reads it) (card
+    answer: 「顺手删掉」).
+- Inferences, labeled: none outstanding.
 - Blocking unknowns: none.

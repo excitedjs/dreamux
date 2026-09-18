@@ -76,9 +76,7 @@ the smallest scope; four of them change what leaves the process when renamed
 own design.
 
 `TeammateInputEvent` also drops `redacted`, for the same reason as the
-activity members: Core writes it and no production code reads it. This is the
-one ride-along the operator has not yet ruled on; the development-approval
-playback names it.
+activity members: Core writes it and no production code reads it.
 
 ## 2. Runtimes
 
