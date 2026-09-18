@@ -132,6 +132,13 @@ id reports nothing stays. Emission points and order do not change.
 - The CoT layer reads `RuntimeActivity` directly
   (`Extract<RuntimeActivity, { kind: 'tool.call' }>` and so on) and every
   member of the four events in camelCase.
+- The CoT layer is not the only reader. The session's single subscription in
+  `feishu-channel.ts` also reads `team.state`: on `status: 'closed'` it passes
+  the event's team name to `forgetTeamRoutes`, which removes that Team's
+  persisted routes and document subscriptions. It reads `teamName` after the
+  change, the cleanup path stays as it is, and a test locks that a closed
+  `team.state` still removes the routes. The route record format does not
+  change.
 - Display ids. `textMessageEvents` takes the row's display namespace beside
   its source, so `opaqueDisplayId(namespace, source)` never sees two rows with
   the same pair: `message` for `assistant.message`, `compacted`,
@@ -263,11 +270,12 @@ no consumer.
 Solution review: the Devbox reviewer on Issue #445 again. Verdict: no blocking
 issue. The reviewer checked the three points it was asked to weigh — the
 missing-id rule, namespaces in place of event identity, redaction-only Core —
-against the code, and independently confirmed that the four events have no
-consumer outside the Feishu CoT adapter and presentation, that Team MCP's
-`TeamSummary` is built from `TeamRecord` and not from the event summary type
-(so the #447 boundary holds), and that `redacted` has no production reader. It
-supports the `teammate.input` `redacted` ride-along.
+against the code. It also stated that the four events have no consumer
+outside the Feishu CoT adapter and presentation (incomplete; see the last
+bullet), and confirmed that Team MCP's `TeamSummary` is built from
+`TeamRecord` and not from the event summary type (so the #447 boundary holds)
+and that `redacted` has no production reader. It supports the
+`teammate.input` `redacted` ride-along.
 
 - Accepted: the opening receipt row (`receipt:${randomUUID()}` in
   `openReceipt`) was missing from the namespace list; §4 names it.
@@ -281,3 +289,8 @@ supports the `teammate.input` `redacted` ride-along.
   for an unobserved shape is the defense this repository does not add.
 - Accepted: the rush change notes name every contract change an external
   integrator must follow (§5).
+- Corrected after review: the reviewer stated the four events have no
+  consumer outside the CoT adapter and presentation. The developer found one
+  before writing code: the route cleanup on a closed `team.state` in
+  `feishu-channel.ts`. It is inside the approved scope ("every Feishu reader
+  of the four events"); §4 names it.
