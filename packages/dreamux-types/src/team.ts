@@ -103,15 +103,16 @@ export interface TeamSummary {
 }
 
 /**
- * One turn submitted from a Channel-facing surface to the addressed
- * Dispatcher's own Agent.
+ * One turn submitted from a Channel-facing surface: the flat payload shared by
+ * both submit Commands, `dispatcher.submit` and `team.submit`.
  *
- * Channel and admin adapters share this one flat payload: the caller interprets
- * its own external envelope and supplies the display attributes, the faithful
+ * The two Commands differ only in who they address; every field the caller
+ * supplies is the same and is read by the same rules. The caller interprets its
+ * own external envelope and supplies the display attributes, the faithful
  * model-facing `text`, and at most one trailing reminder, while Core assembles
  * the provenance envelope around them and never reads what they mean.
  */
-export interface DispatcherSubmitCommand {
+export interface SubmitCommand {
   /**
    * Unordered display attributes rendered onto the envelope's start tag.
    * Omitting them is exactly the empty set. Names are open but must be safe
@@ -142,7 +143,7 @@ export interface DispatcherSubmitCommand {
  * A Team Command names exactly one Team; a turn meant for the Dispatcher Agent
  * uses `dispatcher.submit` instead.
  */
-export interface TeamSubmitCommand extends DispatcherSubmitCommand {
+export interface TeamSubmitCommand extends SubmitCommand {
   readonly team_name: string;
   readonly intent?: string;
 }

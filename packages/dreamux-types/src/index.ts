@@ -103,7 +103,7 @@ export type {
   CoreCommandSource,
 } from './command.js';
 export type {
-  DispatcherSubmitCommand,
+  SubmitCommand,
   TeamCreateCommand,
   TeamCreateRepoRequest,
   TeamStatus,

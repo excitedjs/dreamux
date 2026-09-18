@@ -5,7 +5,7 @@
  * Channel-facing caller — a Channel adapter or `admin.sock` driving the same
  * surface — invokes, and both read the same four fields with the same rules.
  * Those rules live here once: the shared input-schema properties, the parse
- * into {@link DispatcherSubmitCommand}, and the projection to the generic
+ * into {@link SubmitCommand}, and the projection to the generic
  * {@link TeammateSubmitInput} every Core producer states.
  *
  * Core reads none of the caller's envelope: the provenance name is fixed here
@@ -14,8 +14,8 @@
  * for the model.
  */
 import type {
-  DispatcherSubmitCommand,
   JsonSchema,
+  SubmitCommand,
 } from '@excitedjs/dreamux-types';
 
 import { ValidationError } from '../command/errors.js';
@@ -59,7 +59,7 @@ export const CHANNEL_SUBMISSION_PROPERTIES: Readonly<Record<string, JsonSchema>>
 /** Parse one validated payload into the shared submit Command fields. */
 export function parseChannelSubmission(
   payload: CommandPayload,
-): DispatcherSubmitCommand {
+): SubmitCommand {
   const attrs = submissionAttrs(payload);
   const reminder = optionalString(payload, 'reminder');
   const sourceId = optionalString(payload, 'source_id');
@@ -79,7 +79,7 @@ export function parseChannelSubmission(
  * one provenance name. An empty `source_id` is omitted: dedupe is disabled.
  */
 export function channelSubmitInput(
-  command: DispatcherSubmitCommand,
+  command: SubmitCommand,
 ): TeammateSubmitInput {
   return {
     source: CHANNEL_SOURCE,

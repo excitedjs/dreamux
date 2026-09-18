@@ -10,7 +10,7 @@
 import type {
   AgentRuntimeInterruptOutcome,
   CoreCommandDefinition,
-  DispatcherSubmitCommand,
+  SubmitCommand,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
@@ -43,7 +43,7 @@ import {
 import type { DispatcherSummary } from '../dispatcher-service/types.js';
 
 interface DispatcherSubmitInput {
-  command: DispatcherSubmitCommand;
+  command: SubmitCommand;
 }
 
 interface DispatcherListResult {

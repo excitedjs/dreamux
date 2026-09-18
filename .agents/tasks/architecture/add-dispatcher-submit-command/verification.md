@@ -4,7 +4,8 @@
 
 Run by the TeamLeader on the complete worktree, from the repository root
 through `node common/scripts/install-run-rush.js`, after the implementation
-round and again after the pre-review fix round. Both runs: all four green.
+round and again after every later round (pre-review fixes, the rebase onto
+`next`, the review fix, the rename). Every run: all four green.
 
 | Gate | Result |
 |---|---|
@@ -40,6 +41,12 @@ Findings sent back to the developer and fixed in one round:
   line and no notice. The operator ruled to keep that ("保持现状：只记日志"); the
   reason is recorded in the code at that log line.
 
+Two files outside the solution's list were accepted as they stand:
+`feishu-route-reconciliation.ts` (the notice helper's parameter narrows to the
+two rejection codes that can still reach it) and `team-service/types.ts` (the
+shared submit receipt's output schema moves beside the projection both Commands
+return).
+
 ## Implementation review
 
 External review on the pull request, against the requirement and the final
@@ -60,13 +67,16 @@ not catch, because the field it drops is optional:
   and single Dispatcher delivery without saying that only a `bound` plan does
   that; a `provision` rejection is answered in place and reconciles no route.
 
-The review confirmed the rest of what it was asked to check: no missing exit in
+Round one confirmed the rest of what it was asked to check: no missing exit in
 the three delivery branches, the notice firing on exactly `unsubmitted` and
 `rejected`, the shared reader carrying the previous validation over unchanged,
 and the tests tightening rather than weakening the contract.
 
-Two files outside the solution's list were accepted as they stand:
-`feishu-route-reconciliation.ts` (the notice helper's parameter narrows to the
-two rejection codes that can still reach it) and `team-service/types.ts` (the
-shared submit receipt's output schema moves beside the projection both Commands
-return).
+Round two approved the fix after reproducing the regression test red and green
+on its own machine.
+
+Operator review then renamed the shared base type to `SubmitCommand` (no alias;
+the old name never shipped) and questioned the Team pass-through methods on
+`DispatcherService`; that family is left unchanged by operator decision and is
+recorded in the requirement as a cleanup finding. The four gates were re-run
+after the rename.

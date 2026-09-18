@@ -59,12 +59,16 @@ neither schema declares `dispatcher_id`.
   bare-`text` fields "only a Channel-facing caller sends") is rewritten: those
   fields now belong to the shared reader below.
 
-`packages/dreamux-types/src/team.ts`: a `DispatcherSubmitCommand` type
+`packages/dreamux-types/src/team.ts`: a `SubmitCommand` type
 (`attrs`, `text`, `reminder`, `source_id`, with the field docs that today sit
 on `TeamSubmitCommand`) is exported, and `TeamSubmitCommand` extends it with a
 required `team_name` and the optional `intent`, so the four shared fields are
 declared once. Its doc drops "Omitting `team_name` targets the Dispatcher
 Agent". The type stays in `team.ts` beside the payload it is the base of.
+The base was first named `DispatcherSubmitCommand`; operator review of the
+pull request renamed it, because a base that `TeamSubmitCommand` extends must
+not name one recipient. `dispatcher.submit` takes `SubmitCommand` itself, with
+no alias.
 
 ### DispatcherService
 
@@ -89,7 +93,7 @@ seam") but has no production caller: `channelSubmission` takes the retired
 ordered-pair attribute shape and is imported only by two test files. It is
 rewritten, not added beside: it becomes the one owner of the Channel-facing
 submission payload — the schema properties, the parse into
-`DispatcherSubmitCommand`, and the projection to `TeammateSubmitInput` with
+`SubmitCommand`, and the projection to `TeammateSubmitInput` with
 `CHANNEL_SOURCE`. `team.submit` composes it with `team_name` and `intent`;
 `dispatcher.submit` uses it as is. Two rules carry over exactly:
 
@@ -208,7 +212,7 @@ an upgrade: describe them plainly and never use `BREAKING:`, `Rebuild:`, or
   `team_name`. An `admin.sock` script that omitted it gets `BAD_REQUEST` and
   should call the Dispatcher Command instead.
 - `@excitedjs/dreamux-types` (minor): `TeamSubmitCommand.team_name` is
-  required; adds `DispatcherSubmitCommand`.
+  required; adds `SubmitCommand`.
 - `@excitedjs/feishu-channel` (minor): Dispatcher-addressed deliveries and
   `/stop` use the Dispatcher Commands; a Collaboration Space message whose Team
   could not be provisioned gets a failure notice under it instead of going to
@@ -251,7 +255,7 @@ an upgrade: describe them plainly and never use `BREAKING:`, `Rebuild:`, or
     `feishu-document-comments.test.ts` command guards;
   - `dreamux-types/tests/team-teammate-contract.test.ts` "omitting team_name
     targets the Dispatcher Agent" no longer type-checks once `team_name` is
-    required; it becomes a `DispatcherSubmitCommand` / `TeamSubmitCommand`
+    required; it becomes a `SubmitCommand` / `TeamSubmitCommand`
     shape case.
 - Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
   `.agents/scripts/check.sh`.
@@ -275,7 +279,7 @@ External review by Devbox on Issue #443, against `next` after #440 merged.
   `dreamux-types` type test that stops compiling, the `TeamSubmitCommand` doc,
   the Team commands module header) — listed.
 - Accepted nit, resolved without moving the file: `TeamSubmitCommand` extends
-  `DispatcherSubmitCommand`, so the base sits beside its extension.
+  `SubmitCommand`, so the base sits beside its extension.
 - Rejected: marking the `@excitedjs/dreamux` and `@excitedjs/dreamux-types`
   notes `BREAKING:` with `Review:`. The repository's changelog rule reserves
   `BREAKING:` for upgrade-blocking migrations and forbids `BREAKING:`,

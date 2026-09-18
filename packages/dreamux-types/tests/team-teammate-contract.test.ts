@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
-  DispatcherSubmitCommand,
+  SubmitCommand,
   TeamCreateCommand,
   TeamCreateRepoRequest,
   TeamStatus,
@@ -149,9 +149,9 @@ describe('TeamCreateCommand carries restart-durable request identity and leader 
   });
 });
 
-describe('DispatcherSubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared payload, Team name only on the Team Command', () => {
+describe('SubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared payload, Team name only on the Team Command', () => {
   it('a Dispatcher-bound submission needs only text and carries no team_name field', () => {
-    const toDispatcher: DispatcherSubmitCommand = { text: 'dispatcher-bound text' };
+    const toDispatcher: SubmitCommand = { text: 'dispatcher-bound text' };
     expect(toDispatcher.text).toBe('dispatcher-bound text');
     // @ts-expect-error the Dispatcher Command has no team_name: a turn meant for
     // a Team uses team.submit, which requires it.
@@ -179,9 +179,9 @@ describe('DispatcherSubmitCommand / TeamSubmitCommand / TeamSubmitResult: one sh
     expect(toTeam.source_id).toBe('msg-1');
     expect(toTeam.intent).toBe('review this');
 
-    // The shared fields are structurally the Dispatcher Command's own fields,
-    // so a Team Command is assignable wherever the shared shape is read.
-    const sharedView: DispatcherSubmitCommand = toTeam;
+    // The shared fields are SubmitCommand's own fields, so a Team Command is
+    // assignable wherever the shared shape is read.
+    const sharedView: SubmitCommand = toTeam;
     expect(sharedView.text).toBe('team-bound text');
   });
 

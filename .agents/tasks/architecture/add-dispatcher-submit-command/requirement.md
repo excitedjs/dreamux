@@ -138,6 +138,26 @@ directly to a Dispatcher:
   point and so loses the Dispatcher fallback on a failed provisioning run:
   "保持现状：只记日志" — the offered option was a log line only, no in-place
   notice on that path, matching how it already drops other failures.
+- Operator review of the pull request (2026-09-18), two comments:
+  - On the shared base type: "这个继承名字很难理解，父类不应该包含dispatcher
+    这个单词了，应该改成更中性的名字" — renamed `SubmitCommand`.
+  - On `DispatcherService.interruptTeamLeader`: "这个玩意太蠢了。为什么一定要在
+    dispatcherServices 里透传到 teamleader 的 teammate？" Traced and answered:
+    the same pass-through shape covers every Team operation on
+    `DispatcherService` (`createTeam`, `submitToTeamLeader`,
+    `interruptTeamLeader`, `listTeams`, `getTeamStatus`, `getTeamHistory`,
+    `dissolveTeam`, `dissolveTeamForLeader`). They exist because the Team
+    Commands and the Dispatcher's Team MCP delegate hold only
+    `DispatcherService` while `TeamCollection` is private, and because every
+    Team operation runs inside the dispatcher admission gate — yet
+    `TeamCollection` is already constructed with that gate and with the
+    Dispatcher Agent as completion initiator, and TeamMates reach the same
+    gate through one admitted `teammates` surface instead of per-operation
+    methods. Asked whether to collapse the family in this pull request, in a
+    separate task, or only for interrupt, the operator answered:
+    "先改第一个命名问题然后合入吧。" The pass-through family is unchanged here;
+    it is recorded as a cleanup finding, and no follow-up task has been
+    created.
 - Assumptions: None.
 - Blocking unknowns: None. The failure notice's wording and delivery mechanism
   are solution choices, reviewed at the development-approval playback.
