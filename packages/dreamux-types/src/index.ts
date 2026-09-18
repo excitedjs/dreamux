@@ -115,7 +115,6 @@ export type {
 } from './team.js';
 export type {
   TeamContainedRole,
-  TeammateActivity,
   TeammateActivityEvent,
   TeammateActorScope,
   TeammateInputEvent,

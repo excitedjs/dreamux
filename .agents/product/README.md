@@ -359,13 +359,13 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 - **Tool details use the runtime's facts.** Tool rows retain the fixed
   Read/List/Search/Edit action words before a summary, with the matching action
   name when no summary exists. The run action uses its summary directly or Bash
-  when untitled. Tools without an action use the summary directly or tool_name
+  when untitled. Tools without an action use the summary directly or the tool name
   when untitled, without the former 80-byte name cap. Rows keep the icon for their action.
   A call with items expands to its list of pills
   alone, including when it failed. Other calls show arguments as a code
   segment without an ARGUMENTS heading. Nonempty invocation always wins: the
   existing run action uses bash code, other actions use text code. Only when
-  invocation is empty does arguments_json
+  invocation is empty do the call's arguments
   supply formatted JSON or text code. Argument/invocation values are redacted
   like every other displayed member — secret masking and path rewriting both
   apply ("全量脱敏，跟其它成员一视同仁", 2026-09-11, superseding the

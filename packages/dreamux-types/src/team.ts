@@ -167,7 +167,7 @@ export interface TeamSubmitResult {
 }
 
 export interface TeamStateTeammateSummary {
-  readonly teammate_name: string;
+  readonly teammateName: string;
   /**
    * Derived by the Team that owns the row — its leader is `team_leader`, every
    * Agent in its TeammateCollection is `teammate`. It is not read from any
@@ -186,11 +186,11 @@ export interface TeamStateTeammateSummary {
  * Agent stores remain authoritative. A Dispatcher never appears in it.
  */
 export interface TeamStateEvent {
-  readonly schema_version: 1;
+  readonly schemaVersion: 1;
   readonly kind: 'team.state';
-  readonly occurred_at: number;
-  readonly team_name: string;
-  readonly leader_name: string;
+  readonly occurredAt: number;
+  readonly teamName: string;
+  readonly leaderName: string;
   readonly status: TeamStatus;
   readonly teammates: readonly TeamStateTeammateSummary[];
 }

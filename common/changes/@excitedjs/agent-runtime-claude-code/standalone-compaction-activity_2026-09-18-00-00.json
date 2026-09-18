@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Report context compaction and native interruption as text-free activities with unchanged ids and order; teardown still reports only an interrupted end.",
+      "comment": "Report text-free compaction and interruption activities using native envelope UUIDs, and tool activities using native tool ids. Carry the result envelope UUID on result and interrupted protocol events, require interrupted outcomes, and remove generated activity ids and callId.",
       "type": "minor",
       "packageName": "@excitedjs/agent-runtime-claude-code"
     }

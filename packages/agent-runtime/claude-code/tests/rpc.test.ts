@@ -45,7 +45,7 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
   };
   const init = (supported = true) => emit({ type: 'system', subtype: 'init', session_id: 'session', capabilities: supported ? ['msg_lifecycle_v1'] : [] });
   const result = (text: string, uuid?: string, extra: Record<string, unknown> = {}) => {
-    emit({ type: 'result', subtype: 'success', result: text, user_message_uuid: uuid, ...extra });
+    emit({ type: 'result', subtype: 'success', result: text, uuid: 'result-uuid', user_message_uuid: uuid, ...extra });
   };
   const assistant = (text: string) => emit({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
   const send = (uuid: string) => accepted(rpc.submit(uuid, {}, uuid));
@@ -87,6 +87,7 @@ function interruptArtifact(commandUuid: string): Record<string, unknown> {
     type: 'result', subtype: 'error_during_execution', is_error: true,
     stop_reason: 'tool_use', terminal_reason: 'aborted_tools',
     errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    uuid: 'interrupt-result-uuid',
     user_message_uuid: commandUuid,
   };
 }
@@ -114,6 +115,7 @@ describe('native usage boundaries', () => {
       { tokenUsage: { inputTokens: 20_000, outputTokens: 69 }, contextTokens: 14_500 },
       { tokenUsage: { inputTokens: 30_000, outputTokens: 69 }, contextTokens: 14_501 },
     ]);
+    expect(events.filter((event) => event.kind === 'result').map((event) => event.uuid)).toEqual(['result-uuid', 'result-uuid']);
     expect(order).toEqual(['result', 'settle', 'result', 'settle']);
     expect(h.writes).toHaveLength(2);
     expect(h.controls).toEqual([]);
@@ -126,6 +128,7 @@ describe('native usage boundaries', () => {
     h.lifecycle('A', 'started');
     h.emit({ ...interruptArtifact('A'), modelUsage: { main: { inputTokens: 200, outputTokens: 10 } } });
     expect(h.events.find((event) => event.kind === 'interrupted')).toMatchObject({
+      uuid: 'interrupt-result-uuid',
       outcome: { tokenUsage: { inputTokens: 200, outputTokens: 10 }, contextTokens: null },
     });
     await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });

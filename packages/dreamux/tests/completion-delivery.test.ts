@@ -478,11 +478,11 @@ describe('the real conversation projection presents a dispatcher completion deli
 
     expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
       kind: 'teammate.input',
-      team_name: null,
-      teammate_name: 'dispatcher',
+      teamName: null,
+      teammateName: 'dispatcher',
       role: 'dispatcher',
       source: COMPLETION_SOURCE,
-      source_id: null,
+      sourceId: null,
     }]);
   });
 
@@ -497,7 +497,7 @@ describe('the real conversation projection presents a dispatcher completion deli
 
     expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
       kind: 'teammate.activity',
-      team_name: null,
+      teamName: null,
       role: 'dispatcher',
       activity: { kind: 'turn.ended', status: 'completed' },
     }]);

@@ -102,11 +102,11 @@ describe('ChannelEventSource / ChannelEventSubscription stay minimal', () => {
       subscribe(listener: (event: ChannelCoreEvent) => void | Promise<void>) {
         // Simulate one live delivery.
         void listener({
-          schema_version: 1,
+          schemaVersion: 1,
           kind: 'team.state',
-          occurred_at: Date.now(),
-          team_name: 'team-1',
-          leader_name: 'leader-1',
+          occurredAt: Date.now(),
+          teamName: 'team-1',
+          leaderName: 'leader-1',
           status: 'running',
           teammates: [],
         });

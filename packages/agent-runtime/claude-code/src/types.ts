@@ -46,7 +46,7 @@ export type ParsedLine =
       kind: 'compact_boundary';
       raw: JsonObject;
     }
-  | { kind: 'result'; outcome: ResultEnvelope; raw: JsonObject }
+  | { kind: 'result'; uuid: string | null; outcome: ResultEnvelope; raw: JsonObject }
   | {
       kind: 'command_lifecycle';
       commandUuid: string | null;
@@ -191,7 +191,7 @@ export type ClaudeActivityLine = Extract<
 >;
 
 export type ClaudeProtocolEvent =
-  | { readonly kind: 'interrupted'; readonly outcome?: TurnOutcome }
+  | { readonly kind: 'interrupted'; readonly uuid: string | null; readonly outcome: TurnOutcome }
   | {
       /** Public native observation; lifecycle alone does not supply a completion. */
       readonly kind: 'command_lifecycle';
@@ -201,6 +201,8 @@ export type ClaudeProtocolEvent =
   | { readonly kind: 'stream'; readonly line: ClaudeActivityLine }
   | {
       readonly kind: 'result';
+      /** The result envelope's own id, not its inbound-message attribution. */
+      readonly uuid: string | null;
       readonly outcome: TurnOutcome;
       /** Submitted commands answered by this result; empty for background-only turns. */
       readonly commandUuids: readonly string[];

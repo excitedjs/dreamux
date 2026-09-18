@@ -1208,11 +1208,21 @@ set, or presentation identity, because a provider folds any number of Dreamux
 submissions into one runtime-native turn and no display fact can honestly name
 the submission that caused it.
 
+Every member of the four events is spelled in camelCase (`schemaVersion`,
+`occurredAt`, `teamName`, `teammateName`, `leaderName`, `sourceId`); values
+such as `team_leader` are values, not member names (operator, 2026-09-18:
+「应该是全都改成驼峰。外层也是」, scoped to these four events). Other
+channel-seam types and every wire payload keep their own spelling; the
+remaining snake_case types in `@excitedjs/dreamux-types` are tracked in
+[#447](https://github.com/excitedjs/dreamux/issues/447).
+
 `teammate.input` is published at the moment of submission, before any runtime
 has accepted it, so a submission that fails is visible together with the text
-that failed. `teammate.activity` carries a nested payload in the runtime's own
-vocabulary (`assistant.message`, `tool.call`, `token.usage`,
-`context.compacted`, `turn.interrupted`, `turn.ended`), so a runtime that
+that failed. `teammate.activity` carries the runtime's own `RuntimeActivity`
+(`assistant.message`, `tool.call`, `token.usage`, `context.compacted`,
+`turn.interrupted`, `turn.ended`), redacted in place and otherwise unchanged —
+native ids, `occurredAt`, structured `arguments`, `result` and `error` — so
+there is one activity vocabulary from runtime to Channel, and a runtime that
 learns to report something new adds a member and changes no event catalog, no
 seal, and no Channel subscription. `token.usage` carries cumulative counters
 rather than conversation content and is live-only; `context.compacted` and
@@ -1226,7 +1236,7 @@ The seal's catalog is declared as a total record over the event union, so a new
 kind that is not listed fails to compile rather than being published and
 silently dropped. Sealing is the one place
 a fact becomes deliverable: an event outside the set, an event whose
-`schema_version` is not `1`, or one without a finite `occurred_at` is dropped and
+`schemaVersion` is not `1`, or one without a finite `occurredAt` is dropped and
 logged rather than thrown, because producers publish synchronously from inside
 operations whose durable work has already succeeded. A sealed event is deeply
 frozen, so nothing can rewrite it after it has been broadcast.
@@ -1237,7 +1247,7 @@ the whole `ChannelCoreEvent` union and demultiplexes inside the Channel, so addi
 an event changes only that catalog and its consumers.
 
 No event carries a turn identity: presentation correlation is the `source_id` a
-caller supplied, echoed back on its own input, and nothing exposes a
+caller supplied, echoed back on its own input as `sourceId`, and nothing exposes a
 runtime-native Turn object or transcript. Every payload a conversation event
 carries is redacted whole: user/assistant display text, tool results, and the
 argument payloads and invocation strings alike. The 2026-09-09 argument
@@ -1248,9 +1258,10 @@ does, so both go through one policy. Core bounds nothing; the Channel parses JSO
 send limit. Other event metadata does not expose a runtime transcript or its
 path. Raw arguments carry the values submitted to a tool under the same
 redaction guarantee as a result body. Both are redacted by walking the JSON
-value before it is serialized, not by pattern-matching its serialization: a
-field whose name says secret has its value destroyed, every string leaf goes
-through the text rules, and what arrived as JSON is still JSON afterwards. The
+value, never by pattern-matching a serialization: a field whose name says
+secret has its value destroyed, every string leaf goes through the text rules,
+and the Channel receives the same JSON value, not JSON text. No member says
+whether a rule fired; nothing read such a flag. The
 capability itself lives in `@excitedjs/dreamux-utils`; Core only calls it.
 
 Delivery is live and best-effort: Core invokes listeners in publication order
@@ -1331,8 +1342,13 @@ Once a recipient has an anchor, Core-projected assistant text, tool calls and
 results, the lines the Channel renders itself from text-free activities — the
 token-usage line from `token.usage`, `COMPACTED SESSION` from
 `context.compacted`, and `[Request interrupted by user]` from
-`turn.interrupted`, each as an assistant-role row keyed by the activity's id —
-and inputs enter its display. Ordinary inputs retain their bodies.
+`turn.interrupted`, each an assistant-role row — and inputs enter its display.
+A row's display id is its namespace plus a source: `message`, `compacted`,
+`interrupted`, and `usage` rows take the activity's native id, a tool row
+`call` and its result `result` with the call id, and the rows the Channel adds
+itself — `input` echoes, the opening `receipt`, an `end` reason — a random
+source. The namespace is what keeps apart two rows whose activities share a
+native id, such as one turn's usage and interrupt marker. Ordinary inputs retain their bodies.
 Automated inputs use compact Channel-owned labels: `TEAMMATE CALLBACK` with the
 producer name, `CRON TRIGGERED`, `WORKFLOW FINISHED` without a name, and
 `SYSTEM RESTARTED` for the current Dispatcher system notice. Completion kind and
@@ -1340,27 +1356,27 @@ producer name come from structured provenance supplied by the completion owner,
 never from parsing its notification text. `TeammateInputEvent.notice` carries
 `TeammateInputNotice`: `{kind: 'teammate_completion', producer}`,
 `{kind: 'workflow_completion'}`, or null for other inputs. The producer is the
-host's Agent identity name and travels unchanged, like `teammate_name` in the
+host's Agent identity name and travels unchanged, like `teammateName` in the
 actor scope; it is not part of the redacted notification body. Its owning
 identity store validates the name before creation.
 The model-facing body stays intact.
 The Channel suppresses only its own already-visible inbound body by comparing
-`source_id` with the bounded set it issued; a source ID's presence alone proves
+`sourceId` with the bounded set it issued; a source ID's presence alone proves
 nothing. Before an anchor exists, there is no place to send a card.
 
 `/packages/channel/feishu-channel/src/feishu-cot-presentation.ts` owns the existing
 action names and title words: read/list_files/search/edit map to Read/List/Search/Edit
 and prefix a supplied summary with that word. The run action uses Bash as its
 untitled name and its summary without a prefix. The edit action also covers Write.
-Tools without an action use their raw runtime summary as title, or tool_name
+Tools without an action use their raw runtime summary as title, or `toolName`
 when untitled, without the former 80-byte name cap. Existing action icons remain.
 The Channel does not parse a tool's
 argument schema. It selects invocation code language from the existing
-tool_action: run uses bash, other actions use text. It formats JSON arguments
+`action`: run uses bash, other actions use text. It formats JSON arguments
 locally, without a provider language-classification field. Arguments and invocation
 strings arrive redacted like every other member. Generic/MCP tools follow the
 same display policy. A nonempty invocation always
-precedes arguments_json, even for non-Bash tools; only an empty invocation uses
+precedes `arguments`, even for non-Bash tools; only an empty invocation uses
 the JSON/text argument fallback. R3 explicitly confirmed this ordering. Codex
 web search supplies its native `{query, action}` through that argument fallback.
 

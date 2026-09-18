@@ -193,6 +193,19 @@ export type RuntimeSubmissionSettlement =
   | { readonly kind: 'failed'; readonly error: Error }
   | { readonly kind: 'stopped' };
 
+/** A live fact identified by the native object it reports. */
+interface NativeActivity<K extends string> {
+  readonly kind: K;
+  readonly occurredAt: number;
+  /**
+   * The provider's own id, taken whole without a prefix, suffix, or counter.
+   * It identifies the native object, not a unique activity: a tool's start
+   * and result share its call id; usage and interruption share a turn id.
+   * A consumer derives row identity from kind (and tool status) plus this id.
+   */
+  readonly id: string;
+}
+
 /**
  * One thing an agent's runtime did, in the runtime's own vocabulary.
  *
@@ -201,40 +214,29 @@ export type RuntimeSubmissionSettlement =
  * submission that caused it — and inventing one would make a display pick an
  * arbitrary member. What a live surface needs is this agent's stream in order,
  * which is what this is.
+ *
+ * A Channel receives this same type with every text and JSON payload member
+ * already redacted by Core. Core bounds nothing: each surface applies its
+ * own display limits where it sends.
  */
 export type RuntimeActivity =
-  | {
-      readonly kind: 'assistant.message';
-      readonly occurredAt: number;
-      readonly id: string;
+  | NativeActivity<'assistant.message'> & {
       readonly text: string;
     }
-  | {
-      /**
-       * The runtime compacted its context. Carries no summary or compaction
-       * metadata. Live-only: the cold activity reader never produces this.
-       */
-      readonly kind: 'context.compacted';
-      readonly occurredAt: number;
-      readonly id: string;
-    }
-  | {
-      /**
-       * A display marker, not a terminal: a native turn stopped at an interrupt
-       * request. Reported from the native interrupted terminal, before its
-       * `token.usage` (when available) and paired `turn.ended` with status
-       * `interrupted`. Teardown reports `turn.ended` `interrupted` without this
-       * marker. Live-only: the cold activity reader never produces this.
-       */
-      readonly kind: 'turn.interrupted';
-      readonly occurredAt: number;
-      readonly id: string;
-    }
-  | {
-      readonly kind: 'tool.call';
-      readonly occurredAt: number;
-      readonly id: string;
-      readonly callId: string;
+  /**
+   * The runtime compacted its context. Carries no summary or compaction
+   * metadata. Live-only: the cold activity reader never produces this.
+   */
+  | NativeActivity<'context.compacted'>
+  /**
+   * A display marker, not a terminal: a native turn stopped at an interrupt
+   * request. Reported from the native interrupted terminal, before its
+   * `token.usage` (when available) and paired `turn.ended` with status
+   * `interrupted`. Teardown reports `turn.ended` `interrupted` without this
+   * marker. Live-only: the cold activity reader never produces this.
+   */
+  | NativeActivity<'turn.interrupted'>
+  | NativeActivity<'tool.call'> & {
       readonly toolName: string;
       readonly action: RuntimeToolAction | null;
       /**
@@ -266,22 +268,19 @@ export type RuntimeActivity =
       readonly result: JsonValue | null;
       readonly error: string | null;
     }
-  | {
-      /**
-       * The native runtime's cumulative token counters for its live session,
-       * at the turn they were observed for. Runners that fold several native
-       * turns into one provider turn emit once on the native terminal with the
-       * latest snapshot, so one activity stands for one turn.
-       *
-       * Values are session-total as the runtime owns them, never turn deltas:
-       * a consumer derives a turn's consumption by differencing against the
-       * previous snapshot for this agent. The runtime keeps no history and
-       * performs no subtraction. Live-only: the cold activity reader never
-       * replays this, and a dropped snapshot simply widens the next delta.
-       */
-      readonly kind: 'token.usage';
-      readonly occurredAt: number;
-      readonly id: string;
+  /**
+   * The native runtime's cumulative token counters for its live session,
+   * at the turn they were observed for. Runners that fold several native
+   * turns into one provider turn emit once on the native terminal with the
+   * latest snapshot, so one activity stands for one turn.
+   *
+   * Values are session-total as the runtime owns them, never turn deltas:
+   * a consumer derives a turn's consumption by differencing against the
+   * previous snapshot for this agent. The runtime keeps no history and
+   * performs no subtraction. Live-only: the cold activity reader never
+   * replays this, and a dropped snapshot simply widens the next delta.
+   */
+  | NativeActivity<'token.usage'> & {
       readonly inputTokens: number;
       readonly outputTokens: number;
       /** The last response's context footprint, and the native window when the runtime reports one; `null` when the runtime gives no context signal. */
@@ -299,6 +298,9 @@ export type RuntimeActivity =
        * loss. `reason` carries the runtime's own explanation when it holds
        * one, so a display can say why rather than only that.
        * A native interrupt also reports `turn.interrupted` before this end.
+       *
+       * Core also reports this for an input no runtime accepted, because that
+       * input opened a display that nothing else closes.
        *
        * A provider reports this from the native terminal it observed, and
        * again, without asking whether a turn was open, when it tears down a

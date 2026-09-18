@@ -248,7 +248,7 @@ export class FeishuChannelSession {
         this.cot.handle(event);
         if (event.kind !== 'team.state' || event.status !== 'closed') return;
         void this.routeReconciliation.forgetTeamRoutes(
-          event.team_name,
+          event.teamName,
           'team_closed',
         );
       } catch (error) {

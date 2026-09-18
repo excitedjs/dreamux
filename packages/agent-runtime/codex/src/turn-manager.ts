@@ -368,7 +368,7 @@ export class TurnManager {
    * and it is known before any submission binds.
    */
   private observeItem(turnId: string, item: ThreadItem, phase: 'started' | 'completed', occurredAt: number): void {
-    const activity = itemActivity(turnId, item, phase, occurredAt);
+    const activity = itemActivity(item, phase, occurredAt);
     if (activity !== null) this.emitActivity(activity);
     const record = this.nativeTurns.get(turnId);
     if (record !== undefined && record.representative !== null) return;
@@ -434,12 +434,11 @@ function interruptedActivity(turnId: string): RuntimeActivity {
   return {
     kind: 'turn.interrupted',
     occurredAt: Date.now(),
-    id: `${turnId}:interrupted`,
+    id: turnId,
   };
 }
 
 function itemActivity(
-  turnId: string,
   item: ThreadItem,
   phase: 'started' | 'completed',
   occurredAt: number,
@@ -451,7 +450,7 @@ function itemActivity(
     return {
       kind: 'assistant.message',
       occurredAt,
-      id: `${turnId}:${itemId}:completed`,
+      id: itemId,
       text: item.text,
     };
   }
@@ -460,7 +459,7 @@ function itemActivity(
     return {
       kind: 'context.compacted',
       occurredAt,
-      id: `${turnId}:${itemId}:completed`,
+      id: itemId,
     };
   }
   const toolName = toolNameFor(item);
@@ -471,8 +470,7 @@ function itemActivity(
   return {
     kind: 'tool.call',
     occurredAt,
-    id: `${turnId}:${itemId}:${phase}`,
-    callId: itemId,
+    id: itemId,
     toolName,
     ...toolDisplay(item),
     status: phase === 'started' ? 'started' : failed ? 'failed' : 'completed',
@@ -590,7 +588,7 @@ function tokenUsageActivity(turnId: string, usage: ThreadTokenUsage | null): Run
   return {
     kind: 'token.usage',
     occurredAt: Date.now(),
-    id: `${turnId}:usage`,
+    id: turnId,
     inputTokens: input,
     outputTokens: output,
     context: hasContext

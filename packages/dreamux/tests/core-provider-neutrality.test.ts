@@ -25,7 +25,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, expectTypeOf } from 'vitest';
+
+import type { RuntimeActivity } from '@excitedjs/dreamux-types';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const coreSrc = join(here, '..', 'src');
@@ -176,18 +178,13 @@ describe('core provider-id / channel-id neutrality', () => {
   });
 
   it('the neutral RuntimeActivity kinds used in Core are the dreamux-types contract, not provider syntax', () => {
-    // `assistant.message` / `tool.call` appear in
-    // channel/conversation-projection.ts. They must be the neutral
-    // `RuntimeActivity` kind literals dreamux-types declares, not a
-    // provider-native event name Core hardcoded independently — this positive
-    // assertion is what makes the absence check above trustworthy rather than
-    // coincidental.
-    const typesSrc = readFileSync(
-      join(coreSrc, '..', '..', 'dreamux-types', 'src', 'agent-runtime.ts'),
-      'utf8',
-    );
-    expect(typesSrc).toContain("kind: 'assistant.message'");
-    expect(typesSrc).toContain("kind: 'tool.call'");
+    // The kinds Core switches on must be the neutral RuntimeActivity literals
+    // dreamux-types declares. This positive check makes the absence check
+    // above trustworthy. It is type-level, enforced by typecheck:tests.
+    expectTypeOf<Extract<RuntimeActivity, { kind: 'assistant.message' }>['kind']>()
+      .toEqualTypeOf<'assistant.message'>();
+    expectTypeOf<Extract<RuntimeActivity, { kind: 'tool.call' }>['kind']>()
+      .toEqualTypeOf<'tool.call'>();
   });
 });
 

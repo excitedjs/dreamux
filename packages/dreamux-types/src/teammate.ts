@@ -10,7 +10,7 @@
  * Dispatcher-scoped TeamMate publishes its first `teammate.state`; later
  * transitions publish the same kind. There is no separate creation event.
  */
-import type { RuntimeToolAction } from './agent-runtime.js';
+import type { RuntimeActivity } from './agent-runtime.js';
 
 /**
  * The role a TeamMate presents at this boundary.
@@ -34,14 +34,14 @@ export type TeammateStatus =
   | 'closed';
 
 export interface TeammateStateEvent {
-  readonly schema_version: 1;
+  readonly schemaVersion: 1;
   readonly kind: 'teammate.state';
-  readonly occurred_at: number;
-  readonly teammate_name: string;
+  readonly occurredAt: number;
+  readonly teammateName: string;
   /** Runtime projection supplied by the owning Service; never persisted. */
   readonly role: TeammateRole;
   /** `null` for a Dispatcher, which never appears in a Team summary. */
-  readonly team_name: string | null;
+  readonly teamName: string | null;
   readonly status: TeammateStatus;
 }
 
@@ -55,13 +55,13 @@ export interface TeammateStateEvent {
  * in the order it happened, which is exactly what this scopes.
  */
 export interface TeammateActorScope {
-  readonly schema_version: 1;
-  readonly occurred_at: number;
-  readonly teammate_name: string;
+  readonly schemaVersion: 1;
+  readonly occurredAt: number;
+  readonly teammateName: string;
   /** Runtime projection supplied by the owning Service; never persisted. */
   readonly role: TeammateRole;
   /** `null` for a Dispatcher, which never belongs to a Team. */
-  readonly team_name: string | null;
+  readonly teamName: string | null;
 }
 
 /**
@@ -101,121 +101,26 @@ export type TeammateInputEvent = TeammateActorScope & {
    * against ids it issued; its mere presence proves nothing, because cron
    * fires, task push-backs, and restart notices carry one too.
    */
-  readonly source_id: string | null;
+  readonly sourceId: string | null;
   /** The source's own body, never the assembled provenance envelope. */
   readonly content: string;
   /**
    * What kind of automated push-back this is, when it is one. `null` for every
    * input a person or an Agent wrote, whose body is what a reader wants. Its
    * producer name is an Agent name the host assigned, not payload text, so it
-   * carries neither a secret nor a path and `redacted` never speaks for it.
+   * carries neither a secret nor a path.
    */
   readonly notice: TeammateInputNotice | null;
-  readonly redacted: boolean;
 };
-
-/**
- * One thing the runtime did, in the runtime's own vocabulary, with every
- * payload member already redacted by Core. Core bounds nothing here: how much
- * of a payload a surface can show is that surface's own limit, applied where
- * it sends.
- *
- * The member names match `RuntimeActivity`'s on purpose: this is the same
- * fact with its payloads made safe to display, not a second vocabulary a
- * maintainer has to hold beside the first.
- */
-export type TeammateActivity =
-  | {
-      readonly kind: 'assistant.message';
-      readonly event_id: string;
-      readonly content: string;
-      readonly redacted: boolean;
-    }
-  | {
-      /**
-       * The runtime compacted its context. Carries no summary or compaction
-       * metadata. Live-only: the cold activity reader never produces this.
-       */
-      readonly kind: 'context.compacted';
-      readonly event_id: string;
-      /** Always false: this activity carries no text to redact. */
-      readonly redacted: boolean;
-    }
-  | {
-      /**
-       * A display marker, not a terminal: a native turn stopped at an interrupt
-       * request. Reported from the native interrupted terminal, before its
-       * `token.usage` (when available) and paired `turn.ended` with status
-       * `interrupted`. Teardown reports `turn.ended` `interrupted` without this
-       * marker. Live-only: the cold activity reader never produces this.
-       */
-      readonly kind: 'turn.interrupted';
-      readonly event_id: string;
-      /** Always false: this activity carries no text to redact. */
-      readonly redacted: boolean;
-    }
-  | {
-      readonly kind: 'tool.call';
-      readonly event_id: string;
-      readonly call_id: string;
-      readonly tool_name: string;
-      readonly tool_action: RuntimeToolAction | null;
-      readonly summary: string | null;
-      /** What the call was — the command line, the diff, the prompt. */
-      readonly invocation: string | null;
-      readonly items: readonly string[];
-      readonly status: 'started' | 'completed' | 'failed';
-      /**
-       * The call's full structured input as JSON text, redacted like every
-       * other member. Redaction walks the structure and rewrites its string
-       * leaves, so what arrived as JSON is still JSON here; a payload the
-       * runtime supplied as plain text travels as that text.
-       */
-      readonly arguments_json: string | null;
-      readonly result_json: string | null;
-      /** Whether the redactor rewrote any member of this call. */
-      readonly redacted: boolean;
-    }
-  | {
-      /**
-       * The native runtime's cumulative token counters for its live session,
-       * at the turn they were observed for — one per native turn. Values are
-       * session-total, never turn deltas: consumers difference consecutive
-       * snapshots for the same agent. Live-only, never cold-replayed.
-       */
-      readonly kind: 'token.usage';
-      readonly event_id: string;
-      readonly input_tokens: number;
-      readonly output_tokens: number;
-      readonly context: {
-        readonly used_tokens: number;
-        readonly window_tokens: number | null;
-      } | null;
-      readonly redacted: boolean;
-    }
-  | {
-      /**
-       * The runtime stopped producing, once per native turn. It is the display
-       * stream's terminal: a surface showing this Agent's activity finishes on
-       * it. Core publishes the same fact for an input no runtime ever accepted,
-       * because such an input still opened a surface that nothing else closes.
-       * A native interrupt also reports `turn.interrupted` before this end.
-       */
-      readonly kind: 'turn.ended';
-      readonly status: 'completed' | 'failed' | 'interrupted';
-      /** Why it ended, when the producer holds a reason; `null` otherwise. */
-      readonly reason: string | null;
-      readonly redacted: boolean;
-    };
 
 /**
  * One runtime activity fact for this TeamMate.
  *
  * A single published kind carries the whole runtime vocabulary, so a runtime
- * that learns to report something new adds a {@link TeammateActivity} member
+ * that learns to report something new adds a {@link RuntimeActivity} member
  * and changes no event catalog, no seal, and no Channel subscription.
  */
 export type TeammateActivityEvent = TeammateActorScope & {
   readonly kind: 'teammate.activity';
-  readonly activity: TeammateActivity;
+  readonly activity: RuntimeActivity;
 };

@@ -11,7 +11,7 @@ function outcome(overrides: Partial<TurnOutcome> = {}): TurnOutcome {
 function makeHarness() {
   const activityEvents: RuntimeActivity[] = [];
   const nativeEnds: NativeTurnEnd[] = [];
-  const activity = { activitySequence: 0, tools: new Map() };
+  const activity = { tools: new Map() };
   return {
     activityEvents, nativeEnds,
     fire(event: ClaudeProtocolEvent) {
@@ -23,8 +23,8 @@ function makeHarness() {
   };
 }
 
-function resultEvent(o: TurnOutcome, commandUuids: string[] = ['cmd-1']): ClaudeProtocolEvent {
-  return { kind: 'result', outcome: o, commandUuids };
+function resultEvent(o: TurnOutcome, commandUuids: string[] = ['cmd-1'], uuid = 'result-uuid'): ClaudeProtocolEvent {
+  return { kind: 'result', uuid, outcome: o, commandUuids };
 }
 
 function streamAssistantText(text: string, messageId = 'msg-1'): ClaudeProtocolEvent {
@@ -34,7 +34,7 @@ function streamAssistantText(text: string, messageId = 'msg-1'): ClaudeProtocolE
       kind: 'assistant',
       text,
       sessionId: 'thread-1',
-      raw: { message: { id: messageId, content: [{ type: 'text', text }] } },
+      raw: { uuid: messageId, message: { id: 'api-message', content: [{ type: 'text', text }] } },
     },
   };
 }
@@ -52,6 +52,7 @@ function streamToolUse(
       text: '',
       sessionId: 'thread-1',
       raw: {
+        uuid: messageId,
         message: {
           id: messageId,
           content: [{ type: 'tool_use', id: callId, name, input }],
@@ -89,6 +90,7 @@ function streamUserEnvelope(
       kind: 'user',
       raw: {
         type: 'user',
+        uuid: messageId,
         message: { id: messageId, role: 'user', content },
       },
     },
@@ -102,7 +104,7 @@ describe('handleProtocolEvent live activity', () => {
       kind: 'stream',
       line: {
         kind: 'compact_boundary',
-        raw: { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 14950, post_tokens: 1789 } },
+        raw: { uuid: 'compact-uuid', type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 14950, post_tokens: 1789 } },
       },
     });
     // The summary rides right behind the boundary as a synthetic `user`
@@ -120,7 +122,7 @@ describe('handleProtocolEvent live activity', () => {
       },
     });
     expect(h.activityEvents).toEqual([
-      { kind: 'context.compacted', occurredAt: expect.any(Number), id: 'stream-0:compacted' },
+      { kind: 'context.compacted', occurredAt: expect.any(Number), id: 'compact-uuid' },
     ]);
   });
 
@@ -128,8 +130,10 @@ describe('handleProtocolEvent live activity', () => {
     const h = makeHarness();
     h.fire(streamAssistantText('hello there'));
     expect(h.activityEvents).toHaveLength(1);
-    expect(h.activityEvents[0]!).toMatchObject({
+    expect(h.activityEvents[0]!).toEqual({
       kind: 'assistant.message',
+      occurredAt: expect.any(Number),
+      id: 'msg-1',
       text: 'hello there',
     });
     // The seam carries no submission: Claude folds any number of commands
@@ -141,21 +145,12 @@ describe('handleProtocolEvent live activity', () => {
     const h = makeHarness();
     h.fire(streamToolUse('call-1', 'Read', { file_path: '/tmp/x' }));
     h.fire(streamToolResult('call-1', 'file contents', false));
-    expect(h.activityEvents).toHaveLength(2);
-    expect(h.activityEvents[0]!).toMatchObject({
-      kind: 'tool.call',
-      callId: 'call-1',
-      toolName: 'Read',
-      status: 'started',
-      action: 'read',
-    });
-    expect(h.activityEvents[1]!).toMatchObject({
-      kind: 'tool.call',
-      callId: 'call-1',
-      toolName: 'Read',
-      status: 'completed',
-      result: 'file contents',
-    });
+    expect(h.activityEvents).toEqual(['started', 'completed'].map((status) => ({
+      kind: 'tool.call', occurredAt: expect.any(Number), id: 'call-1',
+      toolName: 'Read', action: 'read', summary: '/tmp/x', invocation: null,
+      items: ['/tmp/x'], status, arguments: { file_path: '/tmp/x' },
+      result: status === 'completed' ? 'file contents' : null, error: null,
+    })));
   });
 
   it('carries the display facts derived from the tool input on both the started and the result activity', () => {
@@ -218,7 +213,7 @@ describe('handleProtocolEvent live activity', () => {
     ]);
     expect(h.activityEvents[1]!).toMatchObject({
       kind: 'tool.call',
-      callId: 'call-1',
+      id: 'call-1',
       status: 'completed',
       result: 'Launching skill: team-workflow',
     });
@@ -234,7 +229,7 @@ describe('handleProtocolEvent live activity', () => {
     expect(h.activityEvents).toHaveLength(2);
     expect(h.activityEvents[1]!).toMatchObject({
       kind: 'tool.call',
-      callId: 'call-1',
+      id: 'call-1',
       status: 'completed',
       result: 'file contents',
     });
@@ -257,8 +252,8 @@ describe('handleProtocolEvent live activity', () => {
     h.fire(subagent('assistant', [{ type: 'text', text: 'ok' }]));
     h.fire(streamToolResult('agent-call', 'ok', false, 'msg-main'));
     expect(h.activityEvents).toEqual([
-      expect.objectContaining({ kind: 'tool.call', callId: 'agent-call', toolName: 'Agent', status: 'started' }),
-      expect.objectContaining({ kind: 'tool.call', callId: 'agent-call', toolName: 'Agent', status: 'completed', result: 'ok' }),
+      expect.objectContaining({ kind: 'tool.call', id: 'agent-call', toolName: 'Agent', status: 'started' }),
+      expect.objectContaining({ kind: 'tool.call', id: 'agent-call', toolName: 'Agent', status: 'completed', result: 'ok' }),
     ]);
   });
 });
@@ -279,13 +274,13 @@ describe('handleProtocolEvent token usage', () => {
     const activitySink = (fact: RuntimeActivity): void => { events.push(fact); };
     const value = outcome({ tokenUsage: { inputTokens: 28_531, outputTokens: 69 }, contextTokens: 14_500 });
     handleProtocolEvent(resultEvent(value), {
-      activity: { activitySequence: 0, tools: new Map() }, activitySink,
+      activity: { tools: new Map() }, activitySink,
     });
     expect(events.map((fact) => fact.kind)).toEqual(['token.usage', 'turn.ended']);
     expect(events[0]).toEqual({
       kind: 'token.usage',
       occurredAt: expect.any(Number),
-      id: 'stream-0:usage',
+      id: 'result-uuid',
       inputTokens: 28_531,
       outputTokens: 69,
       context: { usedTokens: 14_500, windowTokens: null },
@@ -309,7 +304,7 @@ describe('handleProtocolEvent token usage', () => {
     h.fire(resultEvent(outcome({ tokenUsage: { inputTokens: 100, outputTokens: 5 }, contextTokens: 50 })));
     h.fire(resultEvent(outcome({
       tokenUsage: { inputTokens: 200, outputTokens: 10 }, isError: true, errors: ['native failure'],
-    })));
+    }), ['cmd-2'], 'second-result-uuid'));
     expect(h.activityEvents).toMatchObject([
       { kind: 'token.usage', inputTokens: 100, outputTokens: 5, context: { usedTokens: 50, windowTokens: null } },
       { kind: 'token.usage', inputTokens: 200, outputTokens: 10, context: null },
@@ -317,18 +312,18 @@ describe('handleProtocolEvent token usage', () => {
     expect(h.nativeEnds.map((fact) => fact.status)).toEqual(['completed', 'failed']);
     expect(h.nativeEnds[1]?.reason).toBe('native failure');
     const ids = h.activityEvents.map((fact) => (fact.kind === 'token.usage' ? fact.id : ''));
-    expect(ids).toEqual(['stream-0:usage', 'stream-1:usage']);
+    expect(ids).toEqual(['result-uuid', 'second-result-uuid']);
   });
 
   it('keeps native interruption markers before usage and the interrupted end', () => {
     const events: RuntimeActivity[] = [];
     handleProtocolEvent({
-      kind: 'interrupted', outcome: outcome({ isError: true, tokenUsage: { inputTokens: 100, outputTokens: 5 } }),
-    }, { activity: { activitySequence: 0, tools: new Map() }, activitySink: (fact) => { events.push(fact); } });
+      kind: 'interrupted', uuid: 'result-uuid', outcome: outcome({ isError: true, tokenUsage: { inputTokens: 100, outputTokens: 5 } }),
+    }, { activity: { tools: new Map() }, activitySink: (fact) => { events.push(fact); } });
     expect(events).toEqual([
-      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'stream-0:interrupted' },
+      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'result-uuid' },
       {
-        kind: 'token.usage', occurredAt: expect.any(Number), id: 'stream-1:usage',
+        kind: 'token.usage', occurredAt: expect.any(Number), id: 'result-uuid',
         inputTokens: 100, outputTokens: 5, context: null,
       },
       { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
@@ -344,14 +339,24 @@ describe('handleProtocolEvent token usage', () => {
 });
 
 describe('handleProtocolEvent native turn end', () => {
+  it.each(['result', 'interrupted'] as const)('still ends a %s with no envelope uuid', (kind) => {
+    const events: RuntimeActivity[] = [];
+    const event = { kind, uuid: null, outcome: outcome({ tokenUsage: { inputTokens: 10, outputTokens: 5 } }), commandUuids: [] };
+    handleProtocolEvent(event, { activity: { tools: new Map() }, activitySink: (fact) => { events.push(fact); } });
+    expect(events).toEqual([{
+      kind: 'turn.ended', occurredAt: expect.any(Number),
+      status: kind === 'interrupted' ? 'interrupted' : 'completed', reason: null,
+    }]);
+  });
+
   it('reports a text-free interrupt marker before the end when no metrics are available', () => {
     const events: RuntimeActivity[] = [];
-    handleProtocolEvent({ kind: 'interrupted' }, {
-      activity: { activitySequence: 0, tools: new Map() },
+    handleProtocolEvent({ kind: 'interrupted', uuid: 'result-uuid', outcome: outcome() }, {
+      activity: { tools: new Map() },
       activitySink: (fact) => { events.push(fact); },
     });
     expect(events).toEqual([
-      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'stream-0:interrupted' },
+      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'result-uuid' },
       { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
     ]);
   });

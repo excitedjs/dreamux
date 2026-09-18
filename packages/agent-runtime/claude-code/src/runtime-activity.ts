@@ -12,7 +12,6 @@ import type {
 
 /** Resident activity is independent of request admission and settlement. */
 export interface NativeActivityState {
-  activitySequence: number;
   tools: Map<string, { name: string; arguments: JsonValue | null }>;
 }
 
@@ -57,14 +56,17 @@ export function handleProtocolEvent(
   if (event.kind === 'command_lifecycle') return;
   if (event.kind === 'result' || event.kind === 'interrupted') {
     const interrupted = event.kind === 'interrupted';
-    if (interrupted) emitActivity(interruptedActivity(context.activity), context.activitySink);
-    const usage = event.outcome?.tokenUsage;
-    if (usage !== undefined) {
-      const contextTokens = event.outcome?.contextTokens;
+    const id = event.uuid;
+    if (interrupted && id !== null && id !== '') {
+      emitActivity(interruptedActivity(id), context.activitySink);
+    }
+    const usage = event.outcome.tokenUsage;
+    if (usage !== undefined && id !== null && id !== '') {
+      const contextTokens = event.outcome.contextTokens;
       emitActivity({
         kind: 'token.usage',
         occurredAt: Date.now(),
-        id: `stream-${context.activity.activitySequence++}:usage`,
+        id,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         context: contextTokens == null
@@ -112,29 +114,30 @@ function emitStreamActivity(
   { activity: activityState, activitySink }: ProtocolEventContext,
 ): void {
   if (line.kind === 'compact_boundary') {
-    emitActivity(compactedActivity(activityState), activitySink);
+    const id = stringValue(line.raw['uuid']);
+    if (id !== null && id !== '') emitActivity(compactedActivity(id), activitySink);
     return;
   }
   if (line.raw['parent_tool_use_id'] != null) return;
   const message = recordValue(line.raw['message']) ?? line.raw;
-  const messageId = stringValue(message['id']) ?? `stream-${activityState.activitySequence++}`;
+  const lineUuid = stringValue(line.raw['uuid']);
   const content = Array.isArray(message['content']) ? message['content'] : [];
-  for (const [blockIndex, candidate] of content.entries()) {
+  for (const candidate of content) {
     const block = recordValue(candidate);
     if (block === null) continue;
     const activity = line.kind === 'assistant'
-      ? assistantBlockActivity(activityState, messageId, blockIndex, block)
-      : toolResultActivity(activityState, messageId, block);
+      ? assistantBlockActivity(activityState, lineUuid, block)
+      : toolResultActivity(activityState, block);
     if (activity === null) continue;
     emitActivity(activity, activitySink);
   }
 }
 
-function compactedActivity(activityState: NativeActivityState): RuntimeActivity {
+function compactedActivity(id: string): RuntimeActivity {
   return {
     kind: 'context.compacted',
     occurredAt: Date.now(),
-    id: `stream-${activityState.activitySequence++}:compacted`,
+    id,
   };
 }
 
@@ -148,26 +151,26 @@ function compactedActivity(activityState: NativeActivityState): RuntimeActivity 
  * end an active session without observing an interrupt request, so its end
  * must not imply that this native event occurred.
  */
-function interruptedActivity(activityState: NativeActivityState): RuntimeActivity {
+function interruptedActivity(id: string): RuntimeActivity {
   return {
     kind: 'turn.interrupted',
     occurredAt: Date.now(),
-    id: `stream-${activityState.activitySequence++}:interrupted`,
+    id,
   };
 }
 
 /** What the model said, or a tool it called. */
 function assistantBlockActivity(
   activityState: NativeActivityState,
-  messageId: string,
-  blockIndex: number,
+  lineUuid: string | null,
   block: Record<string, unknown>,
 ): RuntimeActivity | null {
   if (block['type'] === 'text' && typeof block['text'] === 'string' && block['text'] !== '') {
+    if (lineUuid === null || lineUuid === '') return null;
     return {
       kind: 'assistant.message',
       occurredAt: Date.now(),
-      id: `${messageId}:text:${blockIndex}`,
+      id: lineUuid,
       text: block['text'],
     };
   }
@@ -180,8 +183,7 @@ function assistantBlockActivity(
   return {
     kind: 'tool.call',
     occurredAt: Date.now(),
-    id: `${messageId}:${callId}:started`,
-    callId,
+    id: callId,
     toolName: name,
     ...toolDisplay(name, args),
     status: 'started',
@@ -194,7 +196,6 @@ function assistantBlockActivity(
 /** What a tool returned, correlated to the call the model made. */
 function toolResultActivity(
   activityState: NativeActivityState,
-  messageId: string,
   block: Record<string, unknown>,
 ): RuntimeActivity | null {
   if (block['type'] !== 'tool_result') return null;
@@ -206,8 +207,7 @@ function toolResultActivity(
   return {
     kind: 'tool.call',
     occurredAt: Date.now(),
-    id: `${messageId}:${callId}:result`,
-    callId,
+    id: callId,
     toolName: known?.name ?? 'tool',
     ...toolDisplay(known?.name, known?.arguments ?? null),
     status: failed ? 'failed' : 'completed',

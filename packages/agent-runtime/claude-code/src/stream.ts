@@ -231,7 +231,7 @@ export function parseLine(line: string): ParsedLine {
     case 'user':
       return { kind: 'user', raw: parsed };
     case 'result':
-      return { kind: 'result', outcome: parseResult(parsed), raw: parsed };
+      return { kind: 'result', uuid: str(parsed['uuid']), outcome: parseResult(parsed), raw: parsed };
     case 'control_request': {
       const request = parsed['request'];
       return {

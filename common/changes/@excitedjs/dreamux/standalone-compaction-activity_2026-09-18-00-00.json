@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Project context.compacted and turn.interrupted activities with their native ids and no display text.",
+      "comment": "Project RuntimeActivity without reshaping, redacting text and structured JSON payloads while retaining native ids, timestamps, result and error separately. Publish and validate the four Core events with camelCase members and remove unused redacted flags.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

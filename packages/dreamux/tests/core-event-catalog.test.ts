@@ -50,17 +50,17 @@ import {
 const DISPATCHER_ID = 'dispatcher-fixture';
 
 function baseScope(overrides: Partial<{
-  teammate_name: string;
+  teammateName: string;
   role: 'dispatcher' | 'teammate' | 'team_leader';
-  team_name: string | null;
+  teamName: string | null;
   turn_id: string;
 }> = {}) {
   return {
-    schema_version: 1 as const,
-    occurred_at: Date.now(),
-    teammate_name: 'scout',
+    schemaVersion: 1 as const,
+    occurredAt: Date.now(),
+    teammateName: 'scout',
     role: 'teammate' as const,
-    team_name: 'alpha',
+    teamName: 'alpha',
     ...overrides,
   };
 }
@@ -69,21 +69,21 @@ function baseScope(overrides: Partial<{
 function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
   return {
     'team.state': {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'team.state',
-      occurred_at: Date.now(),
-      team_name: 'alpha',
-      leader_name: 'alpha-leader',
+      occurredAt: Date.now(),
+      teamName: 'alpha',
+      leaderName: 'alpha-leader',
       status: 'running',
       teammates: [],
     },
     'teammate.state': {
-      schema_version: 1,
+      schemaVersion: 1,
       kind: 'teammate.state',
-      occurred_at: Date.now(),
-      teammate_name: 'alpha-leader',
+      occurredAt: Date.now(),
+      teammateName: 'alpha-leader',
       role: 'team_leader',
-      team_name: 'alpha',
+      teamName: 'alpha',
       status: 'running',
     },
     // Both display facts are actor-scoped: a provider folds any number of
@@ -93,27 +93,26 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
       ...baseScope(),
       kind: 'teammate.input',
       source: 'feishu',
-      source_id: null,
+      sourceId: null,
       content: 'hi',
       notice: null,
-      redacted: false,
     },
     'teammate.activity': {
       ...baseScope(),
       kind: 'teammate.activity',
       activity: {
         kind: 'tool.call',
-        event_id: 'evt-2',
-        call_id: 'call-1',
-        tool_name: 'read_file',
-        tool_action: 'read',
+        occurredAt: 1,
+        id: 'call-1',
+        toolName: 'read_file',
+        action: 'read',
         summary: null,
         invocation: null,
         items: [],
         status: 'completed',
-        arguments_json: '{}',
-        result_json: '{}',
-        redacted: false,
+        arguments: {},
+        result: {},
+        error: null,
       },
     },
   };
@@ -192,14 +191,14 @@ describe('the published Core event catalog is exactly four kinds', () => {
     }
   });
 
-  it('rejects a schema_version other than 1', () => {
-    const event = { ...catalogFixtures()['teammate.state'], schema_version: 2 } as unknown as ChannelCoreEvent;
+  it('rejects a schemaVersion other than 1', () => {
+    const event = { ...catalogFixtures()['teammate.state'], schemaVersion: 2 } as unknown as ChannelCoreEvent;
     expect(sealChannelCoreEvent(event)).toBeNull();
   });
 
-  it('rejects a non-finite occurred_at', () => {
+  it('rejects a non-finite occurredAt', () => {
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
-      const event = { ...catalogFixtures()['teammate.state'], occurred_at: bad } as unknown as ChannelCoreEvent;
+      const event = { ...catalogFixtures()['teammate.state'], occurredAt: bad } as unknown as ChannelCoreEvent;
       expect(sealChannelCoreEvent(event)).toBeNull();
     }
   });
@@ -576,7 +575,7 @@ describe('teammate.state covers every Agent entity kind, with role a runtime pro
     );
 
     // The single publisher method both wirings funnel through: it builds
-    // `teammate.state` reading `team_name` off the identity's own `team_id`
+    // `teammate.state` reading `teamName` off the identity's own `team_id`
     // (never a literal `null`), so a mis-scoped record would publish what it
     // actually is instead of what the call site assumed — and its `role`
     // parameter is typed to exclude 'team_leader' entirely, which is the
@@ -587,7 +586,7 @@ describe('teammate.state covers every Agent entity kind, with role a runtime pro
     const methodBody = dispatcherServiceSource.slice(methodStart, methodStart + 600);
     expect(methodBody).toContain("role: 'dispatcher' | 'teammate'");
     expect(methodBody).toContain("kind: 'teammate.state'");
-    expect(methodBody).toContain('team_name: identity.team_id');
+    expect(methodBody).toContain('teamName: identity.team_id');
   });
 
   it('the TeammateRole vocabulary excludes the deleted team_member kind (issue #63 deleted surface)', async () => {
@@ -616,8 +615,8 @@ describe('team.state is the redundant Team aggregate', () => {
       const event = publisher.published[0]?.event;
       expect(event?.kind).toBe('team.state');
       if (event?.kind === 'team.state') {
-        expect(event.team_name).toBe('alpha');
-        expect(event.leader_name).toBe('alpha-leader');
+        expect(event.teamName).toBe('alpha');
+        expect(event.leaderName).toBe('alpha-leader');
         expect(event.status).toBe('starting');
         expect(event.teammates).toEqual([]);
       }
@@ -689,7 +688,7 @@ describe('team.state is the redundant Team aggregate', () => {
       const aggregate = publisher.published[1]?.event;
       if (aggregate?.kind === 'team.state') {
         expect(aggregate.teammates).toEqual([
-          { teammate_name: 'alpha-leader', role: 'team_leader', status: 'starting' },
+          { teammateName: 'alpha-leader', role: 'team_leader', status: 'starting' },
         ]);
       }
 
@@ -717,7 +716,7 @@ describe('team.state is the redundant Team aggregate', () => {
 });
 
 describe('display fact correlation', () => {
-  it('the input fact returns source_id and source, and no event carries a turn_id', () => {
+  it('the input fact returns sourceId and source, and no event carries a turn_id', () => {
     const publisher = createCapturingPublisher();
     const projection = createConversationProjection({
       coreEvents: publisher,
@@ -748,7 +747,7 @@ describe('display fact correlation', () => {
     expect(publisher.published[0]?.event).toMatchObject({
       kind: 'teammate.input',
       source: 'feishu:chat-1',
-      source_id: 'message-fixture',
+      sourceId: 'message-fixture',
       content: 'investigate',
     });
 

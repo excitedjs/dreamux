@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Render context.compacted and turn.interrupted with the unchanged COMPACTED SESSION and [Request interrupted by user] labels, preserving card placement and opening behavior.",
+      "comment": "Consume RuntimeActivity and camelCase Core events, including closed-Team route cleanup. Own compaction and interruption labels and namespace display rows by kind and native id. Preserve card presentation, tool error priority and JSON formatting with structured payloads.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-channel"
     }

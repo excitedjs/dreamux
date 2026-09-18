@@ -309,11 +309,11 @@ async function teardown(harness: Harness): Promise<void> {
 
 function teamStateEvent(): ChannelCoreEvent {
   return {
-    schema_version: 1,
+    schemaVersion: 1,
     kind: 'team.state',
-    occurred_at: Date.now(),
-    team_name: 'alpha',
-    leader_name: 'leader-alpha',
+    occurredAt: Date.now(),
+    teamName: 'alpha',
+    leaderName: 'leader-alpha',
     status: 'running',
     teammates: [],
   };
@@ -321,23 +321,23 @@ function teamStateEvent(): ChannelCoreEvent {
 
 function teammateStateEvent(): ChannelCoreEvent {
   return {
-    schema_version: 1,
+    schemaVersion: 1,
     kind: 'teammate.state',
-    occurred_at: Date.now(),
-    teammate_name: 'flow',
+    occurredAt: Date.now(),
+    teammateName: 'flow',
     role: 'dispatcher',
-    team_name: null,
+    teamName: null,
     status: 'running',
   };
 }
 
 function actorScope() {
   return {
-    schema_version: 1 as const,
-    occurred_at: Date.now(),
-    teammate_name: 'flow',
+    schemaVersion: 1 as const,
+    occurredAt: Date.now(),
+    teammateName: 'flow',
     role: 'dispatcher' as const,
-    team_name: null,
+    teamName: null,
   };
 }
 
@@ -349,19 +349,18 @@ function allCatalogEvents(): ChannelCoreEvent[] {
       ...actorScope(),
       kind: 'teammate.input',
       source: 'channel',
-      source_id: null,
+      sourceId: null,
       content: 'hi',
       notice: null,
-      redacted: false,
     },
     {
       ...actorScope(),
       kind: 'teammate.activity',
       activity: {
         kind: 'assistant.message',
-        event_id: 'evt-1',
-        content: 'hi back',
-        redacted: false,
+        occurredAt: 1,
+        id: 'evt-1',
+        text: 'hi back',
       },
     },
   ];

@@ -111,13 +111,13 @@ export class LeaderLifecycleFence {
   }
 
   onTeamState(
-    event: { team_name: string; leader_name: string; status: string },
+    event: { teamName: string; leaderName: string; status: string },
     states: Map<string, CotState>,
     interrupt: (key: string, state: CotState) => void,
   ): void {
     const eventKey = cotRecipientKey({
       kind: 'leader',
-      teamName: event.team_name,
+      teamName: event.teamName,
     });
     if (event.status !== 'closed') {
       this.leaders.delete(eventKey);
@@ -126,7 +126,7 @@ export class LeaderLifecycleFence {
     }
     this.rememberLeader(eventKey);
     for (const [key, state] of states) {
-      if (!isTeamLeaderOf(state, event.team_name)) continue;
+      if (!isTeamLeaderOf(state, event.teamName)) continue;
       this.rememberLeader(key);
       interrupt(key, state);
     }
@@ -207,23 +207,23 @@ function isTeamLeaderOf(state: CotState, teamName: string): boolean {
  */
 export function cotRecipientOf(event: {
   role: string;
-  team_name: string | null;
-  teammate_name: string;
+  teamName: string | null;
+  teammateName: string;
 }): CotRecipientIdentity | null {
-  if (typeof event.teammate_name !== 'string' || event.teammate_name === '') {
+  if (typeof event.teammateName !== 'string' || event.teammateName === '') {
     return null;
   }
-  if (event.role === 'dispatcher' && event.team_name === null) {
+  if (event.role === 'dispatcher' && event.teamName === null) {
     return { kind: 'dispatcher' };
   }
   if (
     event.role === 'team_leader' &&
-    typeof event.team_name === 'string' &&
-    event.team_name !== ''
+    typeof event.teamName === 'string' &&
+    event.teamName !== ''
   ) {
     return {
       kind: 'leader',
-      teamName: event.team_name,
+      teamName: event.teamName,
     };
   }
   return null;

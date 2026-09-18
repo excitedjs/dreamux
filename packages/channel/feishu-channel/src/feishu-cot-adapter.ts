@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   DreamuxLogger,
   TeamStateEvent,
-  TeammateActivity,
+  RuntimeActivity,
   TeammateActivityEvent,
   TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
@@ -45,6 +45,7 @@ import {
 } from './feishu-cot-events.js';
 import {
   acceptAssistantMessage,
+  acceptDisplayText,
   acceptContextCompacted,
   acceptTurnInterrupted,
   acceptInputMessage,
@@ -212,7 +213,7 @@ export class FeishuCotAdapter {
    *
    * The body is shown unless it is the one this session just submitted, which
    * the operator can already see as their own Feishu message. Recognition is a
-   * comparison against the ids this session issued: a `source_id` is present on
+   * comparison against the ids this session issued: a `sourceId` is present on
    * cron fires, task push-backs, and restart notices too, so its mere presence
    * proves nothing. What is shown for an automated push-back is the label the
    * presentation layer picks, not the notification the model reads.
@@ -220,9 +221,9 @@ export class FeishuCotAdapter {
   onInput(event: TeammateInputEvent): void {
     const found = this.stateFor(event);
     if (found === null) return;
-    if (this.inboundCorrelations.consume(event.source_id)) return;
+    if (this.inboundCorrelations.consume(event.sourceId)) return;
     acceptInputMessage(this.activity, found.key, found.state, {
-      displayId: `input:${randomUUID()}`,
+      displayId: randomUUID(),
       content: inputDisplayContent(event),
     });
   }
@@ -236,7 +237,8 @@ export class FeishuCotAdapter {
       key,
       state,
       textMessageEvents({
-        sourceId: `receipt:${randomUUID()}`,
+        namespace: 'receipt',
+        sourceId: randomUUID(),
         role: 'assistant',
         content: label,
       }),
@@ -293,16 +295,11 @@ export class FeishuCotAdapter {
   private finishCard(
     key: string,
     state: CotState,
-    end: Extract<TeammateActivity, { kind: 'turn.ended' }>,
+    end: Extract<RuntimeActivity, { kind: 'turn.ended' }>,
   ): void {
     if (state.active === null) return;
     if (end.reason !== null) {
-      acceptAssistantMessage(this.activity, key, state, {
-        kind: 'assistant.message',
-        event_id: `end:${randomUUID()}`,
-        content: end.reason,
-        redacted: end.redacted,
-      });
+      acceptDisplayText(this.activity, key, state, 'assistant', randomUUID(), end.reason, 'end');
     }
     state.openCalls.clear();
     this.detach(key, state, end.status);
@@ -356,8 +353,8 @@ export class FeishuCotAdapter {
 
   private stateFor(event: {
     role: string;
-    team_name: string | null;
-    teammate_name: string;
+    teamName: string | null;
+    teammateName: string;
   }): { key: string; state: CotState } | null {
     if (this.closed) return null;
     const identity = cotRecipientOf(event);

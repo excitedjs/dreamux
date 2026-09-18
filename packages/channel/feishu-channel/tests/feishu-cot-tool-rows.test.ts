@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { TeammateActivity } from '@excitedjs/dreamux-types';
+import type { RuntimeActivity } from '@excitedjs/dreamux-types';
 
 import {
   toolCallResultEvents,
@@ -23,22 +23,21 @@ import {
   toolCallStartEvents,
 } from '../src/feishu-cot-events.js';
 
-type ToolCall = Extract<TeammateActivity, { kind: 'tool.call' }>;
+type ToolCall = Extract<RuntimeActivity, { kind: 'tool.call' }>;
 
 function toolCall(overrides: Partial<ToolCall>): ToolCall {
   return {
-    kind: 'tool.call',
-    event_id: 'event-1',
-    call_id: 'call-1',
-    tool_name: 'Bash',
-    tool_action: 'run',
+    kind: 'tool.call', occurredAt: 1,
+    id: 'call-1',
+    toolName: 'Bash',
+    action: 'run',
     summary: null,
     invocation: null,
     items: [],
     status: 'started',
-    arguments_json: null,
-    result_json: null,
-    redacted: false,
+    arguments: null,
+    result: null,
+    error: null,
     ...overrides,
   };
 }
@@ -58,11 +57,42 @@ function segmentsOf(event: { content: unknown }): unknown {
 }
 
 describe('runtime-labelled tool rows', () => {
+  it('pairs a result with its start using the same native id', () => {
+    const call = toolCall({ id: 'native-call' });
+    const [start] = toolCallStartEvents(call);
+    const [result] = toolCallResultEvents({ ...call, status: 'completed', result: 'ok' });
+    const startContent = start!.content as { toolCallId: string };
+    expect(result!.content).toMatchObject({ toolCallId: startContent.toolCallId });
+  });
+
+  it('shows a failed call error ahead of its result', () => {
+    const [result] = toolCallResultEvents(toolCall({
+      status: 'failed', result: { detail: 'result body' }, error: 'error body',
+    }));
+    expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: 'error body' }]);
+  });
+
+  it.each([{ rows: [1, 2] }, [1, 2]])('renders structured arguments and results as JSON: %j', (value) => {
+    const [result] = toolCallResultEvents(toolCall({
+      status: 'completed', arguments: value, result: value,
+    }));
+    const code = JSON.stringify(value, null, 2);
+    expect(segmentsOf(result!)).toEqual([
+      { type: 'code', language: 'json', code }, RESULT,
+      { type: 'code', language: 'json', code },
+    ]);
+  });
+
+  it.each([42, true])('renders a scalar result as JSON text: %j', (value) => {
+    const [result] = toolCallResultEvents(toolCall({ status: 'completed', result: value }));
+    expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: JSON.stringify(value) }]);
+  });
+
   it('titles a run row with the runtime summary, icons it, and sends no raw arguments', () => {
     const events = toolCallStartEvents(toolCall({
       summary: 'Show working tree status',
       invocation: 'git status --short',
-      arguments_json: '{"command":"git status --short","description":"Show working tree status"}',
+      arguments: '{"command":"git status --short","description":"Show working tree status"}',
     }));
     expect(eventTypes(events)).toEqual(['TOOL_CALL_START', 'TOOL_CALL_END']);
     expect(events[0]!.content).toEqual({
@@ -75,14 +105,14 @@ describe('runtime-labelled tool rows', () => {
 
   it('uses decoded display facts rather than raw wrapped arguments for the title and invocation', () => {
     const call = toolCall({
-      tool_name: 'exec_command',
+      toolName: 'exec_command',
       summary: 'node --check script.mjs',
       invocation: 'node --check script.mjs\necho done',
-      arguments_json: JSON.stringify("/usr/bin/zsh -lc 'node --check script.mjs\necho done'"),
+      arguments: JSON.stringify("/usr/bin/zsh -lc 'node --check script.mjs\necho done'"),
     });
     const [start] = toolCallStartEvents(call);
     expect(start!.content).toMatchObject({ icon: 'bash', title: 'node --check script.mjs' });
-    const [result] = toolCallResultEvents({ ...call, status: 'completed', result_json: 'done' });
+    const [result] = toolCallResultEvents({ ...call, status: 'completed', result: 'done' });
     expect(result!.content).toMatchObject({
       content: [
         { type: 'code', language: 'bash', code: 'node --check script.mjs\necho done' },
@@ -94,8 +124,8 @@ describe('runtime-labelled tool rows', () => {
 
   it('leads a read row with a verb and the read icon', () => {
     const [start] = toolCallStartEvents(toolCall({
-      tool_name: 'Read',
-      tool_action: 'read',
+      toolName: 'Read',
+      action: 'read',
       summary: 'src/a.ts',
     }));
     expect(start!.content).toMatchObject({ toolCallName: 'Read', icon: 'read', title: 'Read src/a.ts' });
@@ -103,8 +133,8 @@ describe('runtime-labelled tool rows', () => {
 
   it('leads a listing row with List and the search icon', () => {
     const [start] = toolCallStartEvents(toolCall({
-      tool_name: 'Bash',
-      tool_action: 'list_files',
+      toolName: 'Bash',
+      action: 'list_files',
       summary: 'src',
     }));
     expect(start!.content).toMatchObject({ toolCallName: 'List', icon: 'search', title: 'List src' });
@@ -112,8 +142,8 @@ describe('runtime-labelled tool rows', () => {
 
   it('titles a row the runtime labelled but named no action for with that label alone', () => {
     const [start] = toolCallStartEvents(toolCall({
-      tool_name: 'Skill',
-      tool_action: null,
+      toolName: 'Skill',
+      action: null,
       summary: 'team-workflow',
     }));
     // No `Skill: ` prefix: the label is already a whole label, and the row
@@ -127,9 +157,9 @@ describe('runtime-labelled tool rows', () => {
 
   it('names a call nothing could label by its whole name, behind the generic app icon', () => {
     const events = toolCallStartEvents(toolCall({
-      tool_name: 'mcp__other__thing',
-      tool_action: null,
-      arguments_json: '{"x":1}',
+      toolName: 'mcp__other__thing',
+      action: null,
+      arguments: '{"x":1}',
     }));
     // The name as the runtime spelled it: the leaf alone loses which server a
     // foreign tool came from, and two servers may offer the same leaf.
@@ -144,7 +174,7 @@ describe('runtime-labelled tool rows', () => {
   it('spells out a long name rather than cutting it at a length of its own', () => {
     const toolName = `mcp__${'server-with-a-long-name'.repeat(3)}__do_the_thing`;
     expect(toolName.length).toBeGreaterThan(80);
-    const [start] = toolCallStartEvents(toolCall({ tool_name: toolName, tool_action: null }));
+    const [start] = toolCallStartEvents(toolCall({ toolName: toolName, action: null }));
     expect(start!.content).toEqual({
       toolCallId: expect.any(String),
       toolCallName: toolName,
@@ -156,9 +186,9 @@ describe('runtime-labelled tool rows', () => {
   it("presents the Channel's own tools by the same rule as any other MCP tool", () => {
     for (const toolName of ['mcp__chan-cot__reply', 'channel-chan-cot.react', 'feishu.list_chat_bots']) {
       const [start] = toolCallStartEvents(toolCall({
-        tool_name: toolName,
-        tool_action: null,
-        arguments_json: '{"chat_id":"oc_1","text":"hi"}',
+        toolName: toolName,
+        action: null,
+        arguments: '{"chat_id":"oc_1","text":"hi"}',
       }));
       expect(start!.content).toEqual({
         toolCallId: expect.any(String),
@@ -167,11 +197,11 @@ describe('runtime-labelled tool rows', () => {
       });
     }
     const [result] = toolCallResultEvents(toolCall({
-      tool_name: 'mcp__chan-cot__reply',
-      tool_action: null,
+      toolName: 'mcp__chan-cot__reply',
+      action: null,
       status: 'completed',
-      arguments_json: '{"chat_id":"oc_1","text":"hi"}',
-      result_json: '{"message_ids":["om_1"]}',
+      arguments: '{"chat_id":"oc_1","text":"hi"}',
+      result: '{"message_ids":["om_1"]}',
     }));
     // No fixed Completed line: a tool with no notation of its own shows its
     // whole structured input as JSON, and the output expands like any other
@@ -192,7 +222,7 @@ describe('runtime-labelled tool rows', () => {
       status: 'completed',
       summary: 'Show working tree status',
       invocation: 'git status --short',
-      result_json: ' M src/a.ts\n?? src/b.ts',
+      result: ' M src/a.ts\n?? src/b.ts',
     }));
     expect(result!.content).toMatchObject({
       role: 'tool',
@@ -208,7 +238,7 @@ describe('runtime-labelled tool rows', () => {
   it('keeps the indentation and column alignment of a text output with no-break spaces', () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',
-      result_json: [
+      result: [
         'DIST_TAGS={',
         '  "latest": "0.23.0"',
         '}',
@@ -236,7 +266,7 @@ describe('runtime-labelled tool rows', () => {
   it('measures the cut after the spaces were converted', () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',
-      result_json: '  x\n'.repeat(3_000),
+      result: '  x\n'.repeat(3_000),
     }));
     const shown = (segmentsOf(result!) as Array<{ type: string; text: string }>)[1]!;
     expect(shown.text.startsWith('\u00a0\u00a0x\n')).toBe(true);
@@ -256,7 +286,7 @@ describe('runtime-labelled tool rows', () => {
     const ten = Array.from({ length: 10 }, (_, i) => `line-${i}`).join(separator);
     for (const eleventh of ['line-eleven', separator]) {
       const [event] = toolCallResultEvents(toolCall({
-        status: 'completed', result_json: ten + separator + eleventh,
+        status: 'completed', result: ten + separator + eleventh,
       }));
       expect(segmentsOf(event!)).toEqual([
         RESULT,
@@ -267,7 +297,7 @@ describe('runtime-labelled tool rows', () => {
 
   it.each([Array.from({ length: 12 }, (_, i) => i), { values: Array.from({ length: 12 }, (_, i) => i) }])(
     'keeps all lines of a JSON object or array', (value) => {
-      const [event] = toolCallResultEvents(toolCall({ status: 'completed', result_json: JSON.stringify(value) }));
+      const [event] = toolCallResultEvents(toolCall({ status: 'completed', result: JSON.stringify(value) }));
       expect(segmentsOf(event!)).toEqual([
         RESULT,
         { type: 'code', language: 'json', code: JSON.stringify(value, null, 2) },
@@ -285,7 +315,7 @@ describe('runtime-labelled tool rows', () => {
     '  ' + '界'.repeat(2_000) + '\nshort'.repeat(10),
     JSON.stringify({ values: Array.from({ length: 12 }, () => '界'.repeat(1_000)) }),
   ])('still applies the event byte limit after classification and line cutting', (output) => {
-    const [event] = toolCallResultEvents(toolCall({ status: 'completed', result_json: output }));
+    const [event] = toolCallResultEvents(toolCall({ status: 'completed', result: output }));
     const shown = (segmentsOf(event!) as Array<{ text?: string; code?: string }>)[1]!;
     expect(shown.text ?? shown.code).toContain('… (truncated)');
     expect(Buffer.byteLength(JSON.stringify(event!.content), 'utf8')).toBeLessThanOrEqual(4_096);
@@ -293,10 +323,10 @@ describe('runtime-labelled tool rows', () => {
 
   it('pretty-prints an output that parses as JSON in a json code segment, its spaces untouched', () => {
     const [result] = toolCallResultEvents(toolCall({
-      tool_name: 'mcp__teammate__spawn',
-      tool_action: null,
+      toolName: 'mcp__teammate__spawn',
+      action: null,
       status: 'completed',
-      result_json: '{"teammate":{"name":"tm-1","status":"running"},"status":"submitted"}',
+      result: '{"teammate":{"name":"tm-1","status":"running"},"status":"submitted"}',
     }));
     expect(segmentsOf(result!)).toEqual([
       RESULT,
@@ -318,7 +348,7 @@ describe('runtime-labelled tool rows', () => {
 
   it('shows an output that is not a JSON object or array as text, a bare scalar included', () => {
     for (const output of ['42', 'true', 'ok', '{"unterminated": 1']) {
-      const [result] = toolCallResultEvents(toolCall({ status: 'completed', result_json: output }));
+      const [result] = toolCallResultEvents(toolCall({ status: 'completed', result: output }));
       expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: output }]);
     }
   });
@@ -326,7 +356,7 @@ describe('runtime-labelled tool rows', () => {
   it("cuts a long single-line output at Feishu's per-event content limit, with the marker", () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',
-      result_json: 'x'.repeat(10_000),
+      result: 'x'.repeat(10_000),
     }));
     const shown = (segmentsOf(result!) as Array<{ type: string; text: string }>)[1]!;
     expect(shown.type).toBe('text');
@@ -348,12 +378,12 @@ describe('runtime-labelled tool rows', () => {
 
   it('shows the files a read was about as pills, and nothing else', () => {
     const [result] = toolCallResultEvents(toolCall({
-      tool_name: 'Read',
-      tool_action: 'read',
+      toolName: 'Read',
+      action: 'read',
       status: 'completed',
       summary: 'src/a.ts',
       items: ['src/a.ts'],
-      result_json: 'export const a = 1;',
+      result: 'export const a = 1;',
     }));
     expect(result!.content).toMatchObject({
       content: { type: 'list', items: [{ text: 'src/a.ts', icon: 'read' }] },
@@ -362,13 +392,13 @@ describe('runtime-labelled tool rows', () => {
 
   it('shows the files a patch touched as pills, without the diff or the output', () => {
     const [result] = toolCallResultEvents(toolCall({
-      tool_name: 'apply_patch',
-      tool_action: 'edit',
+      toolName: 'apply_patch',
+      action: 'edit',
       status: 'completed',
       summary: 'src/a.ts, src/b.ts',
       invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
       items: ['src/a.ts', 'src/b.ts'],
-      result_json: 'applied',
+      result: 'applied',
     }));
     expect(result!.content).toMatchObject({
       content: { type: 'list', items: [{ text: 'src/a.ts', icon: 'write' }, { text: 'src/b.ts', icon: 'write' }] },
@@ -377,13 +407,13 @@ describe('runtime-labelled tool rows', () => {
 
   it('shows a failed edit as its pills alone, like the one that succeeded', () => {
     const [result] = toolCallResultEvents(toolCall({
-      tool_name: 'Edit',
-      tool_action: 'edit',
+      toolName: 'Edit',
+      action: 'edit',
       status: 'failed',
       summary: 'src/a.ts',
       invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
       items: ['src/a.ts'],
-      result_json: 'file not found',
+      result: 'file not found',
     }));
     // A call that named what it was about is presented by that list, whatever
     // its status: the pills already say what it touched, and the client cannot
@@ -397,7 +427,7 @@ describe('runtime-labelled tool rows', () => {
   it('truncates a first item longer than the whole pill budget into one pill instead of hiding it', () => {
     const long = `packages/example/src/${'deeply-nested-'.repeat(50)}module.ts`;
     const [result] = toolCallResultEvents(toolCall({
-      tool_action: 'edit',
+      action: 'edit',
       status: 'completed',
       items: [long, 'src/b.ts'],
     }));
@@ -412,7 +442,7 @@ describe('runtime-labelled tool rows', () => {
   it('folds the files past the pill budget into one +N pill', () => {
     const paths = Array.from({ length: 40 }, (_, i) => `packages/example/src/deeply/nested/module-${String(i).padStart(2, '0')}.ts`);
     const [result] = toolCallResultEvents(toolCall({
-      tool_action: 'edit',
+      action: 'edit',
       status: 'completed',
       items: paths,
     }));
@@ -434,7 +464,7 @@ describe('runtime-labelled tool rows', () => {
       status: 'failed',
       summary: 'Run the tests',
       invocation: 'npm test',
-      result_json: output,
+      result: output,
     }));
     expect(segmentsOf(result!)).toEqual([
       { type: 'code', language: 'bash', code: 'npm test' },
@@ -483,17 +513,17 @@ describe('runtime-labelled tool rows', () => {
 
   it('prefers the invocation to the full arguments for every tool, not only Bash', () => {
     const [result] = toolCallResultEvents(toolCall({
-      tool_name: 'Agent',
-      tool_action: null,
+      toolName: 'Agent',
+      action: null,
       status: 'completed',
       summary: 'Review the diff',
       invocation: 'Review the diff and report only real defects.',
-      arguments_json: JSON.stringify({
+      arguments: JSON.stringify({
         description: 'Review the diff',
         prompt: 'Review the diff and report only real defects.',
         subagent_type: 'general-purpose',
       }),
-      result_json: 'no defects found',
+      result: 'no defects found',
     }));
     // The prompt is what the call was; the JSON around it repeats the title
     // and adds routing nobody reads. `text`, because only a `run` action
@@ -507,11 +537,11 @@ describe('runtime-labelled tool rows', () => {
 
   it('falls back to the structured input only when there is no invocation', () => {
     const [result] = toolCallResultEvents(toolCall({
-      tool_name: 'mcp__probe__lookup',
-      tool_action: null,
+      toolName: 'mcp__probe__lookup',
+      action: null,
       status: 'completed',
-      arguments_json: '{"id":7,"deep":{"on":true}}',
-      result_json: 'ok',
+      arguments: '{"id":7,"deep":{"on":true}}',
+      result: 'ok',
     }));
     expect(segmentsOf(result!)).toEqual([
       {
@@ -528,10 +558,10 @@ describe('runtime-labelled tool rows', () => {
     'shows structured input that is not an object or an array as text code: %j',
     (args) => {
       const [result] = toolCallResultEvents(toolCall({
-        tool_name: 'mcp__probe__lookup',
-        tool_action: null,
+        toolName: 'mcp__probe__lookup',
+        action: null,
         status: 'completed',
-        arguments_json: args,
+        arguments: args,
       }));
       expect(segmentsOf(result!)).toEqual([
         { type: 'code', language: 'text', code: args },
@@ -548,7 +578,7 @@ describe('runtime-labelled tool rows', () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',
       invocation: command,
-      result_json: 'ok',
+      result: 'ok',
     }));
     expect(segmentsOf(result!)).toEqual([
       { type: 'code', language: 'bash', code: command },
@@ -561,7 +591,7 @@ describe('runtime-labelled tool rows', () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'failed',
       invocation: `echo ${'界'.repeat(3_000)}`,
-      result_json: '界'.repeat(3_000),
+      result: '界'.repeat(3_000),
     }));
     const shown = segmentsOf(result!) as Array<{ type: string; text?: string; code?: string }>;
     expect(shown.map((segment) => segment.type)).toEqual(['code', 'text', 'text']);
@@ -575,7 +605,7 @@ describe('runtime-labelled tool rows', () => {
     // The known list-budget limitation: many short items pass the pill budget
     // and still overflow the event, and the row then says only how it ended.
     const [result] = toolCallResultEvents(toolCall({
-      tool_action: 'edit',
+      action: 'edit',
       status: 'failed',
       items: Array.from({ length: 150 }, (_, i) => `f${i}`),
     }));

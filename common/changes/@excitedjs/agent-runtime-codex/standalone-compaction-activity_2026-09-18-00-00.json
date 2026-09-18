@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Report completed context compaction items and native interruption as text-free activities with unchanged ids and order; teardown still reports only an interrupted end.",
+      "comment": "Report text-free compaction and interruption activities. Use native item ids for assistant, tool and compaction activities, and turn ids for usage and interruption; remove callId.",
       "type": "minor",
       "packageName": "@excitedjs/agent-runtime-codex"
     }

@@ -162,6 +162,7 @@ describe('parseLine', () => {
     );
     if (line.kind === 'result') {
       expect(line.outcome.userMessageUuid).toBe('client-command-uuid');
+      expect(line.uuid).toBe('server-generated');
     } else {
       throw new Error('expected result');
     }

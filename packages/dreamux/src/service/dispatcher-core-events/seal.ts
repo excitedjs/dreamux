@@ -40,7 +40,7 @@ export function sealChannelCoreEvent(
 ): ChannelCoreEvent | null {
   if (!KINDS.has(event?.kind)) return null;
   // The version a subscriber was promised, and the ordering key it applies.
-  if (event.schema_version !== 1) return null;
-  if (!Number.isFinite(event.occurred_at)) return null;
+  if (event.schemaVersion !== 1) return null;
+  if (!Number.isFinite(event.occurredAt)) return null;
   return deepFreeze(event);
 }

@@ -851,6 +851,37 @@ display layer owns the line it shows for each.
   always paired. A teardown end reports `turn.ended` `interrupted` without it.
   The Feishu CoT shows it as `[Request interrupted by user]`.
 
+Every member except `turn.ended` carries `occurredAt` and `id`, one shared
+base shape. `id` is the provider's own id for the object the activity reports,
+taken whole — no prefix, suffix, counter, or composition:
+
+| Activity | Claude Code | Codex |
+| --- | --- | --- |
+| `assistant.message` | the assistant line's `uuid` | agent message item id |
+| `tool.call` (start and result) | `tool_use.id` | tool item id (its `call_id`) |
+| `context.compacted` | the `compact_boundary` line's `uuid` | compaction item id |
+| `token.usage`, `turn.interrupted` | the `result` line's own `uuid` | `turnId` |
+
+So an id is not unique per activity: a call's start and result share one, and
+so do one turn's usage and interrupt marker. A consumer that needs one
+identity per row derives it from the kind (and a call's status) together with
+the id; the Feishu CoT does exactly that. `tool.call` has no separate call id.
+`turn.ended` has no id, because teardown and Core's own end for an input no
+runtime accepted have no native source. Claude Code's `result` id is the
+envelope's `uuid`, not `user_message_uuid`, which names an inbound message. A
+Claude Code line without a `uuid` reports no text or compaction activity, the
+rule a `tool_use` block without an id already follows; the Agent SDK types the
+member as required and every observed line carries one. An assistant line has
+always carried one content block, so one line is one text id. Operator ruling,
+2026-09-18: 「不不不不不,这个ID让飞书来自己造更恶心.但是它拼接成自增ID也很恶心.最好的
+做法是直接用原生 Provider 生成的 ID，比如 toolcall 就用 toolcall ID。」
+
+A Channel receives this same type. `teammate.activity` carries
+`RuntimeActivity` with every text and JSON payload member redacted by Core and
+nothing reshaped; there is no second, channel-shaped activity type (operator,
+2026-09-18: 「这两个类型可以合并吗？」, then 「合并成一份」). See
+[the channel domain](/.agents/domains/channel.md#dispatcher-scoped-core-events).
+
 Operator ruling on what a compaction shows, 2026-09-04: 「我不要正文，正文太长了，
 只显示压缩发生了即可。claude code 的网页上只显示了 Compacted session，我只需要这一
 行字即可。」 The same day the operator ruled the carrier: 「我觉得没必要给他单独加一个新的
@@ -861,7 +892,7 @@ event: 「上一个pr已经给usage 从 message 事件里拆出来了，我感�
 `turn.ended` or a kind of its own that keeps today's trigger set and position,
 the operator answered 「B 独立 activity 类型」. The uppercase label is specified by
 [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md);
-the carriers by
+the carriers, the native ids, and the single type by
 [standalone-compaction-activity](/.agents/tasks/architecture/standalone-compaction-activity/requirement.md).
 
 The sink is generation-fenced, synchronous, display-only and fail-open — a write from a

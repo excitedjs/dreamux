@@ -19,7 +19,6 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   RuntimeActivity,
-  TeammateActivity,
   TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 
@@ -61,7 +60,7 @@ function inputOf(
 /** The one `teammate.activity` payload this projection published. */
 function activityOf(
   publisher: ReturnType<typeof createCapturingPublisher>,
-): TeammateActivity {
+): RuntimeActivity {
   const event = publisher.published.find((entry) => entry.event.kind === 'teammate.activity')?.event;
   if (event?.kind !== 'teammate.activity') throw new Error('expected a projected activity event');
   return event.activity;
@@ -110,7 +109,6 @@ describe('conversation projection: secret redaction', () => {
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'mcp__probe__lookup',
       action: null,
       summary: null,
@@ -123,17 +121,17 @@ describe('conversation projection: secret redaction', () => {
     });
 
     const tool = activityOf(publisher);
-    const text = tool.kind === 'tool.call' ? tool.result_json : null;
+    const resultValue = tool.kind === 'tool.call' ? tool.result : null;
+    const text = JSON.stringify(resultValue);
     expect(text).not.toContain('abc123secret');
     expect(text).not.toContain('k-1');
     expect(text).not.toContain('p\\"q');
     expect(text).not.toContain('session=xyz');
-    expect(JSON.parse(text ?? '')).toEqual({
+    expect(resultValue).toEqual({
       token: '<redacted>',
       nested: { api_key: '<redacted>', password: '<redacted>', count: 7 },
       note: 'cookie: <redacted>; keep',
     });
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 
   it('redacts an inline api_key= assignment', () => {
@@ -212,10 +210,10 @@ describe('conversation projection: secret redaction', () => {
    * A workspace normally sits under the home. Relativizing it first is what
    * keeps the shorter, more useful form instead of `~/...`-prefixing everything.
    */
-  it('marks redacted:true only when a rule actually fired, false for ordinary text', () => {
+  it('keeps an ordinary input body unchanged', () => {
     const { publisher, projection, agent } = harness();
     projectPrompt(projection, agent, 'nothing sensitive here at all');
-    expect(inputOf(publisher).redacted).toBe(false);
+    expect(inputOf(publisher).content).toBe('nothing sensitive here at all');
   });
 });
 
@@ -228,7 +226,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'read_file',
       action: 'read',
       summary: null,
@@ -241,9 +238,8 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    expect(tool.kind === 'tool.call' && tool.arguments_json).toBe(JSON.stringify(args));
-    expect(tool.kind === 'tool.call' && tool.result_json).toBe(JSON.stringify(result));
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
+    expect(tool.kind === 'tool.call' && tool.arguments).toEqual(args);
+    expect(tool.kind === 'tool.call' && tool.result).toEqual(result);
   });
 
   it('renames workspace paths in every member of a call, the call text included', () => {
@@ -252,7 +248,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
       summary: `${CWD}/src/a.ts`,
@@ -268,9 +263,8 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.summary).toBe('src/a.ts');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
     expect(tool.kind === 'tool.call' && tool.invocation).toBe('cat src/a.ts');
-    expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe(JSON.stringify({ command: 'cat ~/src/a.ts' }));
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+    expect(tool.kind === 'tool.call' && tool.arguments)
+      .toEqual({ command: 'cat ~/src/a.ts' });
   });
 
   it('passes a long summary through whole and redacts a secret-shaped invocation', () => {
@@ -279,7 +273,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
       summary: 's'.repeat(100_000),
@@ -295,18 +288,16 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(100_000);
     expect(tool.kind === 'tool.call' && tool.invocation)
       .toBe('post https://example.test with Bearer <redacted>');
-    expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe(JSON.stringify({ token: '<redacted>', home: '~/keys' }));
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+    expect(tool.kind === 'tool.call' && tool.arguments)
+      .toEqual({ token: '<redacted>', home: '~/keys' });
   });
 
-  it('marks a call redacted when the only secret sat in the invocation', () => {
+  it('redacts an invocation even when it is the only member with a secret', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
       summary: 'ran a request',
@@ -323,8 +314,7 @@ describe('conversation projection: content visible after redaction is unchanged,
       .toBe('curl -H "authorization: <redacted>" https://example.test');
     expect(tool.kind === 'tool.call' && tool.summary).toBe('ran a request');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
-    expect(tool.kind === 'tool.call' && tool.result_json).toBe('ok');
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+    expect(tool.kind === 'tool.call' && tool.result).toBe('ok');
   });
 
   it('keeps the redactor on every member of a call', () => {
@@ -333,7 +323,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
       summary: 'echo with token: dummy',
@@ -347,13 +336,12 @@ describe('conversation projection: content visible after redaction is unchanged,
 
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary).toBe('echo with token: <redacted>');
-    expect(tool.kind === 'tool.call' && tool.result_json).toBe('failed with token: <redacted>');
+    expect(tool.kind === 'tool.call' && tool.error).toBe('failed with token: <redacted>');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
     expect(tool.kind === 'tool.call' && tool.invocation)
       .toBe('echo "token: <redacted>"');
-    expect(tool.kind === 'tool.call' && tool.arguments_json)
-      .toBe(JSON.stringify({ command: 'echo "token: <redacted>"' }));
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+    expect(tool.kind === 'tool.call' && tool.arguments)
+      .toEqual({ command: 'echo "token: <redacted>"' });
   });
 
   it('redacts a multi-line .env written through a tool argument, line by line', () => {
@@ -363,7 +351,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Write',
       action: 'edit',
       summary: '.env',
@@ -376,11 +363,10 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    expect(tool.kind === 'tool.call' && tool.arguments_json).toBe(JSON.stringify({
+    expect(tool.kind === 'tool.call' && tool.arguments).toEqual({
       file_path: '.env',
       content: 'NODE_ENV="production"\nTOKEN="<redacted>"\nPORT=3000\nAPI_KEY=<redacted>\nDEBUG=false',
-    }));
-    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+    });
   });
 
   it('keeps a redacted argument payload parsable as JSON, by construction', () => {
@@ -389,7 +375,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
       summary: 'write the env',
@@ -402,9 +387,9 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    const args = tool.kind === 'tool.call' ? tool.arguments_json : null;
+    const args = tool.kind === 'tool.call' ? tool.arguments : null;
     expect(args).not.toBeNull();
-    expect(JSON.parse(args ?? '')).toEqual({
+    expect(args).toEqual({
       command: 'echo \'export API_KEY="<redacted>"\' >> .env',
     });
   });
@@ -415,7 +400,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
       summary: 'connect',
@@ -431,8 +415,8 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    const args = tool.kind === 'tool.call' ? tool.arguments_json : null;
-    expect(JSON.parse(args ?? '')).toEqual({
+    const args = tool.kind === 'tool.call' ? tool.arguments : null;
+    expect(args).toEqual({
       command: 'password=<redacted>',
       fallback: 'password=<redacted>',
     });
@@ -444,7 +428,6 @@ describe('conversation projection: content visible after redaction is unchanged,
       kind: 'tool.call',
       occurredAt: Date.now(),
       id: 'evt-1',
-      callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
       summary: 'connect',
@@ -466,38 +449,70 @@ describe('conversation projection: content visible after redaction is unchanged,
     const text = 'Ran the tests. 42 passed, 0 failed. Nothing else to report.';
     projection.projectActivity(agent, assistantActivity(text));
     const message = activityOf(publisher);
-    expect(message.kind === 'assistant.message' && message.content).toBe(text);
+    expect(message.kind === 'assistant.message' && message.text).toBe(text);
+  });
+});
+
+describe('conversation projection: shared activity contract', () => {
+  it('preserves each activity shape and identity while redacting every payload member', () => {
+    const activities: RuntimeActivity[] = [
+      { kind: 'assistant.message', occurredAt: 123, id: 'message-uuid', text: 'token: message-secret' },
+      { kind: 'context.compacted', occurredAt: 124, id: 'compact-uuid' },
+      { kind: 'turn.interrupted', occurredAt: 125, id: 'result-uuid' },
+      { kind: 'token.usage', occurredAt: 126, id: 'result-uuid', inputTokens: 10, outputTokens: 5,
+        context: { usedTokens: 8, windowTokens: 100 } },
+      { kind: 'tool.call', occurredAt: 127, id: 'tool-use-id', toolName: 'Bash', action: 'run',
+        summary: 'token: summary-secret', invocation: 'token: invocation-secret',
+        items: ['token: item-secret'], status: 'failed',
+        arguments: { token: 'argument-secret' }, result: { token: 'result-secret' },
+        error: 'token: error-secret' },
+      { kind: 'turn.ended', occurredAt: 128, status: 'failed', reason: 'token: reason-secret' },
+    ];
+    const { publisher, projection, agent } = harness();
+    for (const activity of activities) projection.projectActivity(agent, activity);
+    const expected = [
+      { ...activities[0], text: 'token: <redacted>' },
+      activities[1], activities[2], activities[3],
+      { ...activities[4], summary: 'token: <redacted>', invocation: 'token: <redacted>',
+        items: ['token: <redacted>'], arguments: { token: '<redacted>' },
+        result: { token: '<redacted>' }, error: 'token: <redacted>' },
+      { ...activities[5], reason: 'token: <redacted>' },
+    ];
+    expect(publisher.published.map((entry) => entry.event)).toEqual(expected.map((activity) => ({
+      schemaVersion: 1, kind: 'teammate.activity', teamName: 'alpha', teammateName: 'scout',
+      role: 'teammate', occurredAt: activity!.occurredAt, activity,
+    })));
   });
 });
 
 describe('conversation projection: text-free markers', () => {
   it.each(['context.compacted', 'turn.interrupted'] as const)(
-    'projects %s with the same id and redacted:false', (kind) => {
+    'projects %s with the same native id and timestamp', (kind) => {
       const { publisher, projection, agent } = harness();
-      projection.projectActivity(agent, { kind, occurredAt: Date.now(), id: 'native-event' });
-      expect(activityOf(publisher)).toEqual({ kind, event_id: 'native-event', redacted: false });
+      projection.projectActivity(agent, { kind, occurredAt: 123, id: 'native-event' });
+      expect(activityOf(publisher)).toEqual({ kind, occurredAt: 123, id: 'native-event' });
     },
   );
 });
 
 describe('conversation projection: token.usage', () => {
-  it('maps the cumulative counters verbatim with redacted:false', () => {
+  it('maps the cumulative counters and timestamp verbatim', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'token.usage',
-      occurredAt: Date.now(),
-      id: 'turn-1:usage',
+      occurredAt: 123,
+      id: 'turn-1',
       inputTokens: 28_568,
       outputTokens: 69,
       context: { usedTokens: 14_500, windowTokens: 29_000 },
     });
     expect(activityOf(publisher)).toEqual({
       kind: 'token.usage',
-      event_id: 'turn-1:usage',
-      input_tokens: 28_568,
-      output_tokens: 69,
-      context: { used_tokens: 14_500, window_tokens: 29_000 },
-      redacted: false,
+      id: 'turn-1',
+      occurredAt: 123,
+      inputTokens: 28_568,
+      outputTokens: 69,
+      context: { usedTokens: 14_500, windowTokens: 29_000 },
     });
   });
 
@@ -505,19 +520,19 @@ describe('conversation projection: token.usage', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'token.usage',
-      occurredAt: Date.now(),
-      id: 'stream-0:usage',
+      occurredAt: 123,
+      id: 'result-uuid',
       inputTokens: 10,
       outputTokens: 5,
       context: null,
     });
     expect(activityOf(publisher)).toEqual({
       kind: 'token.usage',
-      event_id: 'stream-0:usage',
-      input_tokens: 10,
-      output_tokens: 5,
+      id: 'result-uuid',
+      occurredAt: 123,
+      inputTokens: 10,
+      outputTokens: 5,
       context: null,
-      redacted: false,
     });
   });
 });
@@ -537,15 +552,13 @@ describe('conversation projection: the turn.ended reason', () => {
     expect(ended.kind === 'turn.ended' && ended.reason).toBe(
       'spawn bin/agent failed: authorization: <redacted>',
     );
-    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(true);
   });
 
-  it('keeps an ordinary reason byte-identical and reports redacted:false', () => {
+  it('keeps an ordinary reason byte-identical', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, endedActivity('the agent runtime is not running'));
     const ended = activityOf(publisher);
     expect(ended.kind === 'turn.ended' && ended.reason).toBe('the agent runtime is not running');
-    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
   });
 
   it('carries a null reason through as null, not an empty string', () => {
@@ -553,6 +566,5 @@ describe('conversation projection: the turn.ended reason', () => {
     projection.projectActivity(agent, endedActivity(null));
     const ended = activityOf(publisher);
     expect(ended.kind === 'turn.ended' && ended.reason).toBeNull();
-    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
   });
 });
