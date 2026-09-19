@@ -10,7 +10,7 @@ Operator, 2026-09-17, as the second requirement beside
 
 ## Current alignment
 
-- Status: Clarifying. The storage infrastructure scope is decided. The operator reopened the Config Service requirement on 2026-09-19 ("config service 重新想想。我觉得我那天想错了"); every Config Service item below stands only as the 2026-09-17 record until it is re-confirmed.
+- Status: Converging (2026-09-19). The operator reopened the 2026-09-17 Config Service shape and replaced it: every store is transactional, and the Commands read and write only `agents`. Items in the 2026-09-17 decisions below that conflict with the later ones are superseded by them. Two TeamLeader proposals await confirmation.
 - Confirmed current behavior and evidence:
   - No Core Command, Channel, or MCP tool writes `config.json`. The only
     writer is `dreamux onboard` (a plain `writeFile`, not temp + rename). The
@@ -147,49 +147,91 @@ Operator, 2026-09-17, as the second requirement beside
       `TeamMateIdentityStore`, a persisting `DispatcherStore`), and
       `.agents/domains/service-topology.md` says collections do not build their
       own identity store while several services do.
-- Desired outcome: A dedicated Config Service owns `config.json` while the
-  daemon runs. A Channel reads and replaces the whole configuration through
-  new `config` Core Commands; `agents` changes apply immediately, `dispatchers`
-  changes apply after the next process restart, and the write result says which
-  changes are waiting for that restart.
+- User story: an operator using a web front end that reaches Dreamux through
+  a Channel views and changes the agent runtime settings — which runtimes
+  exist and how each launches (binary, model, permission and sandbox modes,
+  arguments, environment) — while Dreamux runs, and expects the next runtime
+  it launches to use them without restarting Dreamux. Dispatcher settings stay
+  out of that surface, because a bad Dispatcher setting takes effect only at
+  the next start and can make the front end itself unreachable (see the
+  failure trace above).
+- Desired outcome: One transactional store kind owns every persisted
+  runtime document: the file is written durably before the in-memory value
+  changes, and memory is authoritative while the daemon runs. Every existing
+  store moves onto it. On top of it, a Config Service owns `config.json`
+  while the daemon runs, and new Core Commands let a Channel read and replace
+  the `agents` section, which applies from the next runtime launch.
 - Desired behavior:
-  - Read: the Commands return the whole configuration. A secret value is not
-    returned; the caller sees it as empty.
-  - Write: the caller submits the whole configuration. It is validated as a
-    whole before anything changes. An empty secret keeps the stored value; a
-    non-empty one replaces it.
-  - `agents` — every addition, removal, and change — applies immediately: the
-    in-memory value changes first and the file is written asynchronously.
-    A runtime already running keeps its configuration until its next launch.
-    Removing an id still used by an existing entity is allowed; that entity
-    fails at its next launch.
-  - `dispatchers` — every addition, removal, and change — applies only after
-    the next process restart: the write changes the file, and the running
-    process keeps reading the values it started with. Nothing is restarted
-    automatically.
-  - The write result lists the written changes that wait for a restart.
-  - A failed asynchronous file write is logged; nothing else handles it.
-  - While the daemon runs, the Config Service is authoritative: a hand edit of
-    `config.json` is not read, and the next write overwrites it. The
-    maintenance guidance says to change configuration through the Commands
-    while the daemon runs, and to stop the daemon before editing by hand.
-- Scope: the Config Service, the `config` Core Commands, the host
-  configuration readers that must read through it, their tests, the
-  dreamux-maintenance skill, the knowledge base, and change notes.
+  - Storage:
+    - The Team record, cron jobs, Feishu `access.json`, and
+      `chat-bots.json` stop re-reading their file on every access; like the
+      live agent identity, the Feishu routing document, and the Workflow run
+      record, each keeps an authoritative in-memory value and writes the
+      file before changing it. Writes to one file are serialized, including
+      `chat-bots.json`.
+    - A write that fails leaves memory unchanged and fails the operation
+      that asked for it.
+    - While the daemon runs, a hand edit, damage, or deletion of one of these
+      files is not read; the next write overwrites it.
+  - Config Commands:
+    - Read returns the whole `agents` section. A value whose key names a
+      secret (the rule `dreamux config show` already applies) is returned
+      empty.
+    - Write carries the whole `agents` section. An empty secret keeps the
+      stored value; a non-empty one replaces it. The resulting configuration
+      — the new `agents` with the `dispatchers` the process holds — is
+      validated as a whole before anything changes.
+    - Pending operator confirmation (TeamLeader proposals, not rulings):
+      - Validation applies the rules the next start applies, so a write the
+        next start would reject is rejected. Removing an `agents` id a
+        Dispatcher's `agentRuntime` names is therefore rejected, since the
+        next start would refuse the file; the 2026-09-17 "允许写入" then
+        covers only ids that existing Teams or TeamMates use, which fail at
+        their next launch.
+      - A write that adds an agent whose provider the process has not
+        loaded loads it through the same loader the start uses, as part of
+        validation; a provider that fails to load rejects the write.
+    - A valid write is written to the file, then replaces the in-memory
+      configuration. The next runtime launch uses it; a runtime already
+      running keeps its configuration until its next launch. A failed file
+      write fails the Command and changes nothing.
+    - `dispatchers` is not readable or writable through the Commands. It
+      changes only by editing `config.json` by hand with the daemon stopped,
+      and applies at the next start.
+    - While the daemon runs, the Config Service is authoritative: every
+      Command write rewrites the whole file from memory, so a hand edit made
+      while the daemon runs — to either section — is overwritten by the next
+      write. The same holds for `dreamux onboard` run while the daemon runs.
+      The maintenance guidance says to stop the daemon before editing by hand
+      or running onboard.
+- Scope: the transactional store in `@excitedjs/dreamux-utils`; moving the
+  live agent identity, the Team record, cron jobs, the Workflow run record,
+  and the Feishu routing, `access.json`, and `chat-bots.json` stores onto it,
+  replacing `JsonDocumentStore` and the existing atomic-write helpers; the
+  Config Service; the `config` Core Commands; the host configuration readers
+  that must read through the Config Service; their tests; the
+  dreamux-maintenance skill; the knowledge base; and change notes.
 - Non-goals:
+  - A volatile (memory first, file later) store kind.
+  - Changing `dispatchers` at runtime, or reading it through the Commands.
   - The Channel that serves the web front end.
   - Authorization inside Core.
   - A CLI verb.
-  - Restarting a Dispatcher or a runtime because of a configuration change,
-    including making a newly added Dispatcher startable before a restart.
-  - Recovering from a failed file write.
+  - Restarting a runtime because of a configuration change.
+  - Append-only logs (the Workflow `journal.jsonl`), one-shot hand-offs
+    (`run/restart-intent.json`), and caches.
 - Constraints and invariants:
+  - No persisted file changes shape, path, or mode: every file a released
+    build wrote is read as it is, and a configuration written by the
+    Commands loads at the next start exactly as a hand-written one does.
+  - Moving a store does not move where an unreadable file fails. Today an
+    unreadable `access.json` fails the operation that reads it and is not
+    read at start; it must not become a failed Channel or Dispatcher start. Stores already read at start (the routing document, cron jobs)
+    keep failing there.
   - Every change to the shape, validation, default, ownership, or meaning of
-    `config.json` updates the dreamux-maintenance skill in the same change
-    (repository rule).
-  - A configuration written by the Commands loads at the next start exactly as
-    a hand-written one does; the file format does not change.
-  - The file keeps mode `0600`.
+    a Dreamux config or persisted state file updates the dreamux-maintenance
+    skill in the same change (repository rule).
+  - `config.json` keeps mode `0600`.
   - The storage infrastructure replaces the existing atomic-write helpers
     rather than landing beside them: Core `writeFileAtomic`, utils
     `writeAtomic`, and the inline copy must not all survive next to a new
@@ -197,18 +239,26 @@ Operator, 2026-09-17, as the second requirement beside
 
 ## Acceptance criteria
 
-- A read through a Channel port returns the whole current configuration with
-  every secret value empty.
-- A write that fails validation changes neither memory nor the file.
-- A valid write that changes an `agents` entry is used by the next runtime
-  launch without a restart, and the file eventually holds it.
+- Each moved store serves reads from memory after it loads, writes its file
+  before changing memory, and on a failed write leaves memory unchanged and
+  fails the operation.
+- Writes to `chat-bots.json` are serialized.
+- Every existing state file and `config.json` from the current release loads
+  unchanged.
+- An unreadable `access.json` does not fail the Channel's start.
+- A read through a Channel port returns the whole `agents` section with every
+  secret value empty.
+- A write that fails validation, or whose file write fails, changes neither
+  memory nor the file.
+- A write that removes an `agents` id a Dispatcher's `agentRuntime` names is
+  rejected.
+- A valid write that changes an `agents` entry is in the file when the
+  Command returns and is used by the next runtime launch without a restart.
 - A valid write that submits a secret as empty leaves the stored secret
   unchanged in the file.
-- A valid write that changes `dispatchers` is in the file, is not seen by the
-  running process, is listed in the write result as waiting for a restart, and
-  is in effect after the process restarts.
-- A failed asynchronous file write is logged.
-- The dreamux-maintenance skill states the Config Service ownership rule.
+- No Command reads or writes `dispatchers`.
+- The dreamux-maintenance skill states the Config Service ownership rule and
+  the stop-before-hand-edit guidance.
 - Build, lint, test, and `typecheck:tests` pass.
 
 ## Decisions and unknowns
@@ -313,16 +363,38 @@ Operator, 2026-09-17, as the second requirement beside
   that removes, disables, or changes the Channels of the caller's own
   Dispatcher. The TeamLeader recommended A. The operator: "那就 A 吧。问题就只有
   这个玩意比较割裂，一个配置文件只有一部分可以改。"
+- Confirmed operator decisions (2026-09-19), on one card after A was played
+  back — A narrows "整个文件都能改" to `agents`, retires the pending-restart
+  list, keeps "运行中以 Config Service 为准", and reuses the `dreamux config
+  show` secret rule:
+  - Asked "Config Command 对外暴露什么？": "只管 agents（推荐）" — the option
+    said read and write both carry only `agents`, and `dispatchers` is not
+    exposed through a Command and changes only by hand in `config.json`. The
+    rejected option read the whole file and wrote only `agents`. Moving
+    `agents` into a file of its own was raised in the card text and advised
+    against, because it changes the config file format.
+  - Asked "现在所有存储和 agents 都用事务性存储，易失性存储已经没有使用方了。这次就
+    不做了，对吗？": "不做（推荐）" — the storage infrastructure has the
+    transactional kind only.
+- Superseded by the 2026-09-19 decisions: "整个文件都能改", "列出", the
+  asynchronous write and "落盘失败了就写日志" (a failed write now fails the
+  Command), "不要，等进程重启" and "不自动重启…" (nothing written waits for a
+  restart). "由 Channel 自己鉴权", the secret rule, "整份写回，空=保留原值"
+  (now the whole `agents` section), "下次拉起时生效", and "运行中以 Config
+  Service 为准" still hold. "允许写入" for ids used by entities is narrowed by
+  a pending proposal under Desired behavior.
 - Interpretations recorded without objection when they were played back on the
   2026-09-17 card:
   - The caller is a web front end reaching Core through a Channel's Core port.
   - The Commands are also reachable over `admin.sock`; no CLI verb is added.
 - Assumptions: None.
 - Blocking unknowns:
-  1. Whether the Commands expose only `agents` (read and write), or read the
-     whole file and write only `agents` — the operator named the split "一个
-     配置文件只有一部分可以改" as the cost of A.
-  2. Whether the volatile store kind is dropped now that nothing uses it
-     (inference from "就用那个事务性基建就够了", not yet confirmed).
+  1. The two pending proposals under Desired behavior (validation as the
+     next start; loading a new provider at write time).
+  - Recorded as scope and constraint by the TeamLeader and played back, not
+    operator decisions: the Workflow run record (mixed today) moves onto the
+    transactional store, so `workflow_status` no longer shows progress that
+    is not yet written; and moving a store does not move where an unreadable
+    file fails.
 - Follow-ups:
   - A Command that restarts one Dispatcher; outside this task.

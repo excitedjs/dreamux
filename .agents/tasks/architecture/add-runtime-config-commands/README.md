@@ -2,13 +2,14 @@
 
 ## Current state
 
-- Goal: Add a Config Service that owns config.json at runtime and config Commands that let a Channel read and replace it; agents changes apply immediately, dispatchers changes after restart
+- Goal: Move every persisted runtime store onto one transactional store kind (file first, then memory), and add a Config Service with Core Commands that let a Channel read and replace the `agents` section of config.json at runtime
 - State: `clarification`
 - Requirement: [Current requirement](/.agents/tasks/architecture/add-runtime-config-commands/requirement.md)
 - Final solution: Not created.
 - Solution review Issue: Not created.
 - Blockers: None. The sequencing blocker cleared when the Dispatcher Command task merged (#444, 2026-09-18); the operator chose to continue this task in the same Team.
-- Next action: Re-clarify the Config Service with the operator, who reopened it on 2026-09-19; the storage refactor scope is decided (every existing store moves onto a transactional store).
+- Authority order: the confirmed final product shape decides. Existing code, prior decisions, and existing documents are evidence of how the system got here; any of them may be overturned to fit the current product scenario, knowingly — by naming what is being changed and why its original rationale no longer holds. User-visible behavior changes are operator decisions. This is a multi-stage architecture refactor; the decisions section of the requirement is its rulings ledger.
+- Next action: Confirm the solution path with the operator.
 - Related tasks: changes a configuration-ownership decision recorded in [Minimize Core Provider Boundaries](/.agents/tasks/architecture/minimize-provider-boundaries/README.md); sibling request [Give the Dispatcher Agent its own Commands](/.agents/tasks/architecture/add-dispatcher-submit-command/README.md).
 
 ## Development approval
