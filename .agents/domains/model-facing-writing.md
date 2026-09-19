@@ -259,6 +259,41 @@ text once `structuredContent` is present). Receipt attachment belongs to the
 MCP delegates, not public tool metadata, Command data, or a Channel provider
 contract.
 
+## Completion Notifications
+
+A completion reaches its recipient as ordinary turn text, so every notification
+opens by saying the host sent it: `This is an automated notification from
+Dreamux, not a message from the user.` Two producers follow that sentence with
+different shapes, because they report different kinds of thing
+(`/packages/dreamux/src/service/teammate-service/completion-renderer.ts`).
+
+A **TeamMate** answers in its own words, so the answer is the notification: a
+one-line status sentence, then the result inline, or the path to it when the
+result is over the inline budget.
+
+A **Workflow** run returns a script's value rather than prose written for a
+reader, and its caller usually decides whether to read it at all. So the
+notification states facts and names files:
+
+```
+<workflow-notification>
+<task-id>run-9f2a</task-id>
+<output-file><run-dir>/output.json</output-file>
+<status>completed — 4 agents: 4 succeeded, 0 failed</status>
+<summary>Dynamic workflow "<the description its script declared>" completed</summary>
+<diagnostics>Per-agent results: <run-dir>/journal.jsonl — …</diagnostics>
+</workflow-notification>
+```
+
+The result is deliberately absent: no tag carries it, so no run can flood its
+caller's context with a value the caller may not want, and `<output-file>` is
+therefore written for every terminal. A non-null run error is appended to
+`<status>`, so a failed run needs no tag of its own. Agents are counted as
+succeeded and failed against a total, and only those two: Dreamux has no way to
+skip one Agent of a run, and an Agent a terminal settled as stopped is in the
+total but in neither count, which the run's own terminal status already
+explains.
+
 ## Tests
 
 Tests should protect contracts, not prose preferences. Prefer:

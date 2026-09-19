@@ -21,6 +21,7 @@ import {
   type CompletionInitiator,
   type PreparedCompletionDelivery,
   type PreparedCompletionFact,
+  type TeammateCompletionFact,
 } from '../src/service/completion-router/index.js';
 import {
   completedCompletion,
@@ -28,15 +29,21 @@ import {
   foldSubmissions,
 } from './helpers/runtime-submission.js';
 
-/** Records every user-visible send attempt the router actually makes. */
+/**
+ * Records every user-visible send attempt the router actually makes.
+ *
+ * Token folding is a property of a provider-settled turn, so every case here
+ * routes TeamMate completions; a Workflow terminal carries no token and would
+ * exercise a different entry point.
+ */
 class RecordingInitiator implements CompletionInitiator {
-  readonly prepared: PreparedCompletionFact[] = [];
-  readonly submitted: PreparedCompletionFact[] = [];
+  readonly prepared: TeammateCompletionFact[] = [];
+  readonly submitted: TeammateCompletionFact[] = [];
   readonly recipientKey: object;
 
   constructor(
     key?: object,
-    private readonly gate?: (fact: PreparedCompletionFact) => Promise<void>,
+    private readonly gate?: (fact: TeammateCompletionFact) => Promise<void>,
   ) {
     this.recipientKey = key ?? {};
   }
@@ -44,6 +51,9 @@ class RecordingInitiator implements CompletionInitiator {
   async prepareCompletion(
     fact: PreparedCompletionFact,
   ): Promise<PreparedCompletionDelivery> {
+    if (fact.kind !== 'teammate') {
+      throw new Error('completion token routing is a TeamMate-only path');
+    }
     this.prepared.push(fact);
     await this.gate?.(fact);
     return Object.freeze({
