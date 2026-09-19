@@ -224,9 +224,13 @@ Team records are held for the life of the collection once loaded (ruling
 
 ### 3.6 Cron jobs
 
-`CronJobStore` holds a `TransactionalStore<CronJobFile>` whose loader is the
-version check `JsonDocumentStore` did plus `parseCronJobFile`, both raising
-`LegacyStateError` with today's messages. It still loads at scheduler start.
+`CronJobStore` holds a `TransactionalStore<CronJobFile>` whose loader is
+today's complete `assertCurrent`: the version check `JsonDocumentStore` did,
+`parseCronJobFile`, and `assertCronJobSemantics` (every job belongs to this
+Dispatcher and its schedule is valid), all raising `LegacyStateError` with
+today's messages. `SchedulerService.start` relies on that last check —
+reconcile and arm do not repeat it — so dropping it would let a bad job on
+disk start instead of failing loud. It still loads at scheduler start.
 Its `writes` tail is deleted. `deleteStoreFile` is `remove(empty)`; a
 `setFired` queued behind a delete finds no job and writes nothing. The legacy
 detection used by startup and `dreamux doctor` stays a one-shot read.
@@ -480,3 +484,19 @@ Where the seats disagreed after cross-review, and why this file chose as it did:
 | Command names | `config.agents.get` / `replace` (A, C) | "replace" states whole-section semantics. |
 | `fsync` | none | Operator ruling 2026-09-20. |
 | Delivery | three pull requests (all three) | Review size, given the second-authority risk. |
+
+## 13. Solution review
+
+Devbox reviewed this solution on the
+[solution review Issue](https://github.com/excitedjs/dreamux/issues/448).
+
+| Finding | Verdict | Change |
+| --- | --- | --- |
+| §3.6 named the cron loader as the version check plus `parseCronJobFile`, leaving out `assertCronJobSemantics`, which `SchedulerService.start` depends on for ownership and schedule validity. | Accepted; confirmed in `service/scheduler/store.ts` (`assertCurrent`) and `service/scheduler/service.ts` (`start`). | §3.6 now names today's complete `assertCurrent` as the loader. No design change. |
+
+Verified without findings: the primitive's contract against the Team queue and
+identity `onPersisted` (§2); one shared Dispatcher root identity store, since
+the after-commit step is passed per operation rather than bound at
+construction (§3.4); `resolveConfig` as today's validation tail, the secret
+round trip, raw-object write-back, and `0600` against the start mode check
+(§4).
