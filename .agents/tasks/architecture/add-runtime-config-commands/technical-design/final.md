@@ -449,7 +449,8 @@ Load-bearing regressions kept: the dissolve-members and dissolve-recovery
 cases (held, unheld, already-closed members; a deleted cron store stays
 deleted); runtime-generation rejection including a callback queued before a
 lease is revoked; managed-worktree reopening (the nested-queue case); cron
-delete racing a fire in both orders; routing's binding-plus-subscription
+delete racing a fire in both orders; a cron file holding another Dispatcher's
+job or an invalid schedule failing scheduler start; routing's binding-plus-subscription
 removal in one commit; access approval racing pairing-card delivery; the
 issue #63 non-blocking inbound gate, unchanged. The Team read-path test is the
 one replaced deliberately (§3.5).
