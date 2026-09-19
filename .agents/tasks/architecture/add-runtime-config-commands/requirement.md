@@ -88,8 +88,8 @@ Operator, 2026-09-17, as the second requirement beside
     claim below was read in source unless marked inferred). Grouped by shape:
     - Memory first, file written asynchronously: none. Every runtime state
       write is awaited, and a failure returns to its caller or ends its owner.
-      The volatile kind therefore has no existing store to take over; the
-      Config Service's `agents` section is its first user.
+      (The volatile kind this once pointed at is not built: operator,
+      2026-09-19, "不做（推荐）".)
     - Authoritative memory, file written before memory changes, mutations
       serialized by a promise tail:
       - The live agent identity: `AgentRuntimeStateStore`
@@ -171,8 +171,19 @@ Operator, 2026-09-17, as the second requirement beside
       `chat-bots.json`.
     - A write that fails leaves memory unchanged and fails the operation
       that asked for it.
-    - While the daemon runs, a hand edit, damage, or deletion of one of these
-      files is not read; the next write overwrites it.
+    - While the daemon runs, a hand edit, damage, or deletion of a file that
+      a loaded owner holds is not read; the next write overwrites it. The Team
+      record, cron jobs, the Feishu documents, and `config.json` are held for
+      the life of their owner once loaded. An agent identity is held while its
+      entity is live, and a Workflow run record while its run executes; a
+      stopped member's identity and a finished run's record are read from
+      their file when next used (operator, 2026-09-20, "只在有 owner 时留").
+    - Every read of a live entity goes through its live owner. Today the
+      TeamMate list and status and a Team's `leader_state` read the identity
+      file even while that entity is live
+      (`service/teammate-collection/index.ts`, `service/team-collection/read-model.ts`).
+    - "Written before memory changes" means an awaited temporary file and
+      atomic rename, as today; no `fsync` (operator, 2026-09-20, "不加，维持现状").
   - Config Commands:
     - Read returns the whole `agents` section. A value whose key names a
       secret (the rule `dreamux config show` already applies) is returned
@@ -237,9 +248,11 @@ Operator, 2026-09-17, as the second requirement beside
 
 ## Acceptance criteria
 
-- Each moved store serves reads from memory after it loads, writes its file
-  before changing memory, and on a failed write leaves memory unchanged and
-  fails the operation.
+- Each moved store serves reads from memory while its owner holds it, writes
+  its file before changing memory, and on a failed write leaves memory
+  unchanged and fails the operation.
+- A hand edit to a live entity's identity file does not change what list,
+  status, or `leader_state` report while that entity is live.
 - Writes to `chat-bots.json` are serialized.
 - Every existing state file and `config.json` from the current release loads
   unchanged.

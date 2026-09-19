@@ -150,3 +150,19 @@ are not rulings until confirmed.
   - Asked how the technical solution is produced: "三份独立方案（推荐）" — three
     independent proposals and a cross-review, merged by the TeamLeader, then
     reviewed by Devbox on a GitHub Issue.
+- Confirmed operator decisions (2026-09-20), on a card after the three
+  proposals and their cross-review were adjudicated (the TeamLeader's
+  technical calls were listed in the card text):
+  - Asked "没在运行的成员的 identity，和已经结束的 Workflow 记录，要不要一直留在
+    内存里？（Team 记录按「一起迁」的裁定常驻，不在这题里。）": "只在有 owner 时留
+    （推荐）" — the option said a live member's identity and a running
+    Workflow's record are held in memory and authoritative; once the owner
+    ends they are released and read from their file when next used, so a
+    hand edit to a stopped member's or finished run's file made while the
+    daemon runs is read. The rejected option kept every loaded record until
+    the process exits, with unbounded memory. The card text also stated that
+    reads of a live entity go through its live owner under either answer.
+  - Asked "「先确保落盘」要不要包含 fsync，也就是断电也不丢？": "不加，维持现状
+    （推荐）" — written first means a temporary file and an atomic rename, as
+    the identity store the operator named does today; a process crash loses
+    nothing, a power loss may lose the last write.

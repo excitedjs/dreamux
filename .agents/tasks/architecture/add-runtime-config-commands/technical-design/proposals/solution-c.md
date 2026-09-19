@@ -1032,7 +1032,7 @@ separate process — `server.ts:254,260`).
 
 **Factual error in A:** none that survived checking. Two claims I could not
 independently confirm but do not rely on: the SDK source line citation
-(`node-sdk 1.73.0`, an async `ws.on('message')`) and commit `2ed5f5ea`'s
+(`node-sdk 1.73.0`, an async `ws.on('message')`) and #350's
 intent — both are presented as supporting color, not load-bearing.
 
 ### Review of Solution B

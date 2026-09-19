@@ -1,7 +1,7 @@
 # Solution B — one `TransactionalStore`, owners keep their policy, Config Service on top
 
 Seat B, independent first-round proposal. Inputs: `requirement.md`,
-`rulings.md`, `README.md` as committed at `db41f73b`, the product catalog, and
+`rulings.md`, `README.md` as committed when the solution phase opened, the product catalog, and
 the current source. Every source claim below was read in this round; what I
 could not verify is listed in §11.
 

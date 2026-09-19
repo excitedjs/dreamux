@@ -74,7 +74,7 @@ Corrections and limits of the task inventory:
   repair does not promise to make an unproven native process disappear.
 
 Ownership history was checked rather than inferred from class names. Commit
-`2ed5f5ea` / #350 established path-bound identity stores, Channel-owned routing,
+#350 established path-bound identity stores, Channel-owned routing,
 and the neutral provider boundaries. Its task record distinguishes Team record
 existence from leader identity recovery (`minimize-provider-boundaries/README.md:131-150`)
 and records routing's file-before-memory rule (lines 240-245). The older
