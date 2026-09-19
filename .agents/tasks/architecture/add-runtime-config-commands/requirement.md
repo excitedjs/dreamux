@@ -58,6 +58,31 @@ Operator, 2026-09-17, as the second requirement beside
     state.
   - Slash commands have no permission beyond the ordinary authorization to
     deliver a message in that conversation (product catalog).
+  - How a bad configuration fails, traced on 2026-09-19 for the operator's
+    concern that changing configuration at runtime can make the system
+    unusable:
+    - Read at every runtime launch: `agents`. `TeammateRuntimeOwner` resolves
+      `config.agents[identity.agent_runtime]` inside each start attempt; a
+      failed attempt rolls back and leaves no runtime, so the next submission
+      starts again from the configuration current at that moment. Channel
+      Commands reach Core through the Channel's port and do not pass through
+      any Agent.
+    - Read only when the process or a Dispatcher starts:
+      - `dreamux serve` exits when `loadConfig` rejects the file, and when any
+        enabled Dispatcher's `cwd` fails the workspace preflight
+        (`Server.assertDispatcherWorkspaces`, aggregated, before any
+        Dispatcher starts).
+      - A Dispatcher starts its Channel sessions one by one; one session
+        failing to start fails and rolls back the whole Dispatcher, closing
+        every Channel it had, and the server logs "dispatcher failed to start"
+        and continues with the others. The Feishu session fails its start when
+        its WebSocket is not ready within the startup grace period.
+      - Removing or disabling a Dispatcher removes its Channels at the next
+        start.
+    - The loader already rejects a Dispatcher `agentRuntime` that names no
+      `agents[]` id, a duplicate channel provider in one Dispatcher, and an
+      invalid provider block; it does not check credentials or whether a
+      `cwd` is usable on the host.
   - Persistence inventory for the storage infrastructure direction (read-only
     survey on 2026-09-17, re-surveyed store by store on 2026-09-19; every
     claim below was read in source unless marked inferred). Grouped by shape:
@@ -269,13 +294,23 @@ Operator, 2026-09-17, as the second requirement beside
 - Operator, 2026-09-19, after the card above: "config service 重新想想。我觉得
   我那天想错了" — the Config Service requirement is reopened; which part is
   being reconsidered is not yet known.
+- Operator, 2026-09-19, answering the TeamLeader's two Config Service
+  problems (a volatile `agents` store loses a change silently when the write
+  fails; "`agents` now, `dispatchers` after restart" keeps two copies of the
+  configuration): "你说的很精准，就是这两个问题。agents 其实根本没必要搞成易失性的，
+  就用那个事务性基建就够了。" On the second: "2 这个点其实我还没有想好，因为运行时
+  去改这些配置，其实很危险，很有可能直接给系统搞得不可用了".
+  - Inference, not yet confirmed: with every existing store and `agents`
+    transactional, the volatile kind has no user and is not built.
 - Interpretations recorded without objection when they were played back on the
   2026-09-17 card:
   - The caller is a web front end reaching Core through a Channel's Core port.
   - The Commands are also reachable over `admin.sock`; no CLI verb is added.
 - Assumptions: None.
 - Blocking unknowns:
-  1. The reopened Config Service requirement: which of the 2026-09-17
-     decisions the operator is reconsidering, and what replaces them.
+  1. How the Config Service treats changes that can leave the system
+     unusable, and so when each part of the configuration takes effect. The
+     operator has not decided and is concerned that changing configuration at
+     runtime can make the system unusable.
 - Follow-ups:
   - A Command that restarts one Dispatcher; outside this task.
