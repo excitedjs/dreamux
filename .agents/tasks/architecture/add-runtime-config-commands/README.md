@@ -6,7 +6,7 @@
 - State: `solution`
 - Requirement: [Current requirement](/.agents/tasks/architecture/add-runtime-config-commands/requirement.md)
 - Final solution: [Final technical solution](/.agents/tasks/architecture/add-runtime-config-commands/technical-design/final.md)
-- Solution review Issue: Not created.
+- Solution review Issue: https://github.com/excitedjs/dreamux/issues/448
 - Solution path: three independent proposals with one cross-review round, merged by the TeamLeader into `technical-design/final.md`, then reviewed by Devbox on a GitHub Issue (operator, 2026-09-19: "三份独立方案（推荐）").
 - Solution input: `requirement.md` and `rulings.md` as committed with this state change.
 - Blockers: None. The sequencing blocker cleared when the Dispatcher Command task merged (#444, 2026-09-18); the operator chose to continue this task in the same Team.
