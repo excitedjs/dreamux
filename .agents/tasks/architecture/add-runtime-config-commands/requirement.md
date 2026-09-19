@@ -302,15 +302,27 @@ Operator, 2026-09-17, as the second requirement beside
   去改这些配置，其实很危险，很有可能直接给系统搞得不可用了".
   - Inference, not yet confirmed: with every existing store and `agents`
     transactional, the volatile kind has no user and is not built.
+- Confirmed operator decision (2026-09-19), in conversation after the
+  failure trace above was played back with three directions — A: the
+  Commands change only `agents`, and `dispatchers` stays a hand edit with
+  the daemon stopped (this overturns "整个文件都能改"; memory always equals
+  the file, so no change waits for a restart and the pending-restart list
+  goes away); B: the whole file is writable and a write first runs every
+  check the next start would run, marking what cannot be checked
+  (credentials) as known only after a restart; C: B plus refusing a write
+  that removes, disables, or changes the Channels of the caller's own
+  Dispatcher. The TeamLeader recommended A. The operator: "那就 A 吧。问题就只有
+  这个玩意比较割裂，一个配置文件只有一部分可以改。"
 - Interpretations recorded without objection when they were played back on the
   2026-09-17 card:
   - The caller is a web front end reaching Core through a Channel's Core port.
   - The Commands are also reachable over `admin.sock`; no CLI verb is added.
 - Assumptions: None.
 - Blocking unknowns:
-  1. How the Config Service treats changes that can leave the system
-     unusable, and so when each part of the configuration takes effect. The
-     operator has not decided and is concerned that changing configuration at
-     runtime can make the system unusable.
+  1. Whether the Commands expose only `agents` (read and write), or read the
+     whole file and write only `agents` — the operator named the split "一个
+     配置文件只有一部分可以改" as the cost of A.
+  2. Whether the volatile store kind is dropped now that nothing uses it
+     (inference from "就用那个事务性基建就够了", not yet confirmed).
 - Follow-ups:
   - A Command that restarts one Dispatcher; outside this task.
