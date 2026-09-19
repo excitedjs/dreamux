@@ -50,7 +50,10 @@ export class TransactionalStore<T> {
     change: (current: T) => T | Promise<T>,
     afterCommit?: (next: T, previous: T) => void | Promise<void>,
   ): Promise<T>;
-  create(value: T): Promise<T>;     // create-only publish; rejects when the file exists
+  create(                          // without reading the file first
+    value: T,
+    options?: { replace?: boolean; afterCommit?: (next: T) => void | Promise<void> },
+  ): Promise<T>;                    // default: create-only, rejects when the file exists
   remove(next: T): Promise<void>;   // unlink (ENOENT is success), then memory becomes `next`
   drain(): Promise<void>;           // resolves when everything queued so far has settled
 }
@@ -76,15 +79,21 @@ Contract, each point with its reason:
   record (`publishRecordState` awaits a roster, `service/team-collection/store.ts`) and
   the agent identity (`onPersisted`, `service/agent-entity/identity-store.ts`); both
   publish on an update only when the status changed, so the step receives the
-  previous value too. Its
-  failure rejects the caller while file and memory stay committed, which is
-  what the Team queue does today. It is optional; no other owner passes it.
-- **`create` keeps the no-clobber contract.** Identity creation refuses any
-  existing file, readable or not ("identity creation is no-clobber",
-  `service/CLAUDE.md`), and a Workflow run is created the same way. The
-  create-only publish (complete temporary file, then a hard link that fails
-  with `EEXIST`) lives in utils once, exported as `publishFileExclusive`,
-  because the Workflow journal needs it and the journal is not a document.
+  previous value too. Its failure rejects the caller while file and memory
+  stay committed, which is what the Team queue does today. It is optional; no
+  other owner passes it. `create` takes the same step, because identity
+  creation always publishes.
+- **`create` writes without reading, and keeps the no-clobber contract.**
+  Identity creation refuses any existing file, readable or not ("identity
+  creation is no-clobber", `service/CLAUDE.md`), and a Workflow run is created
+  the same way. The create-only publish (complete temporary file, then a hard
+  link that fails with `EEXIST`) lives in utils once, exported as
+  `publishFileExclusive`, because the Workflow journal needs it and the
+  journal is not a document. `replace: true` is the Team leader's creation,
+  which today overwrites whatever is at the path without reading it; routing
+  it through `update` would load first and turn a legacy-format residue into
+  a failed Team creation. Either way the store is loaded with the value it
+  wrote.
 - **Mode `0600` is an invariant, not an option.** Every file that moves is
   written `0600` today.
 - **No `fsync`** (operator, 2026-09-20, "不加，维持现状"). "Written before memory
@@ -148,7 +157,12 @@ used.
   `read()` policy: missing → `null`; any other read error throws; legacy →
   rethrow; other parse failure → logged `null`.
 - `create` uses the store's `create` (no-clobber, including an unreadable
-  residue); the TeamLeader path's `replaceExisting` keeps replacing. `update`
+  residue), passing `onPersisted` as its after-commit step; the Team leader's
+  `replaceExisting` is `create` with `replace: true`. `upsert`, used only by
+  the Dispatcher Agent's `ensureDispatcherIdentity` right after a `read()`,
+  becomes one `update` that builds from the committed value (fresh when
+  `null`) and always publishes, closing today's gap between that read and
+  write. `update`
   drops its caller-snapshot parameter and merges against the committed value.
   `onPersisted` becomes the `afterCommit` step.
 - `AgentRuntimeStateStore` loses its `identity` copy, `mutationTail`, and
