@@ -10,7 +10,7 @@ Operator, 2026-09-17, as the second requirement beside
 
 ## Current alignment
 
-- Status: Blocked. The Config Service requirement converged; the operator then widened the direction to a storage infrastructure refactor and sequenced this task after the Dispatcher Command task merges.
+- Status: Clarifying. The storage infrastructure scope is decided. The operator reopened the Config Service requirement on 2026-09-19 ("config service 重新想想。我觉得我那天想错了"); every Config Service item below stands only as the 2026-09-17 record until it is re-confirmed.
 - Confirmed current behavior and evidence:
   - No Core Command, Channel, or MCP tool writes `config.json`. The only
     writer is `dreamux onboard` (a plain `writeFile`, not temp + rename). The
@@ -59,28 +59,64 @@ Operator, 2026-09-17, as the second requirement beside
   - Slash commands have no permission beyond the ordinary authorization to
     deliver a message in that conversation (product catalog).
   - Persistence inventory for the storage infrastructure direction (read-only
-    survey on 2026-09-17; spot-checked where marked):
-    - No memory-first, asynchronously persisted store exists. Every runtime
-      state write is awaited, and a failure returns to its caller or ends its
-      owner.
-    - Durable-first stores: the live agent identity (`AgentRuntimeStateStore`
-      over `identity.json`, a promise tail that replaces memory after the
-      write), the Team record (`TeamStore`, a keyed queue that merges against
-      the file on disk), and the Feishu routing document (`FeishuRoutingStore`,
-      a promise tail). `WorkflowRun` changes memory first but awaits each write.
-      `cron-jobs.json`, Feishu `access.json`, and `chat-bots.json` keep no
-      in-memory model and re-read the file on every access; `chat-bots.json`
-      writes are not serialized.
-    - `JsonDocumentStore` (`platform/json-document-store.ts`) has two callers,
-      the cron job store and the workflow run store (spot-checked). The
-      service-topology-foundations plan to move the other single-document
-      stores onto it was not carried out.
-    - Atomic replace-write exists as Core `writeFileAtomic` and
-      `@excitedjs/dreamux-utils` `writeAtomic` (used only by the Feishu access
-      and routing stores, spot-checked), plus two inline copies in the Feishu
-      Channel. A Channel package may depend only on `dreamux-types` and
-      `dreamux-utils`, so a store Channels use cannot live in
-      `@excitedjs/dreamux`.
+    survey on 2026-09-17, re-surveyed store by store on 2026-09-19; every
+    claim below was read in source unless marked inferred). Grouped by shape:
+    - Memory first, file written asynchronously: none. Every runtime state
+      write is awaited, and a failure returns to its caller or ends its owner.
+      The volatile kind therefore has no existing store to take over; the
+      Config Service's `agents` section is its first user.
+    - Authoritative memory, file written before memory changes, mutations
+      serialized by a promise tail:
+      - The live agent identity: `AgentRuntimeStateStore`
+        (`service/agent-entity/runtime-state.ts`) over `AgentIdentityStore`
+        (`identity.json`). The identity store itself holds no memory and also
+        writes entities that have no live owner: creation, the Dispatcher
+        Agent's preparation before its service exists, and closing members
+        that are not held during a dissolve.
+      - The Feishu routing document (`FeishuRoutingStore`,
+        `channel/feishu-channel/src/routing/store.ts`), loaded once per
+        session; the file name carries the channel id, so no other writer
+        exists.
+    - Mixed: a Workflow run record (`WorkflowRun`) changes memory first and
+      then awaits the write inside its serialized mutation; the terminal
+      transition writes before memory. Its `journal.jsonl` is an awaited
+      append-only log.
+    - No memory; each operation reads the file, changes it, and writes it
+      back:
+      - The Team record (`TeamStore`). Its update merges against the file on
+        purpose: "writing the caller's older snapshot back would resurrect a
+        Team from a stale in-memory copy and silently reclaim a name that is
+        free" (`service/team-collection/store.ts`). One instance per
+        Dispatcher writes; `dreamux doctor` and the startup legacy check only
+        read.
+      - Cron jobs (`CronJobStore` over `JsonDocumentStore`), one instance per
+        Dispatcher or Team scope, serialized by a promise tail. Only the
+        daemon writes; `dreamux doctor` only reads.
+      - Feishu `access.json`, serialized by the Channel's access mutex.
+        Operators edit it by hand only with the daemon stopped (the
+        dreamux-maintenance quiesce procedure).
+      - Feishu `chat-bots.json`, written by the Channel only. Its four
+        read-change-write paths share no lock; whether the Feishu SDK can run
+        two of them at once is inferred, not read. `loadChatBots` turns every
+        read error into an empty store, so a failed read followed by any save
+        replaces the file with an empty one.
+      - A Dispatcher runs at most one Channel per provider (the config loader
+        rejects a duplicate provider), so no two Channel sessions share
+        `access.json` or `chat-bots.json`.
+    - Not stores: `run/restart-intent.json` is a one-shot hand-off the CLI
+      writes and the daemon consumes once at start; `config.json` is written
+      today only by `dreamux onboard` and becomes the Config Service's file.
+    - `JsonDocumentStore` (`platform/json-document-store.ts`) is a versioned
+      read plus an atomic write, with no memory; its callers are the cron job
+      store and the Workflow run store. The service-topology-foundations plan
+      to move the other single-document stores onto it was not carried out.
+    - Atomic replace-write exists as Core `writeFileAtomic` (creates missing
+      directories) and `@excitedjs/dreamux-utils` `writeAtomic` (requires the
+      directory; used by the Feishu access and routing stores), plus an inline
+      copy in `chat-bots-store.ts`. Nothing calls `fsync`. A Channel package
+      may depend on `dreamux-types`, `dreamux-utils`, and its own transport
+      package, never on `@excitedjs/dreamux`, so a store Channels use lives in
+      `@excitedjs/dreamux-utils`.
     - Knowledge drift found on the way: the service-topology-foundations
       requirement still names removed stores (`ChannelBindingStore`,
       `TeamMateIdentityStore`, a persisting `DispatcherStore`), and
@@ -129,6 +165,10 @@ Operator, 2026-09-17, as the second requirement beside
   - A configuration written by the Commands loads at the next start exactly as
     a hand-written one does; the file format does not change.
   - The file keeps mode `0600`.
+  - The storage infrastructure replaces the existing atomic-write helpers
+    rather than landing beside them: Core `writeFileAtomic`, utils
+    `writeAtomic`, and the inline copy must not all survive next to a new
+    store layer (repository entropy rule).
 
 ## Acceptance criteria
 
@@ -204,15 +244,38 @@ Operator, 2026-09-17, as the second requirement beside
     dismissed in favor of discussion.
   - Sequencing: "先把需求1 做了。需求1 改动看起来比较可控。然后需求2 你先记录到 task
     记录里，1 合入后我们再推进2".
+- Confirmed operator decision (2026-09-19), after the TeamLeader recommended
+  splitting the storage infrastructure into its own prerequisite task:
+  "不拆了，不管怎么样都会是顺着做。" — the storage infrastructure refactor
+  belongs to this task, and the work runs in order: the infrastructure first,
+  then the Config Service on top of it.
+- Confirmed operator decision (2026-09-19), on a card after the store
+  inventory above was played back. Asked "③ 那四个每次读文件的存储（Team 记录、
+  cron、access.json、chat-bots.json），这次也改成内存为准，迁到事务性存储吗？", the
+  operator chose "一起迁（推荐）". The option said: afterwards only the
+  transactional and volatile kinds remain, and the `chat-bots.json`
+  overwrite race goes with it; the costs are a larger change, the Team
+  record's guarantee against resurrecting a dissolved Team moving from a
+  merge against disk to a single in-memory owner, and a file damaged or
+  deleted by hand while the daemon runs no longer failing loud but being
+  overwritten by the next write. The rejected option moved only the stores
+  that already hold authoritative memory.
+  - Consequence recorded by the TeamLeader, not a ruling: the Feishu routing
+    store moves under either option, so the store infrastructure lives in
+    `@excitedjs/dreamux-utils`.
+  - Product catalog entry this touches: "The Team record is the only
+    existence fact" (Team lifecycle). While the daemon runs, a Team record
+    deleted or damaged by hand no longer frees the name before a restart.
+- Operator, 2026-09-19, after the card above: "config service 重新想想。我觉得
+  我那天想错了" — the Config Service requirement is reopened; which part is
+  being reconsidered is not yet known.
 - Interpretations recorded without objection when they were played back on the
   2026-09-17 card:
   - The caller is a web front end reaching Core through a Channel's Core port.
   - The Commands are also reachable over `admin.sock`; no CLI verb is added.
 - Assumptions: None.
 - Blocking unknowns:
-  1. Whether the storage infrastructure refactor belongs to this task or to its
-     own task that this one builds on.
-  2. Which existing persisted stores move onto the new infrastructure, and in
-     which package it lives.
+  1. The reopened Config Service requirement: which of the 2026-09-17
+     decisions the operator is reconsidering, and what replaces them.
 - Follow-ups:
   - A Command that restarts one Dispatcher; outside this task.
