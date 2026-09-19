@@ -554,3 +554,291 @@ matter.
 - **Threading a config reader through every holder** (§3.3 B).
 - **Keeping `writeAtomic` exported for future callers.** Rejected: that is
   exactly "landing beside" the store.
+
+## Cross-review
+
+Round two. I read `solution-a.md` and `solution-c.md` in full and checked their
+load-bearing claims against the source, not against §0–§12 above. Where this
+section contradicts my first round, this section is my position; the first
+round is left as written so the change is visible.
+
+### CR-1. Errors in my own first round, found while checking the others
+
+1. **A fourth exclusive-create caller exists and is out of scope for the
+   store.** `workflow-service/journal.ts:58` publishes the journal's first line
+   with `writeFileExclusiveAtomic`. My grep pattern (`writeFileAtomic`) cannot
+   match `writeFileExclusiveAtomic`, so §1 "no link-based exclusive publish",
+   §2.7 "deleted: whole file", and §11 "this proposal deletes it too" are
+   wrong: the journal is an append-only log (non-goal), it is not a document,
+   and it needs a no-clobber publish. C found this (C §3); A did not.
+2. **My `decode(text | null)` signature silently rewrites IO error text.**
+   `readDispatcherAccess` wraps a read failure as `Failed to read access.json:
+   …` (`feishu-gate-io.ts:55`), the routing store as `failed to read <path>: …`
+   (`routing/store.ts:83-85`). Under my signature the primitive does the read,
+   so those messages become the primitive's. A's "the caller … supplies the
+   initial loader" (A §3) keeps them byte-identical. Not a persisted-file
+   change, but an unknowing one; withdrawn in CR-3.
+3. **§3.3 cited "以代码量最小的方式来做" as a standing instruction.** Per the
+   ledger it answered "谁、从哪里触发配置修改？". Re-weighed in CR-3.2 without it.
+
+### CR-2. The other proposals
+
+#### Solution A
+
+Accepted, with what changes in my design:
+
+- **The owner supplies the whole initial load; the primitive owns only
+  commit.** Reason in CR-1.2. It also dissolves the `chat-bots.json` question
+  (CR-3.5) without any policy hook. My options become
+  `{ path, dirMode?, load(): Promise<T>, encode? }`.
+- **A post-commit step inside the store's queue** (A §3 "Publication and
+  failure"). I kept `TeamStore`'s `KeyedAsyncQueue` around `update` + publish
+  and, for identity and config, leaned on "`update` resolves before the next
+  queued update starts" — a microtask-ordering argument. One optional
+  post-commit callback replaces both: Team's queue is deleted, and the
+  ordering is a contract instead of reasoning. Verified it is what Team does
+  today: `publishRecordState` awaits the roster after the write, inside
+  `writes.run` (`team-collection/store.ts:176-204,216-224`).
+- **The Feishu SDK overlap is real, not inferred.** Read at the cited path:
+  `ws.on('message', async …)` (`node-sdk/lib/index.js:102466`), and an
+  `EventEmitter` does not await its listener, so two frames interleave. The
+  requirement's "inferred" can be upgraded to "read".
+- **`lib/mutex.ts` is deletable.** `AsyncMutex` has exactly two importers, both
+  for access (`feishu-channel.ts:37,142`, `feishu-session-ops.ts:39,73,91`).
+- **Approval keeps its error *result* on a failed save**
+  (`feishu-session-ops.ts:332-349`): the `update` rejection is caught there and
+  turned into the same `status: 'error'` result. I had not said so.
+- **`getRuntimeConfig` has no production caller.** Verified: only setters at
+  `server.ts:179`, `onboard/run.ts:92,133`, `cli/doctor.ts:117`,
+  `daemon/install.ts:101`. A third copy of the config, read by nobody; delete
+  it in the Config PR.
+- **`TeamService.record` and the Workflow live-over-disk overlay are second
+  authorities to remove** (`team-service/index.ts:655-667`,
+  `workflow-service/index.ts:185-218`, both verified). I had the first as a
+  "candidate"; A is right that leaving it is the most likely way this refactor
+  passes its tests and still fails its purpose.
+- **The `fsync` contradiction** (A §10) — adopted in CR-3.7.
+
+Rejected:
+
+- **Process-lifetime retention of identity and Workflow records** — CR-3.1.
+- **"Patch the shared object in place … can mutate settings already handed to
+  running runtimes"** (A §10). Not true of either B or C: both *replace* the
+  `agents` property with the freshly resolved map; a running runtime holds the
+  old `ResolvedAgentConfig` object, which nothing mutates. The claim holds
+  only for a deep in-place edit nobody proposed. (I still move toward A's
+  conclusion in CR-3.2, on a different argument.)
+- **Two PRs with every store in the first.** Seven stores plus A's ownership
+  rewiring in one review is the size at which a surviving second authority —
+  A's own named biggest risk — gets missed.
+
+Factual gaps in A:
+
+- A keeps exclusive publication "internal" to the store module (A §3, removal
+  2) and never mentions `journal.ts:58`. As written, the journal loses its
+  create primitive.
+- A's product ledger changes "the next ordinary use rebuilds from disk" to
+  "from committed owner records in-process" for **every** record kind. The
+  operator's 2026-09-19 "一起迁" ruling named that cost for the Team record
+  only (`rulings.md:70-86`). Extending it to identity, cron, and Workflow
+  records is a catalog change no ruling covers.
+
+#### Solution C
+
+Accepted:
+
+- **Exclusive creation survives** (C §3, §5.1), with the recorded contract I
+  had not read: "a directory name stays occupied even when its identity is
+  unreadable, and identity creation is no-clobber"
+  (`packages/dreamux/src/service/CLAUDE.md:198`). My §2.3 delta ("would
+  overwrite an unreadable file") contradicted a recorded contract for no gain.
+- **The journal caller** (CR-1.1).
+- **`config.agents.get` / `config.agents.set`** — CR-3.6.
+
+Rejected:
+
+- **`_accessMutex` stays "because it serializes decisions larger than one file
+  write"** (C §5.6, citing `feishu-session-ops.ts:291-333`). I read all five
+  lock bodies this round (`feishu-session-inbound.ts:116-118,183-190,247-262,
+  296-351`, `feishu-session-ops.ts:293-367`). Every one is load → decide →
+  save with no other await; the card send sits *between* LOCK-1 and LOCK-2,
+  outside both. A lock around a serialized `commit` is two queues over one
+  file. This also closes my first-round "read two of five" unknown.
+- **The Team record does not move onto the primitive in C.** C §1 says "one
+  `TransactionalDocument` per dispatcher"; C §5.2 then builds "a small owner
+  class" with its own tail that calls `writeJsonAtomic` directly for each
+  `record.json`. That is a fifth hand-rolled copy of file-then-memory beside
+  the class written to end them, and it needs the raw replace-writer exported
+  — the "landing beside" shape the requirement forbids
+  (`requirement.md:233-236`). One `TransactionalStore` per Team in a map
+  (A and B) uses the primitive as it is.
+- **`stringifyConfig(validated)` as the write** (C §2.2 step 5, §14). It
+  re-serializes `dispatchers` from the resolved view: `cwd` is written
+  `expandHome`-expanded (`config.ts:456`) and omitted `enabled` /
+  `workspace.enabled` are materialized (`config.ts:457-462`, `145-168`). C's
+  own verification item 10 — "a set payload cannot alter dispatcher file
+  content" — fails against C's design for any hand-written `~/` path. A and B
+  hold the raw file object and write that.
+- **Refreshing `dispatcher.runtime` "because they have live in-process
+  readers"** (C §6.4). `provider-diagnostics.ts` has one importer in `src`, a
+  type import from `onboard/types.ts:2`; onboard is another process. No daemon
+  reader exists after `server.ts:429`.
+
+Factual errors in C:
+
+- Internal contradiction on `chat-bots.json`: C §3 — "A real IO error other
+  than ENOENT rejects `load()` under both policies"; C §5.7 —
+  `load({ corrupt: 'empty' })` "keeps ENOENT/parse/IO degradation". With the
+  load moved to `initialize()`, the first reading turns an `EACCES` into a
+  failed Channel start, which the requirement forbids.
+- `corrupt: 'throw' | 'empty'` reintroduces the policy enum C §3 says it
+  deletes, for one caller.
+- C §5.2 "Before load, `get`/`list` throw 'used before loaded'": `TeamStore`
+  is also reached outside the start sequence (`worktree-cleanup.ts:32`; and
+  `host.dispatcher(id)` get-or-builds the aggregate for any Command, so I
+  expect `team.list` can reach the store on a dispatcher that never started —
+  expected from the host contract, not traced). A lazy, deduplicated load has
+  the same failure location and no "used too early" state to hold.
+
+### CR-3. Revised positions on the seven divergences
+
+**3.1 Memory lifetime with no live owner.** Three different answers, because
+they are three different facts:
+
+- *Team record:* process lifetime, in `TeamStore`'s map. Ruled ("一起迁", cost
+  named), and required anyway: name occupancy and request replay are answered
+  from it. All three proposals agree.
+- *Identity:* the document lives exactly as long as a live owner holds it;
+  every ownerless operation is a one-shot store. Unchanged from round one, but
+  now argued against both alternatives:
+  - against A (retain forever): it is a per-entity structure that grows for
+    the process lifetime, and A states it has no bound (A §3, §10) — the case
+    whitepaper §1 rejects by name. What it buys is that a hand edit to a
+    *closed, unmaterialized* entity's file is not read at its next reopen. The
+    scope line says "moving the **live** agent identity"
+    (`requirement.md:205-206`), and the catalog says a failed dissolve
+    "rebuilds from disk". A's own evidence is correct — `TeamRuntimeRegistry`
+    evicts (`runtime-registry.ts:296,399-404`) and the per-Team cron store is
+    rebuilt (`collaborators.ts:110`) — but a re-read at re-materialization is
+    whitepaper §2's "ordinary … lazy materialization", not a second authority:
+    no memory existed to disagree with the file.
+  - against C (no memory in `AgentIdentityStore`; the live document sits in
+    `AgentRuntimeStateStore`, ownerless writes use a raw writer): it leaves
+    two write mechanisms for one file and needs the replace-writer exported.
+    A one-shot store is the same code path as the live one and keeps the
+    writer private.
+- *Workflow run:* same rule as identity — the live `WorkflowRun` holds the
+  document; a finished run's `status`/`list` stays a one-shot read of a file
+  nothing will write again (as C §5.4). I now also take A's removal of the
+  live-over-disk overlay where a live run exists.
+
+What this leaves for the operator is in CR-4.
+
+**3.2 How readers observe a committed write — I change sides: thread a read
+capability.** Without the misapplied ruling, the comparison is:
+
+- In place has no silent failure today: a pattern search of `src/service` and
+  `server.ts` for spreads or `structuredClone` of the config found none (a
+  grep, not a proof). Its hazard
+  is hypothetical, and A's "mutates running runtimes" objection is wrong
+  (CR-2).
+- But in place makes the Config Service hold a *second* resolved copy by
+  design: the store's committed `{raw, config}` and the shared object it
+  assigns into afterwards. Every other section of all three proposals deletes
+  exactly that pattern — `AgentRuntimeStateStore.identity`,
+  `TeamService.record`, `WorkflowRun.record`. Building a new instance of it in
+  the same task is not a position I can defend.
+- Threading makes the type say "this value changes": once the dependency is
+  `{ current(): DreamuxConfig }`, a holder that was not converted does not
+  compile. With in place the compiler is silent.
+- Its cost is mechanical: the ~15 holders and the tests that pass a config
+  literal wrap it as `{ current: () => config }`.
+
+So: `ConfigService` implements the read capability, the holders take it, the
+three `agents` readers call `current()` per operation, and
+`setRuntimeConfig`/`getRuntimeConfig` are deleted. C remains the only proposal
+for in-place assignment.
+
+**3.3 Exclusive creation — survives, reversed from round one.** One
+`publishFileExclusive(path, data)` exported from utils (the journal needs it
+and is not a document), used by the store's `create(value)`, which runs in the
+document's queue. Identity and Workflow-run creation use `create` and keep
+today's refusal of an unreadable residue. Team creation still does not need
+it: all three of its outcomes are decided by the in-memory map (valid record →
+`null`; anything else → replace), so there it stays a serialized update. The
+replace-writer stays private to the store. Net: three replace-writers → zero
+public; one exclusive publisher → one, moved.
+
+**3.4 Team publication ordering — A's post-commit step.** See CR-2.
+`KeyedAsyncQueue` leaves `TeamStore`; `create` joins the Team's document
+queue, which closes that known unknown the same way. A rejection from the
+post-commit step rejects the caller while file and memory stay committed — what
+`writes.run` does today.
+
+**3.5 `chat-bots.json` — keep today's catch-all empty; my delta is
+withdrawn.** A is right on authority: "moving a store does not move where an
+unreadable file fails" (`requirement.md:225-227`) leaves no room for a
+refactor-side tightening. With an owner-supplied loader, `loadChatBots`' body
+*is* the loader, unchanged, and the primitive carries no policy. The data-loss
+path still shrinks from every operation to the first load. Load stays lazy,
+not at `initialize()`.
+
+**3.6 Staging, names, contract.**
+
+- Staging: three PRs as in §7 — Feishu stores with the primitive; Core stores;
+  Config. The exclusive publisher moves to utils in PR 1; both Core helper
+  files are gone by the end of PR 2. C's writer-cutover-first stage and A's
+  single storage PR are both workable; mine optimizes for review size, given
+  A's named risk.
+- Names: `config.agents.get` / `config.agents.set` (C). Three-level names
+  exist (`scheduler.cron.*`), the pair is symmetric, and `config.read`
+  returning only `agents` hides the partial surface the operator himself
+  pointed at ("一个配置文件只有一部分可以改").
+- Contract: all three agree — no input / `{ agents }` in file-entry shape;
+  secret-named keys `''` at any depth, whole value blanked even when not a
+  string; `set` returns the same projection of what it committed; agents
+  matched by `id`, never position; a changed provider does not erase a
+  same-id secret (A). Closed input shape, so a `dispatchers` key is rejected
+  (A).
+
+**3.7 `fsync`.** Still the operator's question; recommendation unchanged (not
+in this task), now with A's argument attached: syncing the temp file *before*
+the rename is compatible with the store's contract (a failure there rejects
+cleanly), while syncing the directory *after* the rename is not — the file has
+already changed, so the operation can no longer truthfully reject with "neither
+memory nor the file changed". If the operator wants more than today, the
+pre-rename file sync is the only part that fits without a new "committed but
+durability unknown" outcome.
+
+### CR-4. What still divides the proposals materially
+
+Technical — a merge has to choose:
+
+1. **Identity and Workflow memory lifetime** (A retain forever; B
+   owner-lifetime plus one-shot; C no identity-store memory). This sets the
+   implementation boundary more than anything else: A rewires per-Team store
+   ownership up to `TeamCollection` and replaces every fresh reader; B and C
+   leave ownership where it is.
+2. **Whether the raw replace-writer is exported** (C yes; A and B no). Follows
+   from C's Team owner class and stateless identity store; it decides whether
+   "one store kind" is structural or a convention.
+3. **Config write source** — raw file object (A, B) or `stringifyConfig` (C).
+   I consider this settled by C's own acceptance test; listed because C has
+   not conceded it.
+4. **Config reader** — threaded (A, now B) or in place (C).
+5. **Access mutex** — deleted (A, B) or kept (C). Settled by reading the five
+   lock bodies, in my view.
+
+The operator's, not ours:
+
+1. **Is "a hand edit is not read while the daemon runs" absolute, or does it
+   mean "is not read while something in memory owns that file"?** That is the
+   product fact under divergence 1. Absolute → A's retention, its unbounded
+   memory, and its wider catalog change. Owner-scoped → B/C, and a hand edit
+   to a closed, unmaterialized entity's file is read at its next reopen. My
+   recommendation is owner-scoped; the ruling's wording covers the Team record
+   only.
+2. **`fsync`** (3.7).
+3. Already scheduled for the development-approval playback: validation by
+   next-start rules, and `workflow_status` no longer showing unwritten
+   progress.

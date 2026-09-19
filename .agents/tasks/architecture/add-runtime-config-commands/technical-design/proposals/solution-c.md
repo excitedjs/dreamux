@@ -390,12 +390,14 @@ collection needs a small owner class around it:
   Team store load there, before recovery. Before load, `get/list` throw
   "used before loaded" (same stance as routing store,
   `routing/store.ts:101-104`).
-- **Standalone disk readers stay.** `server.ts:398-410` startup preflight and
-  `cli/doctor.ts:156-171` run in separate processes and must not instantiate
-  the live owner. Extract the current pure scan (`list()` + `readTeam`) into
-  an exported read-only `readTeamRecords(root, dispatcherId)` that both the
-  live `load()` and the preflight/doctor use. The preflight's
-  `detectLegacyCronJobStore` calls keep working unchanged.
+- **Standalone disk readers stay.** The startup preflight runs **in-process**
+  inside `Server.start()`, before Dispatchers launch
+  (`server.ts:254,260`; the throwaway `TeamStore` is built in
+  `detectLegacyCronStores` at `server.ts:403-406`). Only `dreamux doctor`
+  (`cli/doctor.ts:156-171`) is a separate process. Neither may instantiate the
+  live owner. Extract the current pure scan (`list()` + `readTeam`) into an
+  exported read-only `readTeamRecords(root, dispatcherId)` that the live
+  `load()`, the in-process preflight, and doctor all use.
 
 ### 5.3 Cron — `CronJobStore`
 
@@ -913,3 +915,336 @@ reconciliation still works with file-first ordering; concurrent
   to `server.status` by construction (`createCoreCommandRegistry` is the
   single registry); transport tests will confirm without new transport
   code.
+## Cross-review
+
+Round 2 (2026-09-20). I read both other proposals in full and checked their
+load-bearing claims against source, not against my own design. Evidence
+below is file:line in the current tree. I also corrected one factual error
+in my own §5.2 this round (the startup preflight is in-process, not a
+separate process — `server.ts:254,260`).
+
+### Review of Solution A
+
+**Arguments I accept (and what changes in my design):**
+
+1. **Retain the raw, pre-merge file document for the Config Service —
+   accepted; this is the most consequential correction to my design.** My
+   §6.4 derived the write-back candidate through `toConfigFileShape` over
+   the *resolved* `DreamuxConfig`. Source shows that loses operator-authored
+   bytes: `readDispatchers` expands `cwd` via `expandHome`
+   (`config.ts:456`) and materializes `enabled` (`:457`) and
+   `workspace.enabled` (`:458-462`, via `readWorkspaceConfig` `:297-306`)
+   even when the file omitted them; the channel side keeps `rawConfig`
+   (`:577`) the same way. Re-serializing through `stringifyConfig`
+   (`:145-168`) therefore rewrites every `agents` Command write's
+   `dispatchers` section (and applies defaults to `agents` provider
+   configs). A and B both hold the raw parsed document and write that back
+   verbatim, changing only `agents`. I adopt this: the Config Service holds
+   `{ raw, resolved }`, the encoder emits `raw`, and my `toConfigFileShape`
+   helper is withdrawn (keep `stringifyConfig` as onboard's serializer
+   only). This is strictly better fidelity, not a tie — the resolved object
+   is the wrong source for a verbatim section the Command cannot edit.
+
+2. **`getRuntimeConfig` is dead authority — accepted.** Verified:
+   `getRuntimeConfig` has zero non-test callers; only the definition exists
+   (`platform/paths.ts:81`). The module-level `currentConfig` is written by
+   `setRuntimeConfig` from four production sites (`server.ts:179`,
+   `onboard/run.ts:92,133`, `cli/doctor.ts:117`, `daemon/install.ts:101`)
+   but never read by production code. A is right that wiring a real Config
+   owner should retire this unused *read* authority. Qualification A does
+   not state crisply: `setRuntimeConfig`/`resetRuntimeConfig` cannot simply
+   be deleted in this task — `resetRuntimeConfig` is load-bearing test
+   isolation (`runtime-sockets.test.ts:41` et al.). The minimal honest move
+   is to delete the unused getter and fold the holder's remaining role into
+   the Config Service's scope, updating the test hook deliberately. I add
+   that to my stage 5 rather than asserting the whole holder is removable
+   for free.
+
+3. **The `transact` deadlock shape is correctly identified — accepted.**
+   `runtime-owner.ts:217-224` wraps `reprepareDeletedManagedWorktree` in
+   `state.transact`, and that helper calls `identities.update`
+   (`worktree/workspaces.ts:110`). A and B both say the helper must return
+   a candidate patch and the single owner performs the one commit. My §5.1
+   already says this; A's framing ("must not enter the same queue twice")
+   is the precise reason and I adopt the wording.
+
+4. **The Team anti-resurrection guarantee is pinned by a load-bearing test
+   that this ruling overturns — accepted and important.**
+   `packages/dreamux/tests/team-collection-read-path.test.ts:125-151`
+   asserts that corrupting the disk record makes `update` throw
+   `TeamNotFoundError` and never write back. The 2026-09-19 "一起迁" ruling
+   (hand damage ignored while running) directly reverses that assertion.
+   Per the repo rule "do not weaken a load-bearing test," this test cannot
+   silently go green; it must be replaced deliberately with one asserting
+   the in-memory owner governs. A names the exact test and lines; I did
+   not, and I add it to my verification. This strengthens my §12 risk 1.
+
+5. **Provider import side effects are not rollbackable; state it, do not
+   fake isolation — accepted.** A's §5 and my §6.3 agree. A adds one fact
+   worth carrying: do not unload a provider whose last agent was removed
+   (a running runtime may still use it). I adopt that explicit non-unload
+   rule.
+
+6. **`requirement.md:91` is stale text — confirmed.** It still calls
+   `agents` "the volatile store's first user," contradicted by the
+   2026-09-19 "不做" ruling. My proposal took the ruling as authority
+   without flagging the stale line; A correctly records it for the
+   TeamLeader. No design change, but the requirement text should be amended
+   when the final design lands.
+
+**Arguments I reject (with evidence):**
+
+1. **Replace long-lived `DreamuxConfig` references everywhere with a
+   threaded Config Service read capability — rejected for this task.** A
+   argues for a capability threaded through holders; my §6.4 assigns into
+   the existing shared object. The structural evidence favors the smaller
+   change: there is already exactly one mutable `DreamuxConfig` captured by
+   reference — `Dispatchers` stores it (`dispatchers/index.ts:47,72`) and
+   hands the same reference to every `DispatcherService` (`:174`), and the
+   three live `agents` readers all read *at use time*, not at
+   construction: `resolveAgent` indexes `config.agents` per launch
+   (`agent-config.ts:32`, called from `runtime-owner.ts:333`), the
+   capability snapshot enumerates `this.opts.config.agents` per request
+   (`teammate-collection/index.ts:335`), and `activity-reader.ts:88`.
+   Threading a reader is the greener type ("this can change") but it
+   edits ~15 source files plus dozens of test literals for **zero behavior
+   difference today**, and the ruling "以代码量最小的方式来做" answered the
+   *entry-point* question, not this one — so it is not a license either
+   way; the decision rests on cost/benefit, which favors in-place
+   assignment. What would flip me: the first reader that needs one
+   consistent snapshot across an `await`. None exists in the three
+   enumerated readers. I hold my position, while adopting A's useful
+   framing that the assigned object is "owned and alone written by the
+   Config Service."
+
+2. **Retaining `dispatcher.runtime` / derived snapshot is a second
+   publication point that must be removed — rejected as stated.** A treats
+   the resolved view as a co-equal mutable authority. Source shows
+   `dispatcher.runtime` is a derived, read-after-start projection
+   (`config.ts:465-469`) whose only daemon-side reader is
+   `assertRuntimeImplementationsLoaded` at construction (`server.ts:428`)
+   and `provider-diagnostics.ts:62`; diagnostics runs only in
+   onboard/doctor/install (offline), not in the daemon. Refreshing it in
+   the same commit (my §6.4) is consistency, not a second write authority;
+   deleting it is a cleanup that touches onboard and is out of this task's
+   boundary. B reaches the same conclusion independently (`§3.3`,
+   cleanup-trail item).
+
+**Factual error in A:** none that survived checking. Two claims I could not
+independently confirm but do not rely on: the SDK source line citation
+(`node-sdk 1.73.0`, an async `ws.on('message')`) and commit `2ed5f5ea`'s
+intent — both are presented as supporting color, not load-bearing.
+
+### Review of Solution B
+
+**Arguments I accept (and what changes in my design):**
+
+1. **Hold the raw file object so a Command write preserves `dispatchers`
+   byte-faithfully — accepted (same point as A1, independently reached).**
+   B's concrete serialization argument is the clearest of the three:
+   `expandHome` (`config.ts:456`) plus default materialization (`:457-462`)
+   mean `stringifyConfig` cannot round-trip the operator's
+   `dispatchers`. Adopted; see A1.
+
+2. **`decode`/`encode` with a nullable input, and lazy `load()` whose
+   failure is not cached — accepted as a cleaner primitive contract than
+   mine.** B's `decode(text: string | null)` folds "file absent" and
+   "present" into one owner policy and lets a failed load be retried on the
+   next operation. That retry matters for `access.json` specifically:
+   today every gated op re-reads, so a transiently unreadable file
+   naturally recovers. My §3 primitive loads once and would, on a hard
+   throw, need an explicit retry rule. I adopt B's non-caching failed load:
+   ENOENT is delivered as `null` (a defined empty state), other read errors
+   reject and leave nothing cached. This preserves the access failure
+   location *and* its recovery behavior without a policy enum.
+
+3. **Async decode is needed (the config loader awaits provider
+   `config.read`) — accepted.** `readAgents` awaits
+   `runtimeProvider.config?.read` (`config.ts:381`). My sketch implied a
+   sync `parse`; the Config Service decode must be allowed to be async.
+   Adopted.
+
+4. **`fsync` is absent everywhere today and is the operator's call —
+   accepted.** `grep fsync packages/*/src` returns nothing. I did not
+   surface this as an operator question in round 1; B and A both do. I now
+   agree it must be asked explicitly (recommendation below).
+
+5. **The `chat-bots.json` narrow delta is real and should be stated —
+   accepted as a finding; the product choice stays open.** Today
+   `loadChatBots` swallows *every* error to empty
+   (`chat-bots-store.ts:111-126`), so a non-ENOENT IO error (e.g. EACCES)
+   degrades to empty and the next save overwrites the file. Under any
+   memory-authoritative design the empty state is established at most at
+   first load; B recommends a non-ENOENT IO error fail that operation
+   (removing the last overwrite-with-empty case), while keeping parse
+   errors lenient. This is a genuine behavior delta my §5.7 blurred by
+   saying "lenient stays." I now separate the two: ENOENT/parse → empty
+   (unchanged), genuine IO error → reject, retry next op (B's
+   recommendation), pending the operator's word.
+
+6. **Staging three PRs with the Feishu stores first — accepted over my
+   six-stage list.** B sequences primitive+Feishu (smallest, proves lazy
+   failure location), then Core stores, then Config Service. A wants two
+   PRs; I had six stages. B's three-PR split is the better shipping unit:
+   the Feishu stores exercise every primitive feature (lazy load, tail,
+   drain, lenient decode) before the harder identity/Team/Workflow moves,
+   and it still honors "infrastructure first, one task." I adopt three PRs.
+
+**Arguments I reject (with evidence):**
+
+1. **Exclusive no-clobber creation collapses into a serialized
+   `update((cur) => cur === null ? value : fail())` — rejected.** This is
+   the sharpest technical disagreement. B asserts the single in-memory
+   owner arbitrates, so the link-based primitive is unneeded. Counter:
+   `WorkflowJournal.create` is append-only and an explicit non-goal to
+   migrate, yet it constructs a brand-new file that **must fail if the
+   journal already exists** (`journal.ts:55-65`), and there is no
+   long-lived in-memory owner for a journal that a fresh process recovers.
+   Its "does it exist" fact is the file itself at creation time; a
+   memory-null store in a recovering process cannot distinguish "never
+   created" from "created, not yet loaded by me." Identity create has the
+   same shape: `writeFileExclusiveAtomic` refuses on **any** existing file,
+   readable or not (`identity-store.ts:186-196`), and B itself concedes
+   (§2.3) its replacement would instead *overwrite an unreadable but
+   present* identity file — because `decode` maps unreadable → null. That
+   is a silent weakening of the no-clobber guarantee; B names it "I could
+   not find a path that reaches it," which is a defense without a
+   demonstrated safe scenario, and the directory-occupancy guard
+   (`identity-store.ts:289-305`) protects name *allocation*, not the file
+   publication of a store handed a path directly. Four genuine create-only
+   callers (identity `:191`, Team `store.ts:152`, Workflow run
+   `workflow-service/store.ts:46`, journal `journal.ts:58`) make the
+   exclusive capability a retained primitive, not a special case. My
+   §3 keeps `writeJsonAtomic(..., {exclusive:true})`. A independently keeps
+   exclusive create (§3 bullet 5).
+
+2. **Keep `KeyedAsyncQueue` in TeamStore for write+publication ordering —
+   rejected in favor of the document tail.** B keeps the queue because
+   `publishRecordState` awaits a roster read after the write. But the
+   primitive's `commit` already serializes an async preparation + file
+   write + publish as one unit; the roster fetch and the
+   `team.state` event can run inside the same commit after the file
+   settles (A's explicit "post-commit portion of the transaction
+   callback"). Keeping a second queue keyed by team id next to one
+   document tail is precisely the "new indirection while both survive"
+   anti-pattern when the document already serializes per file. I retain my
+   position: collapse `KeyedAsyncQueue` (the *store's* `writes` queue,
+   `store.ts:39`) into the document. Important scope distinction verified
+   this round: the *other* `KeyedAsyncQueue` at
+   `team-collection/index.ts:52` is `createRequestLifecycle` keyed by
+   request id (`:124`) — a different mechanism for create/replay, and it
+   stays. Only the store's write queue is removed.
+
+**Factual error in B:** one overstatement. B §3.3 says it "found no daemon
+reader of `dispatcher.runtime` after start (`server.ts:429`)." That is
+correct for *line 429* but the broader claim needs the qualifier that
+`provider-diagnostics.ts:62` reads `dispatcher.runtime.config` — it simply
+runs only in offline commands (doctor/onboard/install), never in the
+daemon. So the conclusion (refresh for consistency; delete later) is
+right; the supporting sentence should say "no in-daemon reader," not "no
+reader." B itself hedges this in the cleanup-trail note, so it does not
+change its design.
+
+### Revised position on each open divergence
+
+1. **Record lifetime with no live entity.** Revised. I no longer say
+   "identity gets no memory at all" as my final answer, nor A's
+   "retain every loaded handle for process life." The evidence supports a
+   middle line B and I converge on: the *live* runtime state owns memory;
+   the durable identity store stays path-bound and stateless for the four
+   ownerless write/read paths (create, dispatcher prepare, unheld-member
+   close, cold scans), because the existence fact is the *directory*
+   (`identity-store.ts:289-305`, names are not re-derived from loaded
+   records). For Team and Workflow, the collection owns a map of loaded
+   records for process life (A's retention is right there) so a hand delete
+   cannot resurrect/free a name mid-daemon — but cold, read-only callers in
+   preflight/doctor stay throwaway scanners. So: **identity = no
+   process-wide cache (path-bound reads); Team/Workflow = collection-owned
+   retained map; preflight/doctor = independent disk scanners in all
+   cases.** The difference between identity and Team is justified by what
+   the existence fact is: directory name vs. a readable file whose
+   in-memory authority the ruling just created.
+
+2. **How readers observe a committed `agents` write.** **The Config Service
+   owns and assigns into the existing shared `DreamuxConfig` object**
+   (shared-config assignment), not a threaded read capability. Evidence:
+   single reference graph (`dispatchers/index.ts:47,72,174`) and use-time
+   reads (`agent-config.ts:32`, `teammate-collection/index.ts:335`,
+   `activity-reader.ts:88`). Threading is the better type but costs a large
+   diff for no current behavior gain; flip only when a reader needs a
+   cross-`await` snapshot. The assigned object holds `{raw, resolved}` and
+   only the Config Service writes it.
+
+3. **Exclusive no-clobber create.** **Survives as a primitive operation**
+   (`writeJsonAtomic(...,{exclusive:true})` / tmpfile+link/EEXIST). Four
+   real callers, including journal with no in-memory owner; collapsing into
+   a serialized update silently overwrites an unreadable-but-present
+   identity. Both B's alternative and a full retention of
+   `atomic-write.ts` are wrong; the single merged writer carries an
+   exclusive mode.
+
+4. **Team publication ordering.** **The document's commit tail owns it**,
+   with a post-commit slot for the roster fetch and `team.state` event.
+   Delete the store's `KeyedAsyncQueue` (`store.ts:39`); keep the
+   collection's unrelated `createRequestLifecycle` (`index.ts:52`). The
+   overturned test (`team-collection-read-path.test.ts:125-151`) is replaced
+   deliberately.
+
+5. **`chat-bots.json` unreadable file.** Split the conflation:
+   ENOENT/parse-error → empty default unchanged; **non-ENOENT IO error →
+   fail that operation, do not cache, retry next op** (B's narrow delta).
+   This removes the last read-empty-then-overwrite data-loss path without
+   introducing a Channel-start failure (load stays off the initialize
+   path). Operator to confirm; my round-1 "keep catch-all" is withdrawn as
+   imprecise.
+
+6. **Staging and Command contract.** **Three PRs:** (1) primitive + Feishu
+   routing/access/chat-bots, (2) Core identity/Team/cron/Workflow +
+   deletions, (3) Config Service + Commands + skill/KB/change files.
+   Command names: I move from `config.agents.get/set` to B's
+   **`config.agents.get` / `config.agents.replace`** — "replace" states the
+   whole-section semantics ("整份写回") more honestly than "set"; A's
+   `config.read/config.write` is too broad given the section is
+   agents-only. Contract: closed envelope `{agents:[...]}`, file-shape
+   entries `{id,provider,config}`, secret-named values emitted as `''`,
+   `[]` allowed, `dispatchers` absent from input and output, write result =
+   the committed redacted agents. Secret merge matches by id then JSON path
+   (A's rule, incl. non-string secret values and reordered arrays).
+
+7. **Does "先确保落盘" require `fsync`?** **Recommendation to the operator:
+   not in this task; keep the current awaited tmpfile+rename
+   publication boundary and state it as such.** Nothing calls fsync today,
+   and the ruling contrasts write *order* (file before memory), not
+   power-loss durability. A is right that true crash durability also
+   requires a parent-directory fsync whose failure lands *after* the rename
+   — which cannot satisfy "fail and change nothing," so adopting it forces
+   a new failure semantics nobody defined. After this refactor fsync is a
+   one-line change in one primitive; revisit deliberately if wanted.
+
+### What still materially divides the three
+
+1. **Config reader wiring: shared-object assignment vs. threaded read
+   capability (A).** This is the one remaining technical divergence that
+   changes the implementation boundary (~15 source + many test files if
+   threaded) and the long-term type. B and C choose assignment; A chooses
+   the capability. Recommendation: assignment now, with the
+   cross-await-snapshot trigger recorded. **Technical, not the operator's.**
+
+2. **Exclusive create: primitive (A,C) vs. serialized-update emulation
+   (B).** Changes the primitive surface and the identity/journal
+   no-clobber guarantee. **Technical**, but the operator should be told B's
+   emulation changes the unreadable-file overwrite behavior of identity
+   create, in case that guarantee is considered a product fact.
+
+3. **Record-retention breadth: retain all loaded handles (A) vs. no
+   identity cache, retained Team/Workflow maps (B,C).** Changes memory
+   growth and the identity ownership shape. **Technical** given the
+   directory-occupancy fact; only the *unbounded history* memory cost is a
+   product consideration the operator may want noted.
+
+4. **`chat-bots.json` non-ENOENT IO-error behavior and `fsync`.** Both are
+   genuinely **the operator's decisions** (observable failure semantics / a
+   durability promise), not choices the three seats can close. Everything
+   else — primitive name, queue deletion, command names, three-PR split,
+   raw-document retention — is technical and the proposals now substantially
+   converge (raw-document retention is agreed by A and B and adopted by C).

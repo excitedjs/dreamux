@@ -691,3 +691,360 @@ No additional product decision is required for the stated `agents`-only scope,
 entity-reference removal rule, lazy access behavior, or absence of a volatile
 kind. They are already settled; the durability question above must not be used
 to reopen them.
+
+## Cross-review
+
+This section follows a complete reading of first-round B and C and fresh checks
+of their load-bearing claims against source. It supersedes earlier parts of A
+where a revised position is explicitly stated. No product implementation or
+other proposal was edited. Source paths below are relative to
+`packages/dreamux/src/` unless another package is named.
+
+The principal result is not a three-way convergence. B and C correctly show that
+in-place replacement of the shared config object's `agents` property can reach
+today's launch readers. They do not establish that cold-looking identity readers
+only touch entities without a live owner; current list/status paths disprove
+that premise. I retain the single committed record owner across runtime-object
+eviction, but change my Team publication design to B's domain-owned queue and
+accept C's identification of the journal's exclusive-create dependency. I also
+adopt a three-PR sequence, with corrected deletion and documentation boundaries.
+
+The ruling “以代码量最小的方式来做” is scoped to the entry-point question in
+`rulings.md:11-13`. It is not authority for choosing a memory lifetime, mutable
+configuration wiring, or reduced creation guarantee. Smaller equivalent designs
+can still win under the engineering whitepaper; that requires establishing the
+equivalence, not broadening this ruling.
+
+### Review of solution B
+
+Arguments accepted, and their effect on A:
+
+* **Keep Team's domain publication ordering outside the generic store.** B
+  correctly distinguishes the file transaction from the operation that commits
+  a Team record, awaits its roster, and publishes the aggregate. Current
+  `team-collection/store.ts:175-203,207-223` makes that distinction concrete.
+  I withdraw A's proposed generic post-commit transaction portion. Retain
+  TeamStore's keyed operation queue around document mutation and publication;
+  put `create` inside it too. The document still owns the file/current-value
+  transaction. This leaves two queues with different obligations in this one
+  owner, but adds no generic callback contract or post-commit failure mode to
+  every document. A's deletion count is reduced accordingly: Team's keyed queue
+  is retained, not claimed as removed.
+* **Fix file mode at 0600 in the document API.** All current document callers
+  use that mode. I accept removing the unused document-level mode parameter;
+  domain parent-directory rules remain separate. This narrows A's proposed
+  configurable surface without changing any persisted mode.
+* **Retain raw configuration alongside its derived runtime view and reuse the
+  actual loader.** Confirmed by `config/config.ts:145-167,208-218,451-469`.
+  This reinforces A's existing position, rather than changing it. The raw
+  Dispatcher section must not be reconstructed from expanded/defaulted values.
+* **In-place `agents` replacement can meet current next-launch timing.**
+  `agent-entity/agent-config.ts:27-47`,
+  `teammate-service/runtime-owner.ts:331-346`,
+  `agent-entity/activity-reader.ts:88-108`, and
+  `teammate-collection/index.ts:335-342` all read the selected configuration at
+  use time. I retract any implication in A's rejected-alternative text that
+  assigning a new agents map necessarily changes a running runtime's captured
+  config. It does not. I still prefer the explicit read capability for the
+  ownership reasons below; it is an architectural preference, not a demonstrated
+  functional impossibility of B's approach.
+* **The lifetime cost of retained historical records is real.** B is right to
+  challenge a forever-growing map. My retained-owner design must state its
+  actual bound: loaded persisted bytes and queued candidates, with no finite
+  product-defined ceiling. I do not describe that as a collision defense. It
+  implements the explicit ignore-hand-edits behavior. Choosing a shorter
+  authority lifetime changes that behavior and needs to be said plainly.
+* **Feishu first is a useful implementation slice.** I adopt B's three-PR
+  delivery size, but move all atomic-writer cutovers into the first PR and put
+  each owning maintenance/KB change in the PR that changes that ownership.
+  Section “Revised positions” gives the precise sequence.
+
+Arguments rejected or needing correction:
+
+1. **One-shot identity scans are not confined to unmaterialized entities.**
+   B's Section 2.3 asserts that these scans read files with no memory owner.
+   `TeamCollectionReadModel.list()` traverses every Team and obtains its leader
+   state through a new identity reader, without checking the live cache
+   (`team-collection/read-model.ts:38-42,85-94,128-150`).
+   `TeammateCollection.list/status` first read identities and only then consult
+   live services (`teammate-collection/index.ts:266-275,630-642`). A hand-damaged
+   live member identity can therefore disappear from list or fail status before
+   the live fallback is reached; a changed live leader identity can change
+   `team.list`'s `leader_state`. These are existing public paths, not invented
+   concurrent writers. Keeping their one-shot reads does not complete the new
+   memory authority contract.
+2. **Dropping the store at live-object retirement changes later ordinary
+   access.** A retired member is evicted at
+   `teammate-collection/index.ts:567-573`; later materialization reads identity
+   again at lines 599-609 and 630-636. Workflow completion evicts its execution
+   object at `workflow-service/index.ts:165-169,336-337`, after which status
+   uses the record store at lines 185-196. B's one-shot Workflow listing and
+   live-run-owned handle leave the same gap. Repeated access to a previously
+   loaded closed record must either keep memory authority or explicitly adopt
+   a narrower product guarantee.
+3. **Deleting all exclusive publication has a missed real caller.**
+   `WorkflowJournal.create` uses `writeFileExclusiveAtomic`
+   (`workflow-service/journal.ts:55-65`) on every Workflow initialization before
+   run-record creation (`workflow-service/run.ts:154-165`). Thus deleting
+   `atomic-write.ts` while declaring the journal untouched cannot compile or
+   complete the call graph. This is sufficient to retain a shared create-only
+   publication capability; no fabricated UUID collision is needed. Conversely,
+   I did not establish that ordinary generated-name spawn races would break
+   solely because its identity creation becomes serialized update. B's narrower
+   argument about those fenced callers deserves credit, not a speculative race
+   finding. It does not prove the primitive is unused everywhere.
+4. **The claimed all-policy `decode(text | null)` seam cannot handle read I/O
+   errors.** It never receives an `EACCES` raised before decoding. Team's
+   initial `get` catches read errors (`team-collection/store.ts:85-97`), whereas
+   identity propagates non-ENOENT I/O errors
+   (`agent-entity/identity-store.ts:126-159`). Feishu bots catch all read/parse
+   errors (`packages/channel/feishu-channel/src/chat-bots-store.ts:116-125`).
+   These policies cannot all be preserved by B's exact signature. Keep an
+   owner-controlled initial-load result, including its I/O failure policy.
+   Returning an uncached empty value outside an unloaded store is not a complete
+   substitute: the next mutation would load and fail again. If the policy
+   intentionally returns a default, that default must become the store's value.
+5. **Chat-bots I/O failure is an explicit proposed product change, not accepted
+   simplification.** B correctly discloses it as an operator question; I reject
+   adopting it without that ruling. It also does not remove every possible
+   initial overwrite-with-empty: a parse failure still produces empty under B.
+   The source's “not security-critical” comment is existing rationale, not an
+   operator ruling in this task ledger.
+6. **Leaving TeamService's separate record copy as a cleanup note leaves an
+   unnecessary second authority in the new design.** Its unbooted state is real
+   (`team-service/index.ts:85,668-670`), but a document with no committed Team
+   already represents it. Its write-followed-by-copy-back is at lines 657-659;
+   record-only cleanup updates through the store separately
+   (`team-collection/worktree-cleanup.ts:31-53`). Finish that read-path change
+   in the ownership migration; no new service phase is required.
+7. **Several smaller factual qualifications matter.**
+   `dispatchers/index.ts:88` is the root identity status reader, not the
+   preparation store; preparation already passes the same handle into the Agent
+   (`dispatcher-service/input-source-lifecycle.ts:190-211`). Workflow's old
+   `JsonDocumentStore` fails on malformed/non-ENOENT reads
+   (`platform/json-document-store.ts:23-53`), so the claim that a decoder-based
+   create necessarily overwrites an unreadable Workflow record “the same way
+   identity does” is not established by that parser. Adding complete power-loss
+   durability is not “one line”: temporary-file sync, rename, parent-directory
+   sync, and the post-rename error contract are separate concerns. Finally, the
+   task inventory really does contain stale volatile wording at
+   `requirement.md:89-92`; the claim that it has no error is too broad.
+
+### Review of solution C
+
+Arguments accepted, and their effect on A:
+
+* **Exclusive creation has an out-of-scope append-log caller.** C correctly
+  identifies `WorkflowJournal.create`, which A's first pass missed as a caller
+  of the helper being removed. I revise “internal file publication primitive”
+  to permit the journal to use the one shared create-only publication
+  capability. The journal remains append-only after initialization; it does not
+  become a transactional document. This is a mechanical callsite change needed
+  to delete the old helper, not expansion into journal redesign.
+* **Distinguish directory occupancy from readable identity.** The existing
+  member-name inventory preserves occupied directories even when their identity
+  is invalid (`agent-entity/identity-store.ts:293-306,331-346`). Preserve that
+  rule and the explicit `replaceExisting` exception at lines 188-199. A shared
+  record owner does not authorize turning an invalid initial identity file into
+  a free member name. This strengthens the explanation of A's existing choice.
+* **Worktree preparation must return a candidate rather than recursively
+  write the same document.** Confirmed at
+  `teammate-service/runtime-owner.ts:217-224` and
+  `worktree/workspaces.ts:110-116`. A already identifies this; C independently
+  supports retaining it as an implementation acceptance check.
+* **Preserve lazy access and initial lenient bot-state behavior.** I accept C's
+  intended product behavior, but not the contradictory load API or the move of
+  chat-bots' first load to initialize. The corrected policy belongs to its
+  actual first consumer. The current load locations are shown by
+  `packages/channel/feishu-channel/src/feishu-channel.ts:215,221-225` and
+  `feishu-session-inbound.ts:116-118,125-139`.
+* **One common low-level publication implementation is enough.** Accept C's
+  distinction between publication and document memory, given the real journal
+  caller. The primitive takes bytes, so a name claiming JSON-only semantics is
+  unnecessary. This permits the first PR to remove all three old writer bodies
+  without migrating every Core domain owner in that same PR.
+
+Arguments rejected or needing correction:
+
+1. **A stateless identity store plus a live runtime document leaves two read
+   authorities.** The source counterexamples under the B review apply equally
+   to C's “cold by construction” claim. Existing architecture explains why
+   these readers exist; it does not establish that they satisfy the new story.
+   C also explicitly preserves disk reads for dead Workflow runs in Section
+   5.4. That reads hand edits after a normal run finishes. A query can work with
+   no live execution object while still using a retained record document.
+2. **The Team map is not the stated one-file document.** C's Section 5.2
+   describes `TransactionalDocument<Record<teamId, TeamRecord>>`, then writes
+   different per-Team paths inside a collection tail. Its public primitive
+   accepts exactly one path and encoder. Either the Team owner still implements
+   separate snapshot/write/tail machinery, or the primitive becomes a
+   multi-file transaction abstraction. Neither is the advertised reuse. Use
+   one document per Team inside a collection map. A single collection tail also
+   makes unrelated Teams wait on each other's file I/O and roster query;
+   today's keyed queue is per Team (`team-collection/store.ts:175-176`).
+3. **Dissolution does not free the Team record/name.** Section 5.2 says a
+   dissolved Team is removed from the map; Section 8 says its closed record
+   stays. The latter matches source and product. Closed records also retain
+   accepted-request history (`team-collection/index.ts:124-135,183-187`);
+   creation failure deliberately closes rather than removes a published Team
+   (`team-service/closing.ts:265-270`). Correct the former statement; removing
+   the map entry is not an anti-resurrection fix.
+4. **ConfigService still has its own transaction mechanism in C.** Section
+   6.1 gives it a private tail, and Section 2.2 writes through the raw atomic
+   helper before assignments. That is another hand-built file-first store,
+   instead of the agreed Config Service using the shared transactional store.
+   C's exact document API also lacks async preparation even though provider
+   validation and Workflow journal append are awaited. Its “every document has
+   an empty state” is false for daemon configuration: missing config is an
+   explicit startup error (`config/config.ts:190-194`). Fix these capability
+   gaps in the one store; do not make Config/Workflow exceptions beside it.
+5. **Reconstructing `dispatchers` from resolved config is not unchanged JSON.**
+   C's mapping explicitly emits enabled/workspace defaults and the expanded
+   cwd (`config/config.ts:152-165,451-469`). A file with omitted defaults or
+   `cwd: "~/repo"` will change in its Dispatcher section on an agents write.
+   This may preserve current resolved behavior, but C's promise to leave that
+   file content unchanged is false. B's held raw document is the simpler way
+   to honor the agents-only surface without requiring that extra interpretation.
+   C's secret merge also needs an explicit match by Agent id: “walk in parallel”
+   does not establish safe behavior when the submitted array is reordered.
+6. **The claimed live diagnostics/onboard readers are not daemon consumers.**
+   `provider-diagnostics.ts:48-74` does read `dispatcher.runtime`; its production
+   callers are doctor/onboard (`cli/doctor.ts:310-318`, `onboard/run.ts:293`),
+   which load their own configuration. The daemon reference found is the
+   startup assertion (`server.ts:425-429`). Thus C's live-consumer justification
+   for mutating every existing Dispatcher element is factually wrong. Keeping
+   a derived view coherent is reasonable, but does not require in-place
+   Dispatcher mutation or reverse the runtime-restart non-goal.
+7. **The bot-state load contract contradicts its promised failure location.**
+   C's Section 3 says non-ENOENT I/O errors reject under both policies; Section
+   5.7 says they become empty at initialize. Actual `loadChatBots` catches all
+   errors (`packages/channel/feishu-channel/src/chat-bots-store.ts:116-125`).
+   Following the proposed API turns EACCES into a new Channel-start failure.
+   Following the narrative instead requires a different API. Preserve the
+   current policy at the owner and keep loading at first use; do not move its
+   authority boundary earlier merely for symmetry with routing.
+8. **Access's retained mutex has no extra operation to protect.** All five
+   existing critical sections were read: `feishu-session-inbound.ts:116-118`,
+   `183-190`, `247-262`, `296-351`, and `feishu-session-ops.ts:293-367`, under
+   `packages/channel/feishu-channel/src/`. Each is a read, synchronous decision,
+   optional write, and returned result; none sends a network response inside
+   the lock. These fit the document transaction. The card send remains between
+   two transactions (`feishu-session-inbound.ts:266-296`). Unlike Team's
+   asynchronous post-commit roster publication, no second serialized obligation
+   was found. Delete this mutex, as B proposes.
+9. **Its stages are not independently shippable as written.** Stage 2 deletes
+   `JsonDocumentStore`, while stage 3 still has to migrate its imports in
+   `scheduler/store.ts:4,73` and `workflow-service/store.ts:5,35`. Stage 2's
+   assertion that no old writer remains conflicts with stage 4 deleting the
+   inline bot writer. Maintenance and gate work must accompany each deliverable,
+   not wait for a final cleanup stage.
+10. **Other factual corrections:** chat-bots has seven domain functions but
+    four mutators, not seven/five: `observeKnownBot`, `trustIntroducedBots`,
+    `clearBaselineIfCurrent`, and `recordBotAdded` at
+    `chat-bots-store.ts:149-162,169-196,226-236,265-279` in the Feishu package.
+    `server.ts:396-415` preflight is in the daemon process before activation,
+    not a separate process like doctor. A provider batch can register one ref
+    before another ref fails (`registry/provider-loader.ts:110-118,183-190`),
+    so “a failed provider load rejects before anything is registered” is only
+    true when scoped to that individual failed provider. A rejected candidate's
+    newly warmed registry is not literally what restarting from the unchanged
+    config file produces. The side effect can be acknowledged without that
+    incorrect equivalence.
+
+### Revised positions on the named divergences
+
+| Point | Revised A position |
+| --- | --- |
+| Record lifetime without a live entity | Retain each successfully loaded identity, Team, and Workflow document in its domain scope for the daemon lifetime; evict only execution objects. One-shot reload or a permanently stateless identity reader would require narrowing the ignore-hand-edits guarantee. |
+| Observing committed agents | Continue recommending a ConfigService read capability for dynamic consumers and one prepared committed value. Admit that a service-owned stable shared object can satisfy today's timing; reject arguments based on a nonexistent global “least code” ruling or on a claimed inevitable running-runtime mutation. |
+| Exclusive creation | Keep create-only publication and document creation semantics; share the same implementation with the journal's initial create. Do not add a collision registry, and do not claim a normal generated-name race was proved. A per-document serialized update can simplify Team's valid-record decision, but it does not erase the journal caller or automatically preserve identity's no-clobber contract. |
+| Team publication order | Change A to retain TeamStore's per-Team operation queue around document commit and awaited roster publication, including create. Remove A's generic post-commit hook/portion. Neither no ordering nor a Dispatcher-wide tail is warranted. |
+| Unreadable chat-bots | Keep current catch-all initial default and cache that result; load at first existing consumer, not initialize. Non-ENOENT operation failure is an operator-owned behavior change, not a limit the utility should impose. |
+| PR staging and Commands | Prefer three coherent PRs as specified below; adopt `config.agents.get` and `config.agents.replace`, returning `{ agents: [...] }` with empty secret values and whole-array replacement. No dispatchers, CLI verb, new authorization, or aliases. |
+| fsync | Recommend preserving awaited atomic publication without adding fsync in this task, but ask the operator to confirm that meaning. If power-loss durability is intended, the post-rename failure contract must also be decided; it is not a one-line implementation tweak. |
+
+The revised three PRs are:
+
+1. **One publication backend plus shared document plus Feishu.** Move *all*
+   atomic publication callers, including the journal's initial create, to the
+   one utils backend. Delete the old Core writer file, utils writer body/name,
+   and inline bot writer. Migrate all three Feishu documents and remove access
+   mutex. Update the Feishu owning maintenance/KB references and change notes
+   now. Core's existing domain stores can temporarily call the same publication
+   backend through their current ownership; there are no parallel writer
+   implementations or compatibility forwarding files.
+2. **Core memory ownership.** Migrate identity, Team, cron, and Workflow and
+   their query/recovery paths. Retain stable record handles across service
+   eviction; remove competing snapshots. Delete `JsonDocumentStore` only after
+   its final cron/Workflow caller moves. Retain Team's domain queue and journal
+   append behavior. Update the matching maintenance/product/KB records now.
+3. **ConfigService and Commands.** Reuse the established store, share startup
+   preparation, retain raw Dispatcher JSON, implement secret retention, and
+   wire current reads. Update config maintenance and change notes here. Start
+   this PR only after both infrastructure PRs meet all four gates.
+
+Every PR runs build, lint, test, and `typecheck:tests`; the relevant KB delta
+also runs `.agents/scripts/check.sh`. Staging is a technical delivery choice,
+not permission to leave the final architecture with raw-document write bypasses.
+The final exception is the journal's initialization, because it is not a mutable
+JSON document and is expressly outside the document migration.
+
+For Commands, the closed outer `{ agents }` envelope and the loader's entry
+validation are enough for input; provider configuration remains opaque. A closed
+output projection can describe host-owned `id`/`provider`/optional `config`
+without reimplementing provider validation. Return the redacted value committed
+by that invocation. Match secret preservation by Agent id and nested JSON path,
+and retain the already-ruled empty-string convention; C's suggestion to ask
+whether the front end accepts empty strings would reopen an explicit decision.
+
+### Remaining material disagreements and who decides
+
+**Operator-owned behavioral decisions:**
+
+* **Authority after live-object eviction versus retained-memory cost.** My
+  recommendation preserves the requirement's daemon-lifetime wording; B/C's
+  one-shot/dead-run approaches reduce retained memory but allow a later read to
+  accept disk changes. This affects list/status, reopen, and failure recovery.
+  If the operator intends authority only while a live entity holds a store,
+  record that narrower guarantee and its visible consequences. Source alone
+  cannot decide that product trade-off. Even under that narrower choice, readers
+  of an actually live entity must use its existing owner; the current contrary
+  premise is a factual defect, not an option.
+* **First-load chat-bots I/O failure.** Keep today's empty default, or change
+  that operation to fail and require successful reading before mutation. I
+  recommend preservation in this refactor. A new Channel-start failure is not
+  an equivalent version of either choice.
+* **Meaning of “先确保落盘”.** Confirm atomic publication versus power-loss
+  durability. No fsync recommendation becomes an operator ruling by consensus.
+  The latter choice must also specify what a directory-sync failure after
+  rename means, since the previous file cannot be promised unchanged.
+
+**Technical disagreements for the final design, not new product questions:**
+
+* Explicit config read capability versus the service owning a stable shared
+  object. Both can implement the current timing. I prefer removing the separate
+  publication/aliasing obligation; B/C prefer a smaller wiring diff. Whichever
+  is selected must publish through the shared store and preserve raw Dispatcher
+  JSON, not implement a second Config transaction.
+* How much of create-only publication the document API exposes. The journal's
+  actual caller and identity's current no-clobber behavior must be addressed.
+  They cannot disappear because a primitive interface omitted them. Removing
+  a user-visible collision refusal would become an operator question if someone
+  still proposes it after tracing all affected entry points.
+* Team domain queue versus a generic post-commit facility. I now favor B's
+  domain queue, with a precise retained-mechanism count. A generic facility is
+  not needed by Config or Feishu and should not be added just to remove one
+  existing domain operation queue.
+* Whether the completed migration actually includes cold identity/Workflow
+  query paths, Config's transaction, access's mutex removal, and the journal
+  helper callsite. These alter implementation boundary and risk substantially;
+  they are not naming differences or optional cleanup.
+* PR grouping and `get/replace` versus `get/set` or `read/write` names. These
+  remain ordinary engineering/API naming decisions within the confirmed
+  complete-agents contract. A future required client contract would change that
+  status; no such client implementation is in this task.
+
+No review findings above rely on a green test run: this was a source review,
+and no tests or live services were run. The prior shallow-history and external
+package-consumer limits remain. The SDK concurrency uncertainty was resolved
+from installed source in round one; no live event-timing claim is made.
