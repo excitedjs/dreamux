@@ -7,7 +7,7 @@ import {
   type TurnCollector,
 } from './events.js';
 import type { CodexOutputSchemaCodec } from './output-schema-codec.js';
-import type { CodexReasoningEffort } from './reasoning-effort.js';
+import type { CodexReasoningEffort, SubmissionEffort } from './reasoning-effort.js';
 import type { CodexWsClient } from './rpc.js';
 import { toolDisplay } from './tool-display.js';
 import type { ThreadItem, ThreadTokenUsage } from './types.js';
@@ -129,9 +129,9 @@ export class TurnManager {
     if (this.protocolFailure !== null) return { status: 'failed', error: this.protocolFailure };
     const threadId = this.opts.getThreadId();
     if (threadId === null) return { status: 'failed', error: new Error('input submitted without thread_id') };
-    let effort: string | undefined;
+    let asked: SubmissionEffort;
     try {
-      effort = await this.opts.reasoning.effortFor(text);
+      asked = await this.opts.reasoning.effortFor(text);
     } catch (error) {
       return { status: 'failed', error: asError(error) };
     }
@@ -146,10 +146,10 @@ export class TurnManager {
       response = await submitTurnStart(
         this.opts.client,
         threadId,
-        text,
+        asked.hint === undefined ? [text] : [text, asked.hint],
         this.opts.turnCwd ?? null,
         this.opts.codec?.wireSchema,
-        effort,
+        asked.effort,
       );
     } catch (error) {
       const normalized = asError(error);

@@ -366,14 +366,12 @@ function traceItemType(params: Record<string, unknown>): string | null {
 export async function submitTurnStart(
   client: CodexWsClient,
   threadId: string,
-  prompt: string,
+  texts: string[],
   cwd: string | null,
   outputSchema?: Record<string, unknown>,
   effort?: string,
 ): Promise<TurnStartResponse> {
-  const input: UserInput[] = [
-    { type: 'text', text: prompt, text_elements: [] },
-  ];
+  const input: UserInput[] = texts.map((text) => ({ type: 'text', text, text_elements: [] }));
   const params: Record<string, unknown> = { threadId, input };
   if (cwd !== null) params.cwd = cwd;
   if (outputSchema !== undefined) params.outputSchema = outputSchema;
@@ -405,7 +403,7 @@ export async function runTurn(
 ): Promise<CollectedTurn> {
   const collector = subscribeTurnCollection(client, threadId);
   try {
-    const res = await submitTurnStart(client, threadId, prompt, cwd);
+    const res = await submitTurnStart(client, threadId, [prompt], cwd);
     return await collector.awaitTurn(res.turn.id);
   } finally {
     collector.dispose();

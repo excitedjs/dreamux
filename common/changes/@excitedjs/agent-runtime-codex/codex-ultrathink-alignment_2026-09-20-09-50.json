@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Align the Codex ultrathink keyword with Claude Code: a matching submission now also carries the sentence Claude Code injects, as a separate input item beside the unchanged submission text, and the keyword must appear as a whole word. A submission where it is only part of a word, such as 'ultrathinking', no longer raises effort.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}
