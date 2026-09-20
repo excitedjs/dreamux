@@ -272,12 +272,13 @@ the same change that touches it.
 
 ## Codex reasoning effort
 
-A submission containing `ultrathink`, matched as a case-insensitive substring,
-requests the current Codex model's highest supported effort. All submission
-sources use the same rule. The keyword selects a request parameter and nothing
-else: the submission reaches the model byte for byte as it was assembled, with
-no explanation appended. History, files, and tool results are not independently
-scanned.
+A submission containing `ultrathink` as a whole word, matched
+case-insensitively, requests the current Codex model's highest supported
+effort. All submission sources use the same rule. The submission itself reaches
+the model byte for byte as it was assembled; beside it the turn carries one
+added item, the sentence Claude Code injects for the same keyword, so both
+runtimes tell the model the same thing. History, files, and tool results are
+not independently scanned.
 
 The next ordinary submission explicitly restores ordinary effort. Busy input
 still submits without waiting and follows native merging and setting timing.
@@ -286,7 +287,9 @@ merged native turn after ordinary input. Cold resume uses effective Codex
 configuration or the model default for ordinary effort. Global configuration
 and other threads are unaffected.
 
-Decision: [Issue #430](https://github.com/excitedjs/dreamux/issues/430).
+Decision: [Issue #430](https://github.com/excitedjs/dreamux/issues/430), whose
+substring matching and silent submission were later aligned with Claude Code
+by [promote model and effort](/.agents/tasks/architecture/promote-runtime-model-and-effort/README.md).
 Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasoning-effort).
 
 ## Background work and completion delivery

@@ -440,10 +440,16 @@ Source:
 
 The Codex provider applies the submission rule in
 [the product catalog](../product/README.md#codex-reasoning-effort).
-`CodexReasoningEffort` reads model metadata through `model/list`, including
-hidden entries and pagination. It selects a known actual effort, excluding
-Ultra and non-reasoning modes, and rejects an unresolvable maximum before
-submitting input. It never scans conversation history.
+`CodexReasoningEffort` owns the keyword: the word-boundary match, the hint it
+returns beside the effort, and the metadata lookup behind both. Codex has no
+reminder channel — `UserInput` is text, images, audio, skills and mentions — so
+the hint can only travel as another text item. No item type Dreamux renders as
+activity covers user input, so the added item never reaches a card.
+
+It reads model metadata through `model/list`, including hidden entries and
+pagination. It selects a known actual effort, excluding Ultra and
+non-reasoning modes, and rejects an unresolvable maximum before submitting
+input. It never scans conversation history.
 
 Fresh runtimes retain the ordinary effort returned by `thread/start`, using the
 model default when unset. A resumed runtime reads effective configuration via
@@ -455,9 +461,9 @@ there is no new state file or recovery ledger.
 Preparation runs inside the existing admission ordering, before `turn/start`.
 Metadata failure is a proven pre-admission failure. Native submission errors
 remain ambiguous. Busy input does not wait for completion and no per-turn
-escalation state exists. The provider chooses a `turn/start` parameter and never
-rewrites submission text, so nothing is appended to a submission or to thread
-instructions.
+escalation state exists. A marked submission travels as two text items in one
+`turn/start`: the submission as assembled, then the hint. The provider never
+rewrites submission text and never touches thread instructions.
 
 Source: `/packages/agent-runtime/codex/src/reasoning-effort.ts`,
 `/packages/agent-runtime/codex/src/turn-manager.ts`,

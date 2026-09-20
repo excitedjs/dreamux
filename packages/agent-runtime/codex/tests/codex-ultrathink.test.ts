@@ -5,6 +5,11 @@ import type { CodexWsClient } from '../src/rpc.js';
 import type { CodexProcess } from '../src/supervisor.js';
 import { FAKE_PATHS, FakeCodexProcess, FakeCodexWsClient, noopStateSink, waitFor } from './helpers/codex-runtime-fakes.js';
 
+// The sentence the provider injects, spelled out here so a reworded constant
+// fails instead of matching itself.
+const HINT = 'The user included the keyword "ultrathink", requesting deeper reasoning '
+  + 'on this turn. Reason as thoroughly as the task warrants.';
+
 function createRuntime(client: FakeCodexWsClient, sessionId: string | null = null): CodexRuntime {
   return new CodexRuntime({ runtimeId: 'effort-test', sessionId }, {
     cwd: '/fake/cwd',
@@ -30,22 +35,38 @@ describe('Codex ultrathink submissions', () => {
       const requests = client.requests.filter((request) => request.method === 'turn/start');
       expect(requests.map((request) => (request.params as { effort?: string }).effort))
         .toEqual([undefined, 'xhigh', 'low']);
-      expect(requests[1]?.params).toMatchObject({ input: [{ text: '请ultrathink一下' }] });
+      expect(requests[1]?.params).toMatchObject({ input: [{ text: '请ultrathink一下' }, { text: HINT }] });
       expect(requests[2]?.params).toMatchObject({ input: [{ text: 'next task' }] });
     } finally {
       await runtime.stop();
     }
   });
 
-  it.each(['ULTRATHINK', 'UltraThink', 'prefixULTRATHINKsuffix', 'quoted: "ultrathink"'])(
-    'matches %s without altering the original text', async (text) => {
+  it.each(['ULTRATHINK', 'UltraThink', 'quoted: "ultrathink"', '(ultrathink)'])(
+    'matches %s and appends the hint without altering the original text', async (text) => {
       const client = new FakeCodexWsClient();
       const runtime = createRuntime(client);
       await runtime.start();
       try {
         expect((await runtime.submit({ text })).status).toBe('submitted');
         const params = client.requests.find((request) => request.method === 'turn/start')?.params;
-        expect(params).toMatchObject({ effort: 'xhigh', input: [{ text }] });
+        expect(params).toMatchObject({ effort: 'xhigh', input: [{ text }, { text: HINT }] });
+      } finally {
+        await runtime.stop();
+      }
+    },
+  );
+
+  it.each(['ultrathinking', 'x_ultrathink_y', 'prefixULTRATHINKsuffix'])(
+    'leaves %s to Codex because the keyword is not a whole word', async (text) => {
+      const client = new FakeCodexWsClient();
+      const runtime = createRuntime(client);
+      await runtime.start();
+      try {
+        expect((await runtime.submit({ text })).status).toBe('submitted');
+        const params = client.requests.find((request) => request.method === 'turn/start')?.params;
+        expect(params).toMatchObject({ input: [{ text }] });
+        expect(params).not.toHaveProperty('effort');
       } finally {
         await runtime.stop();
       }

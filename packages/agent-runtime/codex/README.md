@@ -35,11 +35,12 @@ use and tests.
 
 ## Ultrathink
 
-Include `ultrathink` anywhere in a submission to request the current model's
-highest supported reasoning effort. Matching is case-insensitive and includes
-quoted text in that submission. The provider only picks the `turn/start` effort
-parameter: submission text is passed through unchanged, with no explanation
-appended. It does not scan history or tools.
+Include `ultrathink` as a whole word in a submission to request the current
+model's highest supported reasoning effort. Matching is case-insensitive and
+includes quoted text in that submission; a word it is only part of, such as
+`ultrathinking`, does not match. The submission text is passed through
+unchanged, and the turn carries one added text item holding the same sentence
+Claude Code injects for this keyword. It does not scan history or tools.
 
 The next ordinary submission explicitly restores the original effort. Busy
 submissions use the same rule without waiting for completion; Codex owns input

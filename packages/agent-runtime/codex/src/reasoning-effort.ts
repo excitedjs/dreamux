@@ -3,6 +3,22 @@ import type { ThreadStartResponse } from './types.js';
 
 const EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
+const KEYWORD = /\bultrathink\b/i;
+
+// The sentence Claude Code injects for the same keyword, copied so both
+// runtimes read the same instruction. Claude Code sends it as a bare message,
+// and Codex has no reminder channel at all, so it travels as plain input.
+const KEYWORD_HINT = 'The user included the keyword "ultrathink", requesting '
+  + 'deeper reasoning on this turn. Reason as thoroughly as the task warrants.';
+
+/** What one submission asks of Codex beyond the text the author wrote. */
+export interface SubmissionEffort {
+  /** The effort to request, or undefined to leave it to Codex. */
+  effort?: string;
+  /** Present only for a marked submission, sent as its own input item. */
+  hint?: string;
+}
+
 interface Model {
   model: string;
   defaultReasoningEffort: string;
@@ -21,10 +37,10 @@ export class CodexReasoningEffort {
     private readonly cwd: string,
   ) {}
 
-  /** The effort one submission asks for, or undefined to leave it to Codex. */
-  async effortFor(text: string): Promise<string | undefined> {
-    const marked = /ultrathink/i.test(text);
-    if (!marked && !this.resumed && this.ordinary === undefined) return undefined;
+  /** What one submission asks for: its effort, and a marked one's hint. */
+  async effortFor(text: string): Promise<SubmissionEffort> {
+    const marked = KEYWORD.test(text);
+    if (!marked && !this.resumed && this.ordinary === undefined) return {};
 
     if (this.ordinary === undefined) {
       // Cold resume may restore the last temporary override from native state.
@@ -36,7 +52,7 @@ export class CodexReasoningEffort {
         : this.thread.reasoningEffort;
       this.ordinary = effort ?? (await this.readModel()).defaultReasoningEffort;
     }
-    if (!marked) return this.ordinary;
+    if (!marked) return { effort: this.ordinary };
 
     if (this.highest === undefined) {
       const model = await this.readModel();
@@ -49,7 +65,7 @@ export class CodexReasoningEffort {
       this.highest = efforts.reduce((highest, effort) =>
         EFFORT_ORDER.indexOf(effort) > EFFORT_ORDER.indexOf(highest) ? effort : highest);
     }
-    return this.highest;
+    return { effort: this.highest, hint: KEYWORD_HINT };
   }
 
   private async readModel(): Promise<Model> {

@@ -345,6 +345,10 @@ Quoted from the answer cards; nothing here is paraphrased into a wider rule.
 - 2026-09-20, the matching rule: "改成词边界，和 claude 一致" — this narrows
   released behavior, which #430 user story 3 chose deliberately.
 - 2026-09-20, where the change is made: "并进本任务（推荐）".
+- 2026-09-20, delivery order: "把那个 Ultrathink 的改动先做一下" — behavior 7
+  ships first, on its own, while behaviors 1 to 6 stay paused.
+- 2026-09-20, the path for that slice: "快速通道，直接开发（推荐）", and the
+  development authorization for it: "授权开发".
 - 2026-09-20, returning to the configured default: "不处理，切完了就和配置文件无
   关了，恢复的时候 identity.json 会盖过 agent profile 的default model 和 default
   effort" — no reset command, and the identity value outranks the entry's
