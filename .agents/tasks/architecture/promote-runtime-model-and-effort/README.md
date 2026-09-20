@@ -28,6 +28,7 @@
 
 ## Delivery
 
+- Pull request: https://github.com/excitedjs/dreamux/pull/451
 - Delivered: requirement behavior 7 — the Codex keyword now matches on a word
   boundary and a matching submission carries Claude Code's sentence as its own
   input item. Behaviors 1 to 6 are not implemented.
