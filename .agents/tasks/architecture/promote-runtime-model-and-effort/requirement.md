@@ -44,14 +44,26 @@
      says so and writes nothing.
 5. **Claude Code's `agents[].config.model` is removed**, being unused.
 6. **`ultrathink` stays Codex-only in Dreamux**, and nothing is added for
-   Claude Code.
+   Claude Code, which matches the keyword in its own client already.
+7. **Codex's keyword handling aligns with Claude Code's.** A submission that
+   matches now also carries Claude Code's sentence verbatim — "The user
+   included the keyword "ultrathink", requesting deeper reasoning on this turn.
+   Reason as thoroughly as the task warrants." — sent as its own input item
+   beside the submission, which stays byte for byte as assembled. Matching
+   becomes word-boundary (`\bultrathink\b`, case-insensitive) instead of a
+   bare substring. This supersedes the part of
+   [#430](https://github.com/excitedjs/dreamux/issues/430) that said nothing is
+   appended and that matching is a substring; the reason it gave — never
+   rewrite the operator's task text — still holds, because the sentence is a
+   separate item rather than an edit to the body.
 
 ### Scope
 
 The `agents[]` entry shape and its loader; the neutral agent-runtime contract;
 both builtin providers; two optional identity fields; the Core Commands the
-Channel calls; the two slash commands; the maintenance skill and knowledge
-updates; the change file.
+Channel calls; the two slash commands; the Codex keyword's injected sentence
+and match rule; the product catalog, maintenance skill and knowledge updates;
+the change file.
 
 ### Non-goals
 
@@ -60,7 +72,10 @@ updates; the change file.
   only by model or effort.
 - Addressing an individual TeamMate inside a Team.
 - A command that resets an entity back to the entry's defaults.
-- Extending `ultrathink`, or any keyword handling, to Claude Code.
+- Extending `ultrathink`, or any keyword handling, to Claude Code, which needs
+  none.
+- Scanning history, files or tool results for the keyword, and any change to
+  which submission sources the rule applies to — both stay as #430 set them.
 - Changing how `permission_mode`, `approval_policy` or `sandbox_mode` are
   configured, and implementing the capability for any runtime provider
   published outside this repository.
@@ -84,6 +99,15 @@ updates; the change file.
   identity fields.
 - No internal identifier, gateway variable or private model name from the
   operator's install reaches this repository.
+- The product catalog's Codex effort entry is rewritten: it currently promises
+  that the submission arrives "byte for byte … with no explanation appended"
+  and that matching is a substring. Both change, so the entry and the
+  provider-runtime section are updated in the same change, with an ordinary
+  behavior change note — nothing here blocks an upgrade.
+- Verified for the narrowing: word-boundary matching still fires on mixed
+  Chinese and English ("请ultrathink一下", "超ultrathink级") because a CJK
+  character is a non-word character. What stops matching is a suffixed or
+  underscore-joined form — "ultrathinking", "x_ultrathink_y".
 
 ## Confirmed current behavior
 
@@ -311,6 +335,16 @@ Quoted from the answer cards; nothing here is paraphrased into a wider rule.
   处理" — Dreamux keeps its keyword handling Codex-only and adds nothing for
   Claude Code. (The decision stands as quoted; the mechanism is not
   server-side — see the correction under confirmed behavior.)
+- 2026-09-20, aligning Codex's keyword with Claude Code: "既然你确定了
+  ultrathink 是 claude code 内置机制做的，那 codex 的机制可以和claude code 对齐，
+  特别是那句注入的提示，codex 还没有，上次做的时候特地删掉了."
+- 2026-09-20, the injected wording: "照抄 claude 的原句". The TeamLeader
+  recommended an equivalent sentence of our own, on the grounds that a public
+  repository should not carry another product's prompt text and that our
+  behavior also changes the effort; the operator chose the copy.
+- 2026-09-20, the matching rule: "改成词边界，和 claude 一致" — this narrows
+  released behavior, which #430 user story 3 chose deliberately.
+- 2026-09-20, where the change is made: "并进本任务（推荐）".
 - 2026-09-20, returning to the configured default: "不处理，切完了就和配置文件无
   关了，恢复的时候 identity.json 会盖过 agent profile 的default model 和 default
   effort" — no reset command, and the identity value outranks the entry's
@@ -333,6 +367,8 @@ development-approval playback before any code or review cites it.
   not observable, and it avoids starting a runtime on a value that validation
   then rejects.
 - The reply is plain text, like every command except `/teams`.
+- The injected sentence follows the submission in the input array rather than
+  preceding it; the operator did not specify an order.
 - Precedence at launch is the operator's ruling above, stated in full: the
   identity's recorded value, else the entry's `defaultModel` / `defaultEffort`,
   else whatever the runtime defaults to on its own.
@@ -363,9 +399,13 @@ phase opens.
    conversation it is the Dispatcher.
 8. On a provider that does not implement the capability, the command reports
    that and writes nothing.
-9. Codex `ultrathink` behavior is unchanged, including that ordinary effort now
-   means the level recorded in the identity.
-10. The maintenance skill documents both config keys and both identity fields.
+9. A Codex submission matching the keyword raises effort as before, now also
+   carrying the sentence as a separate input item, with the submission text
+   itself unchanged; an ordinary submission carries no extra item, and ordinary
+   effort means the level recorded in the identity.
+10. "请ultrathink一下" still matches; "ultrathinking" no longer does.
+11. The maintenance skill documents both config keys and both identity fields,
+    and the product catalog states the injected sentence and the match rule.
 
 ## Decisions and unknowns
 
