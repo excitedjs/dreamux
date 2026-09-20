@@ -87,6 +87,12 @@ Both packages define seven fields, all optional, all defaulted
   same provider therefore need two entries.
 - An agent entity's identity record holds `agent_runtime` (the entry id) and no
   model or effort (`service/agent-entity/types.ts`).
+- The identity reader does not reject unknown keys: it enforces required
+  fields, a legacy-format check, and a blocklist of removed fields
+  (`readIdentity`, `assertNoRemovedRecordFields` in
+  `service/agent-entity/identity-store.ts`). Adding an optional field is
+  therefore readable by an older build, which ignores it — and drops it on its
+  next write.
 
 ### What each runtime can change while it runs
 
@@ -103,6 +109,10 @@ Both packages define seven fields, all optional, all defaulted
   active model does not support silently clamps to the highest supported level
   at or below it, with no warning under `stream-json` output (model-config
   reference).
+- The `list_models` response carries, per model, `supportsEffort` and
+  `supportedEffortLevels` (a subset of the five levels), so the effort levels a
+  given model accepts are enumerable at runtime. Read from the installed
+  binary. Codex's `model/list` is the symmetric capability.
 - Not verified: whether a mid-session effort change is honoured in a
   `--print` session. The same reference says a non-interactive `/effort` can
   report `Not applied` while a model's default-effort hold is in effect, and
@@ -155,18 +165,55 @@ Both packages define seven fields, all optional, all defaulted
   Team has no conversation binding, so a command cannot name one.
 - A reply is `text`, `card` or `silent`, rendered by the inbound path.
 
+## Confirmed operator decisions
+
+Quoted from the answer cards; nothing here is paraphrased into a wider rule.
+
+- 2026-09-20, task scope: "新开一个任务（推荐）" — this is its own task, not part
+  of `add-runtime-config-commands`.
+- 2026-09-20, what the commands act on: "绑定的 Team 的 leader；未绑定就切
+  Dispatcher（推荐）". The card stated that a command resolves only to the
+  conversation's bound Team or the Dispatcher, and that a TeamMate inside a
+  Team cannot be named.
+- 2026-09-20, where the fields live: "agents[] 外壳的一级字段（推荐）". The card
+  stated the cost: Core gains the concepts of a model and an effort level, the
+  neutral contract gains a capability, and a provider that does not support
+  them needs an answer.
+- 2026-09-20, persistence: "写进该实体的身份记录，重启继续生效" — the switch
+  becomes that entity's own persisted setting, above the `agents[]` default.
+  (This was not the recommended option; the recommendation was a
+  restart-forgets-it switch.)
+- 2026-09-20, coexistence with `ultrathink`: "恢复到 identity.json 最后一次变更
+  之后的那一档" — the ordinary effort a submission returns to is the level
+  currently recorded in the entity's identity.
+
+## Inferences awaiting confirmation
+
+Labelled as inferences, not rulings. Each is confirmed at the
+development-approval playback before any code or review cites it.
+
+- Precedence at launch: the identity's recorded value, else the `agents[]`
+  `defaultModel` / `defaultEffort`, else whatever the runtime itself defaults
+  to. Changing the `agents[]` default later does not rewrite an entity that has
+  its own recorded value.
+- A command that changes a live runtime also writes the identity, so the two
+  never disagree.
+
 ## Open questions for the operator
 
-1. Which runtime does `/model` act on, given commands resolve only to the bound
-   Team or the Dispatcher?
-2. Does a switch persist (and where), or last until the runtime restarts?
-3. Does it affect the in-flight turn or only the next one?
-4. What does `defaultEffort` mean for the existing `ultrathink` behavior, whose
-   rule is that the next ordinary submission restores ordinary effort?
-5. What happens on a provider or model that does not support the requested
-   model or effort?
-6. Do `defaultModel` / `defaultEffort` sit in the `agents[]` envelope (a new
-   neutral concept Core owns) or stay inside each provider's config block?
+1. Does a switch reach the turn already running, or only the next one? Both
+   runtimes' ordinary path is the next turn; Codex has an experimental method
+   that can change a running turn, Claude Code has no equivalent.
+2. Is a requested model or effort validated against what the runtime reports
+   before it is applied? Both runtimes can enumerate models and, per model, the
+   effort levels it accepts. Neither rejects an unsupported value on its own.
+3. What happens to Claude Code's existing `agents[].config.model` once
+   `defaultModel` exists — rejected with a message telling the operator to move
+   it, or still accepted as a fallback?
+4. Does `/model` with no argument list what is available, and `/effort`
+   likewise?
+5. May `teammate.spawn` name a model or effort for the member it creates, or is
+   that out of scope?
 
 ## Acceptance criteria
 
@@ -174,6 +221,5 @@ Both packages define seven fields, all optional, all defaulted
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: this is a new task, not part of
-  `add-runtime-config-commands` (operator, 2026-09-20, "新开一个任务（推荐）").
-- Blocking unknowns: the six open questions above.
+- Confirmed operator decisions: recorded in their own section above.
+- Blocking unknowns: the open questions above.
