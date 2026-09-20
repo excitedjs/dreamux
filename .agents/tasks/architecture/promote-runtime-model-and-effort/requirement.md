@@ -108,7 +108,33 @@ Both packages define seven fields, all optional, all defaulted
   report `Not applied` while a model's default-effort hold is in effect, and
   advises `--effort` at launch instead. Whether that hold also blocks the
   control-request path is untested.
-- Codex: pending — read of the Codex app-server source in progress.
+- Codex (read from the Codex app-server source, `codex-rs/`):
+  - Model can be set on `thread/start` and `thread/resume` (`model`), on
+    `turn/start` ("Override the model for this turn and subsequent turns",
+    stable), on `thread/settings/update` (experimental) and on
+    `turn/settings/update` (experimental, scoped to one running turn).
+  - Effort has no field on `thread/start` or `thread/resume` — those report the
+    resolved effort back but only accept it through the raw `config` override
+    map (`model_reasoning_effort`). It is a first-class param on `turn/start`
+    ("this turn and subsequent turns"), on `thread/settings/update` and on
+    `turn/settings/update`.
+  - A `turn/start` that arrives while a turn is running is folded into that
+    turn as a steer: the persistent thread settings are updated, the running
+    turn keeps the model and effort it started with, and the next turn to open
+    its own context is the first to use the new values.
+  - `model/list` is stable and returns each model with its
+    `supportedReasoningEfforts` and `defaultReasoningEffort`.
+  - An unrecognised model does not fail the call: Codex falls back to default
+    metadata and emits a warning event. An unrecognised effort string
+    deserialises into an open `Custom` variant, and no validation against the
+    model's supported list was found on the client-facing paths (one exists
+    only for the model-invoked `spawn_agent` tool). A live probe on 2026-09-19
+    did see a 400 for an unsupported effort, which came from the backend at
+    turn execution, not from this local validation.
+  - What the Dreamux provider uses today: only `turn/start.effort`, resolved
+    from `model/list`, `config/read` and the thread-start response
+    (`codex/src/reasoning-effort.ts`, `codex/src/events.ts`). It never sends a
+    model, and never uses either settings-update method.
 
 ### How a slash command works today
 
