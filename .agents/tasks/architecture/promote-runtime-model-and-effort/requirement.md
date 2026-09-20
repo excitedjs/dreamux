@@ -146,6 +146,27 @@ Both packages define seven fields, all optional, all defaulted
     (`codex/src/reasoning-effort.ts`, `codex/src/events.ts`). It never sends a
     model, and never uses either settings-update method.
 
+### How model and effort are selected in practice
+
+Read from the operator's own install on 2026-09-20, as evidence for what the
+change has to replace. No identifier from that file is reproduced here.
+
+- Twelve `agents[]` entries, none of which sets `config.model`. That is the
+  evidence behind the ruling that the field is unused.
+- Claude Code entries select their model with `--model` inside `extra_args`.
+- Codex entries select both model and effort with `-c key=value` pairs inside
+  `extra_args`, so several entries exist that differ only in which model or
+  which effort they pin. Collapsing those duplicates is the practical win this
+  task is after.
+- Some Claude Code entries select their model through gateway environment
+  variables in `extra_env` instead of a flag. Claude Code's documented
+  precedence puts an in-session `/model`, then `--model`, above
+  `ANTHROPIC_MODEL`, so a switch still reaches those entries; behind a gateway
+  it "passes any string through without checking", so the enumerable list
+  those entries can offer may be narrower.
+- One entry uses a runtime provider published outside this repository, so a
+  neutral model/effort capability is not a two-provider question.
+
 ### How a slash command works today
 
 - The catalog is one table in the Feishu Channel package
@@ -186,6 +207,17 @@ Quoted from the answer cards; nothing here is paraphrased into a wider rule.
 - 2026-09-20, coexistence with `ultrathink`: "恢复到 identity.json 最后一次变更
   之后的那一档" — the ordinary effort a submission returns to is the level
   currently recorded in the entity's identity.
+- 2026-09-20, when a switch takes effect: "下一轮才换（推荐）" — the turn already
+  running keeps its model and effort; no experimental method is used to change
+  a turn in flight.
+- 2026-09-20, validating a requested value: "先校验，不支持就拒绝并列出可选值
+  （推荐）" — the command checks what the runtime reports and refuses an
+  unsupported value, naming the ones that are available, rather than letting
+  it silently clamp or fall back.
+- 2026-09-20, Claude Code's existing `agents[].config.model`: "应该从来没有人用
+  过这个字段，就当他不存在". Treated as removed, so the loader's unknown-key
+  error is what a config still carrying it gets.
+- 2026-09-20, a bare command: "列出可选值和当前值（推荐）".
 
 ## Inferences awaiting confirmation
 
@@ -201,19 +233,13 @@ development-approval playback before any code or review cites it.
 
 ## Open questions for the operator
 
-1. Does a switch reach the turn already running, or only the next one? Both
-   runtimes' ordinary path is the next turn; Codex has an experimental method
-   that can change a running turn, Claude Code has no equivalent.
-2. Is a requested model or effort validated against what the runtime reports
-   before it is applied? Both runtimes can enumerate models and, per model, the
-   effort levels it accepts. Neither rejects an unsupported value on its own.
-3. What happens to Claude Code's existing `agents[].config.model` once
-   `defaultModel` exists — rejected with a message telling the operator to move
-   it, or still accepted as a fallback?
-4. Does `/model` with no argument list what is available, and `/effort`
-   likewise?
-5. May `teammate.spawn` name a model or effort for the member it creates, or is
-   that out of scope?
+1. May `teammate.spawn` name a model or effort for the member it creates? Today
+   the operator picks effort by spawning a different `agents[]` entry, so
+   without this the duplicate entries cannot collapse.
+2. What does a command do when the entity has no live runtime, given that
+   validation asks the running runtime what it supports?
+3. What does a command do on a runtime provider that does not implement the
+   capability at all?
 
 ## Acceptance criteria
 
