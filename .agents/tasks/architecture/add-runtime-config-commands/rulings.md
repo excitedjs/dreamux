@@ -166,3 +166,19 @@ are not rulings until confirmed.
     （推荐）" — written first means a temporary file and an atomic rename, as
     the identity store the operator named does today; a process crash loses
     nothing, a power loss may lose the last write.
+- Confirmed operator decisions (2026-09-21), on the development-authorization
+  card sent after Devbox's solution review:
+  - Asked to re-confirm write validation, with the cost evidence in the card
+    (the start's `readConfigFile` validation tail is extracted as
+    `resolveConfig` and shared, so no second validator is written):
+    "确认按下次启动校验（推荐）". This settles the 2026-09-19 answer that
+    preferred this shape on product grounds while doubting its cost.
+  - Asked whether the `workflow_status` / `workflow_list` change is accepted —
+    a running run reports the progress already written, which normally differs
+    by the milliseconds of one write and, when a write fails, no longer shows
+    progress that never reached disk: "接受（推荐）".
+  - Asked whether to enter development on the recorded requirement and final
+    solution, delivered as three sequenced pull requests: "暂不开发".
+    Development is therefore not authorized. The requirement, the final
+    solution, and this ledger stand as recorded; nothing in them is reopened
+    by the deferral.
