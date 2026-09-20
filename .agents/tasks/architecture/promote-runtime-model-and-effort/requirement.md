@@ -9,8 +9,8 @@
 
 ## Current alignment
 
-- Status: Converged on the rulings below; awaiting the operator's confirmation
-  of this playback.
+- Status: Final. The operator confirmed the played-back requirement on
+  2026-09-20 ("定稿了").
 - Desired outcome: model and reasoning effort become first-class runtime
   parameters instead of provider-private config, and an operator can switch
   both on a running runtime from the conversation.
