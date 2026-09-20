@@ -9,14 +9,81 @@
 
 ## Current alignment
 
-- Status: Draft; clarification has not converged.
+- Status: Converged on the rulings below; awaiting the operator's confirmation
+  of this playback.
 - Desired outcome: model and reasoning effort become first-class runtime
   parameters instead of provider-private config, and an operator can switch
   both on a running runtime from the conversation.
-- Desired behavior: Not yet confirmed.
-- Scope: Not yet confirmed.
-- Non-goals: Not yet confirmed.
-- Constraints and invariants: Not yet confirmed.
+
+### Desired behavior
+
+1. **Configuration.** An `agents[]` entry may carry `defaultModel` and
+   `defaultEffort` beside `id`, `provider` and `config`. Both are optional.
+   They are what a runtime of that entry starts with when the entity has no
+   value of its own.
+2. **Core owns the two concepts.** The neutral runtime contract carries a model
+   and an effort to the provider, lets a caller change them on a live runtime,
+   and lets a caller ask what the runtime supports. Core does not define the
+   legal values: an effort is a string it passes through and validates against
+   what the runtime reports.
+3. **Per-entity persistence.** Once switched, the value lives in that entity's
+   identity record and outranks the entry's defaults from then on, across
+   restarts. Nothing rewrites it when the entry's defaults change.
+4. **Commands.** `/model` and `/effort` act on the Team bound to the
+   conversation — its leader — or on the Dispatcher when the conversation is
+   not bound to a Team.
+   - With no argument: list what the runtime supports and what is in use.
+   - With an argument: validate against what the runtime reports; refuse an
+     unsupported value and name the available ones, writing nothing; otherwise
+     apply it to the live runtime and record it in the identity.
+   - A turn already running keeps the model and effort it started with; the
+     change takes effect from the next turn.
+   - If the entity is not running, the command starts it the way a first
+     message would, then applies the switch.
+   - On a runtime whose provider does not implement the capability, the command
+     says so and writes nothing.
+5. **Claude Code's `agents[].config.model` is removed**, being unused.
+6. **`ultrathink` stays Codex-only in Dreamux**, and nothing is added for
+   Claude Code.
+
+### Scope
+
+The `agents[]` entry shape and its loader; the neutral agent-runtime contract;
+both builtin providers; two optional identity fields; the Core Commands the
+Channel calls; the two slash commands; the maintenance skill and knowledge
+updates; the change file.
+
+### Non-goals
+
+- Naming a model or effort at `teammate.spawn` (short term, not ruled out
+  later), and therefore no consolidation of the `agents[]` entries that differ
+  only by model or effort.
+- Addressing an individual TeamMate inside a Team.
+- A command that resets an entity back to the entry's defaults.
+- Extending `ultrathink`, or any keyword handling, to Claude Code.
+- Changing how `permission_mode`, `approval_policy` or `sandbox_mode` are
+  configured, and implementing the capability for any runtime provider
+  published outside this repository.
+
+### Constraints and invariants
+
+- The identity record gains two optional fields and no existing field changes,
+  so no manual rebuild is required. An older build still reads such a file and
+  drops the fields on its next write.
+- Removing `config.model` means a config that still sets it fails to load, so
+  the change file leads with `BREAKING:` and a `Rebuild:` line naming the exact
+  edit — unless the loader instead names `defaultModel` in an error that the
+  solution phase decides is enough.
+- Core stays behind the neutral provider contract: no Claude Code or Codex
+  specific name, value or enum reaches it.
+- The slash commands are two rows in the existing Channel table calling Core
+  Commands through the existing port; no second dispatch site, and the file's
+  700-line cap still applies.
+- The maintenance skill is updated in the same change: the config envelope
+  reference for the two new keys, and the state reference for the two new
+  identity fields.
+- No internal identifier, gateway variable or private model name from the
+  operator's install reaches this repository.
 
 ## Confirmed current behavior
 
@@ -167,6 +234,17 @@ change has to replace. No identifier from that file is reproduced here.
 - One entry uses a runtime provider published outside this repository, so a
   neutral model/effort capability is not a two-provider question.
 
+### The `ultrathink` keyword in Claude Code
+
+The ruling above keeps Dreamux out of this path, and that outcome holds. The
+reason recorded with it does not: Claude Code matches the keyword in its own
+client, not on the server. The installed binary carries the test
+`/\bultrathink\b/i`, an `ultrathink_effort` setting, an `ultrathink-active`
+state, and the reminder text it injects into the turn. So a submission
+containing the word already raises that turn's effort on a Claude Code runtime
+without Dreamux doing anything — which is why adding nothing is the right
+outcome regardless of where the matching happens.
+
 ### How a slash command works today
 
 - The catalog is one table in the Feishu Channel package
@@ -228,16 +306,21 @@ Quoted from the answer cards; nothing here is paraphrased into a wider rule.
   starts the entity the way a first message would, then applies the switch.
 - 2026-09-20, a provider without the capability: "明确报「该 runtime 不支持」
   （推荐）" — nothing is written in that case.
+- 2026-09-20, the `ultrathink` keyword: "只对 codex生效，claude code 是支持
+  ultrathink 的，只不过这个特性在 llm 服务端，不需要在agent runtime 这层做任何
+  处理" — Dreamux keeps its keyword handling Codex-only and adds nothing for
+  Claude Code. (The decision stands as quoted; the mechanism is not
+  server-side — see the correction under confirmed behavior.)
+- 2026-09-20, returning to the configured default: "不处理，切完了就和配置文件无
+  关了，恢复的时候 identity.json 会盖过 agent profile 的default model 和 default
+  effort" — no reset command, and the identity value outranks the entry's
+  defaults from then on.
 
 ## Inferences awaiting confirmation
 
 Labelled as inferences, not rulings. Each is confirmed at the
 development-approval playback before any code or review cites it.
 
-- Precedence at launch: the identity's recorded value, else the `agents[]`
-  `defaultModel` / `defaultEffort`, else whatever the runtime itself defaults
-  to. Changing the `agents[]` default later does not rewrite an entity that has
-  its own recorded value.
 - A command that changes a live runtime also writes the identity, so the two
   never disagree.
 - Core does not define the set of legal effort levels. The two runtimes do not
@@ -250,20 +333,39 @@ development-approval playback before any code or review cites it.
   not observable, and it avoids starting a runtime on a value that validation
   then rejects.
 - The reply is plain text, like every command except `/teams`.
+- Precedence at launch is the operator's ruling above, stated in full: the
+  identity's recorded value, else the entry's `defaultModel` / `defaultEffort`,
+  else whatever the runtime defaults to on its own.
 - Consolidating the duplicate `agents[]` entries is explicitly *not* a benefit
   of this change while spawn cannot name a model or effort.
 
 ## Open questions for the operator
 
-1. The `ultrathink` keyword raises effort on Codex only. Now that effort
-   becomes a neutral parameter and Claude Code has its own levels, does the
-   keyword extend to Claude Code, or stay Codex-only?
-2. How does an operator go back to the configured default after a switch, given
-   the switch now persists in the identity?
+None. The requirement is played back for confirmation before the solution
+phase opens.
 
 ## Acceptance criteria
 
-- Not yet confirmed.
+1. An entry carrying `defaultModel` / `defaultEffort` loads; an entry without
+   them loads exactly as today; a config still carrying `config.model` fails
+   with a message that names what to write instead.
+2. A fresh entity launches on the entry's defaults. After a switch, its next
+   launch uses the recorded value even when the entry's default says otherwise.
+3. A bare `/model` and a bare `/effort` list what the runtime supports and what
+   is in use, on both builtin runtimes.
+4. An unsupported value is refused, the available values are named, the
+   identity is unchanged, and the live runtime keeps what it had.
+5. A valid switch during a running turn leaves that turn's model and effort
+   alone and applies to the next turn; the identity holds the new value.
+6. A switch aimed at a stopped entity starts it and applies; the identity holds
+   the new value.
+7. In a Team-bound conversation the target is that Team's leader; in an unbound
+   conversation it is the Dispatcher.
+8. On a provider that does not implement the capability, the command reports
+   that and writes nothing.
+9. Codex `ultrathink` behavior is unchanged, including that ordinary effort now
+   means the level recorded in the identity.
+10. The maintenance skill documents both config keys and both identity fields.
 
 ## Decisions and unknowns
 

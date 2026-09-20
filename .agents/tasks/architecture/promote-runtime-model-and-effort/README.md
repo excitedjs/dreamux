@@ -7,8 +7,8 @@
 - Requirement: [Current requirement](/.agents/tasks/architecture/promote-runtime-model-and-effort/requirement.md)
 - Final solution: Not created.
 - Solution review Issue: Not created.
-- Blockers: Six open requirement questions recorded in the requirement.
-- Next action: Put the open requirement questions to the operator, one decision at a time.
+- Blockers: None. The requirement is converged and awaiting the operator's confirmation of its playback.
+- Next action: Confirm the requirement playback, then agree the solution path.
 - Related tasks: shares the `agents[]` configuration surface with [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md), whose requirement and final solution are recorded and whose development the operator deferred on 2026-09-21; whichever task lands first fixes the shape the other builds on.
 
 ## Development approval
