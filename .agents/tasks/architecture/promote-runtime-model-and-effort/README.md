@@ -1,0 +1,22 @@
+# Promote model and effort to first-class runtime parameters
+
+## Current state
+
+- Goal: Make model and reasoning effort first-class agents[] parameters (defaultModel / defaultEffort) and add /model and /effort commands that switch them on a running runtime
+- State: `clarification`
+- Requirement: [Current requirement](/.agents/tasks/architecture/promote-runtime-model-and-effort/requirement.md)
+- Final solution: Not created.
+- Solution review Issue: Not created.
+- Blockers: Six open requirement questions recorded in the requirement.
+- Next action: Put the open requirement questions to the operator, one decision at a time.
+- Related tasks: shares the `agents[]` configuration surface with [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md), whose requirement and final solution are recorded and whose development the operator deferred on 2026-09-21; whichever task lands first fixes the shape the other builds on.
+
+## Development approval
+
+- Status: Not granted.
+- Approved implementation boundary: None.
+
+## Delivery
+
+- Pull request: Not opened.
+- Knowledge closeout: Pending.
