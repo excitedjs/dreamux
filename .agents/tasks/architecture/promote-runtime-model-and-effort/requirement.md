@@ -218,6 +218,16 @@ Quoted from the answer cards; nothing here is paraphrased into a wider rule.
   过这个字段，就当他不存在". Treated as removed, so the loader's unknown-key
   error is what a config still carrying it gets.
 - 2026-09-20, a bare command: "列出可选值和当前值（推荐）".
+- 2026-09-20, naming a model or effort at spawn: "我觉得短期先按 entry id 选比较
+  好，但是也不排除将来我想要扩展这块。主要是让 teamleader 去指定这个玩意儿，用起来
+  实在是太麻烦了" — out of scope for now; a spawn still selects an `agents[]`
+  entry, and the duplicate entries that differ only by model or effort stay.
+  Not ruled out later.
+- 2026-09-20, a command aimed at a stopped entity: "如果是停着的，我理解设置
+  model 直接给 teammate 拉起来就可以了，就像是发了第一句话一样" — the command
+  starts the entity the way a first message would, then applies the switch.
+- 2026-09-20, a provider without the capability: "明确报「该 runtime 不支持」
+  （推荐）" — nothing is written in that case.
 
 ## Inferences awaiting confirmation
 
@@ -230,16 +240,26 @@ development-approval playback before any code or review cites it.
   its own recorded value.
 - A command that changes a live runtime also writes the identity, so the two
   never disagree.
+- Core does not define the set of legal effort levels. The two runtimes do not
+  agree on one (Claude Code's five named levels against the per-model list
+  Codex reports), so the value is carried as a string and checked against what
+  the runtime reports, which is what the validation ruling already implies.
+- Starting a stopped entity for a switch launches it with its existing value
+  and applies the new one afterwards, rather than launching with an unchecked
+  value. Since the switch takes effect on the next turn either way, this is
+  not observable, and it avoids starting a runtime on a value that validation
+  then rejects.
+- The reply is plain text, like every command except `/teams`.
+- Consolidating the duplicate `agents[]` entries is explicitly *not* a benefit
+  of this change while spawn cannot name a model or effort.
 
 ## Open questions for the operator
 
-1. May `teammate.spawn` name a model or effort for the member it creates? Today
-   the operator picks effort by spawning a different `agents[]` entry, so
-   without this the duplicate entries cannot collapse.
-2. What does a command do when the entity has no live runtime, given that
-   validation asks the running runtime what it supports?
-3. What does a command do on a runtime provider that does not implement the
-   capability at all?
+1. The `ultrathink` keyword raises effort on Codex only. Now that effort
+   becomes a neutral parameter and Claude Code has its own levels, does the
+   keyword extend to Claude Code, or stay Codex-only?
+2. How does an operator go back to the configured default after a switch, given
+   the switch now persists in the identity?
 
 ## Acceptance criteria
 
