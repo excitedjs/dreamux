@@ -166,7 +166,7 @@ are not rulings until confirmed.
     （推荐）" — written first means a temporary file and an atomic rename, as
     the identity store the operator named does today; a process crash loses
     nothing, a power loss may lose the last write.
-- Confirmed operator decisions (2026-09-21), on the development-authorization
+- Confirmed operator decisions (2026-09-20), on the development-authorization
   card sent after Devbox's solution review:
   - Asked to re-confirm write validation, with the cost evidence in the card
     (the start's `readConfigFile` validation tail is extracted as
