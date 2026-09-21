@@ -1,4 +1,50 @@
+import { writeFileAtomic } from '../../platform/atomic-write.js';
+import { workflowRunOutputPath } from '../../platform/paths.js';
+import type { WorkflowAgentTally } from '../completion-router/index.js';
 import type { WorkflowAgentOptions } from './protocol.js';
+import type { WorkflowAgentRecord, WorkflowRunRecord } from './types.js';
+
+/**
+ * Write the terminal result where the caller is told to find it.
+ *
+ * The completion notification names this file instead of carrying the result,
+ * so every terminal record has one: a run stopped with nobody to notify and a
+ * run recovered as terminal after a restart included. It is rewritten
+ * identically when the terminal task is retried.
+ */
+export async function publishWorkflowRunOutput(
+  record: WorkflowRunRecord,
+): Promise<string> {
+  const path = workflowRunOutputPath({
+    dispatcherId: record.dispatcher_id,
+    teamId: record.team_id,
+    runId: record.run_id,
+  });
+  const output = {
+    run_id: record.run_id,
+    status: record.status,
+    result: record.result,
+    error: record.error,
+    agents: record.agents
+      .filter((agent) => agent.name !== null)
+      .map((agent) => ({ index: agent.index, name: agent.name })),
+  };
+  await writeFileAtomic(path, `${JSON.stringify(output, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  return path;
+}
+
+/** Count how a run's Agents came out, for the one line that reports it. */
+export function tallyWorkflowAgents(
+  agents: readonly WorkflowAgentRecord[],
+): WorkflowAgentTally {
+  return {
+    total: agents.length,
+    succeeded: agents.filter((agent) => agent.status === 'completed').length,
+    failed: agents.filter((agent) => agent.status === 'failed').length,
+  };
+}
 
 export class WorkflowSemaphore {
   private active = 0;

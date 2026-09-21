@@ -1,6 +1,6 @@
 # Dynamic Workflow Usage Guide (Beta)
 
-> Applies to Dreamux 0.22.x-beta. The capability is beta: its interface is
+> Applies to Dreamux 0.24.x-beta. The capability is beta: its interface is
 > stable, while behavior may still receive small refinements.
 
 Dynamic Workflow is Dreamux's deterministic multi-agent orchestration
@@ -197,15 +197,18 @@ export const meta = {
 };
 ```
 
-`name` and `description` are required strings. `whenToUse` is an optional
+`name` and `description` are required strings, and both are recorded with the
+run: `description` is the phrase the terminal notification quotes back, so write
+it as the sentence you want to read when the run finishes. `whenToUse` is an optional
 string. Each `phases` entry is `{ title, detail?, model? }`. `detail` and
 `model` are descriptive compatibility metadata; `model` does not select an
 agent model or runtime. Unknown recursively plain literal keys on `meta` and
 phase objects are accepted and currently ignored.
 
-Metadata is validated before the orchestration body can start agents. It is not
-persisted on the run, projected by `workflow_status` or `workflow_list`, or used
-for permission confirmation.
+Metadata is validated at submission, before a run exists. `name` and
+`description` are persisted on the run and projected by `workflow_status` and
+`workflow_list`; the remaining keys are validated only. No part of `meta` is
+used for permission confirmation.
 
 Metadata must be a recursively plain literal object: no variables, calls,
 interpolation, computed properties, methods, shorthand properties, or spread.
@@ -356,9 +359,11 @@ clamped.
 `args` is also optional. Supply direct JSON values; do not encode an object or
 array as JSON text.
 
-For an admitted request, `workflow_run` returns `run_id` immediately. Script
-compilation, entry, or metadata failures happen asynchronously and produce a
-durable failed run plus its terminal completion.
+For an admitted request, `workflow_run` returns `run_id` immediately. A script
+that declares no valid `meta` is rejected by the call itself, before a run
+exists — a run is created with the words its own script declares. Compilation
+and entry failures happen asynchronously and produce a durable failed run plus
+its terminal completion.
 
 ### 4.2 Status
 
@@ -366,8 +371,8 @@ durable failed run plus its terminal completion.
 workflow_status({ run_id: 'run-abc123' })
 ```
 
-Returns the current phase, agent progress, concrete TeamMate names, and terminal
-result when available.
+Returns the words the script declared about itself, the current phase, agent
+progress, concrete TeamMate names, and terminal result when available.
 
 ### 4.3 List
 
@@ -387,6 +392,29 @@ Requests the stopped outcome and resolves only after the run is durably
 terminal: in-flight agent turns settle, the terminal fact is persisted and
 delivered, and the returned status is already final
 (`/packages/dreamux/src/service/workflow-service/run-terminal.ts`).
+
+### 4.5 Terminal Notification
+
+When a run reaches a terminal, its caller is pushed one notification. It states
+what happened and names the files; it never carries the result:
+
+```
+This is an automated notification from Dreamux, not a message from the user.
+
+<workflow-notification>
+<task-id>run-abc123</task-id>
+<output-file>~/.dreamux/state/<dispatcher-id>/workflow/run-abc123/output.json</output-file>
+<status>completed — 4 agents: 4 succeeded, 0 failed</status>
+<summary>Dynamic workflow "What this workflow does" completed</summary>
+<diagnostics>Per-agent results: .../journal.jsonl — one {"kind":"result",...} line per settled Agent.</diagnostics>
+</workflow-notification>
+```
+
+`<summary>` quotes the `description` the script declared. `<status>` is the
+terminal status, the Agent counts, and — when the run has one — its error. Read
+`<output-file>` to get the run's result: it holds `run_id`, `status`, `result`,
+`error`, and the Agent names, and it is written for every terminal, including a
+stopped run whose caller is not notified at all.
 
 ---
 

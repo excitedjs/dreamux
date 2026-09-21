@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Report a finished Dynamic Workflow run as tagged facts instead of an inlined result. The completion push now carries `<task-id>`, `<output-file>`, `<status>` with the run's Agent counts and error, `<summary>` quoting the script's own `description`, and `<diagnostics>`; the result itself is written to a new server-owned `output.json` beside the run's `record.json` and `journal.jsonl`, and the push names that path. A run's `record.json` additionally stores the `name` and `description` its script declared, and `workflow_status` / `workflow_list` project both; a record written without them still loads, reading both as null. A script that declares no valid `meta` is now rejected by `workflow_run` itself instead of producing a durable failed run. TeamMate completion pushes are unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
