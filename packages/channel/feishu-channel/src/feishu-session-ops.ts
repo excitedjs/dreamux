@@ -368,26 +368,26 @@ export async function approvePairingByToken(
 }
 
 /**
- * Where the question card actually is, asked of Feishu rather than assumed.
+ * Where a sent message actually is, asked of Feishu rather than assumed.
  *
- * The round was opened before its card existed, so nothing it holds says where
- * the card landed: a question sent as a reply lives in the replied-to message's
- * topic, which only Feishu can report. A card this fails to locate is a failed
- * delivery — the chat the question was asked from is a guess, and a guess puts
- * one conversation's answer in front of another.
+ * A message sent as a reply lives in the replied-to message's topic, which
+ * only Feishu can report. An ask-user round is opened before its card exists,
+ * so nothing it holds says where the card landed; a message this fails to
+ * locate is a failed delivery — the chat the question was asked from is a
+ * guess, and a guess puts one conversation's answer in front of another.
  */
-async function askUserCardRoute(
+export async function readMessageRoute(
   h: SessionHandle,
-  cardMessageId: string,
+  messageId: string,
 ): Promise<FeishuInboundRoute> {
-  const read = await h.bot.readMessage?.({ messageId: cardMessageId });
-  const card = read?.items.find((item) => item.messageId === cardMessageId);
-  if (card === undefined || card.chatId === '') {
-    throw new Error(`Feishu reported no chat for card ${cardMessageId}`);
+  const read = await h.bot.readMessage?.({ messageId });
+  const message = read?.items.find((item) => item.messageId === messageId);
+  if (message === undefined || message.chatId === '') {
+    throw new Error(`Feishu reported no chat for message ${messageId}`);
   }
   return h.targetRouter.project({
-    chatId: card.chatId,
-    ...(card.threadId !== undefined ? { threadId: card.threadId } : {}),
+    chatId: message.chatId,
+    ...(message.threadId !== undefined ? { threadId: message.threadId } : {}),
   });
 }
 
@@ -409,7 +409,7 @@ async function deliverAskUserSettlement(
     if (cardMessageId === undefined) {
       throw new Error('the question card reported no message id');
     }
-    const route = await askUserCardRoute(h, cardMessageId);
+    const route = await readMessageRoute(h, cardMessageId);
     const { target } = route;
     const outcome = await h.delivery.deliver({
       target,

@@ -39,6 +39,7 @@
   "dependencies": {
     "@excitedjs/agent-runtime-claude-code": "workspace:*",
     "@excitedjs/agent-runtime-codex": "workspace:*",
+    "@excitedjs/dreamux-plugin-bootstrap": "workspace:*",
     "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-channel": "workspace:*",
@@ -50,7 +51,8 @@
     "@clack/prompts": "^1.5.0",
     "execa": "^9.6.1",
     "pino": "^9.5.0",
-    "plist": "^5.0.0"
+    "plist": "^5.0.0",
+    "tapable": "~2.3.3"
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",

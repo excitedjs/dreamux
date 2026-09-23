@@ -23,26 +23,25 @@ import type {
   JsonValue,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
+import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import type {
   CreateBotOptions,
   FeishuBot,
   FeishuCardActionEvent,
 } from './bot.js';
 import { createFeishuBot } from './bot.js';
+import { listChatBots, type PeerBot } from './chat-bots-store.js';
 import {
-  listChatBots,
-  recordBotAdded,
-  type PeerBot,
-} from './chat-bots-store.js';
+  buildInstanceApi,
+  FeishuExtensionRegistry,
+  FeishuSessionExtensions,
+  type FeishuBoundExtensionTool,
+} from './feishu-extensions.js';
+import { sendBindingNotification } from './feishu-notification.js';
+import { DREAMUX_ACTION_KEY } from './feishu-pairing-card.js';
+import { sessionBotRoutes } from './feishu-session-routes.js';
 import { AsyncMutex } from './lib/mutex.js';
-import {
-  alwaysActiveSessionFence,
-  type FeishuSessionFence,
-} from './feishu-inbound-work.js';
-import {
-  isFeishuOperationError,
-  runFeishuBoundedOperation,
-} from './feishu-bounded-operation.js';
+import { alwaysActiveSessionFence, type FeishuSessionFence } from './feishu-inbound-work.js';
 import { createAskUserRegistry } from './feishu-ask-user.js';
 import { isTrustedDispatcherUser } from './feishu-gate-io.js';
 import { FeishuDocumentComments } from './feishu-document-comments.js';
@@ -71,20 +70,15 @@ import {
   handleCardAction as sessionHandleCardAction,
   askUserQuestion as sessionAskUserQuestion,
   expireAskUserQuestion as sessionExpireAskUser,
-  sendCard as sessionSendCard,
   sendReply as sessionSendReply,
   addReaction as sessionAddReaction,
   sessionHandle,
   type SessionHandle,
 } from './feishu-session-ops.js';
-import { onMessage as sessionOnMessage } from './feishu-session-inbound.js';
 import { FeishuTargetRouter } from './feishu-target-router.js';
 import { FeishuRouting } from './routing/index.js';
 import { FeishuRoutingStore } from './routing/store.js';
-import {
-  describeTarget,
-  type FeishuTarget,
-} from './routing/target.js';
+import { describeTarget, type FeishuTarget } from './routing/target.js';
 import type {
   FeishuListChatBotsResult,
   FeishuToolSession,
@@ -119,6 +113,8 @@ export interface FeishuChannelSessionOptions {
   log: DreamuxLogger;
   /** Inject a fake bot (tests), instead of a live Lark connection. */
   botFactory?: () => FeishuBot;
+  /** The Feishu extensions this session runs; none when omitted. */
+  extensions?: FeishuExtensionRegistry;
 }
 
 interface FeishuSessionLifecycle {
@@ -126,8 +122,6 @@ interface FeishuSessionLifecycle {
   fence: FeishuSessionFence;
   inFlight: Set<Promise<unknown>>;
 }
-
-const FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
 
 export class FeishuChannelSession {
   readonly bot: FeishuBot;
@@ -139,6 +133,7 @@ export class FeishuChannelSession {
   private readonly routeReconciliation: FeishuRouteReconciliation;
   private readonly provisioning: FeishuProvisioning;
   private readonly docComments: FeishuDocumentComments;
+  private readonly extensions: FeishuSessionExtensions;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
   private readonly askUser = createAskUserRegistry({
@@ -214,6 +209,9 @@ export class FeishuChannelSession {
         this.bot.resolveUserName?.(openId) ?? Promise.resolve(undefined),
       isTrustedUser: (openId) => isTrustedDispatcherUser(opts.stateDir, openId),
     });
+    this.extensions = new FeishuSessionExtensions(
+      opts.extensions ?? new FeishuExtensionRegistry(),
+    );
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -263,6 +261,25 @@ export class FeishuChannelSession {
         );
       }
     });
+    // Last, so a failing extension tears down a fully initialized session.
+    try {
+      await this.extensions.initialize({
+        dispatcherId: this.opts.dispatcherId,
+        channelId: this.opts.channelId,
+        stateDir: this.opts.stateDir,
+        signal: controller.signal,
+        log: this.opts.log,
+        api: buildInstanceApi({
+          handle: this.handleForFence(lifecycle.fence),
+          routing: this.routing,
+          bindings: this.bindings,
+          submit: (teamName, submission) => this.submit(teamName, submission),
+        }),
+      });
+    } catch (error) {
+      await this.teardown(lifecycle);
+      throw error;
+    }
   }
 
   async start(): Promise<void> {
@@ -271,34 +288,19 @@ export class FeishuChannelSession {
       throw new Error('Feishu channel session was started before initialize');
     }
     try {
-      await this.bot.start({
-        onBotMemberAdded: async (added) => {
-          if (!lifecycle.fence.isCurrent()) return;
-          await this.track(
-            lifecycle,
-            recordBotAdded(this.opts.stateDir, added.chatId, added.eventId),
-          );
-        },
-        onMessage: async (event) => {
-          if (!lifecycle.fence.isCurrent()) return;
-          await this.track(
-            lifecycle,
-            sessionOnMessage(this.handleForFence(lifecycle.fence), event),
-          );
-        },
-        onCardAction: async (event) => {
-          if (!lifecycle.fence.isCurrent()) return {};
-          return this.track(lifecycle, this.onCardAction(event));
-        },
-        onDocComment: async (event) => {
-          if (!lifecycle.fence.isCurrent()) return;
-          await this.track(lifecycle, this.docComments.deliver(event));
-        },
-      });
+      await this.bot.start(sessionBotRoutes({
+        fence: lifecycle.fence,
+        track: (work) => this.track(lifecycle, work),
+        stateDir: this.opts.stateDir,
+        handle: () => this.handleForFence(lifecycle.fence),
+        onCardAction: (event) => this.onCardAction(event),
+        docComments: this.docComments,
+      }));
       if (!lifecycle.fence.isCurrent()) {
         await this.bot.close();
         throw new Error('Feishu channel session was closed during startup');
       }
+      await this.extensions.start();
     } catch (error) {
       await this.teardown(lifecycle);
       throw error;
@@ -327,6 +329,8 @@ export class FeishuChannelSession {
     // never hold session shutdown open.
     await this.cot.close();
     await Promise.allSettled([...lifecycle.inFlight]);
+    // Extension calls are fenced and settled now; no handler holds their state.
+    await this.extensions.close(this.opts.log);
     // Only now is the Channel's own commit queue empty: a listener that
     // removed a binding queued its commit without awaiting it.
     await this.store.drain();
@@ -564,7 +568,35 @@ export class FeishuChannelSession {
     };
   }
 
+  /**
+   * An extension tool bound to this session: refused once the session stopped
+   * taking calls, and tracked so closing waits for it before extensions close.
+   */
+  extensionTool(
+    name: string,
+    kind: ChannelMcpCaller['kind'],
+  ): FeishuBoundExtensionTool | undefined {
+    const tool = this.extensions.tool(name, kind);
+    if (tool === undefined) return undefined;
+    return {
+      def: tool.def,
+      invoke: async (caller, raw) => {
+        const lifecycle = this.lifecycle;
+        if (lifecycle === undefined || !lifecycle.fence.isCurrent()) {
+          throw new PublicInvokeFailure(
+            'The Feishu channel is not accepting tool calls',
+          );
+        }
+        return this.track(lifecycle, tool.invoke(caller, raw));
+      },
+    };
+  }
+
   private async onCardAction(event: FeishuCardActionEvent): Promise<unknown> {
+    const action = this.extensions.action(
+      String(event.actionValue[DREAMUX_ACTION_KEY] ?? ''),
+    );
+    if (action !== undefined) return action(event);
     return sessionHandleCardAction(this.handle, event);
   }
 
@@ -589,52 +621,20 @@ export class FeishuChannelSession {
     card: unknown,
     anchorTeamName: string | null,
   ): Promise<void> {
-    const outbound = this.targetRouter.notificationTarget(target);
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      if (!lifecycle.fence.isCurrent()) return;
-      const requestController = new AbortController();
-      const abortRequest = (): void => requestController.abort();
-      lifecycle.controller.signal.addEventListener('abort', abortRequest, {
-        once: true,
-      });
-      if (lifecycle.controller.signal.aborted) abortRequest();
-      try {
-        const result = await runFeishuBoundedOperation({
-          signal: lifecycle.controller.signal,
-          deadlineAt: Date.now() + FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS,
-          operation: () => sessionSendCard(
-            this.handleForFence(lifecycle.fence),
-            {
-              target: outbound,
-              card,
-              signal: requestController.signal,
-              mode: 'background',
-            },
-          ),
-        });
-        this.onNotificationSent(target, anchorTeamName, result.messageIds[0]);
-        return;
-      } catch (err) {
-        if (isFeishuOperationError(err, 'aborted')) return;
-        requestController.abort();
-        const retrying = attempt === 1 && lifecycle.fence.isCurrent();
-        this.opts.log.warn(
-          {
-            dispatcher_id: this.opts.dispatcherId,
-            channel_id: this.opts.channelId,
-            target: describeTarget(target),
-            attempt,
-            err: { message: errorMessage(err) },
-          },
-          retrying
-            ? 'Feishu binding notification failed; retrying once'
-            : 'Feishu binding notification failed after retry',
-        );
-        if (!retrying) return;
-      } finally {
-        lifecycle.controller.signal.removeEventListener('abort', abortRequest);
-      }
-    }
+    const messageId = await sendBindingNotification({
+      handle: this.handleForFence(lifecycle.fence),
+      lifecycleSignal: lifecycle.controller.signal,
+      isCurrent: () => lifecycle.fence.isCurrent(),
+      outbound: this.targetRouter.notificationTarget(target),
+      card,
+      log: this.opts.log,
+      logFields: {
+        dispatcher_id: this.opts.dispatcherId,
+        channel_id: this.opts.channelId,
+        target: describeTarget(target),
+      },
+    });
+    this.onNotificationSent(target, anchorTeamName, messageId);
   }
 
   /**

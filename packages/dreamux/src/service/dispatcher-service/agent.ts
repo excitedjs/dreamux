@@ -1,4 +1,5 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, LaunchDraft } from '@excitedjs/dreamux-types';
+import type { AsyncSeriesHook } from 'tapable';
 
 import {
   DISABLE_FEATURE_CRON,
@@ -26,6 +27,7 @@ import {
   bundledDispatcherSkillRoot,
   bundledSharedSkillRoot,
 } from '../../platform/paths.js';
+import { composeLaunchDraft } from '../../plugin/taps.js';
 
 export interface DispatcherAgentDeps {
   id: string;
@@ -37,6 +39,8 @@ export interface DispatcherAgentDeps {
   identities: AgentIdentityStore;
   admissions: AdmissionLedger;
   conversationProjection: ConversationProjection;
+  /** This Dispatcher's `beforeLaunch` hook, run once per Agent construction. */
+  beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }
 
 /**
@@ -50,9 +54,31 @@ export interface DispatcherAgentDeps {
  * The agent's runtime is resolved through the same `identity.agent_runtime ->
  * agents[]` path used by TeamLeader and TeamMate. Its `identity.json` is the
  * authoritative runtime recovery state.
+ *
+ * Plugin launch-draft instructions follow the built-in prompt on both prompt
+ * channels, because Codex reads only `replace` and Claude Code only `append`;
+ * plugin skill roots follow the bundled roots, fenced against them.
  */
-export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateService {
-  const agent = createTeammateService({
+export async function createDispatcherAgent(
+  deps: DispatcherAgentDeps,
+): Promise<TeammateService> {
+  const builtinSkills = [
+    {
+      name: 'dispatcher',
+      path: bundledDispatcherSkillRoot(),
+      source: 'dreamux-core',
+    },
+    {
+      name: 'shared',
+      path: bundledSharedSkillRoot(),
+      source: 'dreamux-core',
+    },
+  ];
+  const draft = await composeLaunchDraft(deps.beforeLaunch, {
+    requiredSkillSources: builtinSkills,
+    log: deps.log,
+  });
+  return createTeammateService({
     dispatcherId: deps.id,
     identity: deps.identity,
     config: deps.config,
@@ -71,24 +97,14 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
       ownsWorktreeOnClose: false,
       loggerFields: {},
       assertIdentityScope: assertDispatcherRootAgent,
-      skillSources: [
-        {
-          name: 'dispatcher',
-          path: bundledDispatcherSkillRoot(),
-          source: 'dreamux-core',
-        },
-        {
-          name: 'shared',
-          path: bundledSharedSkillRoot(),
-          source: 'dreamux-core',
-        },
-      ],
+      skillSources: [...builtinSkills, ...draft.skillSources],
       disabledFeatures: [DISABLE_FEATURE_CRON],
       systemPrompt: {
-        replace: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
-        append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS],
+        replace: [DREAMUX_DISPATCHER_BASE_INSTRUCTIONS, ...draft.instructions].join(
+          '\n\n',
+        ),
+        append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS, ...draft.instructions],
       },
     },
   });
-  return agent;
 }

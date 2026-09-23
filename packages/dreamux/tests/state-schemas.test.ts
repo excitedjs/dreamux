@@ -2,10 +2,15 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  ChannelProvider,
+  DreamuxLogger,
+  DreamuxPlugin,
+} from '@excitedjs/dreamux-types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { defaultWorkspaceEnabled, loadConfig } from '../src/config/config.js';
+import type { PluginModuleImporter } from '../src/plugin/loader.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
@@ -48,26 +53,26 @@ const log = {
  */
 
 /**
- * A registry pre-seeded with a FAKE runnable implementation for each builtin
- * provider id, so `loadConfig()` never dynamically imports the real
- * `@excitedjs/feishu-channel` / `@excitedjs/agent-runtime-codex` packages.
+ * Two overrides keep `loadConfig()` from dynamically importing the real
+ * `@excitedjs/feishu-channel` / `@excitedjs/agent-runtime-codex` packages:
+ *
+ * - {@link fakeProviderRegistry} pre-registers a FAKE runnable codex
+ *   implementation. `loadProviderPackages` skips any ref whose
+ *   IMPLEMENTATION is already registered (see `isImplementationLoaded`), so
+ *   the provider package loader (`src/registry/provider-loader.ts`) is never
+ *   touched.
+ * - {@link fakePluginModuleImporter} answers the always-loaded Feishu plugin
+ *   import with a fake plugin module whose factory contributes a FAKE feishu
+ *   channel provider, so the plugin loader never imports the real package.
  *
  * This isolates what THIS test file is responsible for — `config.ts`'s own
  * parse/validate/merge logic (coverage cell G) — from the separate provider
- * package loader (`src/registry/provider-loader.ts`), which is a different
- * module's contract. Because `loadProviderPackages` skips any ref whose
- * IMPLEMENTATION is already registered (see `isImplementationLoaded`),
- * pre-registering these fakes here never touches that loading path at all.
- * The last test in the config describe block below deliberately drops this
- * override so the real default path is covered end to end.
+ * and plugin loaders, which are different modules' contracts. The last test
+ * in the config describe block below deliberately drops both overrides so the
+ * real default path is covered end to end.
  */
 function fakeProviderRegistry(): ProviderRegistry {
   const registry = createBuiltinProviderRegistry();
-  registry.registerImplementation('feishu', {
-    createSession: () => {
-      throw new Error('fake channel provider: createSession not implemented');
-    },
-  });
   registry.registerImplementation('codex', {
     getCapabilities: () => ({ verbs: [], agent_runtimes: [] }),
     readRecentActivity: async () => [],
@@ -76,6 +81,29 @@ function fakeProviderRegistry(): ProviderRegistry {
     },
   });
   return registry;
+}
+
+const fakePluginModuleImporter: PluginModuleImporter = async () => ({
+  default: (): DreamuxPlugin => ({
+    name: 'feishu',
+    contribute(host) {
+      host.channelProviders.contribute('feishu', {
+        createSession: () => {
+          throw new Error('fake channel provider: createSession not implemented');
+        },
+      } as unknown as ChannelProvider<unknown>);
+    },
+  }),
+});
+
+function fakeOverrides(): {
+  providerRegistry: ProviderRegistry;
+  pluginModuleImporter: PluginModuleImporter;
+} {
+  return {
+    providerRegistry: fakeProviderRegistry(),
+    pluginModuleImporter: fakePluginModuleImporter,
+  };
 }
 
 describe('config parser accepts the current shape and rejects a dangling agent ref', () => {
@@ -112,7 +140,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
         },
       ],
     });
-    const { config } = await loadConfig({ configDir, providerRegistry: fakeProviderRegistry() });
+    const { config } = await loadConfig({ configDir, ...fakeOverrides() });
     expect(Object.keys(config.agents)).toEqual(['flow']);
     expect(config.dispatchers).toHaveLength(1);
     expect(config.dispatchers[0]).toMatchObject({
@@ -143,7 +171,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
         },
       ],
     });
-    await expect(loadConfig({ configDir, providerRegistry: fakeProviderRegistry() })).rejects.toThrow(
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
       /agentRuntime='does-not-exist' does not match any agents\[\]\.id/,
     );
   });
@@ -164,7 +192,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
         },
       ],
     });
-    await expect(loadConfig({ configDir, providerRegistry: fakeProviderRegistry() })).rejects.toThrow(/agentRuntime is required/);
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(/agentRuntime is required/);
   });
 
   it('rejects the removed Core Collaboration Space policy block as a named incompatible-configuration error', async () => {
@@ -185,7 +213,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
         },
       ],
     });
-    await expect(loadConfig({ configDir, providerRegistry: fakeProviderRegistry() })).rejects.toThrow(
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
       /collaborationSpace was removed\. Core no longer owns Collaboration Space policy/,
     );
   });
@@ -196,7 +224,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       dispatchers: [],
       codex: { bin: 'codex' },
     });
-    await expect(loadConfig({ configDir, providerRegistry: fakeProviderRegistry() })).rejects.toThrow(
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
       /a top-level "codex" block is no longer supported/,
     );
   });
@@ -219,7 +247,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
         },
       ],
     });
-    await expect(loadConfig({ configDir, providerRegistry: fakeProviderRegistry() })).rejects.toThrow(
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
       /dispatchers\[0\]\.runtime is no longer supported/,
     );
   });
@@ -259,7 +287,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       });
       const { config } = await loadConfig({
         configDir,
-        providerRegistry: fakeProviderRegistry(),
+        ...fakeOverrides(),
       });
       expect(config.dispatchers[0]!.workspace).toEqual({
         enabled: workspaceCase.enabled,
@@ -269,7 +297,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
   }
 
   /**
-   * The REAL default path, with no fake registry: `loadConfig()` over
+   * The REAL default path, with neither override: `loadConfig()` over
    * `createBuiltinProviderRegistry()` is the exact call `dreamux onboard` and
    * server startup make, so this dynamically imports and loads the real
    * `@excitedjs/feishu-channel` package.
@@ -280,7 +308,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
    * therefore accepts a provider on its capability shape alone
    * (`assertChannelProvider` in `src/channel/external-channel-provider.ts`),
    * exactly as the sibling `assertExternalAgentRuntimeProvider` does.
-   * Substituting `fakeProviderRegistry()` here would defeat the entire point
+   * Substituting `fakeOverrides()` here would defeat the entire point
    * of this test.
    */
   it('accepts a builtin:feishu channel through the real default provider registry', async () => {

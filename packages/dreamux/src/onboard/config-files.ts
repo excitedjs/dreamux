@@ -58,6 +58,7 @@ export function dreamuxConfigFromAnswers(
     };
   }
   const next: DreamuxConfig = {
+    ...(base.plugins !== undefined ? { plugins: base.plugins } : {}),
     agents,
     dispatchers,
   };

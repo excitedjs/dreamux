@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Load plugins from an optional top-level `plugins[]` in `config.json` (`builtin:<id>` or `npm:<package>[#export]` refs, each a string or `{ ref, config }`); existing configs load unchanged. Plugins can contribute providers addressed as `builtin:<name>`, append instructions and skill roots to Dispatcher and TeamLeader launches, and react to Team creation; a failing plugin hook is logged and skipped. `dreamux doctor` lists loaded plugins and plugin load failures. Ships the built-in, opt-in `builtin:bootstrap` plugin, which injects `.workspace/identity.md` and `user.md` from the Dispatcher cwd.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

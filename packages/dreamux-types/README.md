@@ -13,7 +13,8 @@ shared structural types.
 - **Declarations only.** The package emits `.d.ts` files (`emitDeclarationOnly`)
   and publishes a `types`-only `exports` map — there is no runtime JS contract
   surface to import as a value.
-- **No runtime dependencies.** `package.json` declares only dev tooling.
+- **One runtime dependency, `tapable`, by type only.** The plugin hook contract
+  is tapable's hook types; beyond it `package.json` declares only dev tooling.
 - **No host-private types.** Provider create contexts here are neutral; Dreamux
   core adapts its private objects (dispatcher rows, stores, identity records)
   into these public shapes rather than exposing them.
@@ -34,6 +35,9 @@ shared structural types.
   collaboration operations, and dispatcher-scoped read-only core event DTOs.
   Channel delivery receipts are status-only and the core event surface carries
   no service Turn submitted/settled events;
+- plugin contracts: `DreamuxPlugin`, its `ContributeHost` / `ServerHost`, the
+  hooked `Dispatcher` / `Team` faces, `LaunchDraft`, and the
+  `DreamuxPluginApis` map a plugin augments to type its published `api`;
 - a minimal public logger type (`DreamuxLogger`).
 
 It does **not** export runtime implementations, default loggers, loader logic,

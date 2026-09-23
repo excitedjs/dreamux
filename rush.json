@@ -9,7 +9,8 @@
  *
  * Projects today include @excitedjs/dreamux, @excitedjs/dreamux-types,
  * @excitedjs/dreamux-utils, the built-in agent-runtime packages, the Feishu
- * channel/transport packages, and the unpublished shared ESLint config, wired
+ * channel/transport packages, the built-in bootstrap plugin, and the
+ * unpublished shared ESLint config, wired
  * with pnpm workspace:*.
  * More packages go under packages/<name>/ and get registered in the
  * `projects` array below.
@@ -71,6 +72,11 @@
     {
       "packageName": "@excitedjs/agent-runtime-claude-code",
       "projectFolder": "packages/agent-runtime/claude-code",
+      "shouldPublish": true
+    },
+    {
+      "packageName": "@excitedjs/dreamux-plugin-bootstrap",
+      "projectFolder": "packages/plugins/bootstrap",
       "shouldPublish": true
     }
   ]

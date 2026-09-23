@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Initial release: the built-in bootstrap plugin. It injects `.workspace/identity.md` and `user.md` from the Dispatcher cwd into the Dispatcher and TeamLeader launch prompts, and guides the Dispatcher to create them while either is missing.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-plugin-bootstrap"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-plugin-bootstrap",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

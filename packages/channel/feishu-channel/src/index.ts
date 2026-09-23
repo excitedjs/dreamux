@@ -1,6 +1,8 @@
 /**
- * `@excitedjs/feishu-channel` — the built-in Feishu `ChannelProvider` for
- * Dreamux (alias `builtin:feishu`). Owns Feishu channel session logic, inbound
+ * `@excitedjs/feishu-channel` — the built-in Feishu plugin for Dreamux. Its
+ * default export is the plugin factory: the plugin contributes the Feishu
+ * `ChannelProvider` (addressed as `builtin:feishu`) and publishes the Feishu
+ * extension api. Owns Feishu channel session logic, inbound
  * normalization, access/trust behavior, attachment handling, its own external
  * routing and Collaboration Space policy, and MCP tool backing on top of
  * `@excitedjs/feishu-transport`. Depends on `@excitedjs/dreamux-types` +
@@ -8,12 +10,22 @@
  * imports `@excitedjs/dreamux` core.
  */
 
+export { default, createFeishuPlugin } from './plugin.js';
+
 export {
-  default,
   createFeishuChannelProvider,
   type CreateFeishuChannelProviderOptions,
   type FeishuChannelConfig,
 } from './provider.js';
+
+export type {
+  FeishuApi,
+  FeishuExtension,
+  FeishuExtensionAction,
+  FeishuExtensionContext,
+  FeishuExtensionTool,
+  FeishuInstanceApi,
+} from './extension.js';
 
 export {
   FeishuChannelSession,
@@ -28,6 +40,7 @@ export { createFeishuSessionMcp } from './feishu-session-mcp.js';
 
 export {
   CHANNEL_REMINDER,
+  type FeishuChatSubmission,
   type FeishuInboundDelivery,
   type FeishuSubmission,
   type FeishuSubmitOutcome,
@@ -111,5 +124,7 @@ export {
   TRUST_DOMAIN_WARNING,
   type DispatcherAccessState,
 } from './feishu-gate.js';
+
+export type { VisibleMessageAnchor } from './feishu-cot-state.js';
 
 export { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';

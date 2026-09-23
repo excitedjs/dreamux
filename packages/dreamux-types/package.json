@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/dreamux-types",
   "version": "0.10.0",
-  "description": "Declaration-only provider-authoring contracts for Dreamux: Agent Runtime and Channel provider types external providers compile against without depending on @excitedjs/dreamux (issue excitedjs/dreamux#209).",
+  "description": "Declaration-only provider- and plugin-authoring contracts for Dreamux: Agent Runtime and Channel provider types and the plugin hook contract, which external providers and plugins compile against without depending on @excitedjs/dreamux (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -32,6 +32,9 @@
     "test:watch": "vitest",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "tapable": "~2.3.3"
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",

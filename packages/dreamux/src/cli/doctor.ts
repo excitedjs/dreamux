@@ -15,6 +15,9 @@ import {
   type ProviderRegistry,
 } from '../registry/index.js';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
+import { createLogger } from '../platform/logger.js';
+import { type LoadedPlugin, PluginLoadError } from '../plugin/loader.js';
+import { pluginDoctorChecks, pluginLoadFailureCheck } from './doctor-plugins.js';
 import {
   providerBinChecksForConfig,
   runDispatcherProviderDiagnostics,
@@ -110,11 +113,14 @@ export async function runDreamuxDoctor(
   const runner = options.runner ?? new ExecaCommandRunner();
   const checks: DoctorCheck[] = [];
   const configDir = globalConfigDir();
-  const { config, configFile, catalogs } = await readConfigForDoctor(
+  const { config, configFile, catalogs, plugins } = await readConfigForDoctor(
     configDir,
     checks,
   );
   setRuntimeConfig(config);
+  // Before the channel diagnostics below: api publication is where extensions
+  // register into their channel provider.
+  checks.push(...pluginDoctorChecks(plugins, createLogger({ name: 'doctor' })));
 
   checks.push({
     name: 'state directory',
@@ -261,6 +267,7 @@ async function readConfigForDoctor(
   config: DreamuxConfig;
   configFile: string;
   catalogs: ProviderDiagnosticCatalogs;
+  plugins: LoadedPlugin[];
 }> {
   try {
     const loaded = await loadConfig({ configDir });
@@ -273,18 +280,23 @@ async function readConfigForDoctor(
       config: loaded.config,
       configFile: loaded.configFile,
       catalogs: catalogsFromRegistry(loaded.providerRegistry),
+      plugins: loaded.plugins,
     };
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    checks.push({
-      name: 'config',
-      ok: false,
-      detail,
-    });
+    if (err instanceof PluginLoadError) {
+      checks.push(
+        { name: 'config', ok: false, detail: `not loaded: plugin "${err.plugin}" failed` },
+        pluginLoadFailureCheck(err),
+      );
+    } else {
+      const detail = err instanceof Error ? err.message : String(err);
+      checks.push({ name: 'config', ok: false, detail });
+    }
     return {
       config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile({ configDir }),
       catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
+      plugins: [],
     };
   }
 }

@@ -5,6 +5,7 @@ import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { ClosedSubscription } from '../closed-fact.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
+import { runTapsIsolated } from '../../plugin/taps.js';
 import { TeamService } from '../team-service/index.js';
 import type {
   TeamSchedulerLifecycle,
@@ -112,6 +113,14 @@ export class TeamRuntimeRegistry {
     }
     this.track(created.service);
     this.publish(created.service, created.schedulerLifecycle);
+    // After `publish`: a tap that reaches this Team through a Command resolves
+    // it from the cache instead of joining this construction, which is waiting
+    // on that tap. Rebuild and replayed requests never reach here.
+    await runTapsIsolated(
+      created.service.hooks.created,
+      [{ requestId: input.createRequest?.requestId ?? null }],
+      this.opts.collection.log,
+    );
     return created;
   }
 
@@ -429,6 +438,7 @@ export class TeamRuntimeRegistry {
       admitOperation: collection.admitOperation ?? ((task) => task()),
       store: this.opts.store,
       leaderMcp: collection.leaderMcp,
+      announceTeam: collection.announceTeam,
       ...(collection.coreEvents !== undefined
         ? { coreEvents: collection.coreEvents }
         : {}),

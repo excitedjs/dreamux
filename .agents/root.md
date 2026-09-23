@@ -49,6 +49,7 @@ boundary of a long task and after every context compaction, not just at kickoff.
 | modify config loading, `agents[]`, `dispatchers[]`, or provider refs | [Provider runtime](domains/provider-runtime.md), [State, config, and files](domains/state-config-and-files.md) |
 | modify any config/persisted-state shape, validation, default, ownership, or meaning | [State, config, and files](domains/state-config-and-files.md), [Model-facing writing](domains/model-facing-writing.md), and update the single owning reference under `packages/dreamux/skills/dispatcher/dreamux-maintenance/` plus its root route when needed |
 | modify bundled maintenance routing or the managed-daemon self-upgrade SOP | [Dispatcher skills](domains/dispatcher-skill.md), [Model-facing writing](domains/model-facing-writing.md), and the archived [maintenance progressive-disclosure specification](archive/proposals/dreamux-maintenance-progressive-disclosure.md) |
+| modify plugin loading, plugin hooks, launch drafts, or a built-in plugin | [Plugins](domains/plugins.md), [Provider runtime](domains/provider-runtime.md) |
 | modify provider loading, Agent Runtime providers, or Channel providers | [Provider runtime](domains/provider-runtime.md), [Channel](domains/channel.md), [Current architecture](domains/current-architecture.md) |
 | modify dispatcher runtime lifecycle, MCP injection, or Team/TeamMate lifecycle | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Service topology](domains/service-topology.md), source |
 | refactor/move a service class or change who-owns-what | [Service topology](domains/service-topology.md) FIRST, then source |
@@ -67,6 +68,7 @@ boundary of a long task and after every context compaction, not just at kickoff.
 
 - [Current architecture](domains/current-architecture.md) — the map.
 - [Provider runtime](domains/provider-runtime.md)
+- [Plugins](domains/plugins.md)
 - [Channel](domains/channel.md)
 - [Feishu pairing access](domains/feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)

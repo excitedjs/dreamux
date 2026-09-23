@@ -6,7 +6,7 @@
     "url": "git+https://github.com/excitedjs/dreamux.git",
     "directory": "packages/channel/feishu-channel"
   },
-  "description": "Built-in Feishu ChannelProvider package for Dreamux (alias builtin:feishu). Owns Feishu channel session logic, inbound normalization, access/trust, and MCP tool backing on top of @excitedjs/feishu-transport; uses yargs-parser for slash-command arguments and never depends on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
+  "description": "Built-in Feishu plugin for Dreamux: contributes the feishu channel provider (builtin:feishu) and publishes the extension api. Owns Feishu channel session logic, inbound normalization, access/trust, and MCP tool backing on top of @excitedjs/feishu-transport; uses yargs-parser for slash-command arguments and never depends on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

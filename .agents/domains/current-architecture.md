@@ -28,19 +28,21 @@ the rush path only.
 | Package | Folder | Role |
 |---|---|---|
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
-| `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider-authoring contracts |
+| `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider- and plugin-authoring contracts |
 | `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared utility helpers with **no Dreamux dependency of any kind** (transcript bounds, digest validation, positional reads, deterministic rendering, path containment) plus the one redaction capability — secret key names, text rules, and the JSON walk — that core, the logger, and config display all call |
 | `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | built-in Codex Agent Runtime provider behind `builtin:codex` |
 | `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | built-in Claude Code Agent Runtime provider behind `builtin:claude-code` |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
-| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | built-in Feishu Channel provider behind `builtin:feishu` |
+| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | always-loaded built-in Feishu plugin: contributes the Channel provider behind `builtin:feishu` and publishes the Feishu extension api |
+| `@excitedjs/dreamux-plugin-bootstrap` | `/packages/plugins/bootstrap/` | built-in opt-in bootstrap plugin behind `builtin:bootstrap`: profile files from the Dispatcher cwd's `.workspace/` in the Dispatcher and TeamLeader launch prompts |
 | `@excitedjs/eslint-config` | `/packages/eslint-config/` | private shared ESLint flat config; single source of the sync-IO ban and the 700-line cap |
 
 Inside `/packages/dreamux/src/`: `admin/` (socket transport), `channel/` and
 `agent-runtime/` (generic provider catalogs/loaders), `command/` (the one
-Command registry), `config/`, `mcp/` (stdio protocol owner), `platform/`
-(paths, logging, sockets), `service/` (dispatcher/Team/TeamMate/Workflow
-domains and their MCP delegates), `state/`, and `server.ts`. Public CLI:
+Command registry), `config/`, `plugin/` (plugin loading, host hooks, tap
+runner), `mcp/` (stdio protocol owner), `platform/` (paths, logging, sockets),
+`service/` (dispatcher/Team/TeamMate/Workflow domains and their MCP
+delegates), `state/`, and `server.ts`. Public CLI:
 `bin/dreamux`. Bundled skills ship under `skills/` and are injected at runtime
 by role, never installed into workspaces.
 
@@ -49,9 +51,10 @@ Owner for install/build/test, change files, and release:
 
 ## Provider Seams
 
-Two seams, three built-ins loaded through one registry/catalog shape
-(`builtin:codex`, `builtin:claude-code`, `builtin:feishu`; external `npm:` refs
-load through the same path):
+Two seams, three built-in providers resolved through one registry/catalog
+shape: `builtin:codex` and `builtin:claude-code` load through the provider
+loader exactly like external `npm:` refs, and `builtin:feishu` is contributed
+into the same registry by the always-loaded Feishu plugin:
 
 - **Agent Runtime** — a provider factory creates a runtime handle with
   `start` / `submit({ text })` / `stop`; provider-private session state crosses
@@ -65,9 +68,16 @@ load through the same path):
   routing, binding, targets, Collaboration Spaces, and presentation are all
   Channel-internal. Owner: [Channel](channel.md).
 
+Plugins sit beside the seams, not behind a third one: a plugin registers
+providers into the same registry (addressed as `builtin:<name>`), taps
+Dispatcher / Team / TeamLeader lifecycle hooks, and publishes an api to other
+plugins. The Feishu channel is itself the always-loaded `feishu` plugin.
+Owner: [Plugins](plugins.md).
+
 Key source: `/packages/dreamux/src/registry/`,
 `/packages/dreamux/src/agent-runtime/catalog.ts`,
-`/packages/dreamux/src/channel/catalog.ts`.
+`/packages/dreamux/src/channel/catalog.ts`,
+`/packages/dreamux/src/plugin/`.
 
 ## Command Registry And Admin Control Plane
 

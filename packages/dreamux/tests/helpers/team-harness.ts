@@ -107,6 +107,8 @@ export async function buildTeamCollectionHarness(input?: {
    * the next one" case) rather than a real random suffix.
    */
   nameSuffixGenerator?: () => string;
+  /** Receives every constructed Team, as `dispatcher.hooks.team` would. */
+  announceTeam?: TeamCollectionOptions['announceTeam'];
 }): Promise<TeamCollectionHarness> {
   const dispatcherId = input?.dispatcherId ?? 'harness-dispatcher';
   const dreamuxRoot = await mkdtemp(join(tmpdir(), 'dreamux-root-'));
@@ -170,6 +172,7 @@ export async function buildTeamCollectionHarness(input?: {
       delegates: [],
       adminSocketPath: join(dreamuxRoot, 'admin.sock'),
     }),
+    announceTeam: input?.announceTeam ?? (() => {}),
     log: silentLog,
     workflowLog: silentLog,
     ...(input?.nameSuffixGenerator !== undefined
@@ -197,6 +200,7 @@ export async function buildTeamCollectionHarness(input?: {
 /** A cold collection over the same durable Team root, as after a restart. */
 export function buildRestartedTeamCollection(
   harness: TeamCollectionHarness,
+  announceTeam: TeamCollectionOptions['announceTeam'] = () => {},
 ): TeamCollection {
   return new TeamCollection({
     dispatcherId: harness.dispatcherId,
@@ -215,6 +219,7 @@ export function buildRestartedTeamCollection(
       delegates: [],
       adminSocketPath: '',
     }) as unknown as ReturnType<TeamCollectionOptions['leaderMcp']>,
+    announceTeam,
     log: silentLog,
     workflowLog: silentLog,
   });

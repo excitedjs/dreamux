@@ -25,7 +25,9 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
   DreamuxLogger,
+  LaunchDraft,
 } from '@excitedjs/dreamux-types';
+import { AsyncSeriesHook } from 'tapable';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
@@ -65,6 +67,7 @@ afterEach(async () => {
 async function launchedLeaderAppend(
   identityPrompt: string | null = null,
   workspace: (teamRoot: string) => AgentEntityWorktreeIdentity = reuseCwdWorktree,
+  beforeLaunch = new AsyncSeriesHook<[LaunchDraft]>(['draft']),
 ): Promise<readonly string[]> {
   const teamRoot = await mkdtemp(join(tmpdir(), 'dreamux-team-leader-prompt-'));
   roots.push(teamRoot);
@@ -124,7 +127,7 @@ async function launchedLeaderAppend(
     dispatchers: [],
   };
 
-  const leader = restoreTeamLeaderAgentForTeam({
+  const leader = await restoreTeamLeaderAgentForTeam({
     dispatcherId: DISPATCHER,
     teamId: TEAM,
     workspace: workspace(teamRoot),
@@ -139,6 +142,7 @@ async function launchedLeaderAppend(
     admissions: new AdmissionLedger(),
     worktrees: {} as unknown as WorktreeManager,
     log: silentLog,
+    beforeLaunch,
   });
   await leader.activate();
 
@@ -204,6 +208,23 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
     const identityPrompt = 'You are the release captain for this Team.';
     const append = await launchedLeaderAppend(identityPrompt);
     expect(append.at(-1)).toBe(identityPrompt);
+  });
+
+  it('places plugin draft instructions before the identity text and drops a failing tap', async () => {
+    const identityPrompt = 'You are the release captain for this Team.';
+    const hook = new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeTeamLeaderLaunch');
+    hook.tapPromise('alpha', async (draft) => {
+      draft.instructions.push('from alpha');
+    });
+    hook.tapPromise('broken', async (draft) => {
+      draft.instructions.push('half written');
+      throw new Error('read failed');
+    });
+
+    const append = await launchedLeaderAppend(identityPrompt, reuseCwdWorktree, hook);
+
+    expect(append.slice(-2)).toEqual(['from alpha', identityPrompt]);
+    expect(append).not.toContain('half written');
   });
 
   it('keeps a channel-composed identity whole across storage and restore', async () => {

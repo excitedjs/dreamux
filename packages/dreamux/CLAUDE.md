@@ -15,8 +15,9 @@ Two settled shape rules govern where code lives:
    polymorphism: core calls only the two neutral interfaces published in
    `@excitedjs/dreamux-types` (`AgentRuntimeProvider`, `ChannelProvider`) and is
    unaware of which class implements them. `builtin:codex` / `builtin:claude-code`
-   / `builtin:feishu` are providers indistinguishable from npm providers — only
-   the ref→package-name resolution differs. Every provider-specific concept
+   are providers indistinguishable from npm providers — only the ref→package-name
+   resolution differs. `builtin:feishu` resolves to the provider the
+   always-loaded Feishu plugin contributes (`src/plugin/`). Every provider-specific concept
    (codex thread, codex home, codex bin, claude stream, feishu app_id) lives in the
    owning **package** (`@excitedjs/agent-runtime-codex`, `-claude-code`,
    `@excitedjs/feishu-channel`), never in core. The packages depend on

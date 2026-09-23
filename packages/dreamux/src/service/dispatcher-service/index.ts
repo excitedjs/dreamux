@@ -1,4 +1,10 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  Dispatcher,
+  DreamuxLogger,
+  LaunchDraft,
+  Team,
+} from '@excitedjs/dreamux-types';
+import { AsyncSeriesHook, SyncHook } from 'tapable';
 
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import {
@@ -9,6 +15,8 @@ import {
   teamMateCollectionDir,
 } from '../../platform/paths.js';
 import { errorInfo } from '../../platform/error-info.js';
+import { callTapsIsolated } from '../../plugin/taps.js';
+import { configuredDispatcherCwd } from '../dispatcher-workspace.js';
 import type { DispatcherRow } from '../../state/dispatcher-store.js';
 import { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { DispatcherInputSourceLifecycle } from './input-source-lifecycle.js';
@@ -94,8 +102,16 @@ export interface TeamSubmitRequest
   teamId: string;
 }
 
-export class DispatcherService {
+export class DispatcherService implements Dispatcher {
   readonly id: string;
+  readonly cwd: string | null;
+  readonly hooks: Dispatcher['hooks'] = Object.freeze({
+    beforeLaunch: new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch'),
+    team: new SyncHook<[Team, { readonly origin: 'create' | 'rebuild' }]>(
+      ['team', 'ctx'],
+      'team',
+    ),
+  });
   private readonly log: DreamuxLogger;
   private readonly _teammates: TeammateCollection;
   private readonly teams: TeamCollection;
@@ -112,6 +128,7 @@ export class DispatcherService {
 
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
+    this.cwd = configuredDispatcherCwd(opts.config, opts.id);
     this.admittedTasks = new DispatcherTaskDrain(
       () => `dispatcher '${this.id}' is shutting down`,
     );
@@ -226,6 +243,7 @@ export class DispatcherService {
       // TeamMates report to that leader, which the Team itself supplies.
       dispatcherCompletionInitiator: () => Promise.resolve(this.mustAgent()),
       admitOperation: (task) => this.admitOperation(task),
+      announceTeam: (team, ctx) => callTapsIsolated(this.hooks.team, [team, ctx], opts.log),
       leaderMcp: ({ teamId, leaderName }) => ({
         leases: opts.mcpLeases,
         adminSocketPath: adminSocket,
@@ -280,6 +298,7 @@ export class DispatcherService {
       teammates: this._teammates,
       admittedTasks: this.admittedTasks,
       workflows: this.workflowOwner,
+      beforeLaunch: this.hooks.beforeLaunch,
       isUnavailable: () => this.shuttingDown || this.stoppingTask !== null,
       restartIntent: () => this.restartIntent,
     });

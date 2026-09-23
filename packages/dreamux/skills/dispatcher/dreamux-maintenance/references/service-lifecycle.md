@@ -1,7 +1,8 @@
 # Service Lifecycle And Reply Diagnosis
 
 This reference owns current serve/daemon lifecycle, missing-reply, stuck-turn,
-Workflow run-state, and cron job-store diagnosis, bundled-skill injection,
+Workflow run-state, and cron job-store diagnosis, plugin doctor lines,
+bundled-skill injection,
 runtime app-server readiness, and same-version restart cautions.
 
 ## Server And Service
@@ -14,6 +15,13 @@ runtime app-server readiness, and same-version restart cautions.
 - Use `dreamux doctor` to inspect configuration, provider loading, service
   state, and runtime app-server readiness. Use `dreamux status` for current
   Dispatcher and process facts; neither command proves Channel delivery.
+- `dreamux doctor` prints one `plugin <name>` line per loaded plugin (its
+  source, contributed providers, and top-level hook taps). A plugin load
+  failure shows as one failed `plugin <name>` line in place of the per-plugin
+  lines, so a missing line for another plugin does not mean it failed. A plugin that fails to
+  load stops `dreamux serve`. A plugin hook that fails while an agent launches
+  is logged with the plugin name and skipped; the launch continues without
+  that plugin's additions.
 - Current durable state is under `~/.dreamux/state/`, volatile runtime files are
   under `~/.dreamux/run/`, and logs are under `~/.dreamux/logs/`. Use the path
   authorities reported by Dreamux instead of guessing alternate roots.
@@ -165,7 +173,9 @@ runtime app-server readiness, and same-version restart cautions.
 Bundled skills are injected by role. Inspect the runtime skill-source config
 and logs instead of copying bundled skills into a workspace. A missing skill is
 an injection/source-readiness problem, not evidence that workspace installation
-is required.
+is required. Plugin launch hooks may add skill roots for the Dispatcher and
+TeamLeaders; they are appended after the bundled roots and cannot shadow a
+bundled skill.
 
 ## Same-Version Restart Cautions
 

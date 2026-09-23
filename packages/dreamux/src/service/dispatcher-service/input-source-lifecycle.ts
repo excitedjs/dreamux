@@ -2,7 +2,9 @@ import type {
   ChannelInstance,
   CoreCommandRegistry,
   DreamuxLogger,
+  LaunchDraft,
 } from '@excitedjs/dreamux-types';
+import type { AsyncSeriesHook } from 'tapable';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
@@ -64,6 +66,8 @@ interface DispatcherInputSourceLifecycleOptions {
   teammates: TeammateCollection;
   admittedTasks: DispatcherTaskDrain;
   workflows: DispatcherWorkflows;
+  /** The Dispatcher's `beforeLaunch` hook, run at each Agent construction. */
+  beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
   isUnavailable(): boolean;
   restartIntent(): RestartIntentConsumer | null;
 }
@@ -199,7 +203,7 @@ export class DispatcherInputSourceLifecycle {
     // else is committed until it has.
     const sessions = await this.opts.channels.build();
     try {
-      const agent = createDispatcherAgent({
+      const agent = await createDispatcherAgent({
         id: this.opts.dispatcherId,
         config: this.opts.config,
         agentRuntimeProviders: this.opts.agentRuntimeProviders,
@@ -209,6 +213,7 @@ export class DispatcherInputSourceLifecycle {
         log: this.opts.log,
         mcp: this.opts.agentMcp(),
         identity,
+        beforeLaunch: this.opts.beforeLaunch,
       });
       this.assertAvailable();
       await this.initializeChannelSessions(sessions);

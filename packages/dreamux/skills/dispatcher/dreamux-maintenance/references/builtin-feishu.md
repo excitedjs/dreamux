@@ -57,6 +57,23 @@ where the slug and digest are both derived from the configured channel `id`.
   naming the file. Recreate the bindings through those tools rather than
   editing it.
 
+## Feishu Extension State
+
+Another plugin may register a Feishu extension: extra `channel-feishu` tools,
+card actions, and a lifecycle that runs with each Feishu channel. Each
+extension owns
+`~/.dreamux/state/<dispatcher-id>/feishu-extensions/<extension>/<channel-slug>.<digest>/`,
+one directory per configured Feishu channel, where the slug and digest are the
+same ones the channel's routing document filename carries. Feishu passes the
+path and does not create it; the contents belong to that extension. Do not
+edit, copy over, or delete it as an operational repair.
+
+`dreamux doctor` lists each extension's tools and card actions on the
+diagnostic line of each configured Feishu channel, and only there: with no
+Dispatcher using a `builtin:feishu` channel, extensions are not listed. A
+Feishu extension that fails to initialize or start fails that Feishu channel's
+start.
+
 ## Collaboration-Space Identity At Team Creation
 
 A Collaboration Space's configured `identity` stays exactly as the operator set

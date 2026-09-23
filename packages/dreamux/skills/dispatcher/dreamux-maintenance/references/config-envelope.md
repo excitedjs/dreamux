@@ -7,8 +7,25 @@ Use `dreamux config path` as the config path authority.
 `DREAMUX_CONFIG_DIR` may relocate `config.json`. Do not use `dreamux config
 show` to inspect provider config; it is not a field-targeted secret-safe view.
 
-The complete current host envelope has independently optional `agents` and
-`dispatchers` arrays. An omitted array normalizes to an empty collection.
+The complete current host envelope has independently optional `plugins`,
+`agents`, and `dispatchers` arrays. An omitted `agents` or `dispatchers` array
+normalizes to an empty collection; an omitted `plugins` array means no opt-in
+plugins.
+
+`plugins[]` entries are either a plugin ref string or an object with exactly:
+
+- non-empty plugin ref `ref`: `builtin:<id>` (the built-in opt-in plugin is
+  `bootstrap`) or `npm:<package>` with an optional `#<export>`;
+- optional plugin-owned `config`, validated by that plugin. A `config` block
+  for a plugin that takes no config is rejected.
+
+The built-in Feishu plugin is always loaded and must not be listed. A
+malformed entry fails `dreamux serve` and shows as a failed `config` line in
+`dreamux doctor`. An unknown built-in plugin, a plugin that fails to load, two
+plugins with the same name, and two providers with the same name fail `dreamux
+serve` and show as a failed `plugin <name>` line in `dreamux doctor`. A
+provider a plugin contributes is addressed in `agents[].provider` or
+`channels[].provider` as `builtin:<name>`.
 
 `agents[]` entries contain:
 
@@ -41,8 +58,9 @@ authority; do not infer fields from a built-in provider.
 1. Confirm explicit operator intent for the target Dispatcher, config file, and
    exact fields.
 2. Resolve the file with `dreamux config path` without printing its contents.
-3. Load the separate provider reference for each affected built-in provider;
-   for an external provider, use that provider's own schema.
+3. Load the separate provider reference for each affected built-in provider
+   or built-in plugin; for an external provider or plugin, including a
+   `plugins[].config` block, use that package's own schema.
 4. Apply an exact structural transform that changes only the requested fields.
    Preserve unrelated Dispatchers, channels, agents, and provider fields. Write
    a complete sibling temporary file at mode `0600`, then atomically replace

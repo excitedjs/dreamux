@@ -1,13 +1,14 @@
 # @excitedjs/feishu-channel
 
-The built-in Feishu **`ChannelProvider`** for [Dreamux](../../dreamux) — the
-package behind the `builtin:feishu` provider reference. It implements the
+The built-in Feishu **plugin** for [Dreamux](../../dreamux): it contributes the
+Feishu `ChannelProvider` behind the `builtin:feishu` provider reference and
+publishes an extension api for other plugins. The provider implements the
 neutral `@excitedjs/dreamux-types` channel contract on top of
 [`@excitedjs/feishu-transport`](../feishu-transport), which stays the sole owner
 of the Lark SDK.
 
-`@excitedjs/dreamux` depends on this package by default and resolves
-`builtin:feishu` to it, so the Feishu channel ships out of the box.
+`@excitedjs/dreamux` depends on this package and always loads its plugin, so
+the Feishu channel ships out of the box.
 
 ## What it owns
 
@@ -42,10 +43,14 @@ of the Lark SDK.
 
 ## Public API
 
-- `createFeishuChannelProvider()` plus the default-exported provider factory —
-  builds the neutral `ChannelProvider` the generic channel loader registers for
-  `builtin:feishu`. Its `createSession` returns a contract-valid `ChannelSession`
-  (`reply` / `react` / `resolveTarget` / `tools` / `handleTool` /
+- The default-exported plugin factory and `createFeishuPlugin()` — the plugin
+  contributes the `feishu` channel provider (`builtin:feishu`) and publishes
+  `FeishuApi`, through which another plugin registers Feishu extensions: extra
+  MCP tools, card actions, and a per-channel-instance lifecycle with an
+  instance api (`FeishuExtension`, `FeishuInstanceApi`).
+- `createFeishuChannelProvider()` — the same provider with no extensions. Its
+  `createSession` returns a contract-valid `ChannelSession` (`reply` /
+  `react` / `resolveTarget` / `tools` / `handleTool` /
   `messageBelongsToTarget`).
 - The session class plus the gate, chat-bots store, message formatter, MCP tool
   parser, and production bot adapter helpers used by the core adapter that

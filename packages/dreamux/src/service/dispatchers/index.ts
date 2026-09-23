@@ -5,8 +5,11 @@ import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type {
   CoreCommandRegistry,
+  Dispatcher,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
+import type { SyncHook } from 'tapable';
+import { callTapsIsolated } from '../../plugin/taps.js';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { dispatcherDir } from '../../platform/paths.js';
 import { DispatcherService } from '../dispatcher-service/index.js';
@@ -32,6 +35,8 @@ export interface DispatchersOptions {
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  /** The host `dispatcher` hook, fired once per constructed DispatcherService. */
+  dispatcherHook: SyncHook<[Dispatcher]>;
   log: DreamuxLogger;
 }
 
@@ -56,6 +61,7 @@ export class Dispatchers {
   private readonly workflowLoggerFactory:
     | ((dispatcherId: string) => DreamuxLogger)
     | undefined;
+  private readonly dispatcherHook: SyncHook<[Dispatcher]>;
   private readonly log: DreamuxLogger;
   /**
    * Read-only readers for each dispatcher's own root Agent identity, shared by
@@ -79,6 +85,7 @@ export class Dispatchers {
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.workflowLoggerFactory = opts.workflowLoggerFactory;
+    this.dispatcherHook = opts.dispatcherHook;
     this.log = opts.log;
   }
 
@@ -105,6 +112,8 @@ export class Dispatchers {
       service = new DispatcherService(this.dispatcherOptions(id));
       service.setRestartIntent(this.restartIntent);
       this.services.set(id, service);
+      // After `set`, so a tap that re-enters `get(id)` receives this object.
+      callTapsIsolated(this.dispatcherHook, [service], this.log);
     }
     return service;
   }

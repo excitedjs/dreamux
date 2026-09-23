@@ -42,8 +42,10 @@ describe('@excitedjs/dreamux-types manifest', () => {
     expect(exportsMap['.'].require).toBeUndefined();
   });
 
-  it('declares no runtime dependencies', () => {
-    expect(pkg.dependencies).toBeUndefined();
+  it('declares tapable as its only runtime dependency', () => {
+    // The plugin contract types hooks with tapable's classes; nothing else may
+    // join it silently.
+    expect(pkg.dependencies).toEqual({ tapable: '~2.3.3' });
     expect(pkg.peerDependencies).toBeUndefined();
     expect(pkg.optionalDependencies).toBeUndefined();
   });

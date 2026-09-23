@@ -184,6 +184,7 @@ async function bootTeam(options: {
       delegates: [],
       adminSocketPath: join(teamRoot, 'admin.sock'),
     }),
+    announceTeam: () => {},
     store: {
       get: async () => record,
       update: async (previous: TeamRecord, patch: Partial<TeamRecord>) => {

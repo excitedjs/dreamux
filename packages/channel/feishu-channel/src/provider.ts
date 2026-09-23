@@ -7,10 +7,11 @@
  * registry wrapper, and everything else that used to be a method is a named
  * capability that a Channel either has or does not.
  *
- * MCP is composed outside the base session. `describe` is answered here from a
- * static caller-scoped catalog, and every registration targets the live
- * instance — Core takes an instance's capability at build time, so a session
- * tool is available from creation rather than from connection.
+ * MCP is composed outside the base session. `describe` is answered here from
+ * the static caller-scoped catalog plus the tools of the registered Feishu
+ * extensions, and every registration targets the live instance — Core takes
+ * an instance's capability at build time, so a session tool is available from
+ * creation rather than from connection.
  */
 import { join } from 'node:path';
 
@@ -19,13 +20,13 @@ import type {
   ChannelMcpCaller,
   ChannelMcpToolRegistration,
   ChannelProvider,
-  ChannelProviderFactory,
   ChannelSessionCreateContext,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
 import { FeishuChannelSession } from './feishu-channel.js';
 import type { FeishuBot } from './bot.js';
+import { FeishuExtensionRegistry } from './feishu-extensions.js';
 import { createFeishuSessionMcp } from './feishu-session-mcp.js';
 import { feishuToolRegistrations } from './tools/registry.js';
 
@@ -78,8 +79,21 @@ export interface CreateFeishuChannelProviderOptions {
   botFactory?: (config: FeishuChannelConfig) => FeishuBot;
 }
 
+/** A Feishu channel provider with no extensions (tests and embedders). */
 export function createFeishuChannelProvider(
   options: CreateFeishuChannelProviderOptions = {},
+): ChannelProvider<FeishuChannelConfig> {
+  return buildFeishuChannelProvider(options, new FeishuExtensionRegistry());
+}
+
+/**
+ * The provider over one extension registry: its catalog adds the extensions'
+ * tools, and every session it creates runs them. The Feishu plugin owns the
+ * registry it passes here.
+ */
+export function buildFeishuChannelProvider(
+  options: CreateFeishuChannelProviderOptions,
+  extensions: FeishuExtensionRegistry,
 ): ChannelProvider<FeishuChannelConfig> {
   return {
     config: {
@@ -124,7 +138,10 @@ export function createFeishuChannelProvider(
         _config: FeishuChannelConfig,
         context: { caller: ChannelMcpCaller },
       ): readonly ChannelMcpToolRegistration[] {
-        return feishuToolRegistrations(context.caller);
+        return [
+          ...feishuToolRegistrations(context.caller),
+          ...extensions.registrationsFor(context.caller),
+        ];
       },
     },
     onboard: {
@@ -147,7 +164,9 @@ export function createFeishuChannelProvider(
       async runDiagnostic() {
         return {
           ok: true,
-          detail: 'Feishu channel has no host-managed diagnostics',
+          detail:
+            'Feishu channel has no host-managed diagnostics; extensions: ' +
+            describeExtensions(extensions),
           errors: [],
         };
       },
@@ -182,6 +201,7 @@ export function createFeishuChannelProvider(
         // per-dispatcher cache root. Effective path is unchanged.
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log,
+        extensions,
         ...(options.botFactory !== undefined
           ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
           : {}),
@@ -192,11 +212,20 @@ export function createFeishuChannelProvider(
 }
 
 /**
- * Default export — the factory Dreamux core's generic channel package-loader
- * selects for the `builtin:feishu` ref.
+ * `none`, or each extension with its tools (and the caller kinds each is
+ * offered to) and its card action keys.
  */
-const feishuChannelProviderFactory:
-  ChannelProviderFactory<FeishuChannelConfig> = () =>
-    createFeishuChannelProvider();
-
-export default feishuChannelProviderFactory;
+function describeExtensions(extensions: FeishuExtensionRegistry): string {
+  const listed = extensions.list();
+  if (listed.length === 0) return 'none';
+  return listed
+    .map((ext) => {
+      const tools = ext.tools
+        .map((tool) => `${tool.name}[${tool.callers.join(',')}]`)
+        .join(', ');
+      const actions = ext.cardActions.map((action) => action.key).join(', ');
+      return `${ext.name} (tools: ${tools === '' ? 'none' : tools}; ` +
+        `card actions: ${actions === '' ? 'none' : actions})`;
+    })
+    .join('; ');
+}

@@ -199,12 +199,14 @@ describe('no package ships a dev-tool runtime dependency', () => {
   });
 });
 
-describe('dreamux-types stays declaration-only with no runtime dependency', () => {
+describe('dreamux-types stays declaration-only with tapable as its only runtime dependency', () => {
   const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-types')!;
   const manifest = readManifest(project.projectFolder);
 
-  it('has no runtime "dependencies" field at all', () => {
-    expect(manifest['dependencies']).toBeUndefined();
+  it('has tapable as its only runtime dependency', () => {
+    expect(manifest['dependencies']).toEqual({ tapable: '~2.3.3' });
+    expect(manifest['peerDependencies']).toBeUndefined();
+    expect(manifest['optionalDependencies']).toBeUndefined();
   });
 
   it('publishes only declaration files (no "import"/"default" export condition)', () => {
@@ -396,16 +398,21 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'ChannelSession',
         'ChannelSessionCreateContext',
         'ChannelSessionMcpCapability',
+        'ContributeHost',
         'CoreCommandContext',
         'CoreCommandDefinition',
         'CoreCommandRegistry',
         'CoreCommandSource',
+        'Dispatcher',
         'DreamuxEnvironment',
         'DreamuxLogger',
+        'DreamuxPlugin',
+        'DreamuxPluginApis',
         'JsonInvokeResult',
         'JsonInvoker',
         'JsonSchema',
         'JsonValue',
+        'LaunchDraft',
         'NpmProviderRef',
         'ProviderBinCheck',
         'ProviderDescriptor',
@@ -430,7 +437,9 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'RuntimeSubmission',
         'RuntimeSubmissionSettlement',
         'RuntimeToolAction',
+        'ServerHost',
         'SubmitCommand',
+        'Team',
         'TeamContainedRole',
         'TeamCreateCommand',
         'TeamCreateRepoRequest',
@@ -582,6 +591,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'DispatcherAccessState',
         'FEISHU_ROUTING_DOCUMENT_VERSION',
         'FEISHU_TOOLS',
+        'FeishuApi',
         'FeishuBindingRecord',
         'FeishuBindingView',
         'FeishuBot',
@@ -590,8 +600,14 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'FeishuChannelConfig',
         'FeishuChannelSession',
         'FeishuChannelSessionOptions',
+        'FeishuChatSubmission',
+        'FeishuExtension',
+        'FeishuExtensionAction',
+        'FeishuExtensionContext',
+        'FeishuExtensionTool',
         'FeishuInboundDelivery',
         'FeishuInboundEvent',
+        'FeishuInstanceApi',
         'FeishuListChatBotsResult',
         'FeishuRouting',
         'FeishuRoutingDocument',
@@ -612,6 +628,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'FormattedFeishuAttachment',
         'PeerBot',
         'TRUST_DOMAIN_WARNING',
+        'VisibleMessageAnchor',
         'WireChatBot',
         'buildPairingApprovalCard',
         'buildPairingSuccessCard',
@@ -619,6 +636,7 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'chatTarget',
         'createFeishuBot',
         'createFeishuChannelProvider',
+        'createFeishuPlugin',
         'createFeishuSessionMcp',
         'default',
         'defaultDispatcherAccessState',

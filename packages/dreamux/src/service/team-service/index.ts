@@ -1,8 +1,11 @@
 import type {
   AgentRuntimeInterruptOutcome,
+  LaunchDraft,
+  Team,
   TeamStateTeammateSummary,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
+import { AsyncSeriesHook } from 'tapable';
 
 import type { CompletionInitiator } from '../completion-router/index.js';
 import type { SchedulerService } from '../scheduler/service.js';
@@ -17,10 +20,7 @@ import type {
 } from '../teammate-collection/types.js';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { TeammateSubmitInput } from '../teammate-service/submission.js';
-import {
-  AGENT_TASK_SOURCE,
-  SCHEDULED_SOURCE,
-} from '../submission-sources.js';
+import { SCHEDULED_SOURCE } from '../submission-sources.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -29,7 +29,6 @@ import {
 import type { TeammateService } from '../teammate-service/index.js';
 import {
   asInboundDeliveryResult,
-  toSubmissionResult,
   type TurnAdmission,
 } from '../teammate-service/turn-recording.js';
 import type {
@@ -50,10 +49,8 @@ import { errorInfo } from '../../platform/error-info.js';
 import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
 import { TeamClosing } from './closing.js';
 import { TeamWorktreeCleanup } from '../team-collection/worktree-cleanup.js';
-import {
-  resolveTeamLeaderCompletionDelivery,
-  TeamLeaderCompletionTargets,
-} from './completion-targets.js';
+import { TeamLeaderCompletionTargets } from './completion-targets.js';
+import { submitInitialLeaderPrompt } from './initial-prompt.js';
 import {
   buildTeamMembers,
   buildTeamScheduler,
@@ -81,12 +78,25 @@ import type { WorkflowService, WorkflowOps } from '../workflow-service/index.js'
  * own collection (no team id — scope is baked in); the leader is never a member
  * row.
  */
-export class TeamService {
+export class TeamService implements Team {
   private record: TeamRecord | null = null;
   private leader_: TeammateService | null = null;
   private leaderBuild: Promise<TeammateService> | null = null;
   private readonly roster: TeamRosterProjection;
   readonly id: string;
+  /** Stored at construction: the `team` hook sees a created Team before its record exists. */
+  readonly name: string;
+  readonly workspace: string;
+  readonly hooks: Team['hooks'] = Object.freeze({
+    beforeTeamLeaderLaunch: new AsyncSeriesHook<[LaunchDraft]>(
+      ['draft'],
+      'beforeTeamLeaderLaunch',
+    ),
+    created: new AsyncSeriesHook<[{ readonly requestId: string | null }]>(
+      ['ctx'],
+      'created',
+    ),
+  });
   /** The TeamLeader's identity storage, bound to this Team's root. */
   private readonly leaderIdentity: AgentIdentityStore;
   /** The team's OWN members collection (`teamScope: team_id`, issue #233).
@@ -116,9 +126,12 @@ export class TeamService {
 
   private constructor(
     private readonly deps: TeamServiceDeps,
-    teamId: string,
+    init: { teamId: string; name: string; workspace: string },
   ) {
+    const { teamId } = init;
     this.id = teamId;
+    this.name = init.name;
+    this.workspace = init.workspace;
     this.closed = new ClosedFactPublisher<TeamClosedFact>(deps.log);
     this.leaderTargets = new TeamLeaderCompletionTargets({
       admit: (task) => this.admit(task),
@@ -212,7 +225,14 @@ export class TeamService {
     deps: TeamServiceDeps,
     input: TeamServiceCreateInput,
   ): Promise<TeamServiceCreateOutput<TeamService> | null> {
-    const service = new TeamService(deps, input.teamId);
+    const service = new TeamService(deps, {
+      teamId: input.teamId,
+      name: input.name,
+      workspace: input.workspace.runtimeCwd,
+    });
+    // Before the record is written: plugins tap this Team's own hooks here. A
+    // taken name discards this object before its leader is ever built.
+    deps.announceTeam(service, { origin: 'create' });
     const identityPrompt = optionalLifecycleText(
       input.identity,
       'TeamLeader identity',
@@ -273,29 +293,7 @@ export class TeamService {
       });
       service.leader_ = leader;
       if (input.prompt !== undefined) {
-        const delivery = await resolveTeamLeaderCompletionDelivery({
-          initiator: deps.leaderCompletionInitiator,
-          completionDelivery: deps.completionDelivery,
-        });
-        const submission = toSubmissionResult(
-          await leader.submitInput({
-            source: AGENT_TASK_SOURCE,
-            text: input.prompt,
-            ...(delivery !== null ? { deliverCompletion: delivery } : {}),
-          }),
-        );
-        if (submission.status !== 'submitted') {
-          if (
-            (submission.status === 'failed' ||
-              submission.status === 'ambiguous') &&
-            submission.error !== undefined
-          ) {
-            throw new Error(submission.error);
-          }
-          throw new Error(
-            `initial TeamLeader prompt was not admitted (${submission.status})`,
-          );
-        }
+        await submitInitialLeaderPrompt({ deps, leader, prompt: input.prompt });
       }
       team = await service.updateRecord({ status: 'running' });
       await service.workflowService.start();
@@ -325,7 +323,7 @@ export class TeamService {
           // anything else at that location is not ours to close.
           const durable = await service.leaderIdentity.read();
           if (durable === null || !alignedWithLeader(durable, team)) return;
-          service.leader_ = restoreTeamLeaderAgentForTeam({
+          service.leader_ = await restoreTeamLeaderAgentForTeam({
             ...service.leaderAgentBase(),
             identity: durable,
           });
@@ -349,8 +347,13 @@ export class TeamService {
     service: TeamService;
     schedulerLifecycle: TeamSchedulerLifecycle;
   }> {
-    const service = new TeamService(deps, record.team_id);
+    const service = new TeamService(deps, {
+      teamId: record.team_id,
+      name: record.name,
+      workspace: record.runtime_cwd,
+    });
     service.record = record;
+    deps.announceTeam(service, { origin: 'rebuild' });
     const identity = await service.leaderIdentity.read();
     const restorable = identity !== null && alignedWithLeader(identity, record);
     // Seed before the leader branch below: creating a leader publishes the
@@ -360,7 +363,7 @@ export class TeamService {
       service.members());
     if (restorable && identity !== null) {
       // Aligned: take the identity exactly as stored — no restamp, no rewrite.
-      service.leader_ = restoreTeamLeaderAgentForTeam({
+      service.leader_ = await restoreTeamLeaderAgentForTeam({
         ...service.leaderAgentBase(),
         identity,
       });
@@ -635,6 +638,7 @@ export class TeamService {
       teamId: this.id,
       workspace: this.mustRecord().worktree,
       identities: this.leaderIdentity,
+      beforeLaunch: this.hooks.beforeTeamLeaderLaunch,
     });
   }
 

@@ -176,6 +176,7 @@ async function harness(options: {
       delegates: [],
       adminSocketPath: join(teamRoot, 'admin.sock'),
     }),
+    announceTeam: () => {},
     store,
     log: silentLog,
     workflowLog: silentLog,

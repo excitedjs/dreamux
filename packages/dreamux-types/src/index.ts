@@ -5,18 +5,22 @@
  * Runtime and Channel providers import Dreamux contracts from this package and
  * must not import `@excitedjs/dreamux`.
  *
- * This package emits declarations only: there is no runtime JS contract surface
- * and no runtime dependencies. See
+ * This package emits declarations only: there is no runtime JS contract
+ * surface. Its one dependency is `tapable`, referenced only by type, because
+ * the plugin hook contract is tapable's hook types. See
  * `.agents/tasks/architecture/npm-package-split/requirement.md (npm-package-split-and-channel-targets)`.
  *
- * Scope: neutral contracts and catalog types only. No provider-specific paths,
- * selectors, or runtime-native record formats cross this boundary, and no
- * module here encodes a provider id or an exposure policy.
+ * Scope: neutral provider and plugin contracts and catalog types only. No
+ * provider-specific paths, selectors, or runtime-native record formats cross
+ * this boundary, and no module here encodes a provider id or an exposure
+ * policy.
  *
  * Module layout follows domain ownership: `agent-runtime.ts` is the Provider /
  * native execution seam, `channel.ts` is the bridge lifecycle plus the two
- * generic Core ports, `command.ts` is the generic Command port, and `team.ts` /
- * `teammate.ts` hold the Core domain facts each of those entities owns.
+ * generic Core ports, `command.ts` is the generic Command port, `plugin.ts` is
+ * the plugin seam (plugin object, hosts, hooked Dispatcher/Team faces, launch
+ * draft), and `team.ts` / `teammate.ts` hold the Core domain facts each of
+ * those entities owns.
  *
  * Root-export policy (issue #209): the root aggregates every public contract
  * type so an external provider author can name any of them directly. A type
@@ -153,3 +157,12 @@ export type {
   ChannelSessionCreateContext,
   ChannelSessionMcpCapability,
 } from './channel.js';
+export type {
+  ContributeHost,
+  Dispatcher,
+  DreamuxPlugin,
+  DreamuxPluginApis,
+  LaunchDraft,
+  ServerHost,
+  Team,
+} from './plugin.js';

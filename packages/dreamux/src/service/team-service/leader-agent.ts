@@ -2,17 +2,17 @@ import type {
   AgentRuntimeSkillSource,
   AgentRuntimeSystemPrompt,
   DreamuxLogger,
+  LaunchDraft,
 } from '@excitedjs/dreamux-types';
+import type { AsyncSeriesHook } from 'tapable';
 
 import {
   DISABLE_FEATURE_CRON,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import {
-  bundledSharedSkillRoot,
-  bundledTeamLeaderSkillRoot,
-} from '../../platform/paths.js';
+import { composeLaunchDraft } from '../../plugin/taps.js';
+import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from '../team-collection/create-request.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { TeamServiceDeps } from './types.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
@@ -107,6 +107,8 @@ export interface TeamLeaderForTeamDeps extends Omit<
     teamId: string;
     leaderName: string;
   }): TeammateAgentMcp;
+  /** This Team's `beforeTeamLeaderLaunch` hook, run at each leader construction. */
+  beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }
 
 /**
@@ -137,6 +139,7 @@ export function teamLeaderAgentBase(input: {
   teamId: string;
   workspace: AgentEntityWorktreeIdentity;
   identities: AgentIdentityStore;
+  beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }): Omit<TeamLeaderForTeamDeps, 'identity'> {
   const { deps } = input;
   return {
@@ -144,6 +147,7 @@ export function teamLeaderAgentBase(input: {
     teamId: input.teamId,
     workspace: input.workspace,
     leaderMcp: deps.leaderMcp,
+    beforeLaunch: input.beforeLaunch,
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: input.identities,
@@ -191,48 +195,59 @@ export async function createTeamLeaderAgentForTeam(
     status: 'starting',
     replaceExisting: true,
   });
-  return restoreTeamLeaderAgentForTeam({ ...rest, identity });
+  return await restoreTeamLeaderAgentForTeam({ ...rest, identity });
 }
 
 /**
  * Build this Team's leader from an identity the Team already proved is its own.
  * The record is used exactly as read — never restamped or regenerated.
+ *
+ * Runs the Team's `beforeTeamLeaderLaunch` hook first: plugin skill roots
+ * follow the built-in and identity roots, fenced against them, and plugin
+ * instructions follow the built-in prompt.
  */
-export function restoreTeamLeaderAgentForTeam(
+export async function restoreTeamLeaderAgentForTeam(
   deps: TeamLeaderForTeamDeps,
-): TeammateService {
-  const { teamId, workspace, leaderMcp, ...agentDeps } = deps;
+): Promise<TeammateService> {
+  const { teamId, workspace, leaderMcp, beforeLaunch, ...agentDeps } = deps;
   const leaderName = deps.identity.name;
+  const baseSkills = [
+    ...TEAM_LEADER_REQUIRED_SKILL_SOURCES,
+    ...deps.identity.skill_sources,
+  ];
+  const draft = await composeLaunchDraft(beforeLaunch, {
+    requiredSkillSources: baseSkills,
+    log: deps.log,
+  });
   return createTeamLeaderAgent({
     ...agentDeps,
     mcp: leaderMcp({ teamId, leaderName }),
-    skillSources: [{
-      name: 'team-leader',
-      path: bundledTeamLeaderSkillRoot(),
-      source: 'dreamux-core',
-    }, {
-      name: 'shared',
-      path: bundledSharedSkillRoot(),
-      source: 'dreamux-core',
-    }, ...deps.identity.skill_sources],
+    skillSources: [...baseSkills, ...draft.skillSources],
     disabledFeatures: [DISABLE_FEATURE_CRON],
     systemPrompt: teamLeaderSystemPrompt(
       teamId,
       workspace,
       deps.identity.identity_prompt,
+      draft.instructions,
     ),
   });
 }
 
+/**
+ * The per-Team identity prompt stays last, after plugin instructions: it is
+ * the most specific statement of who this leader is.
+ */
 function teamLeaderSystemPrompt(
   teamId: string,
   workspace: AgentEntityWorktreeIdentity,
   identityPrompt: string | null,
+  pluginInstructions: readonly string[],
 ): AgentRuntimeSystemPrompt {
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
     'Your Dreamux MCP servers: `teammate` (this Team\'s members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel\'s own tools).',
     teamWorkspaceSentence(workspace),
+    ...pluginInstructions,
   ];
   if (identityPrompt !== null) append.push(identityPrompt);
   return { append };
@@ -269,7 +284,7 @@ export async function leaderForOpenTeam(
       `Team ${JSON.stringify(record.team_id)} has no aligned TeamLeader identity`,
     );
   }
-  return restoreTeamLeaderAgentForTeam({ ...rest, identity });
+  return await restoreTeamLeaderAgentForTeam({ ...rest, identity });
 }
 
 /**
