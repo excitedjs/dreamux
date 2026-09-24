@@ -36,8 +36,9 @@ provider a plugin contributes is addressed in `agents[].provider` or
 `dispatchers[]` entries contain:
 
 - unique path-safe non-empty string `id`;
-- schema-optional or null `cwd`; every enabled Dispatcher must nevertheless
-  have an explicit non-empty usable `cwd` before server startup;
+- required non-empty string `cwd` on every entry, enabled or not: the
+  Dispatcher's workspace directory; `~` expands to the home directory, and
+  server startup creates a missing directory for an enabled Dispatcher;
 - optional boolean `enabled`, default `true`;
 - optional `workspace.enabled`, default `false`;
 - required non-empty `channels[]`;

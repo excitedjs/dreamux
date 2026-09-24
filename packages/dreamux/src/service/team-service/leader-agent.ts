@@ -11,7 +11,7 @@ import {
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import { composeLaunchDraft } from '../../plugin/taps.js';
+import { composeLaunchDraft } from '../../plugin/hooks.js';
 import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from '../team-collection/create-request.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { TeamServiceDeps } from './types.js';
@@ -215,10 +215,7 @@ export async function restoreTeamLeaderAgentForTeam(
     ...TEAM_LEADER_REQUIRED_SKILL_SOURCES,
     ...deps.identity.skill_sources,
   ];
-  const draft = await composeLaunchDraft(beforeLaunch, {
-    requiredSkillSources: baseSkills,
-    log: deps.log,
-  });
+  const draft = await composeLaunchDraft(beforeLaunch, baseSkills);
   return createTeamLeaderAgent({
     ...agentDeps,
     mcp: leaderMcp({ teamId, leaderName }),

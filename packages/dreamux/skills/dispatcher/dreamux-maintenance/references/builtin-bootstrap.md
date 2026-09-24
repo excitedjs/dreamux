@@ -6,8 +6,7 @@ Enable it by listing it in the top-level `plugins[]` of `config.json`:
 { "plugins": ["builtin:bootstrap"] }
 ```
 
-It takes no `config` block; one is rejected. It applies to every Dispatcher
-with a configured `cwd`.
+It takes no `config` block; one is rejected. It applies to every Dispatcher.
 
 ## Files
 

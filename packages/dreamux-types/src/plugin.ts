@@ -65,14 +65,15 @@ export interface ServerHost {
   /** Bound with `plugin: <name>`. */
   readonly logger: DreamuxLogger;
   /**
-   * Core runs each tap on these hooks on its own, in tap order, so one failing
-   * tap cannot stop the others. Call and tap interceptors (`hook.intercept`)
-   * are not run.
+   * Core runs these hooks, and every hook below them, with tapable's own
+   * `call` / `promise`, so interceptors added with `hook.intercept` run. A
+   * `register` interceptor core installs first wraps each tap: a failing tap
+   * is logged with its owning plugin and the other taps still run.
    *
-   * Name every tap, on these hooks and on every hook below them, after the
-   * plugin (`tap('<plugin name>', ...)`): core attributes failures and doctor
-   * lists taps by tap name. A tap on these two hooks under any other name
-   * fails loading.
+   * Tap names are free-form. The owning plugin of a tap is the plugin whose
+   * `server` registered it, or the plugin whose tap callback was running when
+   * it registered (including after an `await` inside that callback). Failure
+   * logs and doctor name taps by that owner.
    */
   readonly hooks: Readonly<{
     /**
@@ -94,17 +95,13 @@ export interface ServerHost {
 /** The public face of a Dispatcher, as plugin hooks receive it. */
 export interface Dispatcher {
   readonly id: string;
+  /** The configured Dispatcher cwd, absolute. */
+  readonly cwd: string;
   /**
-   * The configured Dispatcher cwd, absolute; `null` when the config declares
-   * none. A Dispatcher without a cwd never launches, so its launch hooks never
-   * run.
-   */
-  readonly cwd: string | null;
-  /**
-   * Core runs each tap on its own and the rest still run after one fails.
-   * A failing `beforeLaunch` tap's draft additions are dropped. A `team` tap
-   * that throws is only stopped: taps it already added to the Team's hooks
-   * stay. Call and tap interceptors (`hook.intercept`) are not run.
+   * A failing tap does not stop the others. Each `beforeLaunch` tap receives
+   * its own empty draft, merged into the launch only when the tap succeeds. A
+   * `team` tap that throws is only stopped: taps it already added to the
+   * Team's hooks stay.
    */
   readonly hooks: Readonly<{
     /** Runs each time this Dispatcher's Agent is constructed (each Dispatcher start). */
@@ -125,18 +122,21 @@ export interface Team {
   /** The Team's runtime cwd. */
   readonly workspace: string;
   /**
-   * Core runs each tap on its own and the rest still run after one fails.
-   * A failing `beforeTeamLeaderLaunch` tap's draft additions are dropped; a
-   * failing `created` tap is logged. Call and tap interceptors
-   * (`hook.intercept`) are not run.
+   * A failing tap does not stop the others. Each `beforeTeamLeaderLaunch` tap
+   * receives its own empty draft, merged into the launch only when the tap
+   * succeeds; a failing `created` tap is logged.
    */
   readonly hooks: Readonly<{
-    /** Runs each time this Team's TeamLeader Agent is constructed. */
+    /**
+     * Runs each time this Team's TeamLeader Agent is constructed, including
+     * when a failed creation adopts the already-persisted leader to close it.
+     */
     beforeTeamLeaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
     /**
      * Runs once after a newly created Team reached `running` and became
      * reachable through Commands. Not on rebuild, failed creation, or a
-     * replayed request.
+     * replayed request. It runs in the background: the create reply does not
+     * wait for it, and Dispatcher stop waits for runs still in flight.
      */
     created: AsyncSeriesHook<[{ readonly requestId: string | null }]>;
   }>;

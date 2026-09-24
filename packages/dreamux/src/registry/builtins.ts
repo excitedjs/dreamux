@@ -44,12 +44,17 @@ export const BUILTIN_PROVIDER_PACKAGES: Readonly<Record<string, string>> = {
   'claude-code': '@excitedjs/agent-runtime-claude-code',
 };
 
-/** Thrown when a `builtin:` ref has no known package mapping. */
+/**
+ * Thrown when a `builtin:` ref is neither shipped by Dreamux nor contributed by
+ * a loaded plugin. Plugin-contributed providers are registered before this
+ * lookup runs, so the usual cause is a provider whose plugin is no longer
+ * listed in `plugins[]`.
+ */
 export class UnknownBuiltinProviderPackageError extends Error {
   constructor(readonly id: string) {
     super(
-      `builtin provider ${JSON.stringify(`builtin:${id}`)} has no known ` +
-        'package mapping',
+      `no loaded plugin contributes provider ${JSON.stringify(`builtin:${id}`)} ` +
+        'and Dreamux does not ship it; list the plugin that provides it in plugins[]',
     );
     this.name = 'UnknownBuiltinProviderPackageError';
   }

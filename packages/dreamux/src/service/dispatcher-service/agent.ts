@@ -27,7 +27,7 @@ import {
   bundledDispatcherSkillRoot,
   bundledSharedSkillRoot,
 } from '../../platform/paths.js';
-import { composeLaunchDraft } from '../../plugin/taps.js';
+import { composeLaunchDraft } from '../../plugin/hooks.js';
 
 export interface DispatcherAgentDeps {
   id: string;
@@ -74,10 +74,7 @@ export async function createDispatcherAgent(
       source: 'dreamux-core',
     },
   ];
-  const draft = await composeLaunchDraft(deps.beforeLaunch, {
-    requiredSkillSources: builtinSkills,
-    log: deps.log,
-  });
+  const draft = await composeLaunchDraft(deps.beforeLaunch, builtinSkills);
   return createTeammateService({
     dispatcherId: deps.id,
     identity: deps.identity,

@@ -9,7 +9,6 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import type { SyncHook } from 'tapable';
-import { callTapsIsolated } from '../../plugin/taps.js';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { dispatcherDir } from '../../platform/paths.js';
 import { DispatcherService } from '../dispatcher-service/index.js';
@@ -113,7 +112,7 @@ export class Dispatchers {
       service.setRestartIntent(this.restartIntent);
       this.services.set(id, service);
       // After `set`, so a tap that re-enters `get(id)` receives this object.
-      callTapsIsolated(this.dispatcherHook, [service], this.log);
+      this.dispatcherHook.call(service);
     }
     return service;
   }

@@ -5,7 +5,8 @@ import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { ClosedSubscription } from '../closed-fact.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
-import { runTapsIsolated } from '../../plugin/taps.js';
+import { errorInfo } from '../../platform/error-info.js';
+import { InFlightWork } from '../in-flight-work.js';
 import { TeamService } from '../team-service/index.js';
 import type {
   TeamSchedulerLifecycle,
@@ -41,6 +42,8 @@ export class TeamRuntimeRegistry {
   private readonly materialized = new Set<TeamService>();
   private readonly closedSubscriptions = new Map<TeamService, ClosedSubscription>();
   private readonly constructing = new Map<string, Promise<TeamService | null>>();
+  /** `created` hook runs still in flight; stop waits for them. */
+  private readonly createdHooks = new InFlightWork();
 
   constructor(private readonly opts: TeamRuntimeRegistryOptions) {}
 
@@ -113,15 +116,38 @@ export class TeamRuntimeRegistry {
     }
     this.track(created.service);
     this.publish(created.service, created.schedulerLifecycle);
-    // After `publish`: a tap that reaches this Team through a Command resolves
-    // it from the cache instead of joining this construction, which is waiting
-    // on that tap. Rebuild and replayed requests never reach here.
-    await runTapsIsolated(
-      created.service.hooks.created,
-      [{ requestId: input.createRequest?.requestId ?? null }],
-      this.opts.collection.log,
-    );
+    this.fireCreated(created.service, input.createRequest?.requestId ?? null);
     return created;
+  }
+
+  /**
+   * Run the new Team's `created` hook in the background: plugin work reacting
+   * to a new Team must not hold up the create reply. It starts after
+   * `publish`, so a tap that reaches this Team through a Command resolves it
+   * from the cache. Rebuild and replayed requests never reach here.
+   */
+  private fireCreated(service: TeamService, requestId: string | null): void {
+    this.createdHooks.track(
+      Promise.resolve()
+        .then(() => service.hooks.created.promise({ requestId }))
+        // Core's interceptor already logs failing taps; this catches a
+        // rejection from an interceptor a plugin added to the hook.
+        .catch((error: unknown) => {
+          this.opts.collection.log.error(
+            {
+              dispatcher_id: this.opts.dispatcherId,
+              team_id: service.id,
+              err: errorInfo(error),
+            },
+            'Team created hook failed',
+          );
+        }),
+    );
+  }
+
+  /** Resolve once every `created` hook run started so far has settled. */
+  drainCreatedHooks(): Promise<void> {
+    return this.createdHooks.drain();
   }
 
   private async prepareWorkspace(

@@ -26,6 +26,7 @@ import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { createConversationProjection } from '../src/channel/conversation-projection.js';
 import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
 import { getRuntimeConfig, setRuntimeConfig } from '../src/platform/paths.js';
+import { launchDraftTaps } from '../src/plugin/hooks.js';
 import { createServerHooks } from '../src/plugin/host.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
@@ -86,7 +87,7 @@ describe('host.hooks.dispatcher', () => {
         runtime,
       }],
     };
-    const hooks = createServerHooks();
+    const hooks = createServerHooks(silentLog);
     const announced: Dispatcher[] = [];
     hooks.dispatcher.tap('alpha', (dispatcher) => {
       announced.push(dispatcher);
@@ -151,7 +152,10 @@ describe('dispatcher.hooks.beforeLaunch', () => {
       },
     } as unknown as AgentRuntimeProvider<unknown>;
 
-    const beforeLaunch = new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch');
+    const beforeLaunch = launchDraftTaps(
+      new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch'),
+      silentLog,
+    );
     beforeLaunch.tapPromise('alpha', async (draft) => {
       draft.instructions.push('from alpha');
       draft.skillSources.push({ name: 'alpha', path: pluginSkills, source: 'alpha' });

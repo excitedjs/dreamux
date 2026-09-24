@@ -37,7 +37,7 @@ afterEach(async () => {
   await rm(cwd, { recursive: true, force: true });
 });
 
-function fakeDispatcher(dispatcherCwd: string | null): Dispatcher {
+function fakeDispatcher(dispatcherCwd: string): Dispatcher {
   return {
     id: 'flow',
     cwd: dispatcherCwd,
@@ -142,13 +142,5 @@ describe('bootstrap plugin', () => {
     expect(draft.instructions).toHaveLength(1);
     expect(draft.instructions[0]).toContain('The user ships things.');
     expect(team.hooks.created.taps).toEqual([]);
-  });
-
-  it('taps nothing for a Dispatcher without a cwd', () => {
-    const dispatcher = fakeDispatcher(null);
-    announce(dispatcher);
-
-    expect(dispatcher.hooks.beforeLaunch.taps).toEqual([]);
-    expect(dispatcher.hooks.team.taps).toEqual([]);
   });
 });

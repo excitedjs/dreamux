@@ -1,7 +1,7 @@
 /**
  * Doctor's plugin rows: one per loaded plugin (source, contributed providers,
- * top-level taps), or one failed row when a plugin's `server` or api
- * publication throws.
+ * the top-level hooks it tapped), or one failed row when a plugin's `server`
+ * or api publication throws.
  *
  * Doctor runs `server` but never constructs a Server or Dispatcher, so the
  * Dispatcher / Team hooks never fire and only top-level taps are listed. That
@@ -25,7 +25,7 @@ export function pluginDoctorChecks(
     if (!(err instanceof PluginLoadError)) throw err;
     return [pluginLoadFailureCheck(err)];
   }
-  return formatPluginChecks(plugins, started.tapNames());
+  return formatPluginChecks(plugins, started.tapOwners());
 }
 
 export function pluginLoadFailureCheck(err: PluginLoadError): DoctorCheck {
@@ -34,16 +34,16 @@ export function pluginLoadFailureCheck(err: PluginLoadError): DoctorCheck {
 
 export function formatPluginChecks(
   plugins: readonly LoadedPlugin[],
-  tapNames: ReturnType<StartedPlugins['tapNames']>,
+  owners: ReturnType<StartedPlugins['tapOwners']>,
 ): DoctorCheck[] {
   return plugins.map((loaded) => {
     const providers = loaded.providers.map(
       (provider) => `${provider.kind}:${provider.name}`,
     );
     const taps = [
-      ...(tapNames.dispatcher.includes(loaded.name) ? ['dispatcher'] : []),
-      ...Object.entries(tapNames.plugin)
-        .filter(([, names]) => names.includes(loaded.name))
+      ...(owners.dispatcher.includes(loaded.name) ? ['dispatcher'] : []),
+      ...Object.entries(owners.plugin)
+        .filter(([, tapOwners]) => tapOwners.includes(loaded.name))
         .map(([target]) => `plugin:${target}`),
     ];
     return {

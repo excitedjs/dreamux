@@ -1511,12 +1511,15 @@ instance api handed to each extension. Core only hands the api over.
 `createFeishuChannelProvider` stays a named export and builds a provider with
 an empty extension registry.
 
-- **Registry.** One per plugin instance. `register` rejects a duplicate
-  extension name, a tool name already served to the same caller kind (by a
-  built-in Feishu tool or another extension; the same name for a different
-  caller kind is allowed, as the built-ins already do), and a card action key
-  equal to a built-in Feishu action (pairing approval, `ask_user_question`) or
-  another extension's key. Every error names both sources. Registration
+- **Registry.** One per plugin instance. `register` rejects an empty or
+  duplicate extension name; a tool name already served to the same caller kind
+  (by a built-in Feishu tool, another extension, or another tool of the same
+  extension; the same name for a different caller kind is allowed, as the
+  built-ins already do); an empty card action key (the dispatcher reads a
+  missing `dreamux_action` as `''`, so an empty key would claim every click
+  without one); and a card action key equal to a built-in Feishu action
+  (pairing approval, `ask_user_question`), another extension's key, or another
+  key of the same extension. Every error names both sources. Registration
   happens in the last step of plugin loading, so a collision fails `serve`.
 - **Tools and card actions.** Extension tools are appended to the caller's
   `channel-feishu` catalog and dispatched when no built-in tool matches. A card
@@ -1528,10 +1531,17 @@ an empty extension registry.
   store loaded (local IO only; of the instance api only `owner` works here),
   `start` after the bot connection is live (the first point outbound calls
   work; timers start here), `close` after new extension tool calls and card
-  actions are refused and in-flight ones settled, in reverse registration
-  order, before the routing store drains. An `initialize` or `start` throw
-  fails that session like any other start failure, taking that Dispatcher's
-  Feishu channel down; a `close` throw is logged with the extension name and
+  actions are refused and in-flight work settled, in reverse registration
+  order, before the routing store drains. In-flight work includes a running
+  `start` and an instance-api `bindTeam` (which writes routing after an
+  awaited Core read), so a close landing mid-`start` waits for it and then
+  closes what it opened, and no bind lands after the store drained; that
+  `session.start()` then rejects with "closed during startup". An `initialize`,
+  `start` or card-action throw is logged with `feishu_extension` as "Feishu
+  extension <step> failed" and then propagates: an `initialize` or `start`
+  throw fails that session like any other start failure, taking that
+  Dispatcher's Feishu channel down; a card-action throw reaches the Lark SDK,
+  which cannot name its owner. A `close` throw is logged the same way and
   teardown continues. After teardown begins every outbound api call rejects as
   aborted.
 - **State root.** `<dispatcher state dir>/feishu-extensions/<extension>/<channel

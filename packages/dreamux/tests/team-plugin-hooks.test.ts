@@ -2,7 +2,8 @@
  * When the Team-level plugin hooks fire, against a real file-backed
  * `TeamCollection`: `dispatcher.hooks.team` (through `announceTeam`) on create
  * and rebuild, `beforeTeamLeaderLaunch` at every TeamLeader construction, and
- * `created` exactly once per newly created Team.
+ * `created` exactly once per newly created Team, in the background after the
+ * create reply.
  */
 import type { Team } from '@excitedjs/dreamux-types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -63,20 +64,30 @@ function request(requestId: string, intent: string) {
 }
 
 describe('Team plugin hooks', () => {
-  it('announces a created Team, builds its leader, then fires created once with the request id after it is running', async () => {
+  it('announces a created Team, builds its leader, then fires created once with the request id without holding up the reply', async () => {
     let statusSeenByCreated: string | undefined;
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const hooks = recorder(async (team) => {
       statusSeenByCreated = (await harness!.seedStore.get(team.name))?.status;
+      await released;
+      hooks.events.push(`created done:${team.name}`);
     });
     harness = await buildTeamCollectionHarness({ announceTeam: hooks.announce });
 
     const created = await harness.collection.createFromRequest(request('req-1', 'ship it'));
 
     const name = created.team_name;
+    expect(hooks.events).not.toContain(`created done:${name}`);
+    release();
+    await harness.collection.drainCreatedHooks();
     expect(hooks.events).toEqual([
       `team:create:${name}`,
       `beforeTeamLeaderLaunch:${name}`,
       `created:${name}:req-1`,
+      `created done:${name}`,
     ]);
     expect(statusSeenByCreated).toBe('running');
   });
@@ -94,6 +105,7 @@ describe('Team plugin hooks', () => {
     submission = { restore: () => publish.mockRestore() };
 
     await harness.collection.createFromRequest(request('req-retry', 'needs a free name'));
+    await harness.collection.drainCreatedHooks();
 
     expect(hooks.events).toEqual([
       'team:create:alpha-lost',
@@ -107,11 +119,14 @@ describe('Team plugin hooks', () => {
     const hooks = recorder();
     harness = await buildTeamCollectionHarness({ announceTeam: hooks.announce });
     await harness.collection.createFromRequest(request('req-replay', 'ship it'));
+    await harness.collection.drainCreatedHooks();
     const afterCreate = [...hooks.events];
 
     await harness.collection.createFromRequest(request('req-replay', 'ship it'));
-    await buildRestartedTeamCollection(harness, hooks.announce)
-      .createFromRequest(request('req-replay', 'ship it'));
+    const restarted = buildRestartedTeamCollection(harness, hooks.announce);
+    await restarted.createFromRequest(request('req-replay', 'ship it'));
+    await harness.collection.drainCreatedHooks();
+    await restarted.drainCreatedHooks();
 
     expect(hooks.events).toEqual(afterCreate);
   });
@@ -120,9 +135,12 @@ describe('Team plugin hooks', () => {
     const hooks = recorder();
     harness = await buildTeamCollectionHarness({ announceTeam: hooks.announce });
     const created = await harness.collection.createFromRequest(request('req-1', 'ship it'));
+    await harness.collection.drainCreatedHooks();
     hooks.events.length = 0;
 
-    await buildRestartedTeamCollection(harness, hooks.announce).open(created.team_name);
+    const restarted = buildRestartedTeamCollection(harness, hooks.announce);
+    await restarted.open(created.team_name);
+    await restarted.drainCreatedHooks();
 
     expect(hooks.events).toEqual([
       `team:rebuild:${created.team_name}`,
@@ -146,6 +164,7 @@ describe('Team plugin hooks', () => {
         },
       }),
     ).rejects.toThrow(/runtime boom/);
+    await harness.collection.drainCreatedHooks();
 
     expect(hooks.events.some((event) => event.startsWith('created:'))).toBe(false);
   });
@@ -157,6 +176,7 @@ describe('Team plugin hooks', () => {
     harness = await buildTeamCollectionHarness({ announceTeam: hooks.announce });
 
     const created = await harness.collection.createFromRequest(request('req-1', 'ship it'));
+    await harness.collection.drainCreatedHooks();
 
     expect(created.status).toBe('running');
     expect(hooks.events.at(-1)).toBe(`created:${created.team_name}:req-1`);

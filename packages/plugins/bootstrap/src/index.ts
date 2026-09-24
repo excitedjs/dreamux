@@ -49,9 +49,6 @@ export default function createBootstrapPlugin(): DreamuxPlugin {
     name: 'bootstrap',
     server(host) {
       host.hooks.dispatcher.tap('bootstrap', (dispatcher) => {
-        // A Dispatcher without a configured cwd never launches, so there is
-        // nothing to inject into.
-        if (dispatcher.cwd === null) return;
         const dir = join(dispatcher.cwd, '.workspace');
 
         dispatcher.hooks.beforeLaunch.tapPromise('bootstrap', async (draft) => {

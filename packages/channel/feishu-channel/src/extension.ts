@@ -23,9 +23,10 @@ import type { FeishuToolDef, FeishuToolResult } from './tools/types.js';
 export interface FeishuApi {
   readonly extensions: {
     /**
-     * A duplicate extension name, a tool name already offered to the same
-     * caller kind, or a card action key already claimed throws, naming both
-     * sources.
+     * Throws on an empty extension name or card action key, a duplicate
+     * extension name, a tool name already offered to the same caller kind, or
+     * a card action key already claimed, the extension's own earlier entries
+     * included, naming both sources.
      */
     register<S>(extension: FeishuExtension<S>): void;
   };

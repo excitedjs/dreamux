@@ -46,6 +46,7 @@ import {
   type TeamLeaderCreationInput,
 } from './leader-agent.js';
 import { errorInfo } from '../../platform/error-info.js';
+import { isolatedTaps, launchDraftTaps } from '../../plugin/hooks.js';
 import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
 import { TeamClosing } from './closing.js';
 import { TeamWorktreeCleanup } from '../team-collection/worktree-cleanup.js';
@@ -87,16 +88,7 @@ export class TeamService implements Team {
   /** Stored at construction: the `team` hook sees a created Team before its record exists. */
   readonly name: string;
   readonly workspace: string;
-  readonly hooks: Team['hooks'] = Object.freeze({
-    beforeTeamLeaderLaunch: new AsyncSeriesHook<[LaunchDraft]>(
-      ['draft'],
-      'beforeTeamLeaderLaunch',
-    ),
-    created: new AsyncSeriesHook<[{ readonly requestId: string | null }]>(
-      ['ctx'],
-      'created',
-    ),
-  });
+  readonly hooks: Team['hooks'];
   /** The TeamLeader's identity storage, bound to this Team's root. */
   private readonly leaderIdentity: AgentIdentityStore;
   /** The team's OWN members collection (`teamScope: team_id`, issue #233).
@@ -132,6 +124,19 @@ export class TeamService implements Team {
     this.id = teamId;
     this.name = init.name;
     this.workspace = init.workspace;
+    this.hooks = Object.freeze({
+      beforeTeamLeaderLaunch: launchDraftTaps(
+        new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeTeamLeaderLaunch'),
+        deps.log,
+      ),
+      created: isolatedTaps(
+        new AsyncSeriesHook<[{ readonly requestId: string | null }]>(
+          ['ctx'],
+          'created',
+        ),
+        deps.log,
+      ),
+    });
     this.closed = new ClosedFactPublisher<TeamClosedFact>(deps.log);
     this.leaderTargets = new TeamLeaderCompletionTargets({
       admit: (task) => this.admit(task),

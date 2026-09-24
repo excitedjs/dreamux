@@ -19,25 +19,23 @@ import type { DreamuxConfig } from '../config/config.js';
  */
 
 /**
- * The configured, absolute dispatcher workspace cwd, or `null` when the
- * dispatcher declares no `cwd`. Pure: it resolves the configured value to an
- * absolute path but touches no filesystem.
+ * The configured dispatcher workspace cwd, made absolute. Pure: it touches no
+ * filesystem. Config parsing guarantees every dispatcher entry has a non-empty
+ * `cwd`, and every caller resolves `dispatcherId` from those same entries.
  */
 export function configuredDispatcherCwd(
   config: DreamuxConfig,
   dispatcherId: string,
-): string | null {
-  const entry = config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId);
-  const cwd = entry?.cwd ?? null;
-  if (cwd === null || cwd.trim() === '') return null;
-  return resolve(cwd);
+): string {
+  return resolve(
+    config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)!.cwd,
+  );
 }
 
 /**
  * Resolve and validate a dispatcher's workspace cwd, failing loud when the
  * contract is broken (issue #182 PR-4):
  *
- *  - no explicit `cwd` configured → throw (no state-dir fallback);
  *  - cwd configured but missing → created with `mkdir -p` semantics;
  *  - cwd not a directory, or not read/write/exec accessible → throw.
  *
@@ -49,13 +47,6 @@ export async function ensureDispatcherWorkspace(
   dispatcherId: string,
 ): Promise<string> {
   const cwd = configuredDispatcherCwd(config, dispatcherId);
-  if (cwd === null) {
-    throw new Error(
-      `dispatcher ${JSON.stringify(dispatcherId)} has no configured \`cwd\`; ` +
-        'set an explicit workspace directory in ~/.dreamux/config.json — dreamux ' +
-        'no longer falls back to a state directory (issue #182)',
-    );
-  }
   try {
     await mkdir(cwd, { recursive: true });
   } catch (err) {
@@ -98,22 +89,14 @@ export interface DispatcherWorkspaceDiagnosis {
 /**
  * Non-throwing variant for `dreamux doctor`: reports the cwd contract state
  * without creating or mutating anything. A configured-but-missing directory is
- * not an error — server startup creates it — but a missing/empty `cwd`, a
- * non-directory, or an inaccessible directory is.
+ * not an error — server startup creates it — but a non-directory or an
+ * inaccessible directory is.
  */
 export async function diagnoseDispatcherWorkspace(
   config: DreamuxConfig,
   dispatcherId: string,
 ): Promise<DispatcherWorkspaceDiagnosis> {
   const cwd = configuredDispatcherCwd(config, dispatcherId);
-  if (cwd === null) {
-    return {
-      ok: false,
-      detail:
-        'no configured `cwd`; set an explicit workspace directory in config.json ' +
-        '(dreamux no longer falls back to a state directory)',
-    };
-  }
   let info;
   try {
     info = await stat(cwd);

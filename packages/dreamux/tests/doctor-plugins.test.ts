@@ -45,8 +45,8 @@ describe('pluginDoctorChecks', () => {
         {
           name: 'acme',
           server(host) {
-            host.hooks.dispatcher.tap('acme', () => {});
-            forPlugin(host, 'feishu').tap('acme', () => {});
+            host.hooks.dispatcher.tap('profile', () => {});
+            forPlugin(host, 'feishu').tap('register tools', () => {});
           },
         },
         'plugins[0] ("npm:@acme/a")',
@@ -77,7 +77,7 @@ describe('pluginDoctorChecks', () => {
         {
           name: 'acme',
           server(host) {
-            forPlugin(host, 'feishu').tap('acme', () => {
+            forPlugin(host, 'feishu').tap('register tools', () => {
               throw new Error('tool name taken');
             });
           },

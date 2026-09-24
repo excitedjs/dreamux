@@ -361,4 +361,9 @@ export class TeamCollection {
   async stopForHost(): Promise<void> {
     await this.runtimes.stopForHost();
   }
+
+  /** Wait for the `created` hook runs of Teams created so far. */
+  drainCreatedHooks(): Promise<void> {
+    return this.runtimes.drainCreatedHooks();
+  }
 }

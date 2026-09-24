@@ -16,8 +16,8 @@ import type {
 import { HookMap, SyncHook } from 'tapable';
 
 import { errorMessage } from '../platform/error-info.js';
+import { isolatedTaps, loadPhaseTaps, runAsPlugin, tapOwners } from './hooks.js';
 import { type LoadedPlugin, PluginLoadError } from './loader.js';
-import { callLoadPhaseTaps } from './taps.js';
 
 export type ServerHooks = ServerHost['hooks'];
 
@@ -27,12 +27,15 @@ interface HostHooks {
   readonly pluginHooks: HookMap<SyncHook<[unknown]>>;
 }
 
-function buildHostHooks(): HostHooks {
-  const pluginHooks = new HookMap(
-    (name: string) => new SyncHook<[unknown]>(['api'], `plugin:${name}`),
+function buildHostHooks(logger: DreamuxLogger): HostHooks {
+  const pluginHooks = new HookMap((name: string) =>
+    loadPhaseTaps(new SyncHook<[unknown]>(['api'], `plugin:${name}`), name),
   );
   const hooks: ServerHooks = Object.freeze({
-    dispatcher: new SyncHook<[Dispatcher]>(['dispatcher'], 'dispatcher'),
+    dispatcher: isolatedTaps(
+      new SyncHook<[Dispatcher]>(['dispatcher'], 'dispatcher'),
+      logger,
+    ),
     // tapable exports no TypedHookMap value; the typed view over the same
     // HookMap instance is declared once, here.
     plugin: pluginHooks as unknown as ServerHooks['plugin'],
@@ -40,15 +43,18 @@ function buildHostHooks(): HostHooks {
   return { hooks, pluginHooks };
 }
 
-/** Frozen, empty host hooks. Tests and embedded Servers without plugins use this. */
-export function createServerHooks(): ServerHooks {
-  return buildHostHooks().hooks;
+/** Empty host hooks. Tests and embedded Servers without plugins use this. */
+export function createServerHooks(logger: DreamuxLogger): ServerHooks {
+  return buildHostHooks(logger).hooks;
 }
+
+/** A plugin name, or `null` for a tap registered outside any plugin. */
+type TapOwner = string | null;
 
 export interface StartedPlugins {
   readonly hooks: ServerHooks;
-  /** Tap names on the top-level hooks, for doctor. */
-  tapNames(): { dispatcher: string[]; plugin: Record<string, string[]> };
+  /** Owners of the taps on the top-level hooks, for doctor. */
+  tapOwners(): { dispatcher: TapOwner[]; plugin: Record<string, TapOwner[]> };
 }
 
 /**
@@ -59,61 +65,38 @@ export function startPlugins(
   plugins: readonly LoadedPlugin[],
   logger: DreamuxLogger,
 ): StartedPlugins {
-  const { hooks, pluginHooks } = buildHostHooks();
-  // Doctor rows and load errors find a plugin's taps by tap name, so a tap on
-  // a top-level hook must carry the name of the plugin whose `server` is
-  // running. The throw lands in that `server` call's catch below.
-  let serving: string | null = null;
-  const requireOwnName = {
-    register: <T extends { name: string }>(tap: T): T => {
-      if (serving === null) {
-        throw new Error(`tap "${tap.name}" was added outside a plugin's server`);
-      }
-      if (tap.name !== serving) {
-        throw new Error(`tap "${tap.name}" must be named after its plugin "${serving}"`);
-      }
-      return tap;
-    },
-  };
-  hooks.dispatcher.intercept(requireOwnName);
-  pluginHooks.intercept({
-    factory: (_key, hook) => {
-      hook.intercept(requireOwnName);
-      return hook;
-    },
-  });
+  const { hooks, pluginHooks } = buildHostHooks(logger);
   for (const loaded of plugins) {
     if (loaded.plugin.server === undefined) continue;
-    serving = loaded.name;
+    const server = loaded.plugin.server.bind(loaded.plugin);
     try {
-      loaded.plugin.server({
-        config: loaded.config,
-        logger: logger.child?.({ plugin: loaded.name }) ?? logger,
-        hooks,
-      });
+      runAsPlugin(loaded.name, () =>
+        server({
+          config: loaded.config,
+          logger: logger.child?.({ plugin: loaded.name }) ?? logger,
+          hooks,
+        }),
+      );
     } catch (err) {
       throw new PluginLoadError(loaded.name, 'server', errorMessage(err), {
         cause: err,
       });
-    } finally {
-      serving = null;
     }
   }
   for (const loaded of plugins) {
     if (loaded.plugin.api === undefined) continue;
     // `get`, not `for`: a plugin nobody tapped needs no hook object.
-    const hook = pluginHooks.get(loaded.name);
-    if (hook !== undefined) callLoadPhaseTaps(hook, [loaded.plugin.api], loaded.name);
+    pluginHooks.get(loaded.name)?.call(loaded.plugin.api);
   }
   return {
     hooks,
-    tapNames: () => ({
-      dispatcher: hooks.dispatcher.taps.map((tap) => tap.name),
+    tapOwners: () => ({
+      dispatcher: [...tapOwners(hooks.dispatcher)],
       plugin: Object.fromEntries(
-        plugins.map((loaded) => [
-          loaded.name,
-          (pluginHooks.get(loaded.name)?.taps ?? []).map((tap) => tap.name),
-        ]),
+        plugins.map((loaded) => {
+          const hook = pluginHooks.get(loaded.name);
+          return [loaded.name, hook === undefined ? [] : [...tapOwners(hook)]];
+        }),
       ),
     }),
   };

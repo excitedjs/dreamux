@@ -84,13 +84,12 @@ rejected with the rebuild instruction to declare a named `agents[]` entry.
 `dreamux serve` fails loudly and creates no silent defaults when the config file
 is missing, when its mode is not `0600`, when the JSON does not parse, when the
 shape is rejected (unknown keys, a top-level `codex` block, a dispatcher
-`runtime` block, a duplicate dispatcher id, a channel `collaborationSpace`
-block), when a providerized entry or a plugin cannot be loaded (including a
-duplicate plugin or provider name, and a `config` block for a plugin that takes
-none), or when an enabled
-dispatcher has no explicit `cwd` — the last check lives with the workspace
-contract in `dispatcher-workspace.ts`, not in the config reader. The operator
-fix path is `dreamux onboard` or a manual rebuild.
+`runtime` block, a duplicate dispatcher id, a dispatcher entry without a
+non-empty `cwd` (enabled or not; the error names the dispatcher id), a channel
+`collaborationSpace` block), or when a providerized entry or a plugin cannot be
+loaded (including a duplicate plugin or provider name, and a `config` block for
+a plugin that takes none). The operator fix path is `dreamux onboard` or a
+manual rebuild.
 
 Source:
 

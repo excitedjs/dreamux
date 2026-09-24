@@ -16,7 +16,7 @@ import {
 
 interface TestDispatcherOptions {
   id?: string;
-  cwd?: string | null;
+  cwd?: string;
   enabled?: boolean;
   channelId?: string;
   channelProvider?: string;
@@ -30,6 +30,14 @@ interface TestDispatcherOptions {
   workspaceEnabled?: boolean;
 }
 
+/**
+ * `cwd` is required on every dispatcher. Fixtures that never touch the
+ * workspace get this absolute path, which no test creates.
+ */
+function placeholderCwd(dispatcherId: string): string {
+  return `/nonexistent/dreamux-test/${dispatcherId}`;
+}
+
 export function testDispatcherConfig(
   options: TestDispatcherOptions = {},
 ): DispatcherConfig {
@@ -41,7 +49,7 @@ export function testDispatcherConfig(
   };
   return {
     id,
-    cwd: options.cwd ?? null,
+    cwd: options.cwd ?? placeholderCwd(id),
     enabled: options.enabled ?? true,
     workspace: { enabled: options.workspaceEnabled ?? true },
     channels:
@@ -109,7 +117,7 @@ export interface TestFileAgent {
 /** One dispatchers[] file entry referencing an agent by id. */
 export interface TestFileDispatcher {
   id: string;
-  cwd?: string | null;
+  cwd?: string;
   enabled?: boolean;
   agentRuntime: string;
   feishu?: { app_id: string; app_secret: string };
@@ -138,7 +146,7 @@ export function testConfigFileObject(input: {
     })),
     dispatchers: (input.dispatchers ?? []).map((dispatcher) => ({
       id: dispatcher.id,
-      ...(dispatcher.cwd !== undefined ? { cwd: dispatcher.cwd } : {}),
+      cwd: dispatcher.cwd ?? placeholderCwd(dispatcher.id),
       ...(dispatcher.enabled !== undefined ? { enabled: dispatcher.enabled } : {}),
       ...(dispatcher.workspace !== undefined
         ? { workspace: dispatcher.workspace }
@@ -165,7 +173,7 @@ export function testConfigFileObject(input: {
  */
 export function testSingleDispatcherFileObject(options: {
   id?: string;
-  cwd?: string | null;
+  cwd?: string;
   enabled?: boolean;
   codex?: Record<string, unknown>;
   feishu?: { app_id: string; app_secret: string };

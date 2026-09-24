@@ -298,7 +298,7 @@ describe('startPlugins', () => {
           name: 'acme',
           server(host) {
             calls.push('acme server');
-            forPlugin(host, 'beta').tap('acme', (api: unknown) => {
+            forPlugin(host, 'beta').tap('read beta', (api: unknown) => {
               calls.push(`acme got ${String(api)}`);
             });
           },
@@ -318,10 +318,10 @@ describe('startPlugins', () => {
     const started = startPlugins(loaded, silentLog);
 
     expect(calls).toEqual(['acme server', 'beta server', 'acme got beta-api']);
-    expect(started.tapNames().plugin).toEqual({ feishu: [], acme: [], beta: ['acme'] });
+    expect(started.tapOwners().plugin).toEqual({ feishu: [], acme: [], beta: ['acme'] });
   });
 
-  it('fails the server phase of a plugin whose top-level tap carries another name', async () => {
+  it('attributes a free-form tap name to the plugin whose server registered it', async () => {
     const loaded = await load([{ ref: 'npm:@acme/a' }], {
       '@acme/a': {
         default: (): DreamuxPlugin => ({
@@ -332,18 +332,10 @@ describe('startPlugins', () => {
         }),
       },
     });
-    let caught: unknown;
-    try {
-      startPlugins(loaded, silentLog);
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(PluginLoadError);
-    expect((caught as PluginLoadError).plugin).toBe('acme');
-    expect((caught as PluginLoadError).phase).toBe('server');
-    expect((caught as Error).message).toContain(
-      'tap "acme-profile" must be named after its plugin "acme"',
-    );
+
+    const started = startPlugins(loaded, silentLog);
+
+    expect(started.tapOwners().dispatcher).toEqual(['acme']);
   });
 
   it('wraps a throwing server as that plugin\'s load failure', async () => {
@@ -381,6 +373,7 @@ describe('plugins[] through loadConfig', () => {
       dispatchers: [
         {
           id: 'flow',
+          cwd: '/srv/flow',
           agentRuntime: 'flow',
           channels: [
             {

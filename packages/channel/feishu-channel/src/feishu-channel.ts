@@ -209,9 +209,7 @@ export class FeishuChannelSession {
         this.bot.resolveUserName?.(openId) ?? Promise.resolve(undefined),
       isTrustedUser: (openId) => isTrustedDispatcherUser(opts.stateDir, openId),
     });
-    this.extensions = new FeishuSessionExtensions(
-      opts.extensions ?? new FeishuExtensionRegistry(),
-    );
+    this.extensions = new FeishuSessionExtensions(opts.extensions, opts.log);
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -268,9 +266,9 @@ export class FeishuChannelSession {
         channelId: this.opts.channelId,
         stateDir: this.opts.stateDir,
         signal: controller.signal,
-        log: this.opts.log,
         api: buildInstanceApi({
           handle: this.handleForFence(lifecycle.fence),
+          track: (work) => this.track(lifecycle, work),
           routing: this.routing,
           bindings: this.bindings,
           submit: (teamName, submission) => this.submit(teamName, submission),
@@ -296,11 +294,14 @@ export class FeishuChannelSession {
         onCardAction: (event) => this.onCardAction(event),
         docComments: this.docComments,
       }));
+      // Tracked so a close landing mid-start waits, then closes what it opened.
+      if (lifecycle.fence.isCurrent()) {
+        await this.track(lifecycle, this.extensions.start());
+      }
       if (!lifecycle.fence.isCurrent()) {
         await this.bot.close();
         throw new Error('Feishu channel session was closed during startup');
       }
-      await this.extensions.start();
     } catch (error) {
       await this.teardown(lifecycle);
       throw error;
@@ -330,7 +331,7 @@ export class FeishuChannelSession {
     await this.cot.close();
     await Promise.allSettled([...lifecycle.inFlight]);
     // Extension calls are fenced and settled now; no handler holds their state.
-    await this.extensions.close(this.opts.log);
+    await this.extensions.close();
     // Only now is the Channel's own commit queue empty: a listener that
     // removed a binding queued its commit without awaiting it.
     await this.store.drain();

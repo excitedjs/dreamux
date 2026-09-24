@@ -239,7 +239,7 @@ export class Server {
       homePathPrefixes,
       adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory: this.channelLoggerFactory,
-      dispatcherHook: (this.opts.hooks ?? createServerHooks()).dispatcher,
+      dispatcherHook: (this.opts.hooks ?? createServerHooks(this.log)).dispatcher,
       ...(this.opts.workflowLoggerFactory !== undefined
         ? { workflowLoggerFactory: this.opts.workflowLoggerFactory }
         : {}),

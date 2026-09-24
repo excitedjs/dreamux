@@ -129,6 +129,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       dispatchers: [
         {
           id: 'flow',
+          cwd: '/srv/flow',
           agentRuntime: 'flow',
           channels: [
             {
@@ -145,6 +146,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
     expect(config.dispatchers).toHaveLength(1);
     expect(config.dispatchers[0]).toMatchObject({
       id: 'flow',
+      cwd: '/srv/flow',
       agentRuntime: 'flow',
       runtime: { provider: BUILTIN_CODEX_PROVIDER_REF },
     });
@@ -160,6 +162,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       dispatchers: [
         {
           id: 'flow',
+          cwd: '/srv/flow',
           agentRuntime: 'does-not-exist',
           channels: [
             {
@@ -176,12 +179,36 @@ describe('config parser accepts the current shape and rejects a dangling agent r
     );
   });
 
+  it('rejects a dispatcher without a cwd, enabled or not, naming its id', async () => {
+    await writeConfig({
+      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      dispatchers: [
+        {
+          id: 'flow',
+          enabled: false,
+          agentRuntime: 'flow',
+          channels: [
+            {
+              id: 'primary',
+              provider: BUILTIN_FEISHU_PROVIDER_REF,
+              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+            },
+          ],
+        },
+      ],
+    });
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
+      /dispatchers\[0\]\.cwd is required for dispatcher 'flow'/,
+    );
+  });
+
   it('rejects a dispatcher with no agentRuntime at all', async () => {
     await writeConfig({
       agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
       dispatchers: [
         {
           id: 'flow',
+          cwd: '/srv/flow',
           channels: [
             {
               id: 'primary',
@@ -201,6 +228,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       dispatchers: [
         {
           id: 'flow',
+          cwd: '/srv/flow',
           agentRuntime: 'flow',
           channels: [
             {
@@ -235,6 +263,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       dispatchers: [
         {
           id: 'flow',
+          cwd: '/srv/flow',
           agentRuntime: 'flow',
           runtime: { provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
           channels: [
@@ -271,6 +300,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
         dispatchers: [
           {
             id: 'flow',
+            cwd: '/srv/flow',
             agentRuntime: 'flow',
             ...(workspaceCase.workspace === undefined
               ? {}
@@ -317,6 +347,7 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       dispatchers: [
         {
           id: 'flow',
+          cwd: '/srv/flow',
           agentRuntime: 'flow',
           channels: [
             {

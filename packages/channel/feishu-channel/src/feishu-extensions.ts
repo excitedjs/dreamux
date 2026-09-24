@@ -46,14 +46,20 @@ export class FeishuExtensionRegistry {
 
   register<S>(extension: FeishuExtension<S>): void {
     const ext = extension as unknown as AnyExtension;
+    if (ext.name === '') {
+      throw new Error('A Feishu extension name must not be empty');
+    }
     if (this.extensions.some((other) => other.name === ext.name)) {
       throw new Error(`Feishu extension "${ext.name}" is registered twice`);
     }
-    for (const tool of ext.tools) {
+    ext.tools.forEach((tool, index) => {
       for (const kind of tool.callers) {
         const other = findFeishuTool(tool.name, kind) !== undefined
           ? 'built-in Feishu tool'
-          : this.toolOwner(tool.name, kind);
+          : this.toolOwner(tool.name, kind) ??
+            (offersTool(ext.tools.slice(0, index), tool.name, kind)
+              ? 'another tool of the same extension'
+              : undefined);
         if (other !== undefined) {
           throw new Error(
             `Feishu extension "${ext.name}" tool "${tool.name}" ` +
@@ -61,20 +67,30 @@ export class FeishuExtensionRegistry {
           );
         }
       }
-    }
-    for (const action of ext.cardActions) {
+    });
+    ext.cardActions.forEach((action, index) => {
+      // An empty key would claim every click whose card value carries no
+      // `dreamux_action`, because the dispatcher reads a missing key as ''.
+      if (action.key === '') {
+        throw new Error(
+          `Feishu extension "${ext.name}" has a card action with an empty key`,
+        );
+      }
       const other =
         action.key === DREAMUX_PAIRING_CARD_ACTION ||
         DREAMUX_ASK_ACTIONS.has(action.key)
           ? 'built-in Feishu card action'
-          : this.actionOwner(action.key);
+          : this.actionOwner(action.key) ??
+            (ext.cardActions.slice(0, index).some((a) => a.key === action.key)
+              ? 'another card action of the same extension'
+              : undefined);
       if (other !== undefined) {
         throw new Error(
           `Feishu extension "${ext.name}" card action "${action.key}" ` +
             `conflicts with ${other}`,
         );
       }
-    }
+    });
     this.extensions.push(ext);
   }
 
@@ -94,9 +110,7 @@ export class FeishuExtensionRegistry {
     name: string,
     kind: ChannelMcpCaller['kind'],
   ): string | undefined {
-    const owner = this.extensions.find((ext) =>
-      ext.tools.some((tool) => tool.name === name && tool.callers.includes(kind)),
-    );
+    const owner = this.extensions.find((ext) => offersTool(ext.tools, name, kind));
     return owner === undefined ? undefined : `extension "${owner.name}"`;
   }
 
@@ -108,65 +122,80 @@ export class FeishuExtensionRegistry {
   }
 }
 
+function offersTool(
+  tools: readonly FeishuExtensionTool<unknown>[],
+  name: string,
+  kind: ChannelMcpCaller['kind'],
+): boolean {
+  return tools.some((tool) => tool.name === name && tool.callers.includes(kind));
+}
+
 export interface FeishuExtensionInitializeInput {
   readonly dispatcherId: string;
   readonly channelId: string;
   readonly stateDir: string;
   readonly signal: AbortSignal;
-  readonly log: DreamuxLogger;
   readonly api: FeishuInstanceApi;
 }
 
 /** One Feishu channel instance's running extensions and their states. */
 export class FeishuSessionExtensions {
+  private readonly registry: FeishuExtensionRegistry;
   private readonly states = new Map<AnyExtension, unknown>();
 
-  constructor(private readonly registry: FeishuExtensionRegistry) {}
+  constructor(
+    registry: FeishuExtensionRegistry | undefined,
+    private readonly log: DreamuxLogger,
+  ) {
+    this.registry = registry ?? new FeishuExtensionRegistry();
+  }
 
-  /** In registration order; a throw propagates and fails the instance. */
+  /**
+   * In registration order; a throw is logged naming the extension, then
+   * propagates and fails the instance.
+   */
   async initialize(input: FeishuExtensionInitializeInput): Promise<void> {
     for (const ext of this.registry.list()) {
-      const state = await ext.initialize({
-        dispatcherId: input.dispatcherId,
-        channelId: input.channelId,
-        stateRoot: join(
-          input.stateDir,
-          'feishu-extensions',
-          ext.name,
-          channelPathSegment(input.channelId),
-        ),
-        signal: input.signal,
-        log: input.log.child?.({ feishu_extension: ext.name }) ?? input.log,
-        api: input.api,
-      });
+      const state = await this.attributed(ext, 'initialize', () =>
+        ext.initialize({
+          dispatcherId: input.dispatcherId,
+          channelId: input.channelId,
+          stateRoot: join(
+            input.stateDir,
+            'feishu-extensions',
+            ext.name,
+            channelPathSegment(input.channelId),
+          ),
+          signal: input.signal,
+          log: this.log.child?.({ feishu_extension: ext.name }) ?? this.log,
+          api: input.api,
+        }),
+      );
       this.states.set(ext, state);
     }
   }
 
-  /** In registration order; a throw propagates and fails the instance. */
+  /**
+   * In registration order; a throw is logged naming the extension, then
+   * propagates and fails the instance.
+   */
   async start(): Promise<void> {
-    for (const [ext, state] of this.states) await ext.start(state);
+    for (const [ext, state] of this.states) {
+      await this.attributed(ext, 'start', () => ext.start(state));
+    }
   }
 
   /**
    * In reverse order. A failure is logged and the rest still close, because
    * the session teardown that calls this must go on to drain its own store.
    */
-  async close(log: DreamuxLogger): Promise<void> {
+  async close(): Promise<void> {
     const running = [...this.states].reverse();
     this.states.clear();
     for (const [ext, state] of running) {
-      try {
-        await ext.close(state);
-      } catch (err) {
-        log.error(
-          {
-            feishu_extension: ext.name,
-            err: { message: err instanceof Error ? err.message : String(err) },
-          },
-          'Feishu extension close failed',
-        );
-      }
+      await this.attributed(ext, 'close', () => ext.close(state)).catch(
+        () => undefined,
+      );
     }
   }
 
@@ -196,10 +225,34 @@ export class FeishuSessionExtensions {
     for (const ext of this.registry.list()) {
       const def = ext.cardActions.find((action) => action.key === key);
       if (def !== undefined) {
-        return (event) => def.handle(this.states.get(ext), event);
+        // The Lark SDK logs a rejected callback without knowing its owner.
+        return (event) =>
+          this.attributed(ext, 'card action', () =>
+            def.handle(this.states.get(ext), event),
+          );
       }
     }
     return undefined;
+  }
+
+  /** Run one extension step; a rejection is logged naming the extension and rethrown. */
+  private async attributed<T>(
+    ext: AnyExtension,
+    step: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      this.log.error(
+        {
+          feishu_extension: ext.name,
+          err: { message: err instanceof Error ? err.message : String(err) },
+        },
+        `Feishu extension ${step} failed`,
+      );
+      throw err;
+    }
   }
 }
 
@@ -217,6 +270,8 @@ export function buildInstanceApi(input: {
   handle: SessionHandle;
   routing: FeishuRouting;
   bindings: FeishuBindingOperations;
+  /** Closing the instance waits for work passed here before it drains routing. */
+  track(work: Promise<unknown>): Promise<unknown>;
   submit(
     teamName: string,
     submission: FeishuChatSubmission,
@@ -240,7 +295,9 @@ export function buildInstanceApi(input: {
     },
     async bindTeam({ target, teamName, display }) {
       assertCurrent();
-      await bindings.bindChannel({ target, teamName, display });
+      // Tracked: the bind writes routing after an awaited Core status read,
+      // which must not land after the instance closed its routing store.
+      await input.track(bindings.bindChannel({ target, teamName, display }));
     },
     async sendCard({ chatId, replyTo, card, mode }) {
       const sent = await sendCard(handle, {

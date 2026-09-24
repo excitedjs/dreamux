@@ -33,6 +33,7 @@ import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js'
 import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
+import { launchDraftTaps } from '../src/plugin/hooks.js';
 import { restoreTeamLeaderAgentForTeam } from '../src/service/team-service/leader-agent.js';
 import { AdmissionLedger } from '../src/service/teammate-service/admission-ledger.js';
 import type { TeammateAgentMcp } from '../src/service/teammate-service/types.js';
@@ -212,7 +213,10 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
 
   it('places plugin draft instructions before the identity text and drops a failing tap', async () => {
     const identityPrompt = 'You are the release captain for this Team.';
-    const hook = new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeTeamLeaderLaunch');
+    const hook = launchDraftTaps(
+      new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeTeamLeaderLaunch'),
+      silentLog,
+    );
     hook.tapPromise('alpha', async (draft) => {
       draft.instructions.push('from alpha');
     });

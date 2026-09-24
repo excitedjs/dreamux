@@ -13,7 +13,7 @@ public interface.
 | Plugin contract (`DreamuxPlugin`, `ContributeHost`, `ServerHost`, `Dispatcher`, `Team`, `LaunchDraft`, `DreamuxPluginApis`) | `/packages/dreamux-types/src/plugin.ts` |
 | `plugins[]` parsing, import, factory, same-name checks, `contribute`, `config.read` | `/packages/dreamux/src/plugin/loader.ts` |
 | Top-level hooks, `server`, api publication | `/packages/dreamux/src/plugin/host.ts` |
-| Running taps (the only module that executes plugin callbacks) | `/packages/dreamux/src/plugin/taps.ts` |
+| Tap isolation and owner attribution (the `register` interceptors core installs on every hook it creates) | `/packages/dreamux/src/plugin/hooks.ts` |
 | Built-in plugin ids and the always-loaded list | `/packages/dreamux/src/registry/builtins.ts` |
 | Doctor rows | `/packages/dreamux/src/cli/doctor-plugins.ts` |
 | Built-in bootstrap plugin | `/packages/plugins/bootstrap/src/index.ts` |
@@ -44,8 +44,8 @@ host.hooks.plugin.for(name)      once, with plugin <name>'s api, at the end of l
 | `host.hooks.dispatcher` | `Dispatchers.get` (`/packages/dreamux/src/service/dispatchers/index.ts`), after the service is cached | once per Dispatcher object, including a disabled Dispatcher a Command materializes | again for the cached object |
 | `dispatcher.hooks.beforeLaunch` | `createDispatcherAgent` (`/packages/dreamux/src/service/dispatcher-service/agent.ts`) | each Dispatcher input-source start | a runtime process restart inside the same Agent |
 | `dispatcher.hooks.team` | `TeamService` `createNew` and `rebuild` (`/packages/dreamux/src/service/team-service/index.ts`), through the `announceTeam` dep | create (before the Team record is written) and rebuild; `ctx.origin` says which | a replayed `request_id` (never reaches `createNew`) |
-| `team.hooks.beforeTeamLeaderLaunch` | `restoreTeamLeaderAgentForTeam` (`/packages/dreamux/src/service/team-service/leader-agent.ts`) | create, rebuild, lazy TeamLeader materialization, and the close-only restore of an adopted durable leader | a runtime process restart inside the same TeammateService |
-| `team.hooks.created` | `TeamRuntimeRegistry.createTeam` (`/packages/dreamux/src/service/team-collection/runtime-registry.ts`), after `publish` | once per newly created Team, with the create request id or `null` | rebuild, failed creation, a name-taken discard, a replayed request |
+| `team.hooks.beforeTeamLeaderLaunch` | `restoreTeamLeaderAgentForTeam` (`/packages/dreamux/src/service/team-service/leader-agent.ts`) | create, rebuild, lazy TeamLeader materialization, and creation-failure cleanup when it adopts a durable leader to close it | a runtime process restart inside the same TeammateService |
+| `team.hooks.created` | `TeamRuntimeRegistry.createTeam` (`/packages/dreamux/src/service/team-collection/runtime-registry.ts`), after `publish`, as a background task | once per newly created Team, with the create request id or `null` | rebuild, failed creation, a name-taken discard, a replayed request |
 
 Semantics that follow from the sites:
 
@@ -62,12 +62,22 @@ Semantics that follow from the sites:
   in-flight construction map, so a `created` tap that reached this Team through
   a Command (`team.submit`) would join the construction that is waiting on the
   tap. After `publish` the registry's `get` answers from its cache first.
+- `created` does not hold up the create reply: the registry starts it without
+  awaiting and tracks it. Dispatcher stop waits for runs in flight before it
+  closes channels (a `created` tap may bind a chat to the Team), and again
+  after the admitted-work drain, which ends every create that could still
+  start one.
+- `beforeTeamLeaderLaunch` has a fourth trigger besides create, rebuild and
+  lazy materialization: when Team creation fails after the TeamLeader
+  identity was persisted, `closing.abandonCreation` adopts that durable leader
+  through `restoreTeamLeaderAgentForTeam` so it can be stopped cleanly. The
+  launch hook therefore runs once on a Team that is being closed; a tap that
+  counts launches in its own state sees that one.
 - No TeamMate launch hook and no Team close hook exist.
 
-`Dispatcher.cwd` is `string | null`: `dispatchers[].cwd` is optional, and a
-disabled Dispatcher without one is still materialized (and announced on
-`host.hooks.dispatcher`) by any Command that addresses it. Such a Dispatcher
-never launches, so its launch hooks never fire.
+`Dispatcher.cwd` is a `string`: config parsing requires a non-empty
+`dispatchers[].cwd` on every entry, enabled or not, so a disabled Dispatcher a
+Command materializes carries one too.
 
 The objects handed to taps are the real `DispatcherService` and `TeamService`;
 plugins see only the `Dispatcher` / `Team` interfaces, and no mapping object
@@ -96,26 +106,29 @@ Order, all inside `loadConfig` except the last two steps:
    with the same ref grammar; a provider name already taken by core or another
    plugin fails naming both sources.
 3. Load and validate provider refs as before; refs to contributed providers
-   resolve from the registry like any built-in.
+   resolve from the registry like any built-in. A `builtin:<name>` ref that no
+   loaded plugin contributes and Dreamux does not ship fails loading with that
+   statement, which is what an operator sees after removing a plugin from
+   `plugins[]` while config still addresses its provider.
 4. Run each plugin's `config.read` on its entry's `config`. A `config` block for
-   a plugin with no `config.read` is rejected: the config loader rejects
-   unknown input everywhere else, and dropping the block would leave the
-   operator believing a setting is in force.
+   a plugin with no `config.read` is a `PluginLoadError` (phase `config`), so
+   `dreamux serve` fails to start: the config loader rejects unknown input
+   everywhere else, and dropping the block would leave the operator believing
+   a setting is in force.
 5. `startPlugins` (serve and doctor only): run every `server`.
 6. For each plugin with an `api`, call the taps on `hooks.plugin.for(name)`.
    This runs last because tapable hooks do not replay: a plugin loaded later
    must still get to tap an earlier plugin's api. A plugin that is not loaded
    never fires its `for(name)`, so an optional dependency needs no check.
 
-A plugin names every tap after itself (`tap('<plugin name>', ...)`), on every
-hook level: failure logs, load errors and doctor rows attribute a tap by its
-name, and no other record of which plugin added a tap exists. `startPlugins`
-enforces it on the two top-level hooks with a `register` interceptor that
-compares the tap name with the plugin whose `server` is running: a misnamed
-top-level tap fails that plugin's `server` phase, and a top-level tap added
-outside any `server` (from an api callback, say) fails loading too.
-The lower hooks are tapped at runtime, after `server`, and rely on the
-convention.
+Tap names are free-form. Every hook core creates gets a `register`
+interceptor at construction that records the tap's owner: the plugin whose
+`server` is running, or the plugin whose wrapped tap is executing. The owner
+travels in an `AsyncLocalStorage`, so a tap registered inside another tap,
+including after an `await`, gets the right owner. Failure logs, load errors
+and doctor rows attribute taps by owner. A tap registered outside any plugin
+context (for example from a Feishu extension's event handler) has no owner
+and is reported by its tap name.
 
 `contribute` and `server` only register and tap; they do no IO. `dreamux
 doctor` runs both while a daemon may be live, and at load time no Dispatcher or
@@ -135,17 +148,25 @@ with `plugin: <name>`.
   `plugin <name>` row in place of the per-plugin rows and continues. The `for(name)` taps are load phase
   because name collisions a published api enforces (for example Feishu
   extension tool names) are raised inside them and must be hard errors.
-- Runtime hooks: core never calls tapable's `call` / `promise`. It iterates the
-  public `hook.taps` array (already ordered by `stage` / `before`) so one tap's
-  failure is isolated; call and tap interceptors added with `hook.intercept`
-  are not run.
-  - `SyncHook` taps (`dispatcher`, `team`): a throw is logged with the plugin
-    name and skipped; lower-level taps it registered before throwing stay.
+- Core runs every hook with tapable's own `hook.call` / `hook.promise`, so
+  interceptors plugins add with `hook.intercept` run. Isolation comes from the
+  `register` interceptor core installs first: it wraps each tap's `fn` as the
+  tap registers. The `for(name)` wrapper turns a throw into the load error
+  above, attributed to the tap's owner.
+- Runtime hooks:
+  - `SyncHook` taps (`dispatcher`, `team`): a throw is logged with the owning
+    plugin and skipped; lower-level taps it registered before throwing stay.
   - Launch hooks: each tap writes into its own empty sub-draft, merged only
     after the tap resolved and its `skillSources` passed the skill fence. A
     rejection or a fence violation drops that tap's instructions and skill
-    sources together and is logged; launch continues.
-  - `created`: a rejection is logged and skipped, never propagated.
+    sources together and is logged; launch continues. The required roots
+    (built-in roots, and a TeamLeader identity's persisted roots) are checked
+    once per launch outside any tap's attribution, the first time a tap adds a
+    skill root. If one is unreadable, that is logged once naming the root, and
+    plugin skill roots are skipped for this launch while plugin instructions
+    still apply; no plugin is blamed for a root it does not own.
+  - `created`: a rejection is logged with the owning plugin and skipped,
+    never propagated.
 
 ## Launch Draft Composition
 
@@ -164,8 +185,8 @@ so a plugin can only append, by structure rather than by validation.
 
 ## Built-in Bootstrap Plugin
 
-`@excitedjs/dreamux-plugin-bootstrap` (`builtin:bootstrap`). Per Dispatcher
-with a cwd, it reads `<cwd>/.workspace/identity.md` and `user.md`:
+`@excitedjs/dreamux-plugin-bootstrap` (`builtin:bootstrap`). Per Dispatcher,
+it reads `<cwd>/.workspace/identity.md` and `user.md`:
 
 - `beforeLaunch`: both present → remove `.workspace/bootstrap.md` if present,
   add the rendered profile. Otherwise create `.workspace/` if needed, write the

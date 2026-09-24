@@ -19,7 +19,6 @@ import {
 import {
   describeType,
   isPlainObject,
-  readOptionalString,
   readProviderConfigObject,
   rejectUnknownKeys,
   requireNonEmptyString,
@@ -68,7 +67,7 @@ export interface ResolvedAgentConfig {
 
 export interface DispatcherConfig {
   id: string;
-  cwd: string | null;
+  cwd: string;
   enabled: boolean;
   workspace: DreamuxWorkspaceConfig;
   channels: DispatcherChannelConfig[];
@@ -499,12 +498,18 @@ async function readDispatchers(
       providerRegistry,
     );
 
-    const cwd = readOptionalString(raw, 'cwd', file, prefix);
+    const cwd = raw['cwd'];
+    if (typeof cwd !== 'string' || cwd.trim() === '') {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}cwd is required for dispatcher ` +
+          `'${id}': set it to the Dispatcher's workspace directory`,
+      );
+    }
     const agentRuntimeId = resolveAgentRuntime(raw, prefix, file, agents);
     const agent = agents[agentRuntimeId]!;
     out.push({
       id,
-      cwd: cwd === null ? null : expandHome(cwd),
+      cwd: expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
       workspace: readWorkspaceConfig(
         raw['workspace'],

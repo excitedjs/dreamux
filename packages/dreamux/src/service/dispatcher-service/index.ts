@@ -15,7 +15,7 @@ import {
   teamMateCollectionDir,
 } from '../../platform/paths.js';
 import { errorInfo } from '../../platform/error-info.js';
-import { callTapsIsolated } from '../../plugin/taps.js';
+import { isolatedTaps, launchDraftTaps } from '../../plugin/hooks.js';
 import { configuredDispatcherCwd } from '../dispatcher-workspace.js';
 import type { DispatcherRow } from '../../state/dispatcher-store.js';
 import { DispatcherTaskDrain } from './inbound-task-drain.js';
@@ -104,14 +104,8 @@ export interface TeamSubmitRequest
 
 export class DispatcherService implements Dispatcher {
   readonly id: string;
-  readonly cwd: string | null;
-  readonly hooks: Dispatcher['hooks'] = Object.freeze({
-    beforeLaunch: new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch'),
-    team: new SyncHook<[Team, { readonly origin: 'create' | 'rebuild' }]>(
-      ['team', 'ctx'],
-      'team',
-    ),
-  });
+  readonly cwd: string;
+  readonly hooks: Dispatcher['hooks'];
   private readonly log: DreamuxLogger;
   private readonly _teammates: TeammateCollection;
   private readonly teams: TeamCollection;
@@ -129,6 +123,19 @@ export class DispatcherService implements Dispatcher {
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
     this.cwd = configuredDispatcherCwd(opts.config, opts.id);
+    this.hooks = Object.freeze({
+      beforeLaunch: launchDraftTaps(
+        new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch'),
+        opts.log,
+      ),
+      team: isolatedTaps(
+        new SyncHook<[Team, { readonly origin: 'create' | 'rebuild' }]>(
+          ['team', 'ctx'],
+          'team',
+        ),
+        opts.log,
+      ),
+    });
     this.admittedTasks = new DispatcherTaskDrain(
       () => `dispatcher '${this.id}' is shutting down`,
     );
@@ -243,7 +250,7 @@ export class DispatcherService implements Dispatcher {
       // TeamMates report to that leader, which the Team itself supplies.
       dispatcherCompletionInitiator: () => Promise.resolve(this.mustAgent()),
       admitOperation: (task) => this.admitOperation(task),
-      announceTeam: (team, ctx) => callTapsIsolated(this.hooks.team, [team, ctx], opts.log),
+      announceTeam: (team, ctx) => this.hooks.team.call(team, ctx),
       leaderMcp: ({ teamId, leaderName }) => ({
         leases: opts.mcpLeases,
         adminSocketPath: adminSocket,
@@ -377,6 +384,10 @@ export class DispatcherService implements Dispatcher {
       // settling during shutdown still produces facts a Channel should see.
       // They are revoked once, here, immediately before the sessions holding
       // them are closed.
+      // Before channels close: a `created` tap's work (binding a chat to the
+      // new Team, say) needs a live channel. Runtimes are stopped and
+      // admission is closed, so a tap cannot hang on a Turn or a Command.
+      await collectShutdownFailure(failures, () => this.teams.drainCreatedHooks());
       this.coreEvents.revokeSources();
       await collectShutdownFailure(failures, () =>
         this.channels.closeAll(this.log));
@@ -386,6 +397,9 @@ export class DispatcherService implements Dispatcher {
       await collectShutdownFailure(failures, () =>
         this.inputSources.waitForSettledStart());
       await collectShutdownFailure(failures, () => this.admittedTasks.drain());
+      // Again after the admitted drain, which ends every create that could
+      // still start a `created` hook run.
+      await collectShutdownFailure(failures, () => this.teams.drainCreatedHooks());
       await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
       const lateTeamStopError = await stopTeamRuntimes({
         dispatcherId: this.id,
