@@ -4,7 +4,7 @@
  * `ContributeHost`, extensions registered through the published api, and
  * sessions created by that provider over a fake bot.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,12 +12,16 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vites
 
 import type {
   ChannelCorePort,
+  ChannelDiagnosticContext,
+  ChannelDiagnosticRunner,
   ChannelMcpCaller,
   ChannelProvider,
   ContributeHost,
   DreamuxLogger,
   DreamuxPlugin,
+  JsonValue,
   ServerHost,
+  TeamSummary,
 } from '@excitedjs/dreamux-types';
 
 import feishuPluginFactory, {
@@ -30,7 +34,10 @@ import feishuPluginFactory, {
 } from '../src/index.js';
 import type { FeishuChannelConfig } from '../src/provider.js';
 import { FeishuOperationError } from '../src/feishu-bounded-operation.js';
+import { channelPathSegment, routingDocumentFilename } from '../src/routing/store.js';
+import { chatTarget, topicTarget } from '../src/routing/target.js';
 import { createFakeFeishuBot, type FakeFeishuBot } from './helpers/fake-feishu-bot.js';
+import { teamSummary } from './helpers/team-status.js';
 
 const silentLog: DreamuxLogger = {
   error: () => undefined,
@@ -93,6 +100,89 @@ function inertPort(): ChannelCorePort {
   };
 }
 
+/** The invoke port carries JSON; a Core `TeamSummary` crosses it as plain data. */
+const asPortResult = (summary: TeamSummary): JsonValue =>
+  JSON.parse(JSON.stringify(summary)) as JsonValue;
+
+/** A Core port whose `team.status` answers immediately, for any Team name. */
+function teamStatusPort(): ChannelCorePort {
+  return {
+    invoke: {
+      invoke: async (command, payload) => {
+        if (command !== 'team.status') {
+          throw new Error(`unexpected command ${command}`);
+        }
+        const teamName = (payload as Record<string, unknown>)['team_name'] as string;
+        return asPortResult(teamSummary(teamName));
+      },
+    },
+    events: { subscribe: () => ({ unsubscribe: () => undefined }) },
+  };
+}
+
+/** A Core port whose single `team.status` answer is held until `release`. */
+function heldTeamStatusPort(): {
+  port: ChannelCorePort;
+  release(summary: TeamSummary): void;
+} {
+  let settle!: (value: JsonValue) => void;
+  const pending = new Promise<JsonValue>((resolve) => {
+    settle = resolve;
+  });
+  return {
+    port: {
+      invoke: {
+        invoke: async (command) => {
+          if (command !== 'team.status') {
+            throw new Error(`unexpected command ${command}`);
+          }
+          return pending;
+        },
+      },
+      events: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    },
+    release: (summary) => settle(asPortResult(summary)),
+  };
+}
+
+/** A recording `DreamuxLogger`: no helper in `tests/helpers/` records log calls. */
+function recordingLog(): {
+  log: DreamuxLogger;
+  records: Array<{ fields: Record<string, unknown>; message: string }>;
+} {
+  const records: Array<{ fields: Record<string, unknown>; message: string }> = [];
+  return {
+    records,
+    log: {
+      error: (fields: Record<string, unknown> | string, message?: string) => {
+        if (typeof fields === 'string') {
+          records.push({ fields: {}, message: fields });
+          return;
+        }
+        records.push({ fields, message: message ?? '' });
+      },
+      warn: () => undefined,
+      info: () => undefined,
+      debug: () => undefined,
+      trace: () => undefined,
+    },
+  };
+}
+
+const diagnosticContext: ChannelDiagnosticContext<FeishuChannelConfig> = {
+  dispatcher_id: 'disp-1',
+  channel_id: 'primary',
+  provider: 'builtin:feishu',
+  config: { appId: 'app-1', appSecret: 'secret' },
+  env: {},
+  scope: 'foreground',
+};
+
+const diagnosticRunner: ChannelDiagnosticRunner = {
+  check: async () => true,
+  capture: async () => '',
+};
+
 function tool<S>(
   name: string,
   callers: FeishuExtensionTool<S>['callers'],
@@ -129,13 +219,14 @@ function extension<S>(
 async function createSession(
   provider: ChannelProvider<FeishuChannelConfig>,
   channelId = 'primary',
+  logger: DreamuxLogger = silentLog,
 ) {
   return provider.createSession({
     dispatcher_id: 'disp-1',
     channel_id: channelId,
     provider: 'builtin:feishu',
     config: { appId: 'app-1', appSecret: 'secret' },
-    logger: silentLog,
+    logger,
     state_root: dir,
     cache_root: dir,
   });
@@ -234,6 +325,64 @@ describe('extension registration conflicts', () => {
     api.extensions.register(extension('alpha'));
     expect(() => api.extensions.register(extension('alpha'))).toThrow(
       'Feishu extension "alpha" is registered twice',
+    );
+  });
+
+  it('rejects an extension with an empty name', () => {
+    const { api } = loadFeishu();
+    expect(() => api.extensions.register(extension(''))).toThrow(
+      'A Feishu extension name must not be empty',
+    );
+  });
+
+  it('rejects a card action with an empty key', () => {
+    // An empty key would claim every click whose card value carries no
+    // `dreamux_action`, because the dispatcher reads a missing key as ''.
+    const { api } = loadFeishu();
+    expect(() =>
+      api.extensions.register(extension('alpha', {
+        cardActions: [{ key: '', handle: async () => ({}) }],
+      })),
+    ).toThrow('Feishu extension "alpha" has a card action with an empty key');
+  });
+
+  it('rejects a second tool in the same extension repeating an earlier tool\'s name and caller kind', () => {
+    const { api } = loadFeishu();
+    expect(() =>
+      api.extensions.register(extension('alpha', {
+        tools: [
+          tool('lookup', ['dispatcher']),
+          tool('lookup', ['dispatcher']),
+        ],
+      })),
+    ).toThrow(
+      'Feishu extension "alpha" tool "lookup" (caller dispatcher) conflicts with another tool of the same extension',
+    );
+  });
+
+  it('allows the same tool name offered to two different caller kinds within one extension\'s own tools', () => {
+    const { api } = loadFeishu();
+    expect(() =>
+      api.extensions.register(extension('alpha', {
+        tools: [
+          tool('lookup', ['dispatcher']),
+          tool('lookup', ['team_leader']),
+        ],
+      })),
+    ).not.toThrow();
+  });
+
+  it('rejects a second card action in the same extension repeating an earlier key', () => {
+    const { api } = loadFeishu();
+    expect(() =>
+      api.extensions.register(extension('alpha', {
+        cardActions: [
+          { key: 'ack', handle: async () => ({}) },
+          { key: 'ack', handle: async () => ({}) },
+        ],
+      })),
+    ).toThrow(
+      'Feishu extension "alpha" card action "ack" conflicts with another card action of the same extension',
     );
   });
 });
@@ -395,6 +544,9 @@ describe('extension lifecycle per Feishu channel instance', () => {
         anchor: null,
       } as unknown as Parameters<FeishuInstanceApi['submitToTeam']>[1]),
     ).toEqual({ status: 'error', message: 'Feishu session is not live' });
+    await expect(
+      captured!.bindTeam({ target: chatTarget('oc_x', 'group'), teamName: 'alpha', display: '' }),
+    ).rejects.toMatchObject({ reason: 'aborted' });
   });
 
   it('closes every extension even when one close throws, in reverse registration order', async () => {
@@ -418,5 +570,561 @@ describe('extension lifecycle per Feishu channel instance', () => {
     await instance.session.close();
 
     expect(closed).toEqual(['beta', 'alpha']);
+  });
+
+  it('runs no extension close when the session was never initialized', async () => {
+    const closed: string[] = [];
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      close: async () => {
+        closed.push('alpha');
+      },
+    }));
+    const instance = await createSession(provider);
+
+    await instance.session.close();
+
+    expect(closed).toEqual([]);
+  });
+});
+
+describe('extension lifecycle races and failure attribution', () => {
+  it('a close landing mid-start waits for the in-flight start, then closes what it opened, and session.start() rejects', async () => {
+    const events: string[] = [];
+    let closeCount = 0;
+    let beganStart!: () => void;
+    const startBegan = new Promise<void>((resolve) => {
+      beganStart = resolve;
+    });
+    let releaseHeld!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseHeld = resolve;
+    });
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      start: async () => {
+        events.push('start:begin');
+        beganStart();
+        await held;
+        events.push('start:end');
+      },
+      close: async () => {
+        closeCount += 1;
+        events.push('close');
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+
+    const starting = instance.session.start();
+    await startBegan;
+    const closing = instance.session.close();
+    releaseHeld();
+
+    await expect(starting).rejects.toThrow(/closed during startup/);
+    await expect(closing).resolves.toBeUndefined();
+    // Not just "close fired after start began" — the fix is specifically that
+    // close waits for the in-flight start to finish before closing it.
+    expect(events).toEqual(['start:begin', 'start:end', 'close']);
+    // `start()`'s own catch also tears the lifecycle down, so close is called
+    // twice; the extension's own close callback must still fire exactly once.
+    expect(closeCount).toBe(1);
+  });
+
+  it('close waits for an in-flight instance-api bindTeam before closing extensions and draining the store, and the binding lands on disk', async () => {
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
+      initialize: async (context) => {
+        captured = context.api;
+        return context.api;
+      },
+    }));
+    const instance = await createSession(provider, 'primary');
+    const held = heldTeamStatusPort();
+    await instance.session.initialize(held.port);
+    await instance.session.start();
+
+    // Called directly from the test, not through a tracked tool/action, so
+    // this only proves something if `bindTeam` itself is tracked.
+    const bindTeamPromise = captured!.bindTeam({
+      target: chatTarget('oc_untracked', 'group'),
+      teamName: 'alpha-team',
+      display: '',
+    });
+    let closeResolved = false;
+    const closing = instance.session.close().then(() => {
+      closeResolved = true;
+    });
+    // An ordering flag, not just a final state check: close() must not have
+    // resolved yet while the bindTeam it is waiting for is still held.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(closeResolved).toBe(false);
+
+    held.release(teamSummary('alpha-team'));
+    await bindTeamPromise;
+    await closing;
+    expect(closeResolved).toBe(true);
+
+    const onDisk = JSON.parse(
+      readFileSync(join(dir, routingDocumentFilename('primary')), 'utf8'),
+    ) as { bindings: Array<{ team_name: string }> };
+    expect(onDisk.bindings.map((b) => b.team_name)).toContain('alpha-team');
+  });
+
+  it('an initialize throw from a later extension fails the session and still closes an extension that already initialized', async () => {
+    const closed: string[] = [];
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      close: async () => {
+        closed.push('alpha');
+      },
+    }));
+    api.extensions.register(extension('beta', {
+      initialize: async () => {
+        throw new Error('beta init failed');
+      },
+    }));
+    const instance = await createSession(provider);
+
+    await expect(instance.session.initialize(inertPort())).rejects.toThrow('beta init failed');
+
+    expect(closed).toEqual(['alpha']);
+  });
+
+  it('a start throw from one extension fails the session and closes every initialized extension, including one whose start never ran', async () => {
+    const closed: string[] = [];
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      close: async () => {
+        closed.push('alpha');
+      },
+    }));
+    api.extensions.register(extension('beta', {
+      start: async () => {
+        throw new Error('beta start failed');
+      },
+      close: async () => {
+        closed.push('beta');
+      },
+    }));
+    api.extensions.register(extension('gamma', {
+      close: async () => {
+        closed.push('gamma');
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+
+    await expect(instance.session.start()).rejects.toThrow('beta start failed');
+
+    // gamma's start never ran (beta's threw first), but its initialize
+    // already succeeded, so it still gets a close.
+    expect(closed).toEqual(['gamma', 'beta', 'alpha']);
+  });
+
+  it('logs an initialize failure once, naming the extension, before it propagates', async () => {
+    const { log, records } = recordingLog();
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      initialize: async () => {
+        throw new Error('init boom');
+      },
+    }));
+    const instance = await createSession(provider, 'primary', log);
+
+    await expect(instance.session.initialize(inertPort())).rejects.toThrow('init boom');
+
+    expect(records).toEqual([
+      {
+        fields: { feishu_extension: 'alpha', err: { message: 'init boom' } },
+        message: 'Feishu extension initialize failed',
+      },
+    ]);
+  });
+
+  it('logs a start failure once, naming the extension, before it propagates', async () => {
+    const { log, records } = recordingLog();
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      start: async () => {
+        throw new Error('start boom');
+      },
+    }));
+    const instance = await createSession(provider, 'primary', log);
+    await instance.session.initialize(inertPort());
+
+    await expect(instance.session.start()).rejects.toThrow('start boom');
+
+    expect(records).toEqual([
+      {
+        fields: { feishu_extension: 'alpha', err: { message: 'start boom' } },
+        message: 'Feishu extension start failed',
+      },
+    ]);
+  });
+
+  it('logs a card-action rejection and still delivers it to the caller, and logs a close failure, each once', async () => {
+    const bot = createFakeFeishuBot();
+    const { log, records } = recordingLog();
+    const { api, provider } = loadFeishu([bot]);
+    api.extensions.register(extension('alpha', {
+      cardActions: [{
+        key: 'alpha_fail',
+        handle: async () => {
+          throw new Error('card boom');
+        },
+      }],
+      close: async () => {
+        throw new Error('close boom');
+      },
+    }));
+    const instance = await createSession(provider, 'primary', log);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    await expect(
+      bot.injectCardAction({ actionValue: { dreamux_action: 'alpha_fail' }, raw: {} }),
+    ).rejects.toThrow('card boom');
+
+    await instance.session.close();
+
+    expect(records).toEqual([
+      {
+        fields: { feishu_extension: 'alpha', err: { message: 'card boom' } },
+        message: 'Feishu extension card action failed',
+      },
+      {
+        fields: { feishu_extension: 'alpha', err: { message: 'close boom' } },
+        message: 'Feishu extension close failed',
+      },
+    ]);
+  });
+
+  it('aborts context.signal once the instance begins closing', async () => {
+    let captured: AbortSignal | undefined;
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      initialize: async (context) => {
+        captured = context.signal;
+        return undefined;
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+    expect(captured!.aborted).toBe(false);
+
+    await instance.session.close();
+
+    expect(captured!.aborted).toBe(true);
+  });
+});
+
+describe('extension state root', () => {
+  it('does not create an extension\'s stateRoot directory', async () => {
+    let stateRoot: string | undefined;
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      initialize: async (context) => {
+        stateRoot = context.stateRoot;
+        return undefined;
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    expect(existsSync(stateRoot!)).toBe(false);
+
+    await instance.session.close();
+  });
+
+  it('an extension\'s stateRoot channel segment matches channelPathSegment exactly', async () => {
+    let stateRoot: string | undefined;
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      initialize: async (context) => {
+        stateRoot = context.stateRoot;
+        return undefined;
+      },
+    }));
+    const instance = await createSession(provider, 'primary');
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    expect(stateRoot).toBe(join(dir, 'feishu-extensions', 'alpha', channelPathSegment('primary')));
+
+    await instance.session.close();
+  });
+});
+
+describe('FeishuInstanceApi happy paths', () => {
+  it('owner resolves null for an unbound target, the Team once bound, and a topic inherits its group binding', async () => {
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
+      initialize: async (context) => {
+        captured = context.api;
+        return context.api;
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(teamStatusPort());
+    await instance.session.start();
+
+    const group = chatTarget('oc_group', 'group');
+    const topic = topicTarget('oc_group', 'omt_1');
+    expect(captured!.owner(group)).toBeNull();
+
+    await captured!.bindTeam({ target: group, teamName: 'alpha-team', display: '' });
+
+    expect(captured!.owner(group)).toBe('alpha-team');
+    expect(captured!.owner(topic)).toBe('alpha-team');
+
+    await instance.session.close();
+  });
+
+  it('readMessageRoute resolves the target the fake bot reports for that message', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setMessageRead('msg-1', {
+      items: [{
+        messageId: 'msg-1',
+        messageType: 'text',
+        content: '{}',
+        mentions: [],
+        deleted: false,
+        malformed: false,
+        chatId: 'oc_read',
+      }],
+    });
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu([bot]);
+    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
+      initialize: async (context) => {
+        captured = context.api;
+        return context.api;
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    await expect(captured!.readMessageRoute('msg-1')).resolves.toEqual({
+      target: chatTarget('oc_read', 'group'),
+    });
+
+    await instance.session.close();
+  });
+
+  it('sendCard delivers to the fake bot and returns a target from the read-back, not the input chat id', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setMessageRead('message-fake-1', {
+      items: [{
+        messageId: 'message-fake-1',
+        messageType: 'text',
+        content: '{}',
+        mentions: [],
+        deleted: false,
+        malformed: false,
+        chatId: 'oc_readback',
+      }],
+    });
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu([bot]);
+    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
+      initialize: async (context) => {
+        captured = context.api;
+        return context.api;
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    const result = await captured!.sendCard({
+      chatId: 'oc_input',
+      card: { type: 'card' },
+      mode: 'background',
+    });
+
+    expect(bot.sentCards).toMatchObject([{ chatId: 'oc_input', card: { type: 'card' } }]);
+    expect(result).toEqual({
+      messageId: 'message-fake-1',
+      target: chatTarget('oc_readback', 'group'),
+    });
+
+    await instance.session.close();
+  });
+
+  it('editCard lands in the fake bot\'s edited cards', async () => {
+    const bot = createFakeFeishuBot();
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu([bot]);
+    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
+      initialize: async (context) => {
+        captured = context.api;
+        return context.api;
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    await captured!.editCard('om_target', { type: 'card', body: 'x' });
+
+    expect(bot.editedCards).toEqual([{ messageId: 'om_target', card: { type: 'card', body: 'x' } }]);
+
+    await instance.session.close();
+  });
+
+  it('bindTeam rebinds a target another Team currently owns, with no ownership check', async () => {
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
+      initialize: async (context) => {
+        captured = context.api;
+        return context.api;
+      },
+    }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(teamStatusPort());
+    await instance.session.start();
+    const target = chatTarget('oc_owned', 'group');
+
+    await captured!.bindTeam({ target, teamName: 'team-a', display: '' });
+    expect(captured!.owner(target)).toBe('team-a');
+
+    // No `requireOwner` is passed here at all — the instance api's bindTeam
+    // has no such parameter — so a rebind away from team-a succeeds.
+    await captured!.bindTeam({ target, teamName: 'team-b', display: '' });
+    expect(captured!.owner(target)).toBe('team-b');
+
+    await instance.session.close();
+  });
+
+  it('submitToTeam answers a TEAM_NOT_FOUND rejection directly and never falls back to the Dispatcher', async () => {
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
+      initialize: async (context) => {
+        captured = context.api;
+        return context.api;
+      },
+    }));
+    const calls: string[] = [];
+    const port: ChannelCorePort = {
+      invoke: {
+        invoke: async (command) => {
+          calls.push(command);
+          if (command !== 'team.submit') {
+            throw new Error(`unexpected command ${command}`);
+          }
+          const err = new Error('no such team') as Error & { code: string };
+          err.code = 'TEAM_NOT_FOUND';
+          throw err;
+        },
+      },
+      events: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    };
+    const instance = await createSession(provider);
+    await instance.session.initialize(port);
+    await instance.session.start();
+
+    const outcome = await captured!.submitToTeam('ghost-team', {
+      kind: 'chat',
+      attrs: {},
+      text: 'hi',
+      reminder: '',
+      sourceId: 'msg-1',
+      anchor: null,
+    } as unknown as Parameters<FeishuInstanceApi['submitToTeam']>[1]);
+
+    expect(outcome).toEqual({ status: 'rejected', code: 'TEAM_NOT_FOUND', message: 'no such team' });
+    expect(calls).toEqual(['team.submit']);
+
+    await instance.session.close();
+  });
+});
+
+describe('extension tools through the MCP capability', () => {
+  it('an extension tool\'s successText reaches the MCP outcome\'s text field', async () => {
+    const greetTool: FeishuExtensionTool<undefined> = {
+      name: 'alpha_greet',
+      title: 'alpha_greet',
+      description: 'alpha_greet test tool',
+      inputSchema: { type: 'object' },
+      outputSchema: { type: 'object' },
+      annotations: {},
+      callers: ['dispatcher'],
+      parse: (raw) => raw,
+      handle: async () => ({ ok: true }),
+      successText: () => 'greeted',
+    };
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', { tools: [greetTool] }));
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    const outcome = await instance.mcp!.invoke(
+      { name: 'alpha_greet', arguments: {} },
+      { dispatcher_id: 'disp-1', channel_id: 'primary', caller: DISPATCHER },
+    );
+
+    expect(outcome).toMatchObject({ ok: true, text: 'greeted' });
+
+    await instance.session.close();
+  });
+
+  it('an extension tool\'s catalog registration carries its full descriptor, not just its name', () => {
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      tools: [tool('alpha_describe', ['dispatcher'])],
+    }));
+    const registrations = provider.mcp!.describe(
+      { appId: 'app-1', appSecret: 'secret' },
+      { caller: DISPATCHER },
+    );
+
+    const registration = registrations.find((r) => r.tool.name === 'alpha_describe');
+
+    expect(registration).toMatchObject({
+      tool: {
+        name: 'alpha_describe',
+        title: 'alpha_describe',
+        description: 'alpha_describe test tool',
+        inputSchema: { type: 'object' },
+        outputSchema: { type: 'object' },
+        annotations: {},
+      },
+      target: 'session',
+    });
+  });
+});
+
+describe('the Feishu provider diagnostic', () => {
+  it('reports no extensions when none are registered', async () => {
+    const { provider } = loadFeishu();
+
+    const result = await provider.diagnostic!.runDiagnostic(diagnosticContext, diagnosticRunner);
+
+    expect(result.detail).toContain('extensions: none');
+  });
+
+  it('describes every registered extension with its tools, their caller kinds, and its card actions', async () => {
+    const { api, provider } = loadFeishu();
+    api.extensions.register(extension('alpha', {
+      tools: [tool('alpha_lookup', ['dispatcher', 'team_leader'])],
+      cardActions: [{ key: 'alpha_ack', handle: async () => ({}) }],
+    }));
+    api.extensions.register(extension('beta'));
+
+    const result = await provider.diagnostic!.runDiagnostic(diagnosticContext, diagnosticRunner);
+
+    expect(result.detail).toContain(
+      'extensions: alpha (tools: alpha_lookup[dispatcher,team_leader]; card actions: alpha_ack); ' +
+        'beta (tools: none; card actions: none)',
+    );
   });
 });

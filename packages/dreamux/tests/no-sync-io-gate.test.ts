@@ -213,6 +213,9 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
     expect(gatedProjects.map((p) => p.packageName)).toContain(
       '@excitedjs/agent-runtime-codex',
     );
+    expect(gatedProjects.map((p) => p.packageName)).toContain(
+      '@excitedjs/dreamux-plugin-bootstrap',
+    );
   });
 
   it.each(gatedProjects.map((p) => [p.packageName, p.projectFolder] as const))(
@@ -295,11 +298,30 @@ describe('the core/provider import-boundary rules are wired via the same real es
     expect(rules).toContain('no-restricted-imports');
   });
 
+  it('core (@excitedjs/dreamux) flags a static import of the built-in bootstrap plugin package as no-restricted-imports', async () => {
+    // Same invariant as the provider ban, applied to a plugin package: core
+    // reaches @excitedjs/dreamux-plugin-bootstrap only through the dynamic
+    // loader, never a static import.
+    const pkgRoot = join(REPO_ROOT, 'packages/dreamux');
+    const eslint = new ESLint({ cwd: pkgRoot });
+    const results = await eslint.lintText(
+      [
+        "import createBootstrapPlugin from '@excitedjs/dreamux-plugin-bootstrap';",
+        'export const plugin = createBootstrapPlugin;',
+        '',
+      ].join('\n'),
+      { filePath: join(pkgRoot, 'src/__core_bootstrap_boundary_fixture__.ts') },
+    );
+    const rules = results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
+    expect(rules).toContain('no-restricted-imports');
+  });
+
   it.each([
     ['@excitedjs/agent-runtime-codex', 'packages/agent-runtime/codex'],
     ['@excitedjs/agent-runtime-claude-code', 'packages/agent-runtime/claude-code'],
     ['@excitedjs/feishu-channel', 'packages/channel/feishu-channel'],
     ['@excitedjs/feishu-transport', 'packages/channel/feishu-transport'],
+    ['@excitedjs/dreamux-plugin-bootstrap', 'packages/plugins/bootstrap'],
   ] as const)(
     '%s flags a static import of @excitedjs/dreamux core as no-restricted-imports',
     async (_name, projectFolder) => {

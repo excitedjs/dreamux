@@ -115,6 +115,15 @@ describe('isolatedTaps (dispatcher, team)', () => {
     expect(tapOwners(inner)).toEqual(['acme']);
     expect(errors.map((e) => e.fields['plugin'])).toEqual(['acme']);
   });
+
+  it('returns owners for every tap on one hook, in registration order, including a null owner', () => {
+    const hook = isolatedTaps(new SyncHook<[]>([], 'team'), recordingLog().log);
+    runAsPlugin('alpha', () => hook.tap('first', () => {}));
+    hook.tap('second', () => {});
+    runAsPlugin('beta', () => hook.tap('third', () => {}));
+
+    expect(tapOwners(hook)).toEqual(['alpha', null, 'beta']);
+  });
 });
 
 describe('loadPhaseTaps (plugin.for(name))', () => {
@@ -135,6 +144,21 @@ describe('loadPhaseTaps (plugin.for(name))', () => {
     expect((caught as PluginLoadError).plugin).toBe('acme');
     expect((caught as PluginLoadError).phase).toBe('api');
     expect((caught as Error).message).toContain('plugin "feishu" api: bad register');
+  });
+
+  it('falls back to the tap\'s own name when an owner-less tap fails loading', () => {
+    const hook = loadPhaseTaps(new SyncHook<[unknown]>(['api']), 'feishu');
+    hook.tap('mystery', () => {
+      throw new Error('bad register');
+    });
+    let caught: unknown;
+    try {
+      hook.call({});
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PluginLoadError);
+    expect((caught as PluginLoadError).plugin).toBe('mystery');
   });
 });
 
@@ -162,6 +186,42 @@ describe('isolatedTaps (created)', () => {
     expect(seen).toEqual(['alpha:req-1', 'omega:req-1']);
     expect(errors.map((e) => e.fields['tap'])).toEqual(['broken']);
   });
+
+  it('logs plugin: null for a tap registered outside any plugin context', async () => {
+    const { log, errors } = recordingLog();
+    const hook = isolatedTaps(
+      new AsyncSeriesHook<[{ requestId: string | null }]>(['ctx'], 'created'),
+      log,
+    );
+    hook.tapPromise('lonely', async () => {
+      throw new Error('boom');
+    });
+
+    await hook.promise({ requestId: null });
+
+    expect(errors[0]?.fields).toMatchObject({ plugin: null, tap: 'lonely', hook: 'created' });
+  });
+
+  it('catches a tapAsync failure reported through done(err) and still runs the other tap', async () => {
+    const { log, errors } = recordingLog();
+    const hook = isolatedTaps(
+      new AsyncSeriesHook<[{ requestId: string | null }]>(['ctx'], 'created'),
+      log,
+    );
+    const seen: string[] = [];
+    hook.tapAsync('broken', (_ctx, done) => {
+      done(new Error('async boom'));
+    });
+    hook.tapAsync('omega', ({ requestId }, done) => {
+      seen.push(`omega:${requestId}`);
+      done();
+    });
+
+    await hook.promise({ requestId: 'req-1' });
+
+    expect(seen).toEqual(['omega:req-1']);
+    expect(errors.map((e) => e.fields['tap'])).toEqual(['broken']);
+  });
 });
 
 describe('composeLaunchDraft', () => {
@@ -185,6 +245,56 @@ describe('composeLaunchDraft', () => {
     expect(draft.instructions).toEqual(['from alpha', 'from omega']);
     expect(draft.skillSources).toEqual([]);
     expect(errors.map((e) => e.fields['tap'])).toEqual(['broken']);
+  });
+
+  it('catches a tapAsync failure on a launch hook without losing the other tap\'s contribution', async () => {
+    const { log, errors } = recordingLog();
+    const hook = launchHook(log, 'beforeLaunch');
+    runAsPlugin('broken', () =>
+      hook.tapAsync('broken-tap', (draft, done) => {
+        draft.instructions.push('half written');
+        done(new Error('async boom'));
+      }),
+    );
+    hook.tapPromise('alpha', async (draft) => {
+      draft.instructions.push('from alpha');
+    });
+
+    const draft = await composeLaunchDraft(hook, []);
+
+    expect(draft.instructions).toEqual(['from alpha']);
+    expect(errors.map((e) => e.fields['tap'])).toEqual(['broken-tap']);
+    expect(errors[0]?.fields['plugin']).toBe('broken');
+  });
+
+  it('isolates a plain sync .tap() tap on a launch hook the same way as promise/async taps', async () => {
+    const { log, errors } = recordingLog();
+    const hook = launchHook(log, 'beforeLaunch');
+    hook.tap('alpha', (draft) => {
+      draft.instructions.push('from alpha');
+    });
+    hook.tap('broken', (draft) => {
+      draft.instructions.push('half written');
+      throw new Error('sync boom');
+    });
+    hook.tap('omega', (draft) => {
+      draft.instructions.push('from omega');
+    });
+
+    const draft = await composeLaunchDraft(hook, []);
+
+    expect(draft.instructions).toEqual(['from alpha', 'from omega']);
+    expect(errors.map((e) => e.fields['tap'])).toEqual(['broken']);
+  });
+
+  it('runs a plugin-added interceptor when a launch hook fires through composeLaunchDraft', async () => {
+    const hook = launchHook(recordingLog().log);
+    const calls: number[] = [];
+    hook.intercept({ call: () => calls.push(1) });
+
+    await composeLaunchDraft(hook, []);
+
+    expect(calls).toHaveLength(1);
   });
 
   it('hands each tap its own empty draft, never another tap\'s additions', async () => {
@@ -262,5 +372,72 @@ describe('composeLaunchDraft', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]!.fields['path']).toBe(missing);
     expect(errors[0]!.fields['plugin']).toBeUndefined();
+  });
+
+  it('checks the required roots once per launch, not once per tap', async () => {
+    const missing = join(await skillRoot(), 'deleted');
+    const pluginA = await skillRoot('skill-a');
+    const pluginB = await skillRoot('skill-b');
+    const { log, errors } = recordingLog();
+    const hook = launchHook(log, 'beforeLaunch');
+    hook.tapPromise('alpha', async (draft) => {
+      draft.skillSources.push({ name: 'alpha', path: pluginA, source: 'alpha' });
+      draft.instructions.push('from alpha');
+    });
+    hook.tapPromise('beta', async (draft) => {
+      draft.skillSources.push({ name: 'beta', path: pluginB, source: 'beta' });
+      draft.instructions.push('from beta');
+    });
+
+    const draft = await composeLaunchDraft(hook, [
+      { name: 'identity', path: missing, source: 'team' },
+    ]);
+
+    expect(draft.instructions).toEqual(['from alpha', 'from beta']);
+    expect(draft.skillSources).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.fields['path']).toBe(missing);
+  });
+
+  it('never checks the required roots when no tap adds a skill root', async () => {
+    const missing = join(await skillRoot(), 'deleted');
+    const { log, errors } = recordingLog();
+    const hook = launchHook(log, 'beforeLaunch');
+    hook.tapPromise('alpha', async (draft) => {
+      draft.instructions.push('from alpha');
+    });
+
+    const draft = await composeLaunchDraft(hook, [
+      { name: 'identity', path: missing, source: 'team' },
+    ]);
+
+    expect(draft.instructions).toEqual(['from alpha']);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('drops a later tap whose skill root collides with an earlier plugin\'s already-merged root', async () => {
+    const alphaRoot = await skillRoot('foo');
+    const betaRoot = await skillRoot('foo');
+    const { log, errors } = recordingLog();
+    const hook = launchHook(log, 'beforeLaunch');
+    runAsPlugin('alpha', () =>
+      hook.tapPromise('alpha-tap', async (draft) => {
+        draft.skillSources.push({ name: 'alpha', path: alphaRoot, source: 'alpha' });
+        draft.instructions.push('from alpha');
+      }),
+    );
+    runAsPlugin('beta', () =>
+      hook.tapPromise('beta-tap', async (draft) => {
+        draft.skillSources.push({ name: 'beta', path: betaRoot, source: 'beta' });
+        draft.instructions.push('from beta');
+      }),
+    );
+
+    const draft = await composeLaunchDraft(hook, []);
+
+    expect(draft.instructions).toEqual(['from alpha']);
+    expect(draft.skillSources).toEqual([{ name: 'alpha', path: alphaRoot, source: 'alpha' }]);
+    expect(errors.map((e) => e.fields['tap'])).toEqual(['beta-tap']);
+    expect(errors[0]?.fields['plugin']).toBe('beta');
   });
 });

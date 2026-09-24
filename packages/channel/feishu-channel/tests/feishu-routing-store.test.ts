@@ -217,6 +217,19 @@ describe('FeishuRoutingStore — commit authority', () => {
     expect(a1).not.toBe(b);
   });
 
+  it('routingDocumentFilename is byte-identical to its on-disk format, for a plain id and one needing slugging', () => {
+    // This is a persisted-state filename: a stability/uniqueness check alone
+    // would still pass if the format itself changed underneath (e.g. digest
+    // length, separator, slug charset), silently orphaning documents written
+    // before the change. Pin the exact literal so any such drift fails loud.
+    expect(routingDocumentFilename('acme-channel')).toBe(
+      'feishu-routing.acme-channel.346ef64c6b5c.json',
+    );
+    expect(routingDocumentFilename('acme/beta channel!')).toBe(
+      'feishu-routing.acme-beta-channel.39187d92107b.json',
+    );
+  });
+
   it('persists the committed document to the exact filename the store reads back', async () => {
     const channelId = 'chan-roundtrip';
     const store = newStore(channelId);

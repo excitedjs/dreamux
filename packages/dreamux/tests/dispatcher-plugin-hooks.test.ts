@@ -1,13 +1,17 @@
 /**
  * The Dispatcher-level plugin hooks: `host.hooks.dispatcher` fires once per
- * constructed DispatcherService, and `beforeLaunch` drafts reach the launched
- * runtime on both prompt channels and after the bundled skill roots.
+ * constructed DispatcherService, `beforeLaunch` drafts reach the launched
+ * runtime on both prompt channels and after the bundled skill roots, and the
+ * whole hook tree (`host.hooks.dispatcher` -> `dispatcher.hooks.beforeLaunch`
+ * / `.team` -> `team.hooks.beforeTeamLeaderLaunch` / `.created`) wires
+ * correctly through a real `Server`/`DispatcherService`, including the
+ * `created` hook's shutdown drain (R2 ruling #5).
  */
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentRuntimeCreateContext,
@@ -25,19 +29,33 @@ import {
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { createConversationProjection } from '../src/channel/conversation-projection.js';
 import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
-import { getRuntimeConfig, setRuntimeConfig } from '../src/platform/paths.js';
+import {
+  dispatcherTeamDir,
+  getRuntimeConfig,
+  setRuntimeConfig,
+} from '../src/platform/paths.js';
 import { launchDraftTaps } from '../src/plugin/hooks.js';
-import { createServerHooks } from '../src/plugin/host.js';
+import { createServerHooks, type ServerHooks } from '../src/plugin/host.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
 import { Server } from '../src/server.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { createDispatcherAgent } from '../src/service/dispatcher-service/agent.js';
 import { ensureDispatcherRootIdentity } from '../src/service/dispatcher-service/identity.js';
+import type { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { DispatcherCoreEventBus } from '../src/service/dispatcher-core-events/index.js';
+import { teamCreatePayloadHash } from '../src/service/team-collection/create-request.js';
+import { TeamStore } from '../src/service/team-collection/store.js';
+import { CHANNEL_SOURCE } from '../src/service/submission-sources.js';
 import { AdmissionLedger } from '../src/service/teammate-service/admission-ledger.js';
 import type { TeammateAgentMcp } from '../src/service/teammate-service/types.js';
-import { createFakeChannelProvider } from './helpers/fake-channel-provider.js';
+import {
+  ControlledRuntimeProvider,
+} from './helpers/controlled-runtime-provider.js';
+import {
+  createFakeChannelProvider,
+  type FakeChannelSessionHandle,
+} from './helpers/fake-channel-provider.js';
 
 const silentLog = {
   error: () => {},
@@ -110,6 +128,8 @@ describe('host.hooks.dispatcher', () => {
       expect(announced).toEqual([first]);
       expect(announced[0]?.id).toBe('stopped');
       expect(announced[0]?.cwd).toBe(root);
+      // The hook table itself is frozen at construction (LD:153, PLG:84).
+      expect(Object.isFrozen(announced[0]?.hooks)).toBe(true);
     } finally {
       await server.shutdown();
       setRuntimeConfig(previousConfig);
@@ -156,7 +176,9 @@ describe('dispatcher.hooks.beforeLaunch', () => {
       new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch'),
       silentLog,
     );
+    let alphaTapCalls = 0;
     beforeLaunch.tapPromise('alpha', async (draft) => {
+      alphaTapCalls += 1;
       draft.instructions.push('from alpha');
       draft.skillSources.push({ name: 'alpha', path: pluginSkills, source: 'alpha' });
     });
@@ -201,6 +223,287 @@ describe('dispatcher.hooks.beforeLaunch', () => {
       'shared',
       'alpha',
     ]);
+    expect(alphaTapCalls).toBe(1);
+
+    // A runtime-process restart inside the same Agent does not refire the
+    // launch hook (PLG:45 col4, 52-54): the hook runs at Agent construction,
+    // not at every native process start.
     await agent.stopForHost();
+    await agent.activate();
+
+    expect(launches).toHaveLength(2);
+    expect(alphaTapCalls).toBe(1);
+
+    await agent.stopForHost();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The whole hook tree, reached through a real Server/DispatcherService
+// (LD:245-274 bootstrap-plugin example; PLG:29-40 hook tree).
+// ---------------------------------------------------------------------------
+
+const HOOK_TREE_DISPATCHER_ID = 'hook-tree';
+const HOOK_TREE_AGENT_RUNTIME_ID = 'controlled';
+const HOOK_TREE_RUNTIME_REF = 'npm:@example/hook-tree-runtime';
+const HOOK_TREE_CHANNEL_REF = 'npm:@example/hook-tree-channel';
+
+interface RealServerHandle {
+  server: Server;
+  dispatcher: DispatcherService;
+  provider: ControlledRuntimeProvider;
+  /** Populated only when `channel: true` was requested. */
+  sessions: Map<string, FakeChannelSessionHandle>;
+}
+
+/**
+ * A real `Server` over one enabled Dispatcher, backed by a
+ * `ControlledRuntimeProvider` and (optionally) a recording fake Channel.
+ *
+ * `DREAMUX_ROOT` and the dispatcher's own `cwd` are deliberately separate temp
+ * directories: `WorktreeManager.prepareDefaultWorkspace` refuses a workspace
+ * nested under Dreamux's own home, which an enabled Dispatcher that goes on to
+ * create a Team would hit if both pointed at the same root.
+ */
+async function buildRealServer(input: {
+  hooks: ServerHooks;
+  channel?: boolean;
+  record?: (label: string) => void;
+}): Promise<RealServerHandle> {
+  const root = await tempRoot('dreamux-hook-tree-');
+  const workspaceCwd = await tempRoot('dreamux-hook-tree-workspace-');
+  process.env['DREAMUX_ROOT'] = root;
+
+  const provider = new ControlledRuntimeProvider();
+  const registry = new ProviderRegistry();
+  registry.register({
+    id: HOOK_TREE_RUNTIME_REF,
+    kind: 'agentRuntime',
+    ref: parseProviderRef(HOOK_TREE_RUNTIME_REF),
+  });
+  registry.registerImplementation(HOOK_TREE_RUNTIME_REF, provider);
+
+  let sessions = new Map<string, FakeChannelSessionHandle>();
+  const channels: DreamuxConfig['dispatchers'][number]['channels'] = [];
+  if (input.channel === true) {
+    const fakeChannel = createFakeChannelProvider({ record: input.record ?? (() => {}) });
+    sessions = fakeChannel.sessions;
+    registry.register({
+      id: HOOK_TREE_CHANNEL_REF,
+      kind: 'channel',
+      ref: parseProviderRef(HOOK_TREE_CHANNEL_REF),
+    });
+    registry.registerImplementation(HOOK_TREE_CHANNEL_REF, fakeChannel.provider);
+    channels.push({ id: 'primary', provider: HOOK_TREE_CHANNEL_REF, config: {} });
+  }
+
+  const runtime = { provider: HOOK_TREE_RUNTIME_REF, config: {} };
+  const config: DreamuxConfig = {
+    agents: { [HOOK_TREE_AGENT_RUNTIME_ID]: runtime },
+    dispatchers: [{
+      id: HOOK_TREE_DISPATCHER_ID,
+      cwd: workspaceCwd,
+      enabled: true,
+      workspace: { enabled: false },
+      channels,
+      agentRuntime: HOOK_TREE_AGENT_RUNTIME_ID,
+      runtime,
+    }],
+  };
+
+  const server = new Server({
+    config,
+    providerRegistry: registry,
+    agentRuntimeProviderCatalog: new AgentRuntimeProviderCatalog({ registry }),
+    channelProviderCatalog: new ChannelProviderCatalog({ registry }),
+    adminSocketPath: join(root, 'admin.sock'),
+    logger: silentLog,
+    hooks: input.hooks,
+  });
+  await server.start();
+
+  return { server, dispatcher: server.getDispatcher(HOOK_TREE_DISPATCHER_ID), provider, sessions };
+}
+
+describe('the whole hook tree through a real Server/DispatcherService', () => {
+  it(
+    'fires host.dispatcher -> dispatcher.beforeLaunch/team -> team.beforeTeamLeaderLaunch/created ' +
+      'in order, with frozen hook tables, the real Team workspace, and the beforeLaunch draft reaching the launched runtime',
+    async () => {
+      const order: string[] = [];
+      const hooks = createServerHooks(silentLog);
+      let dispatcherHooksFrozen = false;
+      let teamHooksFrozen = false;
+      let capturedWorkspace: string | null = null;
+      let resolveCreatedFired!: () => void;
+      const createdFired = new Promise<void>((resolve) => {
+        resolveCreatedFired = resolve;
+      });
+      hooks.dispatcher.tap('alpha', (dispatcher) => {
+        order.push(`dispatcher:${dispatcher.id}`);
+        dispatcherHooksFrozen = Object.isFrozen(dispatcher.hooks);
+        dispatcher.hooks.beforeLaunch.tapPromise('alpha', async (draft) => {
+          draft.instructions.push('from alpha dispatcher launch');
+        });
+        dispatcher.hooks.team.tap('alpha', (team, ctx) => {
+          order.push(`team:${ctx.origin}:${team.name}`);
+          teamHooksFrozen = Object.isFrozen(team.hooks);
+          capturedWorkspace = team.workspace;
+          team.hooks.beforeTeamLeaderLaunch.tapPromise('alpha', async () => {
+            order.push(`beforeTeamLeaderLaunch:${team.name}`);
+          });
+          team.hooks.created.tapPromise('alpha', async ({ requestId }) => {
+            order.push(`created:${team.name}:${requestId}`);
+            resolveCreatedFired();
+          });
+        });
+      });
+
+      const { server, dispatcher, provider } = await buildRealServer({ hooks });
+      try {
+        const submitting = dispatcher.submitToAgent({
+          source: CHANNEL_SOURCE,
+          text: 'start dispatcher recipient',
+        });
+        await vi.waitFor(() => {
+          expect(provider.runtimes.length).toBeGreaterThan(0);
+        });
+        const dispatcherRuntime = provider.runtimes[0]!;
+        await expect(submitting).resolves.toMatchObject({ status: 'submitted' });
+
+        const created = await dispatcher.createTeam({
+          requestId: 'req-hook-tree',
+          payloadHash: teamCreatePayloadHash({ intent: 'exercise the whole hook tree' }),
+          options: {
+            namePrefix: 'alpha-team',
+            leaderAgentRuntime: HOOK_TREE_AGENT_RUNTIME_ID,
+            intent: 'exercise the whole hook tree',
+          },
+        });
+        await createdFired;
+
+        expect(order).toEqual([
+          `dispatcher:${HOOK_TREE_DISPATCHER_ID}`,
+          `team:create:${created.team_name}`,
+          `beforeTeamLeaderLaunch:${created.team_name}`,
+          `created:${created.team_name}:req-hook-tree`,
+        ]);
+        expect(dispatcherHooksFrozen).toBe(true);
+        expect(teamHooksFrozen).toBe(true);
+        expect(dispatcherRuntime.context.systemPrompt?.append).toContain(
+          'from alpha dispatcher launch',
+        );
+        expect(
+          dispatcherRuntime.context.systemPrompt?.replace?.endsWith(
+            '\n\nfrom alpha dispatcher launch',
+          ),
+        ).toBe(true);
+
+        const record = await new TeamStore({
+          root: dispatcherTeamDir(HOOK_TREE_DISPATCHER_ID),
+          dispatcherId: HOOK_TREE_DISPATCHER_ID,
+        }).get(created.team_name);
+        // The workspace the `team` tap saw is the Team's real runtime cwd
+        // (LD:139), compared to the durable record rather than the raw tmp
+        // path handed to config to dodge realpath drift.
+        expect(capturedWorkspace).toBe(record?.runtime_cwd);
+      } finally {
+        await server.shutdown();
+      }
+    },
+  );
+
+  it('does not block Team creation when one dispatcher.hooks.team tap throws, and the surviving tap still reaches its own Team hooks', async () => {
+    const order: string[] = [];
+    const hooks = createServerHooks(silentLog);
+    hooks.dispatcher.tap('alpha', (dispatcher) => {
+      dispatcher.hooks.team.tap('alpha', (team) => {
+        order.push(`alpha:team:${team.name}`);
+        team.hooks.beforeTeamLeaderLaunch.tapPromise('alpha', async () => {
+          order.push(`alpha:beforeTeamLeaderLaunch:${team.name}`);
+        });
+      });
+      dispatcher.hooks.team.tap('beta', () => {
+        throw new Error('beta team tap boom');
+      });
+    });
+
+    const { server, dispatcher } = await buildRealServer({ hooks });
+    try {
+      const created = await dispatcher.createTeam({
+        requestId: 'req-throwing-team-tap',
+        payloadHash: teamCreatePayloadHash({ intent: 'survive a throwing team tap' }),
+        options: {
+          namePrefix: 'beta-team',
+          leaderAgentRuntime: HOOK_TREE_AGENT_RUNTIME_ID,
+          intent: 'survive a throwing team tap',
+        },
+      });
+
+      expect(created.status).toBe('running');
+      expect(order).toEqual([
+        `alpha:team:${created.team_name}`,
+        `alpha:beforeTeamLeaderLaunch:${created.team_name}`,
+      ]);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it('awaits an in-flight created hook run before closing channels, on dispatcher shutdown', async () => {
+    const order: string[] = [];
+    const hooks = createServerHooks(silentLog);
+    let releaseCreated!: () => void;
+    const createdGate = new Promise<void>((resolve) => {
+      releaseCreated = resolve;
+    });
+    hooks.dispatcher.tap('alpha', (dispatcher) => {
+      dispatcher.hooks.team.tap('alpha', (team) => {
+        team.hooks.created.tapPromise('alpha', async () => {
+          await createdGate;
+          order.push('created done');
+        });
+      });
+    });
+
+    const { server, dispatcher, sessions } = await buildRealServer({
+      hooks,
+      channel: true,
+      record: (label) => order.push(label),
+    });
+    try {
+      // `Server.start` logs and swallows a dispatcher start failure; check the
+      // channel really came up rather than debugging a silent no-op later.
+      expect(sessions.get('primary')?.startCalled).toBe(true);
+
+      await dispatcher.createTeam({
+        requestId: 'req-shutdown-drain',
+        payloadHash: teamCreatePayloadHash({ intent: 'exercise the shutdown drain' }),
+        options: {
+          namePrefix: 'gamma-team',
+          leaderAgentRuntime: HOOK_TREE_AGENT_RUNTIME_ID,
+          intent: 'exercise the shutdown drain',
+        },
+      });
+
+      const shuttingDown = server.shutdown();
+      let settled = false;
+      void shuttingDown.finally(() => {
+        settled = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+
+      releaseCreated();
+      await shuttingDown;
+
+      const createdIndex = order.indexOf('created done');
+      const closeIndex = order.indexOf('channel:primary:close:begin');
+      expect(createdIndex).toBeGreaterThanOrEqual(0);
+      expect(closeIndex).toBeGreaterThan(createdIndex);
+    } finally {
+      releaseCreated();
+      await server.shutdown().catch(() => {});
+    }
   });
 });

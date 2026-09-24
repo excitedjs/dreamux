@@ -202,6 +202,33 @@ describe('config parser accepts the current shape and rejects a dangling agent r
     );
   });
 
+  it.each([
+    ['an empty string', ''],
+    ['a whitespace-only string', '   '],
+    ['a non-string value', 42],
+  ])('rejects a dispatcher whose cwd is %s, like a missing one', async (_label, cwd) => {
+    await writeConfig({
+      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      dispatchers: [
+        {
+          id: 'flow',
+          cwd,
+          agentRuntime: 'flow',
+          channels: [
+            {
+              id: 'primary',
+              provider: BUILTIN_FEISHU_PROVIDER_REF,
+              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+            },
+          ],
+        },
+      ],
+    });
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
+      /dispatchers\[0\]\.cwd is required for dispatcher 'flow'/,
+    );
+  });
+
   it('rejects a dispatcher with no agentRuntime at all', async () => {
     await writeConfig({
       agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
