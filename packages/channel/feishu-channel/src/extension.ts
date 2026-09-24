@@ -13,20 +13,16 @@ import type { ChannelMcpCaller, DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { FeishuCardActionEvent } from './bot.js';
 import type { FeishuCardActionResponse } from './feishu-pairing-card.js';
-import type {
-  FeishuChatSubmission,
-  FeishuSubmitOutcome,
-} from './feishu-submit.js';
 import type { FeishuTarget } from './routing/target.js';
 import type { FeishuToolDef, FeishuToolResult } from './tools/types.js';
 
 export interface FeishuApi {
   readonly extensions: {
     /**
-     * Throws on an empty extension name or card action key, a duplicate
-     * extension name, a tool name already offered to the same caller kind, or
-     * a card action key already claimed, the extension's own earlier entries
-     * included, naming both sources.
+     * Throws on a blank (trimmed) extension name, tool name, or card action
+     * key; a duplicate extension name; a tool name already offered to the
+     * same caller kind; or a card action key already claimed, the
+     * extension's own earlier entries included, naming both sources.
      */
     register<S>(extension: FeishuExtension<S>): void;
   };
@@ -41,7 +37,7 @@ export interface FeishuExtension<S> {
    * that instance's state. Local IO only: the bot is not started yet and the
    * core channel contract forbids external IO during initialize. Of
    * `context.api`, only `owner` may be called here; outbound calls (`sendCard`,
-   * `editCard`, `readMessageRoute`, `bindTeam`, `submitToTeam`) wait for `start`.
+   * `editCard`, `readMessageRoute`, `bindTeam`) wait for `start`.
    */
   initialize(context: FeishuExtensionContext): Promise<S>;
   /**
@@ -53,8 +49,7 @@ export interface FeishuExtension<S> {
    * After new tool calls and card actions are refused and in-flight ones
    * settled. The instance is already fenced: `readMessageRoute`, `bindTeam`,
    * `sendCard` and `editCard` reject with a `FeishuOperationError` of kind
-   * `aborted`, and `submitToTeam` returns an `error` outcome. Release local
-   * resources only.
+   * `aborted`. Release local resources only.
    */
   close(state: S): Promise<void>;
 }
@@ -72,18 +67,40 @@ export type FeishuExtensionTool<S, TInput = unknown> =
     ): Promise<FeishuToolResult>;
   };
 
+/**
+ * What a card action handler wants forwarded to the conversation's Team, as an
+ * ordinary inbound submission. The handler states only what to say: Feishu
+ * resolves the Team from the card's own message and delivers through the same
+ * path an ask-user answer takes, so no extension holds Team-resolution or
+ * delivery logic of its own.
+ */
+export interface FeishuExtensionForward {
+  readonly text: string;
+  /** The identity Core deduplicates a repeat delivery on. */
+  readonly sourceId: string;
+  readonly attrs?: Readonly<Record<string, string>>;
+}
+
+export interface FeishuExtensionActionResult {
+  /** The card callback's own answer. */
+  readonly response: FeishuCardActionResponse | Record<string, never>;
+  /** Delivered after `response` is handed back to Feishu, detached. */
+  readonly forward?: FeishuExtensionForward;
+}
+
 export interface FeishuExtensionAction<S> {
   /** The card button value's `dreamux_action`. */
   readonly key: string;
   /**
-   * Awaited before Feishu gets the callback answer, and Feishu gives a card
-   * callback only a few seconds before the click looks dead: answer quickly
-   * and keep long work (a submission to a Team, for instance) detached.
+   * `response` is awaited before Feishu gets the callback answer, and Feishu
+   * gives a card callback only a few seconds before the click looks dead:
+   * answer quickly. `forward`, if present, is delivered afterwards and does
+   * not hold up the callback.
    */
   handle(
     state: S,
     event: FeishuCardActionEvent,
-  ): Promise<FeishuCardActionResponse | Record<string, never>>;
+  ): Promise<FeishuExtensionActionResult>;
 }
 
 export interface FeishuExtensionContext {
@@ -125,12 +142,6 @@ export interface FeishuInstanceApi {
     chatId: string;
     replyTo?: string;
     card: unknown;
-    mode: 'inbound' | 'background';
   }): Promise<{ messageId: string; target: FeishuTarget }>;
   editCard(messageId: string, card: unknown): Promise<void>;
-  /** The admission result, not a queued acknowledgement. */
-  submitToTeam(
-    teamName: string,
-    submission: FeishuChatSubmission,
-  ): Promise<FeishuSubmitOutcome>;
 }

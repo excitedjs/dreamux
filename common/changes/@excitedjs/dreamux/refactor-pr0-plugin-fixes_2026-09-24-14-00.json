@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Plugin hook review fixes: a plugin's own interceptor (added with `hook.intercept`) throwing on `dispatcher`, `team`, a launch hook, or api publication is now logged and skipped like a failing tap, instead of possibly crashing `dreamux serve` or `dreamux doctor`; a launch-hook interceptor can no longer see or mutate the internal launch draft, so it cannot add a skill root that skips the skill fence; an async plugin tap on the sync `dispatcher`/`team` hooks is now logged and skipped instead of risking an unhandled rejection; an async `server()` or `contribute()` now fails loading with a clear error instead of silently losing taps registered after its first `await`; and a `plugins[]` entry's `config` block for a plugin with no `config.read` is now ignored instead of failing `dreamux serve` to start.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

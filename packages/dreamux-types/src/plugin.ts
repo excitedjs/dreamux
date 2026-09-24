@@ -15,7 +15,10 @@ import type { DreamuxLogger } from './logger.js';
  * timers, or hold resources: `dreamux doctor` runs both while a daemon may be
  * live, and no Dispatcher or channel exists yet to own a resource. Resources
  * belong to object lifecycles (a channel's initialize/start/close, or a hook
- * callback).
+ * callback). Both must be synchronous — declared `void`, and enforced at load
+ * time by rejecting a returned thenable — since nothing awaits them: an
+ * `async` implementation would silently lose any tap it registers after its
+ * first `await`.
  */
 export interface DreamuxPlugin {
   /** Unique across all loaded plugins; a duplicate fails loading. */
@@ -68,7 +71,12 @@ export interface ServerHost {
    * Core runs these hooks, and every hook below them, with tapable's own
    * `call` / `promise`, so interceptors added with `hook.intercept` run. A
    * `register` interceptor core installs first wraps each tap: a failing tap
-   * is logged with its owning plugin and the other taps still run.
+   * is logged with its owning plugin and the other taps still run. A
+   * plugin's own interceptor callback (`call`/`loop`/`result`/`done`/`error`)
+   * runs outside that wrapper; core catches it at the bare hook invocation
+   * instead, applying the same rule as the hook it is on: logged and skipped
+   * at runtime, a failed load naming the plugin whose `server` ran the
+   * `hooks.plugin.for(name)` call at load time.
    *
    * Tap names are free-form. The owning plugin of a tap is the plugin whose
    * `server` registered it, or the plugin whose tap callback was running when
@@ -147,6 +155,12 @@ export interface Team {
  * roots are not in it and cannot be changed. Core appends `instructions` after
  * the built-in prompt and `skillSources` after the built-in roots, fenced
  * against them.
+ *
+ * This is also the only shape a launch hook itself ever carries: a tap gets
+ * its own private one, merged in only after it resolves and passes the skill
+ * fence, and a plugin's own `hook.intercept` callback on the hook sees a
+ * disconnected one — the accumulator that applies the fence is never handed
+ * to a hook, so an interceptor cannot add a skill root that skips it.
  */
 export interface LaunchDraft {
   readonly instructions: string[];

@@ -188,8 +188,12 @@ Design constraints:
   directly under that chat's authority and does not pair.
 - Keep card rendering in `feishu-pairing-card.ts`, gate state transitions in
   `feishu-gate.ts`, and IO/mutation orchestration in `feishu-session-ops.ts`.
-  Transport code owns only thin Feishu SDK wrappers such as card send and owner
-  lookup. Bot display names come from the transport's runtime bot info
+  Turning an approved token into an `allow_users` entry is
+  `approvePairingByToken` in `feishu-gate-io.ts`, beside the
+  `readDispatcherAccess`/`saveDispatcherAccess` it reads and writes through —
+  the one access-state mutation that answers a card click rather than a gate
+  decision. Transport code owns only thin Feishu SDK wrappers such as card
+  send and owner lookup. Bot display names come from the transport's runtime bot info
   (`/open-apis/bot/v3/info` `app_name`); if missing, the channel falls back to
   the neutral `Dreamux bot` label.
 - Any change to this flow must update `feishu-pairing-card.test.ts`, the

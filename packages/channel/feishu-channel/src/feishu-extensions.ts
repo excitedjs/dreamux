@@ -22,18 +22,14 @@ import type { FeishuBindingOperations } from './feishu-session-bindings.js';
 import {
   readMessageRoute,
   sendCard,
+  type FeishuExtensionActionHandler,
   type SessionHandle,
 } from './feishu-session-ops.js';
-import type {
-  FeishuChatSubmission,
-  FeishuSubmitOutcome,
-} from './feishu-submit.js';
 import type {
   FeishuExtension,
   FeishuExtensionTool,
   FeishuInstanceApi,
 } from './extension.js';
-import type { FeishuCardActionEvent } from './bot.js';
 import type { FeishuRouting } from './routing/index.js';
 import { channelPathSegment } from './routing/store.js';
 import { findFeishuTool, toolRegistration } from './tools/registry.js';
@@ -46,13 +42,18 @@ export class FeishuExtensionRegistry {
 
   register<S>(extension: FeishuExtension<S>): void {
     const ext = extension as unknown as AnyExtension;
-    if (ext.name === '') {
-      throw new Error('A Feishu extension name must not be empty');
+    if (ext.name.trim() === '') {
+      throw new Error('A Feishu extension name must not be blank');
     }
     if (this.extensions.some((other) => other.name === ext.name)) {
       throw new Error(`Feishu extension "${ext.name}" is registered twice`);
     }
     ext.tools.forEach((tool, index) => {
+      if (tool.name.trim() === '') {
+        throw new Error(
+          `Feishu extension "${ext.name}" tool at index ${index} has a blank name`,
+        );
+      }
       for (const kind of tool.callers) {
         const other = findFeishuTool(tool.name, kind) !== undefined
           ? 'built-in Feishu tool'
@@ -69,11 +70,11 @@ export class FeishuExtensionRegistry {
       }
     });
     ext.cardActions.forEach((action, index) => {
-      // An empty key would claim every click whose card value carries no
+      // A blank key would claim every click whose card value carries no
       // `dreamux_action`, because the dispatcher reads a missing key as ''.
-      if (action.key === '') {
+      if (action.key.trim() === '') {
         throw new Error(
-          `Feishu extension "${ext.name}" has a card action with an empty key`,
+          `Feishu extension "${ext.name}" card action at index ${index} has a blank key`,
         );
       }
       const other =
@@ -199,7 +200,12 @@ export class FeishuSessionExtensions {
     }
   }
 
-  /** The extension tool this caller kind means by `name`, over its state. */
+  /**
+   * The extension tool this caller kind means by `name`, over its state.
+   * Unavailable until this instance's `initialize` has filled that
+   * extension's state — the same "no such tool" refusal a caller sees for a
+   * name nothing registered.
+   */
   tool(
     name: string,
     kind: ChannelMcpCaller['kind'],
@@ -208,7 +214,7 @@ export class FeishuSessionExtensions {
       const def = ext.tools.find(
         (tool) => tool.name === name && tool.callers.includes(kind),
       );
-      if (def === undefined) continue;
+      if (def === undefined || !this.states.has(ext)) continue;
       return {
         def,
         invoke: async (caller, raw) =>
@@ -218,19 +224,23 @@ export class FeishuSessionExtensions {
     return undefined;
   }
 
-  /** The extension card action claiming `key`, over its state. */
-  action(
-    key: string,
-  ): ((event: FeishuCardActionEvent) => Promise<unknown>) | undefined {
+  /**
+   * The extension card action claiming `key`, over its state. Unavailable
+   * until this instance's `initialize` has filled that extension's state,
+   * the same as `tool` above.
+   */
+  action(key: string): FeishuExtensionActionHandler | undefined {
     for (const ext of this.registry.list()) {
       const def = ext.cardActions.find((action) => action.key === key);
-      if (def !== undefined) {
+      if (def === undefined || !this.states.has(ext)) continue;
+      return {
+        extensionName: ext.name,
         // The Lark SDK logs a rejected callback without knowing its owner.
-        return (event) =>
+        invoke: (event) =>
           this.attributed(ext, 'card action', () =>
             def.handle(this.states.get(ext), event),
-          );
-      }
+          ),
+      };
     }
     return undefined;
   }
@@ -272,10 +282,6 @@ export function buildInstanceApi(input: {
   bindings: FeishuBindingOperations;
   /** Closing the instance waits for work passed here before it drains routing. */
   track(work: Promise<unknown>): Promise<unknown>;
-  submit(
-    teamName: string,
-    submission: FeishuChatSubmission,
-  ): Promise<FeishuSubmitOutcome>;
 }): FeishuInstanceApi {
   const { handle, routing, bindings } = input;
   const assertCurrent = (): void => {
@@ -299,14 +305,13 @@ export function buildInstanceApi(input: {
       // which must not land after the instance closed its routing store.
       await input.track(bindings.bindChannel({ target, teamName, display }));
     },
-    async sendCard({ chatId, replyTo, card, mode }) {
+    async sendCard({ chatId, replyTo, card }) {
       const sent = await sendCard(handle, {
         target: {
           conversationId: chatId,
           ...(replyTo !== undefined ? { replyTo } : {}),
         },
         card,
-        mode,
       });
       const messageId = sent.messageIds[0];
       if (messageId === undefined) {
@@ -323,6 +328,5 @@ export function buildInstanceApi(input: {
       assertCurrent();
       await handle.bot.editCard(messageId, card);
     },
-    submitToTeam: (teamName, submission) => input.submit(teamName, submission),
   };
 }

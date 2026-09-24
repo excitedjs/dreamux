@@ -1511,22 +1511,35 @@ instance api handed to each extension. Core only hands the api over.
 `createFeishuChannelProvider` stays a named export and builds a provider with
 an empty extension registry.
 
-- **Registry.** One per plugin instance. `register` rejects an empty or
-  duplicate extension name; a tool name already served to the same caller kind
-  (by a built-in Feishu tool, another extension, or another tool of the same
-  extension; the same name for a different caller kind is allowed, as the
-  built-ins already do); an empty card action key (the dispatcher reads a
-  missing `dreamux_action` as `''`, so an empty key would claim every click
-  without one); and a card action key equal to a built-in Feishu action
-  (pairing approval, `ask_user_question`), another extension's key, or another
-  key of the same extension. Every error names both sources. Registration
-  happens in the last step of plugin loading, so a collision fails `serve`.
+- **Registry.** One per plugin instance. `register` rejects a blank (trimmed)
+  extension name, tool name, or card action key; a duplicate extension name; a
+  tool name already served to the same caller kind (by a built-in Feishu tool,
+  another extension, or another tool of the same extension; the same name for
+  a different caller kind is allowed, as the built-ins already do); and a card
+  action key equal to a built-in Feishu action (pairing approval,
+  `ask_user_question`), another extension's key, or another key of the same
+  extension. A blank key would claim every click whose card value carries no
+  `dreamux_action`, because the dispatcher reads a missing key as `''`. Every
+  error names both sources (a blank name or key names the extension and its
+  index instead, since the value itself is not a name). Registration happens
+  in the last step of plugin loading, so a collision fails `serve`.
 - **Tools and card actions.** Extension tools are appended to the caller's
   `channel-feishu` catalog and dispatched when no built-in tool matches. A card
   action is dispatched by the button value's `dreamux_action` key before the
   built-in handler; the handler may be async but Feishu's callback window is a
-  few seconds, so long work must be detached. Handlers receive that Feishu
-  instance's state `S`: two Feishu channels get two states.
+  few seconds, so long work must be detached — a card action's `handle`
+  returns `{ response, forward? }`: `response` is the card callback's own
+  answer, and `forward`, when present, is delivered afterwards, detached, to
+  whichever Team or Dispatcher Agent owns the card's conversation (Feishu
+  resolves that owner from the card's own message and delivers through the
+  same path an ask-user answer's settlement uses; the extension states only
+  what to say, never a Team name or a delivery mechanism of its own). Handlers
+  receive that Feishu instance's state `S`: two Feishu channels get two
+  states. A tool or card action is unreachable until this instance's
+  `initialize` has filled that extension's state — the same "no such tool" (or
+  unclaimed card action) refusal a caller sees for a name nothing registered,
+  covering the window between a session starting and every extension's
+  `initialize` completing.
 - **Lifecycle.** Per Feishu channel session: `initialize` after the routing
   store loaded (local IO only; of the instance api only `owner` works here),
   `start` after the bot connection is live (the first point outbound calls
@@ -1553,10 +1566,11 @@ an empty extension registry.
   the routing plan says owns the conversation, a topic inheriting its group's
   binding, else `null`), `readMessageRoute`, `bindTeam` (the same validation,
   COT fences, and bound notification as the binding tools, without the
-  ownership check), `sendCard` (no idempotency key; the returned target is read
-  back from Feishu because a reply lands in the replied-to topic), `editCard`,
-  and `submitToTeam`, which returns the submit outcome rather than a bare
-  acknowledgement and never falls back to the Dispatcher.
+  ownership check), `sendCard` (no idempotency key, no mode; the returned
+  target is read back from Feishu because a reply lands in the replied-to
+  topic), and `editCard`. The api carries no submit/delivery capability: a
+  card action forwards to a Team through its `handle` return, not through the
+  instance api (see Tools and card actions above).
 - **Doctor.** Extension tools and card actions are listed in the diagnostic line
   of each configured Feishu channel, and only there; with no Dispatcher using a
   `feishu` channel they are not listed. Core gains no Feishu knowledge for it.

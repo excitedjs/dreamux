@@ -38,7 +38,6 @@ import {
   type FeishuBoundExtensionTool,
 } from './feishu-extensions.js';
 import { sendBindingNotification } from './feishu-notification.js';
-import { DREAMUX_ACTION_KEY } from './feishu-pairing-card.js';
 import { sessionBotRoutes } from './feishu-session-routes.js';
 import { AsyncMutex } from './lib/mutex.js';
 import { alwaysActiveSessionFence, type FeishuSessionFence } from './feishu-inbound-work.js';
@@ -271,7 +270,6 @@ export class FeishuChannelSession {
           track: (work) => this.track(lifecycle, work),
           routing: this.routing,
           bindings: this.bindings,
-          submit: (teamName, submission) => this.submit(teamName, submission),
         }),
       });
     } catch (error) {
@@ -593,11 +591,7 @@ export class FeishuChannelSession {
     };
   }
 
-  private async onCardAction(event: FeishuCardActionEvent): Promise<unknown> {
-    const action = this.extensions.action(
-      String(event.actionValue[DREAMUX_ACTION_KEY] ?? ''),
-    );
-    if (action !== undefined) return action(event);
+  private onCardAction(event: FeishuCardActionEvent): Promise<unknown> {
     return sessionHandleCardAction(this.handle, event);
   }
 
@@ -675,6 +669,7 @@ export class FeishuChannelSession {
       sessionFence: fence,
       delivery: this,
       askUser: this.askUser,
+      extensionAction: (key) => this.extensions.action(key),
     });
   }
 

@@ -27,9 +27,11 @@ export function configuredDispatcherCwd(
   config: DreamuxConfig,
   dispatcherId: string,
 ): string {
-  return resolve(
-    config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)!.cwd,
-  );
+  const dispatcher = config.dispatchers.find((d) => d.id === dispatcherId);
+  if (dispatcher === undefined) {
+    throw new Error(`dispatcher ${JSON.stringify(dispatcherId)} is not configured`);
+  }
+  return resolve(dispatcher.cwd);
 }
 
 /**

@@ -305,30 +305,6 @@ describe('resolveBuiltinProviderPackage', () => {
 });
 
 describe('readPluginConfigs', () => {
-  it('gives each plugin its own entry config and rejects config for a plugin without a reader', async () => {
-    const loaded = await load(
-      [{ ref: 'npm:@acme/a', config: { size: 2 } }, { ref: 'npm:@acme/b' }],
-      {
-        '@acme/a': {
-          default: (): DreamuxPlugin => ({
-            name: 'acme',
-            config: { read: (raw) => ({ parsed: raw }) },
-          }),
-        },
-        '@acme/b': { default: () => ({ name: 'beta' }) },
-      },
-    );
-    readPluginConfigs(loaded, 'config.json');
-    expect(loaded.map((p) => p.config)).toEqual([undefined, { parsed: { size: 2 } }, undefined]);
-
-    const withStrayConfig = await load([{ ref: 'npm:@acme/b', config: {} }], {
-      '@acme/b': { default: () => ({ name: 'beta' }) },
-    });
-    expect(() => readPluginConfigs(withStrayConfig, 'config.json')).toThrow(
-      /plugin "beta" takes no config \(config\.json: plugins\[0\]\.config\)/,
-    );
-  });
-
   it('calls config.read with undefined when the entry omits a config block', async () => {
     const loaded = await load([{ ref: 'npm:@acme/a' }], {
       '@acme/a': {
@@ -653,18 +629,4 @@ describe('plugins[] through loadConfig', () => {
     );
   });
 
-  it('surfaces a readPluginConfigs failure through the full loadConfig pipeline, after providers and dispatchers validate', async () => {
-    await writeConfig({
-      ...baseConfig(),
-      plugins: [{ ref: 'npm:@acme/b', config: {} }],
-    });
-    const pluginModuleImporter = importer({
-      [FEISHU_PACKAGE]: { default: fakeFeishu() },
-      '@acme/b': { default: (): DreamuxPlugin => ({ name: 'beta' }) },
-    });
-
-    await expect(
-      loadConfig({ configDir, providerRegistry: codexRegistry(), pluginModuleImporter }),
-    ).rejects.toThrow(/plugin "beta" takes no config \(.*plugins\[0\]\.config\)/);
-  });
 });

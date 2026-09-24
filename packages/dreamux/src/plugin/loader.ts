@@ -72,6 +72,20 @@ export class PluginLoadError extends Error {
   }
 }
 
+/**
+ * Whether `value` is a thenable. `contribute` and `server` are typed `=> void`,
+ * which TypeScript accepts from an `async` implementation too; load-phase
+ * callers use this to reject one instead of silently racing api publication
+ * against it.
+ */
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
 export type PluginModuleImporter = (
   packageName: string,
 ) => Promise<Record<string, unknown>>;
@@ -164,9 +178,9 @@ export async function loadPlugins(options: {
 
 /**
  * Call each plugin's `config.read` with its entry's `config`. A `config` block
- * for a plugin without `config.read` is rejected, matching the config loader's
- * reject-unknown-input policy: dropping it would leave the operator believing a
- * setting is in force.
+ * for a plugin without `config.read` is ignored: every persisted and
+ * configured file tolerates unknown fields, and a plugin with no reader has
+ * nowhere to route the block that would give it effect.
  */
 export function readPluginConfigs(
   plugins: readonly LoadedPlugin[],
@@ -176,16 +190,7 @@ export function readPluginConfigs(
     if (loaded.entry === null) continue;
     const { index, value: entry } = loaded.entry;
     const reader = loaded.plugin.config;
-    if (reader === undefined) {
-      if ('config' in entry) {
-        throw new PluginLoadError(
-          loaded.name,
-          'config',
-          `plugin "${loaded.name}" takes no config (${file}: plugins[${index}].config)`,
-        );
-      }
-      continue;
-    }
+    if (reader === undefined) continue;
     try {
       loaded.config = reader.read(entry.config);
     } catch (err) {
@@ -290,13 +295,28 @@ function contributePlugin(
         contribute('agentRuntime', name, provider),
     },
   };
+  let result: unknown;
   try {
-    plugin.contribute(host);
+    result = plugin.contribute(host);
   } catch (err) {
     if (err instanceof PluginLoadError) throw err;
     throw new PluginLoadError(plugin.name, 'contribute', errorMessage(err), {
       cause: err,
     });
+  }
+  // `contribute` is typed `=> void`, but TypeScript accepts an `async`
+  // implementation too: nothing awaits it, so a tap registered after its
+  // first `await` would silently never run. Its promise would otherwise go
+  // unwatched past this load-phase call, so a later rejection would crash the
+  // process with no handler; attach one before throwing the load error that
+  // already fails the plugin by name.
+  if (isThenable(result)) {
+    Promise.resolve(result).catch(() => {});
+    throw new PluginLoadError(
+      plugin.name,
+      'contribute',
+      'must be synchronous; register and tap only',
+    );
   }
   return providers;
 }

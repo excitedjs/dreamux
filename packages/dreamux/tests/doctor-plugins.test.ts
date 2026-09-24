@@ -198,37 +198,6 @@ describe('runDreamuxDoctor plugin wiring', () => {
     });
   }
 
-  it('a load-phase PluginLoadError pushes two rows (config, then plugin <name>) and the run continues', async () => {
-    // bootstrap has no `config.read`; a `config` block on its entry is
-    // rejected by `readPluginConfigs`, which runs after `loadPlugins` but
-    // is still part of `loadConfig` — this throws before `startPlugins`
-    // ever sees bootstrap. `pluginDoctorChecks` then runs on the
-    // `plugins: []` fallback and contributes no rows.
-    await writeConfig({
-      plugins: [{ ref: 'builtin:bootstrap', config: { anything: true } }],
-      dispatchers: [],
-    });
-
-    const result = await doctor();
-
-    const pluginErrorMessage =
-      `plugin "bootstrap" failed during config: plugin "bootstrap" takes no config ` +
-      `(${configFile}: plugins[0].config)`;
-    expect(result.checks.slice(0, 2)).toEqual([
-      { name: 'config', ok: false, detail: 'not loaded: plugin "bootstrap" failed' },
-      { name: 'plugin bootstrap', ok: false, detail: pluginErrorMessage },
-    ]);
-    // No other row silently failed (or a stray "plugin bootstrap"/"plugin
-    // feishu" row leaked through from the `plugins: []` fallback), and the
-    // rest of doctor still ran to completion rather than aborting.
-    expect(result.checks.filter((check) => !check.ok).map((check) => check.name)).toEqual([
-      'config',
-      'plugin bootstrap',
-      'dispatchers',
-    ]);
-    expect(result.ok).toBe(false);
-  });
-
   it('a non-PluginLoadError config failure pushes only the config row, no plugin row', async () => {
     // `bogus` is not a top-level key `mergeWithDefaults` accepts; this
     // throws a plain Error, not a PluginLoadError, and it throws after

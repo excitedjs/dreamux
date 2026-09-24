@@ -17,7 +17,7 @@ import { HookMap, SyncHook } from 'tapable';
 
 import { errorMessage } from '../platform/error-info.js';
 import { isolatedTaps, loadPhaseTaps, runAsPlugin, tapOwners } from './hooks.js';
-import { type LoadedPlugin, PluginLoadError } from './loader.js';
+import { isThenable, type LoadedPlugin, PluginLoadError } from './loader.js';
 
 export type ServerHooks = ServerHost['hooks'];
 
@@ -69,8 +69,9 @@ export function startPlugins(
   for (const loaded of plugins) {
     if (loaded.plugin.server === undefined) continue;
     const server = loaded.plugin.server.bind(loaded.plugin);
+    let result: unknown;
     try {
-      runAsPlugin(loaded.name, () =>
+      result = runAsPlugin(loaded.name, () =>
         server({
           config: loaded.config,
           logger: logger.child?.({ plugin: loaded.name }) ?? logger,
@@ -82,11 +83,39 @@ export function startPlugins(
         cause: err,
       });
     }
+    // `server` is typed `=> void`, but TypeScript accepts an `async`
+    // implementation too: nothing awaits it, so a tap registered after its
+    // first `await` would silently never run, and the api publication loop
+    // below would race an in-flight `server`. Its promise would otherwise go
+    // unwatched past this load-phase call, so a later rejection would crash
+    // the process with no handler; attach one before throwing the load error
+    // that already fails the plugin by name.
+    if (isThenable(result)) {
+      Promise.resolve(result).catch(() => {});
+      throw new PluginLoadError(
+        loaded.name,
+        'server',
+        'must be synchronous; register and tap only',
+      );
+    }
   }
   for (const loaded of plugins) {
     if (loaded.plugin.api === undefined) continue;
     // `get`, not `for`: a plugin nobody tapped needs no hook object.
-    pluginHooks.get(loaded.name)?.call(loaded.plugin.api);
+    const hook = pluginHooks.get(loaded.name);
+    if (hook === undefined) continue;
+    try {
+      hook.call(loaded.plugin.api);
+    } catch (err) {
+      // `loadPhaseTaps` already turns a tap's own throw into a PluginLoadError
+      // attributed to its owner; this catches a plugin's own `hook.intercept`
+      // callback on `hooks.plugin.for(name)` throwing directly, which bypasses
+      // that wrapper the same way a `dispatcher`/`team` interceptor does.
+      if (err instanceof PluginLoadError) throw err;
+      throw new PluginLoadError(loaded.name, 'api', errorMessage(err), {
+        cause: err,
+      });
+    }
   }
   return {
     hooks,

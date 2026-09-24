@@ -585,7 +585,9 @@ export function dreamuxFeishuGate(
 // IO + UI helpers moved to feishu-gate-io.ts. Re-exported to preserve the
 // public surface so callers (feishu-channel.ts, tests) need no change.
 export {
+  approvePairingByToken,
   loadDispatcherAccess,
   readDispatcherAccess,
   saveDispatcherAccess,
+  type PairingApprovalResult,
 } from './feishu-gate-io.js';

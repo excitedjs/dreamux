@@ -250,7 +250,16 @@ export class DispatcherService implements Dispatcher {
       // TeamMates report to that leader, which the Team itself supplies.
       dispatcherCompletionInitiator: () => Promise.resolve(this.mustAgent()),
       admitOperation: (task) => this.admitOperation(task),
-      announceTeam: (team, ctx) => this.hooks.team.call(team, ctx),
+      announceTeam: (team, ctx) => {
+        try {
+          this.hooks.team.call(team, ctx);
+        } catch (err) {
+          // Core's isolation wrapper already logs a failing tap; this catches
+          // a rejection from an interceptor a plugin added to the hook
+          // itself, so this dep can keep its "never throws" contract.
+          this.log.error({ team_id: team.id, err: errorInfo(err) }, 'team hook failed');
+        }
+      },
       leaderMcp: ({ teamId, leaderName }) => ({
         leases: opts.mcpLeases,
         adminSocketPath: adminSocket,

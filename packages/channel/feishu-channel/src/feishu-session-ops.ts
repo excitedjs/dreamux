@@ -30,12 +30,7 @@ import {
   type FeishuCardActionResponse,
 } from './feishu-pairing-card.js';
 import { introduceAckText } from './introduce.js';
-import {
-  PAIRING_TOKEN_REGEX,
-  loadDispatcherAccess,
-  saveDispatcherAccess,
-  type DispatcherAccessState,
-} from './feishu-gate.js';
+import { PAIRING_TOKEN_REGEX, approvePairingByToken } from './feishu-gate.js';
 import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
@@ -43,27 +38,40 @@ import type {
   FeishuInboundRoute,
   FeishuTargetRouter,
 } from './feishu-target-router.js';
-import { CHANNEL_REMINDER, type FeishuInboundDelivery } from './feishu-submit.js';
+import {
+  CHANNEL_REMINDER,
+  type FeishuChatSubmission,
+  type FeishuInboundDelivery,
+  type FeishuSubmitOutcome,
+} from './feishu-submit.js';
 import type {
   AskUserExpiry,
   AskUserRegistry,
   AskUserSettlement,
 } from './feishu-ask-user.js';
 import type { AskUserQuestionSpec } from './feishu-ask-user-card.js';
+import type {
+  FeishuExtensionActionResult,
+  FeishuExtensionForward,
+} from './extension.js';
 import { FeishuOperationError } from './feishu-bounded-operation.js';
 import {
   alwaysActiveSessionFence,
   type FeishuSessionFence,
 } from './feishu-inbound-work.js';
+import type { FeishuTarget } from './routing/target.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // In-memory state & constants (mirror the class fields)
 // ─────────────────────────────────────────────────────────────────────────
 
-export interface PairingApprovalResult {
-  status: 'ok' | 'not_found' | 'error';
-  message: string;
-  details?: Record<string, unknown>;
+/**
+ * What a resolved extension card action gives `handleCardAction`: enough to
+ * run it and to name it in a forward's delivery logs.
+ */
+export interface FeishuExtensionActionHandler {
+  readonly extensionName: string;
+  invoke(event: FeishuCardActionEvent): Promise<FeishuExtensionActionResult>;
 }
 
 /** Opaque resource bundle a session builds for each helper call. */
@@ -82,6 +90,8 @@ export interface SessionHandle {
   delivery: FeishuInboundDelivery;
   /** Open ask-user rounds; a question outlives the tool call that asked it. */
   askUser: AskUserRegistry;
+  /** The extension claiming a card action key, ready to run, if any. */
+  extensionAction(key: string): FeishuExtensionActionHandler | undefined;
 }
 
 /** Build a package-private handle from a session's internal fields. */
@@ -94,6 +104,7 @@ export function sessionHandle(input: {
   delivery: FeishuInboundDelivery;
   askUser: AskUserRegistry;
   sessionFence?: FeishuSessionFence;
+  extensionAction?: (key: string) => FeishuExtensionActionHandler | undefined;
 }): SessionHandle {
   return {
     opts: input.opts,
@@ -104,6 +115,7 @@ export function sessionHandle(input: {
     delivery: input.delivery,
     askUser: input.askUser,
     sessionFence: input.sessionFence ?? alwaysActiveSessionFence(),
+    extensionAction: input.extensionAction ?? (() => undefined),
   };
 }
 
@@ -121,10 +133,6 @@ function errInfo(err: unknown): { message: string; stack?: string } {
 }
 
 const log = (h: SessionHandle): DreamuxLogger => h.opts.log;
-
-function pairingTokenLogFields(token: string): Record<string, unknown> {
-  return { pairing_token_len: token.length };
-}
 
 function openIdLogFields(name: string, openId: string): Record<string, unknown> {
   return { [`${name}_len`]: openId.length };
@@ -258,115 +266,6 @@ export async function addReaction(
   return reactionId;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Approve pairing by token
-// ─────────────────────────────────────────────────────────────────────────
-
-/**
- * Approve a pending pairing by its internal 6-hex token.
- *
- * Behavior:
- *   - Normalizes `token` to lowercase (the gate stores lowercased tokens).
- *   - Returns `not_found` when the token is unknown or expired (we reject
- *     expired entries explicitly, not just "not found", so the operator
- *     gets the right diagnostic).
- *   - Adds the DM sender to `allow_users`. Idempotent on allowlist
- *     membership (we detect duplicates via allowlist presence, not by
- *     whether the pending entry still has the slot), and always removes
- *     the pending key after a successful approval — the
- *     allowlist IS the source of truth, a pending entry is just a
- *     temporary token.
- *   - Details include `duplicate` flag, `ttl_left_ms`, `sender_id`,
- *     `chat_id`, `kind` for audit logging.
- */
-export async function approvePairingByToken(
-  h: SessionHandle,
-  token: string,
-): Promise<PairingApprovalResult> {
-  if (!PAIRING_TOKEN_REGEX.test(token)) {
-    return {
-      status: 'error',
-      message: '授权请求格式错误',
-    };
-  }
-  const lowerToken = token.toLowerCase();
-  return h.accessMutex.lock(async () => {
-    const state = await loadDispatcherAccess(h.opts.stateDir);
-    const entry = state.pending[lowerToken];
-    const now = Date.now();
-    if (entry === undefined || entry.expires_at <= now) {
-      return {
-        status: 'not_found',
-        message: '授权请求不存在或已过期',
-        details: { token: lowerToken },
-      };
-    }
-
-    if (entry.kind !== 'dm') {
-      return {
-        status: 'error',
-        message: '授权请求类型已不再支持',
-        details: { token: lowerToken, kind: entry.kind },
-      };
-    }
-
-    // Clone so we can mutate
-    const next: DispatcherAccessState = {
-      ...state,
-      pending: { ...state.pending },
-      allow_users: [...state.allow_users],
-    };
-    let duplicate = false;
-
-    if (next.allow_users.includes(entry.sender_id)) {
-      duplicate = true;
-    } else {
-      next.allow_users = [...next.allow_users, entry.sender_id];
-    }
-
-    // Always remove the pending entry (allowlist membership is the
-    // durable approval; a re-approved duplicate token still consumes
-    // its single-use slot).
-    delete next.pending[lowerToken];
-
-    try {
-      await saveDispatcherAccess(h.opts.stateDir, next);
-    } catch (err) {
-      log(h).error(
-        {
-          dispatcher_id: h.opts.dispatcherId,
-          ...pairingTokenLogFields(lowerToken),
-          sender_id: entry.sender_id,
-          chat_id: entry.chat_id,
-          err: errInfo(err),
-        },
-        '[card-action] failed to persist pairing approval',
-      );
-      return {
-        status: 'error',
-        message: '授权写入失败，请重试',
-        details: { token: lowerToken },
-      };
-    }
-
-    const ttlLeftMs = Math.max(0, entry.expires_at - now);
-    const who = `用户 ${entry.sender_id}`;
-    return {
-      status: 'ok',
-      message: duplicate
-        ? `${who} 已在允许列表，授权请求已关闭`
-        : `已批准 ${who} 访问`,
-      details: {
-        duplicate,
-        kind: 'dm',
-        ttl_left_ms: ttlLeftMs,
-        sender_id: entry.sender_id,
-        chat_id: entry.chat_id,
-      },
-    };
-  });
-}
-
 /**
  * Where a sent message actually is, asked of Feishu rather than assumed.
  *
@@ -392,6 +291,71 @@ export async function readMessageRoute(
 }
 
 /**
+ * Build the ordinary inbound submission a card's text becomes, anchored at
+ * the card's own message. Every card-driven delivery goes through this —
+ * an ask-user answer and an extension's forwarded card action alike — so the
+ * address is always read from the card, never guessed or named by the caller.
+ */
+function cardSubmission(input: {
+  target: FeishuTarget;
+  cardMessageId: string;
+  text: string;
+  sourceId: string;
+  attrs?: Readonly<Record<string, string>>;
+}): FeishuChatSubmission {
+  const { target, cardMessageId } = input;
+  return {
+    kind: 'chat',
+    attrs: {
+      // Same provenance the inbound envelope carries, in the same place: the
+      // delivery arrives as a channel message and reads like one.
+      source: 'feishu',
+      chat_id: target.chatId,
+      ...(target.threadId !== undefined ? { thread_id: target.threadId } : {}),
+      message_id: cardMessageId,
+      ...(input.attrs ?? {}),
+    },
+    text: input.text,
+    reminder: CHANNEL_REMINDER,
+    sourceId: input.sourceId,
+    anchor: {
+      chatId: target.chatId,
+      // The card, never `sourceId`: this id is handed to Feishu as a COT
+      // presentation's origin, and a synthetic one would be sent to the API
+      // as if it were real.
+      messageId: cardMessageId,
+      target,
+    },
+  };
+}
+
+/**
+ * Resolve where a card lives and deliver its text to whichever Team or
+ * Dispatcher Agent owns that conversation, as an ordinary inbound submission.
+ * The one mechanism both `deliverAskUserSettlement` and
+ * `deliverExtensionForward` use — the address is always read from the card
+ * via `readMessageRoute`, never guessed or named by the caller.
+ */
+async function deliverToCardOwner(
+  h: SessionHandle,
+  input: {
+    cardMessageId: string;
+    text: string;
+    sourceId: string;
+    attrs?: Readonly<Record<string, string>>;
+  },
+): Promise<{ target: FeishuTarget; outcome: FeishuSubmitOutcome }> {
+  const route = await readMessageRoute(h, input.cardMessageId);
+  const { target } = route;
+  const outcome = await h.delivery.deliver({
+    target,
+    containerChatId: route.containerChatId,
+    submission: cardSubmission({ target, ...input }),
+  });
+  return { target, outcome };
+}
+
+/**
  * Hand a settled ask-user round to Core as an ordinary inbound submission.
  *
  * The answer travels the path a typed reply travels, so nothing downstream has
@@ -409,41 +373,18 @@ async function deliverAskUserSettlement(
     if (cardMessageId === undefined) {
       throw new Error('the question card reported no message id');
     }
-    const route = await readMessageRoute(h, cardMessageId);
-    const { target } = route;
-    const outcome = await h.delivery.deliver({
-      target,
-      containerChatId: route.containerChatId,
-      submission: {
-        kind: 'chat',
-        attrs: {
-          // Same provenance the inbound envelope carries, in the same place:
-          // an answer arrives as a channel message and reads like one.
-          source: 'feishu',
-          chat_id: target.chatId,
-          ...(target.threadId !== undefined
-            ? { thread_id: target.threadId }
-            : {}),
-          message_id: cardMessageId,
-          // Anyone in the chat may answer the card; this is deliberate, so
-          // there is no check on who clicked. Carrying the clicker keeps the
-          // fact the model would otherwise lose.
-          ...(settlement.operatorOpenId !== undefined
-            ? { sender_id: settlement.operatorOpenId }
-            : {}),
-          ask_user_request_id: settlement.requestId,
-        },
-        text: settlement.text,
-        reminder: CHANNEL_REMINDER,
-        sourceId: settlement.sourceId,
-        anchor: {
-          chatId: target.chatId,
-          // The question card, never `sourceId`: this id is handed to Feishu as
-          // a COT presentation's origin, and a synthetic one would be sent to
-          // the API as if it were real.
-          messageId: cardMessageId,
-          target,
-        },
+    const { target, outcome } = await deliverToCardOwner(h, {
+      cardMessageId,
+      text: settlement.text,
+      sourceId: settlement.sourceId,
+      attrs: {
+        // Anyone in the chat may answer the card; this is deliberate, so
+        // there is no check on who clicked. Carrying the clicker keeps the
+        // fact the model would otherwise lose.
+        ...(settlement.operatorOpenId !== undefined
+          ? { sender_id: settlement.operatorOpenId }
+          : {}),
+        ask_user_request_id: settlement.requestId,
       },
     });
     // An `unsubmitted` (or `rejected`) outcome here means a `provision` plan
@@ -473,6 +414,55 @@ async function deliverAskUserSettlement(
         err: errInfo(err),
       },
       '[ask-user] answer delivery failed',
+    );
+  }
+}
+
+/**
+ * Hand an extension card action's forward to whichever Team or Dispatcher
+ * Agent owns the card's conversation, as an ordinary inbound submission.
+ *
+ * The extension names what to say, never where: the card is the only address
+ * it has, and Feishu re-derives the target from that card the same way an
+ * ask-user answer does. A delivery that fails is logged and dropped, on the
+ * same terms `deliverAskUserSettlement` drops one — a second attempt risks a
+ * second turn for one click, and the failure is not the caller's to see: the
+ * card callback already answered.
+ */
+async function deliverExtensionForward(
+  h: SessionHandle,
+  extensionName: string,
+  cardMessageId: string | undefined,
+  forward: FeishuExtensionForward,
+): Promise<void> {
+  try {
+    if (cardMessageId === undefined) {
+      throw new Error('the card reported no message id');
+    }
+    const { target, outcome } = await deliverToCardOwner(h, {
+      cardMessageId,
+      text: forward.text,
+      sourceId: forward.sourceId,
+      ...(forward.attrs !== undefined ? { attrs: forward.attrs } : {}),
+    });
+    log(h).info(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        chat_id: target.chatId,
+        feishu_extension: extensionName,
+        status: outcome.status,
+      },
+      '[extension] card forward delivered',
+    );
+  } catch (err) {
+    log(h).error(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        message_id: cardMessageId,
+        feishu_extension: extensionName,
+        err: errInfo(err),
+      },
+      '[extension] card forward delivery failed',
     );
   }
 }
@@ -546,10 +536,26 @@ export async function expireAskUserQuestion(
   }
 }
 
+/**
+ * The card action this channel instance answers: an extension's claimed key
+ * first, then the built-in pairing/ask-user handling below. An extension
+ * action's `forward`, once its own callback answer is ready, is delivered the
+ * same detached way `deliverAskUserSettlement` is.
+ */
 export async function handleCardAction(
   h: SessionHandle,
   event: FeishuCardActionEvent,
 ): Promise<FeishuCardActionResponse | Record<string, never>> {
+  const key = String(event.actionValue[DREAMUX_ACTION_KEY] ?? '');
+  const extension = h.extensionAction(key);
+  if (extension !== undefined) {
+    const { response, forward } = await extension.invoke(event);
+    if (forward !== undefined) {
+      void deliverExtensionForward(h, extension.extensionName, event.openMessageId, forward);
+    }
+    return response;
+  }
+
   const applied = h.askUser.apply(event);
   if (applied.kind !== 'ignored') {
     if (applied.kind === 'settled') {
@@ -563,8 +569,7 @@ export async function handleCardAction(
     return applied.response;
   }
 
-  const action = String(event.actionValue[DREAMUX_ACTION_KEY] ?? '');
-  if (action !== DREAMUX_PAIRING_CARD_ACTION) return {};
+  if (key !== DREAMUX_PAIRING_CARD_ACTION) return {};
 
   const token = String(event.actionValue[DREAMUX_PAIRING_TOKEN_KEY] ?? '');
   if (!PAIRING_TOKEN_REGEX.test(token)) {
@@ -617,7 +622,15 @@ export async function handleCardAction(
     };
   }
 
-  const result = await approvePairingByToken(h, token);
+  const result = await approvePairingByToken(
+    {
+      stateDir: h.opts.stateDir,
+      accessMutex: h.accessMutex,
+      dispatcherId: h.opts.dispatcherId,
+      log: h.opts.log,
+    },
+    token,
+  );
   if (result.status !== 'ok') {
     return {
       toast: {

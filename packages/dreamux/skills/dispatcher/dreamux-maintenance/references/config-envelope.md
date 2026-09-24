@@ -17,7 +17,8 @@ plugins.
 - non-empty plugin ref `ref`: `builtin:<id>` (the built-in opt-in plugin is
   `bootstrap`) or `npm:<package>` with an optional `#<export>`;
 - optional plugin-owned `config`, validated by that plugin. A `config` block
-  for a plugin that takes no config is rejected.
+  for a plugin that takes no config is ignored, matching the tolerate-unknown
+  rule every persisted and configured file follows.
 
 The built-in Feishu plugin is always loaded and must not be listed. A
 malformed entry fails `dreamux serve` and shows as a failed `config` line in

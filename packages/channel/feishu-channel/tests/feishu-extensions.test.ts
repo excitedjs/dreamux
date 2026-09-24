@@ -33,7 +33,6 @@ import feishuPluginFactory, {
   type FeishuInstanceApi,
 } from '../src/index.js';
 import type { FeishuChannelConfig } from '../src/provider.js';
-import { FeishuOperationError } from '../src/feishu-bounded-operation.js';
 import { channelPathSegment, routingDocumentFilename } from '../src/routing/store.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
 import { createFakeFeishuBot, type FakeFeishuBot } from './helpers/fake-feishu-bot.js';
@@ -296,54 +295,12 @@ describe('extension registration conflicts', () => {
     ).toThrow('Feishu extension "gamma" tool "lookup" (caller dispatcher) conflicts with extension "alpha"');
   });
 
-  it.each(['approve_pairing', 'ask_user_pick'])(
-    'rejects card action key %s when it is built in',
-    (key) => {
-      const { api } = loadFeishu();
-      expect(() =>
-        api.extensions.register(extension('alpha', {
-          cardActions: [{ key, handle: async () => ({}) }],
-        })),
-      ).toThrow(`Feishu extension "alpha" card action "${key}" conflicts with built-in Feishu card action`);
-    },
-  );
-
-  it('rejects a card action key another extension claimed, naming both', () => {
-    const { api } = loadFeishu();
-    api.extensions.register(extension('alpha', {
-      cardActions: [{ key: 'ack', handle: async () => ({}) }],
-    }));
-    expect(() =>
-      api.extensions.register(extension('beta', {
-        cardActions: [{ key: 'ack', handle: async () => ({}) }],
-      })),
-    ).toThrow('Feishu extension "beta" card action "ack" conflicts with extension "alpha"');
-  });
-
   it('rejects a second extension with the same name', () => {
     const { api } = loadFeishu();
     api.extensions.register(extension('alpha'));
     expect(() => api.extensions.register(extension('alpha'))).toThrow(
       'Feishu extension "alpha" is registered twice',
     );
-  });
-
-  it('rejects an extension with an empty name', () => {
-    const { api } = loadFeishu();
-    expect(() => api.extensions.register(extension(''))).toThrow(
-      'A Feishu extension name must not be empty',
-    );
-  });
-
-  it('rejects a card action with an empty key', () => {
-    // An empty key would claim every click whose card value carries no
-    // `dreamux_action`, because the dispatcher reads a missing key as ''.
-    const { api } = loadFeishu();
-    expect(() =>
-      api.extensions.register(extension('alpha', {
-        cardActions: [{ key: '', handle: async () => ({}) }],
-      })),
-    ).toThrow('Feishu extension "alpha" has a card action with an empty key');
   });
 
   it('rejects a second tool in the same extension repeating an earlier tool\'s name and caller kind', () => {
@@ -372,19 +329,6 @@ describe('extension registration conflicts', () => {
     ).not.toThrow();
   });
 
-  it('rejects a second card action in the same extension repeating an earlier key', () => {
-    const { api } = loadFeishu();
-    expect(() =>
-      api.extensions.register(extension('alpha', {
-        cardActions: [
-          { key: 'ack', handle: async () => ({}) },
-          { key: 'ack', handle: async () => ({}) },
-        ],
-      })),
-    ).toThrow(
-      'Feishu extension "alpha" card action "ack" conflicts with another card action of the same extension',
-    );
-  });
 });
 
 describe('extension lifecycle per Feishu channel instance', () => {
@@ -479,74 +423,6 @@ describe('extension lifecycle per Feishu channel instance', () => {
     expect(contexts[0]?.stateRoot.startsWith(join(dir, 'feishu-extensions', 'alpha'))).toBe(true);
     await first.session.close();
     await second.session.close();
-  });
-
-  it('dispatches a card action by its dreamux_action key to the instance state', async () => {
-    const bot = createFakeFeishuBot();
-    const { api, provider } = loadFeishu([bot]);
-    const handled: Array<{ state: string; value: unknown }> = [];
-    api.extensions.register(extension<string>('alpha', {
-      cardActions: [{
-        key: 'alpha_ack',
-        handle: async (state, event) => {
-          handled.push({ state, value: event.actionValue['item'] });
-          return {};
-        },
-      }],
-      initialize: async () => 'state-1',
-    }));
-    const instance = await createSession(provider);
-    await instance.session.initialize(inertPort());
-    await instance.session.start();
-
-    await bot.injectCardAction({
-      actionValue: { dreamux_action: 'alpha_ack', item: 'i-1' },
-      raw: {},
-    });
-
-    expect(handled).toEqual([{ state: 'state-1', value: 'i-1' }]);
-    await instance.session.close();
-  });
-
-  it('fences the instance api once the instance began closing', async () => {
-    let captured: FeishuInstanceApi | undefined;
-    const fromClose: unknown[] = [];
-    const { api, provider } = loadFeishu();
-    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
-      initialize: async (context) => {
-        captured = context.api;
-        return context.api;
-      },
-      close: async (instanceApi) => {
-        fromClose.push(
-          await instanceApi
-            .sendCard({ chatId: 'oc_x', card: {}, mode: 'background' })
-            .catch((err: unknown) => err),
-        );
-      },
-    }));
-    const instance = await createSession(provider);
-    await instance.session.initialize(inertPort());
-    await instance.session.start();
-    await instance.session.close();
-
-    expect(fromClose[0]).toBeInstanceOf(FeishuOperationError);
-    expect((fromClose[0] as FeishuOperationError).reason).toBe('aborted');
-    await expect(captured!.editCard('om_x', {})).rejects.toMatchObject({ reason: 'aborted' });
-    await expect(captured!.readMessageRoute('om_x')).rejects.toMatchObject({ reason: 'aborted' });
-    expect(
-      await captured!.submitToTeam('alpha', {
-        kind: 'chat',
-        attrs: {},
-        text: 'hi',
-        reminder: '',
-        sourceId: 'msg-1',
-        anchor: null,
-      } as unknown as Parameters<FeishuInstanceApi['submitToTeam']>[1]),
-    ).toEqual({ status: 'error', message: 'Feishu session is not live' });
-    await expect(
-      captured!.bindTeam({ target: chatTarget('oc_x', 'group'), teamName: 'alpha', display: '' }),
-    ).rejects.toMatchObject({ reason: 'aborted' });
   });
 
   it('closes every extension even when one close throws, in reverse registration order', async () => {
@@ -917,46 +793,6 @@ describe('FeishuInstanceApi happy paths', () => {
     await instance.session.close();
   });
 
-  it('sendCard delivers to the fake bot and returns a target from the read-back, not the input chat id', async () => {
-    const bot = createFakeFeishuBot();
-    bot.setMessageRead('message-fake-1', {
-      items: [{
-        messageId: 'message-fake-1',
-        messageType: 'text',
-        content: '{}',
-        mentions: [],
-        deleted: false,
-        malformed: false,
-        chatId: 'oc_readback',
-      }],
-    });
-    let captured: FeishuInstanceApi | undefined;
-    const { api, provider } = loadFeishu([bot]);
-    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
-      initialize: async (context) => {
-        captured = context.api;
-        return context.api;
-      },
-    }));
-    const instance = await createSession(provider);
-    await instance.session.initialize(inertPort());
-    await instance.session.start();
-
-    const result = await captured!.sendCard({
-      chatId: 'oc_input',
-      card: { type: 'card' },
-      mode: 'background',
-    });
-
-    expect(bot.sentCards).toMatchObject([{ chatId: 'oc_input', card: { type: 'card' } }]);
-    expect(result).toEqual({
-      messageId: 'message-fake-1',
-      target: chatTarget('oc_readback', 'group'),
-    });
-
-    await instance.session.close();
-  });
-
   it('editCard lands in the fake bot\'s edited cards', async () => {
     const bot = createFakeFeishuBot();
     let captured: FeishuInstanceApi | undefined;
@@ -1003,48 +839,6 @@ describe('FeishuInstanceApi happy paths', () => {
     await instance.session.close();
   });
 
-  it('submitToTeam answers a TEAM_NOT_FOUND rejection directly and never falls back to the Dispatcher', async () => {
-    let captured: FeishuInstanceApi | undefined;
-    const { api, provider } = loadFeishu();
-    api.extensions.register(extension<FeishuInstanceApi>('alpha', {
-      initialize: async (context) => {
-        captured = context.api;
-        return context.api;
-      },
-    }));
-    const calls: string[] = [];
-    const port: ChannelCorePort = {
-      invoke: {
-        invoke: async (command) => {
-          calls.push(command);
-          if (command !== 'team.submit') {
-            throw new Error(`unexpected command ${command}`);
-          }
-          const err = new Error('no such team') as Error & { code: string };
-          err.code = 'TEAM_NOT_FOUND';
-          throw err;
-        },
-      },
-      events: { subscribe: () => ({ unsubscribe: () => undefined }) },
-    };
-    const instance = await createSession(provider);
-    await instance.session.initialize(port);
-    await instance.session.start();
-
-    const outcome = await captured!.submitToTeam('ghost-team', {
-      kind: 'chat',
-      attrs: {},
-      text: 'hi',
-      reminder: '',
-      sourceId: 'msg-1',
-      anchor: null,
-    } as unknown as Parameters<FeishuInstanceApi['submitToTeam']>[1]);
-
-    expect(outcome).toEqual({ status: 'rejected', code: 'TEAM_NOT_FOUND', message: 'no such team' });
-    expect(calls).toEqual(['team.submit']);
-
-    await instance.session.close();
-  });
 });
 
 describe('extension tools through the MCP capability', () => {
@@ -1112,19 +906,4 @@ describe('the Feishu provider diagnostic', () => {
     expect(result.detail).toContain('extensions: none');
   });
 
-  it('describes every registered extension with its tools, their caller kinds, and its card actions', async () => {
-    const { api, provider } = loadFeishu();
-    api.extensions.register(extension('alpha', {
-      tools: [tool('alpha_lookup', ['dispatcher', 'team_leader'])],
-      cardActions: [{ key: 'alpha_ack', handle: async () => ({}) }],
-    }));
-    api.extensions.register(extension('beta'));
-
-    const result = await provider.diagnostic!.runDiagnostic(diagnosticContext, diagnosticRunner);
-
-    expect(result.detail).toContain(
-      'extensions: alpha (tools: alpha_lookup[dispatcher,team_leader]; card actions: alpha_ack); ' +
-        'beta (tools: none; card actions: none)',
-    );
-  });
 });

@@ -110,11 +110,10 @@ Order, all inside `loadConfig` except the last two steps:
    loaded plugin contributes and Dreamux does not ship fails loading with that
    statement, which is what an operator sees after removing a plugin from
    `plugins[]` while config still addresses its provider.
-4. Run each plugin's `config.read` on its entry's `config`. A `config` block for
-   a plugin with no `config.read` is a `PluginLoadError` (phase `config`), so
-   `dreamux serve` fails to start: the config loader rejects unknown input
-   everywhere else, and dropping the block would leave the operator believing
-   a setting is in force.
+4. Run each plugin's `config.read` on its entry's `config`. A `config` block
+   for a plugin with no `config.read` is ignored: every persisted and
+   configured file tolerates unknown fields, and a plugin with no reader has
+   nowhere to route the block that would give it effect.
 5. `startPlugins` (serve and doctor only): run every `server`.
 6. For each plugin with an `api`, call the taps on `hooks.plugin.for(name)`.
    This runs last because tapable hooks do not replay: a plugin loaded later
@@ -152,19 +151,38 @@ with `plugin: <name>`.
   interceptors plugins add with `hook.intercept` run. Isolation comes from the
   `register` interceptor core installs first: it wraps each tap's `fn` as the
   tap registers. The `for(name)` wrapper turns a throw into the load error
-  above, attributed to the tap's owner.
+  above, attributed to the tap's owner. A tap's `fn` is the only thing that
+  wrapper touches; a plugin's own `call`/`loop`/`result`/`done`/`error`
+  interceptor on a hook runs unwrapped, at the bare `hook.call` /
+  `hook.promise` site. Every one of those sites (`Dispatchers.get`, the
+  `announceTeam` dep, `composeLaunchDraft`, and api publication) catches that
+  throw itself and applies the same rule as its hook: logged and skipped at
+  runtime, a `PluginLoadError` naming the api-publishing plugin at load time.
+  This keeps the "never throws" contracts on `announceTeam` and
+  `fireCreated`'s caller true regardless of which mechanism — a tap or an
+  interceptor — a plugin used.
 - Runtime hooks:
   - `SyncHook` taps (`dispatcher`, `team`): a throw is logged with the owning
     plugin and skipped; lower-level taps it registered before throwing stay.
+    A tap's `fn` may be `async` even though the hook is sync (nothing stops a
+    plugin passing one to `.tap`); a returned thenable is watched the same
+    way a throw is, logged and skipped, never left to reject unhandled.
   - Launch hooks: each tap writes into its own empty sub-draft, merged only
     after the tap resolved and its `skillSources` passed the skill fence. A
     rejection or a fence violation drops that tap's instructions and skill
     sources together and is logged; launch continues. The required roots
-    (built-in roots, and a TeamLeader identity's persisted roots) are checked
-    once per launch outside any tap's attribution, the first time a tap adds a
-    skill root. If one is unreadable, that is logged once naming the root, and
-    plugin skill roots are skipped for this launch while plugin instructions
-    still apply; no plugin is blamed for a root it does not own.
+    (built-in roots, and a TeamLeader identity's persisted roots) are
+    canonicalized once per launch, outside any tap's attribution, the first
+    time a tap adds a skill root, and every later `accept` reuses that result
+    instead of re-touching the filesystem for them — so a required root that
+    turns unreadable partway through a launch is never misattributed to
+    whichever plugin's tap happens to run next. If one is unreadable, that is
+    logged once naming the root, and plugin skill roots are skipped for this
+    launch while plugin instructions still apply. The hook itself is only ever
+    handed an opaque `LaunchDraft` object, never the accumulator that holds
+    the fenced state: a plugin's own interceptor on a launch hook sees that
+    same opaque object and cannot reach the fence or the accumulated draft, so
+    it cannot push a skill root that skips the per-tap fence.
   - `created`: a rejection is logged with the owning plugin and skipped,
     never propagated.
 
