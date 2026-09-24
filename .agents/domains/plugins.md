@@ -157,7 +157,11 @@ with `plugin: <name>`.
   guarded the same way a tap is — including `done`/`error`, which tapable
   invokes from a continuation no caller-side try/catch can see. The `for(name)`
   wrapper turns a throw into the load error above, attributed to the tap's or
-  interceptor's owner. No call site (`Dispatchers.get`, the `announceTeam`
+  interceptor's owner. Interceptor methods must be synchronous: tapable ignores
+  their return value (except `register`'s), so an `async` method's rejection is
+  logged at runtime and fails loading under `for(name)`, and an `async`
+  `register` leaves the tap unchanged even when it resolves to a modified tap.
+  No call site (`Dispatchers.get`, the `announceTeam`
   dep, `composeLaunchDraft`, api publication) needs its own catch: every hook
   runs with plain `hook.call` / `hook.promise`. This keeps the "never throws"
   contracts on `announceTeam` and `fireCreated`'s caller true regardless of

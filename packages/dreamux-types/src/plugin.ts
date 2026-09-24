@@ -80,7 +80,11 @@ export interface ServerHost {
    * instead of failing it. A guarded interceptor's throw is attributed to the
    * plugin that added it and follows the same rule as the hook it is on:
    * logged and skipped at runtime, a failed load naming that plugin at load
-   * time (`hooks.plugin.for(name)`).
+   * time (`hooks.plugin.for(name)`). Interceptor methods must be synchronous:
+   * tapable ignores their return value (except `register`'s), so an `async`
+   * method's rejection is logged at runtime and fails loading at load time,
+   * and an `async` `register` leaves the tap unchanged even when its promise
+   * resolves to a modified tap.
    *
    * Tap names are free-form. The owning plugin of a tap is the plugin whose
    * `server` registered it, or the plugin whose tap callback was running when
