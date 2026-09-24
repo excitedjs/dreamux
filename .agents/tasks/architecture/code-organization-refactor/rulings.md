@@ -222,6 +222,11 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
   → bootstrap unchanged on this point; no handling for a Dispatcher cwd inside a
   repository.
 
+## Delivery and tests
+
+- Delivery with PR #453: "跟 453 一起走" (2026-09-24 14:48), then "你先看一下这个重构，然后往 453上开pr，最后跟随453一起合入next 。没问题的话就开始ultracode ，节点都选sonnet 。然后每个pr让devbox 去 review ，逐个合入。" (22:01). → Each stage is a pull request whose base is the PR #453 branch. Each is reviewed and merged in turn, and the stack reaches `next` when PR #453 does.
+- R43 unit tests: "我提一个要点，这所有的pr都不写单测，只删除跑不过的单测，等重构完成后，最后在453上一起补单测。" and "没有单测不作为不允许合入的理由。" (22:01); "只有最后453合入next 的时候才要求单测覆盖。" (22:02). → This supersedes the "in the same change" part of R4 for this refactor. No pull request in the stack adds tests. A test that no longer passes is deleted, or mechanically re-pointed at a moved or renamed symbol. Each deletion is logged with the contract it pinned, so the final test completion on PR #453 can restore that coverage. The gates still run on every pull request. **Inference, stated to the operator on 2026-09-24 and not yet confirmed:** a failure of the issue #63 non-blocking-inbound live gate is a regression signal, not a stale test, so it stops the work instead of being deleted.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's

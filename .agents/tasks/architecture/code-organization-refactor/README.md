@@ -12,14 +12,15 @@
 - Survey: [Code organization audit](/.agents/tasks/architecture/code-organization-refactor/artifacts/audit.md) — read-only, 14 slices with adversarial verification; most of its §9 questions are answered in the rulings, and the rest are open items in the requirement
 - Final solution: Not written.
 - Solution review Issue: Not opened.
-- Blockers: None recorded; development is not authorized.
-- Next action: Write the final technical solution from the requirement, the rulings, and the audit through the development workflow, then open its solution-review Issue.
+- Blockers: None recorded.
+- Next action: Deliver the stacked pull requests in order: PR-0 (open PR #453 defects plus R35, R36, and the R21 plugin-config rule), then requirement stages 1 to 9, then the plugin lifecycle hooks from the PR #453 design handoff, then the test completion on PR #453.
 - Related tasks: absorbs the solution of [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md) (issue #448) by operator ruling; builds on the cap ruling recorded in [suppress-owner-close-stop-pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md) and the cap decision in [Repository Guardrail Records](/.agents/tasks/architecture/repository-guardrails/README.md); the survey ran on the branch of [PR #453](https://github.com/excitedjs/dreamux/pull/453) (plugin system).
 
 ## Development approval
 
-- Status: Not granted.
-- Approved implementation boundary: None.
+- Status: Granted 2026-09-24. The operator's words: "你先看一下这个重构，然后往 453上开pr，最后跟随453一起合入next 。没问题的话就开始ultracode ，节点都选sonnet 。然后每个pr让devbox 去 review ，逐个合入。"
+- Approved implementation boundary: the [requirement](/.agents/tasks/architecture/code-organization-refactor/requirement.md) as amended by the [rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md), delivered as a stack of pull requests into the PR #453 branch, one at a time. Each is reviewed and merged before the next one starts. Open items in the requirement are put to the operator when the pull request that reaches them starts.
+- Tests: see R43 in the rulings. These pull requests write no new unit tests. The unit tests are completed on PR #453 before it merges to `next`.
 
 ## Delivery
 
