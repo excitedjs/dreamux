@@ -178,9 +178,10 @@ export async function loadPlugins(options: {
 
 /**
  * Call each plugin's `config.read` with its entry's `config`. A `config` block
- * for a plugin without `config.read` is ignored: every persisted and
- * configured file tolerates unknown fields, and a plugin with no reader has
- * nowhere to route the block that would give it effect.
+ * for a plugin without `config.read` is ignored: a plugin with no reader has
+ * nowhere to route the block that would give it effect. This is narrower than
+ * general unknown-field tolerance — `rejectUnknownKeys` still applies to
+ * `plugins[]` entry keys and elsewhere in `config.ts`.
  */
 export function readPluginConfigs(
   plugins: readonly LoadedPlugin[],

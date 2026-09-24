@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "The Feishu extension api drops `submitToTeam` and `sendCard`'s `mode` field. A card action handler now returns `{ response, forward? }`: `forward` states what to deliver to the conversation's Team, and Feishu resolves the Team and delivers it through the same path an ask-user answer takes, instead of an extension calling a submit capability of its own.",
+      "comment": "The Feishu extension api's `FeishuInstanceApi` has no `submitToTeam`, and `sendCard` takes no `mode` field. A card action handler returns `{ response, forward? }`: `response` answers the card callback, and `forward`, when present, states text to deliver to the conversation's Team — Feishu resolves that Team from the card and delivers it through the same path an ask-user answer takes, so no extension holds Team-resolution or delivery logic of its own.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-channel"
     }

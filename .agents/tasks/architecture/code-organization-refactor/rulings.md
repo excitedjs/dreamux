@@ -225,7 +225,30 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
 ## Delivery and tests
 
 - Delivery with PR #453: "跟 453 一起走" (2026-09-24 14:48), then "你先看一下这个重构，然后往 453上开pr，最后跟随453一起合入next 。没问题的话就开始ultracode ，节点都选sonnet 。然后每个pr让devbox 去 review ，逐个合入。" (22:01). → Each stage is a pull request whose base is the PR #453 branch. Each is reviewed and merged in turn, and the stack reaches `next` when PR #453 does.
-- R43 unit tests: "我提一个要点，这所有的pr都不写单测，只删除跑不过的单测，等重构完成后，最后在453上一起补单测。" and "没有单测不作为不允许合入的理由。" (22:01); "只有最后453合入next 的时候才要求单测覆盖。" (22:02); "不，单测直接删。一个都不修。" (22:07). → This supersedes the "in the same change" part of R4 for this refactor. No pull request in the stack adds tests. A test that no longer passes is deleted. No test is repaired, re-pointed, or edited to pass. Each deletion is logged with the contract it pinned, so the final test completion on PR #453 can restore that coverage. The gates still run on every pull request.
+- R43 unit tests: "我提一个要点，这所有的pr都不写单测，只删除跑不过的单测，等重构完成后，最后在453上一起补单测。" and "没有单测不作为不允许合入的理由。" (22:01); "只有最后453合入next 的时候才要求单测覆盖。" (22:02); "不，单测直接删。一个都不修。" (22:07). On the issue #63 non-blocking-inbound live gate (`packages/dreamux/tests/codex-live.test.ts`), asked whether it is deleted like any other test or stops the work: "测试代码可以最后补。先记着。这条是高危单测，需要重点覆盖。" (2026-09-25 00:26). → This supersedes the "in the same change" part of R4 for this refactor. No pull request in the stack adds tests. A test that no longer passes is deleted. No test is repaired, re-pointed, or edited to pass. Each deletion is logged with the contract it pinned, so the final test completion on PR #453 can restore that coverage. The #63 gate gets no exception: if it fails, it is deleted and logged like any other test. Its ledger entry is marked high-risk, and the final test completion must restore it with focused coverage of the non-blocking submit path. The gates still run on every pull request.
+
+## Open items settled before the single run (2026-09-25)
+
+The operator asked for every unclear point to be settled by question cards
+before the remaining stages run as one orchestration ("后面所有的PR，你都编排到一个UltraCode里面，一次性搞定", 2026-09-25 00:27).
+
+- R44 `teammate:` result keys (audit §9 item 4): "这个应该是不改的，只不过内部的类名改了一下，应该是。" → Command and MCP result keys keep `teammate:`; only internal class names change under R6.
+- R45 persisted Feishu/access fields (audit §9 item 26): **selected** "只停写前两个". → `access.json` `kind` and `replies` are no longer written (old files still read); `space_id` and per-channel keying are unchanged.
+- R46 unruled harness proposals (audit §7 H4, H5, H6, H10, H11): **selected** "五条全做".
+- R47 legacy-state checks: on doctor, "感觉doctor的检查，现在还是有一些策略上的问题。按照配置文件这边来说，我们只需要检查持久化状态和配置文件是不是可以正常加载，然后允许它有未知字段，不允许有缺字段和类型不对的情况。你上面说的这个情况检查，我感觉这个检查意义不大。甚至可以去掉。包括已经移除的老文件，我感觉也不需要检查，它就一个废弃文件，放在那就放在那了。" Asked whether serve's startup refusal goes too, **selected** "两处都去掉". → The removed-path and removed-field detection (`service/legacy-state.ts`, its doctor rows, and serve's refusal to start) is deleted. Doctor checks that config and persisted state load under R21. The `CLAUDE.md` upgrade policy that relies on fail-loud detection is rewritten in the same change.
+- R48 what plugin hooks are for: "插件的hooks，和dreamux core对外暴露的command 和event各自提供的能力是不同的。给插件的hooks侧重点在于切面，事件在于对外同步事实，Command在于统一调用方式。解释下来，就是说这三者其实是不重叠的。插件的hooks第一次给了外部插件在动作发生之前进行修改和注入的机会。" and "从tapable的角度来看，你所有的Hooks都用call去调用的话，实际上是希望能在call之后拿到一个什么东西。我们一期可以按照这个思路来去确定到底要做哪些Hooks。这个before create，就是把team create command传进来的参数。走一遍hook.call，再拿最终参数去构造team对象". → First-phase hooks are those whose call yields something core uses:
+  - `dispatcher.hooks.beforeLaunch` (existing);
+  - a new `beforeTeamCreate` that runs the `team.create` parameters through the hook and constructs the Team from the result. It sits on the Dispatcher, because the Team does not exist yet. **Inference:** idempotent replay still keys on the original request;
+  - `team.hooks.beforeTeamLeaderLaunch` (existing);
+  - a new TeamMate launch hook covering every TeamMate ("所有 TeamMate": Dispatcher-spawned, Team members, Workflow agents);
+  - the two construction hand-off hooks that give plugins the next level's hooks.
+
+  `team.hooks.created` is deleted, together with its scheduling and drain. Facts after an action are events, which are not built now: "可以先不做。后面有诉求了再加吧。" When they are added, plugins subscribe on the Dispatcher object (**selected** "Dispatcher 对象上").
+- R49 turn-ended: "一轮结束，那它其实都不是hooks。按照刚才那个题的思路，他就完全用事件就够了。", then on the event's payload "这个先不加了". → No turn-ended hook or event now.
+- R50 per-plugin state directory: **selected** "这次就做". → Each plugin gets its own state directory; the Feishu extension state root follows the same rule.
+- R51 hooks that alter Feishu's own behavior (the PR #453 design handoff's open item): **inference, from the operator's explanation of where that item came from:** it is already covered by the Feishu extension API (tools, `sendCard`, `editCard`, card actions); nothing further is built.
+
+- R52 hook names: asked "这些名字全都带before。可以把这个before去掉吗？Webpack那边都起了什么样的名字？" After the reply that webpack keeps `before`/`after` for paired hooks around one action, names a single transform hook after the action or data (`createModule`, `processAssets`) and a hand-off hook after the object (`compilation`, `module`), the proposed names were accepted: "可以". → `dispatcher.hooks.launch` (was `beforeLaunch`), `team.hooks.leaderLaunch` (was `beforeTeamLeaderLaunch`), `dispatcher.hooks.teammateLaunch` (new), `dispatcher.hooks.createTeam` (new, the `team.create` parameters), with `host.hooks.dispatcher` and `dispatcher.hooks.team` unchanged.
 
 ## Resolved by the rulings above
 

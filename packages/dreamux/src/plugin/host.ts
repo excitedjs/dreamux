@@ -79,6 +79,14 @@ export function startPlugins(
         }),
       );
     } catch (err) {
+      // An earlier plugin's `server` may have added an interceptor on a
+      // `hooks.plugin.for(name)` hook this plugin also taps. tapable runs
+      // that interceptor's `register` method synchronously inside this
+      // plugin's own `.tap()` call on the same hook, and the guard around it
+      // (`guardPluginInterceptors`) already turns a throw there into a
+      // PluginLoadError attributed to the earlier plugin. Rethrow it
+      // unwrapped instead of re-attributing the failure to `loaded.name`.
+      if (err instanceof PluginLoadError) throw err;
       throw new PluginLoadError(loaded.name, 'server', errorMessage(err), {
         cause: err,
       });
@@ -104,18 +112,10 @@ export function startPlugins(
     // `get`, not `for`: a plugin nobody tapped needs no hook object.
     const hook = pluginHooks.get(loaded.name);
     if (hook === undefined) continue;
-    try {
-      hook.call(loaded.plugin.api);
-    } catch (err) {
-      // `loadPhaseTaps` already turns a tap's own throw into a PluginLoadError
-      // attributed to its owner; this catches a plugin's own `hook.intercept`
-      // callback on `hooks.plugin.for(name)` throwing directly, which bypasses
-      // that wrapper the same way a `dispatcher`/`team` interceptor does.
-      if (err instanceof PluginLoadError) throw err;
-      throw new PluginLoadError(loaded.name, 'api', errorMessage(err), {
-        cause: err,
-      });
-    }
+    // `loadPhaseTaps` already turns a throwing tap or a throwing
+    // plugin-added interceptor into a `PluginLoadError` attributed to its own
+    // owner, so every throw out of `call` here already is one.
+    hook.call(loaded.plugin.api);
   }
   return {
     hooks,

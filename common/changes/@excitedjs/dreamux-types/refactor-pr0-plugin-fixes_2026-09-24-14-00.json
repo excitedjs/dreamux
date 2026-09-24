@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Document that a plugin's own hook interceptor (`call`/`tap`/`loop`/`result`/`done`/`error`/`register`) is guarded the same way a tap is, including `done`/`error`, which tapable invokes from a continuation no caller-side try/catch can see.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

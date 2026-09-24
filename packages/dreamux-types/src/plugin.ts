@@ -69,14 +69,18 @@ export interface ServerHost {
   readonly logger: DreamuxLogger;
   /**
    * Core runs these hooks, and every hook below them, with tapable's own
-   * `call` / `promise`, so interceptors added with `hook.intercept` run. A
-   * `register` interceptor core installs first wraps each tap: a failing tap
-   * is logged with its owning plugin and the other taps still run. A
-   * plugin's own interceptor callback (`call`/`loop`/`result`/`done`/`error`)
-   * runs outside that wrapper; core catches it at the bare hook invocation
-   * instead, applying the same rule as the hook it is on: logged and skipped
-   * at runtime, a failed load naming the plugin whose `server` ran the
-   * `hooks.plugin.for(name)` call at load time.
+   * `call` / `promise`, so interceptors added with `hook.intercept` run. Core
+   * installs a `register` interceptor first, which wraps each tap: a failing
+   * tap is logged with its owning plugin and the other taps still run. Core
+   * also wraps `hook.intercept` itself, so every method of a plugin's own
+   * interceptor (`call`/`tap`/`loop`/`result`/`done`/`error`/`register`) is
+   * guarded the same way — including `done`/`error`, which tapable invokes
+   * from a continuation no caller-side try/catch can see, so an unguarded
+   * throw there would otherwise hang the hook's own `promise()` forever
+   * instead of failing it. A guarded interceptor's throw is attributed to the
+   * plugin that added it and follows the same rule as the hook it is on:
+   * logged and skipped at runtime, a failed load naming that plugin at load
+   * time (`hooks.plugin.for(name)`).
    *
    * Tap names are free-form. The owning plugin of a tap is the plugin whose
    * `server` registered it, or the plugin whose tap callback was running when

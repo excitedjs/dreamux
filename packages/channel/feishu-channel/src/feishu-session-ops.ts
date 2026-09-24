@@ -30,7 +30,8 @@ import {
   type FeishuCardActionResponse,
 } from './feishu-pairing-card.js';
 import { introduceAckText } from './introduce.js';
-import { PAIRING_TOKEN_REGEX, approvePairingByToken } from './feishu-gate.js';
+import { PAIRING_TOKEN_REGEX } from './feishu-gate.js';
+import { approvePairingByToken } from './feishu-gate-io.js';
 import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
@@ -40,9 +41,11 @@ import type {
 } from './feishu-target-router.js';
 import {
   CHANNEL_REMINDER,
+  describeSubmitOutcome,
   type FeishuChatSubmission,
   type FeishuInboundDelivery,
   type FeishuSubmitOutcome,
+  type SubmitOutcomeMessages,
 } from './feishu-submit.js';
 import type {
   AskUserExpiry,
@@ -104,7 +107,7 @@ export function sessionHandle(input: {
   delivery: FeishuInboundDelivery;
   askUser: AskUserRegistry;
   sessionFence?: FeishuSessionFence;
-  extensionAction?: (key: string) => FeishuExtensionActionHandler | undefined;
+  extensionAction: (key: string) => FeishuExtensionActionHandler | undefined;
 }): SessionHandle {
   return {
     opts: input.opts,
@@ -115,7 +118,7 @@ export function sessionHandle(input: {
     delivery: input.delivery,
     askUser: input.askUser,
     sessionFence: input.sessionFence ?? alwaysActiveSessionFence(),
-    extensionAction: input.extensionAction ?? (() => undefined),
+    extensionAction: input.extensionAction,
   };
 }
 
@@ -445,15 +448,9 @@ async function deliverExtensionForward(
       sourceId: forward.sourceId,
       ...(forward.attrs !== undefined ? { attrs: forward.attrs } : {}),
     });
-    log(h).info(
-      {
-        dispatcher_id: h.opts.dispatcherId,
-        chat_id: target.chatId,
-        feishu_extension: extensionName,
-        status: outcome.status,
-      },
-      '[extension] card forward delivered',
-    );
+    const report = describeSubmitOutcome(outcome);
+    const scope = { dispatcher_id: h.opts.dispatcherId, chat_id: target.chatId, feishu_extension: extensionName };
+    log(h)[report.level]({ ...scope, ...report.fields }, EXTENSION_FORWARD_MESSAGES[report.kind]);
   } catch (err) {
     log(h).error(
       {
@@ -466,6 +463,15 @@ async function deliverExtensionForward(
     );
   }
 }
+
+/** The extension-forward path's words for each outcome. The classification is shared. */
+const EXTENSION_FORWARD_MESSAGES: SubmitOutcomeMessages = {
+  submitted: '[extension] card forward delivered',
+  not_admitted: '[extension] card forward was not admitted',
+  rejected: '[extension] card forward was rejected before admission',
+  ambiguous: '[extension] card forward admission was ambiguous',
+  failed: '[extension] failed to deliver card forward',
+};
 
 /**
  * Send a question card and return the round's id.

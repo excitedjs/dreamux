@@ -20,7 +20,6 @@ import type {
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
-import { errorInfo } from '../../platform/error-info.js';
 
 export interface DispatchersOptions {
   config: DreamuxConfig;
@@ -113,16 +112,9 @@ export class Dispatchers {
       service.setRestartIntent(this.restartIntent);
       this.services.set(id, service);
       // After `set`, so a tap that re-enters `get(id)` receives this object.
-      try {
-        this.dispatcherHook.call(service);
-      } catch (err) {
-        // Core's isolation wrapper already logs a failing tap; this catches a
-        // rejection from an interceptor a plugin added to the hook itself.
-        this.log.error(
-          { dispatcher_id: id, err: errorInfo(err) },
-          'dispatcher hook failed',
-        );
-      }
+      // Every tap and every plugin-added interceptor on this hook is isolated
+      // at hook construction (`isolatedTaps`), so `call` never throws.
+      this.dispatcherHook.call(service);
     }
     return service;
   }

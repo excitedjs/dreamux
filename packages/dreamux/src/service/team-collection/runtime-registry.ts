@@ -5,7 +5,6 @@ import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { ClosedSubscription } from '../closed-fact.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
-import { errorInfo } from '../../platform/error-info.js';
 import { InFlightWork } from '../in-flight-work.js';
 import { TeamService } from '../team-service/index.js';
 import type {
@@ -124,24 +123,13 @@ export class TeamRuntimeRegistry {
    * Run the new Team's `created` hook in the background: plugin work reacting
    * to a new Team must not hold up the create reply. It starts after
    * `publish`, so a tap that reaches this Team through a Command resolves it
-   * from the cache. Rebuild and replayed requests never reach here.
+   * from the cache. Rebuild and replayed requests never reach here. Every tap
+   * and every plugin-added interceptor on `hooks.created` is isolated at hook
+   * construction (`isolatedTaps`), so this promise never rejects.
    */
   private fireCreated(service: TeamService, requestId: string | null): void {
     this.createdHooks.track(
-      Promise.resolve()
-        .then(() => service.hooks.created.promise({ requestId }))
-        // Core's interceptor already logs failing taps; this catches a
-        // rejection from an interceptor a plugin added to the hook.
-        .catch((error: unknown) => {
-          this.opts.collection.log.error(
-            {
-              dispatcher_id: this.opts.dispatcherId,
-              team_id: service.id,
-              err: errorInfo(error),
-            },
-            'Team created hook failed',
-          );
-        }),
+      Promise.resolve().then(() => service.hooks.created.promise({ requestId })),
     );
   }
 

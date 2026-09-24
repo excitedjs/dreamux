@@ -4,16 +4,23 @@
  *
  * Core creates each such hook through one of the `*Taps` functions below,
  * which install a tapable `register` interceptor before any plugin sees the
- * hook. The interceptor wraps each tap's `fn` as it registers, so core then
- * runs the hook with plain `hook.call` / `hook.promise`, and interceptors that
- * plugins add with `hook.intercept` run as tapable defines them.
+ * hook, then guard `hook.intercept` itself (see {@link guardPluginInterceptors}):
+ * every method of an interceptor a plugin adds afterward — `call`, `tap`,
+ * `loop`, `result`, `done`, `error`, `register` — runs under the same
+ * owner-attributed catch as a tap. tapable invokes `done`/`error`/`loop`/
+ * `result` from an internal continuation a caller's own try/catch around
+ * `hook.call` / `hook.promise` structurally cannot see, so without this a
+ * throwing plugin interceptor would hang an awaited `hook.promise()` forever
+ * or crash the process as an unhandled rejection. Core then runs every hook
+ * with plain `hook.call` / `hook.promise` and no call-site catch of its own.
  *
- * The owner of a tap is the plugin in whose context it registered: the plugin
- * whose `server` is running, or the plugin whose wrapped tap is executing. It
- * travels in an `AsyncLocalStorage`, so a tap registered inside another tap,
- * including after an `await`, gets the right owner. A tap registered outside
- * any plugin context (for example from a channel extension's event handler)
- * has no owner and is reported by its tap name.
+ * The owner of a tap or an interceptor is the plugin in whose context it
+ * registered: the plugin whose `server` is running, or the plugin whose
+ * wrapped tap is executing. It travels in an `AsyncLocalStorage`, so a tap
+ * registered inside another tap, including after an `await`, gets the right
+ * owner. A tap registered outside any plugin context (for example from a
+ * channel extension's event handler) has no owner and is reported by its tap
+ * name.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -72,9 +79,71 @@ function invoke(tap: RegisteredTap, args: readonly unknown[]): Promise<unknown> 
   });
 }
 
+/** The interceptor methods {@link guardPluginInterceptors} wraps. */
+const INTERCEPTOR_METHODS = [
+  'call',
+  'tap',
+  'loop',
+  'result',
+  'done',
+  'error',
+  'register',
+] as const;
+type InterceptorMethod = (typeof INTERCEPTOR_METHODS)[number];
+
+/**
+ * Wrap `hook.intercept` so every interceptor a plugin registers afterward has
+ * each of its own methods (`call`/`tap`/`loop`/`result`/`done`/`error`/`register`)
+ * run under the same owner-attributed guard as a tap.
+ *
+ * tapable invokes `done`/`error`/`loop`/`result` from an internal continuation
+ * that is never chained back to the promise `hook.promise()` returns: a throw
+ * there does not reach a try/catch around that call — it leaves the promise
+ * pending forever and becomes an unhandled rejection instead. Guarding at the
+ * point tapable invokes each method, rather than around the call site, closes
+ * that gap for every hook shape (`call`, `callAsync`, `promise`) at once, so
+ * no caller of a hook built through {@link install} needs its own catch for a
+ * plugin's own interceptor.
+ *
+ * `onFailure` decides what a caught throw becomes; each `*Taps` function below
+ * passes the same policy it already applies to a failing tap, so an
+ * interceptor and a tap on the same hook fail the same way. Must run after
+ * core's own `register` interceptor is installed through the hook's own
+ * `intercept` (see {@link install}), so that interceptor is never itself
+ * guarded.
+ */
+function guardPluginInterceptors(
+  hook: InterceptableHook,
+  onFailure: (owner: string | null, method: InterceptorMethod, err: unknown) => void,
+): void {
+  const rawIntercept = hook.intercept.bind(hook);
+  hook.intercept = ((interceptor: Partial<Record<InterceptorMethod, TapFn>>) => {
+    const owner = owners.getStore() ?? null;
+    const guarded: Partial<Record<InterceptorMethod, TapFn>> = { ...interceptor };
+    for (const method of INTERCEPTOR_METHODS) {
+      const fn = interceptor[method];
+      if (fn === undefined) continue;
+      guarded[method] = (...args: unknown[]) => {
+        try {
+          return asOwner(owner, () => fn.apply(interceptor, args));
+        } catch (err) {
+          onFailure(owner, method, err);
+          // A caught `register` must still hand back a valid tap: tapable's
+          // retroactive re-registration (an `intercept()` call applying a new
+          // interceptor to already-registered taps) assigns this return value
+          // straight into its tap list with no check for `undefined`.
+          return method === 'register' ? args[0] : undefined;
+        }
+      };
+    }
+    return rawIntercept(guarded as never);
+  }) as InterceptableHook['intercept'];
+}
+
 function install(
   hook: InterceptableHook,
   wrap: (tap: RegisteredTap, owner: string | null) => RegisteredTap,
+  onInterceptorFailure: (owner: string | null, method: InterceptorMethod, err: unknown) => void,
 ): void {
   const registered: (string | null)[] = [];
   ownersByHook.set(hook, registered);
@@ -85,17 +154,18 @@ function install(
       return wrap(tap as unknown as RegisteredTap, owner) as unknown as typeof tap;
     },
   });
+  guardPluginInterceptors(hook, onInterceptorFailure);
 }
 
 function reportSkipped(
   log: DreamuxLogger,
   hook: InterceptableHook,
-  tap: RegisteredTap,
+  name: string,
   owner: string | null,
   err: unknown,
 ): void {
   log.error(
-    { plugin: owner, tap: tap.name, hook: hook.name, err: errorInfo(err) },
+    { plugin: owner, tap: name, hook: hook.name, err: errorInfo(err) },
     'plugin hook callback failed; its changes were skipped',
   );
 }
@@ -106,42 +176,46 @@ function reportSkipped(
  * promise taps so a failure never reaches the hook's own callback.
  */
 export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxLogger): H {
-  install(hook, (tap, owner) => {
-    if (tap.type === 'sync') {
+  install(
+    hook,
+    (tap, owner) => {
+      if (tap.type === 'sync') {
+        return {
+          ...tap,
+          fn: (...args) => {
+            let result: unknown;
+            try {
+              result = asOwner(owner, () => tap.fn(...args));
+            } catch (err) {
+              reportSkipped(log, hook, tap.name, owner, err);
+              return;
+            }
+            // `dispatcher` and `team` are SyncHooks: a plugin can only `.tap`,
+            // but nothing stops that tap's function from being `async`. Its
+            // returned promise is not part of the hook's own return value, so
+            // an unwatched rejection would otherwise crash the process.
+            if (isThenable(result)) {
+              Promise.resolve(result).catch((err: unknown) =>
+                reportSkipped(log, hook, tap.name, owner, err),
+              );
+            }
+          },
+        };
+      }
       return {
         ...tap,
-        fn: (...args) => {
-          let result: unknown;
+        type: 'promise',
+        fn: async (...args) => {
           try {
-            result = asOwner(owner, () => tap.fn(...args));
+            await asOwner(owner, () => invoke(tap, args));
           } catch (err) {
-            reportSkipped(log, hook, tap, owner, err);
-            return;
-          }
-          // `dispatcher` and `team` are SyncHooks: a plugin can only `.tap`,
-          // but nothing stops that tap's function from being `async`. Its
-          // returned promise is not part of the hook's own return value, so
-          // an unwatched rejection would otherwise crash the process.
-          if (isThenable(result)) {
-            Promise.resolve(result).catch((err: unknown) =>
-              reportSkipped(log, hook, tap, owner, err),
-            );
+            reportSkipped(log, hook, tap.name, owner, err);
           }
         },
       };
-    }
-    return {
-      ...tap,
-      type: 'promise',
-      fn: async (...args) => {
-        try {
-          await asOwner(owner, () => invoke(tap, args));
-        } catch (err) {
-          reportSkipped(log, hook, tap, owner, err);
-        }
-      },
-    };
-  });
+    },
+    (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+  );
   return hook;
 }
 
@@ -150,36 +224,47 @@ export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxL
  * loading and is attributed to the tap's owner.
  */
 export function loadPhaseTaps<H extends InterceptableHook>(hook: H, apiOwner: string): H {
-  install(hook, (tap, owner) => ({
-    ...tap,
-    fn: (...args) => {
-      let result: unknown;
-      try {
-        result = asOwner(owner, () => tap.fn(...args));
-      } catch (err) {
-        throw new PluginLoadError(
-          owner ?? tap.name,
-          'api',
-          `while receiving plugin "${apiOwner}" api: ${errorMessage(err)}`,
-          { cause: err },
-        );
-      }
-      // `hooks.plugin.for(name)` is a SyncHook: a plugin can only `.tap`, but
-      // nothing stops that tap's function from being `async`. Its returned
-      // promise would otherwise go unwatched past this load-phase call, so a
-      // later rejection would crash the process with no handler; attach one
-      // before throwing the load error that already fails the tap by name.
-      if (isThenable(result)) {
-        Promise.resolve(result).catch(() => {});
-        throw new PluginLoadError(
-          owner ?? tap.name,
-          'api',
-          `while receiving plugin "${apiOwner}" api: tap "${tap.name}" must be synchronous`,
-        );
-      }
-      return result;
+  install(
+    hook,
+    (tap, owner) => ({
+      ...tap,
+      fn: (...args) => {
+        let result: unknown;
+        try {
+          result = asOwner(owner, () => tap.fn(...args));
+        } catch (err) {
+          throw new PluginLoadError(
+            owner ?? tap.name,
+            'api',
+            `while receiving plugin "${apiOwner}" api: ${errorMessage(err)}`,
+            { cause: err },
+          );
+        }
+        // `hooks.plugin.for(name)` is a SyncHook: a plugin can only `.tap`, but
+        // nothing stops that tap's function from being `async`. Its returned
+        // promise would otherwise go unwatched past this load-phase call, so a
+        // later rejection would crash the process with no handler; attach one
+        // before throwing the load error that already fails the tap by name.
+        if (isThenable(result)) {
+          Promise.resolve(result).catch(() => {});
+          throw new PluginLoadError(
+            owner ?? tap.name,
+            'api',
+            `while receiving plugin "${apiOwner}" api: tap "${tap.name}" must be synchronous`,
+          );
+        }
+        return result;
+      },
+    }),
+    (owner, method, err) => {
+      throw new PluginLoadError(
+        owner ?? `intercept.${method}`,
+        'api',
+        `while receiving plugin "${apiOwner}" api: ${errorMessage(err)}`,
+        { cause: err },
+      );
     },
-  }));
+  );
   return hook;
 }
 
@@ -269,39 +354,39 @@ class LaunchComposition implements LaunchDraft {
  */
 const compositionsByHandle = new WeakMap<object, LaunchComposition>();
 
-/** The logger each launch hook was built with, for {@link composeLaunchDraft}. */
-const logsByLaunchHook = new WeakMap<object, DreamuxLogger>();
-
 /** Launch hooks (`beforeLaunch`, `beforeTeamLeaderLaunch`). */
 export function launchDraftTaps(
   hook: AsyncSeriesHook<[LaunchDraft]>,
   log: DreamuxLogger,
 ): AsyncSeriesHook<[LaunchDraft]> {
-  logsByLaunchHook.set(hook, log);
-  install(hook, (tap, owner) => ({
-    ...tap,
-    type: 'promise',
-    fn: async (handle) => {
-      // Set by composeLaunchDraft, the only caller that ever fires this hook.
-      const composition = compositionsByHandle.get(handle as object)!;
-      const sub: LaunchDraft = { instructions: [], skillSources: [] };
-      try {
-        await asOwner(owner, () => invoke(tap, [sub]));
-      } catch (err) {
-        reportSkipped(log, hook, tap, owner, err);
-        return;
-      }
-      const accepted =
-        sub.skillSources.length > 0 && !(await composition.requiredRootsReadable(log))
-          ? { instructions: sub.instructions, skillSources: [] }
-          : sub;
-      try {
-        await composition.accept(accepted, owner ?? tap.name, log);
-      } catch (err) {
-        reportSkipped(log, hook, tap, owner, err);
-      }
-    },
-  }));
+  install(
+    hook,
+    (tap, owner) => ({
+      ...tap,
+      type: 'promise',
+      fn: async (handle) => {
+        // Set by composeLaunchDraft, the only caller that ever fires this hook.
+        const composition = compositionsByHandle.get(handle as object)!;
+        const sub: LaunchDraft = { instructions: [], skillSources: [] };
+        try {
+          await asOwner(owner, () => invoke(tap, [sub]));
+        } catch (err) {
+          reportSkipped(log, hook, tap.name, owner, err);
+          return;
+        }
+        const accepted =
+          sub.skillSources.length > 0 && !(await composition.requiredRootsReadable(log))
+            ? { instructions: sub.instructions, skillSources: [] }
+            : sub;
+        try {
+          await composition.accept(accepted, owner ?? tap.name, log);
+        } catch (err) {
+          reportSkipped(log, hook, tap.name, owner, err);
+        }
+      },
+    }),
+    (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+  );
   return hook;
 }
 
@@ -310,7 +395,9 @@ export function launchDraftTaps(
  * fenced against `requiredSkillSources`. The hook itself only ever sees an
  * opaque, disconnected handle — never the {@link LaunchComposition} — so a
  * plugin's own `hook.intercept` callbacks cannot reach the fence machinery or
- * the accumulated draft directly (see {@link compositionsByHandle}).
+ * the accumulated draft directly (see {@link compositionsByHandle}). Every tap
+ * and every plugin-added interceptor on `hook` is already isolated by
+ * {@link launchDraftTaps}, so `hook.promise()` here never rejects.
  */
 export async function composeLaunchDraft(
   hook: AsyncSeriesHook<[LaunchDraft]>,
@@ -319,15 +406,6 @@ export async function composeLaunchDraft(
   const composition = new LaunchComposition(requiredSkillSources);
   const handle: LaunchDraft = { instructions: [], skillSources: [] };
   compositionsByHandle.set(handle, composition);
-  try {
-    await hook.promise(handle);
-  } catch (err) {
-    // Core's isolation wrapper already isolates each tap; this catches a
-    // rejection from an interceptor a plugin added to the hook itself.
-    logsByLaunchHook.get(hook)?.error(
-      { hook: hook.name, err: errorInfo(err) },
-      'plugin hook failed; its changes were skipped',
-    );
-  }
+  await hook.promise(handle);
   return composition;
 }

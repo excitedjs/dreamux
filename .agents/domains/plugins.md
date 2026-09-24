@@ -111,9 +111,10 @@ Order, all inside `loadConfig` except the last two steps:
    statement, which is what an operator sees after removing a plugin from
    `plugins[]` while config still addresses its provider.
 4. Run each plugin's `config.read` on its entry's `config`. A `config` block
-   for a plugin with no `config.read` is ignored: every persisted and
-   configured file tolerates unknown fields, and a plugin with no reader has
-   nowhere to route the block that would give it effect.
+   for a plugin with no `config.read` is ignored: a plugin with no reader has
+   nowhere to route the block that would give it effect. This is narrower than
+   general unknown-field tolerance — `rejectUnknownKeys` still applies to
+   `plugins[]` entry keys and elsewhere in `config.ts`.
 5. `startPlugins` (serve and doctor only): run every `server`.
 6. For each plugin with an `api`, call the taps on `hooks.plugin.for(name)`.
    This runs last because tapable hooks do not replay: a plugin loaded later
@@ -148,19 +149,19 @@ with `plugin: <name>`.
   because name collisions a published api enforces (for example Feishu
   extension tool names) are raised inside them and must be hard errors.
 - Core runs every hook with tapable's own `hook.call` / `hook.promise`, so
-  interceptors plugins add with `hook.intercept` run. Isolation comes from the
-  `register` interceptor core installs first: it wraps each tap's `fn` as the
-  tap registers. The `for(name)` wrapper turns a throw into the load error
-  above, attributed to the tap's owner. A tap's `fn` is the only thing that
-  wrapper touches; a plugin's own `call`/`loop`/`result`/`done`/`error`
-  interceptor on a hook runs unwrapped, at the bare `hook.call` /
-  `hook.promise` site. Every one of those sites (`Dispatchers.get`, the
-  `announceTeam` dep, `composeLaunchDraft`, and api publication) catches that
-  throw itself and applies the same rule as its hook: logged and skipped at
-  runtime, a `PluginLoadError` naming the api-publishing plugin at load time.
-  This keeps the "never throws" contracts on `announceTeam` and
-  `fireCreated`'s caller true regardless of which mechanism — a tap or an
-  interceptor — a plugin used.
+  interceptors plugins add with `hook.intercept` run. Isolation comes from two
+  interceptors core installs on a hook before any plugin sees it: a `register`
+  interceptor wraps each tap's `fn` as the tap registers, and core wraps
+  `hook.intercept` itself so every method of an interceptor a plugin adds
+  afterward (`call`/`tap`/`loop`/`result`/`done`/`error`/`register`) is
+  guarded the same way a tap is — including `done`/`error`, which tapable
+  invokes from a continuation no caller-side try/catch can see. The `for(name)`
+  wrapper turns a throw into the load error above, attributed to the tap's or
+  interceptor's owner. No call site (`Dispatchers.get`, the `announceTeam`
+  dep, `composeLaunchDraft`, api publication) needs its own catch: every hook
+  runs with plain `hook.call` / `hook.promise`. This keeps the "never throws"
+  contracts on `announceTeam` and `fireCreated`'s caller true regardless of
+  which mechanism — a tap or an interceptor — a plugin used.
 - Runtime hooks:
   - `SyncHook` taps (`dispatcher`, `team`): a throw is logged with the owning
     plugin and skipped; lower-level taps it registered before throwing stay.

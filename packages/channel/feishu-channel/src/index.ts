@@ -22,7 +22,9 @@ export type {
   FeishuApi,
   FeishuExtension,
   FeishuExtensionAction,
+  FeishuExtensionActionResult,
   FeishuExtensionContext,
+  FeishuExtensionForward,
   FeishuExtensionTool,
   FeishuInstanceApi,
 } from './extension.js';
