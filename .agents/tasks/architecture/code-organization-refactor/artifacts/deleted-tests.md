@@ -173,8 +173,10 @@ the immediate-submit path, whether or not it was deleted.
 
 ## PR-0 (review round)
 
-- **File / case:** `packages/dreamux/tests/package-boundary-guards.test.ts` —
+- **HIGH-RISK, restore first.** **File / case:** `packages/dreamux/tests/package-boundary-guards.test.ts` —
   `it('feishu-channel index.ts exports exactly the pinned name set', ...)`.
+  While the later Feishu directory restructure runs, this was the only guard
+  on the package's export surface.
   **Contract pinned:** `packages/channel/feishu-channel/src/index.ts` exports
   exactly one fixed, alphabetically sorted set of named bindings and types —
   a regression catcher (epic #209) so an accidental new export (including a
@@ -191,7 +193,7 @@ the immediate-submit path, whether or not it was deleted.
   `FeishuExtensionContext`/`FeishuExtensionTool` respectively). Restore this
   case with the two names added to the pinned array.
 
-- **File:** `packages/channel/feishu-channel/tests/feishu-settlement-envelope.test.ts`
+- **HIGH-RISK, restore first.** **File:** `packages/channel/feishu-channel/tests/feishu-settlement-envelope.test.ts`
   (whole file — every case shares the `handle()` constructor below, and a test
   file with zero suites fails vitest, so there is no partial deletion).
   This file's own header states it is the *only* test keeping the hand-built

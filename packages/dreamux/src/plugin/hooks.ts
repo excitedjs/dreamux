@@ -90,6 +90,13 @@ const INTERCEPTOR_METHODS = [
   'register',
 ] as const;
 type InterceptorMethod = (typeof INTERCEPTOR_METHODS)[number];
+type InterceptorFailure = (owner: string | null, method: InterceptorMethod, err: unknown) => void;
+/** What a plugin interceptor method that returned a promise becomes. */
+type AsyncInterceptorResult = (
+  owner: string | null,
+  method: InterceptorMethod,
+  result: Promise<unknown>,
+) => void;
 
 /**
  * Wrap `hook.intercept` so every interceptor a plugin registers afterward has
@@ -105,6 +112,10 @@ type InterceptorMethod = (typeof INTERCEPTOR_METHODS)[number];
  * no caller of a hook built through {@link install} needs its own catch for a
  * plugin's own interceptor.
  *
+ * tapable also discards every method's return value except `register`'s, so
+ * an `async` interceptor method's promise is never observed. `onAsync`
+ * decides what such a promise becomes.
+ *
  * `onFailure` decides what a caught throw becomes; each `*Taps` function below
  * passes the same policy it already applies to a failing tap, so an
  * interceptor and a tap on the same hook fail the same way. Must run after
@@ -114,7 +125,8 @@ type InterceptorMethod = (typeof INTERCEPTOR_METHODS)[number];
  */
 function guardPluginInterceptors(
   hook: InterceptableHook,
-  onFailure: (owner: string | null, method: InterceptorMethod, err: unknown) => void,
+  onFailure: InterceptorFailure,
+  onAsync: AsyncInterceptorResult,
 ): void {
   const rawIntercept = hook.intercept.bind(hook);
   hook.intercept = ((interceptor: Partial<Record<InterceptorMethod, TapFn>>) => {
@@ -123,17 +135,27 @@ function guardPluginInterceptors(
     for (const method of INTERCEPTOR_METHODS) {
       const fn = interceptor[method];
       if (fn === undefined) continue;
+      // A failed `register` must still hand back a valid tap: tapable's
+      // retroactive re-registration (an `intercept()` call applying a new
+      // interceptor to already-registered taps) assigns this return value
+      // straight into its tap list with no check for `undefined`.
       guarded[method] = (...args: unknown[]) => {
+        const fallback = (): unknown => (method === 'register' ? args[0] : undefined);
+        let result: unknown;
         try {
-          return asOwner(owner, () => fn.apply(interceptor, args));
+          result = asOwner(owner, () => fn.apply(interceptor, args));
         } catch (err) {
           onFailure(owner, method, err);
-          // A caught `register` must still hand back a valid tap: tapable's
-          // retroactive re-registration (an `intercept()` call applying a new
-          // interceptor to already-registered taps) assigns this return value
-          // straight into its tap list with no check for `undefined`.
-          return method === 'register' ? args[0] : undefined;
+          return fallback();
         }
+        // tapable discards every interceptor method's return value except
+        // `register`'s, so an `async` method's promise is never observed: its
+        // rejection would be unhandled and end the process.
+        if (isThenable(result)) {
+          onAsync(owner, method, Promise.resolve(result));
+          return fallback();
+        }
+        return result;
       };
     }
     return rawIntercept(guarded as never);
@@ -143,7 +165,8 @@ function guardPluginInterceptors(
 function install(
   hook: InterceptableHook,
   wrap: (tap: RegisteredTap, owner: string | null) => RegisteredTap,
-  onInterceptorFailure: (owner: string | null, method: InterceptorMethod, err: unknown) => void,
+  onInterceptorFailure: InterceptorFailure,
+  onAsyncInterceptor: AsyncInterceptorResult,
 ): void {
   const registered: (string | null)[] = [];
   ownersByHook.set(hook, registered);
@@ -154,7 +177,7 @@ function install(
       return wrap(tap as unknown as RegisteredTap, owner) as unknown as typeof tap;
     },
   });
-  guardPluginInterceptors(hook, onInterceptorFailure);
+  guardPluginInterceptors(hook, onInterceptorFailure, onAsyncInterceptor);
 }
 
 function reportSkipped(
@@ -215,6 +238,9 @@ export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxL
       };
     },
     (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+    (owner, method, result) => {
+      result.catch((err: unknown) => reportSkipped(log, hook, `intercept.${method}`, owner, err));
+    },
   );
   return hook;
 }
@@ -262,6 +288,17 @@ export function loadPhaseTaps<H extends InterceptableHook>(hook: H, apiOwner: st
         'api',
         `while receiving plugin "${apiOwner}" api: ${errorMessage(err)}`,
         { cause: err },
+      );
+    },
+    // Loading is synchronous: a promise cannot be waited on here, and failing
+    // it later from an unobserved `.catch` would crash instead of failing the
+    // load by name. Swallow its outcome and fail the load now.
+    (owner, method, result) => {
+      result.catch(() => {});
+      throw new PluginLoadError(
+        owner ?? `intercept.${method}`,
+        'api',
+        `while receiving plugin "${apiOwner}" api: interceptor "${method}" must be synchronous`,
       );
     },
   );
@@ -386,6 +423,9 @@ export function launchDraftTaps(
       },
     }),
     (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+    (owner, method, result) => {
+      result.catch((err: unknown) => reportSkipped(log, hook, `intercept.${method}`, owner, err));
+    },
   );
   return hook;
 }
