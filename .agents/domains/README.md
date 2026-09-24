@@ -40,3 +40,6 @@ where the full derivation and rulings live.
   install/build/test, change files, guardrails, the release SOP.
 - [Model-facing writing](model-facing-writing.md) — the contract for text a
   model can see: skills, prompts, MCP descriptions, results, failures.
+- [Unit testing](unit-testing.md) — which unit tests to write: real behavior
+  tests versus banned source-text/structure tests, and the one legitimate
+  absence-check exception.

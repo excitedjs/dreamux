@@ -42,6 +42,7 @@ import {
   redactConfigSecrets,
   resolveConfigProvider,
 } from './config-helpers.js';
+// eslint-disable-next-line no-restricted-syntax -- re-export shim preserving the pre-split import path (config-helpers.ts's single-importer overflow); callers still import expandHome from here
 export { expandHome } from './config-helpers.js';
 
 export interface DreamuxConfig {

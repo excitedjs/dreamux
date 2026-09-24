@@ -32,7 +32,7 @@ Two settled shape rules govern where code lives:
 | Path | What lives here | Why |
 |---|---|---|
 | `server.ts` | process entry + wiring only | builds registry/catalog/store/services, opens the admin socket, starts dispatchers; owns no teammate/channel/runtime orchestration |
-| `agent-runtime/` | the AgentRuntime seam, all neutral: `catalog.ts` (registry-backed `AgentRuntimeProviderCatalog`, a pure registry lookup; builtin descriptors are registered by `registry/builtins.ts`), `capabilities.ts` (Core's one validated capability snapshot per loaded provider — the loader takes it, the catalog reuses it), `external-provider.ts` (the loader `config/`'s `loadConfig` drives for `builtin:` and `npm:` refs alike), `skill-sources.ts` (the runtime-neutral skill-source parse), `host-paths.ts` (the host's implementation of the neutral `AgentRuntimePathContext`), `host-context.ts` (the host's process-env injection seam and the neutral disabled-feature names — core's logger and runtime-state sink are already neutral, so nothing adapts them), `index.ts` barrel. Contract types live in `@excitedjs/dreamux-types` — core imports them directly (no in-core `types.ts` / `turn.ts`) | one neutral abstraction for every agent role; core never names a concrete runtime |
+| `agent-runtime/` | the AgentRuntime seam, all neutral: `catalog.ts` (registry-backed `AgentRuntimeProviderCatalog`, a pure registry lookup; builtin descriptors are registered by `registry/builtins.ts`), `capabilities.ts` (Core's one validated capability snapshot per loaded provider — the loader takes it, the catalog reuses it), `external-provider.ts` (the loader `config/`'s `loadConfig` drives for `builtin:` and `npm:` refs alike), `skill-sources.ts` (the runtime-neutral skill-source parse), `host-paths.ts` (the host's implementation of the neutral `AgentRuntimePathContext`), `host-context.ts` (the host's process-env injection seam and the neutral disabled-feature names — core's logger and runtime-state sink are already neutral, so nothing adapts them), `index.ts` barrel. Contract types live in `@excitedjs/dreamux-types` — core imports them directly and keeps no in-core type-declaration or turn-model module | one neutral abstraction for every agent role; core never names a concrete runtime |
 | `service/` | the Dispatcher Service module (issue #233 restructure): one service class per file/dir, with `index.ts` the package-internal barrel — see [`service/CLAUDE.md`](src/service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |
 | `service/dispatcher-service/` | the per-dispatcher aggregate (`index.ts` = `DispatcherService`) + its agent-side parts: the dispatcher agent as a contained `TeammateService` (`agent.ts` factory), the role→MCP delegate decision (`mcp-delegates.ts`), dispatcher base prompt, and runnable-channel guard. Agent runtime lifecycle (start/resume/stop) lives in the shared `TeammateService`; `DispatcherService` keeps restart-notice injection, cross-service orchestration, MCP assembly, and completion routing. `service/dispatchers/` holds the process-level `Dispatchers` collection. The dispatcher-cwd policy (`ensureDispatcherWorkspace`, issue #182) lives at the `service/` root in `dispatcher-workspace.ts` — a cross-cutting helper shared by server preflight, the dispatcher service, `dreamux doctor`, and the `worktree/` layer | the dispatcher *has an* agent (Phase 5, #233); there is no separate `DispatcherRuntimeService` |
 | `service/channel-service/` | the dispatcher-local Channel service (`index.ts`) plus its Channel MCP delegates. It builds, holds, hands out, and closes live channel instances, and nothing else: no binding table, no route owner, no target resolution, no egress check | routing is Channel-owned; core neither stores a Channel's decision nor rebuilds it |
@@ -70,6 +70,11 @@ Two settled shape rules govern where code lives:
 
 ## Boundaries
 
+- **Layering.** `.dependency-cruiser.cjs` declares this package's `src/`
+  import-direction rules (no-circular plus a layer order over today's real
+  directories) and runs as part of `npm run lint`, warn-only while the code
+  organization refactor is in progress. See that file for the layer list and
+  rule set — this is the one place they are defined.
 - **Do not leak runtime specifics into shared/core layers.** codex and claude
   concepts — thread, home, bin, socket, stream — stay inside their provider package
   (`@excitedjs/agent-runtime-codex` / `-claude-code`). The shared contract,
@@ -101,6 +106,10 @@ Two settled shape rules govern where code lives:
   domains, or real resource keys.
 
 ## Testing focus
+
+Which kind of unit test to write, and which kind is banned, is covered by
+[Unit testing](/.agents/domains/unit-testing.md) — read it before writing or
+modifying a test in this package. This directory's own notes:
 
 - Assert that the Dispatcher Service drives any runtime through the neutral
   AgentRuntime interface; runtime-specific behavior is tested inside each

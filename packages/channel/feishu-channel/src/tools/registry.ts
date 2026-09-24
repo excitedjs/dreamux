@@ -119,6 +119,7 @@ export function toolRegistration(
   };
 }
 
+// eslint-disable-next-line no-restricted-syntax -- convenience re-export so a consumer of this registry module needs no separate import from ./types.js
 export type {
   ChannelLogger,
   FeishuListChatBotsResult,

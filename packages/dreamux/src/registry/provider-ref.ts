@@ -22,6 +22,7 @@
  * runtime stays in this package.
  */
 
+// eslint-disable-next-line no-restricted-syntax -- neutral-contract type re-export documented above, so in-repo imports from ../registry/index.js keep resolving these names (issue #209)
 export type {
   ProviderRefSource,
   BuiltinProviderRef,

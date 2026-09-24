@@ -256,3 +256,86 @@ the immediate-submit path, whether or not it was deleted.
     the Dispatcher Agent), while the card repaint still happens independently.
     **Failure:** same as the group-card case — `expireAskUserQuestion` only,
     typecheck-only failure.
+
+## Stage 1
+
+- **File / case:** `packages/dreamux/tests/no-sync-io-gate.test.ts` —
+  `it('flags source files over 700 physical lines', ...)`.
+  **Contract pinned:** the shared `max-lines` rule fires as a hard error on a
+  `src/**` file over 700 physical lines.
+  **Failure:** R1 (code-only line counting) flips `max-lines`'s options to
+  `{ skipBlankLines: true, skipComments: true }`
+  (`packages/eslint-config/index.js`). The fixture is 701 lines built entirely
+  of `// line N` comments, so it now lints to zero counted code lines and
+  `max-lines` never fires; the `toContain('max-lines')` assertion fails.
+  **Contract survives; restore with a fixture built from 701 non-comment,
+  non-blank lines** (e.g. `` `export const line${i} = ${i};` `` repeated 701
+  times). Split the pinned fact in two: the *counting mode* the case's name
+  and fixture assumed ("physical" lines) was changed knowingly by R1 and does
+  not come back; the *"fires as a hard error above the cap"* half of the
+  contract holds unchanged — only this fixture's shape (all-comment lines)
+  stopped exercising it, so replacing the fixture with 701 code lines is
+  sufficient, no other change is owed.
+
+- **File:** `packages/dreamux-types/tests/no-host-types.test.ts` (whole file).
+  **Contract pinned:** no `dreamux-types/src/*.ts` file references the
+  `@types/node` ambient globals `NodeJS`/`Buffer` as whole tokens.
+  **Failure:** H11 sets `"types": []` in
+  `packages/dreamux-types/tsconfig.json`'s `compilerOptions`, which removes
+  every `@types/node` ambient global (not just `NodeJS`/`Buffer`) from the
+  package's compilation. The fact this file scanned for is now a compiler
+  error instead of a regex match — `NodeJS`/`Buffer` are no longer resolvable
+  identifiers in `src/` at all.
+  **Superseded by compiler (H11); do not restore as written.** The contract
+  is enforced permanently by `"types": []`, not by a gap this refactor is
+  deferring.
+
+- **File:** `packages/dreamux-types/tests/root-export-surface.test.ts` (whole
+  file, three describe blocks).
+  **Contract pinned:** (1) the root export list is non-trivially populated
+  (parse-regression sanity guard); (2) every `export interface`/`export type`
+  declared across `src/*.ts` is reachable from `index.ts`'s root barrel; (3)
+  the deleted inbound-turn shapes (`InboundAttachment`, `InboundTurnInput`,
+  `turn.ts`) stay gone from both source and the root barrel.
+  **Failure:** H11 rewrites `src/index.ts` from per-name
+  `export type { A, B, C } from './module.js'` blocks to one
+  `export type * from './module.js'` line per module, so this file's own
+  `rootReExportedNames()` helper (which parses `export type { ... } from`
+  brace blocks) finds zero names and every assertion in (1) and (2) fails
+  immediately.
+  **Contracts (1) and (2) superseded by compiler (H11); do not restore as
+  written.** `export type * from './module.js'` makes "every declared type is
+  reachable from the root" true by TypeScript construction (verified this
+  stage with the TS checker's `getExportsOfModule` against `index.ts`: the
+  resolved 123-name export set is byte-identical before and after the
+  rewrite), not by a hand-written regex walk — there is no gap to fill later.
+  **Contract (3) does not have a compiler-shaped replacement (it is a
+  never-comes-back absence check, not a reachability fact) and survives —
+  restoration owed at the final test completion on #453, not before.**
+  `deleted-surfaces-absence.test.ts` already does this exact job (a src-wide
+  token-absence scan) for other retired names, so the restoration recipe is:
+  add `InboundAttachment` and `InboundTurnInput` to that file's existing
+  `BANNED_TOKENS` list. Both tokens have zero hits in current `src/` (verified
+  this stage — the same two lines were added and passed before being reverted
+  under R43, which permits no assertion edit in this refactor, restoration
+  included).
+
+- **File / case:** `packages/dreamux/tests/package-boundary-guards.test.ts` —
+  `` it("dreamux-types index.ts exports exactly the pinned name set (the
+  neutral contract's full public surface)") ``.
+  **Contract pinned:** `packages/dreamux-types/src/index.ts` exports exactly
+  one fixed, alphabetically sorted set of 123 named types — a regression
+  catcher so an accidental new or dropped root export is visible in review.
+  **Failure:** not itself named by H11, but breaks as a direct consequence of
+  the `index.ts` rewrite above: this case's `namedExports()` helper
+  regex-matches `export\s+(?:type\s+)?\{...\}` brace blocks, and a bare
+  `export type * from` line has no braces, so the function returns `[]` for
+  `dreamux-types/src/index.ts` and the exact-set comparison fails
+  unconditionally.
+  **Superseded by compiler (H11); do not restore as written.** The fact this
+  case pinned (today's exact 123-name set, unchanged) is now enforced by the
+  type system itself via `export type *`'s reachability guarantee, verified
+  this stage with the TS checker as noted above — the sibling
+  `dreamux-utils`/`agent-runtime-codex`/`agent-runtime-claude-code`/
+  `feishu-transport` cases in the same describe block are untouched, since
+  only `dreamux-types`'s barrel shape changed.

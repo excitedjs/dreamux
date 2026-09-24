@@ -19,6 +19,7 @@ import {
   errorMessage,
 } from '../platform/errors.js';
 
+// eslint-disable-next-line no-restricted-syntax -- callers import the Command failure vocabulary from this module today (see file-level comment above), not from platform/errors.js directly
 export {
   DreamuxError,
   InternalError,

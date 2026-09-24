@@ -21,6 +21,7 @@ import type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types'
  * `../registry/index.js` stay stable (issue #209). The registry runtime stays
  * in this package.
  */
+// eslint-disable-next-line no-restricted-syntax -- neutral-contract type re-export documented above, so in-repo imports from ../registry/index.js keep resolving these names (issue #209)
 export type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types';
 
 /** Thrown when registering a provider id that is already registered. */

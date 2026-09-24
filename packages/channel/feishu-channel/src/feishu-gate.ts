@@ -584,6 +584,7 @@ export function dreamuxFeishuGate(
 
 // IO + UI helpers moved to feishu-gate-io.ts. Re-exported to preserve the
 // public surface so callers (feishu-channel.ts, tests) need no change.
+// eslint-disable-next-line no-restricted-syntax -- re-export shim preserving the pre-split import path, see comment above
 export {
   loadDispatcherAccess,
   readDispatcherAccess,

@@ -60,7 +60,10 @@ The three-way rule, in one line each:
   package. Its one dependency is `tapable`, by type only, for the plugin hook
   contract: a published `.d.ts` that names tapable's hook types makes consumers
   resolve tapable, so it is a real `dependencies` entry rather than a dev or
-  peer one.
+  peer one. Its `tsconfig.json` sets `compilerOptions.types` to an empty array,
+  so no `@types/node` ambient global (`NodeJS`, `Buffer`, and the rest) can
+  appear in its declarations, keeping a host typings dependency out of every
+  external provider package that compiles against it.
 - `@excitedjs/dreamux-utils` — pure helpers, depends on nothing.
 - Provider and plugin packages — depend on `dreamux-types` (and may use
   `dreamux-utils`), never on `@excitedjs/dreamux`.
@@ -97,7 +100,7 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux-types/src/plugin.ts`
-- `/packages/dreamux-types/tests/no-host-types.test.ts`
+- `/packages/dreamux-types/tsconfig.json`
 - `/packages/dreamux-utils/package.json`
 - `/packages/agent-runtime/codex/package.json`
 - `/packages/agent-runtime/claude-code/package.json`
@@ -1045,8 +1048,7 @@ Source:
 - **The dependency direction is one-way.** A provider package must not depend on
   `@excitedjs/dreamux`, and Core must not import a provider implementation or
   call a provider-specific factory. Both directions are guarded by
-  `/packages/dreamux/tests/package-boundary-guards.test.ts` and
-  `/packages/dreamux-types/tests/no-host-types.test.ts`.
+  `/packages/dreamux/tests/package-boundary-guards.test.ts`.
 - **There is no neutral idle capability.** Nothing in Core asks a runtime
   whether it is busy, and no seam read may be reinterpreted as one.
 - **Core is the sole authority for prompt state.** The whole `systemPrompt`

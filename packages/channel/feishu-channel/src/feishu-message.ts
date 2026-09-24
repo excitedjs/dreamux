@@ -151,6 +151,7 @@ export async function formatFeishuMessageForRuntime(
   };
 }
 
+// eslint-disable-next-line no-restricted-syntax -- re-export shim preserving this module's own public surface after formatFeishuCreateTime moved to feishu-message-render.js; other in-package importers still use this path
 export { formatFeishuCreateTime } from './feishu-message-render.js';
 
 function appendNonEmptyAttr(

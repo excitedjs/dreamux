@@ -1,0 +1,46 @@
+// Unused-export report for @excitedjs/dreamux's src/ tree (code organization
+// refactor, H5). Report-only for this stage: every issue type this config
+// scopes to is severity "warn" (printed, not counted toward Knip's total
+// error count), so a clean `npm run lint` run still exits 0 no matter how
+// many findings this reports. That is Knip's own fine-grained mechanism for
+// non-failing mode (see "Rules" in Knip's docs), matching the severity-level
+// approach `.dependency-cruiser.cjs` already uses for the R5 layering gate,
+// rather than the blunter `--no-exit-code` CLI flag. Raise these to "error"
+// once stage 2's deletions land and the noise this first pass reports has
+// been triaged (the audit names several dead exports for stage-2 deletion,
+// not this stage).
+//
+// `--include` (wired in package.json's lint script via the `--exports`
+// shortcut) already restricts analysis to exactly the issue types listed in
+// `rules` below; unused files/dependencies/binaries are a different check
+// (not H5's job) and stay entirely unscoped here.
+//
+// No `project` field here: package.json's lint script passes
+// `--use-tsconfig-files`, so tsconfig.tests.json's own `include` (src/ +
+// tests/, not tsconfig.json's src/-only scope) is the one owner of which
+// files this check scans, instead of a second, hand-copied glob list that
+// could drift out of sync with it. `--use-tsconfig-files` also feeds every
+// matched file into Knip's real TypeScript program instead of parsing them
+// standalone, which resolves cross-file type-level usage a plain glob misses
+// (verified empirically: 67 unused-export findings against this codebase
+// today, vs 76 from an equivalent glob-based `project` list) — closer to
+// this item's own goal of not reporting false positives, on top of scanning
+// tests/ so exports only consumed by tests/ (e.g. the `DEFAULT_*` provider
+// constants core tests import) aren't flagged either. `entry` allowlists
+// this package's two published/semi-public surfaces so their own top-level
+// exports are never flagged just because nothing inside the package imports
+// them: `server.ts` is the npm `main` entry point, and `service/index.ts` is
+// the surface `smoke-built-cli` asserts.
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  "entry": ["src/server.ts", "src/service/index.ts"],
+  "rules": {
+    "exports": "warn",
+    "nsExports": "warn",
+    "types": "warn",
+    "nsTypes": "warn",
+    "enumMembers": "warn",
+    "namespaceMembers": "warn",
+    "duplicates": "warn"
+  }
+}

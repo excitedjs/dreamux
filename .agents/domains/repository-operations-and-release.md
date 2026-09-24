@@ -122,7 +122,7 @@ Source: `/rush.json`, `/common/config/rush/command-line.json`,
 Package source under `packages/*/src/**` must not use synchronous blocking IO.
 The shared flat config enforces, for `src/**`:
 
-- `max-lines` at 700 physical lines (blank lines and comments counted) — a hard
+- `max-lines` at 700 code lines (blank lines and comments excluded) — a hard
   error;
 - `n/no-sync`, which matches any callee whose name ends in `Sync`;
 - `no-restricted-imports` as backstop #1, banning `*Sync` named imports so a
@@ -481,7 +481,7 @@ Source: `/.github/workflows/release.yml`, `/.github/workflows/promote-next.yml`,
   `contents: read` and authenticate with the release deploy key.
 - **A 0.x package never carries a `type: major` change file.**
 - **No synchronous blocking IO in `packages/*/src/**`, and no source file over
-  700 physical lines.**
+  700 code lines.**
 - **Nothing internal is committed or published.** Full-history gitleaks in CI
   and the prerelease tarball audit are both non-bypassable.
 

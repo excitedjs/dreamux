@@ -8,8 +8,10 @@ One service class per file or directory; a class with helpers gets a directory
 whose `index.ts` is the class and whose siblings are its helpers.
 `service/index.ts` is the only package-internal service facade (`Dispatchers`,
 `DispatcherService`, `TeamService`, `WorkflowService`, and the Workflow result
-types). Sub-service directories must not re-export sibling modules; callers
-import the owning module directly unless the symbol belongs on that facade.
+types). Sub-service directories must not re-export sibling modules — this is
+the package-wide re-export ban (`packages/eslint-config/index.js`'s
+`withPackageEntryOnlyReexports`), not a service-only rule; callers import the
+owning module directly unless the symbol belongs on that facade.
 
 ## Collections and Services
 
@@ -80,9 +82,9 @@ Team's members are the same pair again, scoped to the Team.
   own `TeamRecord`: status, delivery, shared workspace, members, and the
   dissolve it submits and then runs behind the receipt. `closing.ts` owns the
   stop-and-close sequence and the host sweep; `collaborators.ts`,
-  `completion-targets.ts`, `leader-agent.ts`, `roster-projection.ts`,
-  `team-summary.ts`, and `delivery-result.ts` are its parts; its retirement
-  broadcast uses the shared `ClosedFactPublisher`.
+  `completion-targets.ts`, `leader-agent.ts`, `roster-projection.ts`, and
+  `team-summary.ts` are its parts; its retirement broadcast uses the shared
+  `ClosedFactPublisher`.
   `DispatcherService.team()` returns a `TeamLeaderHandle` to admin/MCP
   team-leader callers, never the concrete `TeamService`.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —

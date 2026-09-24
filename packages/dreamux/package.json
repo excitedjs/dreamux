@@ -29,7 +29,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
-    "lint": "eslint .",
+    "lint": "eslint . && depcruise --config .dependency-cruiser.cjs src && knip --tsConfig tsconfig.tests.json --use-tsconfig-files --exports",
     "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
     "test": "vitest run --fileParallelism=false",
     "test:watch": "vitest",
@@ -63,6 +63,8 @@
     "eslint": "^9.39.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "dependency-cruiser": "~18.4.0",
+    "knip": "~6.38.0"
   }
 }

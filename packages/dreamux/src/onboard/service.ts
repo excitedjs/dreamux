@@ -34,6 +34,7 @@ import {
 export const LAUNCHD_LABEL = 'dev.excited.dreamux';
 export const SYSTEMD_UNIT = 'dreamux.service';
 
+// eslint-disable-next-line no-restricted-syntax -- re-export shim preserving the pre-split import path; callers still import the service-node helpers from here
 export {
   defaultServiceNodeProbe,
   detectServiceNodeVersionManager,

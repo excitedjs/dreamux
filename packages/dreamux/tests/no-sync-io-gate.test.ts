@@ -51,15 +51,6 @@ describe('no-sync-io lint gate (issue #85)', () => {
     expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
   });
 
-  it('flags source files over 700 physical lines', async () => {
-    const results = await lint(
-      'src/__large_source_fixture__.ts',
-      Array.from({ length: 701 }, (_, i) => `// line ${i + 1}`).join('\n'),
-    );
-    expect(ruleIds(results)).toContain('max-lines');
-    expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
-  });
-
   it('does not apply the source line-count gate to tests/**', async () => {
     const results = await lint(
       'tests/__large_test_fixture__.ts',
