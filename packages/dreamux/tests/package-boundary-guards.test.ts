@@ -91,6 +91,7 @@ describe('epic #209 package-boundary guards', () => {
     const names = projects.map((p) => p.packageName);
     expect(names).toContain('@excitedjs/dreamux');
     expect(names).toContain('@excitedjs/feishu-transport');
+    expect(names).toContain('@excitedjs/dreamux-plugin-bootstrap');
     expect(names.length).toBeGreaterThanOrEqual(6);
   });
 
@@ -119,6 +120,7 @@ describe('epic #209 package-boundary guards', () => {
       '@excitedjs/agent-runtime-codex',
       '@excitedjs/agent-runtime-claude-code',
       '@excitedjs/feishu-channel',
+      '@excitedjs/dreamux-plugin-bootstrap',
     ]) {
       expect(deps).toHaveProperty(builtin);
     }
@@ -131,6 +133,7 @@ describe('epic #209 package-boundary guards', () => {
       '@excitedjs/feishu-channel',
       '@excitedjs/agent-runtime-codex',
       '@excitedjs/agent-runtime-claude-code',
+      '@excitedjs/dreamux-plugin-bootstrap',
     ];
     for (const name of providerPackages) {
       const project = projects.find((p) => p.packageName === name);
@@ -199,12 +202,14 @@ describe('no package ships a dev-tool runtime dependency', () => {
   });
 });
 
-describe('dreamux-types stays declaration-only with no runtime dependency', () => {
+describe('dreamux-types stays declaration-only with tapable as its only runtime dependency', () => {
   const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-types')!;
   const manifest = readManifest(project.projectFolder);
 
-  it('has no runtime "dependencies" field at all', () => {
-    expect(manifest['dependencies']).toBeUndefined();
+  it('has tapable as its only runtime dependency', () => {
+    expect(manifest['dependencies']).toEqual({ tapable: '~2.3.3' });
+    expect(manifest['peerDependencies']).toBeUndefined();
+    expect(manifest['optionalDependencies']).toBeUndefined();
   });
 
   it('publishes only declaration files (no "import"/"default" export condition)', () => {
@@ -239,6 +244,30 @@ describe('dreamux-utils depends on no Dreamux package at all', () => {
   });
 });
 
+describe('dreamux-plugin-bootstrap depends on @excitedjs/dreamux-types only, with tapable as a devDependency', () => {
+  const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-plugin-bootstrap')!;
+  const manifest = readManifest(project.projectFolder);
+
+  it('has @excitedjs/dreamux-types as its only runtime dependency', () => {
+    expect(manifest['dependencies']).toEqual({ '@excitedjs/dreamux-types': 'workspace:*' });
+    expect(manifest['peerDependencies']).toBeUndefined();
+    expect(manifest['optionalDependencies']).toBeUndefined();
+  });
+
+  it('keeps tapable a devDependency only: the plugin taps objects core hands it and never constructs a hook itself', () => {
+    const devDeps = (manifest['devDependencies'] ?? {}) as Record<string, string>;
+    expect(devDeps).toHaveProperty('tapable');
+    const deps = (manifest['dependencies'] ?? {}) as Record<string, string>;
+    expect(deps).not.toHaveProperty('tapable');
+  });
+
+  it('publishes the standard types/import/default export condition set', () => {
+    const exportsMap = manifest['exports'] as Record<string, unknown>;
+    const root = exportsMap['.'] as Record<string, unknown>;
+    expect(Object.keys(root).sort()).toEqual(['default', 'import', 'types']);
+  });
+});
+
 describe('each package\'s public exports map is an intentional, pinned surface', () => {
   // A new subpath export or a widened export condition is a deliberate,
   // reviewed decision, not something that should be able to happen as a side
@@ -251,6 +280,7 @@ describe('each package\'s public exports map is an intentional, pinned surface',
     '@excitedjs/agent-runtime-claude-code': ['.', './config'],
     '@excitedjs/feishu-channel': ['.'],
     '@excitedjs/feishu-transport': ['.'],
+    '@excitedjs/dreamux-plugin-bootstrap': ['.'],
   };
 
   it.each(Object.entries(expectedExportKeys))(
@@ -396,16 +426,21 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'ChannelSession',
         'ChannelSessionCreateContext',
         'ChannelSessionMcpCapability',
+        'ContributeHost',
         'CoreCommandContext',
         'CoreCommandDefinition',
         'CoreCommandRegistry',
         'CoreCommandSource',
+        'Dispatcher',
         'DreamuxEnvironment',
         'DreamuxLogger',
+        'DreamuxPlugin',
+        'DreamuxPluginApis',
         'JsonInvokeResult',
         'JsonInvoker',
         'JsonSchema',
         'JsonValue',
+        'LaunchDraft',
         'NpmProviderRef',
         'ProviderBinCheck',
         'ProviderDescriptor',
@@ -430,7 +465,9 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'RuntimeSubmission',
         'RuntimeSubmissionSettlement',
         'RuntimeToolAction',
+        'ServerHost',
         'SubmitCommand',
+        'Team',
         'TeamContainedRole',
         'TeamCreateCommand',
         'TeamCreateRepoRequest',
@@ -559,85 +596,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'parseLine',
         'readDispatcherClaudeCodeConfig',
         'stringifyClaudeCodeMcpConfig',
-      ].sort(),
-    );
-  });
-
-  it('feishu-channel index.ts exports exactly the pinned name set', () => {
-    const src = readFileSync(
-      join(repoRoot, 'packages/channel/feishu-channel/src/index.ts'),
-      'utf8',
-    );
-    expect(namedExports(src)).toEqual(
-      [
-        'BUILTIN_FEISHU_PROVIDER_REF',
-        'CHANNEL_REMINDER',
-        'ChannelLogger',
-        'ChatBotsListing',
-        'CreateBotOptions',
-        'CreateFeishuChannelProviderOptions',
-        'DREAMUX_ACTION_KEY',
-        'DREAMUX_PAIRING_CARD_ACTION',
-        'DREAMUX_PAIRING_TOKEN_KEY',
-        'DispatcherAccessState',
-        'FEISHU_ROUTING_DOCUMENT_VERSION',
-        'FEISHU_TOOLS',
-        'FeishuBindingRecord',
-        'FeishuBindingView',
-        'FeishuBot',
-        'FeishuCardActionEvent',
-        'FeishuCardActionResponse',
-        'FeishuChannelConfig',
-        'FeishuChannelSession',
-        'FeishuChannelSessionOptions',
-        'FeishuInboundDelivery',
-        'FeishuInboundEvent',
-        'FeishuListChatBotsResult',
-        'FeishuRouting',
-        'FeishuRoutingDocument',
-        'FeishuRoutingPlan',
-        'FeishuRoutingStore',
-        'FeishuSpaceRecord',
-        'FeishuSubmission',
-        'FeishuSubmitOutcome',
-        'FeishuTarget',
-        'FeishuTargetKind',
-        'FeishuTeamSubmitter',
-        'FeishuToolContext',
-        'FeishuToolDef',
-        'FeishuToolResult',
-        'FeishuToolSession',
-        'FormatFeishuMessageOptions',
-        'FormatFeishuMessageResult',
-        'FormattedFeishuAttachment',
-        'PeerBot',
-        'TRUST_DOMAIN_WARNING',
-        'WireChatBot',
-        'buildPairingApprovalCard',
-        'buildPairingSuccessCard',
-        'channelOutboundToFeishuTarget',
-        'chatTarget',
-        'createFeishuBot',
-        'createFeishuChannelProvider',
-        'createFeishuSessionMcp',
-        'default',
-        'defaultDispatcherAccessState',
-        'describeTarget',
-        'dreamuxFeishuGate',
-        'feishuToolRegistrations',
-        'feishuToolsFor',
-        'findFeishuTool',
-        'formatFeishuCreateTime',
-        'formatFeishuMessageForRuntime',
-        'listChatBots',
-        'loadChatBots',
-        'loadDispatcherAccess',
-        'rawCardActionResponse',
-        'routingDocumentFilename',
-        'saveDispatcherAccess',
-        'targetKey',
-        'toWireChatBot',
-        'topicTarget',
       ].sort(),
     );
   });

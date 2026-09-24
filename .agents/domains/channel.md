@@ -1499,6 +1499,90 @@ Source:
 - `/packages/channel/feishu-channel/src/feishu-cot-io.ts`
 - `/packages/channel/feishu-transport/src/transport/cot.ts`
 
+### Feishu extensions
+
+The Feishu package is the always-loaded built-in plugin `feishu` (mechanism:
+[plugins](plugins.md)). Its default export is the plugin factory; the plugin
+contributes the `feishu` channel provider, so `builtin:feishu` refs resolve as
+before, and publishes a `FeishuApi` whose `extensions.register` another plugin
+calls from its `hooks.plugin.for('feishu')` tap. Seen on its own, Feishu is a
+small plugin system: its own registry, a per-instance lifecycle, and an
+instance api handed to each extension. Core only hands the api over.
+`createFeishuChannelProvider` stays a named export and builds a provider with
+an empty extension registry.
+
+- **Registry.** One per plugin instance. `register` rejects a blank (trimmed)
+  extension name, tool name, or card action key; a duplicate extension name; a
+  tool name already served to the same caller kind (by a built-in Feishu tool,
+  another extension, or another tool of the same extension; the same name for
+  a different caller kind is allowed, as the built-ins already do); and a card
+  action key equal to a built-in Feishu action (pairing approval,
+  `ask_user_question`), another extension's key, or another key of the same
+  extension. A blank key would claim every click whose card value carries no
+  `dreamux_action`, because the dispatcher reads a missing key as `''`. Every
+  error names both sources (a blank name or key names the extension and its
+  index instead, since the value itself is not a name). Registration happens
+  in the last step of plugin loading, so a collision fails `serve`.
+- **Tools and card actions.** Extension tools are appended to the caller's
+  `channel-feishu` catalog and dispatched when no built-in tool matches. A card
+  action is dispatched by the button value's `dreamux_action` key before the
+  built-in handler; the handler may be async but Feishu's callback window is a
+  few seconds, so long work must be detached — a card action's `handle`
+  returns `{ response, forward? }`: `response` is the card callback's own
+  answer, and `forward`, when present, is delivered afterwards, detached, to
+  whichever Team or Dispatcher Agent owns the card's conversation (Feishu
+  resolves that owner from the card's own message and delivers through the
+  same path an ask-user answer's settlement uses; the extension states only
+  what to say, never a Team name or a delivery mechanism of its own). Handlers
+  receive that Feishu instance's state `S`: two Feishu channels get two
+  states. A tool or card action is unreachable until this instance's
+  `initialize` has filled that extension's state — the same "no such tool" (or
+  unclaimed card action) refusal a caller sees for a name nothing registered,
+  covering the window between a session starting and every extension's
+  `initialize` completing.
+- **Lifecycle.** Per Feishu channel session: `initialize` after the routing
+  store loaded (local IO only; of the instance api only `owner` works here),
+  `start` after the bot connection is live (the first point outbound calls
+  work; timers start here), `close` after new extension tool calls and card
+  actions are refused and in-flight work settled, in reverse registration
+  order, before the routing store drains. In-flight work includes a running
+  `start` and an instance-api `bindTeam` (which writes routing after an
+  awaited Core read), so a close landing mid-`start` waits for it and then
+  closes what it opened, and no bind lands after the store drained; that
+  `session.start()` then rejects with "closed during startup". An `initialize`,
+  `start` or card-action throw is logged with `feishu_extension` as "Feishu
+  extension <step> failed" and then propagates: an `initialize` or `start`
+  throw fails that session like any other start failure, taking that
+  Dispatcher's Feishu channel down; a card-action throw reaches the Lark SDK,
+  which cannot name its owner. A `close` throw is logged the same way and
+  teardown continues. After teardown begins every outbound api call rejects as
+  aborted.
+- **State root.** `<dispatcher state dir>/feishu-extensions/<extension>/<channel
+  segment>`, not created for the extension. `<channel segment>` is the same
+  slug-plus-digest of the channel id that the routing document filename
+  carries, so two Feishu channels on one Dispatcher never share a directory and
+  an extension cannot overwrite Feishu's own files.
+- **Instance api.** Bound to one session lifecycle: `owner(target)` (the Team
+  the routing plan says owns the conversation, a topic inheriting its group's
+  binding, else `null`), `readMessageRoute`, `bindTeam` (the same validation,
+  COT fences, and bound notification as the binding tools, without the
+  ownership check), `sendCard` (no idempotency key, no mode; the returned
+  target is read back from Feishu because a reply lands in the replied-to
+  topic), and `editCard`. The api carries no submit/delivery capability: a
+  card action forwards to a Team through its `handle` return, not through the
+  instance api (see Tools and card actions above).
+- **Doctor.** Extension tools and card actions are listed in the diagnostic line
+  of each configured Feishu channel, and only there; with no Dispatcher using a
+  `feishu` channel they are not listed. Core gains no Feishu knowledge for it.
+
+Source:
+
+- `/packages/channel/feishu-channel/src/plugin.ts`
+- `/packages/channel/feishu-channel/src/extension.ts`
+- `/packages/channel/feishu-channel/src/feishu-extensions.ts`
+- `/packages/channel/feishu-channel/src/provider.ts`
+- `/packages/channel/feishu-channel/src/routing/store.ts`
+
 ### Feishu access contracts
 
 The Feishu session classifies raw chat/sender identity before routing or trust

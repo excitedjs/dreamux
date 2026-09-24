@@ -18,6 +18,8 @@ where the full derivation and rulings live.
   package layout, per-area summaries with owner links.
 - [Provider runtime](provider-runtime.md) — the Agent Runtime seam, config
   contract, prompts, bundled-skill injection, activity reads.
+- [Plugins](plugins.md) — the plugin mechanism: loading, the hook tree,
+  failure isolation, launch drafts, the built-in bootstrap plugin.
 - [Channel](channel.md) — the Channel seam, sessions, routing, binding,
   targets, Collaboration Spaces, Feishu inbound fidelity, COT display.
 - [Feishu pairing access](feishu-pairing-access.md) — V3 access state,

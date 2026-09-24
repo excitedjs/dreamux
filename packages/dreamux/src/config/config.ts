@@ -19,12 +19,20 @@ import {
 import {
   describeType,
   isPlainObject,
-  readOptionalString,
   readProviderConfigObject,
   rejectUnknownKeys,
   requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { createLogger } from '../platform/logger.js';
+import {
+  loadPlugins,
+  readPluginConfigs,
+  readPluginEntries,
+  type LoadedPlugin,
+  type PluginConfigEntry,
+  type PluginModuleImporter,
+} from '../plugin/loader.js';
 import {
   agentProviderRefs,
   asChannelProvider,
@@ -37,6 +45,12 @@ import {
 export { expandHome } from './config-helpers.js';
 
 export interface DreamuxConfig {
+    /**
+     * The raw `plugins[]` entries, present iff the file has a `plugins` key.
+     * Kept only so `stringifyConfig` round-trips them; the loaded plugins
+     * travel in {@link LoadConfigResult.plugins}.
+     */
+    plugins?: PluginConfigEntry[];
     agents: Record<string, ResolvedAgentConfig>;
     dispatchers: DispatcherConfig[];
 }
@@ -53,7 +67,7 @@ export interface ResolvedAgentConfig {
 
 export interface DispatcherConfig {
   id: string;
-  cwd: string | null;
+  cwd: string;
   enabled: boolean;
   workspace: DreamuxWorkspaceConfig;
   channels: DispatcherChannelConfig[];
@@ -88,12 +102,15 @@ export interface ConfigPathOverrides {
     providerRegistry?: ProviderRegistry;
     externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
     externalChannelModuleImporter?: ExternalChannelModuleImporter;
+    pluginModuleImporter?: PluginModuleImporter;
 }
 
 export interface LoadConfigResult {
   config: DreamuxConfig;
   configFile: string;
   providerRegistry: ProviderRegistry;
+  /** Loaded and contributed, with configs read; `server` has not run. */
+  plugins: LoadedPlugin[];
 }
 
 export function globalConfigDir(overrides: ConfigPathOverrides = {}): string {
@@ -118,6 +135,7 @@ export async function loadOrInitConfig(
   configFile: string;
   createdOnThisBoot: boolean;
   providerRegistry: ProviderRegistry;
+  plugins: LoadedPlugin[];
 }> {
   const file = globalConfigFile(overrides);
   const providerRegistry = providerRegistryFor(overrides);
@@ -125,8 +143,12 @@ export async function loadOrInitConfig(
   await mkdir(dirname(file), { recursive: true });
 
   const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
-  const config = await readConfigFile(file, providerRegistry, overrides);
-  return { config, configFile: file, createdOnThisBoot, providerRegistry };
+  const { config, plugins } = await readConfigFile(
+    file,
+    providerRegistry,
+    overrides,
+  );
+  return { config, configFile: file, createdOnThisBoot, providerRegistry, plugins };
 }
 
 export async function loadConfig(
@@ -135,15 +157,23 @@ export async function loadConfig(
   const file = globalConfigFile(overrides);
   const providerRegistry = providerRegistryFor(overrides);
   await assertNoLegacyTomlOnly(overrides);
-  return {
-    config: await readConfigFile(file, providerRegistry, overrides),
-    configFile: file,
+  const { config, plugins } = await readConfigFile(
+    file,
     providerRegistry,
-  };
+    overrides,
+  );
+  return { config, configFile: file, providerRegistry, plugins };
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {
   const fileShape = {
+    ...(config.plugins !== undefined
+      ? {
+          plugins: config.plugins.map((entry) =>
+            'config' in entry ? { ref: entry.ref, config: entry.config } : entry.ref,
+          ),
+        }
+      : {}),
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
       provider: agent.provider,
@@ -186,7 +216,7 @@ async function readConfigFile(
   file: string,
   providerRegistry: ProviderRegistry,
   overrides: ConfigPathOverrides,
-): Promise<DreamuxConfig> {
+): Promise<{ config: DreamuxConfig; plugins: LoadedPlugin[] }> {
   if (!(await pathExists(file))) {
     throw new Error(
       `dreamux config is missing at ${file}.\n` +
@@ -205,6 +235,21 @@ async function readConfigFile(
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
+  // Plugins contribute providers config may address, so they load before
+  // provider refs are loaded and validated. A non-object top level is still
+  // reported by mergeWithDefaults.
+  const entries = isPlainObject(parsed)
+    ? readPluginEntries(parsed, file)
+    : undefined;
+  const plugins = await loadPlugins({
+    registry: providerRegistry,
+    entries: entries ?? [],
+    // The serve file logger does not exist yet; contribute only registers.
+    logger: createLogger({ name: 'plugins' }),
+    ...(overrides.pluginModuleImporter !== undefined
+      ? { importModule: overrides.pluginModuleImporter }
+      : {}),
+  });
   await loadAgentRuntimeProviders({
     registry: providerRegistry,
     refs: agentProviderRefs(parsed),
@@ -215,7 +260,12 @@ async function readConfigFile(
     refs: channelProviderRefs(parsed),
     importModule: overrides.externalChannelModuleImporter,
   });
-  return await mergeWithDefaults(parsed, file, providerRegistry);
+  const config = await mergeWithDefaults(parsed, file, providerRegistry);
+  readPluginConfigs(plugins, file);
+  return {
+    config: entries === undefined ? config : { ...config, plugins: entries },
+    plugins,
+  };
 }
 
 export async function assertNoLegacyTomlOnly(
@@ -274,7 +324,7 @@ async function mergeWithDefaults(
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
   rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
+  rejectUnknownKeys(raw, new Set(['plugins', 'agents', 'dispatchers']), file, '');
 
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   const dispatchers = await readDispatchers(
@@ -448,12 +498,18 @@ async function readDispatchers(
       providerRegistry,
     );
 
-    const cwd = readOptionalString(raw, 'cwd', file, prefix);
+    const cwd = raw['cwd'];
+    if (typeof cwd !== 'string' || cwd.trim() === '') {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}cwd is required for dispatcher ` +
+          `'${id}': set it to the Dispatcher's workspace directory`,
+      );
+    }
     const agentRuntimeId = resolveAgentRuntime(raw, prefix, file, agents);
     const agent = agents[agentRuntimeId]!;
     out.push({
       id,
-      cwd: cwd === null ? null : expandHome(cwd),
+      cwd: expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
       workspace: readWorkspaceConfig(
         raw['workspace'],

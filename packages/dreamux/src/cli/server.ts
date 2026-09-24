@@ -12,6 +12,11 @@
  *     referenced via dispatchers[].agentRuntime
  *   - built-in defaults compiled into the binary
  *
+ * Plugins (the optional top-level plugins[] plus the always-loaded built-in
+ * plugins) load and contribute providers inside loadConfig; their `server`
+ * entries run once the file logger exists, before the Server is constructed,
+ * so every host hook is tapped before the first Dispatcher exists.
+ *
  * Per-dispatcher channel secrets live in the dreamux JSON config.
  */
 
@@ -20,6 +25,7 @@ import { mkdir } from 'node:fs/promises';
 import { Server } from '../server.js';
 import { loadConfig } from '../config/config.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { startPlugins } from '../plugin/host.js';
 import { createLogger } from '../platform/logger.js';
 import { errorInfo } from '../platform/error-info.js';
 import {
@@ -53,7 +59,7 @@ async function main(): Promise<void> {
 
   // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile } = await loadConfig({ providerRegistry });
+  const { config, configFile, plugins } = await loadConfig({ providerRegistry });
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
@@ -65,10 +71,12 @@ async function main(): Promise<void> {
   // foreground `serve` stays visible.
   const logger = createLogger({ name: 'server', filePath: serverLogPath() });
   logger.info({ config_file: configFile }, 'loaded global config');
+  const { hooks } = startPlugins(plugins, logger);
 
   const server = new Server({
     config,
     providerRegistry,
+    hooks,
     logger,
     channelLoggerFactory: (id) =>
       createLogger({ name: `channel/${id}`, filePath: channelLogPath(id) }),
@@ -126,6 +134,11 @@ Dispatcher declarations:
   Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
   Provider refs load through the registry before config validation.
   Built-in refs are resolved through the same provider loading path as npm:<package>[#export].
+
+Plugins:
+  plugins[] (builtin:<id> or npm:<package>[#export]) load before provider refs,
+  so a provider a plugin contributes is addressable as builtin:<name>.
+  builtin:bootstrap is opt-in.
 `);
 }
 

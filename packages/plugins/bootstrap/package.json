@@ -1,0 +1,50 @@
+{
+  "name": "@excitedjs/dreamux-plugin-bootstrap",
+  "version": "0.0.0",
+  "description": "Built-in Dreamux bootstrap plugin: injects the identity.md and user.md profile files from the Dispatcher cwd's .workspace/ into the Dispatcher and TeamLeader launch prompts, and guides the Dispatcher to create them while either is missing.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/excitedjs/dreamux.git",
+    "directory": "packages/plugins/bootstrap"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22.7"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@excitedjs/dreamux-types": "workspace:*"
+  },
+  "devDependencies": {
+    "@excitedjs/eslint-config": "workspace:*",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.39.0",
+    "tapable": "~2.3.3",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

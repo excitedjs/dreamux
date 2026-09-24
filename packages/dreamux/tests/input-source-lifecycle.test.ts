@@ -34,7 +34,9 @@ import type {
   CoreCommandContext,
   DreamuxLogger,
   JsonValue,
+  LaunchDraft,
 } from '@excitedjs/dreamux-types';
+import { AsyncSeriesHook } from 'tapable';
 
 import type { DispatcherChannelConfig, DreamuxConfig } from '../src/config/config.js';
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
@@ -274,6 +276,7 @@ async function buildHarness(options: {
     teammates,
     admittedTasks,
     workflows,
+    beforeLaunch: new AsyncSeriesHook<[LaunchDraft]>(['draft']),
     isUnavailable: () => false,
     restartIntent: () => null,
   });

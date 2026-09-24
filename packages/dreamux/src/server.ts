@@ -27,6 +27,7 @@ import {
   setRuntimeConfig,
 } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
+import { createServerHooks, type ServerHooks } from './plugin/host.js';
 import { errorInfo } from './platform/error-info.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
@@ -114,6 +115,11 @@ export interface ServerOptions {
    * operator's real state dir. Detection only — never removed or migrated.
    */
   legacyAdminLockPath?: string | null;
+  /**
+   * Host hooks after `startPlugins`. Omitted by tests and embedded servers
+   * without plugins, which get empty hooks.
+   */
+  hooks?: ServerHooks;
 }
 
 export interface Repos {
@@ -233,6 +239,7 @@ export class Server {
       homePathPrefixes,
       adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory: this.channelLoggerFactory,
+      dispatcherHook: (this.opts.hooks ?? createServerHooks(this.log)).dispatcher,
       ...(this.opts.workflowLoggerFactory !== undefined
         ? { workflowLoggerFactory: this.opts.workflowLoggerFactory }
         : {}),

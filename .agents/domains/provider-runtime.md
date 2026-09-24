@@ -15,22 +15,28 @@ Dreamux has two live provider seams:
 - `channel` creates Channel sessions, resolves Channel targets, and owns
   provider-specific tools.
 
-The built-in refs are stable aliases. Core resolves them to packages through the
-same loader path as package-backed providers:
+The built-in refs are stable aliases. Core resolves the two Agent Runtime refs
+to packages through the same loader path as package-backed providers;
+`builtin:feishu` is contributed into the same registry by the always-loaded
+Feishu plugin:
 
-| Ref | Kind | Package |
-|---|---|---|
-| `builtin:codex` | `agentRuntime` | `@excitedjs/agent-runtime-codex` |
-| `builtin:claude-code` | `agentRuntime` | `@excitedjs/agent-runtime-claude-code` |
-| `builtin:feishu` | `channel` | `@excitedjs/feishu-channel` |
+| Ref | Kind | Package | Registered by |
+|---|---|---|---|
+| `builtin:codex` | `agentRuntime` | `@excitedjs/agent-runtime-codex` | provider loader |
+| `builtin:claude-code` | `agentRuntime` | `@excitedjs/agent-runtime-claude-code` | provider loader |
+| `builtin:feishu` | `channel` | `@excitedjs/feishu-channel` | the `feishu` plugin's `contribute` |
+
+A provider any plugin contributes is addressed as `builtin:<name>`, with the
+same ref grammar and catalogs; the plugin mechanism is owned by
+[plugins](plugins.md).
 
 The host package, `@excitedjs/dreamux`, depends on the built-in provider
 packages so a default install keeps the built-in path. Provider packages depend
 on `@excitedjs/dreamux-types` and must not depend on `@excitedjs/dreamux`.
 
-`@excitedjs/dreamux-types` is the provider-authoring contract. It exports
-declarations only: provider descriptors, Agent Runtime contracts, Channel
-contracts, turn shapes, and diagnostics. It does not export host stores, path
+`@excitedjs/dreamux-types` is the provider- and plugin-authoring contract. It
+exports declarations only: provider descriptors, Agent Runtime contracts,
+Channel contracts, turn shapes, diagnostics, and the plugin contract. It does not export host stores, path
 helpers, provider loaders, or runtime implementations.
 
 **Who may depend on it is part of what it is.** It exists for code *outside*
@@ -50,10 +56,14 @@ in `package.json` alone
 
 The three-way rule, in one line each:
 
-- `@excitedjs/dreamux-types` — declarations only, depends on nothing.
+- `@excitedjs/dreamux-types` — declarations only; depends on no Dreamux
+  package. Its one dependency is `tapable`, by type only, for the plugin hook
+  contract: a published `.d.ts` that names tapable's hook types makes consumers
+  resolve tapable, so it is a real `dependencies` entry rather than a dev or
+  peer one.
 - `@excitedjs/dreamux-utils` — pure helpers, depends on nothing.
-- Provider packages — depend on `dreamux-types` (and may use `dreamux-utils`),
-  never on `@excitedjs/dreamux`.
+- Provider and plugin packages — depend on `dreamux-types` (and may use
+  `dreamux-utils`), never on `@excitedjs/dreamux`.
 
 Agent Runtime providers implement `AgentRuntimeProvider` and return one
 `AgentRuntime` instance per launched agent. The runtime interface is
@@ -86,6 +96,7 @@ Source:
 - `/packages/dreamux-types/src/provider.ts`
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux-types/src/plugin.ts`
 - `/packages/dreamux-types/tests/no-host-types.test.ts`
 - `/packages/dreamux-utils/package.json`
 - `/packages/agent-runtime/codex/package.json`
@@ -101,6 +112,7 @@ normally `~/.dreamux/config.json`, relocatable with `DREAMUX_CONFIG_DIR`.
 
 Current schema:
 
+- `plugins[]` (optional) lists plugin refs; see [plugins](plugins.md#loading).
 - `agents[]` declares named Agent Runtime configs. `agents[].id` is a
   config-internal alias, not a dispatcher id or path key.
 - `dispatchers[]` declares dispatcher ids, explicit `cwd`, configured
@@ -110,8 +122,10 @@ Current schema:
 - `dispatchers[].channels[]` entries carry dispatcher-local `id`, provider ref,
   and provider-owned config.
 
-Config loading first loads the referenced Agent Runtime and Channel providers,
-then validates provider-owned config through each provider's `readConfig`.
+Config loading first loads plugins (the always-loaded Feishu plugin, then
+`plugins[]` in order) and runs their `contribute`, then loads the referenced
+Agent Runtime and Channel providers, validates provider-owned config through
+each provider's `readConfig`, and finally runs each plugin's `config.read`.
 Provider config can be sync or async. Core rejects old top-level `codex`,
 inline `dispatchers[].runtime`, missing `agentRuntime`, duplicate
 `agents[].id`, duplicate dispatcher ids, duplicate channel ids, and duplicate
@@ -129,6 +143,7 @@ Source:
 
 - `/packages/dreamux/src/config/config.ts`
 - `/packages/dreamux/src/config/config-helpers.ts`
+- `/packages/dreamux/src/plugin/loader.ts`
 - `/packages/dreamux/src/agent-runtime/external-provider.ts`
 - `/packages/dreamux/src/channel/external-channel-provider.ts`
 
@@ -245,6 +260,13 @@ result as `developerInstructions` on `thread/start`, `thread/resume`, and the
 resume fallback start. Both escape XML text content inside each wrapper so one
 fragment cannot create or modify sibling blocks.
 
+Plugins add text and skill roots through launch drafts: the Dispatcher's
+`beforeLaunch` and a Team's `beforeTeamLeaderLaunch` hooks. Draft
+instructions follow the built-in prompt in both Dispatcher forms (`replace`
+joined, `append` as extra fragments) and precede the TeamLeader's identity
+fragment; draft skill roots follow the built-in ones, fenced against them. The
+composition is owned by [plugins](plugins.md#launch-draft-composition).
+
 Dreamux-owned turns that are not channel messages use plain text input; the
 provider receives no `CompletionEnvelope`, no source discriminator, and no
 rendering instruction.
@@ -291,6 +313,12 @@ normalization includes both the role-specific and shared roots, reserving the
 bundled `teamwork` and `dynamic-workflow` names so custom roots cannot shadow
 either required skill. This capability is not part of MCP tool schemas or
 model-facing runtime discovery.
+
+Plugin launch drafts may also add roots, for the Dispatcher and the TeamLeader
+only. They are appended after the bundled (and, for a TeamLeader, identity)
+roots and pass the same normalization with those roots as required sources, so
+a plugin root cannot shadow a bundled skill; a tap whose roots fail the fence
+contributes nothing.
 
 Runtime packages own engine-specific application:
 

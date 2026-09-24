@@ -34,17 +34,20 @@ const INCOMPATIBLE =
 
 /**
  * A configured channel id is an operator's own string and may contain anything
- * a path segment must not. The slug keeps the file recognizable and the digest
- * keeps it unique, so two channel ids can never collide on one document.
+ * a path segment must not. The slug keeps the name recognizable and the digest
+ * keeps it unique, so two channel ids can never collide on one path.
  */
-export function routingDocumentFilename(channelId: string): string {
+export function channelPathSegment(channelId: string): string {
   const slug = channelId
     .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
   const digest = createHash('sha256').update(channelId).digest('hex');
-  return `feishu-routing.${slug === '' ? 'channel' : slug}.` +
-    `${digest.slice(0, 12)}.json`;
+  return `${slug === '' ? 'channel' : slug}.${digest.slice(0, 12)}`;
+}
+
+export function routingDocumentFilename(channelId: string): string {
+  return `feishu-routing.${channelPathSegment(channelId)}.json`;
 }
 
 export interface FeishuRoutingStoreOptions {

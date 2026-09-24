@@ -27,7 +27,13 @@ release workflows, anti-leak guardrails, lint gates, or changelog behavior.
 - **npm trusted publishing owns publish authentication.** Each publishable
   package carries an npm trusted-publisher entry (provider GitHub Actions, owner
   `excitedjs`, repository `excitedjs/dreamux`, workflow `release.yml`). No
-  long-lived npm token exists.
+  long-lived npm token exists. A package that has never existed on npm has no
+  settings to attach that entry to, so it needs a one-time bootstrap by the
+  holder of publish rights on the `excitedjs` npm org before the change that
+  adds it with `shouldPublish: true` merges. When `@excitedjs/dreamux` gains a
+  `dependencies` entry on the new package in that same change (as it did for
+  `@excitedjs/dreamux-plugin-bootstrap`), merging first breaks the next beta
+  publish and every install of it.
 - **The TeamLeader-only [development workflow](../skills/dev-workflow/SKILL.md)
   owns how a non-trivial feature, refactor, or bug fix is driven** from task
   discovery through review, merge, and knowledge closeout.
@@ -298,6 +304,11 @@ lives under `/packages/dreamux/tests/helpers/` and implements the production
 so the real channel, gate, routing, and MCP tool code still runs unmodified.
 A new test double belongs in `tests/` and must implement a production seam, not
 be exported from a package.
+
+The built-in plugins other than Feishu ship as their own packages that
+`@excitedjs/dreamux` depends on (today `@excitedjs/dreamux-plugin-bootstrap`
+under `/packages/plugins/`); they are imported only when `plugins[]` lists
+them.
 
 Source: `/packages/dreamux/package.json`, `/packages/dreamux/bin/dreamux`,
 `/packages/dreamux/src/cli/commands/mcp.ts`,

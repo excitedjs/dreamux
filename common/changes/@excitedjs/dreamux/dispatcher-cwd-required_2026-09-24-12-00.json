@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: `dispatchers[].cwd` is now required and must be a non-empty string on every Dispatcher entry, enabled or not; a config without it fails to load with an error naming the Dispatcher id. Rebuild: add \"cwd\": \"<absolute dir>\" to every dispatchers[] entry that lacks it.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

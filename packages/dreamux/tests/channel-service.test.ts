@@ -89,7 +89,7 @@ function dreamuxConfigWith(
     dispatchers: [
       {
         id: dispatcherId,
-        cwd: null,
+        cwd: '/tmp/dreamux-channel-service-test',
         enabled: true,
         workspace: { enabled: true },
         channels,

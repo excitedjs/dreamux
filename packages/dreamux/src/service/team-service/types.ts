@@ -1,6 +1,7 @@
 import type {
   AgentRuntimeSkillSource,
   DreamuxLogger,
+  Team,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
@@ -91,6 +92,8 @@ export interface TeamServiceDeps {
     teamId: string;
     leaderName: string;
   }) => TeammateAgentMcp;
+  /** Fires the owning Dispatcher's `team` hook for a just-constructed Team; never throws. */
+  announceTeam: (team: Team, ctx: { origin: 'create' | 'rebuild' }) => void;
   store: TeamStore;
   agentNameSuffixGenerator?: SuffixGenerator;
   coreEvents?: DispatcherCoreEventPublisher;

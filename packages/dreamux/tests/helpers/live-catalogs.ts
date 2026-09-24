@@ -21,8 +21,8 @@ import { AgentRuntimeProviderCatalog } from '../../src/agent-runtime/index.js';
 import { ChannelProviderCatalog } from '../../src/channel/catalog.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
   createBuiltinProviderRegistry,
+  registerBuiltinProvider,
 } from '../../src/registry/index.js';
 import {
   createCodexAgentRuntimeProvider,
@@ -63,9 +63,9 @@ export function feishuChannelCatalog(
   botFactory: (config: FeishuChannelConfig) => FeishuBot,
 ): ChannelProviderCatalog {
   const registry = createBuiltinProviderRegistry();
-  const descriptor = registry.resolve(BUILTIN_FEISHU_PROVIDER_REF);
-  registry.registerImplementation(
-    descriptor.id,
+  registerBuiltinProvider(
+    registry,
+    { id: 'feishu', kind: 'channel' },
     createFeishuChannelProvider({ botFactory }),
   );
   return new ChannelProviderCatalog({ registry });

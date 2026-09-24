@@ -29,6 +29,13 @@ import { describe, it, expect, expectTypeOf } from 'vitest';
 
 import type { RuntimeActivity } from '@excitedjs/dreamux-types';
 
+import {
+  ALWAYS_LOADED_PLUGIN_REFS,
+  BUILTIN_PLUGIN_PACKAGES,
+  BUILTIN_PROVIDER_PACKAGES,
+  BUILTIN_PROVIDERS,
+} from '../src/registry/builtins.js';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const coreSrc = join(here, '..', 'src');
 
@@ -120,18 +127,29 @@ describe('core provider-id / channel-id neutrality', () => {
     expect(body).not.toMatch(/\belse\b/);
   });
 
-  it('the builtin id -> package carve-out list is itself pinned', () => {
-    // A new leak could otherwise hide by silently growing this exact map
-    // instead of adding a new file to the allowance above. Pin its shape so a
-    // fourth builtin id is a deliberate, reviewed change.
+  it('the builtin id -> package carve-out lists are themselves pinned', () => {
+    // A new leak could otherwise hide by silently growing one of these maps
+    // instead of adding a new file to the allowance above. Pin their shape so
+    // a new builtin id, builtin plugin, or always-loaded plugin is a
+    // deliberate, reviewed change.
+    expect(BUILTIN_PROVIDER_PACKAGES).toEqual({
+      codex: '@excitedjs/agent-runtime-codex',
+      'claude-code': '@excitedjs/agent-runtime-claude-code',
+    });
+    expect(BUILTIN_PROVIDERS).toEqual([
+      { id: 'codex', kind: 'agentRuntime' },
+      { id: 'claude-code', kind: 'agentRuntime' },
+    ]);
+    expect(BUILTIN_PLUGIN_PACKAGES).toEqual({
+      bootstrap: '@excitedjs/dreamux-plugin-bootstrap',
+      feishu: '@excitedjs/feishu-channel',
+    });
+    expect(ALWAYS_LOADED_PLUGIN_REFS).toEqual(['builtin:feishu']);
+    // Kind-agnostic count over the source, so a spec declared outside
+    // BUILTIN_PROVIDERS also shows up as a diff here.
     const src = readFileSync(join(coreSrc, 'registry/builtins.ts'), 'utf8');
-    expect(src).toContain("codex: '@excitedjs/agent-runtime-codex'");
-    expect(src).toContain("'claude-code': '@excitedjs/agent-runtime-claude-code'");
-    expect(src).toContain("feishu: '@excitedjs/feishu-channel'");
-    // Sanity: exactly 3 builtins declared (kind-agnostic count), so a new
-    // provider *type* (not just a re-export) shows up as a diff here.
     const specMatches = src.match(/\{ id: '[a-z-]+', kind: '[a-zA-Z]+' \}/g) ?? [];
-    expect(specMatches).toHaveLength(3);
+    expect(specMatches).toHaveLength(2);
   });
 
   it('core does not import a provider implementation package outside the loader boundary', () => {

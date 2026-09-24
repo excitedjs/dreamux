@@ -467,3 +467,30 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   asset. On the 0.x line an incompatible shape is handled by fail-loud plus
   manual rebuild — no migrations, no lazy backfill, no old-shape fallback
   readers. (Domain: [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+
+## Plugins
+
+- **Plugins are opt-in through config.** An operator enables a plugin by
+  listing it in the optional top-level `plugins[]` (`builtin:<id>` or
+  `npm:<package>[#export]`, optionally with a plugin-owned `config` block). A
+  config without `plugins[]` behaves as before; the built-in Feishu channel is
+  always loaded and never listed. A plugin that fails to load, a duplicate
+  plugin or provider name, or a `config` block for a plugin that takes none
+  stops `dreamux serve` with an error naming the plugin; a plugin callback that
+  fails while an agent launches is logged and skipped, and the launch goes on
+  without that plugin's additions. (Domain: [plugins](/.agents/domains/plugins.md).)
+- **The bootstrap plugin keeps a shared profile.** With `builtin:bootstrap`
+  enabled, a Dispatcher whose cwd lacks `.workspace/identity.md` or
+  `.workspace/user.md` is told at start to offer the user to create them
+  together (the guide is also written to `.workspace/bootstrap.md`). Once both
+  files exist, the Dispatcher (from its next start) and every TeamLeader (from
+  its next launch) receive both files in their prompt, and `bootstrap.md` is
+  removed. TeamMates never receive them, and TeamLeaders never see the guide.
+  (Domain: [plugins](/.agents/domains/plugins.md#built-in-bootstrap-plugin).)
+- **Doctor lists plugins.** `dreamux doctor` prints one line per loaded plugin
+  (its source, the providers it contributed, the top-level hooks it tapped); a
+  plugin load failure shows as one failed line in place of those lines. Feishu extensions (tools and
+  card actions another plugin added to the Feishu channel) are listed on the
+  diagnostic line of each configured Feishu channel, and are not listed when
+  no Dispatcher has a Feishu channel. (Domain: [plugins](/.agents/domains/plugins.md),
+  [channel](/.agents/domains/channel.md#feishu-extensions).)

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Plugin hook review fixes: a plugin's own interceptor added with `hook.intercept` — on `call`, `tap`, `loop`, `result`, `done`, `error`, or `register` — is guarded the same way a tap is, attributed to the plugin that registered it: on `dispatcher`, `team`, and a launch hook a throw is logged and skipped, and on `hooks.plugin.for(name)` a throw fails plugin loading with a clear error, so neither crashes `dreamux serve` or `dreamux doctor` — including a `done`/`error` interceptor on an async hook, which tapable invokes from a continuation an ordinary try/catch around the hook cannot see. Interceptor methods must be synchronous: an `async` one's rejection is logged at runtime and fails plugin loading on `hooks.plugin.for(name)` with an error naming the interceptor, and an `async` `register` leaves the tap unchanged. A launch-hook interceptor sees only an opaque, disconnected handle, never the internal launch draft, so it cannot add a skill root that skips the skill fence. An async plugin tap on the sync `dispatcher`/`team` hooks is logged and skipped, with no unhandled rejection risk. An async `server()` or `contribute()` fails loading with a clear error naming the plugin, so a tap registered after its first `await` is never silently lost. A `plugins[]` entry's `config` block for a plugin with no `config.read` is ignored, so `dreamux serve` starts.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

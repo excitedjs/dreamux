@@ -126,12 +126,14 @@ const PROVIDER_PACKAGES_BAN = {
     '@excitedjs/feishu-channel/*',
     '@excitedjs/feishu-transport',
     '@excitedjs/feishu-transport/*',
+    '@excitedjs/dreamux-plugin-bootstrap',
+    '@excitedjs/dreamux-plugin-bootstrap/*',
   ],
   message:
-    'Core (@excitedjs/dreamux) must not import a provider or Feishu platform-I/O ' +
-    'package. Call the neutral @excitedjs/dreamux-types contract instead; builtin:* ' +
-    'resolves to a package name the dynamic loader imports at runtime (issue #209 ' +
-    'polymorphism boundary).',
+    'Core (@excitedjs/dreamux) must not import a provider, plugin, or Feishu ' +
+    'platform-I/O package. Call the neutral @excitedjs/dreamux-types contract ' +
+    'instead; builtin:* resolves to a package name the dynamic loader imports at ' +
+    'runtime (issue #209 polymorphism boundary).',
 };
 
 /** The core host package that a provider package must never import. */

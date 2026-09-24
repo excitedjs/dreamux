@@ -59,6 +59,11 @@ secrets.
 
 It declares:
 
+- `plugins[]` (optional): plugin refs (`builtin:<id>` or
+  `npm:<package>[#export]`), each a bare string or `{ ref, config }` whose
+  `config` the plugin itself validates. The always-loaded Feishu plugin is not
+  listed. A config without the key loads unchanged, and onboarding rewrites
+  the file with `plugins[]` preserved. Mechanism: [plugins](plugins.md).
 - `agents[]`: Agent Runtime provider configs, such as `builtin:codex` or
   `builtin:claude-code`.
 - `dispatchers[]`: dispatcher `id`, explicit `cwd`, `enabled`, dispatcher-local
@@ -79,15 +84,17 @@ rejected with the rebuild instruction to declare a named `agents[]` entry.
 `dreamux serve` fails loudly and creates no silent defaults when the config file
 is missing, when its mode is not `0600`, when the JSON does not parse, when the
 shape is rejected (unknown keys, a top-level `codex` block, a dispatcher
-`runtime` block, a duplicate dispatcher id, a channel `collaborationSpace`
-block), when a providerized entry cannot be loaded, or when an enabled
-dispatcher has no explicit `cwd` — the last check lives with the workspace
-contract in `dispatcher-workspace.ts`, not in the config reader. The operator
-fix path is `dreamux onboard` or a manual rebuild.
+`runtime` block, a duplicate dispatcher id, a dispatcher entry without a
+non-empty `cwd` (enabled or not; the error names the dispatcher id), a channel
+`collaborationSpace` block), or when a providerized entry or a plugin cannot be
+loaded (including a duplicate plugin or provider name, and a `config` block for
+a plugin that takes none). The operator fix path is `dreamux onboard` or a
+manual rebuild.
 
 Source:
 
 - `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/plugin/loader.ts`
 - `/packages/dreamux/src/config/config-helpers.ts`
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/onboard/run.ts`
@@ -255,6 +262,13 @@ re-read, owner-only atomic patch, restart — is owned by
 `chat-bots.json` is the Feishu known/trusted peer bot store, `version: 1`,
 owner-only and atomically written by the same provider.
 
+`feishu-extensions/<extension>/<channel segment>/` belongs to one Feishu
+extension (a plugin-registered add-on to the Feishu channel) for one configured
+Feishu channel; `<channel segment>` is the same slug-plus-digest the routing
+document filename carries. Feishu hands the extension the path and does not
+create it; its contents are the extension's own. See
+[channel](channel.md#feishu-extensions).
+
 Source:
 
 - `/packages/channel/feishu-channel/src/routing/store.ts`
@@ -414,9 +428,17 @@ not safely ignore everything is repaired. Startup also fails loud when the
 configured `cwd` is missing, is not a directory, or is not read/write/exec
 accessible.
 
+With the built-in bootstrap plugin enabled, `.workspace/` also holds
+`identity.md` and `user.md`, which are user-owned profile files the plugin only
+reads, and `bootstrap.md`, which the plugin owns: written while either profile
+file is missing and removed once both exist. The plugin creates `.workspace/`
+when needed but does not write its `.gitignore`, so before the first managed
+worktree the profile files can show as untracked in a git-backed cwd.
+
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
+- `/packages/plugins/bootstrap/src/index.ts`
 - `/packages/dreamux/src/service/worktree/paths.ts`
 - `/packages/dreamux/src/service/worktree/manager.ts`
 - `/packages/dreamux/src/service/worktree/workspaces.ts`

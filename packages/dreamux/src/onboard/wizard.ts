@@ -40,6 +40,8 @@ import {
   type ProviderRegistry,
 } from '../registry/index.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { createLogger } from '../platform/logger.js';
+import { loadPlugins } from '../plugin/loader.js';
 import type {
   OnboardAgentRuntimeConfig,
   OnboardAnswers,
@@ -90,7 +92,7 @@ export async function collectOnboardAnswers(
     'dispatcher cwd',
     options.dispatcherCwd ?? process.cwd(),
   );
-  const registry = createBuiltinProviderRegistry();
+  const registry = await onboardProviderRegistry();
   const agentProvider = await promptProviderRef(
     registry,
     'agentRuntime',
@@ -144,7 +146,7 @@ export async function answersFromOptions(
     'agent',
   );
   const channelSelections = parseChannelSelections(options.channel);
-  const registry = createBuiltinProviderRegistry();
+  const registry = await onboardProviderRegistry();
   await loadSelectedProviders(registry, agentSelection, channelSelections);
   const agentCatalog = new AgentRuntimeProviderCatalog({ registry });
   const channelCatalog = new ChannelProviderCatalog({ registry });
@@ -365,6 +367,16 @@ function parseJsonObject(raw: string, optionName: string): Record<string, unknow
     throw new Error(`--${optionName} must decode to an object config block`);
   }
   return parsed;
+}
+
+/**
+ * The built-in registry plus the always-loaded plugins' providers, so
+ * `builtin:feishu` (contributed by the Feishu plugin) resolves during onboard.
+ */
+async function onboardProviderRegistry(): Promise<ProviderRegistry> {
+  const registry = createBuiltinProviderRegistry();
+  await loadPlugins({ registry, entries: [], logger: createLogger({ name: 'onboard' }) });
+  return registry;
 }
 
 async function promptProviderRef(

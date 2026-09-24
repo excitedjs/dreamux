@@ -31,6 +31,7 @@ const EXPECTED_EXPORTS = [
   'chatTarget',
   'createFeishuBot',
   'createFeishuChannelProvider',
+  'createFeishuPlugin',
   'createFeishuSessionMcp',
   'default',
   'defaultDispatcherAccessState',

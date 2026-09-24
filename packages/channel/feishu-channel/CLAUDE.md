@@ -1,7 +1,9 @@
 # @excitedjs/feishu-channel
 
-This package is the built-in Feishu `ChannelProvider` for Dreamux (alias
-`builtin:feishu`, issue #209 slice 5). It sits between
+This package is the built-in Feishu plugin for Dreamux: its default export is
+the plugin factory, and the plugin contributes the Feishu `ChannelProvider`
+(alias `builtin:feishu`, issue #209 slice 5) and publishes the Feishu extension
+api. It sits between
 `@excitedjs/feishu-transport` and `@excitedjs/dreamux`, implements the neutral
 `@excitedjs/dreamux-types` `ChannelProvider`/`ChannelSession` contract, and
 depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`,
@@ -113,6 +115,31 @@ never on `@excitedjs/dreamux` core.
   exists, render `status="not_downloaded"` with the escaped key; retain the
   short reason in structured diagnostics, not inline XML.
 
+## Feishu Extensions
+
+The plugin publishes `FeishuApi` as its plugin `api`; other plugins register
+`FeishuExtension`s through it while plugins load (`extension.ts` holds the
+contract, `feishu-extensions.ts` the registry, the per-session lifecycle, and
+the instance api).
+
+- `register` rejects a duplicate extension name, a tool name already offered to
+  the same caller kind (built-in or another extension), and a card action key
+  already claimed (`approve_pairing`, the `ask_user_*` keys, or another
+  extension), naming both sources.
+- Extension tools join the provider's caller-scoped catalog and are served by
+  the same session MCP capability after the built-in lookup misses. Extension
+  card actions are matched on `dreamux_action` before the built-in handler.
+- Per session: `initialize` runs last in the session's `initialize`, `start`
+  after the bot started, and `close` in reverse order during teardown, after
+  in-flight work settled and before the routing store drains. An
+  `initialize`/`start` throw fails the session; a `close` throw is logged.
+  Extension tool calls are refused once the session stopped taking calls and
+  are tracked, so teardown waits for them.
+- Each extension's state root is
+  `<state dir>/feishu-extensions/<extension>/<channel segment>`, where the
+  channel segment is the same slug and digest the routing document filename
+  carries (`channelPathSegment`).
+
 ## Owner-Only Pairing Approval Card
 
 The Feishu pairing flow is an interactive-card approval flow, not a
@@ -161,8 +188,12 @@ Design constraints:
   directly under that chat's authority and does not pair.
 - Keep card rendering in `feishu-pairing-card.ts`, gate state transitions in
   `feishu-gate.ts`, and IO/mutation orchestration in `feishu-session-ops.ts`.
-  Transport code owns only thin Feishu SDK wrappers such as card send and owner
-  lookup. Bot display names come from the transport's runtime bot info
+  Turning an approved token into an `allow_users` entry is
+  `approvePairingByToken` in `feishu-gate-io.ts`, beside the
+  `readDispatcherAccess`/`saveDispatcherAccess` it reads and writes through —
+  the one access-state mutation that answers a card click rather than a gate
+  decision. Transport code owns only thin Feishu SDK wrappers such as card
+  send and owner lookup. Bot display names come from the transport's runtime bot info
   (`/open-apis/bot/v3/info` `app_name`); if missing, the channel falls back to
   the neutral `Dreamux bot` label.
 - Any change to this flow must update `feishu-pairing-card.test.ts`, the
@@ -193,8 +224,9 @@ runtime attachments retain the applicable structured facts.
 - Upstream: `@excitedjs/feishu-transport` low-level Lark operations.
 - Intended downstream: `@excitedjs/dreamux`. Since issue #209 slice 5, Dreamux
   depends on this package at runtime again: `@excitedjs/dreamux` declares it as
-  a dependency, and `builtin:feishu` resolves to it through
-  `BUILTIN_PROVIDER_PACKAGES` on the generic provider loading path. The package
+  a dependency and always loads this package's default export as the built-in
+  `feishu` plugin. The plugin contributes the channel provider under the name
+  `feishu`, which is what `builtin:feishu` resolves to. The package
   stays `shouldPublish: true` so the published manifest can resolve it — the
   issue #97 failure mode.
 - Dreamux may provide cache roots, limits, and logging hooks, but the channel

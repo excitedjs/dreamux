@@ -19,6 +19,7 @@
  */
 import type {
   ChannelMcpCall,
+  ChannelMcpCaller,
   ChannelMcpCallContext,
   ChannelMcpToolOutcome,
   ChannelSessionMcpCapability,
@@ -28,6 +29,7 @@ import { settleJsonInvoke } from '@excitedjs/dreamux-utils';
 
 import type { FeishuChannelSession } from './feishu-channel.js';
 import { findFeishuTool } from './tools/registry.js';
+import type { FeishuToolResult } from './tools/types.js';
 
 export function createFeishuSessionMcp(
   session: FeishuChannelSession,
@@ -44,11 +46,11 @@ export function createFeishuSessionMcp(
         caller: context.caller.kind,
         tool: call.name,
       };
-      const def = findFeishuTool(call.name, context.caller.kind);
+      const tool = resolveTool(session, call, context.caller);
       // Unreachable through Core, which admits only names this caller's own
       // frozen catalog advertises. A direct embedder is told the same thing
       // rather than getting a silent no-op.
-      if (def === undefined) {
+      if (tool === undefined) {
         return {
           ok: false,
           message:
@@ -57,27 +59,52 @@ export function createFeishuSessionMcp(
         };
       }
       try {
-        const outcome = await settleJsonInvoke(async () =>
-          def.handle(
-            {
-              caller: context.caller,
-              session: session.toolSession(context.caller),
-            },
-            def.parse(call.arguments),
-          ),
-        );
+        const outcome = await settleJsonInvoke(tool.run);
         if (!outcome.ok) {
           log.info({ ...scope, reason: outcome.message },
             'feishu MCP tool refused a call');
           return outcome;
         }
-        const text = def.successText?.(outcome.value);
+        const text = tool.successText?.(outcome.value);
         return text !== undefined ? { ...outcome, text } : outcome;
       } catch (err) {
         log.error({ ...scope, err: errInfo(err) }, 'feishu MCP tool failed');
         throw err;
       }
     },
+  };
+}
+
+/**
+ * The tool this caller means by the call's name: a built-in one first, else
+ * one a Feishu extension registered for this caller kind.
+ */
+function resolveTool(
+  session: FeishuChannelSession,
+  call: ChannelMcpCall,
+  caller: ChannelMcpCaller,
+):
+  | {
+      run(): Promise<FeishuToolResult>;
+      successText?(result: FeishuToolResult): string | undefined;
+    }
+  | undefined {
+  const builtin = findFeishuTool(call.name, caller.kind);
+  if (builtin !== undefined) {
+    return {
+      run: async () =>
+        builtin.handle(
+          { caller, session: session.toolSession(caller) },
+          builtin.parse(call.arguments),
+        ),
+      successText: (result) => builtin.successText?.(result),
+    };
+  }
+  const extension = session.extensionTool(call.name, caller.kind);
+  if (extension === undefined) return undefined;
+  return {
+    run: () => extension.invoke(caller, call.arguments),
+    successText: (result) => extension.def.successText?.(result),
   };
 }
 

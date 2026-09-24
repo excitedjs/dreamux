@@ -123,6 +123,7 @@ async function bootTeam(): Promise<{
     leaderCompletionInitiator: async () => null,
     admitOperation: <T>(task: () => Promise<T>) => task(),
     leaderMcp: () => ({}),
+    announceTeam: () => {},
     store: {
       get: async () => record,
       update: async (previous: TeamRecord, patch: Partial<TeamRecord> & { status?: string }) => {
