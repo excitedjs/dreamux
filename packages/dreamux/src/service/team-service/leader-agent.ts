@@ -44,7 +44,7 @@ export interface TeamLeaderAgentDeps {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
   admissions: AdmissionLedger;
-  conversationProjection?: ConversationProjection;
+  conversationProjection: ConversationProjection;
   worktrees: WorktreeManager;
   log: DreamuxLogger;
 }
@@ -77,9 +77,7 @@ export function createTeamLeaderAgent(
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
     admissions: deps.admissions,
-    ...(deps.conversationProjection !== undefined
-      ? { conversationProjection: deps.conversationProjection }
-      : {}),
+    conversationProjection: deps.conversationProjection,
     worktrees: deps.worktrees,
     log: deps.log,
   });
@@ -152,9 +150,7 @@ export function teamLeaderAgentBase(input: {
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: input.identities,
     admissions: deps.admissions,
-    ...(deps.conversationProjection !== undefined
-      ? { conversationProjection: deps.conversationProjection }
-      : {}),
+    conversationProjection: deps.conversationProjection,
     worktrees: deps.worktrees,
     log: deps.log,
   };

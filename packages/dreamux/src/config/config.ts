@@ -73,7 +73,6 @@ export interface DispatcherConfig {
   workspace: DreamuxWorkspaceConfig;
   channels: DispatcherChannelConfig[];
     agentRuntime: string;
-    runtime: DispatcherRuntimeConfig;
 }
 
 export interface DispatcherChannelConfig {
@@ -84,13 +83,24 @@ export interface DispatcherChannelConfig {
     identity?: string;
 }
 
-export interface DispatcherRuntimeConfig {
-  provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
-}
-
 export type DispatcherProviderConfig = Record<string, unknown>;
+
+/**
+ * The agent config a dispatcher references (`agents[dispatcher.agentRuntime]`),
+ * looked up on demand rather than carried as a precomputed field on
+ * `DispatcherConfig`. `readDispatchers` already validates every parsed
+ * dispatcher's `agentRuntime` names a real `agents[]` entry and every
+ * dispatcher id is unique, so a `config` this loader produced never fails
+ * this lookup; callers must not pass a hand-built `config`/`dispatcherId`
+ * pair that skips that validation.
+ */
+export function dispatcherAgent(
+  config: DreamuxConfig,
+  dispatcherId: string,
+): ResolvedAgentConfig {
+  const dispatcher = config.dispatchers.find((entry) => entry.id === dispatcherId)!;
+  return config.agents[dispatcher.agentRuntime]!;
+}
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
   agents: {},
@@ -507,7 +517,6 @@ async function readDispatchers(
       );
     }
     const agentRuntimeId = resolveAgentRuntime(raw, prefix, file, agents);
-    const agent = agents[agentRuntimeId]!;
     out.push({
       id,
       cwd: expandHome(cwd),
@@ -519,11 +528,6 @@ async function readDispatchers(
       ),
       channels,
       agentRuntime: agentRuntimeId,
-      runtime: {
-        provider: agent.provider,
-        config: agent.config,
-        ...(agent.rawConfig === undefined ? {} : { rawConfig: agent.rawConfig }),
-      },
     });
   }
   return out;

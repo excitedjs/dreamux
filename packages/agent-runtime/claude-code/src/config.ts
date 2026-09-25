@@ -52,7 +52,7 @@ export interface DispatcherClaudeCodeConfig {
   turn_timeout_ms: number;
 }
 
-/** Default `dispatchers[].runtime.config.bin` for `builtin:claude-code`. */
+/** Default `agents[].config.bin` for `builtin:claude-code`. */
 export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
 
 /**
@@ -61,7 +61,7 @@ export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
  * turn is failed and the child reaped (issue #120 anti-hang, idle-based since
  * issue #156) — it is reset on every stream line, so it does not cap a long but
  * actively-streaming turn. Operators can override via
- * `dispatchers[].runtime.config.turn_timeout_ms`.
+ * each dispatcher's `agents[]` entry `config.turn_timeout_ms`.
  */
 export const DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS = 600_000;
 
@@ -156,19 +156,19 @@ export function readDispatcherClaudeCodeConfig(
 }
 
 /**
- * Typed accessor for a dispatcher's resolved claude-code runtime config. Typed
- * structurally (not against `DispatcherConfig`) so this module never imports
- * the host config type — a full `DispatcherConfig` still satisfies it at the
- * call sites.
+ * Typed accessor for a dispatcher's resolved claude-code agent config. Typed
+ * structurally (not against the host's `ResolvedAgentConfig`) so this module
+ * never imports the host config type — the host's `agents[]` entry shape
+ * still satisfies it at the call sites.
  */
-export function dispatcherClaudeCodeConfig(dispatcher: {
-  id: string;
-  runtime: { provider: string; config: unknown };
-}): DispatcherClaudeCodeConfig {
-  if (dispatcher.runtime.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
+export function dispatcherClaudeCodeConfig(
+  agent: { provider: string; config: unknown },
+  dispatcherId: string,
+): DispatcherClaudeCodeConfig {
+  if (agent.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
     throw new Error(
-      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Claude Code`,
+      `dispatcher '${dispatcherId}' runtime provider ${JSON.stringify(agent.provider)} is not wired to Claude Code`,
     );
   }
-  return dispatcher.runtime.config as DispatcherClaudeCodeConfig;
+  return agent.config as DispatcherClaudeCodeConfig;
 }

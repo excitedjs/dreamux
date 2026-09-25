@@ -1,5 +1,3 @@
-import { Buffer } from 'node:buffer';
-
 import type {
   AgentActivityError,
   AgentActivityPage,
@@ -7,10 +5,7 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import {
-  HOST_INJECT_ENV,
-  type AgentRuntimeProviderCatalog,
-} from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import { resolveAgent } from './agent-config.js';
 import {
@@ -20,16 +15,6 @@ import {
 } from './types.js';
 import { errorInfo } from '../../platform/error-info.js';
 import { validateLastLimit } from './read-helpers.js';
-
-/**
- * Core's independent bounds on a provider page. The provider enforces its own
- * native read bounds and reports truncation; Core still validates what comes
- * back, because a provider is not trusted to bound Core's output.
- */
-export const ACTIVITY_OUTPUT_BUDGET_BYTES = 262_144;
-const ACTIVITY_CURSOR_MAX_LENGTH = 4096;
-const ACTIVITY_TEXT_MAX_CHARS = 16_384;
-const ACTIVITY_TOOL_NAME_MAX_CHARS = 256;
 
 const ACTIVITY_ERROR_REASONS = new Set<AgentActivityError['reason']>([
   'session_unavailable',
@@ -103,7 +88,6 @@ export async function readAgentActivity(
       {
         config: agent.config,
         cwd: input.identity.runtime_cwd,
-        injectEnv: HOST_INJECT_ENV,
         logger: input.log,
       },
     );
@@ -178,11 +162,7 @@ function recognizedActivityErrorReason(
 
 function validateActivityCursor(cursor: string | undefined): string | undefined {
   if (cursor === undefined) return undefined;
-  if (
-    cursor.length === 0 ||
-    cursor.length > ACTIVITY_CURSOR_MAX_LENGTH ||
-    !/^[A-Za-z0-9_-]+$/.test(cursor)
-  ) {
+  if (cursor.length === 0 || !/^[A-Za-z0-9_-]+$/.test(cursor)) {
     throw new AgentActivityReadError('cursor_invalid');
   }
   return cursor;
@@ -215,12 +195,6 @@ function verifyActivityPage(
     );
   }
   for (const record of page.records) verifyActivityRecord(record);
-  const bytes = Buffer.byteLength(JSON.stringify(page.records), 'utf8');
-  if (bytes > ACTIVITY_OUTPUT_BUDGET_BYTES) {
-    throw new Error(
-      `Agent Runtime activity provider exceeded the ${ACTIVITY_OUTPUT_BUDGET_BYTES}-byte output budget`,
-    );
-  }
 }
 
 function verifyActivityRecord(record: AgentActivityRecord): void {
@@ -235,7 +209,7 @@ function verifyActivityRecord(record: AgentActivityRecord): void {
     );
   }
   if (record.kind === 'assistant_message') {
-    if (!isBoundedString(record.text, ACTIVITY_TEXT_MAX_CHARS)) {
+    if (typeof record.text !== 'string') {
       throw new Error(
         'Agent Runtime activity provider returned an invalid assistant record',
       );
@@ -244,7 +218,7 @@ function verifyActivityRecord(record: AgentActivityRecord): void {
   }
   if (
     record.kind !== 'tool' ||
-    !isBoundedString(record.name, ACTIVITY_TOOL_NAME_MAX_CHARS) ||
+    typeof record.name !== 'string' ||
     (record.status !== 'started' &&
       record.status !== 'completed' &&
       record.status !== 'failed')
@@ -260,7 +234,6 @@ function isValidPageCursor(value: string | undefined): boolean {
     value === undefined ||
     (typeof value === 'string' &&
       value.length > 0 &&
-      value.length <= ACTIVITY_CURSOR_MAX_LENGTH &&
       /^[A-Za-z0-9_-]+$/.test(value))
   );
 }
@@ -272,8 +245,4 @@ function isNullableTimestamp(value: string | undefined): boolean {
     value.length <= 64 &&
     !Number.isNaN(Date.parse(value))
   );
-}
-
-function isBoundedString(value: unknown, limit: number): value is string {
-  return typeof value === 'string' && [...value].length <= limit;
 }

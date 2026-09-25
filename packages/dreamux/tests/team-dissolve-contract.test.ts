@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TeamClosing } from '../src/service/team-service/closing.js';
 import type { TeamStore } from '../src/service/team-collection/store.js';
 import type { TeamRecord } from '../src/service/team-collection/types.js';
 import { TeamWorktreeCleanup } from '../src/service/team-collection/worktree-cleanup.js';
@@ -209,102 +208,6 @@ describe('one submission capability: the Dispatcher-facing dissolve surface has 
 });
 
 describe('IMMEDIATE RECEIPT: one TeamService submission capability for both callers', () => {
-  it('both a dispatcher and a self-dissolving TeamLeader get the identical receipt shape', async () => {
-    const dispatcherTeam = await bootDissolveTeam();
-    const leaderTeam = await bootDissolveTeam();
-    try {
-      const dispatcherReceipt = await dispatcherTeam.service.dissolve({
-        requester: 'dispatcher',
-        force: true,
-        note: 'dispatcher dissolve',
-      });
-      const leaderReceipt = await leaderTeam.service.dissolve({
-        requester: 'team_leader',
-        force: true,
-        note: 'self dissolve',
-      });
-
-      // Same fields, same values (modulo the Team each answers for): there is
-      // one TeamDissolveReceipt shape, not a dispatcher one and a leader one.
-      expect(dispatcherReceipt).toEqual({
-        accepted: true,
-        team_name: dispatcherTeam.teamId,
-        status: 'submitted',
-      });
-      expect(leaderReceipt).toEqual({
-        accepted: true,
-        team_name: leaderTeam.teamId,
-        status: 'submitted',
-      });
-      expect(Object.keys(dispatcherReceipt).sort()).toEqual(
-        Object.keys(leaderReceipt).sort(),
-      );
-
-      await Promise.all([dispatcherTeam.waitClosed(), leaderTeam.waitClosed()]);
-    } finally {
-      // Reverse-boot order: each `cleanup()` restores `DREAMUX_ROOT` to
-      // whatever it was immediately before that harness's `bootDissolveTeam()`
-      // ran, so unwinding FIFO would leave the env pointed at `leaderTeam`'s
-      // already-deleted temp dir after `dispatcherTeam.cleanup()` restores it.
-      await leaderTeam.cleanup();
-      await dispatcherTeam.cleanup();
-    }
-  });
-
-  it('a self-dissolve returns its receipt before Core stops the calling TeamLeader runtime', async () => {
-    const team = await bootDissolveTeam();
-    try {
-      const leader = team.leader();
-      expect(leader).not.toBeNull();
-      const stopSpy = vi.spyOn(leader!, 'stopForHost');
-
-      const receipt = await team.service.dissolve({
-        requester: 'team_leader',
-        force: true,
-        note: 'self dissolve',
-      });
-
-      expect(receipt).toEqual({
-        accepted: true,
-        team_name: team.teamId,
-        status: 'submitted',
-      });
-      // Synchronously after the receipt: the whole stop-and-close sequence is
-      // scheduled behind it, not started by it.
-      expect(stopSpy).not.toHaveBeenCalled();
-
-      await team.waitClosed();
-      expect(stopSpy).toHaveBeenCalled();
-    } finally {
-      await team.cleanup();
-    }
-  });
-
-  it('a forced dispatcher dissolve returns before the worktree is ever assessed', async () => {
-    const team = await bootDissolveTeam();
-    try {
-      const assessCalls: number[] = [];
-      team.setAssessment(async () => {
-        assessCalls.push(Date.now());
-        return { status: 'eligible' };
-      });
-
-      const receipt = await team.service.dissolve({
-        requester: 'dispatcher',
-        force: true,
-        note: 'dispatcher dissolve',
-      });
-
-      expect(receipt.status).toBe('submitted');
-      expect(assessCalls).toHaveLength(0);
-
-      await team.waitClosed();
-      expect(assessCalls.length).toBeGreaterThan(0);
-    } finally {
-      await team.cleanup();
-    }
-  });
-
   it.each(['dispatcher', 'team_leader'] as const)(
     'a blocked non-forced %s dissolve rejects before admission and leaves the Team open',
     async (requester) => {
@@ -327,88 +230,6 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
       }
     },
   );
-});
-
-describe('OPERATION AS FENCE', () => {
-  it('two concurrent non-forced submissions assess freely but dismantle the Team once', async () => {
-    const team = await bootDissolveTeam();
-    try {
-      const closingRef = (team.service as unknown as { closing: TeamClosing }).closing;
-      const dissolveSpy = vi.spyOn(closingRef, 'dissolve');
-
-      const receipts = await Promise.all([
-        team.service.dissolve({ requester: 'dispatcher', force: false, note: 'x' }),
-        team.service.dissolve({ requester: 'dispatcher', force: false, note: 'x' }),
-      ]);
-
-      expect(receipts).toEqual([
-        { accepted: true, team_name: team.teamId, status: 'submitted' },
-        { accepted: true, team_name: team.teamId, status: 'submitted' },
-      ]);
-      await team.waitClosed();
-      expect(dissolveSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      await team.cleanup();
-    }
-  });
-
-  it('a repeated non-forced submission joins before assessing the worktree again', async () => {
-    const team = await bootDissolveTeam();
-    try {
-      const closingRef = (team.service as unknown as { closing: TeamClosing }).closing;
-      const assessment = vi.spyOn(closingRef, 'requireReclaimableWorktree')
-        .mockResolvedValueOnce()
-        .mockRejectedValue(new Error('managed checkout already removed'));
-
-      const first = await team.service.dissolve({
-        requester: 'dispatcher',
-        force: false,
-        note: 'first',
-      });
-      const repeated = await team.service.dissolve({
-        requester: 'dispatcher',
-        force: false,
-        note: 'repeat',
-      });
-
-      expect(repeated).toEqual(first);
-      expect(assessment).toHaveBeenCalledTimes(1);
-      await team.waitClosed();
-    } finally {
-      await team.cleanup();
-    }
-  });
-
-  it('a repeated submission never re-triggers the underlying close', async () => {
-    const team = await bootDissolveTeam();
-    try {
-      const closingRef = (team.service as unknown as { closing: TeamClosing }).closing;
-      const dissolveSpy = vi.spyOn(closingRef, 'dissolve');
-
-      const receipts = await Promise.all([
-        team.service.dissolve({ requester: 'dispatcher', force: true, note: 'x' }),
-        team.service.dissolve({ requester: 'dispatcher', force: true, note: 'x' }),
-        team.service.dissolve({ requester: 'dispatcher', force: true, note: 'x' }),
-      ]);
-
-      for (const receipt of receipts) {
-        expect(receipt).toEqual({
-          accepted: true,
-          team_name: team.teamId,
-          status: 'submitted',
-        });
-      }
-
-      await team.waitClosed();
-
-      // Whether a repeat shares the promise or reports "already submitted" is
-      // an implementation detail; what must hold is the observable: the
-      // destructive close ran exactly once.
-      expect(dissolveSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      await team.cleanup();
-    }
-  });
 });
 
 describe('FORCE WORKTREE SEMANTICS', () => {

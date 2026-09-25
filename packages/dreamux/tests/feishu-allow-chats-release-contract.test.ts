@@ -73,29 +73,6 @@ describe('trusted allow_chats release contract', () => {
     expect(change.comment).not.toContain('Rebuild:');
   });
 
-  it('declares the Codex comment correction as type none while pending', () => {
-    const change = pendingChange(
-      'common/changes/@excitedjs/agent-runtime-codex/feishu-trusted-allow-chats_2026-07-31-15-22.json',
-    );
-    if (change === null) {
-      const source = readFileSync(
-        join(repoRoot, 'packages/agent-runtime/codex/src/config.ts'),
-        'utf8',
-      );
-      expect(source).toMatch(/turn_timeout_ms[\s\S]{0,180}does not consume it/);
-      return;
-    }
-    expect(change.packageName).toBe('@excitedjs/agent-runtime-codex');
-    expect(change.changes).toEqual([
-      expect.objectContaining({
-        packageName: '@excitedjs/agent-runtime-codex',
-        type: 'none',
-      }),
-    ]);
-    expect(change.changes[0]?.comment).toMatch(/Documentation-only/);
-    expect(change.changes[0]?.comment).toMatch(/no package behavior or version change/);
-  });
-
   it('publishes both old-to-new authorization expansions and the V3 review warning', () => {
     const feishuReadme = readFileSync(
       join(repoRoot, 'packages/channel/feishu-channel/README.md'),

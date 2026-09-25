@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { unlink } from 'node:fs/promises';
 
-import { JsonDocumentStore } from '../../platform/json-document-store.js';
+import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
-import { LegacyStateError } from '../legacy-state.js';
+import { JsonDocumentStore } from '../../platform/json-document-store.js';
 import { validateCronSchedule } from './cron-validation.js';
 
 const STORE_VERSION = 1;
@@ -98,14 +98,9 @@ export class CronJobStore {
     );
   }
 
-  async create(input: CronJobCreateInput, maxJobs: number): Promise<CronJob> {
+  async create(input: CronJobCreateInput): Promise<CronJob> {
     return this.runExclusive(async () => {
       const file = await this.read();
-      if (file.jobs.length >= maxJobs) {
-        throw new Error(
-          `cron owner '${this.opts.dispatcherId}' already has the maximum ${maxJobs} cron jobs`,
-        );
-      }
       const now = Date.now();
       const job: CronJob = {
         id: `job-${randomUUID().slice(0, 8)}`,

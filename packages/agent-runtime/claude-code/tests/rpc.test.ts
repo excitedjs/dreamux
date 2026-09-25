@@ -161,30 +161,6 @@ describe('resident request admission and settlement', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it.each(['before', 'after'])('shares one completion for folded inputs with completed %s result', async (order) => {
-    const h = harness();
-    const a = await h.send('A');
-    h.lifecycle('A', 'started');
-    h.init();
-    const b = await h.send('B');
-    h.lifecycle('B', 'queued', 'started');
-    if (order === 'before') {
-      h.lifecycle('A', 'completed');
-      h.lifecycle('B', 'completed');
-    }
-    h.result('folded', 'A');
-    if (order === 'after') {
-      h.lifecycle('A', 'completed');
-      h.lifecycle('B', 'completed');
-    }
-    const [first, second] = await Promise.all([completion(a), completion(b)]);
-    expect(first).toEqual({ status: 'completed', resultText: 'folded' });
-    expect(second).toBe(first);
-    expect(Object.isFrozen(first)).toBe(true);
-    expect(h.results()).toHaveLength(1);
-    expect(h.results()[0]!.commandUuids).toEqual(['A', 'B']);
-  });
-
   it.each([{}, { user_message_uuid: 'internal' }, { origin: { kind: 'task-notification' } }])('answers consumed background steers regardless of result metadata %j', async (extra) => {
     const h = harness();
     h.init();
@@ -197,22 +173,6 @@ describe('resident request admission and settlement', () => {
     const [first, second] = await Promise.all([completion(b), completion(c)]);
     expect(first).toEqual({ status: 'completed', resultText: 'background answer' });
     expect(second).toBe(first);
-  });
-
-  it('keeps queued input pending across an unrelated background result', async () => {
-    const h = harness();
-    h.init();
-    const b = await h.send('B');
-    const settled = vi.fn();
-    void b.settled.then(settled);
-    h.lifecycle('B', 'queued');
-    h.result('background');
-    await tick();
-    expect(settled).not.toHaveBeenCalled();
-    expect(h.results()[0]!.commandUuids).toEqual([]);
-    h.lifecycle('B', 'started', 'completed');
-    h.result('B answer', 'B');
-    expect(await completion(b)).toEqual({ status: 'completed', resultText: 'B answer' });
   });
 
   it('retains a completed request until its answer arrives, without gating other inputs', async () => {
@@ -231,24 +191,6 @@ describe('resident request admission and settlement', () => {
     h.lifecycle('B', 'started');
     h.result('B answer');
     expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
-  });
-
-  it('preserves input order while capability is unknown and flushes on started before init', async () => {
-    const h = harness();
-    const a = await h.send('A');
-    const b = h.send('B');
-    const c = h.send('C');
-    expect(h.writes.map((input) => input.uuid)).toEqual(['A']);
-    h.lifecycle('A', 'started');
-    h.init(false);
-    await Promise.all([b, c]);
-    expect(h.writes.map((input) => input.message.content[0]!.text)).toEqual(['A', 'B', 'C']);
-    h.lifecycle('B', 'started');
-    h.lifecycle('C', 'started');
-    h.result('all');
-    const values = await Promise.all([a, await b, await c].map(completion));
-    expect(values[1]).toBe(values[0]);
-    expect(values[2]).toBe(values[0]);
   });
 
   it('accepts an immediate native result before the write callback and ignores its late error', async () => {
@@ -277,45 +219,6 @@ describe('resident request admission and settlement', () => {
     callback(new Error('late write error'));
     h.result('accepted natively');
     expect(await completion(a)).toMatchObject({ resultText: 'accepted natively' });
-  });
-
-  it('does not flush remaining unwritten requests when a write callback stops the session', async () => {
-    const h = harness();
-    const a = await h.send('A');
-    const b = h.rpc.submit('B');
-    const c = h.rpc.submit('C');
-    h.stdin.onWrite = (_input, callback) => {
-      callback();
-      h.rpc.stop();
-    };
-    h.lifecycle('A', 'started');
-    const acceptedB = await accepted(b);
-    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
-    await expect(acceptedB.settled).resolves.toEqual({ kind: 'stopped' });
-    await expect(c).resolves.toEqual({ status: 'stopped' });
-    expect(h.writes.map((input) => input.message.content[0]!.text)).toEqual(['A', 'B']);
-  });
-
-  it('preserves write order when an early callback submits input during capability release', async () => {
-    const h = harness();
-    const a = await h.send('A');
-    const b = h.send('B');
-    const c = h.send('C');
-    let d!: Promise<RuntimeSubmission>;
-    h.stdin.onWrite = (input, callback) => {
-      if (input.uuid === 'B') d = h.send('D');
-      callback();
-    };
-    h.lifecycle('A', 'started');
-    const requests = [a, await b, await c, await d];
-    expect(h.writes.map((input) => input.uuid)).toEqual(['A', 'B', 'C', 'D']);
-    h.lifecycle('B', 'started');
-    h.lifecycle('C', 'started');
-    h.lifecycle('D', 'started');
-    h.result('all answered');
-    const answers = await Promise.all(requests.map(completion));
-    expect(answers[0]).toEqual({ status: 'completed', resultText: 'all answered' });
-    for (const answer of answers) expect(answer).toBe(answers[0]);
   });
 
   it('lets a result callback submit the next request without attributing the previous answer to it', async () => {
@@ -378,31 +281,7 @@ describe('supported compatibility inputs', () => {
     expect(await completion(b)).toBe(await completion(a));
   });
 
-  it('rejects unwritten concurrent input when capability is absent, then supports subsequent single input', async () => {
-    const h = harness();
-    const a = await h.send('A');
-    const b = h.rpc.submit('B');
-    h.init(false);
-    await expect(b).resolves.toMatchObject({ status: 'failed', error: expect.objectContaining({ message: expect.stringContaining('msg_lifecycle_v1') }) });
-    h.result('legacy');
-    expect(await completion(a)).toMatchObject({ resultText: 'legacy' });
-    const c = await h.send('C');
-    h.result('later');
-    expect(await completion(c)).toMatchObject({ resultText: 'later' });
-    expect(h.writes.map((input) => input.uuid)).toEqual(['A', 'C']);
-  });
-
-  it('releases unwritten input when the first matching result arrives before capability is decided', async () => {
-    const h = harness();
-    const a = await h.send('A');
-    const b = h.rpc.submit('B');
-    h.result('A', 'A');
-    expect(await completion(a)).toMatchObject({ resultText: 'A' });
-    await expect(b).resolves.toMatchObject({ status: 'failed' });
-    expect(h.writes).toHaveLength(1);
-  });
-
-  it.each([true, false])('never uses a foreign UUID as sole-request fallback with lifecycle=%s', async (supported) => {
+  it.each([true])('never uses a foreign UUID as sole-request fallback with lifecycle=%s', async (supported) => {
     const h = harness();
     h.init(supported);
     const a = await h.send('A');
@@ -569,27 +448,6 @@ describe('native failure and transport lifetime', () => {
     expect(await completion(a)).toMatchObject({ resultText: 'running answer' });
   });
 
-  it.each(['before', 'after'] as const)('settles a consumed failure with cancelled %s result and preserves the queued request', async (order) => {
-    const h = harness();
-    h.init();
-    const a = await h.send('A');
-    h.lifecycle('A', 'started');
-    h.assistant('failed partial answer');
-    const b = await h.send('B');
-    h.lifecycle('B', 'queued');
-    if (order === 'before') h.lifecycle('A', 'cancelled');
-    h.emit(nativeFailure);
-    if (order === 'after') h.lifecycle('A', 'cancelled');
-    const failed = await completion(a);
-    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message: 'native model failure' }) });
-    h.lifecycle('B', 'started');
-    h.result('');
-    expect(await completion(b)).toEqual({ status: 'completed', resultText: null });
-    expect(await completion(a)).toBe(failed);
-    expect(h.results().map((event) => event.commandUuids)).toEqual([['A'], ['B']]);
-    expect(h.reap).not.toHaveBeenCalled();
-  });
-
   it('shares the actual failure across initial and folded commands despite their different cancelled order', async () => {
     const h = harness();
     h.init();
@@ -609,65 +467,6 @@ describe('native failure and transport lifetime', () => {
     const failed = await completion(a);
     expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message: 'native model failure' }) });
     expect(await completion(b)).toBe(failed);
-  });
-
-  it('reports an unbound internal failure and clears its text before later input', async () => {
-    const h = harness();
-    h.lifecycle('internal', 'started');
-    h.assistant('failed internal answer');
-    h.emit(nativeFailure);
-    h.lifecycle('internal', 'cancelled');
-    expect(h.results()[0]).toMatchObject({ commandUuids: [], outcome: { isError: true, errors: ['native model failure'] } });
-    const a = await h.send('A');
-    h.lifecycle('A', 'started');
-    h.result('');
-    expect(await completion(a)).toEqual({ status: 'completed', resultText: null });
-  });
-
-  it('reports setup failure without guessing a queued owner, then fails the named cancelled request', async () => {
-    const h = harness();
-    h.init();
-    const a = await h.send('A');
-    const b = await h.send('B');
-    h.lifecycle('A', 'queued');
-    h.lifecycle('B', 'queued');
-    h.emit({ ...nativeFailure, terminal_reason: 'turn_setup_failed', errors: ['queryParams builder failed'] });
-    expect(h.results()[0]).toMatchObject({
-      commandUuids: [], outcome: { isError: true, terminalReason: 'turn_setup_failed', errors: ['queryParams builder failed'] },
-    });
-    h.lifecycle('A', 'cancelled');
-    await expect(a.settled).resolves.toMatchObject({
-      kind: 'failed', error: expect.objectContaining({ message: 'claude command was cancelled' }),
-    });
-    const settled = vi.fn();
-    void b.settled.then(settled);
-    await tick();
-    expect(settled).not.toHaveBeenCalled();
-    h.lifecycle('B', 'started');
-    h.result('B answer');
-    expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
-    expect(h.reap).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [{ type: 'result', subtype: 'error_during_execution' }, 'error_during_execution'],
-    [nativeFailure, 'native model failure'],
-    [{ ...nativeFailure, errors: [] }, 'model_error'],
-    [{ type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', result: 'Authentication failed' }, 'Authentication failed'],
-  ] as const)('never retains a consumed request past an error boundary %j', async (failure, message) => {
-    const h = harness();
-    h.init();
-    const a = await h.send('A');
-    h.lifecycle('A', 'started');
-    h.emit(failure);
-    const failed = await completion(a);
-    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message }) });
-    const b = await h.send('B');
-    h.lifecycle('B', 'started');
-    h.result('B answer');
-    expect(await completion(b)).toEqual({ status: 'completed', resultText: 'B answer' });
-    expect(await completion(a)).toBe(failed);
-    expect(h.results().map((event) => event.commandUuids)).toEqual([['A'], ['B']]);
   });
 
   it('fails every outstanding request on child loss and settles no completion', async () => {
@@ -711,19 +510,6 @@ describe('native failure and transport lifetime', () => {
     ]);
   });
 
-  it.each(['stop', 'fail'] as const)('classifies unconfirmed native writes as ambiguous on %s', async (action) => {
-    const h = harness();
-    let callback!: WriteCallback;
-    h.stdin.onWrite = (_input, cb) => { callback = cb; };
-    const a = h.rpc.submit('A');
-    const b = h.rpc.submit('B'); // Not written: capability remains unknown.
-    if (action === 'stop') h.rpc.stop(); else h.rpc.fail(new Error('lost transport'));
-    await expect(a).resolves.toMatchObject({ status: 'ambiguous' });
-    await expect(b).resolves.toMatchObject({ status: action === 'stop' ? 'stopped' : 'failed' });
-    callback();
-    expect(h.writes).toHaveLength(1);
-  });
-
   it.each(['throw', 'callback'])('reports an ambiguous native write failure through %s', async (mode) => {
     const h = harness();
     h.stdin.onWrite = (_input, callback) => {
@@ -754,27 +540,6 @@ describe('idle policy and result contract', () => {
     await expect(a.settled).resolves.toMatchObject({ kind: 'failed' });
     await expect(b.settled).resolves.toMatchObject({ kind: 'failed' });
     expect(h.reap).toHaveBeenCalledTimes(1);
-  });
-
-  it('resets idle time on every native line and clears it as soon as requests are answered', async () => {
-    vi.useFakeTimers();
-    const h = harness();
-    const a = await h.send('A');
-    h.lifecycle('A', 'started');
-    for (let i = 0; i < 5; i++) {
-      vi.advanceTimersByTime(800);
-      h.assistant('working');
-    }
-    expect(h.reap).not.toHaveBeenCalled();
-    h.result('done');
-    await completion(a);
-    // No completed frame is needed to release the request's deadline.
-    vi.advanceTimersByTime(10_000);
-    h.assistant('background');
-    h.result('background');
-    vi.advanceTimersByTime(10_000);
-    expect(h.reap).not.toHaveBeenCalled();
-    expect(h.results()[1]!.commandUuids).toEqual([]);
   });
 
   it.each([

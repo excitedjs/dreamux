@@ -168,7 +168,7 @@ export class FeishuSessionExtensions {
             channelPathSegment(input.channelId),
           ),
           signal: input.signal,
-          log: this.log.child?.({ feishu_extension: ext.name }) ?? this.log,
+          log: this.log.child({ feishu_extension: ext.name }),
           api: input.api,
         }),
       );

@@ -271,10 +271,10 @@ export interface ChannelSessionCreateContext<TConfig> {
   channel_id: string;
   provider: string;
   config: TConfig;
-  logger?: DreamuxLogger;
+  logger: DreamuxLogger;
   /** The per-dispatcher root the Channel owns its durable state under. */
-  state_root?: string;
-  cache_root?: string;
+  state_root: string;
+  cache_root: string;
 }
 
 /**

@@ -444,20 +444,16 @@ export class TeamRuntimeRegistry {
       teamRoot: this.opts.store.teamRoot(teamId),
       names: collection.names,
       admissions: collection.admissions,
-      ...(collection.conversationProjection !== undefined
-        ? { conversationProjection: collection.conversationProjection }
-        : {}),
+      conversationProjection: collection.conversationProjection,
       completionDelivery: collection.completionDelivery,
       leaderCompletionInitiator: collection.dispatcherCompletionInitiator,
-      admitOperation: collection.admitOperation ?? ((task) => task()),
+      admitOperation: collection.admitOperation,
       store: this.opts.store,
       leaderMcp: collection.leaderMcp,
       announceTeam: collection.announceTeam,
-      ...(collection.coreEvents !== undefined
-        ? { coreEvents: collection.coreEvents }
-        : {}),
+      coreEvents: collection.coreEvents,
       log: collection.log,
-      workflowLog: collection.workflowLog ?? collection.log,
+      workflowLog: collection.workflowLog,
       ...(collection.agentNameSuffixGenerator !== undefined
         ? { agentNameSuffixGenerator: collection.agentNameSuffixGenerator }
         : {}),

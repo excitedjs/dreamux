@@ -2,12 +2,10 @@ import type { RuntimeCompletion } from '@excitedjs/dreamux-types';
 import type { TurnOutcome } from './types.js';
 
 export function buildClaudeProcessEnv(
-  injectEnv: Record<string, string> | undefined,
   extraEnv: Record<string, string>,
 ): NodeJS.ProcessEnv {
   return {
     ...globalThis.process.env,
-    ...(injectEnv ?? {}),
     ...extraEnv,
   };
 }

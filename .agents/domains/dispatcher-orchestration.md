@@ -195,10 +195,11 @@ envelopes, and typed provider errors inside their own runtime packages. Neutral
 scan mechanics — digests, a bounded discovery budget, exact positional reads,
 and lexical path containment — are single-sourced in
 `/packages/dreamux-utils/src/activity-scan.ts`, which holds mechanism only and
-owns no record shape. Output bounding is not delegated: Core's own
-`readAgentActivity` re-validates every returned page against its record, cursor,
-text, and byte budgets, because a provider is not trusted to bound Core's
-output.
+owns no record shape. Core's own `readAgentActivity` still re-validates every
+returned page's shape (record count against what was requested, record and
+cursor field types) against its record, but a provider's own bounds are the
+only bound on the magnitude of what it returns — Core no longer imposes a
+byte/char/cursor-length cap of its own on top of them.
 
 Source:
 

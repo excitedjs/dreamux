@@ -143,6 +143,22 @@ export class RuleViolation extends Error {
   }
 }
 
+/**
+ * A reader's refusal to interpret a persisted file: the version, shape, or a
+ * field is one this build does not accept. Deliberately *not* a
+ * {@link DreamuxError} — it names no wire code because Dreamux 0.x has no
+ * migration path for it; the only remedy is deleting the file and letting it
+ * rebuild, and a read path that hits it propagates the failure rather than
+ * degrading to `null` or an empty document the way an ordinary missing or
+ * corrupt-but-tolerated file does.
+ */
+export class LegacyStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = new.target.name;
+  }
+}
+
 /** The process refused the request because shutdown already closed admission. */
 export class ServerShuttingDownError extends StatedFailure {
   constructor() {

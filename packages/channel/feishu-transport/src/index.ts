@@ -50,14 +50,9 @@ export {
   type FeishuTransport,
   type FeishuCredentials,
   type FeishuTransportOptions,
-  type FeishuWebSocketRegistration,
   type FeishuAppOwnerIdentity,
   type FeishuSendOptions,
   type FeishuSendResult,
-  type FeishuCreateGroupInput,
-  type FeishuCreateGroupResult,
-  type FeishuInviteMembersInput,
-  type FeishuInviteMembersResult,
   type FeishuChatMode,
   type FeishuCommentAnchor,
   type FeishuCommentSegment,
@@ -93,10 +88,3 @@ export type { TransportLogger } from './transport/diagnostics.js'
 
 // ── small shared util ──
 export { isRecord, asString } from './json.js'
-
-/**
- * Package marker — a stable export the channel layer can import to assert the
- * core resolves end to end. Kept from the PR0 scaffold so the `feishu-channel`
- * smoke test stays green.
- */
-export const FEISHU_TRANSPORT_PACKAGE = '@excitedjs/feishu-transport'

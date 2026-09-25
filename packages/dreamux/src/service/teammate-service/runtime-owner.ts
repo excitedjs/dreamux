@@ -11,7 +11,6 @@ import type {
 
 import {
   DISABLE_FEATURE_USER_INTERRUPT,
-  HOST_INJECT_ENV,
   hostRuntimePaths,
 } from '../../agent-runtime/index.js';
 import type { ResolvedAgentConfig } from '../../config/config.js';
@@ -31,7 +30,7 @@ import type { TeammateServiceDeps, TeammateServiceOptions } from './types.js';
 
 interface RuntimeLaunchSpec {
   provider: AgentRuntimeProvider<unknown>;
-  context: Omit<AgentRuntimeCreateContext<unknown>, 'injectEnv'>;
+  context: AgentRuntimeCreateContext<unknown>;
 }
 
 interface TeammateRuntimeOwnerCallbacks {
@@ -246,7 +245,6 @@ export class TeammateRuntimeOwner {
       const launch = this.resolveLaunch(lease);
       runtime = await launch.provider.createRuntime({
         ...launch.context,
-        injectEnv: HOST_INJECT_ENV,
         disabledFeatures: [
           DISABLE_FEATURE_USER_INTERRUPT,
           ...(launch.context.disabledFeatures ?? []),
@@ -321,7 +319,7 @@ export class TeammateRuntimeOwner {
         );
         return;
       }
-      this.deps.conversationProjection?.projectActivity(
+      this.deps.conversationProjection.projectActivity(
         { identity: this.state.current(), role: this.options.role },
         activity,
       );
@@ -359,13 +357,12 @@ export class TeammateRuntimeOwner {
         state: lease.state,
         paths: hostRuntimePaths,
         mcpServers: this.mcpServerDescriptors(lease),
-        logger:
-          this.deps.log.child?.({
-            dispatcher_id: this.dispatcherId,
-            ...(this.options.loggerFields ?? {
-              teammate: identity.name,
-            }),
-          }) ?? this.deps.log,
+        logger: this.deps.log.child({
+          dispatcher_id: this.dispatcherId,
+          ...(this.options.loggerFields ?? {
+            teammate: identity.name,
+          }),
+        }),
       },
     };
   }

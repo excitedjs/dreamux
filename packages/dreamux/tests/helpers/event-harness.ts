@@ -51,6 +51,9 @@ export function createCapturingLogger(): CapturingLogger {
     info: () => {},
     debug: () => {},
     trace: () => {},
+    // Bindings are dropped: nothing here asserts on a child logger's own
+    // scoped fields, only on which bucket a call landed in.
+    child: () => logger,
   };
   return { logger, warnCalls, errorCalls };
 }
@@ -139,34 +142,4 @@ export function makeIdentityStore(input: {
     log: input.log ?? createCapturingLogger().logger,
     ...(input.onPersisted !== undefined ? { onPersisted: input.onPersisted } : {}),
   });
-}
-
-/** A full in-memory `AgentEntityIdentity`, for tests that never touch disk. */
-export function makeIdentity(
-  overrides: Partial<AgentEntityIdentity> = {},
-): AgentEntityIdentity {
-  const now = Date.now();
-  return {
-    version: 1,
-    dispatcher_id: 'dispatcher-fixture',
-    name: 'fixture-agent',
-    team_id: null,
-    agent_runtime: 'fixture-runtime',
-    session_id: null,
-    source_cwd: '/workspace/repo',
-    source_repo: null,
-    cwd: '/workspace/repo',
-    runtime_cwd: '/workspace/repo',
-    worktree: makeWorktreeIdentity('/workspace/repo'),
-    intent: null,
-    identity_prompt: null,
-    skill_sources: [],
-    created_at: now,
-    updated_at: now,
-    status: 'starting',
-    last_error: null,
-    closed_at: null,
-    close_note: null,
-    ...overrides,
-  };
 }

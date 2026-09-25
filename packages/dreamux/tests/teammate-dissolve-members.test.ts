@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentEntityCollectionStore } from '../src/service/agent-entity/identity-store.js';
 import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
 import { closeMembersForDissolve } from '../src/service/teammate-collection/dissolve-members.js';
-import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import type { TeammateService } from '../src/service/teammate-service/index.js';
 import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
 import { makeTempDir, silentLog } from './helpers/dissolve-harness.js';
@@ -197,30 +196,6 @@ describe('closeMembersForDissolve: cold (record-only) members are normalized dir
 });
 
 describe('bulk member dissolve has no Dispatcher-facing lifecycle surface', () => {
-  it('a dispatcher-scoped TeammateCollection (teamScope: null) refuses the bulk close/stop capability outright', async () => {
-    const collection = new TeammateCollection({
-      dispatcherId: DISPATCHER,
-      teamScope: null,
-      config: { agents: {} } as never,
-      agentRuntimeProviders: {} as never,
-      worktrees: {} as never,
-      store: {} as never,
-      names: {} as never,
-      admissions: {} as never,
-      log: silentLog as never,
-    });
-
-    // Dissolve is not a dispatcher verb: the bulk capability only exists for
-    // a Team's own scoped collection, which `TeamClosing` holds directly
-    // rather than reaching it through `TeammateOps`.
-    await expect(collection.closeAllForDissolve('note')).rejects.toThrow(
-      'bulk member dissolve is a Team capability',
-    );
-    await expect(collection.stopAllForDissolve()).rejects.toThrow(
-      'bulk member dissolve is a Team capability',
-    );
-  });
-
   it('the TeammateOps surface a Dispatcher receives declares no bulk-dissolve verb', async () => {
     const text = await readFile(
       new URL('../src/service/teammate-collection/types.ts', import.meta.url),

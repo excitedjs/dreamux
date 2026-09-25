@@ -90,7 +90,7 @@ export function createConversationProjection(input: {
     projectInput(agent, admitted) {
       const identity = agent.identity;
       const scope = actorScope(agent);
-      if (scope === null || input.coreEvents.hasSources?.() === false) return;
+      if (scope === null || !input.coreEvents.hasSources()) return;
       guarded(agent, 'input', () => {
         const content = redactText(admitted.text, identity.cwd, input.homePathPrefixes);
         const event: TeammateInputEvent = {
@@ -112,7 +112,7 @@ export function createConversationProjection(input: {
     projectActivity(agent, activity) {
       const identity = agent.identity;
       const scope = actorScope(agent);
-      if (scope === null || input.coreEvents.hasSources?.() === false) return;
+      if (scope === null || !input.coreEvents.hasSources()) return;
       guarded(agent, 'activity', () => {
         const event: TeammateActivityEvent = {
           ...scope,

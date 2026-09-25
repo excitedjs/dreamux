@@ -14,7 +14,6 @@ import {
   dispatcherDir,
   logsRoot,
   probeStandardExecDirs,
-  setRuntimeConfig,
   stateRoot,
   type ExecDirProbe,
 } from '../platform/paths.js';
@@ -89,7 +88,6 @@ export async function runOnboard(
         probe: options.nodeProbe,
       })
     : process.execPath;
-  setRuntimeConfig(dreamuxConfig);
 
   await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
@@ -130,7 +128,6 @@ export async function runOnboard(
   const loaded = answers.dryRun
     ? null
     : await loadConfig({ configDir: answers.configDir });
-  if (loaded !== null) setRuntimeConfig(loaded.config);
   const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
   const fallbackDirs = answers.registerService
     ? await probeStandardExecDirs(
@@ -292,6 +289,7 @@ async function runDispatcherDoctor(
     : env;
   const reports = await runDispatcherProviderDiagnostics(
     {
+      config: loaded.config,
       dispatcher,
       catalogs,
       runner,

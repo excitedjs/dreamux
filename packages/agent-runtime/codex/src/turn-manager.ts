@@ -62,7 +62,6 @@ export class TurnManager {
   private readonly terminalOrder: string[] = [];
   private protocolFailure: Error | null = null;
   private collector: TurnCollector | null = null;
-  private collectorThreadId: string | null = null;
   private tokenUsage: ThreadTokenUsage | null = null;
   private decisionTail: Promise<void> = Promise.resolve();
   private stopped = false;
@@ -177,19 +176,20 @@ export class TurnManager {
     return task;
   }
 
+  /**
+   * Construct the collector once. One TurnManager instance is bound to one
+   * resident runtime session, whose native thread id is fixed before the
+   * manager is built (`CodexRuntime` resolves the thread and only then
+   * constructs its `TurnManager`), so `threadId` never changes across calls.
+   */
   private ensureCollector(threadId: string): void {
-    if (this.collector !== null && this.collectorThreadId === threadId) return;
-    this.collector?.dispose();
-    this.collectorThreadId = threadId;
-    this.tokenUsage = null;
+    if (this.collector !== null) return;
     this.collector = subscribeTurnCollection(this.opts.client, threadId, {
-      retainAfterTerminal: true,
       onTokenUsage: (usage) => { this.tokenUsage = usage ?? null; },
       onItemStarted: (turnId, item) => this.observeItem(turnId, item, 'started', Date.now()),
       onItemCompleted: (turnId, item, occurredAt) => this.observeItem(turnId, item, 'completed', occurredAt),
       onTerminal: (turnId, terminal) => this.observeTerminal(turnId, terminal),
       onUnscopedFailure: (error) => this.failProtocol(error),
-      onProtocolViolation: (error) => this.failProtocol(error),
     });
   }
 

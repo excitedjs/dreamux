@@ -95,36 +95,17 @@ function notifyMessageCreated(
   }
 }
 
-export interface FeishuCreateGroupInput {
-  name: string
-  userOpenIds: string[]
-}
-export interface FeishuCreateGroupResult {
-  chatId: string
-}
-export interface FeishuInviteMembersInput {
-  chatId: string
-  userOpenIds: string[]
-}
-export interface FeishuInviteMembersResult {
-  addedOpenIds: string[]
-}
-
 export type FeishuChatMode = 'p2p' | 'group' | 'topic'
 
 function feishuChatClient(client: lark.Client): {
   chat?: {
-    create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
     get?: (input: unknown) => Promise<{ data?: { chat_mode?: string; name?: string } }>
-    members?: { create?: (input: unknown) => Promise<unknown> }
   }
 } {
   const root = client as unknown as {
     im?: {
       chat?: {
-        create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
         get?: (input: unknown) => Promise<{ data?: { chat_mode?: string; name?: string } }>
-        members?: { create?: (input: unknown) => Promise<unknown> }
       }
     }
   }
@@ -232,8 +213,6 @@ export interface FeishuTransport {
       card: unknown,
       options?: Pick<FeishuSendOptions, 'signal'>,
     ): Promise<FeishuSendResult>
-    createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult>
-    inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>
     /** Optional capability for custom transports; callers must fail safe when absent. */
     getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>
     /** Optional best-effort lookup of a chat's current Feishu name. */
@@ -277,13 +256,24 @@ export interface FeishuCredentials {
 export interface FeishuTransportOptions {
     client?: lark.Client
     logger?: TransportLogger
-    /** Narrow test/embedding edge replacing only WebSocket route registration. */
-    webSocketRegistration?: FeishuWebSocketRegistration
 }
 
-export interface FeishuWebSocketRegistration {
-  open(routes: InboundRoutes): Promise<{ openId?: string; appName?: string } | void>
-  close(): void | Promise<void>
+/**
+ * Suppresses the Lark SDK's own client/dispatcher/WebSocket logging (R39: no
+ * SDK diagnostic log, redacted or not — see `diagnostics.ts`'s module doc).
+ * Omitting `logger` entirely is not equivalent: the SDK falls back to its own
+ * `defaultLogger`, which writes unredacted args straight to `console.log` /
+ * `console.warn` — reopening the credential leak this seam existed to close
+ * and, for `console.log`/`console.info`/`console.debug`, writing to stdout,
+ * which an MCP stdio transport reserves for the JSON-RPC stream. One shared
+ * no-op object silences all three SDK clients without either regression.
+ */
+const NOOP_SDK_LOGGER: lark.Logger = {
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
 }
 
 export function createFeishuTransport(
@@ -296,7 +286,7 @@ export function createFeishuTransport(
     new lark.Client({
       appId: creds.appId,
       appSecret: creds.appSecret,
-      logger: diag.sdkLogger,
+      logger: NOOP_SDK_LOGGER,
     })
   let wsClient: lark.WSClient | undefined
   const selfIdentity = createSelfIdentityCache(client, diag)
@@ -322,14 +312,8 @@ export function createFeishuTransport(
 
   async function openInbound(routes: InboundRoutes): Promise<void> {
     const inbound = withSelfIdentityRecovery(routes)
-    if (options.webSocketRegistration !== undefined) {
-      selfIdentity.accept(
-        (await options.webSocketRegistration.open(inbound)) || undefined,
-      )
-      return
-    }
     await selfIdentity.ensureResolved()
-    const dispatcher = new lark.EventDispatcher({ logger: diag.sdkLogger }).register(inbound)
+    const dispatcher = new lark.EventDispatcher({ logger: NOOP_SDK_LOGGER }).register(inbound)
     let markReady: () => void = () => {}
     const ready = new Promise<void>((resolve) => {
       markReady = resolve
@@ -338,7 +322,7 @@ export function createFeishuTransport(
     const ws = new lark.WSClient({
       appId: creds.appId,
       appSecret: creds.appSecret,
-      logger: diag.sdkLogger,
+      logger: NOOP_SDK_LOGGER,
       handshakeTimeoutMs: WS_HANDSHAKE_TIMEOUT_MS,
       autoReconnect: true,
       onReady: () => {
@@ -410,39 +394,6 @@ export function createFeishuTransport(
       const res = await sendFeishuMessage(client, target, content, options?.signal)
       const id = res.data?.message_id
       return { messageIds: id ? [id] : [] }
-    },
-
-    async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
-      const chatClient = feishuChatClient(client)
-      if (chatClient.chat?.create === undefined) {
-        throw new Error('Feishu chat create API is not available in this SDK/client; grant chat create permission or upgrade the Feishu transport client.')
-      }
-      const res = await chatClient.chat.create({
-        params: { user_id_type: 'open_id' },
-        data: {
-          name: input.name,
-          user_id_list: input.userOpenIds,
-        },
-      })
-      const chatId = res.data?.chat_id
-      if (typeof chatId !== 'string' || chatId === '') {
-        throw new Error('Feishu chat create API returned no chat_id')
-      }
-      return { chatId }
-    },
-
-    async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
-      if (input.userOpenIds.length === 0) return { addedOpenIds: [] }
-      const chatClient = feishuChatClient(client)
-      if (chatClient.chat?.members?.create === undefined) {
-        throw new Error('Feishu chat member invite API is not available in this SDK/client; grant chat member permission or upgrade the Feishu transport client.')
-      }
-      await chatClient.chat.members.create({
-        path: { chat_id: input.chatId },
-        data: { id_list: input.userOpenIds },
-        params: { member_id_type: 'open_id' },
-      })
-      return { addedOpenIds: input.userOpenIds }
     },
 
     async getChatMode(chatId: string): Promise<FeishuChatMode | undefined> {
@@ -568,11 +519,7 @@ export function createFeishuTransport(
 
     async close(): Promise<void> {
       try {
-        if (options.webSocketRegistration !== undefined) {
-          await options.webSocketRegistration.close()
-        } else {
-          wsClient?.close()
-        }
+        wsClient?.close()
       } catch (err) {
         diag.diagnostic('error while closing the Feishu WebSocket:', err)
       }

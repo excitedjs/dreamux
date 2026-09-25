@@ -8,7 +8,7 @@ import type {
 import type { AgentRuntimeProviderCatalog } from './agent-runtime/catalog.js';
 import { hostRuntimePaths } from './agent-runtime/host-paths.js';
 import type { ChannelProviderCatalog } from './channel/catalog.js';
-import type { DispatcherConfig, DreamuxConfig } from './config/config.js';
+import { dispatcherAgent, type DispatcherConfig, type DreamuxConfig } from './config/config.js';
 import {
   dispatcherCacheDir,
   dispatcherDir,
@@ -31,6 +31,7 @@ export interface ProviderDiagnosticReport {
 }
 
 interface ProviderDiagnosticRunOptions {
+  config: DreamuxConfig;
   dispatcher: DispatcherConfig;
   catalogs: ProviderDiagnosticCatalogs;
   runner: CommandRunner;
@@ -48,18 +49,17 @@ interface ProviderBinCheckOptions {
 export async function runDispatcherProviderDiagnostics(
   options: ProviderDiagnosticRunOptions,
 ): Promise<ProviderDiagnosticReport[]> {
-  const { dispatcher, catalogs, runner, env, scope } = options;
-  const runtimeProvider = catalogs.agentRuntime.resolve(
-    dispatcher.runtime.provider,
-  ).implementation;
+  const { config, dispatcher, catalogs, runner, env, scope } = options;
+  const agent = dispatcherAgent(config, dispatcher.id);
+  const runtimeProvider = catalogs.agentRuntime.resolve(agent.provider).implementation;
   const runtimeDiagnostic = runtimeProvider.diagnostic;
   const runtimeResult =
     runtimeDiagnostic === undefined
-      ? providerDefaultDiagnostic('agentRuntime', dispatcher.runtime.provider)
+      ? providerDefaultDiagnostic('agentRuntime', agent.provider)
       : await runtimeDiagnostic.runDiagnostic(
           {
             runtime_id: dispatcher.id,
-            config: dispatcher.runtime.config,
+            config: agent.config,
             env,
             scope,
             paths: hostRuntimePaths,
@@ -70,7 +70,7 @@ export async function runDispatcherProviderDiagnostics(
     {
       kind: 'agentRuntime',
       id: dispatcher.agentRuntime,
-      provider: dispatcher.runtime.provider,
+      provider: agent.provider,
       scope,
       result: runtimeResult,
     },

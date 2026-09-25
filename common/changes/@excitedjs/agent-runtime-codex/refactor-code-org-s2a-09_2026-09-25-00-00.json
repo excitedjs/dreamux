@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2a, item 9: events.ts's one-shot turn-collection mode (runTurn, TurnCollector.awaitTurn, and the acceptAnyThread/onTrace/retainAfterTerminal collector options it needed) is deleted along with the sha256 terminal-fingerprint comparison, and turn-manager.ts's collector construction no longer re-subscribes on a thread-id change. None of the deleted names were re-exported from the package's index.ts barrel (verified: only the resident push-style subscribeTurnCollection path, used by TurnManager, was ever reachable outside this package), so there is no published-API or runtime-behavior change for a Dreamux-managed Codex session.",
+      "type": "none",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

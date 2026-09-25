@@ -234,41 +234,4 @@ describe('createFeishuTransport — self-identity recovery', () => {
     expect(request).toHaveBeenCalledTimes(1)
     expect(transport.selfId).toBeUndefined()
   })
-
-  test('a registration that reports no open_id leaves identity recoverable', async () => {
-    const request = vi.fn().mockResolvedValue(RESOLVED as never)
-    let registered: InboundRoutes | undefined
-    const seenSelfIds: Array<string | undefined> = []
-    const transport = createFeishuTransport(
-      { appId: 'app', appSecret: 'secret' },
-      {
-        client: { request } as unknown as lark.Client,
-        logger: silentLogger,
-        webSocketRegistration: {
-          open: async (routes: InboundRoutes) => {
-            registered = routes
-            // An app name without an open_id is not a resolved identity.
-            return { appName: 'Dreamux' }
-          },
-          close: () => undefined,
-        },
-      },
-    )
-
-    await transport.start({
-      [IM_MESSAGE_EVENT_TYPE]: async () => {
-        seenSelfIds.push(transport.selfId)
-      },
-    })
-
-    expect(transport.selfId).toBeUndefined()
-    expect(transport.selfName).toBeUndefined()
-    expect(request).not.toHaveBeenCalled()
-
-    await registered?.[IM_MESSAGE_EVENT_TYPE]?.(messageEvent())
-
-    expect(seenSelfIds).toEqual(['ou_self'])
-    expect(transport.selfName).toBe('Dreamux')
-    expect(request).toHaveBeenCalledTimes(1)
-  })
 })

@@ -217,7 +217,7 @@ export class TeamStore {
     const coreEvents = this.opts.coreEvents;
     // Nobody is listening, so there is no fact to establish and no reason to
     // read a roster for one. The same short-circuit the turn projection uses.
-    if (coreEvents === undefined || coreEvents.hasSources?.() === false) return;
+    if (coreEvents === undefined || !coreEvents.hasSources()) return;
     const teammates = (await this.opts.roster?.(team)) ?? null;
     if (teammates === null) return;
     this.publish(team, team.updated_at, teammates);

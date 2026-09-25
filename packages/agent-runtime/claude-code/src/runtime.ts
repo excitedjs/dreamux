@@ -9,7 +9,6 @@ import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import { materializeClaudeSkillAddDir } from './skill-materializer.js';
 import type { ClaudeCodeSession } from './supervisor.js';
 import type { ClaudeProtocolEvent } from './types.js';
-import { consoleFallbackLogger } from './logger.js';
 import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
   endNativeTurn,
@@ -97,7 +96,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.threadId = priorSessionId;
     this.resumeOnNextSpawn = priorSessionId !== null;
     this.resumed = priorSessionId !== null;
-    this.logger = deps.logger ?? consoleFallbackLogger(this.dispatcherId);
+    this.logger = deps.logger;
   }
 
   start(): Promise<AgentRuntimeStartOutcome> {
@@ -346,7 +345,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       bin: this.bin,
       args,
       cwd: this.cwd,
-      env: buildClaudeProcessEnv(this.deps.injectEnv, this.config.extra_env),
+      env: buildClaudeProcessEnv(this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
       sessionId: candidateSessionId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,

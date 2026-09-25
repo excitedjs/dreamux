@@ -74,7 +74,7 @@ export function startPlugins(
       result = runAsPlugin(loaded.name, () =>
         server({
           config: loaded.config,
-          logger: logger.child?.({ plugin: loaded.name }) ?? logger,
+          logger: logger.child({ plugin: loaded.name }),
           hooks,
         }),
       );

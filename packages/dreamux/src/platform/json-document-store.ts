@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 
 import { writeFileAtomic } from './atomic-write.js';
 import { errorMessage } from './error-info.js';
+import { LegacyStateError } from './errors.js';
 import { isNotFound } from './fs-errors.js';
-import { LegacyStateError } from '../service/legacy-state.js';
 
 export interface JsonDocumentStoreOptions<TDoc> {
   version: number;

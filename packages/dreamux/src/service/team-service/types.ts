@@ -79,7 +79,7 @@ export interface TeamServiceDeps {
   /** The dispatcher-global agent-name namespace. */
   names: AgentNameRegistry;
   admissions: AdmissionLedger;
-  conversationProjection?: ConversationProjection;
+  conversationProjection: ConversationProjection;
   completionDelivery: CompletionDeliveryPolicy;
   /**
    * Where this Team's own leader reports: the dispatcher Agent that owns the
@@ -96,7 +96,7 @@ export interface TeamServiceDeps {
   announceTeam: (team: Team, ctx: { origin: 'create' | 'rebuild' }) => void;
   store: TeamStore;
   agentNameSuffixGenerator?: SuffixGenerator;
-  coreEvents?: DispatcherCoreEventPublisher;
+  coreEvents: DispatcherCoreEventPublisher;
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;
 }

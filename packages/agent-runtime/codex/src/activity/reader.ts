@@ -67,10 +67,6 @@ interface ScanResult {
 export async function readCodexRecentActivity(
   query: AgentActivityQuery,
   context: AgentActivityReadContext<DispatcherCodexConfig>,
-  testHooks: {
-    afterLocate?: () => void | Promise<void>;
-    maxReadChunkBytes?: number;
-  } = {},
 ): Promise<AgentActivityPage> {
   const limit = resolveLimit(query.limit);
   const includeTools = query.includeTools ?? true;
@@ -83,7 +79,6 @@ export async function readCodexRecentActivity(
     discoveryBudget,
   );
   const lineage = await buildLineage(tail, roots, discoveryBudget);
-  await testHooks.afterLocate?.();
   const generation = lineageGeneration(lineage);
   const fingerprint = codexQueryFingerprint(includeTools);
   const cursor =
@@ -97,12 +92,7 @@ export async function readCodexRecentActivity(
     );
   }
   if (cursor !== null) {
-    await verifyBoundaryDigest(
-      lineage,
-      cursor.pos,
-      cursor.bd,
-      testHooks.maxReadChunkBytes,
-    );
+    await verifyBoundaryDigest(lineage, cursor.pos, cursor.bd);
   }
 
   const scan = await scanRecords({
@@ -110,9 +100,6 @@ export async function readCodexRecentActivity(
     startPosition: cursor?.pos ?? null,
     limit,
     includeTools,
-    ...(testHooks.maxReadChunkBytes !== undefined
-      ? { maxReadChunkBytes: testHooks.maxReadChunkBytes }
-      : {}),
   });
 
   const anchor = scan.hasOlder
@@ -214,7 +201,6 @@ async function scanRecords(input: {
   startPosition: CodexCursorPosition | null;
   limit: number;
   includeTools: boolean;
-  maxReadChunkBytes?: number;
 }): Promise<ScanResult> {
   if (
     input.startPosition !== null &&
@@ -256,7 +242,6 @@ async function scanRecords(input: {
       segment.transcript,
       endOffset,
       bytesRemaining,
-      input.maxReadChunkBytes,
     );
     bytesRemaining -= window.bytesRead;
     recordsRemaining -= window.lines.length;
@@ -302,7 +287,6 @@ async function loadLineWindow(
   transcript: CodexValidatedRollout,
   requestedEndOffset: number | null,
   maxBytes: number,
-  maxReadChunkBytes?: number,
 ): Promise<{
   lines: CodexActivityLine[];
   startOffset: number;
@@ -329,11 +313,7 @@ async function loadLineWindow(
     const end = Math.min(requestedEndOffset ?? opened.size, opened.size);
     const start = Math.max(0, end - maxBytes);
     const length = end - start;
-    const data = await readBytesAt(opened.handle, start, length, {
-      ...(maxReadChunkBytes !== undefined
-        ? { maxChunkBytes: maxReadChunkBytes }
-        : {}),
-    });
+    const data = await readBytesAt(opened.handle, start, length);
     return {
       lines: parseLines(data, start, start === 0),
       startOffset: start,
@@ -390,7 +370,6 @@ async function verifyBoundaryDigest(
   lineage: readonly LineageSegment[],
   position: CodexCursorPosition,
   expectedDigest: string,
-  maxReadChunkBytes?: number,
 ): Promise<void> {
   const segment = lineage[position.segment];
   if (segment === undefined) {
@@ -402,7 +381,6 @@ async function verifyBoundaryDigest(
   const boundaryBytes = await readBoundaryRecordBytes(
     segment.transcript,
     position.offset,
-    maxReadChunkBytes,
   );
   if (digest(boundaryBytes) !== expectedDigest) {
     throw new CodexActivityError(
@@ -415,7 +393,6 @@ async function verifyBoundaryDigest(
 async function readBoundaryRecordBytes(
   transcript: CodexValidatedRollout,
   offset: number,
-  maxReadChunkBytes?: number,
 ): Promise<Buffer> {
   const opened = await openValidatedSegment(transcript);
   try {
@@ -430,11 +407,7 @@ async function readBoundaryRecordBytes(
       );
     }
     const length = Math.min(MAX_DECODED_BYTES, opened.size - offset);
-    const bytes = await readBytesAt(opened.handle, offset, length, {
-      ...(maxReadChunkBytes !== undefined
-        ? { maxChunkBytes: maxReadChunkBytes }
-        : {}),
-    });
+    const bytes = await readBytesAt(opened.handle, offset, length);
     return boundaryRecordFromBuffer(bytes, 0);
   } finally {
     await opened.handle.close();
@@ -474,7 +447,6 @@ function effectiveEnvironment(
 ): Record<string, string | undefined> {
   return {
     ...process.env,
-    ...(context.injectEnv ?? {}),
     ...context.config.extra_env,
   };
 }

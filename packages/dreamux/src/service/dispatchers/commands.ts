@@ -1,11 +1,11 @@
 /**
  * The Dispatcher namespace's canonical Commands.
  *
- * The process-level {@link Dispatchers} collection owns dispatcher enumeration
- * and lifecycle, while the addressed Dispatcher's own Agent owns its turn
- * intake and interrupt, so all five definitions live beside that collection.
- * Each one addresses its target through the caller context; only
- * `dispatcher.list` is process-wide.
+ * The process-level {@link Dispatchers} collection owns dispatcher enumeration,
+ * while the addressed Dispatcher's own Agent owns its turn intake and
+ * interrupt, so all four definitions live beside that collection. Each one
+ * addresses its target through the caller context; only `dispatcher.list` is
+ * process-wide.
  */
 import type {
   AgentRuntimeInterruptOutcome,
@@ -58,16 +58,6 @@ interface DispatcherStatusResult {
   last_error: string | null;
 }
 
-interface DispatcherStartResult {
-  dispatcher_id: string;
-  status: string | null;
-}
-
-const START_OUTPUT = objectSchema(
-  { dispatcher_id: STRING, status: NULLABLE_STRING },
-  ['dispatcher_id', 'status'],
-);
-
 export function dispatcherCommands(
   host: CoreCommandHost,
 ): readonly AnyCoreCommand[] {
@@ -119,27 +109,6 @@ export function dispatcherCommands(
     },
   };
 
-  const start: CoreCommandDefinition<
-    'dispatcher.start',
-    void,
-    DispatcherStartResult
-  > = {
-    name: 'dispatcher.start',
-    version: 1,
-    input: NO_INPUT,
-    output: START_OUTPUT,
-    parse(payload) {
-      commandPayload(payload);
-    },
-    async execute(context) {
-      const id = mustDispatcherId(context);
-      mustDispatcherRow(host, id);
-      const dispatcher = host.dispatcher(id);
-      await dispatcher.start();
-      return { dispatcher_id: id, status: dispatcher.runtimeStatus().status };
-    },
-  };
-
   const submit: CoreCommandDefinition<
     'dispatcher.submit',
     DispatcherSubmitInput,
@@ -181,5 +150,5 @@ export function dispatcherCommands(
     },
   };
 
-  return [list, status, start, submit, interrupt] as unknown as readonly AnyCoreCommand[];
+  return [list, status, submit, interrupt] as unknown as readonly AnyCoreCommand[];
 }

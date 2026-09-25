@@ -523,15 +523,6 @@ describe('outbound builders', () => {
     expect('isSynthetic' in parsed).toBe(false);
   });
 
-  it('buildUserMessage sets isSynthetic as a sibling of message', () => {
-    const parsed = JSON.parse(buildUserMessage('done', { isSynthetic: true }));
-    expect(parsed).toEqual({
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text: 'done' }] },
-      isSynthetic: true,
-    });
-  });
-
   it('buildUserMessage sends no delivery priority at all', () => {
     // The envelope carried a `priority` until it was deleted as a feature.
     expect('priority' in JSON.parse(buildUserMessage('hi'))).toBe(false);

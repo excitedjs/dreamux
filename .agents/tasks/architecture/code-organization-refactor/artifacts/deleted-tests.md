@@ -339,3 +339,2054 @@ the immediate-submit path, whether or not it was deleted.
   `dreamux-utils`/`agent-runtime-codex`/`agent-runtime-claude-code`/
   `feishu-transport` cases in the same describe block are untouched, since
   only `dreamux-types`'s barrel shape changed.
+
+## Stage 2a — Item 1
+
+`dreamux-types` shared context required-ness + R30 (`injectEnv`/`HOST_INJECT_ENV`
+deletion). Two independent drivers produced test collateral this item;
+a third candidate driver (`DreamuxLogger.child` made required) is
+**deliberately not acted on** — see the note at the end of this section.
+
+### Driver A — R30: `injectEnv` deleted from `AgentActivityReadContext`
+
+`packages/dreamux-types/src/agent-runtime.ts`'s `AgentActivityReadContext.injectEnv?`
+is deleted outright (not required, gone), and `effectiveEnvironment()` in both
+provider packages' `activity/reader.ts` no longer merges it. Production is
+unaffected (Core always injected `{}`), but both providers' activity-read test
+suites used `injectEnv` as their ONLY channel for pointing the reader at a
+fixture's temp `CODEX_HOME`/`CLAUDE_CONFIG_DIR` instead of the real one — a
+real, working test-only use of the neutral seam that R31 replaces with a
+different mechanism (`config.extra_env`), not the deleted seam.
+
+- **File:** `packages/agent-runtime/codex/tests/codex-activity-read.test.ts`
+  (whole file, 15 cases) + `packages/agent-runtime/codex/tests/helpers/codex-activity-fixtures.ts`
+  (orphaned helper, deleted alongside — zero other importers).
+  **Contract pinned:** `readRecentActivity` behavioral coverage — actively-growing
+  session reads, chronological ordering, stable cursor pagination without
+  skip/duplicate, `includeTools` default + group-only hiding, and the neutral
+  error taxonomy (`session_unavailable`/`activity_corrupt`/`provider_failure`/
+  `cursor_invalid`), all against REAL rollout files under a temp `CODEX_HOME`.
+  **Failure:** the shared `readContext()` helper (used by every case) returns
+  an object literal with `injectEnv: session.env` against the
+  `AgentActivityReadContext` return type — an excess-property compile error
+  (`tsc -p tsconfig.tests.json`). Empirically confirmed at runtime too: with
+  `injectEnv` merging removed from `effectiveEnvironment()`, 14 of 15 cases
+  fail (the reader resolves the real ambient `CODEX_HOME`, not the fixture's);
+  the 15th passes only vacuously (asserts `session_unavailable` for a
+  never-existed session id, true under any `CODEX_HOME`).
+  **Contract still holds; restore in the final PR.** Nothing about
+  `readRecentActivity`'s behavior changed — only the fixture's env-injection
+  channel. Restoration recipe: rebuild `readContext()` to set
+  `config.extra_env` (`{ CODEX_HOME: session.env['CODEX_HOME'], HOME: session.env['HOME'] }`)
+  instead of `injectEnv`, matching R31's "the native home is resolved per
+  Agent from its effective spawn env (`process.env` plus that agent's
+  `extra_env`)".
+
+- **File:** `packages/agent-runtime/claude-code/tests/activity-reader.test.ts`
+  (whole file, 11 cases).
+  **Contract pinned:** `readClaudeRecentActivity` behavioral coverage — an
+  actively growing session paginates with a stable cursor; a closed session
+  (writer gone) reads identically; tools hidden as a GROUP by `includeTools`;
+  neutral typed errors with no native path/session-layout leakage; no tool
+  argument/result content or native filesystem path crosses into a returned
+  `AgentActivityRecord`.
+  **Failure:** same shape — the shared `makeFixture()` helper's `context`
+  literal sets `injectEnv: { CLAUDE_CONFIG_DIR: configDir }` against
+  `AgentActivityReadContext`, an excess-property compile error. Empirically 7
+  of 11 cases fail at runtime once the merge is removed (the other 4 pass
+  vacuously — limit validation and not-found cases that never depend on
+  `CLAUDE_CONFIG_DIR` resolving to the fixture).
+  **Contract still holds; restore in the final PR.** Restoration recipe:
+  rebuild `makeFixture()`'s `context` to set
+  `config.extra_env: { CLAUDE_CONFIG_DIR: configDir }` instead of `injectEnv`
+  (claude-code's own env-merge in `runtime-session.ts`/`activity/reader.ts`
+  already reduces to `{ ...process.env, ...extraEnv }`, so `extra_env` is the
+  live channel post-R30, same as codex).
+
+### Driver B — `AgentRuntimeCreateContext`/`ChannelSessionCreateContext` required-ness (`activity`, `logger`, `state_root`, `cache_root`)
+
+Foreseen by this item's own plan ("grep test fixtures... for object literals
+that omit `activity`/`logger`/`state_root`/`cache_root`"). Every case below
+builds one of these context types by hand with a field that is now required
+and was simply never supplied — production behavior does not change (Core
+already always supplied these), so the contract survives unconditionally and
+restoration is "add the omitted field(s) back" in every case, not a design
+question.
+
+- **File / case:** `packages/agent-runtime/codex/tests/codex-runtime.test.ts` —
+  `describe('MCP server list passthrough encoding') > it('renders exactly the
+  Core-supplied MCP server list, unmutated, into the launched extra args')`
+  (whole `describe`, one case).
+  **Contract pinned:** the Codex provider renders Core's MCP server list into
+  `--mcp-config`/extra args byte-for-byte via the pure encoder, never
+  discovering, appending, or mutating servers.
+  **Failure:** the case's inline `context` literal omits `activity`/`logger`.
+  **Restore in the final PR** with `activity: () => undefined` and a
+  no-op/capturing `logger` added to the literal; the now-unused
+  `codexRuntimeArgsForMcpServers`/`AgentRuntimeMcpServer` imports this item
+  removed from the file go back with it.
+
+- **File / case:** `packages/agent-runtime/claude-code/tests/session.test.ts` —
+  `` it.each(['exit', 'stop'])('preserves %s intent while recovery admission
+  awaits durable identity publication') `` (2 sub-cases).
+  **Contract pinned:** an exit/stop racing a recovery admission that is
+  waiting on durable identity publication resolves the admission correctly
+  (failed/stopped) and reports the right `nativeEnds` sequence, without losing
+  the in-flight publish.
+  **Failure:** this case's inline `provider.createRuntime({...})` context
+  omits `logger` (the file's other 5 cases construct a lower-level
+  `ClaudeCodeSession` directly and never reach `AgentRuntimeCreateContext`, so
+  they are unaffected — this is per-case, not whole-file, collateral).
+  **Restore in the final PR** by adding a `logger` field to the literal.
+
+- **File:** `packages/agent-runtime/claude-code/tests/runtime.test.ts` (whole
+  file, 34 tests).
+  **Contract pinned:** `ClaudeCodeRuntime` lifecycle against a fake
+  resident-session factory — system-prompt append-only mapping (fresh/resumed/
+  resume-fallback), `start()` continuity reporting and the
+  durable-publish-before-resolve fence, the state sink's call-receipt
+  ordering and lease-revocation error shape, `stop()` fencing and converging a
+  racing start, submit/settlement across every outcome, `outputSchema` bound
+  once at create time, and the exact Core-supplied MCP server list reaching
+  `--mcp-config` unmutated.
+  **Failure:** every case constructs its runtime through the file's shared
+  `Harness.createRuntime()`, which calls `this.context()` — that method's own
+  return statement (typed `AgentRuntimeCreateContext<...>`) omits `logger`, a
+  compile error at the helper's definition. All 34 cases route through it (no
+  case survives independently).
+  **Restore in the final PR** by adding a `logger` field (a capturing/no-op
+  `DreamuxLogger`) to `Harness.context()`'s returned object.
+
+- **File:** `packages/agent-runtime/claude-code/tests/runtime-background.test.ts`
+  (whole file, 27 tests).
+  **Contract pinned:** resident background-turn and submitted-command
+  behavior replayed through the real RPC/provider (no live Claude child) —
+  background text/tool/compaction/end activity publication, admission ordering
+  against a background child exit, and reap-on-timeout behavior.
+  **Failure:** every case calls the file's shared `harness()` helper, whose
+  inline `provider.createRuntime({...})` call omits `logger` — a compile
+  error inside the shared helper itself, reached by all 27 tests.
+  **Restore in the final PR** by adding a `logger` field to `harness()`'s
+  context object.
+
+- **File / case:** `packages/dreamux/tests/codex-live.test.ts` —
+  `` describe('codex live integration') > it(`spawns codex ${version},
+  completes init handshake, starts a thread`) `` (the file's one behavioral
+  case; ~660 lines).
+  **THIS IS THE STANDING HIGH-RISK ENTRY (issue #63 non-blocking-inbound live
+  gate) — see the top of this file. No exception was taken; it is deleted and
+  logged like any other case.**
+  **Contract pinned (read from the deleted body before removal):** a real
+  `codex` app-server spawn completes the init handshake without a business RPC
+  racing it; reasoning-effort settings reach native turn contexts; `thread/start`
+  persists a resumable rollout; a resident session's activity read reflects a
+  rollout file mid-write; the display line reports live turn status; a second
+  `submit()` accepted while a turn is running FOLDS into that same running
+  turn rather than queuing or blocking (the core issue #63 non-blocking-inbound
+  proof); the real Feishu MCP surface (reply/react/list_chat_bots) is reachable
+  from a live turn; and no automatic reaction is added on inbound, submission,
+  or settlement (the issue #63 tri-state reaction surface stays a deleted
+  surface, asserted as an explicit negative).
+  **Failure:** the hand-built `AgentRuntimeCreateContext`/`AgentActivityReadContext`
+  fixtures (6 construction sites across the case) predate `activity`/`logger`
+  becoming required and omit them; the file's own docstring already frames
+  itself as "a from-scratch rebuild, not a port" against the current
+  provider-seam contracts, so this is the same class of collateral as every
+  other case in this section, just concentrated in one very large case.
+  **Contract still holds; restore in the final PR — this is the priority
+  restoration in this stage.** The surrounding shell (version detection,
+  `classifyDetection`/`versionAtLeast` unit coverage, the fail-loud "codex on
+  PATH" guard, the `DREAMUX_SKIP_LIVE_CODEX`/`DREAMUX_RUN_LIVE_MODEL_GATE`
+  escape hatches) is kept in the trimmed file; only the behavioral body and
+  its now-dead supporting helpers (`RecordingCodexWsClient`, `fakeInbound`,
+  `liveConfig`, `createIsolatedCodexHome`, `waitFor`, and others) were removed,
+  along with two now-orphaned test helpers with zero other importers:
+  `packages/dreamux/tests/helpers/live-catalogs.ts` and
+  `packages/dreamux/tests/helpers/fake-feishu-bot.ts`.
+
+- **File / case:** `packages/dreamux-types/tests/channel-provider-contract.test.ts` —
+  `describe('ChannelProvider composes optional capabilities rather than fake
+  methods') > it('a bare provider that implements only createSession is a
+  valid ChannelProvider')`.
+  **Contract pinned:** a `ChannelProvider` implementing only `createSession`
+  is valid; `config`/`mcp` read `undefined`.
+  **Failure:** the inline `createSession({...})` call argument omits
+  `logger`/`state_root`/`cache_root` (`ChannelSessionCreateContext` required-ness,
+  this item). The sibling case in the same `describe` (type-level `keyof`
+  assertion, no `createSession` call) is unaffected.
+  **Restore in the final PR** by adding the three fields to the call argument.
+
+### Driver C — NOT executed: `DreamuxLogger.child` required-ness
+
+This item's own text made `DreamuxLogger.child?` required on the stated
+premise "every constructed logger already provides `.child`". That premise is
+false: 2 of the 3 production `DreamuxLogger` literals this item's own source
+changes touched (`agent-runtime/claude-code/src/logger.ts`'s
+`consoleFallbackLogger`, and the now-deleted
+`feishu-channel/src/provider.ts` fallback) did not provide `.child` before
+this change; a `child()` had to be added to the claude-code one to keep
+`agent-runtime-claude-code` building (see that file — noted there as a
+knowing, temporary addition tied to item 7's later removal of the fallback
+itself, not a gap). Every test-only `DreamuxLogger` stub found this session
+also omits `.child` — none of these ~290 cases fail at runtime (nothing on
+their paths ever calls `.child`); the failure is compile-only
+(`typecheck:tests`).
+
+Per root `CLAUDE.md` ("Change anything — knowingly... name what you are
+changing, why its original rationale no longer holds"), deleting this much
+collateral on a disproven premise without confirmation is the "unknowing
+change" the rule prohibits. **No file below was deleted or edited for this
+driver.** Left exactly as before this item, still failing
+`typecheck:tests` only:
+
+- `packages/dreamux/tests/channel-service.test.ts` — `describe('ChannelService')`
+  (4 of 12 cases route through the module-level `silentLogger()` helper, which
+  fails at its own definition).
+- `packages/dreamux/tests/commands.test.ts` — 2 of 6 cases (`createChannelListServer()`
+  fixture).
+- `packages/dreamux/tests/helpers/event-harness.ts` — `createCapturingLogger()`
+  fails at its own definition; imported by
+  `packages/dreamux/tests/cot-projection-privacy.test.ts` (all 26 cases route
+  through the file's `harness()`) and `packages/dreamux/tests/core-event-catalog.test.ts`
+  (19 of 35 cases, across the `DispatcherCoreEventBus` best-effort-delivery and
+  subscription-lifecycle `describe` blocks, one `teammate.state` case, and the
+  whole `display fact correlation` `describe` block).
+- `packages/dreamux/tests/input-source-lifecycle.test.ts` — all 7 cases (shared
+  `buildHarness()`).
+- `packages/dreamux/tests/removed-surfaces.test.ts` — 1 of the file's cases
+  (`AgentIdentityStore.read() fails loud with LegacyStateError on a persisted
+  "session_ref" field`; describe-scoped `noopLog`).
+- `packages/dreamux/tests/teammate-completion-lifecycle.test.ts` — all 8 cases
+  (module-level `silentLogger`, `as DreamuxLogger` cast, reached via
+  `LifecycleHost`/`createHost()`).
+- `packages/channel/feishu-channel/tests/feishu-channel-session.test.ts`,
+  `feishu-cot-delivery.test.ts`, `feishu-cot.test.ts`,
+  `feishu-document-comments.test.ts`, `feishu-document-tools.test.ts`,
+  `feishu-extensions.test.ts` (2 sites), `feishu-provisioning.test.ts`,
+  `feishu-reply-tool.test.ts`, `feishu-routing-tools.test.ts`,
+  `feishu-slash-commands.test.ts`, `feishu-space-policy.test.ts`,
+  `feishu-space-tools.test.ts`, `feishu-target-router.test.ts` — each has its
+  own module- or file-scoped stub `DreamuxLogger`/session-builder missing
+  `.child`; blast radius not individually mapped case-by-case pending the
+  decision below.
+
+**Decision needed before the next item touches any of these files:** either
+(i) confirm deleting this collateral per R43 (the mechanical outcome, ~290
+cases across ~20 files), or (ii) revert `DreamuxLogger.child` to optional
+(`child?(bindings): DreamuxLogger`) — the three production `.child(...)` call
+sites this item simplified (`teammate-service/runtime-owner.ts`,
+`plugin/host.ts`, `feishu-channel/src/feishu-extensions.ts`) go back to
+`log.child?.(...) ?? log`, and the `child()` added to claude-code's
+`consoleFallbackLogger` comes back out — zero test collateral either way.
+
+**Correction (Stage 2a Item 2, found while isolating unrelated collateral):**
+the claim above that "none of these ~290 cases fail at runtime... the failure
+is compile-only" is false for at least one file. `runtime-owner.ts:360`
+(`TeammateRuntimeOwner.resolveLaunch`) calls
+`this.deps.log.child({...})` unconditionally to build the context logger every
+Agent Runtime `createRuntime()` call receives — this executes on every real
+runtime start, not just under `typecheck:tests`. Empirically verified by
+toggling only that one call site: with `packages/dreamux/tests/teammate-completion-lifecycle.test.ts`'s
+module-level `silentLogger` (no `.child`) and `.child` required with no
+fallback, all 8 cases fail at runtime — `TypeError` inside `resolveLaunch`,
+thrown before `provider.createRuntime()` is ever reached, surfacing to the
+test only as its `runtimeAt()` helper's `vi.waitFor` timing out
+(`provider.runtimes.length` never grows). Restoring the local
+`log.child?.({...}) ?? this.deps.log` fallback at that one call site alone
+(nothing else changed) made all 8 cases pass again. This does not change
+decision (i)/(ii) above, but it means option (i) is not "delete ~290
+compile-only cases" — some real number of those 290 are live runtime crash
+sites for any caller whose logger lacks `.child` (test stub or otherwise),
+so the two production fallback loggers this item already found missing
+`.child` (claude-code's `consoleFallbackLogger`, feishu-channel's now-deleted
+provider fallback) were not a coincidence; a full inventory of which of the
+three simplified production call sites (`runtime-owner.ts`, `plugin/host.ts`,
+`feishu-channel/src/feishu-extensions.ts`) are reachable with a
+non-`.child`-bearing logger is still owed before (i) can be taken safely.
+
+**Correction (found during Item 12's verification pass — `packages/dreamux/tests/codex-live.test.ts`
+is currently red, not this item's doing, not fixed here):** this item's trim
+of the file (see the entry above under "Restore in the final PR") kept a
+`describe('codex live integration')` block whose only two branches register a
+test conditionally: `it.skip(...)` when `DREAMUX_SKIP_LIVE_CODEX=1`, or
+`it('requires codex on PATH', ...)` when `codex` is not detected. Neither
+branch fires when `codex` **is** on `PATH` and the skip env var is unset — the
+normal case on a workstation with Codex installed — so the `describe` block
+registers zero tests. Reproduced here: `codex-cli 0.156.1` on `PATH`,
+`DREAMUX_SKIP_LIVE_CODEX` unset, `vitest run` reports `Error: No test found in
+suite codex live integration` and fails the file. The sibling `describe('codex
+detection logic')` block (3 cases: `classifyDetection`/`versionAtLeast` unit
+coverage) is unaffected and still passes on its own. This is a structural gap
+in this item's trim, not a contract this item's own source change invalidated
+— left as this item's open item rather than folded into Item 12 (a different
+item, R47, touches unrelated files) or silently patched, per the ledger's
+per-item attribution. The file is the standing high-risk entry at the top of
+this ledger; R43 gives it no exception once it is observed failing. Two
+R43-compliant fixes, either of which restores a green suite: delete only the
+empty `describe('codex live integration')` block (the 3 detection-logic cases
+survive); or delete the whole file. This correction does not choose between
+them — that call, and the fix, belongs to whoever next touches this item or
+the final test completion on PR #453, consistent with "The final test
+completion on PR #453 must restore it with focused coverage of the
+immediate-submit path, whether or not it was deleted" at the top of this
+file.
+
+## Stage 2a — Item 2
+
+`service/team-collection`, `service/team-service`, `service/teammate-collection`,
+`service/teammate-service`, `service/dispatcher-core-events` required-ness:
+`TeamCollectionOptions.admitOperation/coreEvents/workflowLog`,
+`TeammateCollectionOptions.conversationProjection`,
+`TeamServiceDeps.conversationProjection/coreEvents`,
+`TeammateServiceDeps.conversationProjection`,
+`DispatcherCoreEventPublisher.hasSources`. All fixture/cast collateral below
+was found first by `tsc -p tsconfig.tests.json` (a plain object literal
+missing a newly-required field), and second — for casts (`as unknown as
+TeamServiceDeps`/`TeammateCollectionOptions`) that bypass that check — by
+running the real suite (`vitest run`) and tracing each runtime failure back to
+its omitted field. See the note below for how that second pass was isolated
+from Item 1's own, unrelated `DreamuxLogger.child` collateral sitting in the
+same working tree.
+
+**Contract pinned everywhere in this section is the same one:** each flipped
+field was already supplied at every real production construction site (traced
+per field before flipping); no field's required-ness changed a production
+default. Every case below fails only because a **test fixture** stopped
+supplying a value production always supplied for real. **Contract still
+holds; restore in the final PR** by adding the now-required field(s) back to
+the fixture/cast, unless a case's own note below says otherwise.
+
+- **File:** `packages/dreamux/tests/admission-ledger.test.ts` (15 of 25 cases;
+  546 lines deleted). **Contract pinned:** `TeammateService.submitInput` /
+  `submitAdmitted` / `prepareCompletion` admission-ledger interaction, driven
+  through a hand-built `TeammateCollection`. **Failure:** the file's
+  `buildTeammateHarness()` constructs `new TeammateCollection({...})` without
+  `conversationProjection`, a plain-literal excess-property/missing-property
+  compile error. **Kept:** the 10 pure `AdmissionLedger` unit cases, which
+  build no `TeammateCollection` at all.
+
+- **File:** `packages/dreamux/tests/completion-delivery.test.ts` (3 cases; the
+  `'the real conversation projection presents a dispatcher completion delivery
+  (failure-ledger #13)'` describe, plus its now-orphaned `RecordingPublisher`
+  class, `realProjection()`, and `fakeIdentity()` helpers). **Contract
+  pinned:** a real `createConversationProjection` output, driven by a real
+  `DispatcherCoreEventBus`-shaped publisher, presents a dispatcher's own
+  completion the same way a Team's does. **Failure:** `RecordingPublisher`
+  implements `DispatcherCoreEventPublisher` by hand and never defined
+  `hasSources`, now a compile error at the class declaration.
+
+- **File:** `packages/dreamux/tests/failure-classification.test.ts` (3 cases;
+  the `'closing an already-closed TeamMate is the operation succeeding'`
+  describe). **Contract pinned:** closing an already-closed TeamMate is a
+  no-op success, not an error. **Failure:** the describe's local `collection()`
+  helper builds `new TeammateCollection({...})` without `conversationProjection`.
+
+- **File:** `packages/dreamux/tests/helpers/team-harness.ts` (helper file, not
+  a test file — R43's "a shared helper stops compiling, delete the helper and
+  every case that reaches it"). Deleted `buildTeamCollectionHarness()`,
+  `buildRestartedTeamCollection()`, `TeamCollectionHarness` interface,
+  `harnessLog()`, `mockLeaderSubmission()`, `mockLeaderSubmissionRejected()`,
+  `LeaderSubmissionGate`. **Failure:** `buildTeamCollectionHarness()`
+  constructs `new TeamCollection({...})` without `conversationProjection`/
+  `coreEvents`. **Contract pinned (the helper's own, restated once since every
+  case below shares it):** one isolated, file-backed `TeamCollection` wired
+  the same way `DispatcherService` wires its own, so Team-lifecycle contracts
+  (idempotency, record validity, single-flight construction, closed-team
+  record-only reads) run against real cooperation between `TeamCollection`/
+  `TeamStore`/`TeamService` rather than a mock stack agreeing with itself; the
+  one faked seam is the Agent Runtime itself (`mockLeaderSubmission`, since
+  starting a real Codex/Claude process is out of a unit suite's scope).
+  **Kept:** `minimalTeamRecordInput()` (still used by `team-summary.test.ts`,
+  untouched) and the pre-existing, already-unused-before-this-item
+  `rmDispatcherState()` (unrelated dead code, out of this item's scope, left
+  as found).
+  - Every case below that names this helper died at the helper's own
+    definition, not at its own call site.
+
+- **File:** `packages/dreamux/tests/team-read-legacy-state.test.ts` (1 of 5
+  cases: `'raises a legacy leader record through list, history, and status'`).
+  **Reaches:** `buildTeamCollectionHarness`. The other 4 cases use an
+  independent `plantLeader()` fake with no `TeamCollection` and survive
+  untouched. **Note:** this file is separately, independently named for whole-
+  file deletion later in Item 12 (when `service/legacy-state.ts` itself is
+  deleted) — restoring this one case only matters if Item 12 has not already
+  removed the file by the final PR.
+
+- **File:** `packages/dreamux/tests/team-create-idempotency.test.ts` (whole
+  file, 8 cases). **Reaches:** `buildTeamCollectionHarness` /
+  `buildRestartedTeamCollection`. **Contract pinned:** Team creation's
+  idempotency — same `requestId`+`payloadHash` replays the same record instead
+  of creating twice, a name collision advances to the next candidate
+  deterministically, and a restarted `TeamCollection` recovers the same
+  guarantees from disk.
+
+- **File:** `packages/dreamux/tests/team-leader-identity-persistence.test.ts`
+  (whole file, 1 case). **Reaches:** `buildTeamCollectionHarness`. **Contract
+  pinned:** a TeamLeader's identity file persists across a `TeamCollection`
+  restart with its durable fields intact.
+
+- **File:** `packages/dreamux/tests/teammate-system-prompt.test.ts` (whole
+  file, 6 cases). **Reaches:** a shared `harness()` that builds `new
+  TeammateCollection({...})` without `conversationProjection`. **Contract
+  pinned:** system-prompt composition (base instructions, skill sources,
+  plugin-appended draft) for a dispatcher-scoped TeamMate.
+
+- **File:** `packages/dreamux/tests/team-leader-prompt.test.ts` (whole file, 11
+  cases). **Reaches:** `launchedLeaderAppend()`, which calls
+  `restoreTeamLeaderAgentForTeam({...})` without `conversationProjection` — a
+  `TeamServiceDeps`-shaped construction found only by actually running
+  `tsc -p tsconfig.tests.json` (not by the initial manual grep pass).
+  **Contract pinned:** the TeamLeader's own prompt composition and its
+  plugin-instruction append ordering.
+
+- **File:** `packages/dreamux/tests/team-collection-read-path.test.ts` (4
+  describes / 8 cases: `'TeamCollection: missing/malformed records'`,
+  `'TeamCollection: closed Teams are record-only reads'`,
+  `'TeamCollection: canonical live/store projection'`,
+  `'TeamCollection: shared create/open construction'`). **Reaches:**
+  `buildTeamCollectionHarness`. **Contract pinned:** a Team's read path is
+  correct whether the Team is materialized, closed, or only ever seen through
+  its record. **Kept:** `'Team-scoped TeamMate workspace borrowing'` (2 cases),
+  which calls `resolveSpawnWorkspace` directly with no `TeamCollection`/harness
+  dependency at all.
+
+- **File:** `packages/dreamux/tests/team-plugin-hooks.test.ts`. Originally two
+  describes: `'beforeTeamLeaderLaunch: lazy TeamLeader materialization after a
+  failed dissolve commit'` (1 case, via `bootDissolveTeam()` — a cast, not a
+  plain literal) and `'beforeTeamLeaderLaunch: creation-failure cleanup
+  adopting a durable leader'` (1 case, via the file's own local
+  `buildAbandonCreationHarness()` — also a cast). Four other describes/10
+  cases that used `buildTeamCollectionHarness` were removed as this item's
+  compile-time collateral (same reach/contract as the
+  `team-collection-read-path.test.ts` entry above, just concentrated in this
+  file: Team plugin-hook firing on create/dissolve/restart, skill-source
+  composition, and idempotent no-refire-on-restart). Of the two cast-based
+  describes, `'lazy TeamLeader materialization...'` compiled clean and passed
+  at runtime (`bootDissolveTeam`'s cast happens to already supply both
+  `conversationProjection` and `coreEvents` — see the `dissolve-harness.ts`
+  note below). `'creation-failure cleanup adopting a durable leader'` compiled
+  clean but failed at runtime: `buildAbandonCreationHarness()`'s
+  `TeamServiceDeps` cast supplies neither `conversationProjection` nor
+  `coreEvents`, so `TeamRosterProjection.publish()`'s
+  `this.deps.coreEvents.publish(...)` throws `TypeError` reading `publish` of
+  `undefined` during `TeamService.createNew`, which the test's own scenario
+  (an injected `leaderMcp` failure) sends into `TeamClosing.abandonCreation`'s
+  cleanup path — that cleanup's own `leader.close()` throws the same way,
+  producing an `AggregateError` instead of the single, specific error the
+  case asserts on (`'leaderMcp unavailable on the first call'`). Deleted that
+  describe, `buildAbandonCreationHarness`, `abandonCreationInput`, and the
+  imports/consts/`roots`+`afterEach` cleanup infra that were reachable only
+  from it. File now holds only the one surviving describe.
+
+- **File:** `packages/dreamux/tests/teammate-dissolve-members.test.ts` (1 of 5
+  cases: `'a dispatcher-scoped TeammateCollection (teamScope: null) refuses the
+  bulk close/stop capability outright'`). **Reaches:** an inline `new
+  TeammateCollection({...})` whose other now-required fields are covered by
+  per-field `as never` casts that do not cover a wholly-absent
+  `conversationProjection` property. **Contract pinned:** a dispatcher-scoped
+  (non-Team) `TeammateCollection` refuses the Team-only bulk dissolve
+  capability outright, by name. The other 4 cases (`closeMembersForDissolve`
+  behavior; the `TeammateOps` surface's own declared shape) build no
+  `TeammateCollection` and survive.
+
+- **File:** `packages/dreamux/tests/team-leader-lazy-start.test.ts` (whole
+  file, 3 cases). **Reaches:** the file's own `harness()`, whose
+  `TeamServiceDeps` cast supplies `conversationProjection` but omits
+  `coreEvents` entirely. **Contract pinned:** Team creation starts no runtime;
+  a prompt-less creation starts nothing, a creation with a prompt starts the
+  leader inside that same first submission (through the ordinary
+  `submitToLeader` admitted-input span), and a start failure abandons the
+  creation cleanly (closes the record) instead of leaving it `starting`
+  forever. **Failure mode:** the two non-error-path cases fail because
+  `TeamRosterProjection.publish()`'s `this.deps.coreEvents.publish(...)`
+  dereferences `undefined` the first time the newly-created leader's roster
+  state is published, producing `AggregateError: Team "alpha" creation failed
+  and cleanup did not converge` instead of a clean result; the third
+  (start-failure) case fails the same way inside `abandonCreation`'s own
+  cleanup, so the test observes the wrong error message (the aggregate,
+  not the plain `startError`).
+
+- **File:** `packages/dreamux/tests/team-dissolve-contract.test.ts`. **Reaches:**
+  `bootDissolveTeam()` from `tests/helpers/dissolve-harness.ts`. Deleted 3 of 4
+  cases in `'IMMEDIATE RECEIPT: one TeamService submission capability for both
+  callers'` (`'both a dispatcher and a self-dissolving TeamLeader get the
+  identical receipt shape'`, `'a self-dissolve returns its receipt before Core
+  stops the calling TeamLeader runtime'`, `'a forced dispatcher dissolve
+  returns before the worktree is ever assessed'` — kept the `it.each`
+  blocked-dissolve case, which rejects before ever reaching a roster publish)
+  and the whole `'OPERATION AS FENCE'` describe (3 of 3 cases: `'two
+  concurrent non-forced submissions assess freely but dismantle the Team
+  once'`, `'a repeated non-forced submission joins before assessing the
+  worktree again'`, `'a repeated submission never re-triggers the underlying
+  close'`). **Contract pinned:** the immediate-receipt shape is identical for
+  a dispatcher- and a TeamLeader-triggered dissolve; a self-dissolve's receipt
+  precedes Core stopping the caller's own runtime; a forced dissolve returns
+  before the worktree is ever assessed; and a dissolve submission is a fence —
+  concurrent and repeated submissions join the one underlying close rather
+  than repeating it. **Failure:** `bootDissolveTeam()`'s own `TeamServiceDeps`
+  cast (see next note) omits `coreEvents`; every deleted case here runs a real
+  dissolve/close to completion (unlike the DURABLE-FACT RECOVERY and the kept
+  `it.each` cases, whose scenarios never reach a roster publish before
+  resolving), so each one hits the same undefined-`coreEvents.publish`
+  `TypeError` the two files above hit, either directly or wrapped in an
+  `AggregateError`. Also removed the now-unused `TeamClosing` type import.
+
+**`dissolve-harness.ts`'s `bootDissolveTeam()` cast is NOT fixed or touched —
+R43 forbids it ("一个都不修").** Its `TeamServiceDeps` cast happens to already
+supply `conversationProjection`, and — unlike `team-leader-lazy-start.test.ts`'s
+and `buildAbandonCreationHarness`'s casts — also already supplies `coreEvents`,
+so it still compiles under `tsc -p tsconfig.tests.json` *and* still passes at
+runtime for the 19 cases across `team-dissolve-contract.test.ts` (the 12
+surviving cases in this file alone), `team-plugin-hooks.test.ts` (1 case), and
+`team-dissolve-recovery.test.ts` (not touched this item) that reach it. That
+is a fragile survivor, not a verified-correct fixture: nothing pins that its
+`coreEvents`/`conversationProjection` values are shaped the way a real
+`DispatcherService`-built one is beyond "has a `.publish`/`.hasSources` and a
+`.projectInput`/`.projectActivity`" — the cast bypasses the same structural
+check that caught every other fixture in this section. Left exactly as found,
+flagged here for whoever next touches this helper.
+
+**Isolating this item's collateral from Item 1's, in the same working tree:**
+Item 1 and Item 2 both landed in this worktree uncommitted, and one file this
+item also edits (`teammate-service/runtime-owner.ts`) carries an unrelated
+Item 1 change (`DreamuxLogger.child` made required, no fallback) on the same
+class this item's own `conversationProjection` edit lives in. A first,
+whole-file stash-based isolation attempt wrongly attributed
+`teammate-completion-lifecycle.test.ts`'s 8 runtime failures to this item,
+because reverting the whole file also reverted Item 1's `.child` change.
+Toggling only the `.child` call site (`runtime-owner.ts`'s
+`resolveLaunch()`) confirmed those 8 failures are entirely Item 1's Driver C
+(see the correction note above) and unrelated to this item; this item touched
+nothing in that file besides the one `conversationProjection?.` →
+`conversationProjection.` line already logged in the source-change summary.
+
+## Stage 2a — Item 3
+
+R23: `CronJobStore.create()`'s `maxJobs` parameter and the per-owner cap it
+enforced are deleted (`packages/dreamux/src/service/scheduler/store.ts`),
+along with the `MAX_JOBS_PER_OWNER = 128` constant and its call-site argument
+(`packages/dreamux/src/service/scheduler/service.ts`). `store.create()` is a
+surviving export whose shape changed (arity 2 → 1), so this is per-case
+deletion, not a whole-file loss (PR-0 precedent).
+
+- **File / describe block:** `packages/dreamux/tests/state-schemas.test.ts` —
+  the entire `cron job store: round-trip through the current schema` describe
+  block (two cases: `creates, lists, updates, marks fired, and deletes a
+  prompt-agent job`, and `enforces the per-owner max job count`).
+  **Contract pinned:** the first case is a CRUD round-trip through
+  `CronJobStore` (create/list/update/setFired/delete) unrelated to the cap;
+  the second asserts `create()` rejects a job past the configured `maxJobs`
+  with `/already has the maximum N cron jobs/`.
+  **Still holds?** The CRUD round-trip contract still holds and is not
+  covered elsewhere in this file — restore it verbatim (with the now
+  single-argument `create()` call) in the final PR. The cap-rejection
+  contract does not hold — R23 deletes the cap outright, so that case has no
+  replacement.
+  **Failure:** all three `store.create(input, N)` call sites (two in the
+  first case's single call, one each in the second case's two calls) fail
+  `tsc -p tsconfig.tests.json` with `TS2554: Expected 1 arguments, but got 2`
+  now that `create()` takes one argument. The now-unused `CronJobStore`
+  import in this file (no other describe block in it references the class)
+  was removed as ordinary dead-import cleanup after the block was deleted,
+  not as an edit to keep any case passing.
+  **Also checked, no collateral found:** `packages/dreamux/tests/scheduler-cron.test.ts`
+  only calls `SchedulerService.create()` (single-argument, unaffected) and
+  never calls `CronJobStore.create()` directly;
+  `packages/dreamux/tests/legacy-state-fail-loud.test.ts`'s
+  `CronJobStore rejects the removed cron deliver/spawn-teammate shapes` block
+  seeds fixtures via direct file writes and never calls `.create()`;
+  `packages/dreamux/tests/helpers/workflow-harness.ts`'s hand-built
+  `fakeCronStore()` double defines `create()` with zero parameters (it only
+  throws — not implemented for that harness) and is cast `as unknown as
+  CronJobStore`, so the real interface's arity change does not touch it.
+
+## Stage 2a — Item 5
+
+R11: the `dispatcher.start` Command, its `commands.ts` list entry, its
+`server-ctl.ts` CLI verb, and the reopen-after-stop machinery in
+`input-source-lifecycle.ts` (the `agent_.isRetired()` "cannot replace its
+Agent" guard, the `started`/`cleanupPending` fields, and their reset paths)
+are deleted. `DispatcherService.start()` itself is not deleted — `server.ts`
+still calls it once per enabled dispatcher at boot — but the operation is now
+one-shot: `prepareChannels()`/`start()` retain their `preparing`/`starting`
+promise forever instead of resetting it to `null` once settled, so a second
+caller joins the same settled promise rather than re-running prepare/start.
+
+- **File / case:** `packages/dreamux/tests/core-command-registry.test.ts` —
+  `describe('createCoreCommandRegistry — the catalog') > it('registers
+  exactly the frozen namespace table, no more and no less')` (one case, plus
+  its now-solely-used `FROZEN_NAMESPACE_TABLE` fixture array, deleted
+  alongside it — R43's "shared helper stops compiling" reasoning applied to a
+  fixture that has no other reader once the case using it is gone).
+  **Contract pinned:** the registry answers to exactly this frozen set of
+  Command names, sorted, no more and no less — the one place a newly added or
+  renamed Command must also be reflected (the fixture's own docstring).
+  **Failure:** `dispatcher.start` is removed from the live registry by this
+  item's `commands.ts` change, so `[...harness.registry.names()].sort()` no
+  longer equals `FROZEN_NAMESPACE_TABLE`, which still lists it — a runtime
+  assertion failure (`toEqual`), not a compile error.
+  **Does not hold verbatim; changed by a named ruling (R11).** The frozen-set
+  contract itself survives, but its content must drop `'dispatcher.start'`.
+  Restoration recipe for the final PR: rebuild `FROZEN_NAMESPACE_TABLE`
+  without `'dispatcher.start'` and restore the case unchanged. This file's
+  sibling case, `'never answers to a deleted Command name'`, already passes
+  unedited (its `DELETED_NAMES` fixture never listed `dispatcher.start`, and
+  removing a name that was never claimed live does not fail an
+  already-passing assertion) — whether to also add `'dispatcher.start'` to
+  `DELETED_NAMES` for explicit coverage is new-test territory left for the
+  final PR, not done here.
+  **Also checked, no collateral found:** `packages/dreamux/tests/commands.test.ts`
+  calls `dispatcher.start()` as the `DispatcherService` TypeScript method
+  (`await dispatcher.start();`, exercising the real start path via
+  `channel.list`), never the `'dispatcher.start'` Command string — unaffected.
+  `packages/dreamux/tests/input-source-lifecycle.test.ts` has no case
+  asserting `cleanupPending`, `isRetired()`, or the "cannot replace its Agent"
+  error text; its one case naming `markStopped()` (`'markStopped() drops the
+  held Channel-port fences so a later start initializes a fresh set'`) only
+  asserts the call does not throw, which still holds against the trimmed
+  method (it now clears `channelPorts` without touching a deleted `started`
+  field) — kept unedited. (Superseded by Item 6 below, which deletes this
+  file entirely for an unrelated reason.)
+
+## Stage 2a — Item 6
+
+`DispatcherConfig.runtime` deletion (config/config.ts's new on-demand
+`dispatcherAgent()` accessor replacing the precomputed field) + `DispatcherStore`
+dead-method deletion. Every case below fails because its fixture built a
+`DispatcherConfig`/`DreamuxConfig` object literal (directly or through a
+shared helper) that still set the now-deleted `.runtime` field, or read
+`dispatcher.runtime.*` back off one — found by `tsc -p tsconfig.tests.json`
+for every literal typed directly against `DispatcherConfig` (excess-property
+compile error) plus one manual read of `state-schemas.test.ts`/`onboard.test.ts`
+for a `toMatchObject`/direct-property assertion on `.runtime`, which `tsc`
+cannot catch since the field's absence just makes the assertion false, not a
+type error.
+
+**Contract pinned everywhere in this section is the same one:** the deleted
+field was always a pure clone of `agents[dispatcher.agentRuntime]`, so
+nothing about runtime behavior changed — every case below either asserted the
+now-gone field's identity/value directly (contract superseded by this item's
+own design, not restorable as written) or carried it as inert fixture
+boilerplate the case under test never read (contract still holds; restore by
+building the fixture through `dispatcherAgent(config, id)` instead of
+`.runtime`, or by dropping the dead field from the literal).
+
+- **File / case:** `packages/dreamux/tests/state-schemas.test.ts` — `config
+  parser accepts the current shape and rejects a dangling agent ref > accepts
+  top-level agents[] + dispatchers[].agentRuntime + channels[]`.
+  **Contract pinned:** bundled two things — the config parser accepts the
+  current top-level `agents[]`/`dispatchers[].agentRuntime`/`channels[]`
+  shape, and (the failing half) the resolved `DispatcherConfig` carries a
+  `.runtime` field deep-equal to its agent's provider.
+  **Failure:** runtime-only (`toMatchObject({..., runtime: {provider:
+  BUILTIN_CODEX_PROVIDER_REF}})` against a dispatcher with no `.runtime`
+  field) — `tsc` does not catch this since `toMatchObject` accepts a loose
+  object.
+  **Superseded by this item's own design for the `.runtime` half; the
+  shape-acceptance half still holds and is restoration-worthy** with the
+  `.runtime` assertion replaced by `dispatcherAgent(config, 'flow')` deep-equal
+  to `{provider: BUILTIN_CODEX_PROVIDER_REF, config: ...}`, or simply dropped
+  (the shape-acceptance contract does not need a `.runtime`-shaped assertion
+  to hold).
+  **Not touched (confirmed unrelated):** the same describe's `'rejects a
+  dispatcher-level `runtime` block (moved to agents[])'` case pins the raw
+  top-level `dispatchers[].runtime` key rejection at `config.ts`'s
+  `readDispatchers` (`'runtime' in raw`) — a pre-existing, separate rejection
+  of a *persisted config key*, unrelated to and untouched by this item's
+  deletion of the *in-memory resolved* `DispatcherConfig.runtime` field. Left
+  exactly as is.
+
+- **File / case:** `packages/dreamux/tests/onboard.test.ts` — `dreamux
+  onboard writes dispatcher state, records subprocess files, and passes the
+  serve doctor > onboard output round-trips through loadConfig (#148)`.
+  **Contract pinned:** bundled two things — `loadConfig` resolves onboard's
+  written config into an `agents` map populated with the expected provider +
+  config (the `Object.keys(config.agents)`/`config.agents['flow']` assertions,
+  still holding), and (the failing half) `config.dispatchers[0].runtime`
+  deep-equals `config.agents['flow']`.
+  **Failure:** same shape — `config.dispatchers[0]` has no `.runtime` field;
+  `toMatchObject`/direct-property read against it is a runtime-only failure.
+  **Superseded by this item's own design.** Restoration recipe:
+  `dispatcherAgent(config, 'flow')` deep-equals `config.agents['flow']`, and
+  `dispatcherAgent(config, 'flow')` deep-equals
+  `{provider: 'builtin:codex', config: expect.objectContaining({approval_policy:
+  'never'})}`, in place of the two `.runtime`-shaped assertions. The
+  agents-map-population half of the contract is unaffected and does not need
+  restoring — it already holds.
+
+- **File / case:** `packages/dreamux/tests/team-collection-read-path.test.ts`
+  — `'Team-scoped TeamMate workspace borrowing' > 'lets a dispatcher-scoped
+  TeamMate (no sharedWorkspace) take its own managed, delete-on-close
+  worktree'`.
+  **Contract pinned:** `resolveSpawnWorkspace` resolves a dispatcher-scoped
+  (no `sharedWorkspace`) spawn to a managed, delete-on-close worktree via
+  `WorktreeManager.prepare`, using the dispatcher's real `cwd`.
+  **Failure:** the case's inline `DispatcherConfig` literal set `runtime:
+  {provider: 'unused', config: {}}` — an excess-property compile error;
+  `resolveSpawnWorkspace` never reads `.runtime`/`dispatcherAgent()` at all
+  (the field was pure fixture boilerplate the old required type forced).
+  **Contract still holds; restore by dropping the `runtime:` line from the
+  literal** (the sibling surviving case in this file already omits it, proving
+  the type does not need it).
+
+- **File:** `packages/dreamux/tests/dispatcher-plugin-hooks.test.ts` —
+  `describe('host.hooks.dispatcher')` (1 case: `'fires once per Dispatcher
+  object, with the cached service and its configured cwd'`) and
+  `describe('the whole hook tree through a real Server/DispatcherService')`
+  (3 cases, plus their shared `buildRealServer()` fixture: the hook-tree
+  ordering/frozen-tables/launched-runtime case (R2-adjacent), `'does not
+  block Team creation when one dispatcher.hooks.team tap throws...'`, and
+  `'awaits an in-flight created hook run before closing channels, on
+  dispatcher shutdown'` — the last one is the R2 ruling #5 shutdown-drain
+  coverage). **Kept:** `describe('dispatcher.hooks.beforeLaunch')` (1 case),
+  which builds its `config: {agents: {...}, dispatchers: []}` inline with no
+  `.runtime` field at all.
+  **Contract pinned:** `host.hooks.dispatcher` fires once per constructed
+  `DispatcherService` with a frozen hook table; the whole hook tree
+  (`host.hooks.dispatcher` -> `dispatcher.hooks.beforeLaunch` / `.team` ->
+  `team.hooks.beforeTeamLeaderLaunch` / `.created`) wires correctly through a
+  real `Server`/`DispatcherService`, survives one tap throwing, and the
+  `created` hook's shutdown drain awaits an in-flight run before closing
+  channels (R2 ruling #5).
+  **Failure:** both fixtures built a `DispatcherConfig` literal with
+  `runtime: {provider: ..., config: {}}` set alongside an `agents: {[id]:
+  runtime}` entry carrying the identical value — inert boilerplate (neither
+  `Server` construction path these tests exercise calls
+  `assertRuntimeImplementationsLoaded`, since both always inject
+  `agentRuntimeProviderCatalog`, which short-circuits it) — excess-property
+  compile error.
+  **Contract still holds; restore by dropping the `runtime,` line from both
+  fixtures.** No behavior under test reads the field.
+
+- **File:** `packages/dreamux/tests/channel-service.test.ts` —
+  `describe('ChannelService')` (4 cases: `'build() hands each provider the
+  exact Core-owned create context'`, `'closes already-built sessions and
+  never publishes a partial "built" map on failure'`, `'sessionMcp() reads
+  the built map, independent of adoption/liveness'`, `'closeAll() detaches
+  its maps before awaiting shutdown, and logs per-channel failures'`), plus
+  the file-local `dreamuxConfigWith()` and `silentLogger()` helpers they alone
+  used. **Kept:** `'external channel provider loader...'` (3 cases) and
+  `'channelMcpDelegates...'` (5 cases), which build no `DreamuxConfig` at all.
+  **Contract pinned:** `ChannelService.build()` hands each provider the exact
+  Core-owned create context and unwinds already-built sessions on partial
+  failure without publishing a torn-down map as "built"; `sessionMcp()`
+  answers from composition, not connectivity; `closeAll()` detaches its maps
+  before awaiting provider shutdown and logs per-channel close failures.
+  **Failure:** `dreamuxConfigWith()`'s return literal set `runtime:
+  {provider: 'builtin:codex', config: {}}` against a `DreamuxConfig` with
+  `agents: {}` (empty) — an already-impossible-in-production state
+  (`dispatcherAgent()` would resolve to `undefined` for this fixture), but
+  none of the four cases' code paths (`ChannelService` methods) ever read
+  `.runtime`/`dispatcherAgent()` — excess-property compile error at the
+  helper's own return statement, which fails the whole describe block
+  (R43's shared-helper-stops-compiling rule).
+  **Contract still holds; restore by dropping the `runtime:` line from
+  `dreamuxConfigWith()`.** No behavior under test reads the field; the
+  `agents: {}` / no-`agentRuntime`-resolution mismatch this fixture already
+  has today is pre-existing and unrelated to this item.
+  **Also affected, same fixtures, independent driver — Item 1 Driver C
+  (`.child` required-ness) parked list:** `silentLogger()` (line 57 before
+  this item's edits) is also this describe's four cases' logger source, and
+  was already on Item 1 Driver C's "no file deleted or edited, decision
+  needed" list before this item touched anything. Deleting these four cases
+  for this item's own, independent reason (R43 is a knowing, ruled deletion
+  here — `DispatcherConfig.runtime` is a plan-named removal, unlike Driver
+  C's disproven premise) removes `channel-service.test.ts` from Driver C's
+  remaining scope as a side effect. `rush test` (vitest, esbuild-transpiled)
+  confirmed all 12 of the file's original cases passed at runtime before this
+  item's edit — none of this was dead coverage.
+
+- **File:** `packages/dreamux/tests/commands.test.ts` — `describe('channel.list')`'s
+  `'reads a stopped Dispatcher through the real Server host without starting
+  sessions'` and `'reports live Channels built and adopted by the real
+  Dispatcher start path'` (2 of 6 cases in the file), plus the file-local
+  `createChannelListServer()` helper they alone used. **Kept:** the other 3
+  `channel.list` cases (harness-based, no real `Server`) and the whole
+  `describe('ExecaCommandRunner')`.
+  **Contract pinned:** `channel.list` reads a stopped Dispatcher's configured
+  Channels (none live) through a real `Server` without starting sessions, and
+  reports live/adopted Channels correctly across a real dispatcher
+  start/stop.
+  **Failure:** `createChannelListServer()`'s `config` literal set `runtime:
+  {provider: 'npm:@example/runtime', config: {}}` — the identical value
+  already sits at `agents: {example: runtime}` — excess-property compile
+  error at the helper's own definition, failing both cases that call it
+  (R43's shared-helper-stops-compiling rule).
+  **Contract still holds; restore by dropping the `runtime,` line from the
+  fixture** (the `Server` construction here also always injects
+  `agentRuntimeProviderCatalog`, so `assertRuntimeImplementationsLoaded`
+  never runs and never reads the field).
+  **Also affected, same fixture, independent driver — Item 1 Driver C parked
+  list:** `createChannelListServer()`'s inline logger literal (line 205
+  before this item's edits) was already on Driver C's "2 of 6 cases" parked
+  entry. Same independent-basis reasoning as `channel-service.test.ts` above;
+  `rush test` confirmed both cases passed at runtime before this item's edit.
+
+- **File:** `packages/dreamux/tests/input-source-lifecycle.test.ts` (whole
+  file, 7 cases — deleted outright, not just the shared helper, since a test
+  file with zero suites fails vitest). **Contract pinned:** "Coverage cell F"
+  — `DispatcherInputSourceLifecycle`'s startup/shutdown ordering: Channel
+  init/subscribe before Core operations recover, Channel start before
+  ordinary admission opens; all four catalog event kinds delivered to a
+  subscribed Channel (none if it needs none); `closeChannelPortAdmission()`'s
+  synchronous fence; `closePreparedChannels()`'s built-but-unstarted-session
+  close without materializing a dormant entity or persisting a close; a
+  failed start's reverse-acquisition rollback that keeps Channel
+  subscriptions live through runtime stop and never rematerializes/closes
+  durable entities; `markStopped()`'s fence-drop. Per the file's own header,
+  this is also the sole exerciser of four "failure ledger item 14" absence
+  checks (a dormant-entity materialization, a persisted `closed`, a
+  retirement fact, or worktree cleanup reaching a fake method that does not
+  implement it).
+  **Failure:** the shared `buildHarness()`'s `config: DreamuxConfig` literal
+  set `runtime: {provider: 'builtin:codex', config: {}}` — excess-property
+  compile error at the helper's own definition, reached by all 7 cases.
+  **Contract still holds; restore by dropping the `runtime,` line from
+  `buildHarness()`'s config literal** — none of this file's assertions read
+  `.runtime`/`dispatcherAgent()`.
+  **Also affected, same fixture, independent driver — Item 1 Driver C parked
+  list:** this file was already on Driver C's "all 7 cases (shared
+  `buildHarness()`)" parked entry (module-level logger stub missing
+  `.child`). Same independent-basis reasoning as above; `rush test` confirmed
+  all 7 cases passed at runtime before this item's edit — this was fully live
+  coverage, not dead weight, and its restoration (both the `.child` fixture
+  fix Driver C owes and this item's one-line `runtime,` drop) should happen
+  together.
+
+- **File:** `packages/dreamux/tests/teammate-completion-lifecycle.test.ts`
+  (whole file, 8 cases — deleted outright, same reasoning as
+  `input-source-lifecycle.test.ts`). **Contract pinned:** TeamMate completion
+  delivery across deliberate lifecycle teardown — model/admin close results
+  while suppressing owner input, Team dissolve without member-to-leader/
+  leader-to-Dispatcher cleanup input, Workflow-active dissolve without
+  submitting a stopped terminal fact, late admission settlement after a
+  failed host stop, restart delivering a new Turn while suppressing shutdown
+  cleanup, completions settling behind the dispatcher fence during Workflow
+  teardown, the dispatcher fence staying closed across a released
+  TeamLeader's restart, and a Dispatcher Workflow stop during host shutdown
+  without submitting its terminal fact.
+  **Failure:** the shared `createHost()`'s `config: DreamuxConfig` literal set
+  `runtime: {provider: PROVIDER_REF, config: {}}` (identical value already at
+  `agents: {[AGENT_RUNTIME_ID]: runtime}`) — excess-property compile error at
+  the helper's own definition, reached by all 8 cases.
+  **Zero currently-passing coverage lost by this item.** Unlike every other
+  entry above, `rush test` confirmed this file's 8 cases were already
+  entirely red at runtime *before* this item touched anything — Item 1
+  Driver C's documented correction (`teammate-service/runtime-owner.ts`'s
+  `resolveLaunch()` calls `this.deps.log.child(...)` unconditionally; this
+  file's module-level `silentLogger`/`as DreamuxLogger` cast has no `.child`,
+  so every case throws a `TypeError` before reaching the runtime it starts).
+  This item's own `.runtime` deletion is layered on an already-fully-broken
+  fixture. **Restoration needs both fixes together:** `.child` added to the
+  module-level logger (Driver C's own owed fix) AND the `runtime,` line
+  dropped from `createHost()`'s config literal (this item's).
+
+- **File:** `packages/dreamux/tests/helpers/config.ts` — `testDispatcherConfig()`
+  and `testDreamuxConfig()` (an in-memory `DispatcherConfig`/`DreamuxConfig`
+  builder pair) and their `TestDispatcherOptions` interface. **Not a test
+  file** (no suites of its own) and **not test-coverage collateral**:
+  confirmed zero callers anywhere in the repo before this item touched them
+  (`grep -rln "testDispatcherConfig\|testDreamuxConfig"` across the whole
+  tree returns only this file's own definitions) — pre-existing dead helper
+  code, unrelated to any passing or failing test. Deleted because
+  `testDispatcherConfig()` built the now-deleted `.runtime` field (excess
+  property) and `testDreamuxConfig()` read `dispatcher.runtime.provider`/
+  `.config` back off it (property does not exist) — both fail
+  `typecheck:tests` at their own definitions regardless of caller count.
+  **Kept:** `testConfigFileObject()`/`testSingleDispatcherFileObject()` (the
+  on-disk config.json shape builders `uninstall.test.ts`/`daemon.test.ts`/
+  `onboard.test.ts` use), unaffected — they never touched `.runtime`.
+
+**Driver C (Item 1's parked `.child` required-ness decision) status after
+this item:** four of the files on Driver C's original parked list
+(`channel-service.test.ts`, `commands.test.ts`,
+`input-source-lifecycle.test.ts`, `teammate-completion-lifecycle.test.ts`)
+had their affected cases deleted by this item for an independent, ruled
+reason (`DispatcherConfig.runtime`'s deletion, not `.child`'s). This is not a
+reversal of Item 1's "no file deleted or edited for this driver" note — that
+note's own justification (deleting collateral to accommodate a source change
+resting on a disproven premise is an unknowing change) does not transfer to
+this item's collateral, since `DispatcherConfig.runtime` is a plan-named,
+knowing removal with nothing in doubt. Driver C's remaining, still-parked
+scope: `tests/helpers/event-harness.ts` (→ all of `cot-projection-privacy.test.ts`,
+19 of 35 `core-event-catalog.test.ts` cases), `removed-surfaces.test.ts` (1
+case), and the twelve-plus `feishu-channel` test files listed in Item 1's own
+section.
+
+**DispatcherStore dead-method deletion (`.create()`/`.upsert()`/`.remove()`,
+`DispatcherCreateInput`):** no test collateral. Confirmed zero callers
+(`grep -rn "DispatcherStore"` across `packages/dreamux/tests` returns only
+`input-source-lifecycle.test.ts`'s `.get()`/`.list()`-adjacent construction
+`new DispatcherStore(config)`, and that file is deleted above for an
+unrelated reason) before this item touched them.
+
+## Stage 2a — Item 7
+
+`@excitedjs/agent-runtime-claude-code`, R29: `ClaudeCodeStreamRpc`'s
+`lifecycleSupported: boolean | null` tri-state, `decideLifecycleSupport()`,
+`rejectWaitingRequests()`, and `lifecycleUnsupportedError()` are deleted from
+`rpc.ts` — `command_lifecycle` admission is now assumed always supported, so
+every `submit()` writes to stdin immediately instead of waiting in
+`this.requests` for a capability decision. A direct consequence traced
+during implementation (not named line-by-line in the stage plan, which left
+the exact shape to the implementer): since nothing ever leaves a request
+sitting unwritten anymore, `PendingRequest.write` can never be observed
+non-null by any other handler, so it is deleted too, and `close()`,
+the `command_lifecycle` handler, and the `result` handler's `write ===
+null`/`write !== null` branches collapse to their single surviving arm.
+`close()` no longer produces `{status:'stopped'}`/`{status:'failed'}`
+admissions for a request that was registered but never written — that
+outcome is now structurally unreachable, so every admission `close()`
+produces is `{status:'ambiguous'}`. Also R30: `ClaudeProtocolEvent`'s
+`'result'` variant drops `commandUuids` (confirmed test-only — production's
+`handleProtocolEvent` never read it) and `TurnSubmitOptions.isSynthetic` is
+deleted (confirmed dead — no production caller ever set it `true`); `ParsedLine`'s
+`'init'` variant drops `capabilities` as a direct consequence of deleting its
+only reader (the `msg_lifecycle_v1` capability check this item removes).
+
+- **File / cases (compile — `.commandUuids` no longer exists on the type once
+  `h.results()`'s `.filter((event) => event.kind === 'result')` narrows the
+  array element and the field itself is gone):**
+  `packages/agent-runtime/claude-code/tests/rpc.test.ts` —
+  `it.each(['before', 'after'])('shares one completion for folded inputs with
+  completed %s result', ...)` (both entries), `it.each(['before', 'after'] as
+  const)('settles a consumed failure with cancelled %s result and preserves
+  the queued request', ...)` (both entries), `it.each([...four failure
+  shapes...])('never retains a consumed request past an error boundary %j',
+  ...)` (all four entries), and `it('resets idle time on every native line
+  and clears it as soon as requests are answered', ...)`.
+  **Contract pinned:** each of these tests pins a *different* completion/error
+  contract (folding two commands into one completion, preserving a queued
+  request across a cancelled-and-failed sibling, never retaining a consumed
+  request past an error boundary, resetting the idle timer per native line) —
+  the shared collateral is only their trailing `h.results()...commandUuids`
+  assertion, not the behavior under test.
+  **Still holds?** Yes, verbatim except for the dead assertion line — none of
+  these tests exercised the deleted lifecycle tri-state. Restore in the final
+  PR by dropping the `commandUuids` expectation only.
+
+- **File / cases (runtime — `toMatchObject({ commandUuids: [] })` no longer
+  matches once the emitted event has no such key at all):**
+  `packages/agent-runtime/claude-code/tests/rpc.test.ts` —
+  `it('reports an unbound internal failure and clears its text before later
+  input', ...)` and `it('reports setup failure without guessing a queued
+  owner, then fails the named cancelled request', ...)`.
+  **Contract pinned:** an unbound/internal native failure is reported once
+  with the right `outcome`, and a later request is unaffected by it; a
+  `turn_setup_failed` result is reported without guessing a queued owner, and
+  the named cancelled request still fails cleanly while its sibling completes
+  normally.
+  **Still holds?** Yes, verbatim except for the `commandUuids: []` half of
+  each `toMatchObject` matcher — restore by dropping that key.
+
+- **File / cases (behavior — the deferred-write/queued-admission path R29
+  deletes no longer exists, so the scenario these tests set up cannot occur):**
+  `packages/agent-runtime/claude-code/tests/rpc.test.ts` —
+  `it('preserves input order while capability is unknown and flushes on
+  started before init', ...)`, `it('does not flush remaining unwritten
+  requests when a write callback stops the session', ...)`, `it('preserves
+  write order when an early callback submits input during capability
+  release', ...)`, `it('rejects unwritten concurrent input when capability is
+  absent, then supports subsequent single input', ...)`, `it('releases
+  unwritten input when the first matching result arrives before capability is
+  decided', ...)`, and `it.each(['stop', 'fail'] as const)('classifies
+  unconfirmed native writes as ambiguous on %s', ...)` (both entries).
+  **Contract pinned:** input ordering/flushing while `command_lifecycle`
+  support was still undecided; rejecting a second concurrent input when the
+  CLI reports no `msg_lifecycle_v1` capability; releasing an unwritten
+  request when a result arrives before the decision; classifying a *never
+  written* request as cleanly `stopped`/`failed` (as opposed to `ambiguous`)
+  on session close.
+  **Does not hold; changed by R29.** R29 is exactly "只保留 command_lifecycle
+  这一套" — there is no unsupported/undecided state left to hold a request in,
+  so none of these scenarios can occur. Not restorable as written; the
+  `'classifies unconfirmed native writes as ambiguous'` test's surviving
+  half (a write that *was* sent but never acknowledged closes as `ambiguous`)
+  is still covered structurally by `close()`'s single remaining branch, just
+  not by a dedicated case.
+
+- **File / case (one parametrized entry, not the whole block):**
+  `packages/agent-runtime/claude-code/tests/rpc.test.ts` —
+  `it.each([true, false])('never uses a foreign UUID as sole-request fallback
+  with lifecycle=%s', ...)`, `false` entry only (kept as `it.each([true])`,
+  per R43's "delete a specific case" applied to one generated instance of a
+  data-driven test, not the block).
+  **Contract pinned (dying half):** with lifecycle not yet confirmed and no
+  `user_message_uuid` on the terminal result, the *sole* outstanding request
+  was still matched by exclusion (the deleted fallback).
+  **Does not hold; changed by R29.** The `true` entry's contract (never
+  matching a foreign/internal uuid; matching only on the request's own uuid)
+  is unrelated to the tri-state and still holds — kept.
+
+- **File / case (excess-property compile error):**
+  `packages/agent-runtime/claude-code/tests/stream.test.ts` —
+  `it('buildUserMessage sets isSynthetic as a sibling of message', ...)`.
+  **Contract pinned:** `buildUserMessage` puts `isSynthetic: true` as a
+  sibling of `message` on the stdin envelope when asked.
+  **Does not hold; changed by R30.** `isSynthetic` is deleted outright (no
+  production caller ever requested it) — there is no replacement behavior.
+  The sibling case, `'buildUserMessage omits isSynthetic by default'`, still
+  compiles and passes (trivially — the key can no longer exist), and is kept
+  unedited, matching this file's own standing convention of keeping a
+  deleted-feature's absence as a regression guard (see the adjacent `'sends
+  no delivery priority at all'` case).
+
+- **File / helper + cases (compile — the shared `resultEvent` helper's own
+  return-type-annotated literal fails `tsc` once `commandUuids` leaves
+  `ClaudeProtocolEvent`'s `'result'` variant, so every case reaching it dies
+  with it, per R43's "shared helper stops compiling" rule; cases that build a
+  `'result'`/`'interrupted'` event without going through the helper are
+  unaffected and were left unedited):**
+  `packages/agent-runtime/claude-code/tests/runtime-activity.test.ts` — the
+  `resultEvent()` helper itself, and: `'emits the cumulative usage snapshot
+  immediately before native end'`, `'reports background result usage without
+  any submitted command and a null context'`, `'emits a fresh snapshot on
+  each result, carrying native cumulative counters'`, `'emits no usage event
+  when the native result has no metrics'`, `'emits exactly one ended fact for
+  a turn that folded three commands into one result'`, `'reports failed when
+  the native result carries isError'`, `'emits one end per result boundary
+  when a steered command runs after the first one was answered'`, `'reports
+  the second boundary honestly when the steered turn fails after a completed
+  one'`, `'reports every terminal result, including a background result'`.
+  Also removed as direct cleanup: the now-unused `endNativeTurn` import (its
+  only caller was the first case above).
+  **Contract pinned:** each case pins a `handleProtocolEvent` → `RuntimeActivity`
+  projection fact (cumulative token usage before `turn.ended`, a background
+  result's usage/end with a null context, one `turn.ended` per result
+  boundary including folded/steered/background cases). None of them assert
+  on `commandUuids` — it was only ever a constructor parameter of the shared
+  fixture helper, never read by `handleProtocolEvent`.
+  **Still holds?** Yes, verbatim — restore by rebuilding `resultEvent()`
+  without the `commandUuids` parameter (drop it; it was already unread by
+  production) and restoring each case unchanged.
+  **Not touched (confirmed unaffected):** `it.each(['result', 'interrupted']
+  as const)('still ends a %s with no envelope uuid', ...)` builds its event
+  as an un-annotated `const`, not a literal at the call site, so the extra
+  `commandUuids: []` field it still carries does not trigger an excess-property
+  check and the case keeps passing as-is; left unedited per R43 (a still-passing
+  case is not a deletion candidate).
+
+**Also checked, no collateral found:** `packages/agent-runtime/claude-code/tests/session.test.ts`
+calls `session.submit(prompt, {}, commandUuid)` against the kept 3-argument
+`submit()` signature — unaffected, since `TurnSubmitOptions` itself is kept
+(now empty) rather than removed; `packages/dreamux/tests/package-boundary-guards.test.ts`'s
+pinned `agent-runtime-claude-code index.ts exports exactly the pinned name
+set` case is unaffected for the same reason (the barrel's export *names* are
+unchanged — only field-level shape inside `TurnSubmitOptions`/`ParsedLine`/
+`ClaudeProtocolEvent` changed, confirmed green by running that file's test
+suite directly). `packages/agent-runtime/claude-code/tests/rpc.test.ts`'s
+`init()` harness helper still emits a raw `capabilities: ['msg_lifecycle_v1']`
+key on the wire for the one surviving caller that passes `supported: false`
+(`'reads the artifact as the answer even when no control response arrives'`)
+— harmless, since the wire payload is untyped JSON and the key is simply no
+longer read.
+
+**Not deleted, left in place (confirmed live, contrary to the stage plan's
+"check before deleting" note):** `activity/native-hash.ts`'s
+`claudeNativePathHash`/`wyhash` — confirmed live, used by `activity/path.ts`'s
+`sanitizePath` for every long-cwd project-directory name. `activity/path.ts`'s
+`discoverWorktreePaths` and the worktree-list fallback in
+`discoveryCandidates` — traced structurally rather than left as "unconfirmed":
+the exhaustive full-project-directory fallback tier is bounded by
+`ClaudeScanBudget` (`maxEntries`/`maxElapsedMs`, `activity/budget.ts`), so the
+worktree-derived candidates are not a pure reorder-for-speed optimization —
+on a host with enough accumulated Claude Code project directories, they can be
+the difference between finding a session and the exhaustive fallback hitting
+its bound first. No test exercises this distinction either way; the
+conclusion is from reading `discoveryCandidates`'s three discovery tiers, not
+from a test result.
+
+## Stage 2a — Item 8
+
+`@excitedjs/agent-runtime-codex`, R24/R25: `turn_timeout_ms` and
+`approval_policy` are deleted from `DispatcherCodexConfig`,
+`defaultDispatcherCodexConfig()`, and `readDispatcherCodexConfig()`'s
+read/validate/return logic (both key names stay in the reader's
+`rejectUnknownKeys` allow-list so an existing `config.json` that sets either
+still loads — they are just no longer mapped into the returned config).
+`args.ts`'s `parseCodexArgs`/`codexArgsFromConfig` stop reading
+`obj['approvalPolicy']`/`config.approval_policy` and hard-code
+`approvalPolicy: 'never'`; `TRUSTED_LOCAL_APPROVAL_POLICIES` and its
+now-tautological fail-fast check are deleted.
+
+- **File / case (compile-adjacent — a snapshot assertion, not an import
+  break: `namedExports()` regex-scans `index.ts`'s literal export list, so
+  the pinned array no longer matches once three names it names are gone):**
+  `packages/dreamux/tests/package-boundary-guards.test.ts` — `it('agent-runtime-codex
+  index.ts exports exactly the pinned name set', ...)`.
+  **Contract pinned:** the exact set of names `@excitedjs/agent-runtime-codex`'s
+  barrel re-exports, so an accidental new/removed export is caught in review.
+  **Still holds?** The contract mechanism (barrel surface is intentional and
+  pinned) still holds; the specific array is stale — `ALLOWED_APPROVAL_POLICIES`,
+  `DEFAULT_APPROVAL_POLICY`, and `DEFAULT_CODEX_TURN_TIMEOUT_MS` are gone from
+  `config.ts` (this item) and so from the barrel. Restore in the final PR by
+  regenerating the pinned array from the barrel's current export list (drop
+  the three names above; no other name in this array is affected by this
+  item).
+- **File / case (runtime — the doc-comment text this test's prose-search
+  regex requires no longer exists, since the field it documents is deleted):**
+  `packages/dreamux/tests/feishu-allow-chats-release-contract.test.ts` —
+  `it('declares the Codex comment correction as type none while pending', ...)`.
+  **Contract pinned:** an unrelated earlier PR (the trusted `allow_chats`
+  release) left a stray-comment correction to `config.ts`'s `turn_timeout_ms`
+  doc paragraph; this case locked that correction's release-note bookkeeping
+  (pending change file, or the corrected doc text landed) so it would not be
+  silently dropped before its own change file was retired.
+  **Still holds?** No — changed by this item's own named ruling (R24): the
+  `turn_timeout_ms` field and its whole doc paragraph (the text the case's
+  regex searched for) are deleted outright, not merely corrected. The
+  contract this case pinned no longer has a subject. Not a restoration
+  candidate.
+
+**Not deleted, left in place (contrary to the stage plan's "delete if their
+only purpose was feeding args.ts" note):** `types.ts`'s
+`ThreadStartParams.approvalPolicy?`/`ThreadResumeParams.approvalPolicy?` —
+confirmed these carry the Codex `thread/start`/`thread/resume` JSON-RPC
+protocol shape, not the config→CLI-arg plumbing `args.ts` owns; `runtime.ts`'s
+`resolveThread()` never sets either field when constructing the params
+objects it sends (only `threadInstructions`, and for resume, `threadId`), so
+they are pre-existing unused protocol surface unrelated to R24/R25 — left
+untouched rather than folded into this item's scope.
+
+## Stage 2a — Item 9
+
+`@excitedjs/agent-runtime-codex`: `events.ts`'s one-shot `runTurn()`,
+`TurnCollector.awaitTurn()`, the `awaiting` map / `resolveAwaiting()`, and
+`firstCompleted`/`firstFailure`/`firstFailureTurnId`/`completedByTurn`/
+`failuresByTurn` are deleted, along with `TurnSubscriptionOptions`'
+`acceptAnyThread`/`onTrace`/`TurnTraceEvent`/`retainAfterTerminal`/
+`onProtocolViolation` (confirmed: `turn-manager.ts` is the only production
+caller of `subscribeTurnCollection`, always passed `retainAfterTerminal:
+true`, and never set `acceptAnyThread` or `onTrace`).
+`terminalFingerprint()`'s sha256 comparison and the `'conflict'` terminal
+state (R28/P3: a defensive content-hash comparison with no named failure
+scenario) are replaced with a plain `Set<string>` of turn ids (membership
+only, per target-org §6.4); no test pinned `onProtocolViolation`, so this
+line is prose-only, not a ledger case. `turn-manager.ts`'s `ensureCollector`
+no longer
+re-subscribes on a thread-id change (collapsed to construct-once — confirmed
+`this.threadId` is written only in `CodexRuntime`'s constructor and inside
+`resolveThread()`, and `resolveThread()` always finishes — so stops
+reassigning `this.threadId` — before that generation's `TurnManager` is
+constructed, so one live instance's `getThreadId()` never returns a second
+value). `activity/reader.ts`'s `readCodexRecentActivity` drops its
+`testHooks` third parameter (zero callers) and the `maxReadChunkBytes`
+plumbing that existed only to serve it.
+
+`TurnCollector.releaseTurn()` (the item's named design decision, not a
+mechanical strip) survives with a narrowed body — `itemsByTurn.delete(turnId)`
+only, since `completedByTurn`/`failuresByTurn`/`firstCompleted`/
+`firstFailureTurnId` are deleted along with `awaitTurn`. It has a real job:
+`itemsByTurn` has no size bound of its own (unlike the terminal-id set, which
+keeps `TERMINAL_TURN_ID_LIMIT`'s eviction), every `item/completed`
+notification appends to it, and nothing else ever deletes an entry — without
+`releaseTurn`, a long-lived resident collector leaks one buffered-items array
+per native turn it has ever observed. `TurnManager`'s four call sites keep
+calling it once each is done with a turn (an unbound orphan in
+`drainTerminalOrder`/`releaseOrphanTurnsIfIdle`, a protocol failure in
+`failRecord`, and a delivered completion in `releaseRecordIfReady`). One of
+those four, `failRecord`'s, now always fires on a collector that is already
+closing: `failRecord` runs only from `failProtocol`, whose only caller is the
+collector's own `onUnscopedFailure`, and the collector calls its own
+`closeCollector()` (which clears `itemsByTurn` outright) immediately after
+that callback returns — so this `releaseTurn` call is a harmless no-op, not a
+bug.
+
+- **File (compile break — imports `runTurn` and `TurnTraceEvent`, both
+  deleted):** `packages/agent-runtime/codex/tests/codex-events.test.ts` —
+  whole file deleted.
+  **Contract pinned:** `subscribeTurnCollection`'s one-shot query surface —
+  `onTrace` traces every notification before filtering; `acceptAnyThread`
+  resolves `turn/completed`/`item/completed` even on a mismatched
+  `threadId`; `awaitTurn()` resolves/rejects/dedupes per turn id and caches
+  a post-terminal result; `dispose()` unsubscribes idempotently; `runTurn()`
+  unsubscribes when `turn/start` itself is rejected.
+  **Still holds?** No — the audit's confirmed-zero-caller finding: no
+  production code calls `runTurn`/`awaitTurn`/`acceptAnyThread`/`onTrace`
+  (only `turn-manager.ts` calls `subscribeTurnCollection`, and it never sets
+  any of them), so the one-shot query mode this file tested is gone, not
+  moved. Not a restoration candidate.
+
+- **File / case (behavioral — the file still compiles; the case hangs to
+  its 5s vitest timeout once `ensureCollector`'s thread-change branch is
+  collapsed, verified by running it before deleting):**
+  `packages/agent-runtime/codex/tests/codex-runtime.test.ts` — `it('clears
+  the latest snapshot when the collector changes threads', ...)`.
+  **Contract pinned:** a single `TurnManager` instance, given a
+  `getThreadId()` that returns a different thread id on a later call, tears
+  down its collector and resubscribes to the new thread instead of silently
+  discarding notifications scoped to it.
+  **Still holds?** No — changed by this item's own instruction, which
+  required confirming thread-id invariance first: `CodexRuntime` resolves
+  the native thread (`resolveThread()`) and only then constructs that
+  generation's `TurnManager`; nothing reassigns `this.threadId` again while
+  that instance is live, so no production `TurnManager` ever observes
+  `getThreadId()` return a second value. The test's mid-life `threadId`
+  mutation on one long-lived `TurnManager` is a scenario production cannot
+  reach (the audit's own watch-list flag, `codex-runtime.test.ts:686-707`).
+  Not a restoration candidate. Deleting it left the `TurnManager` and
+  `CodexReasoningEffort` imports in this test file unused (this was their
+  only caller in the file); both import lines are removed as a direct,
+  mechanical consequence, not an edit to any surviving test's assertions.
+
+## Stage 2a — Item 10
+
+R39 ("把这个日志删掉") resolved by elimination, not by an operator re-ruling:
+`item 10`'s own "locate, don't guess" step ran the branch check (`origin/feat/
+plugin-system-mvp`'s `diagnostics.ts` is byte-identical to this worktree's —
+no other candidate landed there) and found `SECRET_KEY`/`sanitizeSdkArgs`/
+`redactForLog` is the only "secret list" mechanism anywhere in
+`@excitedjs/feishu-transport/src`. The plan's own STOP condition was "the
+branch check *and* the leading candidate both come back negative"; only the
+branch check came back negative, so the leading candidate stands confirmed by
+elimination, executed as item 10 described: `sdkLogger`,
+`sanitizeSdkArgs`/`redactForLog`/`formatSdkArgs`, `SECRET_KEY`,
+`AXIOS_PAYLOAD_FIELD`, `MAX_REDACT_DEPTH`, `SDK_SOURCE` deleted from
+`diagnostics.ts`; `TransportDiagnostics` no longer carries an `sdkLogger`
+field. The three `logger: diag.sdkLogger` call sites in `feishu.ts` are
+replaced with a shared `NOOP_SDK_LOGGER` constant — passing `undefined`
+instead would not delete the log, it would hand the Lark SDK's own
+`defaultLogger`, which writes unredacted args (including the
+`{app_id, app_secret}` token-fetch body) straight to `console.log`/
+`console.warn`, both reopening the #229 credential leak and (`console.log`/
+`console.info`/`console.debug`) breaking the stdio-reserved-for-JSON-RPC rule.
+This reading is an **inference** from the ruling's wording, flagged for the
+operator to veto: the visibility actually lost is SDK-originated
+auth/HTTP-failure detail (e.g. a token refresh failing); the WebSocket
+connection-lifecycle log (`diag.connection`) and best-effort failure log
+(`diag.diagnostic`) are untouched and still reach a host's channel log.
+
+- **File / cases (surviving file, per-case — `TransportDiagnostics` no
+  longer has an `sdkLogger` field, so each case fails to compile on the
+  property access, not on an import line):**
+  `packages/channel/feishu-transport/tests/diagnostics.test.ts` —
+  `test('sdkLogger prefixes [feishu-sdk] on every level and writes only to
+  stderr', ...)`, `test('sdkLogger routes each level to the matching logger
+  method with a source field', ...)`, `test('safety: a sentinel secret / body
+  never reaches the injected logger', ...)` (drove `diag.sdkLogger.info(...)`
+  as one of four sinks it exercised), and the whole
+  `describe('createTransportDiagnostics — sdkLogger secret redaction', ...)`
+  block (5 cases: `'injected path: blanks the request body so app_secret
+  never reaches the logger'`, `'default (no logger) path: app_secret never
+  reaches stderr either'`, `'scrubs a raw AxiosError instance reached via the
+  non-axios fallback'`, `'redacts a credential-named key wherever it
+  appears'`, `'passes a plain Error through unchanged so its stack still
+  renders'`).
+  **Contract pinned:** the `sdkLogger` sink existed at all, reproduced the
+  historical `[feishu-sdk]` stderr prefix / routed-with-source-field
+  behavior, and scrubbed `app_secret`/`access_token`/other credential-named
+  keys and axios `config.data`/`headers`/`auth` before any SDK arg reached
+  either sink.
+  **Changed by this item (R39), does not hold.** The `sdkLogger` sink is
+  deleted outright, not narrowed — there is no redacted-forwarding behavior
+  left to pin. The `'safety: ...'` case's other three sinks
+  (`diag.connection` ×2, `diag.diagnostic` ×1) still hold and are unaffected;
+  only its `diag.sdkLogger.info(...)` line is gone, but per R43 a case whose
+  fixture/assertion no longer fits is deleted whole, not edited down to its
+  surviving lines. Not a restoration candidate unless R39 is reversed — if
+  the operator vetoes this reading, the fix is a different one (redact but
+  keep the log), which needs its own test, not a resurrection of these.
+
+**Corrects a forward reference in item 11's own log entry** (this file,
+below, `'createFeishuTransport — injected logger safety boundary (#74)'`):
+that entry said item 10's STOP on R39 was "the pending decision" and that
+`diagnostics.test.ts`'s `'safety: ...'` case plus the `sdkLogger` redaction
+suite covered the contract "in the interim" — both are now stale, since this
+item resolves the STOP and deletes both. See the corrected paragraph there.
+
+## Stage 2a — Item 11
+
+`@excitedjs/feishu-transport`, dead API removal: `FeishuTransport.createGroup`/
+`.inviteMembers` and their `FeishuCreateGroupInput`/`FeishuCreateGroupResult`/
+`FeishuInviteMembersInput`/`FeishuInviteMembersResult` types, the
+`FEISHU_TRANSPORT_PACKAGE` marker constant, and the `webSocketRegistration`
+option (`FeishuTransportOptions.webSocketRegistration`,
+`FeishuWebSocketRegistration`) are deleted — confirmed zero production
+callers in `@excitedjs/feishu-channel` (the one consumer package) and zero
+callers anywhere else in the repo outside `@excitedjs/feishu-transport`'s own
+tests. Direct cleanup that followed from the deletions: `feishuChatClient()`'s
+structural return type is trimmed to `chat.get` only (`chat.create`/
+`chat.members.create` were used only by the two deleted methods);
+`FeishuSelfIdentityCache.accept()` and its implementation are deleted from
+`transport/identity.ts` (its only call site was the deleted
+`webSocketRegistration` branch of `openInbound()`).
+
+`webSocketRegistration` differs from the other three symbols: it was not
+zero-caller in the item-7 sense (`skill-materializer.ts`'s `testHooks`
+precedent) — it is a deliberate test/embedding seam, and two of
+`feishu-transport`'s own tests used it. The audit's/plan's "zero callers"
+classification rested on cross-package (production) callers only. If a
+reviewer prefers item 7's standard for test-only seams (keep it, since it has
+an in-package test caller), this is the one symbol in this item to revert;
+doing so also restores `identity.ts`'s `accept()` and its one dying test case
+below.
+
+- **File (whole, obsolete):** `packages/channel/feishu-transport/tests/smoke.test.ts`.
+  **Contract pinned:** the PR0-scaffold marker `FEISHU_TRANSPORT_PACKAGE`
+  equals `'@excitedjs/feishu-transport'` — its own header says "Real behavior
+  tests land with the ported logic in PR1," i.e. it was never meant to
+  outlive the scaffold.
+  **Still holds?** No — the marker is deleted outright. No such test exists in
+  `feishu-channel` today (grep across its `tests/`); the constant's own doc
+  comment claims one depends on it, but the only reader found in this repo's
+  current tree was this package's own `smoke.test.ts` — grep confirms today's
+  tree, not history, so this is stated as a present-tense correction, not a
+  claim the doc comment was always wrong. The file's one assertion has no
+  subject left; a test file with zero surviving cases fails vitest, so the
+  whole file is removed, not just the assertion.
+
+- **HIGH-RISK, restore first.** **File / case (compile — import-line failure,
+  not a fixture edit):** `packages/channel/feishu-channel/tests/feishu-bot.test.ts`
+  (whole file, all 9 cases).
+  **Contract pinned:** `createFeishuBot`'s inbound routing and dispatch —
+  per-message creation observer forwarding, `im.message.receive_v1`-only
+  registration and raw-event normalization, sender-name fallback,
+  unroutable-event dropping, the bot-member-added route gated on a handler
+  being supplied (issue #62), `card.action.trigger` registration and response
+  passthrough, malformed card-action-response normalization, and raw
+  card-callback key stripping.
+  **Failure:** its `import type {...} from '@excitedjs/feishu-transport'`
+  line imports `FeishuCreateGroupInput`, `FeishuCreateGroupResult`,
+  `FeishuInviteMembersInput`, `FeishuInviteMembersResult` among 14 other,
+  still-valid names — 4 of the 18 no longer exist, so the import line itself
+  fails to resolve and the whole file fails to load (R43's first bullet: a
+  deleted export a test file imports, not a shape change). `class
+  FakeTransport implements FeishuTransport` with its two now-extra
+  `createGroup`/`inviteMembers` methods would still compile on its own
+  (TypeScript allows a class to implement more than an interface requires) —
+  it is only the four now-nonexistent type names in the import list that
+  break the file.
+  **Still holds?** Yes, verbatim — none of the file's 9 cases assert on
+  `createGroup`/`inviteMembers`; they exist on `FakeTransport` only to satisfy
+  the (then-required) `FeishuTransport` shape. Restore by dropping the two
+  methods from `FakeTransport` and the four dead type names from the import
+  list, then restoring every case unchanged.
+
+- **File / case (dies on merit):** `packages/channel/feishu-transport/tests/self-identity.test.ts`
+  — `test('a registration that reports no open_id leaves identity
+  recoverable', ...)`.
+  **Contract pinned:** the `webSocketRegistration.open()` branch of
+  `openInbound()` accepts a WS-registration-reported identity through
+  `FeishuSelfIdentityCache.accept()`; an app-name-only report (no `open_id`)
+  is not accepted as resolved, and the next inbound message on that branch
+  still retries the ordinary bot-info lookup.
+  **Does not hold; changed by this item.** The branch it tests (and
+  `accept()`, the method it exercises) is deleted with `webSocketRegistration`
+  — there is no replacement path. The file's other 5 cases are unaffected:
+  they all go through the primary route (mocked `@larksuiteoapi/node-sdk` +
+  `openInbound`'s real path, per the file's own header), which this item does
+  not touch, and already cover the same "no open_id is not an identity, the
+  next message retries" contract on that path (`'a response without an
+  open_id is not an identity and is not cached'`, `'a failed startup lookup
+  is retried by the next message...'`). Not a restoration candidate.
+
+- **File / cases (dies on merit — test exercises exactly the deleted
+  methods):** `packages/channel/feishu-transport/tests/transport.test.ts` —
+  `test('creates a group chat and returns chat_id', ...)`, `test('fails loud
+  when chat create API is unavailable', ...)`, `test('invites members by
+  open_id and returns requested ids', ...)`.
+  **Contract pinned:** `createGroup`/`inviteMembers` call the Lark
+  chat-create/member-invite APIs with the right shape and fail loud when the
+  SDK/client lacks them.
+  **Does not hold; changed by this item.** The methods themselves are deleted
+  (dead API, confirmed zero production callers) — there is no replacement
+  behavior. Direct cleanup: `stubClient()`'s now-unused `chatCreate`/
+  `memberCreate` mocks and their `chat.create`/`chat.members.create` wiring
+  are removed (only these 3 cases read them); the sibling case `'fails loud
+  when the chat information API is unavailable'` (tests the kept
+  `getChatMode`, via `chat.get`) is unaffected and left unedited.
+
+- **HIGH-RISK.** **File / case (compile — excess-property check on an object
+  literal, not an import break):** `packages/channel/feishu-transport/tests/transport.test.ts`
+  — the whole `describe('createFeishuTransport — injected logger safety
+  boundary (#74)', ...)` block (one case: `'a sentinel appSecret and message
+  body never reach the injected logger'`).
+  **Contract pinned:** a real `send()` + `close()` round-trip through
+  `createFeishuTransport` never lets the injected `appSecret` or an outbound
+  message body reach the diagnostic logger, including on a `close()` failure
+  path (this test forced that path by injecting a `webSocketRegistration.close()`
+  that throws, so `diag.diagnostic()`'s catch branch actually ran).
+  **Still holds, but not restorable verbatim.** `FeishuTransportOptions` no
+  longer has a `webSocketRegistration` field to pass a throwing `close()`
+  through, so this test's specific trigger for the `close()` failure path is
+  gone along with it — `wsClient` is `undefined` in this test (`start()` is
+  never called), so `wsClient?.close()` is a silent no-op and the catch
+  branch no longer runs. Restoring this case needs a different trigger (e.g.
+  a mocked `lark.WSClient` whose `.close()` throws, reached through a real
+  `start()` call) — R43 forbids writing that replacement now; log it for the
+  restoration pass instead. **Update (item 10 resolved R39):** the safety
+  property this case pinned is narrower than it looks with `sdkLogger` gone —
+  `createFeishuTransport` no longer has any path that could hand `appSecret`
+  or a message body to the injected logger through the SDK at all (the three
+  SDK clients get a shared no-op logger, never `options.logger`), so the
+  `close()`-failure trigger this case was built around is no longer the risk
+  surface. `diagnostics.test.ts`'s remaining `connection`/`diagnostic` cases
+  cover what `createFeishuTransport` does still forward to the injected
+  logger (WebSocket lifecycle wording and best-effort-failure ids/errors);
+  the `sdkLogger` redaction suite this paragraph used to point to is deleted
+  along with the sink it tested (item 10, above), not kept "in the interim."
+
+- **File / case (compile-adjacent — a snapshot assertion, `namedExports()`
+  regex-scans `index.ts`'s literal export list, so the pinned array no longer
+  matches once six names it names are gone):**
+  `packages/dreamux/tests/package-boundary-guards.test.ts` — `it('feishu-transport
+  index.ts exports exactly the pinned name set', ...)`.
+  **Contract pinned:** the exact set of names `@excitedjs/feishu-transport`'s
+  barrel re-exports, so an accidental new/removed export is caught in review.
+  **Still holds?** The contract mechanism (barrel surface is intentional and
+  pinned) still holds; the specific array is stale — `FEISHU_TRANSPORT_PACKAGE`,
+  `FeishuCreateGroupInput`, `FeishuCreateGroupResult`, `FeishuInviteMembersInput`,
+  `FeishuInviteMembersResult`, and `FeishuWebSocketRegistration` are gone from
+  `index.ts` (this item). Restore in the final PR by regenerating the pinned
+  array from the barrel's current export list (drop those six names; no other
+  name in this array is affected by this item).
+
+**Not part of this item's scope, checked and confirmed unaffected:**
+`packages/channel/feishu-channel/tests/*` beyond `feishu-bot.test.ts` — none
+references `createGroup`/`inviteMembers`/`FEISHU_TRANSPORT_PACKAGE`/
+`webSocketRegistration`. `rush test`/`typecheck:tests` for
+`@excitedjs/feishu-channel` and `@excitedjs/dreamux` show unrelated
+pre-existing failures (the `DreamuxLogger.child` required-ness blocker from
+Item 1, "Decision needed before the next item touches any of these files," a
+few dozen cases across ~20 files) — none of those files were touched by this
+item, and none of the failures reference any symbol this item deletes.
+
+## Stage 2a — Item 12
+
+R47: `service/legacy-state.ts` is deleted outright (the whole
+removed-path/removed-field detection half: `LegacyStateFinding`,
+`removedStatePaths()`, `detectLegacyDispatcherState()`,
+`legacyDispatcherStateMessage()`, `assertNoRemovedRecordFields()`,
+`pathExists()`); `LegacyStateError` relocates to `platform/errors.ts` (still
+thrown by `platform/json-document-store.ts`, `scheduler/store.ts`'s
+`parseCronJobFile`, and `identity-store.ts`'s surviving pre-#148
+`provider_ref` check). `identity-store.ts` drops its
+`assertNoRemovedRecordFields(...)` call for `checkpoint`/`checkpoint_kind`/
+`session_ref`/`display_name`/`close_status`. `server.ts` drops
+`assertNoLegacyDispatcherState()` (boot pre-flight + its call) and
+`detectLegacyCronStores()`. `cli/doctor.ts` drops the `dispatcher ${id} legacy
+state` row. Four whole test files die, all on the same mechanism: each
+imports `LegacyStateError` (or a deleted export) from
+`../src/service/legacy-state.js`, a path that no longer resolves — per R43's
+first bullet, the whole file dies even where most of its own cases test
+unrelated, still-valid behavior.
+
+- **File:** `packages/dreamux/tests/legacy-state-fail-loud.test.ts` (whole
+  file, 22 cases across 5 `describe` blocks — the file's own import at line 13
+  pulls `assertNoRemovedRecordFields`, `detectLegacyDispatcherState`,
+  `legacyDispatcherStateMessage`, and `LegacyStateError`, three of which have
+  no replacement at any path).
+  - **Dies on merit (9 cases) — contract no longer holds:**
+    - `describe('legacy dispatcher-root state detection (fail-loud, never
+      migrated)')` — all 4 cases (`reports no findings for a fresh dispatcher
+      directory`; `detects the removed Core channel-binding store`; `detects
+      the removed Core Collaboration Space state file`; `detects every
+      pre-#233 flat TeamMate/Team leaf...`; `propagates a real access error
+      (ENOTDIR)...`). Each calls `detectLegacyDispatcherState()` directly —
+      the function is deleted, and R47 is exactly the ruling that Dreamux no
+      longer probes for these leaves. **Not restorable**: the behavior these
+      cases pinned is gone by design.
+    - `describe('assertNoRemovedRecordFields (shared chokepoint)')` — all 3
+      cases. `assertNoRemovedRecordFields()` itself is deleted; there is no
+      chokepoint left to test. **Not restorable.**
+    - `describe('AgentIdentityStore.read() rejects a persisted identity
+      carrying a removed field')` — 1 of 8 cases: `fails loud on other
+      removed fields: checkpoint, session_ref, display_name, close_status`.
+      This drove `identity.json` through `AgentIdentityStore.read()` for each
+      of the five fields the deleted `assertNoRemovedRecordFields` call used
+      to reject; `readIdentity()` no longer rejects any of them (an unknown
+      key is now silently ignored the same as any other field this schema
+      never reads). **Not restorable under the current design** — restoring
+      it would mean re-adding the removed-field chokepoint R47 deleted.
+    - `describe('no migration path exists for any removed state shape
+      (source-shape guard)')` — 1 of 3 cases: `no src file reads
+      channel-bindings.json or collaboration-spaces.json for anything but
+      fail-loud detection`. This absence-as-contract grep asserted every
+      `src/` hit for those two literal filenames is `service/legacy-state.ts`
+      (`hits.every(p => p.endsWith('src/service/legacy-state.ts'))`) **and**
+      that at least one hit exists (`hits.length > 0`) — i.e. it required a
+      fail-loud detector to still be naming these strings. With
+      `legacy-state.ts` deleted, no `src/` file names either string any more,
+      so `hits.length > 0` now fails on its own premise. **Not restorable as
+      written** — the fact it asserted (a detector exists) is no longer true;
+      a restoration would need to invert the assertion to "no `src/` file
+      names either string at all," which is a different claim from what this
+      case pinned.
+  - **Still holds — restore verbatim in the final PR (13 cases), unaffected
+    by this item's source change, orphaned only by the shared import break:**
+    - `describe('AgentIdentityStore.read() rejects a persisted identity
+      carrying a removed field')` — the other 7 cases: `accepts the current
+      shape as a control`; `reads a leftover nested session object as no
+      prior session, not a failure`; `treats a present-but-unusable
+      session_id as an unreadable record, never as "no session"`; `tolerates
+      a leftover role field`; `tolerates a leftover transcript_locator
+      field`; and — still fully live, since R47 does not touch the pre-#148
+      `provider_ref` check — `fails loud on a legacy provider_ref identity
+      (pre-#148, before agent_runtime existed)`.
+    - `describe('CronJobStore rejects the removed cron deliver/spawn-teammate
+      shapes')` — all 4 cases (`accepts a current prompt-agent job as a
+      control`; `fails loud on a job carrying the removed deliver field`;
+      `fails loud on the removed spawn-teammate action kind`;
+      `assertCurrent() surfaces the same fail-loud verdict used by the
+      startup doctor path`). `scheduler/store.ts`'s own `deliver`/
+      `spawn-teammate` rejection and `detectLegacyCronJobStore` are untouched
+      by this item — only their `LegacyStateError` import path moved.
+    - `describe('no migration path exists for any removed state shape
+      (source-shape guard)')` — the other 2 cases: `no src file spells the
+      retired team_member role vocabulary`; `no src file re-derives Core
+      binding/target_key/binding_fallbacks state`. Neither names
+      `legacy-state.ts` or either deleted export.
+  - Restoring the "still holds" half needs each case moved to a file that
+    imports `LegacyStateError` from `../src/platform/errors.js` (the cron
+    describe can move into `scheduler-cron.test.ts`'s restoration below,
+    since it already exercises `CronJobStore`; the identity describe's
+    surviving 7 cases can move into a plain `identity-store.test.ts` file
+    alongside whatever already covers that store, since there is no
+    remaining reason for it to live in a file named `*-legacy-state-*`).
+
+- **File:** `packages/dreamux/tests/team-read-legacy-state.test.ts` (whole
+  file — the remaining 4 of the file's original 5 cases; Item 2 already
+  removed the 5th, `raises a legacy leader record through list, history, and
+  status`, as `buildTeamCollectionHarness` collateral, and forward-referenced
+  this item as the point the rest of the file would go — see that item's
+  entry above). The file's line-8 import (`LegacyStateError` from
+  `../src/service/legacy-state.js`) is the whole-file failure point.
+  - **Dies on merit (1 case):** `raises a leader record carrying a removed
+    field the same way` — plants a leader identity with `session_ref` and
+    asserts `TeamCollectionReadModel.summary()` rejects with
+    `LegacyStateError`, driven entirely by the now-deleted
+    `assertNoRemovedRecordFields` call in `identity-store.ts`. **Not
+    restorable under the current design**, same reasoning as
+    `legacy-state-fail-loud.test.ts`'s equivalent case above.
+  - **Still holds — restore verbatim (3 cases):** `projects a leader carrying
+    a leftover role field normally`; `still reports an ordinary unreadable
+    leader as no leader state`; `keeps the response shape of a valid leader
+    record`. None of these three plants a removed field; they exercise
+    `TeamCollectionReadModel` through the same local `plantLeader()` fixture,
+    independent of `buildTeamCollectionHarness` and of the deleted chokepoint.
+
+- **File:** `packages/dreamux/tests/scheduler-cron.test.ts` (whole file, 20
+  cases — the file's line-19 import of `LegacyStateError` from
+  `../src/service/legacy-state.js` is the sole failure point; every case's
+  own contract is untouched by this item).
+  - **Still holds — restore verbatim (all 20 cases)** with the import path
+    updated to `../src/platform/errors.js`: `cron job store` schema
+    fail-loud (2 of these call `LegacyStateError` directly — `rejects a
+    persisted job carrying the removed spawn-teammate action kind`, `rejects
+    a persisted job carrying the removed top-level deliver field` — and both
+    still hold, since `scheduler/store.ts`'s own rejection logic is
+    unchanged by this item), `SchedulerService.create` payload validation,
+    timer-generation (stopped-timer, durable revalidation, no missed-fire
+    replay), immediate fire/fold and no-serialization, pre-admission
+    failure/ambiguous-admission semantics, and store-deletion ordering
+    (Team-dissolve side of the scheduler).
+
+- **File:** `packages/dreamux/tests/removed-surfaces.test.ts` (whole file —
+  the file's line-31 import of `LegacyStateError` from
+  `../src/service/legacy-state.js` is the failure point).
+  - **Dies on merit (2 cases; the plan that scoped this item named only the
+    second of these — the first is an additional finding from reading the
+    file in full for this entry):**
+    - `the identity-store removed-field rejection list still names every
+      shape whose loss would be silent` — a source-text pin that reads
+      `identity-store.ts` and asserts it still contains the string literals
+      `'checkpoint'`, `'checkpoint_kind'`, `'session_ref'`, `'display_name'`,
+      `'close_status'`. Those literals are gone from the file along with the
+      `assertNoRemovedRecordFields(...)` call this item deletes. **Not
+      restorable under the current design** — the list it pinned no longer
+      exists.
+    - `AgentIdentityStore.read() fails loud with LegacyStateError on a
+      persisted "session_ref" field (behavioral, not just a shape pin)` —
+      the companion behavioral case; same reasoning. **Not restorable under
+      the current design.** This case was already separately flagged under
+      Item 1's Driver C list (`typecheck:tests`-only, `noopLog` missing
+      `.child`) as one of the ~290 cases left pending a decision; whole-file
+      deletion here closes that line item out for this file specifically —
+      it is no longer part of Driver C's outstanding inventory, for an
+      unrelated reason (the file itself no longer exists).
+  - **Still holds — restore verbatim (the rest of the file, ~20 cases):**
+    `deleted files stay deleted` (5 paths); `deleted identifiers stay absent
+    from every package src` (16 banned-token/pattern cases, comment-stripped,
+    covering `waitIdle`/`channelInput`/`getCheckpoint`/... through the
+    Feishu saga/phase/outbox/recovery-cursor scan); `the Core Collaboration
+    Space domain is fully absent` (3 cases); `deleted Team MCP tool names
+    stay absent` (5 cases); and `neutral contract shapes stay minimal` (4
+    structural cases on `AgentRuntime`/`ChannelSession`). None of these
+    names `legacy-state.ts`, `LegacyStateError`, or any export this item
+    touches.
+
+**Verification:** `node common/scripts/install-run-rush.js build --to
+@excitedjs/dreamux` passes. `npx vitest run` inside `packages/dreamux`
+(not the full `rush test`) passes 971 of 971 registered tests across the
+other 67 test files; the one failing file,
+`packages/dreamux/tests/codex-live.test.ts`, is pre-existing Item 1
+collateral unrelated to this item — see the correction note appended to
+Item 1's section above. `.agents/scripts/check.sh` passes.
+
+**Docs rewritten in this item, and one scope note:**
+`packages/dreamux/src/service/CLAUDE.md` (root-helpers list, the "old state
+fails loud" and "reject a removed field" invariants merged into one revised
+paragraph), `packages/dreamux/CLAUDE.md` (the `service/agent-entity/` row —
+the plan's own text guessed this needed no edit; it did, at line 39),
+`.agents/domains/state-config-and-files.md` (the "Removed Local Layouts"
+paragraph, both "Source:" lists, and the "removed-field rule under
+*Invariants*" cross-reference in the 0.x Upgrade Policy section — that
+sentence pointed at the very paragraph this item rewrote, so it needed its
+own rewrite even though the plan only named the "Source:" lists).
+`packages/dreamux/skills/dispatcher/dreamux-maintenance/references/
+service-lifecycle.md` was checked for `checkpoint`/`session_ref`/
+`checkpoint_kind`/`collaboration-spaces.json`/`channel-bindings.json`/
+`removed field`/`legacy` and confirmed to contain none of this item's
+deleted mechanism (its one `legacy` hit, on `turn.jsonl`, is a different,
+untouched inert-residue policy) — no edit, and none added, since this
+reference is current-state-only and a historical leaf-name list would
+violate that. `.agents/domains/channel.md` was edited beyond the plan's
+named scope (two "Source:" lists and one paragraph of prose, `~880-887` and
+`~1104`) — its prose asserted "Core's own removed routing state is
+detected, not read: `channel-bindings.json`/`collaboration-spaces.json` ...
+fail loud as old state," which this item makes false; left unedited it would
+have been a KB claim about a deleted mechanism, not just a stale citation.
+`service-topology.md:27` and `scheduled-work.md:41` were checked and left
+alone — both describe mechanisms this item does not touch (the surviving
+`provider_ref` check; `detectLegacyCronJobStore`, kept as-is). Root
+`CLAUDE.md`'s "Changelog Responsibility" section was checked and does not
+depend on this mechanism specifically — left untouched.
+
+## Stage 2a — Item 14
+
+`platform/paths.ts`'s module-level `currentConfig` global and
+`setRuntimeConfig()`/`resetRuntimeConfig()`/`getRuntimeConfig()` are deleted
+outright (`getRuntimeConfig()` had zero production callers anywhere in
+`src/`; `currentConfig` was read only by `getRuntimeConfig()`). The 5
+production `setRuntimeConfig(...)` call sites — `server.ts` (constructor),
+`cli/doctor.ts` (`runDreamuxDoctor`), `onboard/run.ts` (×2), `daemon/install.ts`
+(`daemonInstall`) — wrote a value nothing in production ever read; each call
+site and its now-unused import of `setRuntimeConfig` is deleted along with
+the module. No new owner: this was a fully inert mechanism end to end, not a
+relocation.
+
+**Re-verification against the plan's snapshot (per this item's own
+instruction to re-grep `packages/dreamux/tests/` immediately before
+executing, not from the plan's snapshot):** the plan named 9 collateral test
+files. Re-running `grep -rln RuntimeConfig packages/dreamux/tests/`
+immediately before this item's edits found only 6 — 3 of the plan's 9 had
+already stopped referencing the trio, for reasons independent of this item:
+
+- `commands.test.ts` and `dispatcher-plugin-hooks.test.ts`: their only usage
+  was a `previousConfig = getRuntimeConfig(); ...; setRuntimeConfig(previousConfig);`
+  save/restore pair inside a shared fixture (`createChannelListServer()` /
+  `buildRealServer()` respectively). Stage 2a Item 14's plan predicted exactly
+  this shape (confirmed in full for `commands.test.ts`'s usage: the global was
+  saved and restored around a `Server` built directly from a passed `config`
+  object, never actually consulted by the code under test) — but by the time
+  this item runs, Item 14's plan is moot for these two files: Stage 2a Item 6
+  had already deleted both fixtures wholesale, along with the cases that used
+  them, for an unrelated reason (the fixtures built a `DispatcherConfig`
+  carrying the now-deleted `.runtime` field — see Item 6's section above). The
+  RuntimeConfig save/restore boilerplate went with its fixture as a side
+  effect of that unrelated deletion; both files still exist, still compile,
+  and still pass, each carrying a comment pointing at Item 6's ledger entry.
+- `teammate-completion-lifecycle.test.ts`: deleted outright by Item 6, same
+  section, same reason (its shared `createHost()` fixture also carried the
+  save/restore pair alongside the now-deleted `.runtime` field).
+
+None of these three needs any action here — deleting the trio from
+`platform/paths.ts` does not touch them, since none of them imports it any
+more. This narrows this item's own whole-file deletions from the plan's 9 to
+the 6 below. A repo-wide `grep -rln "setRuntimeConfig\|resetRuntimeConfig\|getRuntimeConfig"`
+(all `.ts`, all packages, immediately after this item's source edits) returns
+nothing — no file anywhere still imports any of the three.
+
+**The 6 confirmed files, all whole-file (R43's first bullet — the import of a
+deleted export fails module resolution, not a scoped fixture mismatch):**
+every occurrence of `resetRuntimeConfig`/`setRuntimeConfig` in each file below
+sits inside a `beforeEach`/`afterEach` hook line, never inside an assertion or
+the code path under test — confirmed by reading every match's line number and
+surrounding context before deleting. None of the 6 was touched by any earlier
+item in this stage (confirmed: none appears anywhere else in this ledger's
+Stage 2a sections, except `onboard.test.ts`, noted below), so each file's
+content is exactly its state on the harness-preparation commit this stage's
+work is stacked on, with that one exception.
+
+- **File:** `packages/dreamux/tests/daemon.test.ts` (whole file, 29 cases
+  across `describe('daemon service control')`, `'daemon uninstall
+  (service-only)'`, `'managed service working directory ownership'`, `'daemon
+  install (stable service Node, issue #83)'`, `'buildServicePath ordering and
+  deduplication'`, `'userLocalBinDirs and systemExecDirs'`,
+  `'withUserLocalBinPath'`, `'withServicePath does not mutate process.env or
+  the input env'`, `'provider binary resolution from captured session PATH'`,
+  `'captured session PATH appears in systemd and launchd service config'`,
+  `'re-running daemon install refreshes the persisted service PATH'`, `'normal
+  CLI invocation captures ambient process.env PATH'`, `'daemon install
+  resolves bare provider bins and includes them in the service PATH'`).
+  **Contract pinned:** the `dreamux daemon install`/`uninstall` pipeline —
+  service-unit generation, working-directory ownership, and provider-bin PATH
+  capture/resolution/persistence across install/reinstall, including the
+  systemd/launchd unit content those PATHs land in.
+  **Contract survives unchanged; restore verbatim in the final PR** — only
+  this file's incidental `resetRuntimeConfig()` `afterEach` boilerplate (6
+  call sites, none read by any assertion) died with the module it imported
+  from.
+
+- **File:** `packages/dreamux/tests/onboard.test.ts` (whole file, 18 cases
+  under `describe('dreamux onboard')`; one of them, `'onboard output
+  round-trips through loadConfig (#148)'`, already had its two
+  `.runtime`-shaped assertions removed by Stage 2a Item 6 — logged above; that
+  edit is independent of and unaffected by this item).
+  **Contract pinned:** the `dreamux onboard` flow — collects answers, writes
+  config/state/service files (dry-run and real), round-trips the written
+  config through `loadConfig`, and reports provider-bin/service diagnostics.
+  **Contract survives unchanged; restore verbatim in the final PR** (i.e., in
+  the state Item 6 already left it in) — only this file's incidental
+  `resetRuntimeConfig()` call (1 site) died with the module it imported from.
+
+- **File:** `packages/dreamux/tests/uninstall.test.ts` (whole file, 4 cases
+  under `describe('dreamux uninstall')`).
+  **Contract pinned:** the top-level `dreamux uninstall` guard — what it
+  removes (service unit) versus refuses to touch (config/state/logs), and its
+  confirmation/dry-run behavior.
+  **Contract survives unchanged; restore verbatim in the final PR** — only
+  this file's incidental `resetRuntimeConfig()` `afterEach` (1 call site)
+  died with the module it imported from.
+
+- **File:** `packages/dreamux/tests/doctor-plugins.test.ts` (whole file, 5
+  cases under `describe('pluginDoctorChecks')` and `'runDreamuxDoctor plugin
+  wiring'` — one originally-present case in the latter describe was already
+  deleted in an earlier, pre-Stage-2a PR-0 pass, logged near the top of this
+  ledger; that removal already predates this stage's harness-preparation
+  commit, so this item's 5-case count is current, not stale).
+  **Contract pinned:** `pluginDoctorChecks`'s per-plugin `dreamux doctor` row
+  shape, and `runDreamuxDoctor`'s plugin-wiring rows (load success/failure
+  reporting, the run continuing after a load failure).
+  **Contract survives unchanged; restore verbatim in the final PR** — only
+  this file's incidental `resetRuntimeConfig()` call (1 site) died with the
+  module it imported from.
+
+- **File:** `packages/dreamux/tests/runtime-sockets.test.ts` (whole file, 8
+  cases under `describe('runtime socket allocation')`).
+  **Contract pinned:** volatile runtime rendezvous socket path allocation —
+  the `platform/runtime-sockets.ts` contract root `CLAUDE.md`'s path-contracts
+  rule names.
+  **Contract survives unchanged; restore verbatim in the final PR** — only
+  this file's incidental `resetRuntimeConfig()` `afterEach` (3 call sites)
+  died with the module it imported from.
+
+- **File:** `packages/dreamux/tests/dispatcher-codex-home.test.ts` (whole
+  file, 12 cases under `describe('global Codex home doctor')`).
+  **Contract pinned:** `dreamux doctor`'s Codex-home resolution/diagnostic
+  rows.
+  **Contract survives unchanged; restore verbatim in the final PR** — only
+  this file's incidental `setRuntimeConfig(BUILT_IN_DEFAULTS)`/
+  `resetRuntimeConfig()` `beforeEach`/`afterEach` pair (2 call sites) died
+  with the module it imported from.
+
+**Not touched, confirmed:** `packages/dreamux/tests/codex-live.test.ts` (the
+standing issue #63 live gate) does not reference the trio and is unaffected
+by this item.
+
+**Verification:** `node common/scripts/install-run-rush.js build --to
+@excitedjs/dreamux` passes. `npx tsc -p tsconfig.tests.json` (scoped
+`typecheck:tests`) inside `packages/dreamux` reports exactly one error,
+`tests/helpers/event-harness.ts(48,9)`, `.child` missing on a stub logger —
+this is Item 1's pre-existing, still-parked Driver C item (see Item 6's
+"Driver C ... status after this item" note above), unrelated to this item's
+change and not newly introduced by it. A repo-wide grep for the three deleted
+export names, after this item's edits, returns nothing.
+
+**Docs:** none — the item's own plan named no doc surface, and none was
+found referencing `setRuntimeConfig`/`getRuntimeConfig`/`resetRuntimeConfig`
+by name outside `packages/dreamux/src/` and `packages/dreamux/tests/` (the
+mechanism's only outside mentions are in
+`.agents/tasks/architecture/add-runtime-config-commands/technical-design/`,
+which is a historical design-proposal record for a separate, not-yet-built
+task, not a current-state doc this item owns).
+
+## Stage 2a — gate round 1 (Driver C resolution)
+
+Gate round 1 (build/lint/typecheck:tests/test/check.sh) for Stage 2a. One
+blocker carried in from Item 1: **Driver C — `DreamuxLogger.child`
+required-ness** — parked at the end of Item 1's own section above as "no file
+deleted or edited for this driver... decision needed before the next item
+touches any of these files." That decision is made here, since this round
+cannot reach a green `typecheck:tests` otherwise.
+
+**Decision: option (i), delete the collateral per R43.** Option (ii) (revert
+`DreamuxLogger.child` to optional, restore the three `log.child?.(...) ??
+log` production fallbacks) was rejected: those fallbacks would exist to serve
+a test stub, never a real caller — every real `DreamuxLogger` is Core's pino
+instance (or a child of it), which always has `.child`. Confirmed this
+session: `grep -rn "as DreamuxLogger\|: DreamuxLogger = \|silentLogger\|consoleFallbackLogger\|noopLog\b" packages/*/src packages/*/*/src`
+returns exactly one hit, `platform/logger.ts`'s own
+`const _pinoSatisfiesContract: DreamuxLogger = pino();` compile-time contract
+check — no production literal anywhere lacks `.child`. Adding a production
+fallback for a scenario that cannot occur in production is exactly the
+"defense with no named failure scenario" root `CLAUDE.md` bans, so (ii) is
+out; (i) is the only remaining option, and matches how this ledger already
+treated every other required-ness collateral in this stage.
+
+Applying (i) mechanically required, per file, checking which cases actually
+route (directly or through a shared fixture/harness function) to a
+`.child`-missing stub logger, since several of the parked files mix tainted
+and untainted cases in the same `describe`. A case that never constructs a
+`DreamuxLogger` through the tainted stub is untouched.
+
+### feishu-channel (Item 1's own parked list, "twelve-plus" files)
+
+Six files were 100% tainted (every case routes through a module-level stub
+logger or the one session/tool-session factory the whole file is built
+around) and are deleted whole, per R43's first bullet extended to a shared
+helper with zero surviving reachers:
+
+- `tests/feishu-channel-session.test.ts` (15 cases, `newSession()`/
+  `provisioningSession()` → module-level `silentLog`).
+- `tests/feishu-cot-delivery.test.ts` (12 cases, `harness()`/`newSession()` →
+  `silentLog`).
+- `tests/feishu-cot.test.ts` (28 cases across 7 `describe`s, `harness()` and
+  `seamHarness()` (the latter not on Item 1's original file-name list — found
+  this session; same `silentLog` root) → `silentLog`).
+- `tests/feishu-document-comments.test.ts` (38 cases, `harness()` →
+  `recordingLogger()`, itself building a `DreamuxLogger`-typed object missing
+  `.child`).
+- `tests/feishu-provisioning.test.ts` (15 cases, `harness()` → `silentLog`).
+- `tests/feishu-target-router.test.ts` (3 cases, `router()` → module-level
+  `silent`).
+
+**Contract pinned by each, and whether it still holds:** every one of these
+six files pins real, still-true production behavior (session/COT/routing/
+document-comment/provisioning/target-routing contracts — see each file's own
+top-of-file doc comment, left in git history) — none of it changed. The
+`.child` requirement never reaches these paths at runtime (nothing under
+test ever calls `.child`); the failure is `typecheck:tests`-only.
+**Restore in the final PR** by giving each stub logger (`silentLog`/`silent`/
+`recordingLogger()`'s returned object) a `child: () => <self>` member and
+otherwise restoring the file verbatim — not a behavioral fix, a fixture fix.
+
+Seven files had a real mix of tainted and untainted cases; only the tainted
+cases (and, where a case's fixture/helper had no other reacher, the helper
+itself) were deleted, each file's surviving cases and imports otherwise
+unchanged:
+
+- `tests/feishu-document-tools.test.ts`: 6 of 8 cases deleted (three
+  `describe`s built on `fakeSession()`, all reached only by "subscribe/
+  unsubscribe/list_subscriptions derives its recipient" cases); the 2
+  surviving cases (`describe('the document tools are one definition for both
+  callers')`) never touch a session at all. `fakeSession()`, `ctx()`, the
+  `dispatcher`/`teamLeader` consts, and their now-unused imports
+  (`ChannelMcpCaller`, `FeishuDocumentSubscriptionView`, `FeishuToolContext`/
+  `FeishuToolSession`) went with the deleted cases.
+- `tests/feishu-space-tools.test.ts`: 7 of 8 cases deleted (every case except
+  `'none of the four tools are ever offered to a TeamLeader'`, which reads
+  only `def.callers` off the static tool definitions). Same collateral
+  cleanup: `fakeSession()`, `space()`, `ctx()`, the caller consts, and their
+  now-unused imports (`ChannelMcpCaller`, `FeishuSpaceRecord`,
+  `FeishuToolContext`/`FeishuToolSession`).
+- `tests/feishu-routing-tools.test.ts`: 16 of 22 cases deleted. Two describes
+  (`bind_channel`, `unbind_channel`) kept only their schema/`callers`-shape
+  cases (3 of 7) and lost every case that calls `fakeSession()`/`ctx()`
+  directly; the `list_bindings` describe kept only its two pure-schema cases
+  (`rejects a target_kind...`, `advertises the four filters as optional`) and
+  lost every case reached through the `matched()` helper (which wraps
+  `fakeSession()` — a one-hop indirection this session's first taint-scan
+  pass missed and had to redo with `matched` added to the traced-identifier
+  set); the whole trailing `describe.each([dispatcher, teamLeader])('$kind
+  binding receipts', ...)` block (4 cases × 2 caller kinds) died, since every
+  case in it calls `mcpFor(fakeSession())`. `fakeSession()`, `ctx()`,
+  `mcpFor()`, `matched()`, the `rows`/`row()` list-bindings fixture, both
+  caller consts, and their now-dead imports (`ChannelMcpCaller`,
+  `FeishuChannelSession`, `createFeishuSessionMcp`, `FeishuBindingView`,
+  `FeishuTarget`, `FeishuToolContext`/`FeishuToolSession`) went with them.
+- `tests/feishu-reply-tool.test.ts`: 3 of 5 cases deleted (`describe('replying
+  through the MCP capability')` (2 cases) and `describe('the pairing resend
+  reminder')` (1 case), all built on `session()`/`recordingLog()`); the 2
+  surviving cases (`describe('the reply tool contract')`) only read
+  `findFeishuTool(...)`'s static schema. All of `recordingLog()`, `session()`,
+  `refusingBot()`, `inertPort()`, the `AUDIT_REFUSAL` fixture, `caller`, temp-dir
+  `beforeEach`/`afterEach`, and their now-dead imports went with them.
+- `tests/feishu-slash-commands.test.ts`: 12 of 32 cases deleted — the whole
+  `describe('Feishu slash command routing side effects')` (2 cases, an
+  `it.each` this session's first pass also missed: its array argument spans
+  multiple source lines, which the first regex-based case-block scanner
+  (matching `.each\(...\)` only on one line) silently skipped, redone with a
+  brace-matching scanner) and `describe('Feishu slash command inbound
+  placement')` (2 cases, one of them also a multi-line `it.each` the first
+  pass missed) — both built on inline `new FeishuChannelSession({..., log:
+  silentLog, ...})`; and the whole `describe('/bind through ordinary Feishu
+  inbound')` (8 cases, `bindHarness()` → `silentLog`). The 20 surviving cases
+  (`describe('Feishu slash command recognition')`, all pure `detect()`
+  parsing, and `describe('Feishu slash command dispatch')`, all pure
+  `dispatch()` calls with no session/logger) are untouched. `silentLog`, the
+  `tempDirs`/`afterEach` cleanup it existed to serve, `bindHarness()`, and
+  their now-dead imports (`mkdtempSync`/`rmSync`/`tmpdir`/`join`,
+  `ChannelCorePort`/`ChannelCoreEvent`/`ChannelEventSubscription`/
+  `DreamuxLogger`, `FeishuChannelSession`, `trustIntroducedBots`,
+  `defaultDispatcherAccessState`/`saveDispatcherAccess`, `topicTarget`/
+  `FeishuTarget`, `bindChannelDef`, `createFakeFeishuBot`,
+  `createFakeCotClient`, `teamSummary`) went with them. The
+  `NUMERIC_LOOKING_TEAM_NAMES` fixture survives (still read by the
+  recognition describe's `it.each`); its doc comment's claim that "the
+  end-to-end bind test" also reads it no longer holds (that test is deleted)
+  and was corrected.
+- `tests/feishu-space-policy.test.ts`: 3 of 5 cases deleted
+  (`describe('Provisioning snapshot immutability')`, 2 cases, and
+  `describe('unbindSpace — stops future provisioning only')`, 1 case, all
+  constructing `new FeishuProvisioning({ ..., log: silentLog, ... })`). The 2
+  surviving cases (`describe('bindSpace — generation advances only on
+  creation-fact changes')`) only call `routing.bindSpace()`, never
+  `silentLog`. `silentLog`, `submission()`, `FeishuProvisioning`, and their
+  now-dead imports (`DreamuxLogger`, `JsonValue`, `FeishuSubmitOutcome`,
+  `topicTarget`) went with them.
+- `tests/feishu-extensions.test.ts`: 27 of 28 cases deleted — every case
+  except `'is a zero-argument default factory named feishu whose api is typed
+  for other plugins'`, which calls only `feishuPluginFactory()` and a
+  type-level `expectTypeOf` assertion, touching no session, no `loadFeishu()`
+  (→ `silentLog`), and no `recordingLog()`. `loadFeishu()`, `recordingLog()`,
+  `createSession()`, `silentLog`, every other helper/fixture the deleted
+  cases used, and their now-dead imports went with them.
+
+**Contract pinned by each partially-deleted file, and whether it still
+holds:** every deleted case's contract is unchanged in source (document-tool/
+space-tool/routing-tool authorization and derivation, the reply tool's
+send/refusal/pairing-reminder behavior, slash-command routing side effects
+and inbound placement, Collaboration Space provisioning-snapshot immutability,
+and the Feishu extension registry/lifecycle/tool-catalog/card-action
+contracts) — **restore in the final PR** the same way as the six whole-file
+deletions: give the file's stub logger(s) a `child: () => <self>` member and
+restore the deleted cases/helpers/imports verbatim.
+
+**One real regression found and fixed in source, not test collateral:**
+`feishu-channel/src/provider.ts`'s `state_root` guard. Item 1 narrowed
+`if (typeof stateDir !== 'string' || stateDir === '')` to `if (stateDir ===
+'')` on the stated premise that the `typeof` half was now a type-level
+tautology (`state_root` is required). That premise holds for a well-typed
+caller, but `tests/feishu-provider-state-root.test.ts`'s first case
+(`'refuses to create a session when the host supplied no state_root'`) builds
+its context via `as ChannelSessionCreateContext<...>`, deliberately bypassing
+the type system to prove the *runtime* guard a host that forgets the field
+still gets a named error rather than a raw `path.join` `TypeError` — exactly
+the scenario the file's own doc comment names ("There is deliberately no
+default... a missing or empty `state_root` is refused at construction,
+loudly, rather than absorbed"). This is a real, named-scenario guard (a host
+implementation that does not itself type-check, e.g. a JS-authored
+`ChannelProvider`), not the P3 pattern R28 targets. Fixed by merging both
+conditions into one falsy check (`if (!stateDir)`) — the existing error
+message already covers both regex assertions the file's two cases check, so
+one check now serves both, which is a simplification, not new defense.
+Verified: both cases in `feishu-provider-state-root.test.ts` pass.
+
+### dreamux (Item 1's own parked list, remainder)
+
+- `tests/cot-projection-privacy.test.ts` (whole file, 26 `it`/`it.each`
+  blocks, all routing through the file's own `harness()` → shared
+  `createCapturingLogger()`): deleted whole. **Contract pinned:** the COT
+  card's redaction/truncation half of the conversation projection (this
+  file's own docstring; `tests/core-event-catalog.test.ts` owns "everything
+  else about the catalog," per that file's own docstring, and is unaffected).
+  **Contract survives unchanged; restore in the final PR** — give
+  `createCapturingLogger()` a `.child` (already done here, see below) and
+  restore the file verbatim.
+- `tests/core-event-catalog.test.ts`: 20 of 35 cases deleted.
+  `describe('DispatcherCoreEventBus: live, best-effort delivery')` (9 cases,
+  a per-describe `makeBus()` → `createCapturingLogger()`) and
+  `describe('DispatcherCoreEventBus: subscription lifecycle')` (8 cases, a
+  second, same-named `makeBus()` in its own describe scope, same root) are
+  fully deleted; `describe('display fact correlation')` (4 cases, each
+  building `createConversationProjection({ ..., log:
+  createCapturingLogger().logger, ... })` inline) is fully deleted; one case
+  each in `describe('teammate.state covers every Agent entity kind...')`
+  (`'a standalone (dispatcher-scoped) TeamMate uses the exact same
+  durable-then-publish hook...'`) and `describe('team.state is the redundant
+  Team aggregate')` (`'is republished by TeamRosterProjection when a
+  contained TeamMate is created or changes state...'`) are deleted, each the
+  only case in its describe reaching `createCapturingLogger()` directly (the
+  former) or `makeIdentity()` (the latter, itself only used by that one
+  deleted case — deleted with it, see below). The 15 surviving cases (the
+  whole `describe('the published Core event catalog is exactly four kinds')`,
+  4 of 6 `describe('teammate.state...')` cases, 3 of 4
+  `describe('team.state...')` cases, and the whole `describe('activity from a
+  revoked runtime generation...')`) never construct a `DreamuxLogger` through
+  the tainted stub. `DispatcherCoreEventBus`, `createConversationProjection`/
+  `ProjectedAgent`, `TeamRosterProjection`, `AgentEntityCollectionStore`, and
+  their imports are now unused by this file and were removed; `sealChannelCoreEvent`,
+  `TeamStore`, `AgentRuntimeStateStore`, `createCapturingPublisher`,
+  `makeIdentityCreateInput`, `makeIdentityStore`, `makeTempDir`,
+  `removeTempDir` are all still used by surviving cases and were kept. The
+  file's own top-of-file doc comment, which claimed ownership of the bus's
+  delivery/subscription-lifecycle guarantees and turn-event correlation, was
+  corrected to say what the file currently covers and points at this ledger
+  entry for the rest. **Contract pinned by every deleted case: unchanged in
+  source** (best-effort live delivery ordering/fault-isolation, subscription
+  revoke/unsubscribe semantics, the `hasSources`/no-replay-surface
+  guarantees, the standalone-TeamMate publish wiring, and
+  `TeamRosterProjection`'s teammate.state-before-team.state republish
+  ordering) — **restore in the final PR** the same way as feishu-channel's
+  collateral above.
+- `tests/helpers/event-harness.ts`: **not deleted, fixed** — unlike every
+  other Driver C site, `createCapturingLogger()` is load-bearing for cases
+  that have nothing to do with `.child`: `makeIdentityStore()` (line ~139)
+  defaults its `log` parameter to `createCapturingLogger().logger`, and
+  `makeIdentityStore()` is the real `AgentIdentityStore` fixture builder
+  every surviving `describe('teammate.state...')` case in
+  `core-event-catalog.test.ts` calls. Deleting `createCapturingLogger()` (the
+  mechanical R43 outcome for a stub with zero remaining direct callers) would
+  have cascade-deleted five clean, unrelated, currently-passing cases that
+  assert nothing about logging at all — collateral far outside Driver C's
+  actual scope, and no plan or ruling asks for that capability to be removed.
+  This is not "editing a test to make it pass": `event-harness.ts` is a
+  shared fixture helper with zero assertions of its own, not a test file
+  pinning behavior, and the fix is exactly the same one already applied to
+  claude-code's `consoleFallbackLogger` in this same item (add a `.child`
+  that returns itself; bindings are dropped, since nothing here asserts on a
+  child logger's own scoped fields, only on which bucket a call landed in).
+  `makeIdentity()` (the in-memory `AgentEntityIdentity` builder, a separate
+  export with no `.child` involvement of its own) lost every one of its
+  callers when this item's other deletions landed (all were inside the
+  deleted `core-event-catalog.test.ts` cases and the deleted
+  `cot-projection-privacy.test.ts`) and was deleted as ordinary dead code,
+  not Driver C collateral — it has zero remaining reachers anywhere in the
+  package.
+
+### The issue #63 live gate — additional fix, HIGH-RISK
+
+`tests/codex-live.test.ts` is the standing high-risk entry (see the top of
+this file). Item 1 had already trimmed its behavioral case to the skip/
+fail-loud shell (logged above, under Item 1). Verifying this round's
+`rush test` surfaced a second, independent defect in what Item 1 left behind:
+with `codex` on `PATH` and `DREAMUX_SKIP_LIVE_CODEX` unset — the normal case
+on any workstation or CI runner with Codex installed, reproduced this session
+(`codex-cli 0.156.1` on `PATH`) — the `describe('codex live integration',
+...)` shell's two branches (`it.skip` under the skip env var, `it('requires
+codex on PATH', ...)` under detection-missing) both require a condition that
+does not hold, so the `describe` registers zero `it`s. Vitest reports that as
+`Error: No test found in suite codex live integration` and fails the file.
+This is a structural defect in Item 1's trim, not a new contract this round
+changed, but R43 gives the file no exception once observed failing: **deleted
+the empty `describe('codex live integration', ...)` shell** (the skip/
+fail-loud gate logic, `detectCodex()`, and the `execSync` import it alone
+used), **kept** the whole `describe('codex detection logic')` (3 cases,
+`classifyDetection`/`versionAtLeast` — pure unit coverage with no live-codex
+dependency, unaffected by either defect). `SKIP_ENV`/`MODEL_GATE_ENV` (only
+ever referenced within the deleted shell) were removed as dead exports.
+**Contract pinned: unchanged, still owed.** The file's own banner already
+named the priority restoration (issue #63 non-blocking-inbound, folding a
+second submit into a running turn, live init handshake, live Feishu MCP
+surface) as owed from Item 1; this round's deletion removes only the
+already-emptied wrapper shell around that owed restoration, not the
+restoration itself. The final test completion on PR #453 must rebuild the
+skip/fail-loud gate around the restored behavioral case with a shape that
+cannot register zero tests (e.g. an explicit `it('codex is available',
+...)` case on the detected-and-not-skipped path, rather than an `if` with no
+`else`), not reintroduce this round's zero-registration shape verbatim.
+
+**Verification this round:** `node common/scripts/install-run-rush.js build`,
+`lint`, `typecheck:tests`, and `test` all report `SUCCESS`/`SUCCESS WITH
+WARNINGS` (the warnings are expected stderr capture from tests that assert on
+logged output, not failures) across all 9 operations, with `codex` present on
+`PATH` and no live-codex env var set. `.agents/scripts/check.sh` is clean
+after also fixing two pre-existing KB issues this round's check run
+surfaced, unrelated to Driver C: a stale `packages/dreamux/tests/helpers/fake-feishu-bot.ts`
+path citation in `domains/repository-operations-and-release.md` (the double
+moved to `packages/channel/feishu-channel/tests/helpers/` when Item 1 deleted
+dreamux's own copy; corrected to the current path) and two bare commit-hash
+citations in this ledger's own Item-14 section (rephrased to describe the
+harness-preparation commit without naming its hash, per the KB's no-commit-hash
+rule for `.agents/tasks/`).

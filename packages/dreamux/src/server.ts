@@ -15,17 +15,12 @@ import {
 } from './registry/index.js';
 import {
   BUILT_IN_DEFAULTS,
+  dispatcherAgent,
   type DreamuxConfig,
 } from './config/config.js';
 import { DispatcherStore } from './state/dispatcher-store.js';
 import { resolveHomePathPrefixes } from './platform/home-paths.js';
-import {
-  adminSocketPath,
-  dispatcherCronJobsPath,
-  dispatcherTeamCronJobsPath,
-  dispatcherTeamDir,
-  setRuntimeConfig,
-} from './platform/paths.js';
+import { adminSocketPath } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
 import { createServerHooks, type ServerHooks } from './plugin/host.js';
 import { errorInfo } from './platform/error-info.js';
@@ -45,12 +40,6 @@ import {
   type DispatcherService,
 } from './service/index.js';
 import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
-import {
-  detectLegacyDispatcherState,
-  legacyDispatcherStateMessage,
-} from './service/legacy-state.js';
-import { detectLegacyCronJobStore } from './service/scheduler/store.js';
-import { TeamStore } from './service/team-collection/store.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -182,7 +171,6 @@ export class Server {
     if (opts.agentRuntimeProviderCatalog === undefined) {
       assertRuntimeImplementationsLoaded(config, this.providerRegistry);
     }
-    setRuntimeConfig(config);
     this.log = opts.logger ?? createLogger({ name: 'server' });
     // Built after the logger it records unclassified tool failures through: an
     // Agent reads only the message, so the whole value belongs in this log.
@@ -260,12 +248,6 @@ export class Server {
     // a misconfigured deployment never comes up half-broken.
     await this.assertDispatcherWorkspaces();
 
-    // Pre-#199 local state contract (issue #199 Slice 5): a leftover session
-    // ledger / identities dir / Team audit ledger from an earlier layout is a
-    // hard upgrade blocker — 0.x does not migrate it. Aggregate every
-    // dispatcher's findings and fail the whole start loud before launching.
-    await this.assertNoLegacyDispatcherState();
-
     // Before taking the new run/ admin lock, fail loud if an OLD-version
     // server still holds the pre-#182 state/ admin lock — the two locks are at
     // different paths and would not otherwise see each other (issue #182 P1).
@@ -341,29 +323,6 @@ export class Server {
     }
   }
 
-  /**
-   * Fail loud when any dispatcher still has pre-#199 local state (issue #199
-   * Slice 5). Detection only — the legacy paths are never read for migration,
-   * rewritten, or removed; the operator deletes them and lets the current layout
-   * rebuild. Aggregated like the workspace contract so every stale dispatcher is
-   * reported at once.
-   */
-  private async assertNoLegacyDispatcherState(): Promise<void> {
-    const messages: string[] = [];
-    for (const row of this.repos.dispatchers.list()) {
-      const findings = await detectLegacyDispatcherState(row.dispatcher_id);
-      if (findings.length > 0) {
-        messages.push(legacyDispatcherStateMessage(row.dispatcher_id, findings));
-      }
-      messages.push(...(await detectLegacyCronStores(row.dispatcher_id)));
-    }
-    if (messages.length > 0) {
-      throw new Error(
-        `dreamux serve cannot start — incompatible local state found:\n${messages.join('\n')}`,
-      );
-    }
-  }
-
   summarize() {
     return this.dispatchers.summarize();
   }
@@ -400,28 +359,6 @@ export class Server {
   }
 }
 
-async function detectLegacyCronStores(dispatcherId: string): Promise<string[]> {
-  const messages: string[] = [];
-  const dispatcherCron = await detectLegacyCronJobStore(
-    dispatcherCronJobsPath(dispatcherId),
-    dispatcherId,
-  );
-  if (dispatcherCron !== null) messages.push(dispatcherCron);
-  const teams = new TeamStore({
-    root: dispatcherTeamDir(dispatcherId),
-    dispatcherId,
-  });
-  for (const team of await teams.list()) {
-    if (team.status === 'closed') continue;
-    const teamCron = await detectLegacyCronJobStore(
-      dispatcherTeamCronJobsPath(dispatcherId, team.team_id),
-      dispatcherId,
-    );
-    if (teamCron !== null) messages.push(teamCron);
-  }
-  return messages;
-}
-
 /**
  * Every dispatcher's runtime provider must already have a loaded implementation
  * in `registry` (builtin and npm alike load through loadConfig's single dynamic
@@ -433,7 +370,7 @@ function assertRuntimeImplementationsLoaded(
   registry: ProviderRegistry,
 ): void {
   for (const dispatcher of config.dispatchers) {
-    const ref = dispatcher.runtime.provider;
+    const ref = dispatcherAgent(config, dispatcher.id).provider;
     let loaded = false;
     try {
       loaded = registry.getImplementation(registry.resolve(ref).id) !== undefined;

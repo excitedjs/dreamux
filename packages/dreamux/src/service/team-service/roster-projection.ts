@@ -29,7 +29,7 @@ export class TeamRosterProjection {
     private readonly deps: {
       teamId: string;
       store: TeamStore;
-      coreEvents?: DispatcherCoreEventPublisher;
+      coreEvents: DispatcherCoreEventPublisher;
       /** The Team record this projection is published against, or `null`
        * before the Team is booted. */
       record: () => TeamRecord | null;
@@ -47,7 +47,7 @@ export class TeamRosterProjection {
    */
   publish(identity: AgentEntityIdentity, role: TeamContainedRole): void {
     this.remember(identity.name, role, identity.status);
-    this.deps.coreEvents?.publish(identity.dispatcher_id, {
+    this.deps.coreEvents.publish(identity.dispatcher_id, {
       schemaVersion: 1,
       kind: 'teammate.state',
       occurredAt: identity.updated_at,

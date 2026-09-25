@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The Lark SDK's own client/dispatcher/WebSocket logging is no longer forwarded anywhere (`[feishu-sdk]` stderr lines, or the `source: feishu-sdk` structured line on an injected logger) — the three SDK clients now get a shared no-op logger instead of a redacted-forwarding one. WebSocket connection-lifecycle lines and best-effort-failure diagnostics are unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "053700@gmail.com"
+}

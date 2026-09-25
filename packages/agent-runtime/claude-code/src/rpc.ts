@@ -22,8 +22,6 @@ interface PendingRequest {
   settle: (settlement: RuntimeSubmissionSettlement) => void;
   /** Null after native write acknowledgement or positive protocol evidence. */
   admit: ((admission: RuntimeAdmission) => void) | null;
-  /** Non-null only while waiting for concurrent-input capability before writing. */
-  write: (() => void) | null;
 }
 
 export interface ClaudeCodeStreamRpcOptions {
@@ -37,12 +35,6 @@ export interface ClaudeCodeStreamRpcOptions {
 }
 
 /**
- * One resident transport, one association from UUID to unanswered request.
- * Native results consume requests directly; no aggregate execution window waits
- * for terminal lifecycle frames. The consumed set also includes native internal
- * commands so cancellation is scoped to work that actually entered a turn.
- */
-/**
  * The two `terminal_reason` values that mean the turn was aborted rather than
  * answered, from the Agent SDK's documented set. The other reasons all name a
  * failure or a limit, so this is the whole of what an interrupt looks like on
@@ -52,12 +44,17 @@ export interface ClaudeCodeStreamRpcOptions {
  */
 const INTERRUPT_TERMINAL_REASONS = new Set(['aborted_streaming', 'aborted_tools']);
 
+/**
+ * One resident transport, one association from UUID to unanswered request.
+ * Native results consume requests directly; no aggregate execution window waits
+ * for terminal lifecycle frames. The consumed set also includes native internal
+ * commands so cancellation is scoped to work that actually entered a turn.
+ */
 export class ClaudeCodeStreamRpc {
   private readonly lineBuf = new LineBuffer();
   private readonly aggregator = new TurnAggregator();
   private readonly requests = new Map<string, PendingRequest>();
   private readonly consumed = new Set<string>();
-  private lifecycleSupported: boolean | null = null;
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
   private readonly control: ClaudeCodeControlRpc;
@@ -86,39 +83,25 @@ export class ClaudeCodeStreamRpc {
     if (this.closed || !this.stdin.writable) {
       return Promise.resolve({ status: 'failed', error: new Error('claude resident child is not running') });
     }
-    const concurrent = this.requests.size > 0;
-    if (concurrent && this.lifecycleSupported === false) {
-      return Promise.resolve({ status: 'failed', error: lifecycleUnsupportedError() });
-    }
     let settle!: PendingRequest['settle'];
     const submission = Object.freeze({
       settled: new Promise<RuntimeSubmissionSettlement>((resolve) => { settle = resolve; }),
     });
     return new Promise<RuntimeAdmission>((admit) => {
-      const request: PendingRequest = {
-        submission,
-        settle,
-        admit,
-        write: () => {
-          request.write = null;
-          this.armIdleTimer();
-          try {
-            this.stdin.write(`${buildUserMessage(prompt, options, commandUuid)}\n`, (error) => {
-              if (error != null) this.failWrite(commandUuid, request, error);
-              else this.acceptRequest(request);
-            });
-          } catch (error) {
-            this.failWrite(commandUuid, request, asError(error));
-          }
-        },
-      };
+      const request: PendingRequest = { submission, settle, admit };
       // Registration precedes writing: a transport may synchronously acknowledge
-      // or answer this message before write() returns or invokes its callback.
+      // or answer this message before the stdin write returns or invokes its
+      // callback.
       this.requests.set(commandUuid, request);
-      if (this.lifecycleSupported === true) {
-        // Reentrant input must not overtake older requests waiting on init.
-        for (const pending of this.requests.values()) pending.write?.();
-      } else if (!concurrent) request.write!();
+      this.armIdleTimer();
+      try {
+        this.stdin.write(`${buildUserMessage(prompt, options, commandUuid)}\n`, (error) => {
+          if (error != null) this.failWrite(commandUuid, request, error);
+          else this.acceptRequest(request);
+        });
+      } catch (error) {
+        this.failWrite(commandUuid, request, asError(error));
+      }
     });
   }
 
@@ -160,10 +143,12 @@ export class ClaudeCodeStreamRpc {
     const error = settlement.kind === 'failed'
       ? settlement.error
       : new Error('claude resident session stopped before write acknowledgement');
+    // Every request here has already been written: submit() writes to stdin
+    // synchronously, in the same tick as registration, so nothing in this map
+    // is ever unwritten. What is unknown is only whether claude received or
+    // acted on it before the session ended.
     for (const request of this.requests.values()) {
-      request.admit?.(request.write === null
-        ? { status: 'ambiguous', error }
-        : settlement.kind === 'stopped' ? { status: 'stopped' } : { status: 'failed', error });
+      request.admit?.({ status: 'ambiguous', error });
       request.admit = null;
       request.settle(settlement);
     }
@@ -232,7 +217,6 @@ export class ClaudeCodeStreamRpc {
     switch (line.kind) {
       case 'init':
         this.aggregator.accept(line);
-        this.decideLifecycleSupport(line.capabilities.includes('msg_lifecycle_v1'));
         break;
       case 'assistant':
         this.aggregator.accept(line);
@@ -247,7 +231,7 @@ export class ClaudeCodeStreamRpc {
         if (commandUuid === null || state === null) break;
         if (state === 'started') this.consumed.add(commandUuid);
         const request = this.requests.get(commandUuid);
-        if (request?.write === null) {
+        if (request !== undefined) {
           this.acceptRequest(request);
           // Consumed commands can report cancelled before their failure result.
           // Keep the result's members; lifecycle alone cannot supply its outcome.
@@ -261,7 +245,6 @@ export class ClaudeCodeStreamRpc {
         // An unconsumed command's cancellation cannot discard generating text.
         if (state === 'cancelled' && this.consumed.has(commandUuid)) this.aggregator.discard();
         this.options.onProtocolEvent?.({ kind: 'command_lifecycle', commandUuid, state });
-        this.decideLifecycleSupport(true);
         break;
       }
       case 'result': {
@@ -271,19 +254,12 @@ export class ClaudeCodeStreamRpc {
         this.consumed.clear();
         const uuid = line.outcome.userMessageUuid;
         if (uuid !== null) commandUuids.add(uuid);
-        if (this.lifecycleSupported !== true && uuid === null) {
-          for (const [id, request] of this.requests) {
-            if (request.write === null) commandUuids.add(id);
-          }
-        }
         const answered: PendingRequest[] = [];
-        const submittedUuids: string[] = [];
         for (const id of commandUuids) {
           const request = this.requests.get(id);
-          if (request === undefined || request.write !== null) continue;
+          if (request === undefined) continue;
           this.requests.delete(id);
           answered.push(request);
-          submittedUuids.push(id);
         }
         this.clearIdleIfEmpty();
         // What ended this turn is the turn's own fact. An aborted turn reports
@@ -309,12 +285,11 @@ export class ClaudeCodeStreamRpc {
         // Native end is still delivered before these submissions settle.
         this.options.onProtocolEvent?.(interrupted
           ? { kind: 'interrupted', uuid: line.uuid, outcome }
-          : { kind: 'result', uuid: line.uuid, outcome, commandUuids: submittedUuids });
+          : { kind: 'result', uuid: line.uuid, outcome });
         for (const request of answered) {
           this.acceptRequest(request);
           request.settle(interrupted ? { kind: 'stopped' } : { kind: 'completion', completion: completion! });
         }
-        if (this.lifecycleSupported !== true) this.rejectWaitingRequests();
         break;
       }
       case 'control_request':
@@ -330,34 +305,6 @@ export class ClaudeCodeStreamRpc {
         break;
     }
   }
-
-  private decideLifecycleSupport(supported: boolean): void {
-    if (this.lifecycleSupported === true) return;
-    if (!supported && this.lifecycleSupported !== null) return;
-    this.lifecycleSupported = supported;
-    if (!supported) {
-      this.rejectWaitingRequests();
-      return;
-    }
-    for (const request of this.requests.values()) request.write?.();
-  }
-
-  private rejectWaitingRequests(): void {
-    const error = this.lifecycleSupported === false ? lifecycleUnsupportedError()
-      : new Error('claude result arrived before concurrent-input capability was decided');
-    for (const [uuid, request] of this.requests) {
-      if (request.write === null) continue;
-      this.requests.delete(uuid);
-      request.admit?.({ status: 'failed', error });
-      request.admit = null;
-      request.settle({ kind: 'failed', error });
-    }
-    this.clearIdleIfEmpty();
-  }
-}
-
-function lifecycleUnsupportedError(): Error {
-  return new Error('claude resident session cannot attribute concurrent inputs: msg_lifecycle_v1 is unavailable');
 }
 
 function asError(error: unknown): Error {

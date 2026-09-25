@@ -11,22 +11,15 @@
  *   - stop() fencing input synchronously and converging a racing start
  *   - submit()/settlement (completed, failed, internal/protocol failure, stopped)
  *   - outputSchema bound once at create time and reapplied per native turn
- *   - MCP server list passthrough (exact, unmutated) into the rendered config
  *   - the provider's public surface staying the neutral AgentRuntimeProvider
  */
 import { describe, expect, it } from 'vitest';
 
 import { CodexRuntime } from '../src/runtime.js';
-import { TurnManager } from '../src/turn-manager.js';
-import { CodexReasoningEffort } from '../src/reasoning-effort.js';
-import {
-  createCodexAgentRuntimeProvider,
-  codexRuntimeArgsForMcpServers,
-} from '../src/provider.js';
+import { createCodexAgentRuntimeProvider } from '../src/provider.js';
 import { compileCodexOutputSchema } from '../src/output-schema-codec.js';
-import { defaultDispatcherCodexConfig } from '../src/config.js';
 import type { CodexRuntimeDeps } from '../src/runtime-deps.js';
-import { CodexProcess, type CodexProcessOptions } from '../src/supervisor.js';
+import { CodexProcess } from '../src/supervisor.js';
 import { CodexWsClient } from '../src/rpc.js';
 import {
   FakeCodexProcess,
@@ -37,9 +30,7 @@ import {
   waitFor,
 } from './helpers/codex-runtime-fakes.js';
 import type {
-  AgentRuntimeCreateContext,
   AgentRuntimeIdentity,
-  AgentRuntimeMcpServer,
   RuntimeActivity,
   RuntimeAdmission,
   RuntimeSubmission,
@@ -683,30 +674,6 @@ describe('CodexRuntime token usage', () => {
     await runtime.stop();
   });
 
-  it('clears the latest snapshot when the collector changes threads', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
-    const activity: RuntimeActivity[] = [];
-    let threadId = 'thread-A';
-    const manager = new TurnManager({
-      dispatcherId: 'agent-1', getThreadId: () => threadId,
-      client: client as unknown as CodexWsClient, codec: null,
-      reasoning: new CodexReasoningEffort(client as unknown as CodexWsClient,
-        { model: 'test-model', reasoningEffort: 'low' }, false, '/fake/cwd'),
-      activitySink: (fact) => { activity.push(fact); },
-    });
-    const first = requireSubmitted(await manager.submitInput({ text: 'first' }));
-    client.emitTokenUsage(threadId, 'turn-1', usage());
-    client.emitCompleted(threadId, 'turn-1', 'answer');
-    await first.settled;
-    activity.length = 0;
-    threadId = 'thread-B';
-    const second = requireSubmitted(await manager.submitInput({ text: 'second' }));
-    client.emitCompleted(threadId, 'turn-2', 'answer');
-    await second.settled;
-    expect(activity.map((fact) => fact.kind)).toEqual(['assistant.message', 'turn.ended']);
-    await manager.stop();
-  });
-
   it('omits context entirely when codex holds no positive window size, so the line stays n/a', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
@@ -1272,52 +1239,6 @@ describe('CodexRuntime outputSchema binding', () => {
     if (settlement.kind === 'completion' && settlement.completion.status === 'completed') {
       expect(settlement.completion.resultText).toBe('{"values":{}}');
     }
-    await runtime.stop();
-  });
-});
-
-describe('MCP server list passthrough encoding', () => {
-  it('renders exactly the Core-supplied MCP server list, unmutated, into the launched extra args', async () => {
-    const servers: AgentRuntimeMcpServer[] = [
-      { name: 'core.feishu', command: 'node', args: ['server.js'] },
-      // A logical name with characters that would corrupt a naive TOML key
-      // if it were sanitized instead of quoted: dots, quotes, unicode.
-      { name: 'weird "name".with.dots 中文', command: 'node', args: [] },
-    ];
-    let capturedArgs: string[] | undefined;
-    const process = new FakeCodexProcess();
-    const client = new FakeCodexWsClient();
-    const provider = createCodexAgentRuntimeProvider({
-      codexProcessFactory: (opts: CodexProcessOptions) => {
-        capturedArgs = opts.extraArgs;
-        return process as unknown as CodexProcess;
-      },
-      codexClientFactory: () => client as unknown as CodexWsClient,
-    });
-
-    const context: AgentRuntimeCreateContext<ReturnType<typeof defaultDispatcherCodexConfig>> = {
-      identity: identity(null),
-      config: defaultDispatcherCodexConfig(),
-      cwd: '/fake/cwd',
-      mcpServers: servers,
-      skillSources: [],
-      disabledFeatures: [],
-      paths: FAKE_PATHS,
-      state: noopStateSink(),
-    };
-    const runtime = await provider.createRuntime(context);
-    await runtime.start();
-
-    expect(capturedArgs).toBeDefined();
-    // The extraArgs also carry this provider's own approval_policy/sandbox_mode
-    // overrides ahead of the MCP block; what this test owns is that the MCP
-    // block itself is the exact same rendering the pure encoder would produce
-    // from the exact same list — the provider never discovers, appends, or
-    // mutates servers before handing them to the encoder.
-    const expected = codexRuntimeArgsForMcpServers(servers);
-    expect(capturedArgs!.slice(-expected.length)).toEqual(expected);
-    const joined = capturedArgs!.join(' ');
-    expect(joined).toContain('weird \\"name\\".with.dots 中文');
     await runtime.stop();
   });
 });

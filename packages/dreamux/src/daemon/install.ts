@@ -40,7 +40,6 @@ import {
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import {
   probeStandardExecDirs,
-  setRuntimeConfig,
   type ExecDirProbe,
 } from '../platform/paths.js';
 
@@ -98,7 +97,6 @@ export async function runDaemonInstall(
       registry: loaded.providerRegistry,
     }),
   };
-  setRuntimeConfig(config);
 
   const fallbackDirs = await probeStandardExecDirs(
     { platform, homeDir, env },

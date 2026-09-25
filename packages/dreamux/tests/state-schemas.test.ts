@@ -22,7 +22,6 @@ import {
   AgentIdentityStore,
 } from '../src/service/agent-entity/identity-store.js';
 import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
-import { CronJobStore } from '../src/service/scheduler/store.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
 import type { TeamRecord } from '../src/service/team-collection/types.js';
 import {
@@ -123,38 +122,15 @@ describe('config parser accepts the current shape and rejects a dangling agent r
     });
   }
 
-  it('accepts top-level agents[] + dispatchers[].agentRuntime + channels[]', async () => {
-    await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
-      dispatchers: [
-        {
-          id: 'flow',
-          cwd: '/srv/flow',
-          agentRuntime: 'flow',
-          channels: [
-            {
-              id: 'primary',
-              provider: BUILTIN_FEISHU_PROVIDER_REF,
-              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
-            },
-          ],
-        },
-      ],
-    });
-    const { config } = await loadConfig({ configDir, ...fakeOverrides() });
-    expect(Object.keys(config.agents)).toEqual(['flow']);
-    expect(config.dispatchers).toHaveLength(1);
-    expect(config.dispatchers[0]).toMatchObject({
-      id: 'flow',
-      cwd: '/srv/flow',
-      agentRuntime: 'flow',
-      runtime: { provider: BUILTIN_CODEX_PROVIDER_REF },
-    });
-    expect(config.dispatchers[0]!.channels).toHaveLength(1);
-    expect(config.dispatchers[0]!.channels[0]!.provider).toBe(
-      BUILTIN_FEISHU_PROVIDER_REF,
-    );
-  });
+  /**
+   * The case that used to live here ('accepts top-level agents[] +
+   * dispatchers[].agentRuntime + channels[]') was deleted as Stage 2a Item 6
+   * collateral: its assertion checked `config.dispatchers[0].runtime`, a
+   * field this item deletes (replaced by the on-demand `dispatcherAgent()`
+   * accessor) — see
+   * `.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md`,
+   * Stage 2a Item 6.
+   */
 
   it('rejects a dispatcher whose agentRuntime does not match any agents[].id', async () => {
     await writeConfig({
@@ -589,80 +565,6 @@ describe('TeamRecord: round-trip through the current schema', () => {
     expect(created).not.toBeNull();
     const read = await store.get('team-beta');
     expect(read!.team_id).toBe('team-beta');
-  });
-});
-
-describe('cron job store: round-trip through the current schema', () => {
-  let dir: string;
-  let path: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'dreamux-cron-'));
-    path = join(dir, 'cron-jobs.json');
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  it('creates, lists, updates, marks fired, and deletes a prompt-agent job', async () => {
-    const store = new CronJobStore({ cronJobsPath: path, dispatcherId: 'flow' });
-    const created = await store.create(
-      {
-        cron: '0 9 * * *',
-        tz: 'UTC',
-        recurring: true,
-        action: { kind: 'prompt-agent', prompt: 'daily stand-up' },
-        nextRunAt: 1_700_000_000_000,
-      },
-      10,
-    );
-    expect(created.enabled).toBe(true);
-    expect(created.dispatcher_id).toBe('flow');
-
-    const listed = await store.list();
-    expect(listed).toHaveLength(1);
-    expect(listed[0]!.id).toBe(created.id);
-
-    const updated = await store.update({ id: created.id, title: 'Stand-up' });
-    expect(updated.title).toBe('Stand-up');
-
-    const fired = await store.setFired({
-      id: created.id,
-      firedAt: 1_700_000_100_000,
-      nextRunAt: 1_700_086_400_000,
-      enabled: true,
-    });
-    expect(fired!.last_fired_at).toBe(1_700_000_100_000);
-
-    expect(await store.delete(created.id)).toBe(true);
-    expect(await store.list()).toEqual([]);
-  });
-
-  it('enforces the per-owner max job count', async () => {
-    const store = new CronJobStore({ cronJobsPath: path, dispatcherId: 'flow' });
-    await store.create(
-      {
-        cron: '0 9 * * *',
-        tz: 'UTC',
-        recurring: true,
-        action: { kind: 'prompt-agent', prompt: 'x' },
-        nextRunAt: null,
-      },
-      1,
-    );
-    await expect(
-      store.create(
-        {
-          cron: '0 10 * * *',
-          tz: 'UTC',
-          recurring: true,
-          action: { kind: 'prompt-agent', prompt: 'y' },
-          nextRunAt: null,
-        },
-        1,
-      ),
-    ).rejects.toThrow(/already has the maximum 1 cron jobs/);
   });
 });
 

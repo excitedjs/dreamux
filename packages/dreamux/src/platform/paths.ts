@@ -43,10 +43,6 @@ import {
   assertUnixSocketPathBudget,
 } from '@excitedjs/dreamux-utils';
 
-import {
-  BUILT_IN_DEFAULTS,
-  type DreamuxConfig,
-} from '../config/config.js';
 import { pathExists } from './fs-errors.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
@@ -61,26 +57,6 @@ export const BUNDLED_SKILL_NAMES = [
 ] as const;
 
 export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];
-
-let currentConfig: DreamuxConfig = BUILT_IN_DEFAULTS;
-
-/**
- * Set the active configuration snapshot. Called once by Server.start() with
- * the result of loadConfig(); tests can call it to inject a custom snapshot.
- * Idempotent.
- */
-export function setRuntimeConfig(config: DreamuxConfig): void {
-  currentConfig = config;
-}
-
-/** Test hook: revert to the built-in defaults. */
-export function resetRuntimeConfig(): void {
-  currentConfig = BUILT_IN_DEFAULTS;
-}
-
-export function getRuntimeConfig(): DreamuxConfig {
-  return currentConfig;
-}
 
 /**
  * The dreamux home root. Overridable via the `DREAMUX_ROOT` environment variable

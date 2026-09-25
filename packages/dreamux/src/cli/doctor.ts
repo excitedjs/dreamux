@@ -29,14 +29,9 @@ import {
   dispatcherCronJobsPath,
   dispatcherTeamCronJobsPath,
   dispatcherTeamDir,
-  setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
 import { diagnoseDispatcherWorkspace } from '../service/dispatcher-workspace.js';
-import {
-  detectLegacyDispatcherState,
-  legacyDispatcherStateMessage,
-} from '../service/legacy-state.js';
 import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
 import { TeamStore } from '../service/team-collection/store.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
@@ -117,7 +112,6 @@ export async function runDreamuxDoctor(
     configDir,
     checks,
   );
-  setRuntimeConfig(config);
   // Before the channel diagnostics below: api publication is where extensions
   // register into their channel provider.
   checks.push(...pluginDoctorChecks(plugins, createLogger({ name: 'doctor' })));
@@ -150,15 +144,6 @@ export async function runDreamuxDoctor(
         detail: diagnosis.detail,
       });
     }
-    const legacy = await detectLegacyDispatcherState(dispatcher.id);
-    checks.push({
-      name: `dispatcher ${dispatcher.id} legacy state`,
-      ok: legacy.length === 0,
-      detail:
-        legacy.length === 0
-          ? 'no removed state paths found'
-          : legacyDispatcherStateMessage(dispatcher.id, legacy),
-    });
     const cronLegacy = await detectLegacyCronJobStore(
       dispatcherCronJobsPath(dispatcher.id),
       dispatcher.id,
@@ -320,6 +305,7 @@ async function readDispatchers(
   return Promise.all(
     config.dispatchers.map(async (dispatcher) => {
       const foreground = await runDispatcherProviderDiagnostics({
+        config,
         dispatcher,
         catalogs,
         runner,
@@ -328,6 +314,7 @@ async function readDispatchers(
       });
       const managedService = service.installed
         ? await runDispatcherProviderDiagnostics({
+            config,
             dispatcher,
             catalogs,
             runner,

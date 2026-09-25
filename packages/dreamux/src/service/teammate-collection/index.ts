@@ -93,7 +93,7 @@ export interface TeammateCollectionOptions {
   names: AgentNameRegistry;
   admissions: AdmissionLedger;
   completionDelivery?: CompletionDeliveryPolicy;
-  conversationProjection?: ConversationProjection | undefined;
+  conversationProjection: ConversationProjection;
   /**
    * Where a completion produced by an Agent in this collection is delivered.
    *
@@ -543,9 +543,7 @@ export class TeammateCollection implements TeammateOps {
       peers: this.store,
       admissions: this.opts.admissions,
       worktrees: this.worktrees,
-      ...(this.opts.conversationProjection !== undefined
-        ? { conversationProjection: this.opts.conversationProjection }
-        : {}),
+      conversationProjection: this.opts.conversationProjection,
       log: this.opts.log,
     });
   }

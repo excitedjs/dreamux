@@ -1,19 +1,14 @@
 /**
- * Build the process env for a Codex app-server child. The neutral env boundary
- * (issue #209 cleanup) is `{ ...process.env, ...injectEnv, ...extraEnv }`:
- *   - `injectEnv` is the host's optional neutral env-injection seam from the
- *     create context (empty today); core owns what it injects.
- *   - `extraEnv` is THIS provider's own `config.extra_env`, merged last so a
- *     dispatcher can override an injected value.
+ * Build the process env for a Codex app-server child: `{ ...process.env,
+ * ...extraEnv }`, where `extraEnv` is this provider's own `config.extra_env`.
  * The child inherits the operator's ambient `CODEX_HOME` like a vanilla
  * `codex` invocation — Dreamux creates no dispatcher-private Codex home (MVP),
  * so there is nothing to strip.
  */
 export function codexProcessEnv(
-  injectEnv: Record<string, string> = {},
   extraEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
-  return { ...globalThis.process.env, ...injectEnv, ...extraEnv };
+  return { ...globalThis.process.env, ...extraEnv };
 }
 
 export function codexThreadInstructions(options: {

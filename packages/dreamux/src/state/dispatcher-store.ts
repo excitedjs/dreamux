@@ -20,12 +20,6 @@ export interface DispatcherRow {
   updated_at: number;
 }
 
-export interface DispatcherCreateInput {
-  dispatcher_id: string;
-  channel_identity: string;
-  enabled?: 0 | 1 | boolean;
-}
-
 export class DispatcherStore {
   private readonly rows = new Map<string, DispatcherRow>();
 
@@ -34,36 +28,6 @@ export class DispatcherStore {
     for (const dispatcher of config.dispatchers) {
       this.rows.set(dispatcher.id, rowDefaults(dispatcher, now));
     }
-  }
-
-  create(input: DispatcherCreateInput): DispatcherRow {
-    if (this.rows.has(input.dispatcher_id)) {
-      throw new Error(`dispatcher '${input.dispatcher_id}' already exists`);
-    }
-    const now = Date.now();
-    const row: DispatcherRow = {
-      dispatcher_id: input.dispatcher_id,
-      channel_identity: input.channel_identity,
-      status: 'declared',
-      enabled: normalizeEnabled(input.enabled ?? 1),
-      created_at: now,
-      updated_at: now,
-    };
-    this.rows.set(row.dispatcher_id, row);
-    return { ...row };
-  }
-
-  upsert(input: DispatcherCreateInput): DispatcherRow {
-    const existing = this.rows.get(input.dispatcher_id);
-    if (existing === undefined) return this.create(input);
-    const row: DispatcherRow = {
-      ...existing,
-      channel_identity: input.channel_identity,
-      enabled: normalizeEnabled(input.enabled ?? existing.enabled),
-      updated_at: Date.now(),
-    };
-    this.rows.set(row.dispatcher_id, row);
-    return { ...row };
   }
 
   get(id: string): DispatcherRow | null {
@@ -79,10 +43,6 @@ export class DispatcherStore {
 
   listEnabled(): DispatcherRow[] {
     return this.list().filter((row) => row.enabled === 1);
-  }
-
-  remove(id: string): void {
-    this.rows.delete(id);
   }
 }
 
@@ -103,6 +63,3 @@ function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
   };
 }
 
-function normalizeEnabled(value: 0 | 1 | boolean): 0 | 1 {
-  return value === true || value === 1 ? 1 : 0;
-}

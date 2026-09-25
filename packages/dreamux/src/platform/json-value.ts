@@ -41,13 +41,15 @@ export interface JsonValueBounds {
  * holes, and hidden keys are still rejected, and the value is still
  * canonicalized and frozen. Only the depth/entry/byte ceilings are lifted.
  *
- * Use it for a value Core itself produced, where a generic ceiling would be an
- * arbitrary cutoff rather than a real policy. Some producers do bound their own
- * result (activity pages, `*.history` cursors) and some do not — a roster
- * listing grows with the persisted entities — but no product path produces an
- * arbitrarily large one, and the answer for a result that does grow is
- * pagination owned by its domain. Never use it for untrusted input: that is what
- * an explicit {@link JsonValueBounds} is for.
+ * Use it where a generic ceiling would be an arbitrary cutoff rather than a
+ * real policy: a value Core itself produced (some producers do bound their own
+ * result — activity pages, `*.history` cursors — and some do not, since a
+ * roster listing grows with the persisted entities, but no product path
+ * produces an arbitrarily large one, and the answer for a result that does
+ * grow is pagination owned by its domain), or a provider-declared value whose
+ * magnitude the provider itself is responsible for bounding. Use an explicit
+ * {@link JsonValueBounds} when Core is the one imposing a real size policy on
+ * the value.
  */
 export const JSON_VALUE_UNBOUNDED: JsonValueBounds = {
   maxDepth: Number.POSITIVE_INFINITY,

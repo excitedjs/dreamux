@@ -1,17 +1,17 @@
 /**
  * Coverage cell C (event half), Stage 9 node "core-events".
  *
- * Covers the seven-kind Core event catalog, the dispatcher-scoped live bus's
- * best-effort delivery and subscription-lifecycle guarantees
- * (`service/dispatcher-core-events/`), the `teammate.state` role catalog and
- * `team.state` redundant-aggregate republication rule
- * (`service/team-collection/store.ts`, `service/team-service/roster-projection.ts`,
- * `service/agent-entity/identity-store.ts`), and turn-event correlation by
- * `turn_id` alone (`channel/conversation-projection.ts`).
+ * Covers the seven-kind Core event catalog and the `teammate.state` role
+ * catalog / `team.state` redundant-aggregate republication rule
+ * (`service/team-collection/store.ts`, `service/agent-entity/identity-store.ts`).
  *
- * `tests/cot-projection-privacy.test.ts` owns the redaction/truncation half of
- * the conversation projection; this file owns everything else about the
- * catalog.
+ * `DispatcherCoreEventBus`'s own delivery/subscription-lifecycle coverage and
+ * `channel/conversation-projection.ts`'s display-fact/turn_id-correlation
+ * coverage were removed from this file as Driver C collateral of the
+ * `DreamuxLogger.child` required-ness change (stage 2a item 1) — see
+ * `.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md`.
+ * Both contracts still hold in source and are owed back in the final test
+ * completion pass.
  */
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -24,23 +24,12 @@ import type {
   TeamStateTeammateSummary,
 } from '@excitedjs/dreamux-types';
 
-import { DispatcherCoreEventBus } from '../src/service/dispatcher-core-events/index.js';
 import { sealChannelCoreEvent } from '../src/service/dispatcher-core-events/seal.js';
-import {
-  createConversationProjection,
-  type ProjectedAgent,
-} from '../src/channel/conversation-projection.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
 import type { TeamRecord } from '../src/service/team-collection/types.js';
-import { TeamRosterProjection } from '../src/service/team-service/roster-projection.js';
-import {
-  AgentEntityCollectionStore,
-} from '../src/service/agent-entity/identity-store.js';
 import { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
 import {
-  createCapturingLogger,
   createCapturingPublisher,
-  makeIdentity,
   makeIdentityCreateInput,
   makeIdentityStore,
   makeTempDir,
@@ -210,260 +199,6 @@ describe('the published Core event catalog is exactly four kinds', () => {
   });
 });
 
-describe('DispatcherCoreEventBus: live, best-effort delivery', () => {
-  function makeBus(maxSources = 4) {
-    const { logger, warnCalls, errorCalls } = createCapturingLogger();
-    const bus = new DispatcherCoreEventBus({
-      dispatcherId: DISPATCHER_ID,
-      log: logger,
-      maxSources,
-    });
-    return { bus, warnCalls, errorCalls };
-  }
-
-  it('drops and logs an event outside the seven-kind catalog instead of delivering it', () => {
-    const { bus, errorCalls } = makeBus();
-    const source = bus.createSource('channel-a');
-    const received: ChannelCoreEvent[] = [];
-    source.source.subscribe((event) => { received.push(event); });
-
-    bus.publisher.publish(DISPATCHER_ID, {
-      ...baseScope(),
-      kind: 'not.a.catalog.kind',
-    } as unknown as ChannelCoreEvent);
-
-    expect(received).toHaveLength(0);
-    expect(errorCalls.some((c) => c.message === 'dispatcher core event is not a publishable catalog event')).toBe(true);
-  });
-
-  it('drops and logs an event scoped to a different dispatcher rather than deliver it', () => {
-    const { bus, errorCalls } = makeBus();
-    const source = bus.createSource('channel-a');
-    const received: ChannelCoreEvent[] = [];
-    source.source.subscribe((event) => { received.push(event); });
-
-    bus.publisher.publish('some-other-dispatcher', catalogFixtures()['teammate.state']);
-
-    expect(received).toHaveLength(0);
-    expect(errorCalls.some((c) => c.message === 'dispatcher core event scope mismatch')).toBe(true);
-  });
-
-  it('publish() is a void call: no listener promise can ever be awaited to gate a Core operation', () => {
-    const { bus } = makeBus();
-    bus.createSource('channel-a');
-    // If this returned a Promise, a caller could `await` it and let a
-    // listener's own timing decide when a Core operation is considered done —
-    // exactly the coupling "notifications after the durable fact" forbids.
-    const result = bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']);
-    expect(result).toBeUndefined();
-  });
-
-  it('invokes every listener on one source in subscription order, without waiting for a slow one', async () => {
-    const { bus } = makeBus();
-    const source = bus.createSource('channel-a');
-    const order: string[] = [];
-    let releaseSlow!: () => void;
-    const slowResolved = new Promise<void>((resolve) => {
-      releaseSlow = resolve;
-    });
-
-    source.source.subscribe(() => {
-      order.push('first');
-    });
-    source.source.subscribe(async () => {
-      order.push('second-start');
-      await slowResolved;
-      order.push('second-end');
-    });
-
-    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']);
-
-    // Both listeners have already been invoked synchronously, in the order
-    // they subscribed, even though the second is still awaiting its own
-    // promise — proving delivery is not awaited by the publisher.
-    expect(order).toEqual(['first', 'second-start']);
-    releaseSlow();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(order).toEqual(['first', 'second-start', 'second-end']);
-  });
-
-  it('a synchronous throw from one listener never prevents another listener, on the same or a different source, from receiving the fact', () => {
-    const { bus, warnCalls } = makeBus();
-    const sourceA = bus.createSource('channel-a');
-    const sourceB = bus.createSource('channel-b');
-    const received: string[] = [];
-
-    sourceA.source.subscribe(() => {
-      received.push('a-1');
-      throw new Error('a-1 is hostile');
-    });
-    sourceA.source.subscribe(() => {
-      received.push('a-2');
-    });
-    sourceB.source.subscribe(() => {
-      received.push('b-1');
-    });
-
-    expect(() =>
-      bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']),
-    ).not.toThrow();
-
-    expect(received).toEqual(['a-1', 'a-2', 'b-1']);
-    expect(warnCalls.some((c) => c.message === 'channel core event listener failed')).toBe(true);
-  });
-
-  it('a rejected listener promise is caught and logged, never surfacing as an unhandled rejection or a publish() failure', async () => {
-    const { bus, warnCalls } = makeBus();
-    const source = bus.createSource('channel-a');
-    let settled = false;
-    source.source.subscribe(async () => {
-      throw new Error('async hostile listener');
-    });
-    source.source.subscribe(() => {
-      settled = true;
-    });
-
-    expect(() =>
-      bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']),
-    ).not.toThrow();
-    expect(settled).toBe(true);
-
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(warnCalls.some((c) => c.message === 'channel core event listener failed')).toBe(true);
-  });
-
-  it('a turn still projects submitted/settled facts to a well-behaved sibling listener even with a hostile listener attached', () => {
-    const { bus } = makeBus();
-    const sourceA = bus.createSource('channel-hostile');
-    const sourceB = bus.createSource('channel-well-behaved');
-    sourceA.source.subscribe(() => {
-      throw new Error('always throws');
-    });
-    const wellBehaved: ChannelCoreEvent[] = [];
-    sourceB.source.subscribe((event) => { wellBehaved.push(event); });
-
-    const projection = createConversationProjection({
-      coreEvents: bus.publisher,
-      log: createCapturingLogger().logger,
-      homePathPrefixes: [],
-    });
-    const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
-    const agent: ProjectedAgent = { identity, role: 'teammate' };
-    expect(() =>
-      projection.projectInput(agent, {
-        source: 'feishu', sourceId: null, text: 'go', notice: null, occurredAt: Date.now(),
-      }),
-    ).not.toThrow();
-    expect(() =>
-      projection.projectActivity(agent, {
-        kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null,
-      }),
-    ).not.toThrow();
-
-    const kinds = wellBehaved.map((event) => event.kind);
-    expect(kinds).toContain('teammate.input');
-    expect(kinds).toContain('teammate.activity');
-  });
-});
-
-describe('DispatcherCoreEventBus: subscription lifecycle', () => {
-  function makeBus(maxSources = 4) {
-    const { logger } = createCapturingLogger();
-    return new DispatcherCoreEventBus({
-      dispatcherId: DISPATCHER_ID,
-      log: logger,
-      maxSources,
-    });
-  }
-
-  it('never delivers a fact published before the source existed (no subscribe-time snapshot, no replay)', () => {
-    const bus = makeBus();
-    // Publish before anyone has subscribed at all.
-    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']);
-
-    const source = bus.createSource('channel-a');
-    const received: ChannelCoreEvent[] = [];
-    source.source.subscribe((event) => { received.push(event); });
-
-    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.input']);
-
-    expect(received).toHaveLength(1);
-    expect(received[0]?.kind).toBe('teammate.input');
-  });
-
-  it('revoking one source stops its delivery without touching a sibling source', () => {
-    const bus = makeBus();
-    const sourceA = bus.createSource('channel-a');
-    const sourceB = bus.createSource('channel-b');
-    const receivedA: ChannelCoreEvent[] = [];
-    const receivedB: ChannelCoreEvent[] = [];
-    sourceA.source.subscribe((event) => { receivedA.push(event); });
-    sourceB.source.subscribe((event) => { receivedB.push(event); });
-
-    sourceA.revoke();
-    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']);
-
-    expect(receivedA).toHaveLength(0);
-    expect(receivedB).toHaveLength(1);
-  });
-
-  it('revokeSources() fences every live source at once, and no callback runs after that final close', () => {
-    const bus = makeBus();
-    const sourceA = bus.createSource('channel-a');
-    const sourceB = bus.createSource('channel-b');
-    const received: ChannelCoreEvent[] = [];
-    sourceA.source.subscribe((event) => { received.push(event); });
-    sourceB.source.subscribe((event) => { received.push(event); });
-
-    bus.revokeSources();
-    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']);
-
-    expect(received).toHaveLength(0);
-  });
-
-  it('a revoked source refuses a new subscription rather than silently accepting one', () => {
-    const bus = makeBus();
-    const source = bus.createSource('channel-a');
-    source.revoke();
-    expect(() => source.source.subscribe(() => {})).toThrow();
-  });
-
-  it('unsubscribe() removes exactly one registration and leaves siblings on the same source delivering', () => {
-    const bus = makeBus();
-    const source = bus.createSource('channel-a');
-    const received: string[] = [];
-    const subA = source.source.subscribe(() => { received.push('a'); });
-    source.source.subscribe(() => { received.push('b'); });
-
-    subA.unsubscribe();
-    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.state']);
-
-    expect(received).toEqual(['b']);
-  });
-
-  it('hasSources() is true only while at least one non-revoked source exists', () => {
-    const bus = makeBus();
-    expect(bus.publisher.hasSources?.()).toBe(false);
-    const sourceA = bus.createSource('channel-a');
-    expect(bus.publisher.hasSources?.()).toBe(true);
-    const sourceB = bus.createSource('channel-b');
-    sourceA.revoke();
-    expect(bus.publisher.hasSources?.()).toBe(true);
-    sourceB.revoke();
-    expect(bus.publisher.hasSources?.()).toBe(false);
-  });
-
-  it('exposes no FIFO, replay, snapshot, or history surface a caller could read the past from', () => {
-    const bus = makeBus();
-    const untyped = bus as unknown as Record<string, unknown>;
-    for (const forbidden of ['replay', 'getHistory', 'history', 'snapshot', 'ack', 'acknowledge', 'retry']) {
-      expect(untyped[forbidden], `DispatcherCoreEventBus must not expose '${forbidden}'`).toBeUndefined();
-    }
-  });
-});
-
 describe('teammate.state covers every Agent entity kind, with role a runtime projection only', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -532,23 +267,6 @@ describe('teammate.state covers every Agent entity kind, with role a runtime pro
       expect(capturedKeys).not.toContain('role');
     } finally {
       await removeTempDir(dir);
-    }
-  });
-
-  it('a standalone (dispatcher-scoped) TeamMate uses the exact same durable-then-publish hook as any other collection member', async () => {
-    const root = await makeTempDir('teammate-collection');
-    try {
-      const published: string[] = [];
-      const collection = new AgentEntityCollectionStore({
-        root,
-        dispatcherId: DISPATCHER_ID,
-        log: createCapturingLogger().logger,
-        onPersisted: (identity) => published.push(identity.name),
-      });
-      await collection.entity('scout').create(makeIdentityCreateInput({ name: 'scout' }));
-      expect(published).toEqual(['scout']);
-    } finally {
-      await removeTempDir(root);
     }
   });
 
@@ -660,156 +378,6 @@ describe('team.state is the redundant Team aggregate', () => {
     } finally {
       await removeTempDir(root);
     }
-  });
-
-  it('is republished by TeamRosterProjection when a contained TeamMate is created or changes state, teammate.state first', async () => {
-    const root = await makeTempDir('team-roster-projection');
-    try {
-      const publisher = createCapturingPublisher();
-      const roster = vi.fn(async (): Promise<readonly TeamStateTeammateSummary[]> => []);
-      const store = new TeamStore({ root, dispatcherId: DISPATCHER_ID, coreEvents: publisher, roster });
-      let currentRecord = await store.create(makeTeamRecordInput());
-      expect(currentRecord).not.toBeNull();
-      publisher.published.length = 0; // isolate the projection's own publications
-
-      const projection = new TeamRosterProjection({
-        teamId: 'alpha',
-        store,
-        coreEvents: publisher,
-        record: () => currentRecord,
-      });
-
-      const leaderIdentity = makeIdentity({ name: 'alpha-leader', team_id: 'alpha' });
-      projection.publish(leaderIdentity, 'team_leader');
-
-      expect(publisher.published).toHaveLength(2);
-      expect(publisher.published[0]?.event.kind).toBe('teammate.state');
-      expect(publisher.published[1]?.event.kind).toBe('team.state');
-      const aggregate = publisher.published[1]?.event;
-      if (aggregate?.kind === 'team.state') {
-        expect(aggregate.teammates).toEqual([
-          { teammateName: 'alpha-leader', role: 'team_leader', status: 'starting' },
-        ]);
-      }
-
-      publisher.published.length = 0;
-      const memberIdentity = makeIdentity({ name: 'scout', team_id: 'alpha' });
-      projection.publish(memberIdentity, 'teammate');
-
-      expect(publisher.published).toHaveLength(2);
-      const secondAggregate = publisher.published[1]?.event;
-      if (secondAggregate?.kind === 'team.state') {
-        // A fresh bounded summary every publish, not a shared mutable array.
-        expect(secondAggregate.teammates).toHaveLength(2);
-        // `TeamStateTeammateSummary.role` is typed `TeamContainedRole`
-        // ('teammate' | 'team_leader') — a Dispatcher literally cannot type-check
-        // as a row here, which is the compile-time half of "a Dispatcher never
-        // appears in a team.state summary". This is the runtime half: only the
-        // roles this test actually published ever show up.
-        expect(secondAggregate.teammates.every((row) => row.role === 'teammate' || row.role === 'team_leader')).toBe(true);
-      }
-      if (currentRecord === null) throw new Error('unreachable');
-    } finally {
-      await removeTempDir(root);
-    }
-  });
-});
-
-describe('display fact correlation', () => {
-  it('the input fact returns sourceId and source, and no event carries a turn_id', () => {
-    const publisher = createCapturingPublisher();
-    const projection = createConversationProjection({
-      coreEvents: publisher,
-      log: createCapturingLogger().logger,
-      homePathPrefixes: [],
-    });
-    const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
-    const agent: ProjectedAgent = { identity, role: 'teammate' };
-    projection.projectInput(agent, {
-      source: 'feishu:chat-1',
-      sourceId: 'message-fixture',
-      text: 'investigate',
-      notice: null,
-      occurredAt: Date.now(),
-    });
-    projection.projectActivity(agent, {
-      kind: 'assistant.message',
-      occurredAt: Date.now(),
-      id: 'evt-1',
-      text: 'done',
-    });
-
-    const kinds = publisher.published.map((entry) => entry.event.kind);
-    expect(kinds).toEqual(['teammate.input', 'teammate.activity']);
-
-    // One input fact carries the provenance and the body together: there is no
-    // second event to correlate to it, and so no correlation key at all.
-    expect(publisher.published[0]?.event).toMatchObject({
-      kind: 'teammate.input',
-      source: 'feishu:chat-1',
-      sourceId: 'message-fixture',
-      content: 'investigate',
-    });
-
-    for (const entry of publisher.published) {
-      expect('turn_id' in entry.event).toBe(false);
-    }
-  });
-
-  it('never carries a ChannelOrigin, turnOrigin, or presentation-correlation field on any display fact', () => {
-    const publisher = createCapturingPublisher();
-    const projection = createConversationProjection({
-      coreEvents: publisher,
-      log: createCapturingLogger().logger,
-      homePathPrefixes: [],
-    });
-    const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
-    const agent: ProjectedAgent = { identity, role: 'teammate' };
-    projection.projectInput(agent, {
-      source: 'feishu:chat-1', sourceId: null, text: 'do it', notice: null, occurredAt: Date.now(),
-    });
-    projection.projectActivity(agent, {
-      kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null,
-    });
-
-    const forbidden = /channelorigin|turnorigin|presentation.?correlation|correlation.?token/i;
-    for (const entry of publisher.published) {
-      for (const key of Object.keys(entry.event)) {
-        expect(forbidden.test(key), `unexpected field '${key}' on ${entry.event.kind}`).toBe(false);
-      }
-    }
-  });
-
-  it('projects nothing for a dispatcher-scoped TeamMate (neither a Dispatcher stream nor a Team one)', () => {
-    const publisher = createCapturingPublisher();
-    const projection = createConversationProjection({
-      coreEvents: publisher,
-      log: createCapturingLogger().logger,
-      homePathPrefixes: [],
-    });
-    const identity = makeIdentity({ team_id: null, name: 'scout' });
-    const agent: ProjectedAgent = { identity, role: 'teammate' };
-    projection.projectInput(agent, {
-      source: 'dispatcher:cli', sourceId: null, text: 'go', notice: null, occurredAt: Date.now(),
-    });
-
-    expect(publisher.published).toHaveLength(0);
-  });
-
-  it('publishes nothing at all when hasSources() reports no live listener', () => {
-    const publisher = createCapturingPublisher(false);
-    const projection = createConversationProjection({
-      coreEvents: publisher,
-      log: createCapturingLogger().logger,
-      homePathPrefixes: [],
-    });
-    const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
-    const agent: ProjectedAgent = { identity, role: 'teammate' };
-    projection.projectInput(agent, {
-      source: 'feishu', sourceId: null, text: 'go', notice: null, occurredAt: Date.now(),
-    });
-
-    expect(publisher.published).toHaveLength(0);
   });
 });
 

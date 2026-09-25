@@ -877,14 +877,15 @@ the rows through `bind_channel` / `bind_collaboration_space`. `subscriptions` is
 the one section a document may legitimately lack — a file written before it
 existed loses no fact, so it reads as `[]` and the version stays `1` — while a
 present-but-malformed one fails loud like the two beside it. Core's own removed
-routing state is detected, not read: `channel-bindings.json` and
-`collaboration-spaces.json` at the dispatcher root fail loud as old state.
+routing state — `channel-bindings.json` and `collaboration-spaces.json` at the
+dispatcher root — is no longer detected or read (R47): a leftover from before
+a Channel owned this state is inert residue that does not block `dreamux
+serve` or show up in `dreamux doctor`.
 
 Source:
 
 - `/packages/channel/feishu-channel/src/routing/store.ts`
 - `/packages/channel/feishu-channel/src/routing/document.ts`
-- `/packages/dreamux/src/service/legacy-state.ts`
 
 ### Team binding and authorization
 
@@ -1101,7 +1102,6 @@ Source:
 - `/packages/channel/feishu-channel/src/routing/naming.ts`
 - `/packages/channel/feishu-channel/src/tools/space-tools.ts`
 - `/packages/dreamux/src/config/config.ts`
-- `/packages/dreamux/src/service/legacy-state.ts`
 
 ### Routing notification cards
 

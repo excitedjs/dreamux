@@ -47,7 +47,7 @@ export interface TeammateServiceDeps {
    * which never closes or reopens, so it never reaches the manager.
    */
   worktrees?: WorktreeManager;
-  conversationProjection?: ConversationProjection;
+  conversationProjection: ConversationProjection;
   log: DreamuxLogger;
 }
 

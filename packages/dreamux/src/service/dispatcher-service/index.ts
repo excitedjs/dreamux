@@ -342,10 +342,6 @@ export class DispatcherService implements Dispatcher {
     // already under way rather than begin a second one.
     const task = Promise.resolve()
       .then(() => this.doStop())
-      .catch((error: unknown) => {
-        this.inputSources.markCleanupPending();
-        throw error;
-      })
       .finally(() => {
         this.stoppingTask = null;
       });

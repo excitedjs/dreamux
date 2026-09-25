@@ -17,7 +17,6 @@ export type ParsedLine =
       kind: 'init';
       sessionId: string | null;
       model: string | null;
-      capabilities: readonly string[];
       raw: JsonObject;
     }
   | {
@@ -113,20 +112,8 @@ export interface ResultEnvelope {
   readonly tokenUsage?: { readonly inputTokens: number; readonly outputTokens: number };
 }
 
-/**
- * Per-turn stdin delivery options. The default (an absent object) produces a
- * plain human-equivalent user turn; completion delivery opts into the native
- * notification idiom.
- */
-export interface TurnSubmitOptions {
-  /**
-   * Mark the stdin user message synthetic. claude-code maps this to its
-   * internal `isMeta`: hidden in the TUI transcript but model-visible and sent
-   * to the API like a normal user turn — the native channel for a background /
-   * sub-agent completion notification. Never set on human channel turns.
-   */
-  isSynthetic?: boolean;
-}
+/** Per-turn stdin delivery options. Currently empty: no delivery variant is submitted. */
+export interface TurnSubmitOptions {}
 
 /** The reduced outcome of one assistant turn, terminated by a `result`. */
 export interface TurnOutcome {
@@ -204,8 +191,6 @@ export type ClaudeProtocolEvent =
       /** The result envelope's own id, not its inbound-message attribution. */
       readonly uuid: string | null;
       readonly outcome: TurnOutcome;
-      /** Submitted commands answered by this result; empty for background-only turns. */
-      readonly commandUuids: readonly string[];
     };
 
 /**

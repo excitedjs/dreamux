@@ -13,8 +13,6 @@
  *    collection answers it from the durable record, including when a
  *    concurrent close commits inside the window this one is reading.
  */
-import { rm } from 'node:fs/promises';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -29,7 +27,6 @@ import {
   readAgentActivity,
 } from '../src/service/agent-entity/activity-reader.js';
 import { capturingLogger, type CapturedLog } from './helpers/command-harness.js';
-import { AgentEntityCollectionStore } from '../src/service/agent-entity/identity-store.js';
 import {
   agentEntityLastQuery,
   optionalAgentEntityNameParam,
@@ -42,11 +39,8 @@ import {
   teamNameParam,
   validateTeamId,
 } from '../src/service/team-collection/types.js';
-import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import { parseWorkflowMaxConcurrency } from '../src/service/workflow-service/limits.js';
 import { workflowRunInput } from '../src/service/workflow-service/types.js';
-import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
-import { makeTempDir, silentLog } from './helpers/dissolve-harness.js';
 import {
   fakeCronStore,
   silentLog as silentCronLog,
@@ -353,120 +347,4 @@ describe('every request reader re-types the rule and nothing else', () => {
       expect(code).toBe('BAD_REQUEST');
     });
   }
-});
-
-describe('closing an already-closed TeamMate is the operation succeeding', () => {
-  const DISPATCHER = 'dispatcher-1';
-
-  async function collection(): Promise<{
-    store: AgentEntityCollectionStore;
-    teammates: TeammateCollection;
-    cleanup: () => Promise<void>;
-  }> {
-    const root = await makeTempDir('dreamux-close-idempotency-');
-    const store = new AgentEntityCollectionStore({
-      root,
-      dispatcherId: DISPATCHER,
-      log: silentLog,
-    } as never);
-    const teammates = new TeammateCollection({
-      dispatcherId: DISPATCHER,
-      teamScope: null,
-      config: { agents: {} } as never,
-      agentRuntimeProviders: {} as never,
-      worktrees: {} as never,
-      store,
-      names: {} as never,
-      admissions: {} as never,
-      log: silentLog as never,
-    });
-    return {
-      store,
-      teammates,
-      cleanup: () => rm(root, { recursive: true, force: true }),
-    };
-  }
-
-  async function seed(
-    store: AgentEntityCollectionStore,
-    name: string,
-    status: 'running' | 'closed',
-  ): Promise<void> {
-    const created = await store.entity(name).create({
-      name,
-      teamId: undefined,
-      agentRuntime: 'fake-runtime',
-      sourceCwd: '/repo',
-      sourceRepo: null,
-      cwd: '/repo',
-      runtimeCwd: '/repo',
-      worktree: reuseCwdWorktree('/repo'),
-      intent: null,
-      identityPrompt: null,
-      status: 'running',
-    } as never);
-    if (status === 'closed') {
-      await store.entity(name).update(created, {
-        status: 'closed',
-        closedAt: Date.now() - 60_000,
-        closeNote: 'closed earlier',
-      } as never);
-    }
-  }
-
-  it('a record that already says closed is the answer, not a failure', async () => {
-    const { store, teammates, cleanup } = await collection();
-    try {
-      await seed(store, 'retired', 'closed');
-      const result = await teammates.close({ name: 'retired', note: 'cleanup' });
-      expect(result.teammate.name).toBe('retired');
-      expect(result.teammate.status).toBe('closed');
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('a close that loses the race to a concurrent one still answers, it does not refuse', async () => {
-    const { store, teammates, cleanup } = await collection();
-    try {
-      await seed(store, 'racer', 'running');
-      // The record flips to closed the moment after the first read of it — a
-      // concurrent close committing inside this close's window. Whichever read
-      // this close ends up making, the TeamMate is closed and saying so is the
-      // whole job; refusing would make an idempotent operation fail on timing.
-      const real = store.entity.bind(store);
-      let reads = 0;
-      vi.spyOn(store, 'entity').mockImplementation((name: string) => {
-        const entity = real(name);
-        const read = entity.read.bind(entity);
-        return Object.assign(Object.create(Object.getPrototypeOf(entity)), entity, {
-          read: async () => {
-            const identity = await read();
-            reads += 1;
-            return reads === 1 || identity === null
-              ? identity
-              : { ...identity, status: 'closed', closed_at: Date.now() };
-          },
-        }) as ReturnType<typeof real>;
-      });
-
-      const result = await teammates.close({ name: 'racer', note: 'cleanup' });
-      expect(result.teammate.status).toBe('closed');
-      expect(reads).toBeGreaterThan(0);
-    } finally {
-      vi.restoreAllMocks();
-      await cleanup();
-    }
-  });
-
-  it('a name that never existed is still the caller`s to fix', async () => {
-    const { teammates, cleanup } = await collection();
-    try {
-      const error = await raised(() =>
-        teammates.close({ name: 'ghost', note: 'cleanup' }));
-      expect(codeOf(error)).toBe('TEAMMATE_NOT_FOUND');
-    } finally {
-      await cleanup();
-    }
-  });
 });

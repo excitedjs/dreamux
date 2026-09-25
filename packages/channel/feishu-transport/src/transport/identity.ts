@@ -89,8 +89,6 @@ export async function resolveBotInfo(
 export interface FeishuSelfIdentityCache {
   /** The cached identity, or `undefined` while it is still unresolved. */
   readonly resolved: FeishuBotInfo | undefined
-  /** Take an identity supplied by an embedding WebSocket registration. */
-  accept(info: { openId?: string; appName?: string } | undefined): void
   /** Resolve while unresolved, sharing one in-flight bot-info lookup. */
   ensureResolved(): Promise<void>
 }
@@ -105,16 +103,6 @@ export function createSelfIdentityCache(
   return {
     get resolved(): FeishuBotInfo | undefined {
       return resolved
-    },
-
-    accept(info: { openId?: string; appName?: string } | undefined): void {
-      if (info?.openId === undefined || info.openId === '') return
-      resolved = {
-        openId: info.openId,
-        ...(info.appName !== undefined && info.appName !== ''
-          ? { appName: info.appName }
-          : {}),
-      }
     },
 
     ensureResolved(): Promise<void> {

@@ -299,9 +299,10 @@ not a separate public npm bin.
 
 Test doubles are not package surface. `createFakeFeishuBot` / `FakeFeishuBot`
 were removed from published package API as a breaking cleanup; the double now
-lives under `/packages/dreamux/tests/helpers/` and implements the production
-`FeishuBot` seam, injected through `createFeishuChannelProvider({ botFactory })`
-so the real channel, gate, routing, and MCP tool code still runs unmodified.
+lives under `/packages/channel/feishu-channel/tests/helpers/` (the package
+that owns the production `FeishuBot` seam it implements), injected through
+`createFeishuChannelProvider({ botFactory })` so the real channel, gate,
+routing, and MCP tool code still runs unmodified.
 A new test double belongs in `tests/` and must implement a production seam, not
 be exported from a package.
 
@@ -312,7 +313,7 @@ them.
 
 Source: `/packages/dreamux/package.json`, `/packages/dreamux/bin/dreamux`,
 `/packages/dreamux/src/cli/commands/mcp.ts`,
-`/packages/dreamux/tests/helpers/fake-feishu-bot.ts`.
+`/packages/channel/feishu-channel/tests/helpers/fake-feishu-bot.ts`.
 
 ### Public-Repo Red Line
 

@@ -57,7 +57,7 @@ export class TeamCollection {
     this.store = new TeamStore({
       root: opts.root,
       dispatcherId: this.dispatcherId,
-      ...(opts.coreEvents !== undefined ? { coreEvents: opts.coreEvents } : {}),
+      coreEvents: opts.coreEvents,
       // Resolved at publication time, never captured: a materialized Team
       // states its own roster, and any other Team's is read from the identity
       // stores that authoritatively hold it.

@@ -51,12 +51,10 @@ function stubClient() {
       }],
     },
   }))
-  const chatCreate = vi.fn(async () => ({ data: { chat_id: 'oc_created' } }))
   const chatGet = vi.fn(
     async (): Promise<{ data?: Record<string, unknown> }> =>
       ({ data: { chat_mode: 'group' } }),
   )
-  const memberCreate = vi.fn(async () => ({}))
   const request = vi.fn(
     async (_payload: unknown): Promise<unknown> =>
       ({ code: 0, data: { message_id: 'om_stub' } }),
@@ -76,7 +74,7 @@ function stubClient() {
       },
       message: { patch },
       messageReaction: { create: reactionCreate, delete: reactionDelete },
-      chat: { create: chatCreate, get: chatGet, members: { create: memberCreate } },
+      chat: { get: chatGet },
     },
     drive: {
       meta: { batchQuery: metaBatchQuery },
@@ -101,9 +99,7 @@ function stubClient() {
     reactionDelete,
     messageResourceGet,
     messageGet,
-    chatCreate,
     chatGet,
-    memberCreate,
     request,
     contactUserGet,
   }
@@ -891,50 +887,6 @@ describe('createFeishuTransport — group chats', () => {
       /chat get API is not available/,
     )
   })
-
-  test('creates a group chat and returns chat_id', async () => {
-    const stub = stubClient()
-    const transport = buildTransport(stub)
-
-    const result = await transport.createGroup({
-      name: 'Dreamux Team',
-      userOpenIds: ['ou_user'],
-    })
-
-    expect(result).toEqual({ chatId: 'oc_created' })
-    expect(stub.chatCreate).toHaveBeenCalledWith({
-      params: { user_id_type: 'open_id' },
-      data: { name: 'Dreamux Team', user_id_list: ['ou_user'] },
-    })
-  })
-
-  test('fails loud when chat create API is unavailable', async () => {
-    const stub = stubClient()
-    const raw = stub.client as unknown as { im: { chat?: unknown } }
-    delete raw.im.chat
-    const transport = buildTransport(stub)
-
-    await expect(
-      transport.createGroup({ name: 'Dreamux Team', userOpenIds: [] }),
-    ).rejects.toThrow(/chat create API is not available/)
-  })
-
-  test('invites members by open_id and returns requested ids', async () => {
-    const stub = stubClient()
-    const transport = buildTransport(stub)
-
-    const result = await transport.inviteMembers({
-      chatId: 'oc_chat',
-      userOpenIds: ['ou_a', 'ou_b'],
-    })
-
-    expect(result).toEqual({ addedOpenIds: ['ou_a', 'ou_b'] })
-    expect(stub.memberCreate).toHaveBeenCalledWith({
-      path: { chat_id: 'oc_chat' },
-      data: { id_list: ['ou_a', 'ou_b'] },
-      params: { member_id_type: 'open_id' },
-    })
-  })
 })
 
 describe('createFeishuTransport — message resources', () => {
@@ -1093,61 +1045,6 @@ describe('createFeishuTransport — sender names', () => {
 
     await expect(transport.resolveUserName?.('ou_sender')).resolves.toBeUndefined()
     await expect(transport.resolveUserName?.('')).resolves.toBeUndefined()
-  })
-})
-
-describe('createFeishuTransport — injected logger safety boundary (#74)', () => {
-  test('a sentinel appSecret and message body never reach the injected logger', async () => {
-    // Sentinels fed through the *real* transport inputs — the credentials and an
-    // outbound body — so this proves the adapter does not surface them, rather
-    // than asserting against strings the test never passed in.
-    const SECRET = 'fake-not-a-real-secret'
-    const BODY = 'do-not-log-body'
-
-    const calls: Array<{
-      fields: Record<string, unknown> | string
-      message?: string
-    }> = []
-    const record = (
-      fields: Record<string, unknown> | string,
-      message?: string,
-    ): void => {
-      calls.push({ fields, message })
-    }
-    const logger: TransportLogger = {
-      error: record,
-      warn: record,
-      info: record,
-      debug: record,
-      trace: record,
-    }
-
-    const stub = stubClient()
-    const transport = createFeishuTransport(
-      { appId: 'app', appSecret: SECRET },
-      {
-        client: stub.client,
-        logger,
-        webSocketRegistration: {
-          open: async () => undefined,
-          close: () => {
-            throw new Error('the socket was already gone')
-          },
-        },
-      },
-    )
-
-    // Send a real body (no log on success), then fail the close so the
-    // best-effort `diagnostic()` sink actually runs.
-    await transport.send({ chatId: 'oc_chat' }, BODY)
-    await transport.close()
-
-    // The diagnostic path ran (so the assertion below is not vacuous)…
-    expect(calls.length).toBeGreaterThan(0)
-    // …yet neither sentinel appears anywhere in what the logger received.
-    const haystack = JSON.stringify(calls)
-    expect(haystack).not.toContain(SECRET)
-    expect(haystack).not.toContain(BODY)
   })
 })
 

@@ -17,13 +17,13 @@ export const DISPATCHER_AGENT_NAME = 'dispatcher';
 
 /**
  * Directory segments an agent (teammate or team) name MUST NOT take (issue
- * #233). With the symmetric layout each entity is a directory whose name is the
- * agent name, sitting beside the legacy leaves that `legacy-state.ts` fail-loud
- * detects (`identities/`, `records/`, `turns/`, `history/`, `sessions.jsonl`,
- * `ledger/`). Reserving those names keeps a real entity dir from recreating a
- * path legacy detection would flag, or shadowing the old layout. Matched
- * case-insensitively so a case-folding filesystem can't smuggle a collision.
- * Keep in sync with the probed leaves in `legacy-state.ts`.
+ * #233). With the symmetric layout each entity is a directory whose name is
+ * the agent name, sitting beside the pre-#233 flat-layout leaves
+ * (`identities/`, `records/`, `turns/`, `history/`, `sessions.jsonl`,
+ * `ledger/`) an operator's `teammate/`/`team/` directory may still hold as
+ * inert residue. Reserving those names keeps a real entity dir from
+ * colliding with one of those leftovers. Matched case-insensitively so a
+ * case-folding filesystem can't smuggle a collision.
  */
 export const RESERVED_AGENT_NAME_SEGMENTS = new Set([
   'dispatcher',

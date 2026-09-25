@@ -312,20 +312,25 @@ state mechanisms:
 - no durable `runtime/<name>/` scratch under the dispatcher state root (runtime
   scratch is volatile and lives under `run/`).
 
-`legacy-state.ts` is the one module that still knows the removed leaf names. It
-probes them so `dreamux serve` aborts and `dreamux doctor` names the path to
-delete: `channel-bindings.json` and `collaboration-spaces.json` at the
-dispatcher root (removed Core routing and Space state — a Channel now owns both,
-in its own file), `teammate/identities`, `teammate/records`, `teammate/turns`,
-`teammate/sessions.jsonl`, `teammate/history`, `team/records`,
-`team/channel-bindings.json`, and `team/ledger`. The `teammate/` and `team/`
-directories themselves stay valid, which is why detection probes leaves rather
-than parents.
+Dreamux 0.x does not migrate old state, but as of R47 it also no longer
+actively probes for these removed leaf names: `channel-bindings.json` and
+`collaboration-spaces.json` at the dispatcher root (removed Core routing and
+Space state — a Channel now owns both, in its own file), `teammate/identities`,
+`teammate/records`, `teammate/turns`, `teammate/sessions.jsonl`,
+`teammate/history`, `team/records`, `team/channel-bindings.json`, and
+`team/ledger`. A leftover under one of these names is now inert residue: no
+path creates, reads, validates, or deletes it, `dreamux serve` starts with it
+present, and `dreamux doctor` does not report it. The `teammate/` and `team/`
+directories themselves stay valid as the current per-entity collection roots;
+the reserved-name guard (`assertNotReservedAgentName`,
+`service/agent-entity/types.ts`) still keeps a real entity directory from
+taking one of these leaf names, so a live entity can never collide with a
+leftover.
 
 Source:
 
-- `/packages/dreamux/src/service/legacy-state.ts`
 - `/packages/dreamux/src/platform/paths.ts`
+- `/packages/dreamux/src/service/agent-entity/types.ts`
 
 ### JSON Document Stores
 
@@ -531,10 +536,17 @@ correct outcome, in this order:
 
 Adding a validation that rejects a document a previous build wrote moves a
 change from (1) to (3) — check that the rejection is earning its cost before
-writing it. The removed-field rule under *Invariants* draws the same line for
-one field: rejection is earned only when accepting would silently discard a
-fact the reader cannot otherwise see, because each rejection costs the operator
-a rebuild.
+writing it: it is earned only when accepting would silently discard a fact the
+reader cannot otherwise see, because each rejection costs the operator a
+rebuild. R47 removed the one example of this pattern that used to live here (a
+curated removed-field list on the agent identity record, rejecting `checkpoint`
+and `session_ref` while tolerating other leftover keys) for exactly that
+reason: none of its rejected fields were reachable through a real upgrade path
+any more, so the check had stopped earning its cost. What still fails loud —
+because accepting it would run the wrong thing, not just carry an inert key —
+is a persisted document whose `version` its `JsonDocumentStore`/`CronJobStore`
+does not recognize, and an agent identity still keyed by the pre-#148
+`provider_ref` format; both raise `LegacyStateError`.
 
 Any change to the shape, validation, default, ownership, or meaning of a config
 or persisted state file also updates
@@ -542,8 +554,9 @@ or persisted state file also updates
 
 Source:
 
-- `/packages/dreamux/src/service/legacy-state.ts`
+- `/packages/dreamux/src/platform/errors.ts`
 - `/packages/dreamux/src/platform/json-document-store.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 
 ## Invariants
 

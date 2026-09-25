@@ -30,18 +30,13 @@ import {
  * environment variable is a host-level override that takes precedence over it
  * (resolved by the codex builtin's `resolveCodexBinPath`).
  * `initialize_timeout_ms` is that dispatcher's handshake timeout.
- * `turn_timeout_ms` is accepted and defaulted by this config reader, but the
- * current `CodexRuntime` does not consume it. It therefore has no runtime
- * effect; documenting that gap must not be confused with wiring a timeout.
  */
 export interface DispatcherCodexConfig {
   bin: string;
-  approval_policy: string;
   sandbox_mode: string;
   extra_args: string[];
   extra_env: Record<string, string>;
   initialize_timeout_ms: number;
-  turn_timeout_ms: number;
 }
 
 /**
@@ -54,25 +49,8 @@ export const DEFAULT_CODEX_BIN = 'codex';
 /** Default `agents[].config.initialize_timeout_ms` (handshake timeout, ms). */
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
 
-/**
- * Default accepted value for `agents[].config.turn_timeout_ms` (ms). The reader
- * validates and returns it, but `CodexRuntime` currently does not consume it,
- * so changing this value has no runtime effect.
- */
-export const DEFAULT_CODEX_TURN_TIMEOUT_MS = 600_000;
-
-/** Default `agents[].config.approval_policy` when omitted. */
-export const DEFAULT_APPROVAL_POLICY = 'never';
-
 /** Default `agents[].config.sandbox_mode` when omitted. */
 export const DEFAULT_SANDBOX_MODE = 'workspace-write';
-
-export const ALLOWED_APPROVAL_POLICIES = new Set([
-  'never',
-  'auto',
-  'auto-approve',
-  'on-failure',
-]);
 
 export const ALLOWED_SANDBOX_MODES = new Set([
   'read-only',
@@ -83,12 +61,10 @@ export const ALLOWED_SANDBOX_MODES = new Set([
 export function defaultDispatcherCodexConfig(): DispatcherCodexConfig {
   return {
     bin: DEFAULT_CODEX_BIN,
-    approval_policy: DEFAULT_APPROVAL_POLICY,
     sandbox_mode: DEFAULT_SANDBOX_MODE,
     extra_args: [],
     extra_env: {},
     initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
-    turn_timeout_ms: DEFAULT_CODEX_TURN_TIMEOUT_MS,
   };
 }
 
@@ -101,12 +77,16 @@ export function readDispatcherCodexConfig(
     rawCodex,
     new Set([
       'bin',
+      // 'approval_policy' and 'turn_timeout_ms' are no longer read (Codex
+      // approval policy is hard-coded to 'never'; turn_timeout_ms was
+      // accepted-and-ignored with no runtime effect) but stay in this
+      // allow-list so a config.json written before this change still loads.
       'approval_policy',
+      'turn_timeout_ms',
       'sandbox_mode',
       'extra_args',
       'extra_env',
       'initialize_timeout_ms',
-      'turn_timeout_ms',
     ]),
     file,
     prefix,
@@ -121,14 +101,6 @@ export function readDispatcherCodexConfig(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
-  const approvalPolicy =
-    readOptionalString(rawCodex, 'approval_policy', file, prefix) ??
-    defaults.approval_policy;
-  if (!ALLOWED_APPROVAL_POLICIES.has(approvalPolicy)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}approval_policy='${approvalPolicy}' is not one of ${Array.from(ALLOWED_APPROVAL_POLICIES).join(' | ')}`,
-    );
-  }
   const sandboxMode =
     readOptionalString(rawCodex, 'sandbox_mode', file, prefix) ??
     defaults.sandbox_mode;
@@ -139,7 +111,6 @@ export function readDispatcherCodexConfig(
   }
   return {
     bin,
-    approval_policy: approvalPolicy,
     sandbox_mode: sandboxMode,
     extra_args: requireStringArray(
       rawCodex,
@@ -162,30 +133,23 @@ export function readDispatcherCodexConfig(
       file,
       prefix,
     ),
-    turn_timeout_ms: requirePositiveInt(
-      rawCodex,
-      'turn_timeout_ms',
-      defaults.turn_timeout_ms,
-      file,
-      prefix,
-    ),
   };
 }
 
 /**
- * Typed accessor for a dispatcher's resolved codex runtime config. Typed
- * structurally (not against `DispatcherConfig`) so this module never imports
- * the host config type — a full `DispatcherConfig` still satisfies it at the
- * call sites.
+ * Typed accessor for a dispatcher's resolved codex agent config. Typed
+ * structurally (not against the host's `ResolvedAgentConfig`) so this module
+ * never imports the host config type — the host's `agents[]` entry shape
+ * still satisfies it at the call sites.
  */
-export function dispatcherCodexConfig(dispatcher: {
-  id: string;
-  runtime: { provider: string; config: unknown };
-}): DispatcherCodexConfig {
-  if (dispatcher.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF) {
+export function dispatcherCodexConfig(
+  agent: { provider: string; config: unknown },
+  dispatcherId: string,
+): DispatcherCodexConfig {
+  if (agent.provider !== BUILTIN_CODEX_PROVIDER_REF) {
     throw new Error(
-      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Codex`,
+      `dispatcher '${dispatcherId}' runtime provider ${JSON.stringify(agent.provider)} is not wired to Codex`,
     );
   }
-  return dispatcher.runtime.config as DispatcherCodexConfig;
+  return agent.config as DispatcherCodexConfig;
 }

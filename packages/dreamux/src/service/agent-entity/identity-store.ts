@@ -10,13 +10,13 @@ import {
   writeFileAtomic,
   writeFileExclusiveAtomic,
 } from '../../platform/atomic-write.js';
+import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
   agentIdentityPath,
   collectionEntityDir,
   teamMateCollectionDir,
 } from '../../platform/paths.js';
-import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import {
   allocateConcreteName,
   type ConcreteNameKind,
@@ -393,10 +393,9 @@ async function listDirectoryNames(dir: string): Promise<string[]> {
  * whose name is not encoded in the path — the parsed `name` is then
  * authoritative.
  *
- * Current shape only. A field this schema removed, or a required field that is
- * missing or the wrong type, is not repaired into something plausible: the file
- * says something this version does not accept, and saying so is the only honest
- * answer a reader can give.
+ * Current shape only. A required field that is missing or the wrong type is
+ * not repaired into something plausible: the file says something this version
+ * does not accept, and saying so is the only honest answer a reader can give.
  */
 function readIdentity(
   dispatcherId: string,
@@ -416,18 +415,6 @@ function readIdentity(
         'file to rebuild it.',
     );
   }
-  assertNoRemovedRecordFields(
-    `agent record ${JSON.stringify(storedName)}`,
-    value,
-    [
-      'checkpoint',
-      'checkpoint_kind',
-      'session_ref',
-      'display_name',
-      'close_status',
-    ],
-    'close and respawn this teammate, or delete its identity directory to rebuild it.',
-  );
   if (
     value['version'] !== 1 ||
     value['dispatcher_id'] !== dispatcherId ||

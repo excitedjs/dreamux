@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2a, item 6: deleted the precomputed DispatcherConfig.runtime projection (and DispatcherRuntimeConfig), replaced by an on-demand dispatcherAgent(config, dispatcherId) accessor over agents[]; migrated server.ts, provider-diagnostics.ts, and onboard/config-files.ts to it and dropped config-files.ts's now-redundant per-dispatcher agents[] re-derivation. Deleted DispatcherStore's dead create()/upsert()/remove() and DispatcherCreateInput (zero callers). Internal-only; no persisted or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

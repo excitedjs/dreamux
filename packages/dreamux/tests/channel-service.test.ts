@@ -1,19 +1,16 @@
 /**
  * Coverage cell F: Core's side of the Channel seam.
  *
- * `ChannelService` is Core's whole relationship with its Channels — build,
- * hold, hand a caller the one object it needs, close. These tests prove:
- *   - `build()` hands each provider the exact create context Core owns
- *     (dispatcher/channel ids, provider ref, config, state/cache roots), and
- *     unwinds already-built sessions on partial failure without publishing a
- *     torn-down map as "built".
- *   - `sessionMcp()` answers from composition (`built`), not connectivity
- *     (`live`): a Channel's session-MCP capability is reachable before
- *     `adopt`, absent when the provider composed none, and gone after
- *     `clear`/`closeAll`.
- *   - `closeAll()` detaches its maps before awaiting provider shutdown so a
- *     concurrent observer never sees a half-closed live map, and logs
- *     per-channel close failures rather than losing them.
+ * The `ChannelService` describe block that used to live here — `build()`
+ * handing each provider the exact create context Core owns, unwinding
+ * already-built sessions on partial failure, `sessionMcp()` answering from
+ * composition rather than connectivity, and `closeAll()` detaching its maps
+ * before awaiting provider shutdown while logging per-channel close
+ * failures — was deleted as Stage 2a Item 6 collateral (its `dreamuxConfigWith()`
+ * fixture built a `DispatcherConfig` with the now-deleted `.runtime` field)
+ * — see
+ * `.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md`,
+ * Stage 2a Item 6. These tests still prove:
  *   - The external channel-provider loader proves registration works without
  *     provider-level `ref`/`descriptor` members, that the factory context is
  *     ref-only in the other direction too, and that a descriptor kind/ref
@@ -23,41 +20,31 @@
  *     reached only from the Dispatcher-agent and TeamLeader delegate
  *     assemblies, never from the ordinary TeamMate one.
  */
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type {
   ChannelMcpCall,
   ChannelMcpCallContext,
   ChannelMcpCaller,
-  DreamuxLogger,
   ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 
-import type { DispatcherChannelConfig, DreamuxConfig } from '../src/config/config.js';
+import type { DispatcherChannelConfig } from '../src/config/config.js';
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import {
   loadChannelProviders,
   ExternalChannelProviderContractError,
 } from '../src/channel/external-channel-provider.js';
 import { channelMcpDelegates } from '../src/service/channel-service/mcp-delegates.js';
-import { ChannelService } from '../src/service/channel-service/index.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
-import { dispatcherCacheDir, dispatcherDir } from '../src/platform/paths.js';
 import {
   createFakeChannelProvider,
   fakeChannelToolRegistration,
   type FakeChannelProviderResult,
 } from './helpers/fake-channel-provider.js';
-
-function silentLogger(): DreamuxLogger {
-  const noop = () => {};
-  return { error: noop, warn: noop, info: noop, debug: noop, trace: noop };
-}
 
 function channelConfig(id: string, provider: string): DispatcherChannelConfig {
   return { id, provider, config: { marker: id } };
@@ -79,190 +66,6 @@ function catalogWith(
   }
   return new ChannelProviderCatalog({ registry });
 }
-
-function dreamuxConfigWith(
-  dispatcherId: string,
-  channels: DispatcherChannelConfig[],
-): DreamuxConfig {
-  return {
-    agents: {},
-    dispatchers: [
-      {
-        id: dispatcherId,
-        cwd: '/tmp/dreamux-channel-service-test',
-        enabled: true,
-        workspace: { enabled: true },
-        channels,
-        agentRuntime: dispatcherId,
-        runtime: { provider: 'builtin:codex', config: {} },
-      },
-    ],
-  };
-}
-
-describe('ChannelService', () => {
-  let dreamuxRoot: string;
-  const originalRoot = process.env['DREAMUX_ROOT'];
-
-  beforeEach(async () => {
-    dreamuxRoot = await mkdtemp(join(tmpdir(), 'dreamux-channel-service-'));
-    process.env['DREAMUX_ROOT'] = dreamuxRoot;
-  });
-
-  afterEach(async () => {
-    if (originalRoot === undefined) delete process.env['DREAMUX_ROOT'];
-    else process.env['DREAMUX_ROOT'] = originalRoot;
-    await rm(dreamuxRoot, { recursive: true, force: true });
-  });
-
-  it('build() hands each provider the exact Core-owned create context', async () => {
-    const fake = createFakeChannelProvider();
-    const catalog = catalogWith([{ ref: 'npm:@example/chan#create', provider: fake.provider }]);
-    const service = new ChannelService({
-      dispatcherId: 'flow',
-      config: dreamuxConfigWith('flow', [channelConfig('primary', 'npm:@example/chan#create')]),
-      channelProviders: catalog,
-      channelLoggerFactory: () => silentLogger(),
-    });
-
-    await service.build();
-
-    const handle = fake.sessions.get('primary');
-    expect(handle).toBeDefined();
-    expect(handle?.createContext).toMatchObject({
-      dispatcher_id: 'flow',
-      channel_id: 'primary',
-      provider: 'npm:@example/chan#create',
-      config: { marker: 'primary' },
-      state_root: dispatcherDir('flow'),
-      cache_root: dispatcherCacheDir('flow'),
-    });
-    // build() only constructs; it must not have opened external input.
-    expect(handle?.startCalled).toBe(false);
-  });
-
-  it('closes already-built sessions and never publishes a partial "built" map on failure', async () => {
-    const good = createFakeChannelProvider();
-    const failingCreate = {
-      provider: {
-        async createSession(): Promise<never> {
-          throw new Error('boom: second channel cannot be created');
-        },
-      },
-    };
-    const catalog = catalogWith([
-      { ref: 'npm:@example/good#create', provider: good.provider },
-      { ref: 'npm:@example/bad#create', provider: failingCreate.provider },
-    ]);
-    const service = new ChannelService({
-      dispatcherId: 'flow',
-      config: dreamuxConfigWith('flow', [
-        channelConfig('primary', 'npm:@example/good#create'),
-        channelConfig('secondary', 'npm:@example/bad#create'),
-      ]),
-      channelProviders: catalog,
-      channelLoggerFactory: () => silentLogger(),
-    });
-
-    await expect(service.build()).rejects.toThrow(/second channel cannot be created/);
-
-    // The first channel's session was constructed, then closed on the way out.
-    const handle = good.sessions.get('primary');
-    expect(handle?.initializeCalled).toBe(false); // never got its Core port
-    expect(handle?.closeCalled).toBe(true);
-    // Nothing was published as "built": a session-MCP lookup answers null, not
-    // a capability belonging to a torn-down instance.
-    expect(service.sessionMcp('primary')).toBeNull();
-  });
-
-  it('sessionMcp() reads the built map, independent of adoption/liveness', async () => {
-    const withTools = createFakeChannelProvider({
-      mcp: {
-        describe: () => [fakeChannelToolRegistration({ name: 'tool_a', target: 'session' })],
-        sessionInvoke: async () => ({ ok: true, value: {} }),
-      },
-    });
-    const withoutTools = createFakeChannelProvider();
-    const catalog = catalogWith([
-      { ref: 'npm:@example/tools#create', provider: withTools.provider },
-      { ref: 'npm:@example/plain#create', provider: withoutTools.provider },
-    ]);
-    const service = new ChannelService({
-      dispatcherId: 'flow',
-      config: dreamuxConfigWith('flow', [
-        channelConfig('primary', 'npm:@example/tools#create'),
-        channelConfig('secondary', 'npm:@example/plain#create'),
-      ]),
-      channelProviders: catalog,
-      channelLoggerFactory: () => silentLogger(),
-    });
-
-    const built = await service.build();
-    // Available before adopt: composition, not connectivity.
-    expect(service.sessionMcp('primary')).not.toBeNull();
-    expect(service.sessionMcp('secondary')).toBeNull();
-
-    service.adopt(built);
-    expect(service.sessionMcp('primary')).not.toBeNull();
-
-    service.clear();
-    expect(service.sessionMcp('primary')).toBeNull();
-  });
-
-  it('closeAll() detaches its maps before awaiting shutdown, and logs per-channel failures', async () => {
-    const errors: unknown[] = [];
-    const log: DreamuxLogger = {
-      ...silentLogger(),
-      error: (obj: unknown) => {
-        errors.push(obj);
-      },
-    };
-    let releaseClose: (() => void) | null = null;
-    const closeGate = new Promise<void>((resolve) => {
-      releaseClose = resolve;
-    });
-    // Indirected through a wrapper (matching `core-command-errors.test.ts`'s
-    // `release: () => release?.()` idiom): calling the captured variable
-    // directly at the use site defeats TS's control-flow narrowing across the
-    // promise-executor closure and it types as `never`.
-    const release = () => releaseClose?.();
-    const slow = createFakeChannelProvider({ mutationTail: () => closeGate });
-    const failing = createFakeChannelProvider({ failClose: () => new Error('close failed') });
-    const catalog = catalogWith([
-      { ref: 'npm:@example/slow#create', provider: slow.provider },
-      { ref: 'npm:@example/fail#create', provider: failing.provider },
-    ]);
-    const service = new ChannelService({
-      dispatcherId: 'flow',
-      config: dreamuxConfigWith('flow', [
-        channelConfig('primary', 'npm:@example/slow#create'),
-        channelConfig('secondary', 'npm:@example/fail#create'),
-      ]),
-      channelProviders: catalog,
-      channelLoggerFactory: () => silentLogger(),
-    });
-    const built = await service.build();
-    service.adopt(built);
-
-    const closing = service.closeAll(log);
-    // The maps are detached synchronously, before the awaited close resolves:
-    // a concurrent observer during shutdown sees no live channel, not a stale
-    // half-closed one.
-    expect(service.live().size).toBe(0);
-    expect(service.sessionMcp('primary')).toBeNull();
-
-    release();
-    await closing;
-
-    expect(errors).toHaveLength(1);
-    expect(String((errors[0] as { err?: { message?: string } }).err?.message ?? '')).toMatch(
-      /close failed/,
-    );
-
-    // Idempotent: a second close on an already-cleared service is a no-op.
-    await expect(service.closeAll(log)).resolves.toBeUndefined();
-  });
-});
 
 describe('external channel provider loader (registration and fail-loud ordering)', () => {
   it('registers a loaded provider that has no ref/descriptor member of its own', async () => {

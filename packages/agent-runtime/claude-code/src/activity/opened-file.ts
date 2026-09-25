@@ -86,14 +86,9 @@ export async function openClaudeRollout(
 export async function validateClaudeSessionEvidence(
   opened: ClaudeOpenedRollout,
   expectedSessionId: string,
-  options: { maxReadChunkBytes?: number } = {},
 ): Promise<void> {
   const length = Math.min(opened.size, MAX_METADATA_BYTES + 1);
-  const data = await readBytesAt(opened.handle, 0, length, {
-    ...(options.maxReadChunkBytes !== undefined
-      ? { maxChunkBytes: options.maxReadChunkBytes }
-      : {}),
-  });
+  const data = await readBytesAt(opened.handle, 0, length);
   let cursor = 0;
   while (cursor < data.length) {
     const newline = data.indexOf(0x0a, cursor);

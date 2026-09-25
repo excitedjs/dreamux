@@ -316,7 +316,7 @@ export class TeammateService {
    * human reader.
    */
   private projectInput(input: TeammateSubmitInput): void {
-    this.deps.conversationProjection?.projectInput(this.projectedAgent(), {
+    this.deps.conversationProjection.projectInput(this.projectedAgent(), {
       source: input.source,
       sourceId: input.sourceId ?? null,
       text: input.text,
@@ -338,7 +338,7 @@ export class TeammateService {
       },
       'ending the agent display as failed for an input no runtime accepted',
     );
-    this.deps.conversationProjection?.projectActivity(this.projectedAgent(), {
+    this.deps.conversationProjection.projectActivity(this.projectedAgent(), {
       kind: 'turn.ended',
       occurredAt: Date.now(),
       status: 'failed',
@@ -581,7 +581,7 @@ export class TeammateService {
     return this.transitionToClosed(closeNote, token);
   }
 
-  @deduplicate({ type: 'once' })
+  @deduplicate
   private async transitionToClosed(
     closeNote: string,
     token: object | null,

@@ -15,6 +15,7 @@ import type {
 } from '../teammate-collection/index.js';
 import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
 import type { LockedTeammate } from '../teammate-service/types.js';
+import { canonicalJsonValue, JSON_VALUE_UNBOUNDED } from '../../platform/json-value.js';
 import {
   validateWorkflowRunId,
   workflowRunJournalPath,
@@ -22,7 +23,6 @@ import {
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
 import { WorkflowRunNotFoundError } from './errors.js';
-import { validateWorkflowArgs } from './json-args.js';
 import { WorkflowJournal } from './journal.js';
 import { parseWorkflowMaxConcurrency } from './limits.js';
 import { WorkflowRun } from './run.js';
@@ -114,7 +114,9 @@ export class WorkflowService implements WorkflowOps {
     await this.initialize();
     if (!this.accepting) throw new Error('workflow admission is closed');
     const maxConcurrency = parseWorkflowMaxConcurrency(input.max_concurrency);
-    if (Object.hasOwn(input, 'args')) validateWorkflowArgs(input.args);
+    if (Object.hasOwn(input, 'args')) {
+      canonicalJsonValue(input.args, JSON_VALUE_UNBOUNDED);
+    }
     const script = await resolveWorkflowScript(input);
     if (script.trim() === '') {
       throw new Error('workflow script must be non-empty');
@@ -238,7 +240,7 @@ export class WorkflowService implements WorkflowOps {
    * per scope; a failed attempt is released, so the next caller retries rather
    * than inheriting a broken view.
    */
-  @deduplicate({ type: 'once' })
+  @deduplicate
   private async initialize(): Promise<void> {
     await this.recoverRunningRecords();
   }

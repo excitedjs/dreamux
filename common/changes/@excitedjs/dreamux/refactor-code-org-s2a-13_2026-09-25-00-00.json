@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2a, item 13: deleted deduplicate.ts's unused 'active' mode (both call sites already use once-semantics, so the decorator now always retains the first success and takes no options) and collapsed its now-redundant dual-WeakMap tracking into one. Deleted KeyedAsyncQueue.runBefore() (zero production callers). Deleted worktree/manager.ts's deadlineAt assessment-deadline mechanism (zero callers ever passed a deadline), including the now-dead WorktreeAssessmentOptions carrier and its assertAssessmentDeadline/withinAssessmentDeadline helpers. Deleted workflow-service/json-args.ts, which re-implemented platform/json-value's JSON-round-trip validation; its one call site now uses canonicalJsonValue directly. Internal-only; no persisted or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

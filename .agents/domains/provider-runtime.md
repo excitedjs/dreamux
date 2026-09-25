@@ -595,17 +595,20 @@ Source:
 ### Claude Code Stream-Json Settlement
 
 One resident session accepts every input through the same submit path. RPC owns
-one table of unanswered requests: the settlement resolver, native admission
-resolver and, while capability is unknown, a deferred write. Requests are
-registered before writing so early native evidence cannot outrun registration.
-The runtime owns process continuity and durable state; it has no second request
-registry, initial/steer branch or enclosing execution-window promise.
+one table of unanswered requests, keyed by commandUuid; every submission writes
+to stdin immediately on admission. Requests are registered before writing so
+early native evidence cannot outrun registration. The runtime owns process
+continuity and durable state; it has no second request registry, initial/steer
+branch or enclosing execution-window promise.
 
-Admission resolves on a successful write callback or positive native evidence.
-A proven failure before writing is failed admission; an unconfirmed write is
-ambiguous and must not be retried automatically. Concurrent inputs wait for
-lifecycle evidence when capability is unknown, and are rejected when it is
-unavailable. Existing single-input compatibility remains supported.
+command_lifecycle admission is assumed always supported — there is no runtime
+capability check and no version gate against the CLI. Admission resolves on a
+successful write callback or positive native evidence. A proven failure before
+writing is failed admission; an unconfirmed write is ambiguous and must not be
+retried automatically. A request that was registered but never written is not
+a state this RPC can be in: closing the session (stop or a transport failure)
+always finds every outstanding request already written, so every admission it
+produces on close is ambiguous, never a clean stopped/failed.
 
 At each native result, RPC associates and settles the requests it answers:
 
@@ -616,9 +619,8 @@ At each native result, RPC associates and settles the requests it answers:
 - An exactly matching submitted user_message_uuid is additional positive
   evidence, including no-start compatibility. A foreign or absent UUID never
   vetoes consumed requests, and origin is never a routing filter.
-- With lifecycle evidence, an empty group stays empty. A merely queued request
-  is not answered by an earlier background result. The lifecycle-less fallback
-  applies only to a written single input and a result with no UUID.
+- An empty group stays empty. A merely queued request is not answered by an
+  earlier background result.
 
 RPC removes answered requests before callbacks, creates one immutable completion
 using the pinned session/structured-output contract, and settles those requests
@@ -654,9 +656,12 @@ fails and triggers process teardown. Pure background work arms no such timer.
 Custom ClaudeCodeSession factories implement submit returning RuntimeAdmission,
 with settlement owned by the session. The spec supplies sessionId and optional
 outputSchemaEnabled; the exit callback carries its Error. Protocol result
-callbacks retain commandUuids and command_lifecycle for observation. The public
-interrupted variant remains available for independently established interruption;
-cancelled alone no longer emits that boundary. Direct ClaudeCodeStreamRpc
+callbacks retain command_lifecycle for observation; the result event itself
+carries the result envelope's own uuid and outcome only, not the commandUuids
+it answered — no production consumer reads that attribution, only the result's
+own reported end. The public interrupted variant remains available for
+independently established interruption; cancelled alone no longer emits that
+boundary. Direct ClaudeCodeStreamRpc
 consumers also use submit, fail and stop; its options require sessionId and its
 timeout callback receives the failure Error. Protocol callbacks alone do not
 settle requests. This is a breaking Claude extension-seam change; the neutral
@@ -681,7 +686,6 @@ Source:
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/types.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
-- `/packages/agent-runtime/claude-code/tests/runtime-background.test.ts`
 
 ### Claude Code Stream-Json Envelopes On The Display Line
 
@@ -732,10 +736,11 @@ errors stay inside each runtime package's own `src/activity/`. Both built-ins
 reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral
 digests, bounded scan accounting, exact positional reads, and path containment;
 duplicating those security and determinism primitives in each provider is not an
-accepted boundary. That module owns mechanism only and no record shape, and it
-does not bound Core's output — Core re-validates each returned page against its
-own record, cursor, and byte budgets in
-`/packages/dreamux/src/service/agent-entity/activity-reader.ts`.
+accepted boundary. That module owns mechanism only and no record shape.
+`/packages/dreamux/src/service/agent-entity/activity-reader.ts` still validates
+each returned page's shape — record count against what was requested, and
+record/cursor field types — but imposes no byte/char/cursor-length magnitude
+cap of its own; a provider's own bounds are the only bound on what it returns.
 
 ### Codex Portable Output Schema
 
@@ -781,11 +786,13 @@ runtime outcome with no assistant text. Submission failure, stop, app-server
 teardown/restart, and late completion clear or discard in-memory codecs through
 the same turn lifecycle and never restore or settle twice.
 
-Each collector owns and unregisters exactly one Codex notification handler.
-Normal completion and terminal failure close it automatically; rejected
-`turn/start`, runtime stop, and direct `runTurn` cleanup dispose it explicitly.
-An abandoned collector therefore cannot buffer a later turn or accumulate
-handlers on the resident Codex client.
+Each collector owns and unregisters exactly one Codex notification handler. It
+stays subscribed across every native turn on its thread — normal completion
+and turn failure never close it on their own — until explicit disposal:
+`TurnManager.stop()` disposes it on teardown, and an unscoped protocol failure
+(an `error` notification carrying no `turnId`) disposes it internally right
+after reporting the failure. An abandoned collector therefore cannot buffer a
+later turn or accumulate handlers on the resident Codex client.
 
 Source:
 
@@ -794,7 +801,7 @@ Source:
 - `/packages/agent-runtime/codex/src/rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/codex/tests/codex-events.test.ts`
+- `/packages/agent-runtime/codex/tests/codex-runtime.test.ts`
 
 ### Native Turn Usage Activity
 

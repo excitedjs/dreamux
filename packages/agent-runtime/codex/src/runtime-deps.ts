@@ -32,7 +32,6 @@ export interface CodexRuntimeDeps {
   codec: CodexOutputSchemaCodec | null;
   allocateSocketPath: (id: string) => string;
   skillSources?: readonly AgentRuntimeSkillSource[];
-  injectEnv?: Record<string, string>;
   codexBinPath?: string;
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   codexClientFactory?: (socketPath: string) => CodexWsClient;

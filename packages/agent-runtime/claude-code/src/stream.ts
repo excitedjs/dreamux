@@ -201,11 +201,6 @@ export function parseLine(line: string): ParsedLine {
           kind: 'init',
           sessionId: str(parsed['session_id']),
           model: str(parsed['model']),
-          capabilities: Array.isArray(parsed['capabilities'])
-            ? parsed['capabilities'].filter(
-                (value): value is string => typeof value === 'string',
-              )
-            : [],
           raw: parsed,
         };
       }
@@ -294,17 +289,10 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
 
 // ─── Outbound message builders (stdin) ──────────────────────────────────────
 
-/**
- * One user turn as a stream-json `user` message line (no trailing newline).
- *
- * `isSynthetic` is a sibling of `message` on the stdin envelope (claude-code
- * SDKUserMessage schema), not part of the message body. It is only set for the
- * native completion-notification idiom; a plain channel turn omits it entirely
- * and reads as a normal human user turn.
- */
+/** One user turn as a stream-json `user` message line (no trailing newline). */
 export function buildUserMessage(
   text: string,
-  options: TurnSubmitOptions = {},
+  _options: TurnSubmitOptions = {},
   commandUuid?: string,
 ): string {
   const envelope: Record<string, unknown> = {
@@ -312,7 +300,6 @@ export function buildUserMessage(
     message: { role: 'user', content: [{ type: 'text', text }] },
   };
   if (commandUuid !== undefined) envelope['uuid'] = commandUuid;
-  if (options.isSynthetic === true) envelope['isSynthetic'] = true;
   return JSON.stringify(envelope);
 }
 

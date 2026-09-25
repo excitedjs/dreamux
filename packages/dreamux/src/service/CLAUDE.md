@@ -32,8 +32,10 @@ Team's members are the same pair again, scoped to the Team.
 - **`dispatchers/`** — the process-level `Dispatchers` collection: a factory
   plus cache over per-dispatcher `DispatcherService` aggregates, its Commands,
   and its errors. Its `commands.ts` owns the whole Dispatcher namespace:
-  enumeration and lifecycle plus the addressed Dispatcher Agent's own
-  `dispatcher.submit` / `dispatcher.interrupt`. A Team Command names exactly one
+  enumeration and status plus the addressed Dispatcher Agent's own
+  `dispatcher.submit` / `dispatcher.interrupt`. There is no start/stop Command:
+  every configured, enabled Dispatcher starts when the daemon starts, and
+  nothing stops one independently while the process is up. A Team Command names exactly one
   Team; neither namespace addresses the other's recipient. It owns no teammate/team/channel state; each
   `DispatcherService` builds and owns its own object graph. Shutdown closes the
   factory admission before sweeping the existing aggregates, so no dispatcher
@@ -113,9 +115,9 @@ Team's members are the same pair again, scoped to the Team.
   dispatcher gate, a Workflow run, the Workflow service, and a TeamMate's
   ordinary mutations),
   `dispatcher-workspace.ts` (the dispatcher-cwd policy shared by startup, the
-  dispatcher service, `dreamux doctor`, and `worktree/`), `legacy-state.ts`,
-  `name-allocator.ts`, `submission-sources.ts`, `channel-submission.ts`, and
-  `frozen-snapshot.ts` live at the root because no single service owns them.
+  dispatcher service, `dreamux doctor`, and `worktree/`), `name-allocator.ts`,
+  `submission-sources.ts`, `channel-submission.ts`, and `frozen-snapshot.ts`
+  live at the root because no single service owns them.
 
 ## Invariants (why it's shaped this way)
 
@@ -200,22 +202,25 @@ Team's members are the same pair again, scoped to the Team.
   occupied even when its identity is unreadable, and identity creation is
   no-clobber. The reserved-name guard blocks names that would recreate a
   removed layout leaf.
-- **Old state fails loud, it is never migrated.** 0.x has no schema migration.
-  `legacy-state.ts` is the one place that knows the removed layout: it probes
-  the removed leaves so `dreamux serve` aborts and `dreamux doctor` names the
-  path to delete, and it rejects removed *fields* left in a present record.
-  Detection only — legacy paths are never read for migration, rewritten, or
-  removed. A current-layout `turn.jsonl` left by an older Dreamux is inert
-  residue that no path creates, opens, validates, or deletes.
-- **Reject a removed field only when accepting it would lose something.** The
-  rejected-field list is narrower than "every field ever deleted", because each
-  entry costs the operator a rebuild. A field earns rejection when a released
-  build wrote it AND accepting the record would silently discard a fact this
-  reader cannot see — `checkpoint`, or `session_ref`, whose resumable id sits one
-  level below where `session_id` is read. Two kinds of leftover do not qualify. A
-  field this version never consults (`role`, derived from the owning directory;
-  `transcript_locator`, replaced by the Activity seam's opaque id) is inert
-  residue. And a shape no released build ever wrote cannot reach a real upgrade,
-  so gating on it buys nothing: a field's own type check is the better gate,
-  because "no usable id found" already degrades correctly to "start a fresh
-  session", while a present-but-corrupt value still fails validation.
+- **Old state is never migrated, and a pre-#233 leftover is no longer actively
+  detected either (R47).** 0.x still has no schema migration. A
+  `JsonDocumentStore`/`CronJobStore` still raises `LegacyStateError`
+  (`platform/errors.ts`) on a persisted document whose `version` it does not
+  recognize, and the identity reader still raises it on an identity file still
+  keyed by the pre-#148 `provider_ref` format — both because accepting either
+  would run the wrong thing, and every caller propagates the error rather than
+  degrading to `null`/empty. What no longer happens: `dreamux serve` no longer
+  runs a startup pre-flight that aggregates every dispatcher's cron store and
+  removed-layout findings and aborts the whole process before the admin socket
+  opens. Each store is now read only where its owning Service already reads
+  it — a dispatcher's scheduler start, `dreamux doctor`'s cron rows — so a bad
+  cron store now fails only that one dispatcher's start (logged, not fatal to
+  the process) instead of blocking every dispatcher and the admin socket.
+  `dreamux serve` no longer probes for a pre-#233 flat-layout leaf
+  (`teammate/records/`, `team/ledger/`, a dispatcher-root
+  `channel-bindings.json`, …) or for a record carrying a field this version no
+  longer reads, and `dreamux doctor` no longer reports either. A leftover of
+  either kind is now inert residue: nothing creates, reads, validates, or
+  deletes it. The operator may delete it by hand at their own pace; the
+  reserved-name guard exists precisely because that leftover can still be on
+  disk beside a live entity directory.

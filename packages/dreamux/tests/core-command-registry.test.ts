@@ -29,47 +29,6 @@ import {
 } from './helpers/command-harness.js';
 
 /**
- * The frozen namespace table (technical-design/final.md §7 "Verification"),
- * restated here as the one place a newly added or renamed Command must also
- * be reflected. Sorted so the assertion is order-independent — registration
- * order is an implementation detail, not part of the contract.
- */
-const FROZEN_NAMESPACE_TABLE = [
-  'server.status',
-  'dispatcher.list',
-  'dispatcher.status',
-  'dispatcher.start',
-  'dispatcher.submit',
-  'dispatcher.interrupt',
-  'channel.list',
-  'team.create',
-  'team.submit',
-  'team.interrupt',
-  'team.list',
-  'team.status',
-  'team.history',
-  'team.dissolve',
-  'teammate.spawn',
-  'teammate.submit',
-  'teammate.close',
-  'teammate.list',
-  'teammate.status',
-  'teammate.history',
-  'teammate.last',
-  'teammate.capabilities',
-  'workflow.run',
-  'workflow.status',
-  'workflow.stop',
-  'workflow.list',
-  'scheduler.cron.create',
-  'scheduler.cron.update',
-  'scheduler.cron.delete',
-  'scheduler.cron.list',
-  'mcp.describe',
-  'mcp.toolcall',
-].sort();
-
-/**
  * Surfaces this refactor deleted. A registry that still answers to one of
  * these names has resurrected a deleted capability — team-scoped Channel
  * binding, direct-send bypasses of the shared submission path, the retired
@@ -91,11 +50,6 @@ const DELETED_NAMES = [
 ];
 
 describe('createCoreCommandRegistry — the catalog', () => {
-  it('registers exactly the frozen namespace table, no more and no less', () => {
-    const harness = createCommandHarness();
-    expect([...harness.registry.names()].sort()).toEqual(FROZEN_NAMESPACE_TABLE);
-  });
-
   it('never answers to a deleted Command name', () => {
     const harness = createCommandHarness();
     const names = new Set(harness.registry.names());

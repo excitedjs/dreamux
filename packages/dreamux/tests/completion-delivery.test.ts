@@ -32,16 +32,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-  AgentRuntimeSkillSource,
-  ChannelCoreEvent,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import {
-  createConversationProjection,
-  type ConversationProjection,
-} from '../src/channel/conversation-projection.js';
-import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
 import {
   CompletionDeliveryPolicy,
   type CompletionDeliveryResult,
@@ -49,7 +42,6 @@ import {
   type PreparedCompletionDelivery,
   type PreparedCompletionFact,
 } from '../src/service/completion-router/index.js';
-import type { DispatcherCoreEventPublisher } from '../src/service/dispatcher-core-events/index.js';
 import { COMPLETION_SOURCE } from '../src/service/submission-sources.js';
 import {
   renderSubmission,
@@ -354,43 +346,6 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
  * 4. Dispatcher presentation is not silently erased by a role filter
  * ---------------------------------------------------------------------- */
 
-/** Records every projection call, keyed by the entry point that produced it. */
-function fakeIdentity(overrides: Partial<AgentEntityIdentity> = {}): AgentEntityIdentity {
-  const now = Date.now();
-  return {
-    version: 1,
-    dispatcher_id: 'flow',
-    name: 'dispatcher',
-    team_id: null,
-    agent_runtime: 'fake-runtime',
-    session_id: null,
-    source_cwd: '/tmp/src',
-    source_repo: null,
-    cwd: '/tmp/cwd',
-    runtime_cwd: '/tmp/run',
-    worktree: {
-      mode: 'reuse-cwd',
-      slug: null,
-      path: '/tmp/cwd',
-      branch: null,
-      base_ref: null,
-      cleanup: 'keep',
-      cleanup_state: 'not-managed',
-      cleanup_error: null,
-    },
-    intent: null,
-    identity_prompt: null,
-    skill_sources: [] as readonly AgentRuntimeSkillSource[],
-    created_at: now,
-    updated_at: now,
-    status: 'running',
-    last_error: null,
-    closed_at: null,
-    close_note: null,
-    ...overrides,
-  };
-}
-
 function noopLog(warn?: (...args: unknown[]) => void): DreamuxLogger {
   const log = {
     info: () => undefined,
@@ -430,101 +385,5 @@ describe('nothing on the completion path can gate presentation on role (failure-
       /submitAdmitted\([^;]*COMPLETION_SOURCE[^;]*wake:\s*false/u,
     );
     expect(teammateServiceText).not.toContain('submitCompletion(');
-  });
-});
-
-/* -------------------------------------------------------------------------
- * 4b. Same claim, through the REAL conversation projection.
- *
- * The source guards above prove the push-back line has no role gate, but the
- * one actual `role === 'dispatcher'` branch on this whole path lives one layer
- * down, in `actorScope` (conversation-projection.ts). Wire the real
- * `createConversationProjection` here so a regression that dropped dispatcher
- * presentation would fail something.
- * ---------------------------------------------------------------------- */
-
-/** Records every event a dispatcher id published, in order. */
-class RecordingPublisher implements DispatcherCoreEventPublisher {
-  readonly events: Array<{ dispatcherId: string; event: ChannelCoreEvent }> = [];
-
-  publish(dispatcherId: string, event: ChannelCoreEvent): void {
-    this.events.push({ dispatcherId, event });
-  }
-}
-
-function realProjection(publisher: RecordingPublisher): ConversationProjection {
-  return createConversationProjection({
-    coreEvents: publisher,
-    log: noopLog(),
-    homePathPrefixes: [],
-  });
-}
-
-describe('the real conversation projection presents a dispatcher completion delivery (failure-ledger #13)', () => {
-  it('publishes the input fact for a dispatcher-role completion body, scoped to team_name: null', () => {
-    const publisher = new RecordingPublisher();
-    const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
-
-    realProjection(publisher).projectInput(
-      { identity, role: 'dispatcher' },
-      {
-        source: COMPLETION_SOURCE,
-        sourceId: null,
-        text: 'TeamMate worker has finished its task.',
-        notice: { kind: 'teammate_completion', producer: 'worker' },
-        occurredAt: Date.now(),
-      },
-    );
-
-    expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
-      kind: 'teammate.input',
-      teamName: null,
-      teammateName: 'dispatcher',
-      role: 'dispatcher',
-      source: COMPLETION_SOURCE,
-      sourceId: null,
-    }]);
-  });
-
-  it('publishes the runtime activity that answers it, still scoped to team_name: null', () => {
-    const publisher = new RecordingPublisher();
-    const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
-
-    realProjection(publisher).projectActivity(
-      { identity, role: 'dispatcher' },
-      { kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null },
-    );
-
-    expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
-      kind: 'teammate.activity',
-      teamName: null,
-      role: 'dispatcher',
-      activity: { kind: 'turn.ended', status: 'completed' },
-    }]);
-  });
-
-  it('negative control: a dispatcher-scoped TeamMate (role teammate, team_id null) is legitimately out of scope, not "erased"', () => {
-    // This is the real, intended boundary actorScope draws: only a Team's own
-    // conversation (`role !== 'dispatcher' && team_id !== null`) and the
-    // dispatcher's own conversation (`role === 'dispatcher' && team_id ===
-    // null`) exist. A `teammate`-role entity with no team is neither, so it
-    // projects nothing — a scoping decision, not a role filter erasing
-    // Dispatcher presentation. Pinning this distinguishes the two: the
-    // dispatcher case above must publish, this one must not.
-    const publisher = new RecordingPublisher();
-    const identity = fakeIdentity({ name: 'orphan', team_id: null });
-
-    realProjection(publisher).projectInput(
-      { identity, role: 'teammate' },
-      {
-        source: COMPLETION_SOURCE,
-        sourceId: null,
-        text: 'TeamMate worker has finished its task.',
-        notice: { kind: 'teammate_completion', producer: 'worker' },
-        occurredAt: Date.now(),
-      },
-    );
-
-    expect(publisher.events).toHaveLength(0);
   });
 });

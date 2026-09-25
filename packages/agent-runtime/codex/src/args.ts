@@ -1,41 +1,31 @@
 /**
  * Parse `dispatchers.codex_args_json` into the CLI-arg array passed to
- * the codex app-server child, AND validate that the trusted-local
- * invariants from issue #2 "trust model" hold.
+ * the codex app-server child.
  *
  * Canonical shape:
  *   {
- *     "approvalPolicy": "never",            // from dispatchers[].runtime.config
- *     "sandboxMode":    "workspace-write",  // from dispatchers[].runtime.config
- *     "extraArgs":      ["--model", "..."]  // from runtime.config.extra_args
+ *     "sandboxMode":    "workspace-write",  // from the dispatcher's agents[] entry config
+ *     "extraArgs":      ["--model", "..."]  // from that entry's config.extra_args
  *   }
  *
- * This JSON is encoded per dispatcher from
- * `dispatchers[].runtime.config` (every field carries a dispatcher-local
- * default), so it is the sole source of truth. The optional `defaults` param
+ * This JSON is encoded per dispatcher from its `agents[dispatcher.agentRuntime]`
+ * entry's config (every field carries a dispatcher-local default), so it is
+ * the sole source of truth. The optional `defaults` param
  * remains a thin seam; with the top-level `codex` block removed there is no
  * global layer, and a caller normally passes nothing.
  *
  * Precedence for each field (highest wins):
  *   1. dispatchers.codex_args_json (this JSON)
  *   2. `defaults` (optional caller seam)
- *   3. hardcoded fallbacks (`'never'`, `'workspace-write'`, `[]`)
+ *   3. hardcoded fallbacks (`'workspace-write'`, `[]`)
  *
- * `approvalPolicy` not in the trusted-local allowlist fails-fast at startup
- * (issue #2 "implementation pitfalls"): dispatcher refuses to come up if the
- * policy may request approval AND no approval handler is wired.
+ * `approvalPolicy` is always `'never'` (issue #2 "trust model": the dreamux
+ * MVP only ships with a fail-fast approval handler, so no other policy is
+ * safe to run) — it is not read from config.
  *
- * `sandboxMode` is similarly validated against the codex 0.134 enum so a
- * typo doesn't reach the daemon (where the only feedback is a fatal early
- * exit).
+ * `sandboxMode` is validated against the codex 0.134 enum so a typo doesn't
+ * reach the daemon (where the only feedback is a fatal early exit).
  */
-
-const TRUSTED_LOCAL_APPROVAL_POLICIES = new Set([
-  'never',
-  'auto',
-  'auto-approve',
-  'on-failure',
-]);
 
 const ALLOWED_SANDBOX_MODES = new Set([
   'read-only',
@@ -50,7 +40,6 @@ export interface ParsedCodexArgs {
 }
 
 export interface CodexArgsDefaults {
-  approvalPolicy?: string;
   sandboxMode?: string;
   extraArgs?: string[];
 }
@@ -71,10 +60,6 @@ export function parseCodexArgs(
     throw new Error('codex_args_json must be a JSON object');
   }
   const obj = raw as Record<string, unknown>;
-  const approvalPolicy =
-    typeof obj['approvalPolicy'] === 'string'
-      ? (obj['approvalPolicy'] as string)
-      : (defaults.approvalPolicy ?? 'never');
   const sandboxMode =
     typeof obj['sandboxMode'] === 'string'
       ? (obj['sandboxMode'] as string)
@@ -91,35 +76,28 @@ export function parseCodexArgs(
     ...perDispatcherExtra,
   ];
 
-  return validateCodexArgs({ approvalPolicy, sandboxMode, extraArgs });
+  return validateCodexArgs({ approvalPolicy: 'never', sandboxMode, extraArgs });
 }
 
 /**
  * Build the codex CLI-arg model directly from the structured codex config
- * block (`dispatchers[].runtime.config`), without round-tripping through JSON.
+ * block (the dispatcher's `agents[]` entry config), without round-tripping
+ * through JSON.
  * Behavior-equivalent to encoding that block and calling {@link parseCodexArgs}:
  * the same trusted-local invariants are enforced.
  */
 export function codexArgsFromConfig(config: {
-  approval_policy: string;
   sandbox_mode: string;
   extra_args: string[];
 }): ParsedCodexArgs {
   return validateCodexArgs({
-    approvalPolicy: config.approval_policy,
+    approvalPolicy: 'never',
     sandboxMode: config.sandbox_mode,
     extraArgs: [...config.extra_args],
   });
 }
 
 function validateCodexArgs(parsed: ParsedCodexArgs): ParsedCodexArgs {
-  if (!TRUSTED_LOCAL_APPROVAL_POLICIES.has(parsed.approvalPolicy)) {
-    throw new Error(
-      `dispatcher startup refused: approvalPolicy='${parsed.approvalPolicy}' may request approval, ` +
-        `but the dreamux MVP only ships with a fail-fast approval handler ` +
-        `(issue #2 "trust model"). Configure approvalPolicy='never' or extend the trust model first.`,
-    );
-  }
   if (!ALLOWED_SANDBOX_MODES.has(parsed.sandboxMode)) {
     throw new Error(
       `dispatcher startup refused: sandboxMode='${parsed.sandboxMode}' is not one of ` +

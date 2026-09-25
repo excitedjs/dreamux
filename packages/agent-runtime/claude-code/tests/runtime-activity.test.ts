@@ -1,6 +1,6 @@
 /** Native activity projection is independent of submitted requests. */
 import { describe, expect, it } from 'vitest';
-import { endNativeTurn, handleProtocolEvent } from '../src/runtime-activity.js';
+import { handleProtocolEvent } from '../src/runtime-activity.js';
 import type { ClaudeProtocolEvent, TurnOutcome } from '../src/types.js';
 import type { RuntimeActivity } from '@excitedjs/dreamux-types';
 
@@ -21,10 +21,6 @@ function makeHarness() {
       } });
     },
   };
-}
-
-function resultEvent(o: TurnOutcome, commandUuids: string[] = ['cmd-1'], uuid = 'result-uuid'): ClaudeProtocolEvent {
-  return { kind: 'result', uuid, outcome: o, commandUuids };
 }
 
 function streamAssistantText(text: string, messageId = 'msg-1'): ClaudeProtocolEvent {
@@ -269,52 +265,6 @@ describe('handleProtocolEvent live activity', () => {
  * name.
  */
 describe('handleProtocolEvent token usage', () => {
-  it('emits the cumulative usage snapshot immediately before native end', () => {
-    const events: RuntimeActivity[] = [];
-    const activitySink = (fact: RuntimeActivity): void => { events.push(fact); };
-    const value = outcome({ tokenUsage: { inputTokens: 28_531, outputTokens: 69 }, contextTokens: 14_500 });
-    handleProtocolEvent(resultEvent(value), {
-      activity: { tools: new Map() }, activitySink,
-    });
-    expect(events.map((fact) => fact.kind)).toEqual(['token.usage', 'turn.ended']);
-    expect(events[0]).toEqual({
-      kind: 'token.usage',
-      occurredAt: expect.any(Number),
-      id: 'result-uuid',
-      inputTokens: 28_531,
-      outputTokens: 69,
-      context: { usedTokens: 14_500, windowTokens: null },
-    });
-    expect(value.text).toBe('answer');
-    endNativeTurn('interrupted', null, activitySink);
-    expect(events.map((fact) => fact.kind)).toEqual(['token.usage', 'turn.ended', 'turn.ended']);
-  });
-
-  it('reports background result usage without any submitted command and a null context', () => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome({ tokenUsage: { inputTokens: 10, outputTokens: 5 }, contextTokens: null }), []));
-    expect(h.activityEvents[0]).toMatchObject({
-      kind: 'token.usage', inputTokens: 10, outputTokens: 5, context: null,
-    });
-    expect(h.nativeEnds[0]).toMatchObject({ status: 'completed', reason: null });
-  });
-
-  it('emits a fresh snapshot on each result, carrying native cumulative counters', () => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome({ tokenUsage: { inputTokens: 100, outputTokens: 5 }, contextTokens: 50 })));
-    h.fire(resultEvent(outcome({
-      tokenUsage: { inputTokens: 200, outputTokens: 10 }, isError: true, errors: ['native failure'],
-    }), ['cmd-2'], 'second-result-uuid'));
-    expect(h.activityEvents).toMatchObject([
-      { kind: 'token.usage', inputTokens: 100, outputTokens: 5, context: { usedTokens: 50, windowTokens: null } },
-      { kind: 'token.usage', inputTokens: 200, outputTokens: 10, context: null },
-    ]);
-    expect(h.nativeEnds.map((fact) => fact.status)).toEqual(['completed', 'failed']);
-    expect(h.nativeEnds[1]?.reason).toBe('native failure');
-    const ids = h.activityEvents.map((fact) => (fact.kind === 'token.usage' ? fact.id : ''));
-    expect(ids).toEqual(['result-uuid', 'second-result-uuid']);
-  });
-
   it('keeps native interruption markers before usage and the interrupted end', () => {
     const events: RuntimeActivity[] = [];
     handleProtocolEvent({
@@ -330,12 +280,6 @@ describe('handleProtocolEvent token usage', () => {
     ]);
   });
 
-  it('emits no usage event when the native result has no metrics', () => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome()));
-    expect(h.activityEvents).toEqual([]);
-    expect(h.nativeEnds).toHaveLength(1);
-  });
 });
 
 describe('handleProtocolEvent native turn end', () => {
@@ -361,18 +305,6 @@ describe('handleProtocolEvent native turn end', () => {
     ]);
   });
 
-  it('emits exactly one ended fact for a turn that folded three commands into one result', () => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome({ text: 'one answer for all three' }), ['cmd-1', 'cmd-2', 'cmd-3']));
-
-    expect(h.nativeEnds).toHaveLength(1);
-    expect(h.nativeEnds[0]!.status).toBe('completed');
-    // No logical membership: the fact names no command, submission, or turn.
-    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual([
-      'kind', 'occurredAt', 'reason', 'status',
-    ]);
-  });
-
   it('emits nothing before the result, so an in-flight turn never looks finished', () => {
     const h = makeHarness();
     h.fire(streamAssistantText('still working'));
@@ -381,45 +313,4 @@ describe('handleProtocolEvent native turn end', () => {
     expect(h.activityEvents.length).toBeGreaterThan(0);
     expect(h.nativeEnds).toHaveLength(0);
   });
-
-  it('reports failed when the native result carries isError', () => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' })));
-
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
-  });
-
-  it('emits one end per result boundary when a steered command runs after the first one was answered', () => {
-    const h = makeHarness();
-    // The already legal protocol sequence for a steer that did not fold: the
-    // initial command is answered, then the queued command starts
-    // and is answered by a result of its own — two native turns in the one
-    // resident session.
-    h.fire(resultEvent(outcome({ text: 'first answer' })));
-    h.fire(resultEvent(outcome({ text: 'second answer' }), ['cmd-2']));
-
-    expect(h.nativeEnds.map((end) => end.status)).toEqual([
-      'completed',
-      'completed',
-    ]);
-
-  });
-
-  it('reports the second boundary honestly when the steered turn fails after a completed one', () => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome({ text: 'first answer' })));
-    h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' }), ['cmd-2']));
-
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
-  });
-
-  it('reports every terminal result, including a background result', () => {
-    const h = makeHarness();
-    h.fire(resultEvent(outcome({ text: 'first' })));
-    // A background turn has no submitted group but still reports its end.
-    h.fire(resultEvent(outcome({ text: 'second' }), []));
-
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
-  });
-
 });

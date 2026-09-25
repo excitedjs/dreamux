@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2a, item 1: AgentRuntimeCreateContext.activity/.logger, the activity-read context's .logger, ChannelSessionCreateContext.logger/.state_root/.cache_root, and DreamuxLogger.child are now required fields instead of optional ones — Core always supplied them. AgentRuntimeCreateContext.injectEnv and the activity-read context's .injectEnv are deleted; the neutral env-injection seam was always empty in production. Not user-visible.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

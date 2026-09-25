@@ -49,14 +49,14 @@ export function dreamuxConfigFromAnswers(
       ...(rawConfig === undefined ? {} : { rawConfig }),
     };
   }
-  for (const dispatcher of dispatchers) {
-    const rawConfig = cloneOptionalProviderConfig(dispatcher.runtime.rawConfig);
-    agents[dispatcher.agentRuntime] = {
-      provider: dispatcher.runtime.provider,
-      config: cloneProviderConfig(dispatcher.runtime.config),
-      ...(rawConfig === undefined ? {} : { rawConfig }),
-    };
-  }
+  // The answers-driven dispatcher's agent is the only entry this onboard run
+  // can add or change; every other dispatcher's agent is already seeded above
+  // from `base.agents`, unchanged.
+  agents[answers.agentRuntime.id] = {
+    provider: answers.agentRuntime.provider,
+    config: cloneProviderConfig(answers.agentRuntime.config),
+    rawConfig: cloneProviderConfig(answers.agentRuntime.config),
+  };
   const next: DreamuxConfig = {
     ...(base.plugins !== undefined ? { plugins: base.plugins } : {}),
     agents,
@@ -81,11 +81,6 @@ function dispatcherConfigFromAnswers(
       rawConfig: cloneProviderConfig(channel.config),
     })),
     agentRuntime: answers.agentRuntime.id,
-    runtime: {
-      provider: answers.agentRuntime.provider,
-      config: cloneProviderConfig(answers.agentRuntime.config),
-      rawConfig: cloneProviderConfig(answers.agentRuntime.config),
-    },
   };
 }
 
@@ -104,13 +99,6 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
         : { rawConfig: cloneProviderConfig(channel.rawConfig) }),
     })),
     agentRuntime: dispatcher.agentRuntime,
-    runtime: {
-      provider: dispatcher.runtime.provider,
-      config: cloneProviderConfig(dispatcher.runtime.config),
-      ...(dispatcher.runtime.rawConfig === undefined
-        ? {}
-        : { rawConfig: cloneProviderConfig(dispatcher.runtime.rawConfig) }),
-    },
   };
 }
 

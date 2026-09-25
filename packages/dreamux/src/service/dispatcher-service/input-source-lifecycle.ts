@@ -76,6 +76,14 @@ interface DispatcherInputSourceLifecycleOptions {
 export class DispatcherInputSourceLifecycle {
   private agent_: TeammateService | null = null;
   private workspaceCwd: string | null = null;
+  /**
+   * The prepare/start operation is its own fence: a nullable `Promise` field
+   * is the state, published before the work behind it runs. Neither is reset
+   * once settled — a Dispatcher's channels and workflow/scheduler admission
+   * start at most once per process lifetime, so a second caller always joins
+   * the same settled promise (resolved or rejected) rather than re-running
+   * prepare/start.
+   */
   private preparing: Promise<void> | null = null;
   private starting: Promise<void> | null = null;
   private preparedChannels: Map<string, ChannelInstance> | null = null;
@@ -85,8 +93,6 @@ export class DispatcherInputSourceLifecycle {
    * — rather than relying on each provider to stop calling.
    */
   private readonly channelPorts: ChannelCorePortLease[] = [];
-  private started = false;
-  private cleanupPending = false;
 
   constructor(private readonly opts: DispatcherInputSourceLifecycleOptions) {}
 
@@ -96,22 +102,17 @@ export class DispatcherInputSourceLifecycle {
 
   async prepareChannels(): Promise<void> {
     this.assertAvailable();
-    if (this.preparedChannels !== null || this.started) return;
+    if (this.preparedChannels !== null) return;
     if (this.preparing !== null) return this.preparing;
-    const promise = this.doPrepareChannels().finally(() => {
-      this.preparing = null;
-    });
+    const promise = this.doPrepareChannels();
     this.preparing = promise;
     return promise;
   }
 
   async start(): Promise<void> {
     this.assertAvailable();
-    if (this.started) return;
     if (this.starting !== null) return this.starting;
-    const promise = this.doStart().finally(() => {
-      this.starting = null;
-    });
+    const promise = this.doStart();
     this.starting = promise;
     return promise;
   }
@@ -163,24 +164,13 @@ export class DispatcherInputSourceLifecycle {
   }
 
   markStopped(): void {
-    this.started = false;
-    // The leases belonged to the sessions this run initialized; a later start
-    // initializes new ones. Keeping the old objects would fence nothing and
-    // would grow with every restart.
+    // The leases were held only to fence this run's Channel sessions; once
+    // stopped, nothing needs them, and keeping the array would leak references.
     this.channelPorts.length = 0;
-  }
-
-  markCleanupPending(): void {
-    this.cleanupPending = true;
   }
 
   private async doPrepareChannels(): Promise<void> {
     this.assertAvailable();
-    if (this.agent_ !== null && !this.agent_.isRetired()) {
-      throw new Error(
-        `dispatcher ${JSON.stringify(this.opts.dispatcherId)} cannot replace its Agent while prior teardown is incomplete`,
-      );
-    }
     const row = this.opts.dispatchers.get(this.opts.dispatcherId);
     if (row === null) {
       throw new Error(`no dispatcher '${this.opts.dispatcherId}'`);
@@ -286,7 +276,6 @@ export class DispatcherInputSourceLifecycle {
       this.assertAvailable();
       await this.opts.teams.startSchedulers();
       this.assertAvailable();
-      this.started = true;
     } catch (error) {
       this.opts.workflows.closeAdmission();
       this.closeChannelPortAdmission();
@@ -309,12 +298,10 @@ export class DispatcherInputSourceLifecycle {
         }));
       this.preparedChannels = null;
       this.channelPorts.length = 0;
-      this.started = false;
       if (rollbackFailures.length === 0 && !this.opts.isUnavailable()) {
         this.opts.admittedTasks.openAdmission();
       }
       if (rollbackFailures.length > 0) {
-        this.cleanupPending = true;
         throw new AggregateError(
           [error, ...rollbackFailures],
           `dispatcher ${JSON.stringify(this.opts.dispatcherId)} start failed and rollback did not complete`,
@@ -399,11 +386,6 @@ export class DispatcherInputSourceLifecycle {
   }
 
   private assertAvailable(): void {
-    if (this.cleanupPending) {
-      throw new Error(
-        `dispatcher ${JSON.stringify(this.opts.dispatcherId)} cannot start while prior teardown is incomplete`,
-      );
-    }
     if (this.opts.isUnavailable()) {
       throw new Error(`dispatcher '${this.opts.dispatcherId}' is shutting down`);
     }

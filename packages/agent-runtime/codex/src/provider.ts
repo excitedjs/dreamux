@@ -35,12 +35,12 @@ import type {
  * Construction options for the built-in Codex provider. The runtime's host
  * contracts arrive on the NEUTRAL create context, not as factory hooks:
  * volatile socket placement comes from `context.paths.runtimeSocketDirs()` (this
- * package owns the allocation policy), and env injection comes from
- * `context.injectEnv`. Role-gated bundled skills arrive as neutral
- * `skillSources`. Registration identity is Core's: the provider carries no
- * descriptor. What remains here are the test/host seams (process/WS factories,
- * the optional Codex home pre-start check, restart backoff) that let core and
- * tests wire behavior without changing the provider.
+ * package owns the allocation policy). Role-gated bundled skills arrive as
+ * neutral `skillSources`. Registration identity is Core's: the provider
+ * carries no descriptor. What remains here are the test/host seams
+ * (process/WS factories, the optional Codex home pre-start check, restart
+ * backoff) that let core and tests wire behavior without changing the
+ * provider.
  */
 export interface CodexAgentRuntimeProviderOptions {
   /** Optional Codex home/auth pre-start check, invoked with the runtime id and cwd. */
@@ -135,7 +135,7 @@ export function createCodexAgentRuntimeProvider(
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
-        activitySink: context.activity ?? (() => undefined),
+        activitySink: context.activity,
         codec,
         paths,
         // The package owns socket allocation: pick a fresh name in the first of
@@ -146,9 +146,6 @@ export function createCodexAgentRuntimeProvider(
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,
-        ...(context.injectEnv !== undefined
-          ? { injectEnv: context.injectEnv }
-          : {}),
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
@@ -158,7 +155,7 @@ export function createCodexAgentRuntimeProvider(
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
           : {}),
-        ...(context.logger !== undefined ? { logger: context.logger } : {}),
+        logger: context.logger,
         ...(options.codexHomeDoctor !== undefined
           ? { codexHomeDoctor: options.codexHomeDoctor }
           : {}),

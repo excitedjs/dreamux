@@ -148,7 +148,7 @@ export class TeamService implements Team {
     this.roster = new TeamRosterProjection({
       teamId,
       store: deps.store,
-      ...(deps.coreEvents !== undefined ? { coreEvents: deps.coreEvents } : {}),
+      coreEvents: deps.coreEvents,
       record: () => this.record,
     });
     // The leader lives at the Team root itself; its TeamMates live one level

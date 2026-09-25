@@ -421,21 +421,12 @@ export interface AgentRuntimeCreateContext<TConfig> {
    * valid JSON conforming to the schema; the caller parses it.
    */
   readonly outputSchema?: JsonSchema;
-  /**
-   * Neutral process-env injection seam. Core merges these entries into the
-   * runtime's spawn environment AFTER `process.env` and BEFORE the provider's
-   * own `config.extra_env`, i.e. spawn env =
-   * `{ ...process.env, ...injectEnv, ...config.extra_env }`. Core owns what (if
-   * anything) it injects; `config.extra_env` is the provider's own config and is
-   * NOT routed through here.
-   */
-  readonly injectEnv?: Readonly<Record<string, string>>;
   readonly paths: AgentRuntimePathContext;
   /** Leased, push-only state sink for this runtime generation. */
   readonly state: AgentRuntimeStateSink;
   /** Leased, push-only sink for this runtime generation's live activity. */
-  readonly activity?: AgentRuntimeActivitySink;
-  readonly logger?: AgentRuntimeLogger;
+  readonly activity: AgentRuntimeActivitySink;
+  readonly logger: AgentRuntimeLogger;
 }
 
 /** What `start` restored. Core consumes it before admitting the first submission. */
@@ -490,8 +481,7 @@ export interface AgentActivityQuery {
 export interface AgentActivityReadContext<TConfig> {
   readonly config: TConfig;
   readonly cwd: string;
-  readonly injectEnv?: Readonly<Record<string, string>>;
-  readonly logger?: AgentRuntimeLogger;
+  readonly logger: AgentRuntimeLogger;
 }
 
 /**

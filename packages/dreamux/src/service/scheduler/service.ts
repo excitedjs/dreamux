@@ -22,7 +22,6 @@ import type {
 } from './types.js';
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
-const MAX_JOBS_PER_OWNER = 128;
 
 interface TimerSlot {
   dueAt: number;
@@ -91,13 +90,10 @@ export class SchedulerService {
   private async doCreate(input: CronCreateRequest): Promise<CronJob> {
     const normalized = this.normalizeCreate(input);
     const nextRunAt = nextRunAfter(normalized.cron, normalized.tz, this.now());
-    const job = await this.store.create(
-      {
-        ...normalized,
-        nextRunAt,
-      },
-      MAX_JOBS_PER_OWNER,
-    );
+    const job = await this.store.create({
+      ...normalized,
+      nextRunAt,
+    });
     this.log.info(
       { owner_id: this.ownerId, job_id: job.id },
       'cron job created',

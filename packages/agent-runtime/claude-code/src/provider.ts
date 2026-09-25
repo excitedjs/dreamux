@@ -28,12 +28,11 @@ function normalizedSystemPromptAppend(
 }
 
 /**
- * Construction options for the built-in Claude Code provider. Env injection
- * arrives on the NEUTRAL create context (`context.injectEnv`), not as a factory
- * hook, and registration identity is Core's: the provider carries no
- * descriptor. What remains here are the test/host seams (the resident-session
- * factory, an optional host bin resolver) that let core and tests wire behavior
- * without changing the provider.
+ * Construction options for the built-in Claude Code provider. Registration
+ * identity is Core's: the provider carries no descriptor. What remains here
+ * are the test/host seams (the resident-session factory, an optional host bin
+ * resolver) that let core and tests wire behavior without changing the
+ * provider.
  */
 export interface ClaudeCodeAgentRuntimeProviderOptions {
   /** Optional host-level bin resolver (default: identity on the config bin). */
@@ -102,14 +101,11 @@ export function createClaudeCodeAgentRuntimeProvider(
         config: context.config,
         cwd: context.cwd,
         state: context.state,
-        activitySink: context.activity ?? (() => undefined),
+        activitySink: context.activity,
         paths: context.paths,
         mcpServers: context.mcpServers,
         sessionFactory,
         resolveBinPath,
-        ...(context.injectEnv !== undefined
-          ? { injectEnv: context.injectEnv }
-          : {}),
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
@@ -123,7 +119,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
           : {}),
-        ...(context.logger !== undefined ? { logger: context.logger } : {}),
+        logger: context.logger,
       };
       return new ClaudeCodeRuntime(context.identity, deps);
     },

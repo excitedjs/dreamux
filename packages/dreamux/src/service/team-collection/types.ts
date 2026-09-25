@@ -62,7 +62,7 @@ export interface TeamCollectionOptions {
    * the recipient it knows rather than deriving one from the producing record.
    */
   dispatcherCompletionInitiator: () => Promise<CompletionInitiator | null>;
-  admitOperation?: <T>(task: () => Promise<T>) => Promise<T>;
+  admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
   /**
    * Build one TeamLeader's Agent-facing MCP surface.
    *
@@ -78,9 +78,9 @@ export interface TeamCollectionOptions {
   /** Fires the owning Dispatcher's `team` hook for a just-constructed Team; never throws. */
   announceTeam: (team: Team, ctx: { origin: 'create' | 'rebuild' }) => void;
   log: DreamuxLogger;
-  workflowLog?: DreamuxLogger;
-  coreEvents?: DispatcherCoreEventPublisher;
-  conversationProjection?: ConversationProjection;
+  workflowLog: DreamuxLogger;
+  coreEvents: DispatcherCoreEventPublisher;
+  conversationProjection: ConversationProjection;
   nameSuffixGenerator?: SuffixGenerator;
   agentNameSuffixGenerator?: SuffixGenerator;
 }

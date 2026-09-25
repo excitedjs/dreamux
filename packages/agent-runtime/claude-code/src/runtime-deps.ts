@@ -19,7 +19,6 @@ export interface ClaudeCodeRuntimeDeps {
   mcpServers: readonly AgentRuntimeMcpServer[];
   sessionFactory: ClaudeCodeSessionFactory;
   resolveBinPath: (bin: string) => string;
-  injectEnv?: Record<string, string>;
   systemPromptAppend?: readonly string[];
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
@@ -29,6 +28,6 @@ export interface ClaudeCodeRuntimeDeps {
    */
   outputSchema?: Record<string, unknown>;
   generateSessionId?: () => string;
-  logger?: DreamuxLogger;
+  logger: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
 }

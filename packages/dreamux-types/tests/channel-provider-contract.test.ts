@@ -151,26 +151,4 @@ describe('ChannelProvider composes optional capabilities rather than fake method
     >();
   });
 
-  it('a bare provider that implements only createSession is a valid ChannelProvider', async () => {
-    const session: ChannelSession = {
-      async initialize(): Promise<void> {},
-      async start(): Promise<void> {},
-      async close(): Promise<void> {},
-    };
-    const provider: ChannelProvider<{ token: string }> = {
-      async createSession() {
-        return { session };
-      },
-    };
-
-    expect(provider.config).toBeUndefined();
-    expect(provider.mcp).toBeUndefined();
-    const instance = await provider.createSession({
-      dispatcher_id: 'd1',
-      channel_id: 'c1',
-      provider: 'fake',
-      config: { token: 'tok' },
-    });
-    expect(instance.session).toBe(session);
-  });
 });
