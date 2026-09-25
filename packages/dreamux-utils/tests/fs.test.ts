@@ -77,7 +77,9 @@ describe('writeAtomic', () => {
     const handle = await open(collidePath, 'wx', 0o600);
     await handle.writeFile('first-writer-data');
     try {
-      await expect(open(collidePath, 'wx', 0o600)).rejects.toMatchObject({ code: 'EEXIST' });
+      await expect(open(collidePath, 'wx', 0o600)).rejects.toMatchObject({
+        code: 'EEXIST',
+      });
       // The first writer's data must be untouched by the failed second open.
       const content = await readFile(collidePath, 'utf8');
       expect(content).toBe('first-writer-data');

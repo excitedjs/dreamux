@@ -13,7 +13,10 @@
  * step where the rule is. The TeamMate MCP delegate reads the same helpers;
  * neither adapter reads the other.
  */
-import type { CoreCommandDefinition, JsonSchema } from '@excitedjs/dreamux-types';
+import type {
+  CoreCommandDefinition,
+  JsonSchema,
+} from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
@@ -152,14 +155,16 @@ export function teammateCommands(
       const skillSources = await normalizeSkillSources(input.skillSources);
       const repo = repoWorktree(input.repo);
       const cwd =
-        repo === null ? null : repo.cwd ?? (await dispatcher.workspace());
+        repo === null ? null : (repo.cwd ?? (await dispatcher.workspace()));
       const worktree: TeamMateWorktreeRequest | null = repo?.worktree ?? null;
       const spawnInput = {
         name: input.name,
         prompt: input.prompt,
         intent: input.intent,
         ...(cwd !== null ? { cwd } : {}),
-        ...(input.agentRuntime !== null ? { agentRuntime: input.agentRuntime } : {}),
+        ...(input.agentRuntime !== null
+          ? { agentRuntime: input.agentRuntime }
+          : {}),
         ...(input.identity !== null ? { identity: input.identity } : {}),
         ...(skillSources !== null ? { skillSources } : {}),
         ...(worktree !== null ? { worktree } : {}),
@@ -177,10 +182,10 @@ export function teammateCommands(
   > = {
     name: 'teammate.submit',
     version: 1,
-    input: objectSchema(
-      { name: STRING, prompt: STRING, intent: STRING },
-      ['name', 'prompt'],
-    ),
+    input: objectSchema({ name: STRING, prompt: STRING, intent: STRING }, [
+      'name',
+      'prompt',
+    ]),
     output: objectSchema(
       { teammate: OBJECT, status: SUBMISSION_STATUS, error: STRING },
       ['teammate', 'status'],
@@ -209,10 +214,10 @@ export function teammateCommands(
   > = {
     name: 'teammate.close',
     version: 1,
-    input: objectSchema(
-      { name: STRING, note: NON_EMPTY_STRING },
-      ['name', 'note'],
-    ),
+    input: objectSchema({ name: STRING, note: NON_EMPTY_STRING }, [
+      'name',
+      'note',
+    ]),
     output: objectSchema({ teammate: OBJECT }, ['teammate']),
     parse(payload) {
       const params = commandPayload(payload);
@@ -270,7 +275,9 @@ export function teammateCommands(
     output: objectSchema({ teammates: arrayOf(OBJECT) }, ['teammates']),
     parse: () => ({}),
     async execute(context) {
-      return { teammates: await mustDispatcher(host, context).teammates.list() };
+      return {
+        teammates: await mustDispatcher(host, context).teammates.list(),
+      };
     },
   };
 
@@ -288,12 +295,18 @@ export function teammateCommands(
     },
     async execute(context, input) {
       return {
-        teammate: await mustDispatcher(host, context).teammates.status(input.name),
+        teammate: await mustDispatcher(host, context).teammates.status(
+          input.name,
+        ),
       };
     },
   };
 
-  const last: CoreCommandDefinition<'teammate.last', LastInput, AgentEntityLastResult> = {
+  const last: CoreCommandDefinition<
+    'teammate.last',
+    LastInput,
+    AgentEntityLastResult
+  > = {
     name: 'teammate.last',
     version: 1,
     input: objectSchema(

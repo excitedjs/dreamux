@@ -26,7 +26,10 @@ import {
   AgentActivityReadError,
   readAgentActivity,
 } from '../src/service/agent-entity/activity-reader.js';
-import { capturingLogger, type CapturedLog } from './helpers/command-harness.js';
+import {
+  capturingLogger,
+  type CapturedLog,
+} from './helpers/command-harness.js';
 import {
   agentEntityLastQuery,
   optionalAgentEntityNameParam,
@@ -47,7 +50,9 @@ import {
   testCronJob,
 } from './helpers/workflow-harness.js';
 
-function scheduler(options: Partial<SchedulerServiceOptions> = {}): SchedulerService {
+function scheduler(
+  options: Partial<SchedulerServiceOptions> = {},
+): SchedulerService {
   return new SchedulerService({
     ownerId: 'dispatcher-1',
     store: fakeCronStore([]).store,
@@ -185,7 +190,10 @@ describe('an Activity read reports what failed, and invents nothing', () => {
     expect(unnamed).toHaveLength(1);
     // Nothing is claimed about a reason the provider never gave.
     expect(unnamed[0]!.fields).not.toHaveProperty('activity_reason');
-    const err = unnamed[0]!.fields['err'] as { message: string; stack?: string };
+    const err = unnamed[0]!.fields['err'] as {
+      message: string;
+      stack?: string;
+    };
     expect(err.message).toBe('EIO: i/o error');
     expect(typeof err.stack).toBe('string');
   });
@@ -195,21 +203,30 @@ describe('a broken cron rule is the caller`s mistake', () => {
   const badRequests: ReadonlyArray<[string, Record<string, unknown>]> = [
     ['an empty prompt', { cron: '*/5 * * * *', prompt: '' }],
     ['an empty title', { cron: '*/5 * * * *', prompt: 'go', title: '' }],
-    ['an action kind nothing can run', {
-      cron: '*/5 * * * *',
-      prompt: 'go',
-      action: { kind: 'spawn-teammate' },
-    }],
+    [
+      'an action kind nothing can run',
+      {
+        cron: '*/5 * * * *',
+        prompt: 'go',
+        action: { kind: 'spawn-teammate' },
+      },
+    ],
     ['a cron that is not five fields', { cron: '*/5 * * *', prompt: 'go' }],
-    ['a five-field cron the library cannot parse', {
-      cron: '99 99 99 99 99',
-      prompt: 'go',
-    }],
-    ['a timezone that does not exist', {
-      cron: '*/5 * * * *',
-      prompt: 'go',
-      tz: 'Mars/Olympus',
-    }],
+    [
+      'a five-field cron the library cannot parse',
+      {
+        cron: '99 99 99 99 99',
+        prompt: 'go',
+      },
+    ],
+    [
+      'a timezone that does not exist',
+      {
+        cron: '*/5 * * * *',
+        prompt: 'go',
+        tz: 'Mars/Olympus',
+      },
+    ],
   ];
 
   for (const [label, request] of badRequests) {
@@ -226,7 +243,8 @@ describe('a broken cron rule is the caller`s mistake', () => {
     // the field it sent, never about a parser it never chose.
     const service = scheduler();
     const error = await raised(() =>
-      service.create({ cron: '99 99 99 99 99', prompt: 'go' } as never));
+      service.create({ cron: '99 99 99 99 99', prompt: 'go' } as never),
+    );
     expect((error as Error).message).toBe(
       "cron '99 99 99 99 99' is not a valid 5-field expression",
     );
@@ -236,7 +254,8 @@ describe('a broken cron rule is the caller`s mistake', () => {
     const job = testCronJob({ id: 'job-1' });
     const service = scheduler({ store: fakeCronStore([job]).store });
     const error = await raised(() =>
-      service.update({ id: 'job-1', cron: 'not a cron' } as never));
+      service.update({ id: 'job-1', cron: 'not a cron' } as never),
+    );
     expect(codeOf(error)).toBe('BAD_REQUEST');
   });
 });
@@ -267,7 +286,8 @@ describe('a failure nobody classified stays the server`s, even on a validation p
         cron: '*/5 * * * *',
         prompt: 'go',
         action: explodingAction(),
-      } as never));
+      } as never),
+    );
     expect(error).toBeInstanceOf(TypeError);
     expect(codeOf(error)).toBeUndefined();
   });
@@ -276,14 +296,16 @@ describe('a failure nobody classified stays the server`s, even on a validation p
     const job = testCronJob({ id: 'job-1' });
     const service = scheduler({ store: fakeCronStore([job]).store });
     const error = await raised(() =>
-      service.update({ id: 'job-1', action: explodingAction() } as never));
+      service.update({ id: 'job-1', action: explodingAction() } as never),
+    );
     expect(error).toBeInstanceOf(TypeError);
     expect(codeOf(error)).toBeUndefined();
   });
 
   it('a persisted job that breaks a rule stays loud rather than becoming a caller mistake', async () => {
     const service = scheduler({
-      store: fakeCronStore([testCronJob({ id: 'job-1', cron: 'not a cron' })]).store,
+      store: fakeCronStore([testCronJob({ id: 'job-1', cron: 'not a cron' })])
+        .store,
     });
     const error = await raised(() => service.start());
     expect(codeOf(error)).not.toBe('BAD_REQUEST');
@@ -299,8 +321,9 @@ describe('every request reader re-types the rule and nothing else', () => {
    * above, where an unforeseen `TypeError` crosses the same narrowing.
    */
   it('the shared narrowing converts a rule violation and rethrows everything else', () => {
-    expect(() => throwCallerMistake(new RuleViolation('name is too long')))
-      .toThrowError(expect.objectContaining({ code: 'BAD_REQUEST' }));
+    expect(() =>
+      throwCallerMistake(new RuleViolation('name is too long')),
+    ).toThrowError(expect.objectContaining({ code: 'BAD_REQUEST' }));
     const unforeseen = new TypeError('cannot read properties of undefined');
     expect(() => throwCallerMistake(unforeseen)).toThrow(unforeseen);
     const shuttingDown = new ServerShuttingDownError();
@@ -315,13 +338,17 @@ describe('every request reader re-types the rule and nothing else', () => {
     {
       what: 'a Team name',
       rule: () => validateTeamId('not a legal team'),
-      read: () => teamNameParam({ team_name: 'not a legal team' } as never, 'team_name'),
+      read: () =>
+        teamNameParam({ team_name: 'not a legal team' } as never, 'team_name'),
     },
     {
       what: 'a TeamMate name',
       rule: () => validateAgentEntityName('not a legal name'),
       read: () =>
-        optionalAgentEntityNameParam({ name: 'not a legal name' } as never, 'name'),
+        optionalAgentEntityNameParam(
+          { name: 'not a legal name' } as never,
+          'name',
+        ),
     },
     {
       what: 'a last-read limit',
@@ -331,7 +358,8 @@ describe('every request reader re-types the rule and nothing else', () => {
     {
       what: 'a workflow concurrency bound',
       rule: () => parseWorkflowMaxConcurrency(0),
-      read: () => workflowRunInput({ prompt: 'go', max_concurrency: 0 } as never),
+      read: () =>
+        workflowRunInput({ prompt: 'go', max_concurrency: 0 } as never),
     },
   ];
 

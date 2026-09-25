@@ -1,12 +1,12 @@
-import type * as lark from '@larksuiteoapi/node-sdk'
+import type * as lark from '@larksuiteoapi/node-sdk';
 
-import type { OutboundTarget } from '../contract/outbound.js'
+import type { OutboundTarget } from '../contract/outbound.js';
 
 export interface MessageSendResponse {
-  code?: number
-  msg?: string
-  data?: { message_id?: string }
-  error?: { log_id?: string }
+  code?: number;
+  msg?: string;
+  data?: { message_id?: string };
+  error?: { log_id?: string };
 }
 
 /**
@@ -28,44 +28,45 @@ export async function sendFeishuMessage(
   content: string,
   signal?: AbortSignal,
 ): Promise<MessageSendResponse> {
-  const replyTo = target.replyToMessageId
-  const operation = replyTo === undefined ? 'message.create' : 'message.reply'
-  const payload = replyTo === undefined
-    ? {
-      url: '/open-apis/im/v1/messages',
-      method: 'POST' as const,
-      params: { receive_id_type: 'chat_id' },
-      data: { receive_id: target.chatId, msg_type: 'interactive', content },
-    }
-    : {
-      url: `/open-apis/im/v1/messages/${encodeURIComponent(replyTo)}/reply`,
-      method: 'POST' as const,
-      data: { msg_type: 'interactive', content },
-    }
+  const replyTo = target.replyToMessageId;
+  const operation = replyTo === undefined ? 'message.create' : 'message.reply';
+  const payload =
+    replyTo === undefined
+      ? {
+          url: '/open-apis/im/v1/messages',
+          method: 'POST' as const,
+          params: { receive_id_type: 'chat_id' },
+          data: { receive_id: target.chatId, msg_type: 'interactive', content },
+        }
+      : {
+          url: `/open-apis/im/v1/messages/${encodeURIComponent(replyTo)}/reply`,
+          method: 'POST' as const,
+          data: { msg_type: 'interactive', content },
+        };
 
-  let res: MessageSendResponse
+  let res: MessageSendResponse;
   try {
     res = await client.request<MessageSendResponse>({
       ...payload,
       ...(signal !== undefined ? { signal } : {}),
-    })
+    });
   } catch (err) {
-    const response = feishuErrorResponse(err)
-    if (response === undefined) throw err
+    const response = feishuErrorResponse(err);
+    if (response === undefined) throw err;
     throw new Error(
       describeSendFailure(operation, response.status, response.body),
       { cause: err },
-    )
+    );
   }
   if (typeof res.code === 'number' && res.code !== 0) {
-    throw new Error(describeSendFailure(operation, undefined, res))
+    throw new Error(describeSendFailure(operation, undefined, res));
   }
-  return res
+  return res;
 }
 
 interface FeishuErrorResponse {
-  status: number | undefined
-  body: MessageSendResponse
+  status: number | undefined;
+  body: MessageSendResponse;
 }
 
 /**
@@ -78,12 +79,13 @@ interface FeishuErrorResponse {
  * boundary can describe, and keeps the message its author wrote.
  */
 function feishuErrorResponse(err: unknown): FeishuErrorResponse | undefined {
-  const response = asRecord(asRecord(err)?.response)
-  if (response === undefined) return undefined
-  const body = asRecord(response.data)
-  if (body === undefined || typeof body.code !== 'number') return undefined
-  const status = typeof response.status === 'number' ? response.status : undefined
-  return { status, body: body as MessageSendResponse }
+  const response = asRecord(asRecord(err)?.response);
+  if (response === undefined) return undefined;
+  const body = asRecord(response.data);
+  if (body === undefined || typeof body.code !== 'number') return undefined;
+  const status =
+    typeof response.status === 'number' ? response.status : undefined;
+  return { status, body: body as MessageSendResponse };
 }
 
 function describeSendFailure(
@@ -91,21 +93,20 @@ function describeSendFailure(
   status: number | undefined,
   body: MessageSendResponse,
 ): string {
-  const logId = asRecord(body.error)?.['log_id']
+  const logId = asRecord(body.error)?.['log_id'];
   const facts = [
     status === undefined ? undefined : `HTTP ${status}`,
     typeof body.code === 'number' ? `code ${body.code}` : undefined,
     typeof logId === 'string' && logId !== '' ? `log_id=${logId}` : undefined,
-  ].filter((fact): fact is string => fact !== undefined)
-  const detail = facts.length === 0 ? '' : ` (${facts.join(', ')})`
-  const reason = typeof body.msg === 'string' && body.msg !== ''
-    ? `: ${body.msg}`
-    : ''
-  return `Feishu ${operation} failed${detail}${reason}`
+  ].filter((fact): fact is string => fact !== undefined);
+  const detail = facts.length === 0 ? '' : ` (${facts.join(', ')})`;
+  const reason =
+    typeof body.msg === 'string' && body.msg !== '' ? `: ${body.msg}` : '';
+  return `Feishu ${operation} failed${detail}${reason}`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined
+    ? (value as Record<string, unknown>)
+    : undefined;
 }

@@ -25,10 +25,7 @@ function stableHash(value: string): number {
   return hash >>> 0;
 }
 
-function stablePaletteColor(
-  value: string,
-  palette: readonly string[],
-): string {
+function stablePaletteColor(value: string, palette: readonly string[]): string {
   return palette[stableHash(value) % palette.length]!;
 }
 
@@ -45,7 +42,9 @@ function plural(count: number, noun: string): string {
 }
 
 function repoName(team: RunningTeamRow): string {
-  return team.source_repo === null ? 'No repository' : basename(team.source_repo);
+  return team.source_repo === null
+    ? 'No repository'
+    : basename(team.source_repo);
 }
 
 /**
@@ -57,15 +56,19 @@ function repoName(team: RunningTeamRow): string {
  * the thread position — rather than a subset no client is known to accept.
  */
 function bindingLink(binding: FeishuBindingView): string {
-  const [path, query] = binding.target_kind === 'topic' && binding.thread_id !== null
-    ? ['thread', {
-        open_chat_id: binding.chat_id,
-        open_thread_id: binding.thread_id,
-        openchatid: binding.chat_id,
-        openthreadid: binding.thread_id,
-        thread_position: '-1',
-      }]
-    : ['chat', { openChatId: binding.chat_id }];
+  const [path, query] =
+    binding.target_kind === 'topic' && binding.thread_id !== null
+      ? [
+          'thread',
+          {
+            open_chat_id: binding.chat_id,
+            open_thread_id: binding.thread_id,
+            openchatid: binding.chat_id,
+            openthreadid: binding.thread_id,
+            thread_position: '-1',
+          },
+        ]
+      : ['chat', { openChatId: binding.chat_id }];
   return `https://applink.feishu.cn/client/${path}/open?${new URLSearchParams(query)}`;
 }
 
@@ -93,14 +96,18 @@ function teamItem(input: {
     input.team.leader_agent_runtime,
     RUNTIME_COLORS,
   );
-  const bindingText = input.bindings.length === 0
-    ? '<font color=\'grey\'>No Feishu bindings</font>'
-    : input.bindings.map((binding) => {
-        const suffix = binding.target_kind === 'topic' && binding.thread_id !== null
-          ? ` <font color='grey'>· ${escapeMarkdown(binding.thread_id)}</font>`
-          : '';
-        return `[📍 ${escapeMarkdown(binding.chatName)}](${bindingLink(binding)})${suffix}`;
-      }).join('  \n');
+  const bindingText =
+    input.bindings.length === 0
+      ? "<font color='grey'>No Feishu bindings</font>"
+      : input.bindings
+          .map((binding) => {
+            const suffix =
+              binding.target_kind === 'topic' && binding.thread_id !== null
+                ? ` <font color='grey'>· ${escapeMarkdown(binding.thread_id)}</font>`
+                : '';
+            return `[📍 ${escapeMarkdown(binding.chatName)}](${bindingLink(binding)})${suffix}`;
+          })
+          .join('  \n');
   return {
     tag: 'interactive_container',
     width: 'fill',
@@ -135,7 +142,9 @@ function teamItem(input: {
  * cell empty rather than letting the final tile stretch to full width, which
  * would read as a different kind of row.
  */
-function teamGrid(tiles: readonly Record<string, unknown>[]): Record<string, unknown> {
+function teamGrid(
+  tiles: readonly Record<string, unknown>[],
+): Record<string, unknown> {
   const columns: Record<string, unknown>[][] = [[], []];
   tiles.forEach((tile, index) => columns[index % 2]!.push(tile));
   return {
@@ -198,11 +207,12 @@ export async function buildRunningTeamsCard(input: {
     bindingsByTeam.get(team.team_name) ?? [];
   // The repository colour is the panel's whole identity — its name and the
   // border of every tile under it — so one hash serves both.
-  const panels = [...groups].sort(([left], [right]) => left.localeCompare(right))
+  const panels = [...groups]
+    .sort(([left], [right]) => left.localeCompare(right))
     .map(([repository, teams]) => {
       const color = stablePaletteColor(repository, REPOSITORY_COLORS);
-      const sorted = [...teams].sort(
-        (left, right) => left.team_name.localeCompare(right.team_name),
+      const sorted = [...teams].sort((left, right) =>
+        left.team_name.localeCompare(right.team_name),
       );
       const chats = new Set(
         sorted.flatMap((team) => bindingsFor(team).map((b) => b.chat_id)),
@@ -220,11 +230,15 @@ export async function buildRunningTeamsCard(input: {
           },
         },
         elements: [
-          teamGrid(sorted.map((team) => teamItem({
-            team,
-            bindings: bindingsFor(team),
-            borderColor: `${color}-100`,
-          }))),
+          teamGrid(
+            sorted.map((team) =>
+              teamItem({
+                team,
+                bindings: bindingsFor(team),
+                borderColor: `${color}-100`,
+              }),
+            ),
+          ),
         ],
       };
     });
@@ -239,8 +253,7 @@ export async function buildRunningTeamsCard(input: {
       title: { tag: 'plain_text', content: 'Running Teams' },
       subtitle: {
         tag: 'plain_text',
-        content:
-          `${plural(input.teams.length, 'Team')} · ${plural(chatCount, 'chat')}`,
+        content: `${plural(input.teams.length, 'Team')} · ${plural(chatCount, 'chat')}`,
       },
       template: 'blue',
       icon: { tag: 'standard_icon', token: 'myai_colorful' },
@@ -249,9 +262,10 @@ export async function buildRunningTeamsCard(input: {
       direction: 'vertical',
       padding: '12px 12px 20px 12px',
       vertical_spacing: '8px',
-      elements: panels.length > 0
-        ? panels
-        : [{ tag: 'markdown', content: 'No Teams are running.' }],
+      elements:
+        panels.length > 0
+          ? panels
+          : [{ tag: 'markdown', content: 'No Teams are running.' }],
     },
   };
 }

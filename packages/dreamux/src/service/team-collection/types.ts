@@ -33,10 +33,7 @@ import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { RuleViolation } from '../../platform/errors.js';
-import {
-  clampTeamHistoryLimit,
-  decodeTeamCursor,
-} from './read-helpers.js';
+import { clampTeamHistoryLimit, decodeTeamCursor } from './read-helpers.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -87,9 +84,7 @@ export interface TeamCollectionOptions {
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-export type TeamDissolveRequesterKind =
-  | 'dispatcher'
-  | 'team_leader';
+export type TeamDissolveRequesterKind = 'dispatcher' | 'team_leader';
 
 export interface TeamRecord {
   version: 1;
@@ -297,8 +292,11 @@ export function optionalTeamStatus(
 ): TeamStatus | null {
   const value = optionalString(params, key);
   if (value === null) return null;
-  if (value === 'starting' || value === 'running' || value === 'closed') return value;
-  throw new ValidationError(`param '${key}' must be starting, running, or closed`);
+  if (value === 'starting' || value === 'running' || value === 'closed')
+    return value;
+  throw new ValidationError(
+    `param '${key}' must be starting, running, or closed`,
+  );
 }
 
 export function validateTeamId(id: string): string {

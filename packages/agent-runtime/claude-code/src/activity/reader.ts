@@ -115,8 +115,7 @@ export async function readClaudeRecentActivity(
     const hasOlder =
       (anchor?.start ?? endOffset) > 0 &&
       (projected.length > consumed.length || parsed.boundReached);
-    const boundary =
-      anchor ?? (hasOlder ? parsed.oldestProcessed : null);
+    const boundary = anchor ?? (hasOlder ? parsed.oldestProcessed : null);
     if (boundary !== null && cursor !== null && boundary.start >= cursor.pos) {
       throw new ClaudeActivityError(
         'scan_unsupported',
@@ -248,16 +247,14 @@ function buildSelectedChain(entries: readonly NativeEntry[]): NativeEntry[] {
     if (parent !== null) parents.add(parent);
   }
   const leaf =
-    [...entries]
-      .reverse()
-      .find((entry) => {
-        const uuid = stringValue(entry.value['uuid']);
-        return (
-          uuid !== null &&
-          !parents.has(uuid) &&
-          isConversationParticipant(entry.value)
-        );
-      }) ?? null;
+    [...entries].reverse().find((entry) => {
+      const uuid = stringValue(entry.value['uuid']);
+      return (
+        uuid !== null &&
+        !parents.has(uuid) &&
+        isConversationParticipant(entry.value)
+      );
+    }) ?? null;
   if (leaf === null) return [];
   const chain: NativeEntry[] = [];
   const seen = new Set<string>();
@@ -365,31 +362,31 @@ async function verifyCursorBoundaryDigest(
   position: number,
   expected: string,
 ): Promise<void> {
-    const length = Math.min(
-      MAX_DECODED_BYTES,
-      Math.max(0, opened.size - position),
+  const length = Math.min(
+    MAX_DECODED_BYTES,
+    Math.max(0, opened.size - position),
+  );
+  const bytes = await readBytesAt(opened.handle, position, length);
+  const newline = bytes.indexOf(0x0a, 0);
+  if (bytes.length === 0) {
+    throw new ClaudeActivityError(
+      'cursor_stale',
+      'Claude Code activity cursor is no longer valid',
     );
-    const bytes = await readBytesAt(opened.handle, position, length);
-    const newline = bytes.indexOf(0x0a, 0);
-    if (bytes.length === 0) {
-      throw new ClaudeActivityError(
-        'cursor_stale',
-        'Claude Code activity cursor is no longer valid',
-      );
-    }
-    if (newline < 0) {
-      throw new ClaudeActivityError(
-        'scan_unsupported',
-        'Claude Code activity cursor boundary exceeds the bounded limit',
-      );
-    }
-    const boundaryBytes = bytes.subarray(0, newline + 1);
-    if (digest(boundaryBytes) !== expected) {
-      throw new ClaudeActivityError(
-        'cursor_stale',
-        'Claude Code activity cursor is no longer valid',
-      );
-    }
+  }
+  if (newline < 0) {
+    throw new ClaudeActivityError(
+      'scan_unsupported',
+      'Claude Code activity cursor boundary exceeds the bounded limit',
+    );
+  }
+  const boundaryBytes = bytes.subarray(0, newline + 1);
+  if (digest(boundaryBytes) !== expected) {
+    throw new ClaudeActivityError(
+      'cursor_stale',
+      'Claude Code activity cursor is no longer valid',
+    );
+  }
 }
 
 function isConversationParticipant(value: Record<string, unknown>): boolean {
@@ -441,7 +438,12 @@ async function verifyRewriteEvidence(
   if (cursor.rp !== null && cursor.rd !== null) {
     await verifyCursorBoundaryDigest(opened, cursor.rp, cursor.rd);
   }
-  const appended = await scanRewriteEvidence(opened, cursor.rw, opened.size, true);
+  const appended = await scanRewriteEvidence(
+    opened,
+    cursor.rw,
+    opened.size,
+    true,
+  );
   if (appended.position !== null) {
     throw new ClaudeActivityError(
       'cursor_stale',
@@ -471,9 +473,7 @@ async function scanRewriteEvidence(
   const data = await readBytesAt(opened.handle, start, length);
   let position: number | null = null;
   let evidenceDigest: string | null = null;
-  let cursor = startsAtBoundary
-    ? 0
-    : data.indexOf(0x0a) + 1;
+  let cursor = startsAtBoundary ? 0 : data.indexOf(0x0a) + 1;
   if (cursor === 0 && !startsAtBoundary && data.length > 0) {
     throw new ClaudeActivityError(
       'scan_unsupported',
@@ -517,12 +517,10 @@ function rewriteGeneration(evidence: RewriteEvidence): string {
 function isRewriteRecord(value: Record<string, unknown>): boolean {
   return (
     value['type'] === 'summary' ||
-    (value['type'] === 'system' &&
-      value['subtype'] === 'compact_boundary') ||
+    (value['type'] === 'system' && value['subtype'] === 'compact_boundary') ||
     value['snipMetadata'] !== undefined
   );
 }
-
 
 function visibleText(value: unknown, type: string): string {
   if (typeof value === 'string') return value;

@@ -22,7 +22,6 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-
 /** Retain at most this many recent bot-added event ids per chat for dedupe. */
 const MAX_SEEN_EVENT_IDS = 200;
 
@@ -113,9 +112,7 @@ function peerBotsFrom(entry: ChatBotsEntry, openIds: string[]): PeerBot[] {
  * file is not security-critical — it only affects peer-bot discovery — so a
  * load failure degrades to an empty store rather than throwing.
  */
-export async function loadChatBots(
-  stateDir: string,
-): Promise<ChatBotsState> {
+export async function loadChatBots(stateDir: string): Promise<ChatBotsState> {
   const path = join(stateDir, 'chat-bots.json');
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
@@ -272,7 +269,8 @@ export async function recordBotAdded(
   if (eventId !== '' && entry.seenEventIds.includes(eventId)) return false;
   if (eventId !== '') {
     entry.seenEventIds.push(eventId);
-    while (entry.seenEventIds.length > MAX_SEEN_EVENT_IDS) entry.seenEventIds.shift();
+    while (entry.seenEventIds.length > MAX_SEEN_EVENT_IDS)
+      entry.seenEventIds.shift();
   }
   markBaseline(entry);
   await saveChatBots(stateDir, state);
@@ -292,8 +290,14 @@ function normalizeChatBots(raw: unknown): ChatBotsState {
   }
   const chatsRaw = (raw as Record<string, unknown>)['chats'];
   const chats: Record<string, ChatBotsEntry> = {};
-  if (chatsRaw !== null && typeof chatsRaw === 'object' && !Array.isArray(chatsRaw)) {
-    for (const [chatId, value] of Object.entries(chatsRaw as Record<string, unknown>)) {
+  if (
+    chatsRaw !== null &&
+    typeof chatsRaw === 'object' &&
+    !Array.isArray(chatsRaw)
+  ) {
+    for (const [chatId, value] of Object.entries(
+      chatsRaw as Record<string, unknown>,
+    )) {
       chats[chatId] = normalizeEntry(value);
     }
   }
@@ -302,7 +306,8 @@ function normalizeChatBots(raw: unknown): ChatBotsState {
 
 function normalizeEntry(raw: unknown): ChatBotsEntry {
   const entry = emptyEntry();
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return entry;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw))
+    return entry;
   const obj = raw as Record<string, unknown>;
   entry.known = stringArray(obj['known']);
   entry.trusted = stringArray(obj['trusted']);
@@ -324,5 +329,9 @@ function normalizeEntry(raw: unknown): ChatBotsEntry {
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item): item is string => typeof item === 'string'))];
+  return [
+    ...new Set(
+      value.filter((item): item is string => typeof item === 'string'),
+    ),
+  ];
 }

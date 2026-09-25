@@ -50,12 +50,9 @@ describe('Claude skill materialization', () => {
     releaseFirst.resolve();
     await expect(first).resolves.toBe(target);
 
-    expect(await readlink(join(
-      target,
-      '.claude',
-      'skills',
-      'review',
-    ))).toBe(fixture.skill);
+    expect(await readlink(join(target, '.claude', 'skills', 'review'))).toBe(
+      fixture.skill,
+    );
     await expect(
       readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
     ).resolves.toContain('"version": 2');
@@ -151,12 +148,9 @@ describe('Claude skill materialization', () => {
     await expect(
       materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
     ).resolves.toBe(root);
-    expect(await readlink(join(
-      root,
-      '.claude',
-      'skills',
-      'code-review',
-    ))).toBe(renamedSkill);
+    expect(await readlink(join(root, '.claude', 'skills', 'code-review'))).toBe(
+      renamedSkill,
+    );
     await expect(
       lstat(join(root, '.claude', 'skills', 'review')),
     ).rejects.toMatchObject({ code: 'ENOENT' });
@@ -185,7 +179,9 @@ describe('Claude skill materialization', () => {
   async function expectNoLeftovers(dir: string): Promise<void> {
     const leftovers = await readdir(dir);
     expect(
-      leftovers.filter((name) => name.endsWith('.tmp') || name.endsWith('.stale')),
+      leftovers.filter(
+        (name) => name.endsWith('.tmp') || name.endsWith('.stale'),
+      ),
     ).toEqual([]);
   }
 

@@ -35,7 +35,9 @@ describe('TeamLeaderHandle', () => {
         'export const meta = { name: "x", description: "x" }; return null;',
     });
 
-    await expect(withTimeout(agentLeaseEntered.promise)).resolves.toBeUndefined();
+    await expect(
+      withTimeout(agentLeaseEntered.promise),
+    ).resolves.toBeUndefined();
     await expect(starting).resolves.toEqual({ run_id: 'run-1' });
   });
 
@@ -61,7 +63,9 @@ describe('TeamLeaderHandle', () => {
 
     const stopping = handle.workflows.stop({ run_id: 'run-1' });
 
-    await expect(withTimeout(agentLeaseEntered.promise)).resolves.toBeUndefined();
+    await expect(
+      withTimeout(agentLeaseEntered.promise),
+    ).resolves.toBeUndefined();
     await expect(stopping).resolves.toEqual({
       run_id: 'run-1',
       status: 'stopped',
@@ -72,7 +76,10 @@ describe('TeamLeaderHandle', () => {
     const calls: string[] = [];
     const service = {
       teammates: {
-        send: vi.fn(async () => ({ status: 'submitted' as const, turn_id: 't1' })),
+        send: vi.fn(async () => ({
+          status: 'submitted' as const,
+          turn_id: 't1',
+        })),
         list: vi.fn(async () => []),
       },
     } as unknown as TeamService;
@@ -98,7 +105,10 @@ describe('TeamLeaderHandle', () => {
 
   it('routes spawnTeamMate through withMutationService, not withReadService', async () => {
     const service = {
-      spawnTeamMate: vi.fn(async () => ({ name: 'mate-1', status: 'starting' })),
+      spawnTeamMate: vi.fn(async () => ({
+        name: 'mate-1',
+        status: 'starting',
+      })),
     } as unknown as TeamService;
     let mutateCalls = 0;
     let readCalls = 0;

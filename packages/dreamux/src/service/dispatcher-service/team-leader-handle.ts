@@ -47,18 +47,23 @@ export function teamLeaderHandle(input: {
   ): Promise<T> => {
     // Some workflow operations can wait for agents that re-enter this Team
     // lease. Carry their completion promise out as data before awaiting it.
-    const pending = await mutate(async (service) => ({ completion: task(service) }));
+    const pending = await mutate(async (service) => ({
+      completion: task(service),
+    }));
     return pending.completion;
   };
   return {
     teammates: {
-      send: (sendInput) => mutate((service) => service.teammates.send(sendInput)),
-      close: (closeInput) => mutate((service) => service.teammates.close(closeInput)),
+      send: (sendInput) =>
+        mutate((service) => service.teammates.send(sendInput)),
+      close: (closeInput) =>
+        mutate((service) => service.teammates.close(closeInput)),
       list: () => read((service) => service.teammates.list()),
       status: (name) => read((service) => service.teammates.status(name)),
       history: (historyInput) =>
         read((service) => service.teammates.history(historyInput)),
-      last: (name, query) => read((service) => service.teammates.last(name, query)),
+      last: (name, query) =>
+        read((service) => service.teammates.last(name, query)),
       getCapabilities: () =>
         read(async (service) => service.teammates.getCapabilities()),
     },

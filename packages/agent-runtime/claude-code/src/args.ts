@@ -110,7 +110,9 @@ function escapeXmlText(text: string): string {
  * resume and for re-spawn after an unexpected exit), and threads the operator's
  * model / permission mode / extra args through.
  */
-export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): string[] {
+export function claudeCodeResidentArgs(
+  input: ClaudeCodeResidentArgsInput,
+): string[] {
   const args = [
     '--print',
     '--input-format',

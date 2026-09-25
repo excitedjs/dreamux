@@ -126,7 +126,8 @@ export class CronJobStore {
     return this.runExclusive(async () => {
       const file = await this.read();
       const index = file.jobs.findIndex((job) => job.id === input.id);
-      if (index === -1) throw new Error(`cron job '${input.id}' does not exist`);
+      if (index === -1)
+        throw new Error(`cron job '${input.id}' does not exist`);
       const current = file.jobs[index]!;
       const next: CronJob = { ...current, updated_at: Date.now() };
       if (input.title !== undefined) {
@@ -223,7 +224,9 @@ export async function detectLegacyCronJobStore(
 
 function parseCronJobFile(raw: unknown, ctx: { path: string }): CronJobFile {
   if (!isRecord(raw) || !Array.isArray(raw['jobs'])) {
-    throw new LegacyStateError(`cron job store ${ctx.path} must contain a jobs array`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} must contain a jobs array`,
+    );
   }
   return {
     version: STORE_VERSION,
@@ -233,7 +236,9 @@ function parseCronJobFile(raw: unknown, ctx: { path: string }): CronJobFile {
 
 function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
   if (!isRecord(raw)) {
-    throw new LegacyStateError(`cron job store ${ctx.path} contains a non-object job`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} contains a non-object job`,
+    );
   }
   const id = requiredString(raw, 'id', ctx);
   const dispatcherId = requiredString(raw, 'dispatcher_id', ctx);
@@ -271,7 +276,9 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
  */
 function parseAction(raw: unknown, ctx: { path: string }): CronJobAction {
   if (!isRecord(raw)) {
-    throw new LegacyStateError(`cron job store ${ctx.path} has a non-object action`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} has a non-object action`,
+    );
   }
   const kind = requiredString(raw, 'kind', ctx);
   if (kind === 'prompt-agent') {
@@ -288,7 +295,9 @@ function parseAction(raw: unknown, ctx: { path: string }): CronJobAction {
         'the store file and recreate the schedule.',
     );
   }
-  throw new LegacyStateError(`cron job store ${ctx.path} has unknown action kind '${kind}'`);
+  throw new LegacyStateError(
+    `cron job store ${ctx.path} has unknown action kind '${kind}'`,
+  );
 }
 
 function assertCronJobSemantics(
@@ -337,7 +346,9 @@ function requiredString(
 ): string {
   const value = raw[key];
   if (typeof value !== 'string' || value === '') {
-    throw new LegacyStateError(`cron job store ${ctx.path} field '${key}' must be a non-empty string`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} field '${key}' must be a non-empty string`,
+    );
   }
   return value;
 }
@@ -350,7 +361,9 @@ function optionalString(
   const value = raw[key];
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || value === '') {
-    throw new LegacyStateError(`cron job store ${ctx.path} field '${key}' must be a non-empty string`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} field '${key}' must be a non-empty string`,
+    );
   }
   return value;
 }
@@ -371,7 +384,9 @@ function requiredBoolean(
 ): boolean {
   const value = raw[key];
   if (typeof value !== 'boolean') {
-    throw new LegacyStateError(`cron job store ${ctx.path} field '${key}' must be a boolean`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} field '${key}' must be a boolean`,
+    );
   }
   return value;
 }
@@ -383,7 +398,9 @@ function requiredNumber(
 ): number {
   const value = raw[key];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new LegacyStateError(`cron job store ${ctx.path} field '${key}' must be a finite number`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} field '${key}' must be a finite number`,
+    );
   }
   return value;
 }
@@ -396,7 +413,9 @@ function optionalNumberOrNull(
   const value = raw[key];
   if (value === null || value === undefined) return null;
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new LegacyStateError(`cron job store ${ctx.path} field '${key}' must be a finite number or null`);
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} field '${key}' must be a finite number or null`,
+    );
   }
   return value;
 }
@@ -427,6 +446,8 @@ export function cronJobResult(job: CronJob): CronJob {
 }
 
 /** The canonical public value of one cron job list. */
-export function cronListResult(result: { jobs: CronJob[] }): { jobs: CronJob[] } {
+export function cronListResult(result: { jobs: CronJob[] }): {
+  jobs: CronJob[];
+} {
   return { jobs: result.jobs.map(cronJobResult) };
 }

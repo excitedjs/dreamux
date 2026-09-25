@@ -27,7 +27,9 @@ export function parseAgentRuntimeSkillSources(
     const record = entry as Record<string, unknown>;
     const path = nonBlankString(record['path'], `${label}[${index}].path`);
     if (!isAbsolute(path)) {
-      throw new RuleViolation(`${label}[${index}].path must be an absolute path`);
+      throw new RuleViolation(
+        `${label}[${index}].path must be an absolute path`,
+      );
     }
     return {
       name: nonBlankString(record['name'], `${label}[${index}].name`),
@@ -74,7 +76,11 @@ export async function canonicalizeRequiredSkillSources(
   const result: CanonicalSkillRoot[] = [];
   for (const source of sources) {
     const root = await canonicalSkillRoot(source, label, 'required source');
-    result.push({ name: source.name, path: root.path, skillNames: root.skillNames });
+    result.push({
+      name: source.name,
+      path: root.path,
+      skillNames: root.skillNames,
+    });
   }
   return result;
 }
@@ -93,11 +99,17 @@ export async function normalizeAgentRuntimeSkillSources(
 
   const requiredRoots =
     opts.requiredRoots ??
-    (await canonicalizeRequiredSkillSources(opts.requiredSources ?? [], opts.label));
+    (await canonicalizeRequiredSkillSources(
+      opts.requiredSources ?? [],
+      opts.label,
+    ));
   for (const root of requiredRoots) {
     seenRoots.add(root.path);
     for (const skillName of root.skillNames) {
-      seenSkillNames.set(skillName, `required source ${JSON.stringify(root.name)}`);
+      seenSkillNames.set(
+        skillName,
+        `required source ${JSON.stringify(root.name)}`,
+      );
     }
   }
 

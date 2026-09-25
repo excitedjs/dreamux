@@ -22,15 +22,18 @@ import {
  * The TeamLeader skill roots Core always injects. A caller's `skill_sources`
  * extend these; they can never remove them.
  */
-export const TEAM_LEADER_REQUIRED_SKILL_SOURCES = [{
-  name: 'team-leader',
-  path: bundledTeamLeaderSkillRoot(),
-  source: 'dreamux-core',
-}, {
-  name: 'shared',
-  path: bundledSharedSkillRoot(),
-  source: 'dreamux-core',
-}] as const;
+export const TEAM_LEADER_REQUIRED_SKILL_SOURCES = [
+  {
+    name: 'team-leader',
+    path: bundledTeamLeaderSkillRoot(),
+    source: 'dreamux-core',
+  },
+  {
+    name: 'shared',
+    path: bundledSharedSkillRoot(),
+    source: 'dreamux-core',
+  },
+] as const;
 
 /**
  * The maximum length of a caller-supplied `request_id`.
@@ -71,7 +74,8 @@ export function isTeamCreateRequestId(value: unknown): boolean {
 }
 
 function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (value === null || typeof value !== 'object')
+    return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) {
     return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
   }

@@ -37,27 +37,31 @@ export function renderFeishuBody(
   const refs = renderRefs(event);
   let groupBots = renderGroupBots(trustedBots);
   let groupBotsRendered = groupBots !== '';
-  const contentOpen = event.contentIncomplete === true
-    ? '<content incomplete="true">'
-    : '<content>';
-  const emptyContent = event.contentIncomplete === true
-    ? '<content incomplete="true" />'
-    : '<content />';
+  const contentOpen =
+    event.contentIncomplete === true
+      ? '<content incomplete="true">'
+      : '<content>';
+  const emptyContent =
+    event.contentIncomplete === true
+      ? '<content incomplete="true" />'
+      : '<content />';
   const fixedBlocks = (): string =>
     [refs, groupBots]
       .filter((block) => block !== '')
       .map((block) => `\n${block}`)
       .join('');
-  const wrap = (inner: string): string => inner === ''
-    ? `${emptyContent}${fixedBlocks()}`
-    : `${contentOpen}\n${inner}\n</content>${fixedBlocks()}`;
+  const wrap = (inner: string): string =>
+    inner === ''
+      ? `${emptyContent}${fixedBlocks()}`
+      : `${contentOpen}\n${inner}\n</content>${fixedBlocks()}`;
   const whole = wrap(content);
   if (whole.length <= MAX_SERIALIZED_BODY_CHARS) {
     return { body: whole, groupBotsRendered };
   }
 
   const wrapperCost = contentOpen.length + '\n'.length + '\n</content>'.length;
-  let available = MAX_SERIALIZED_BODY_CHARS - wrapperCost - fixedBlocks().length;
+  let available =
+    MAX_SERIALIZED_BODY_CHARS - wrapperCost - fixedBlocks().length;
   if (available < BODY_TRUNCATION_MARKER.length && groupBots !== '') {
     groupBots = '';
     groupBotsRendered = false;
@@ -76,9 +80,8 @@ export function formatFeishuCreateTime(value: string): string {
 
   const numeric = Number(trimmed);
   if (Number.isFinite(numeric)) {
-    const epochMs = Math.abs(numeric) < 1_000_000_000_000
-      ? numeric * 1000
-      : numeric;
+    const epochMs =
+      Math.abs(numeric) < 1_000_000_000_000 ? numeric * 1000 : numeric;
     const date = new Date(epochMs);
     if (!Number.isNaN(date.getTime())) return formatLocalDate(date);
   }
@@ -89,15 +92,10 @@ export function formatFeishuCreateTime(value: string): string {
 }
 
 function formatLocalDate(date: Date): string {
-  return [
-    date.getFullYear(),
-    date.getMonth() + 1,
-    date.getDate(),
-  ].join('-') + ` ${[
-    date.getHours(),
-    date.getMinutes(),
-    date.getSeconds(),
-  ].join(':')}`;
+  return (
+    [date.getFullYear(), date.getMonth() + 1, date.getDate()].join('-') +
+    ` ${[date.getHours(), date.getMinutes(), date.getSeconds()].join(':')}`
+  );
 }
 
 /**
@@ -110,7 +108,8 @@ function tokenTable(
 ): Map<string, string> {
   const table = new Map<string, string>();
   for (const record of mentions) {
-    if (record.key !== '') table.set(escapeXmlText(record.key), renderMention(record));
+    if (record.key !== '')
+      table.set(escapeXmlText(record.key), renderMention(record));
   }
   for (const attachment of attachments) {
     table.set(escapeXmlText(attachment.key), renderAttachment(attachment));
@@ -124,7 +123,8 @@ function tokenTable(
  * that names them.
  */
 function substituteTokens(text: string, table: Map<string, string>): string {
-  const matches: Array<{ start: number; end: number; replacement: string }> = [];
+  const matches: Array<{ start: number; end: number; replacement: string }> =
+    [];
   const claimed = new Uint8Array(text.length);
   const tokens = [...table.entries()].sort(([a], [b]) => b.length - a.length);
   for (const [token, replacement] of tokens) {
@@ -151,7 +151,8 @@ function substituteTokens(text: string, table: Map<string, string>): string {
 }
 
 function renderMention(record: Mention): string {
-  const id = nonEmpty(record.id?.open_id) ??
+  const id =
+    nonEmpty(record.id?.open_id) ??
     nonEmpty(record.id?.union_id) ??
     nonEmpty(record.id?.user_id);
   // An application record carries no user identity; nothing can reply to it,
@@ -211,14 +212,13 @@ function renderRefs(event: FeishuInboundEvent): string {
   }
   const parentId = replyAncestryParentId(event);
   if (parentId !== undefined) {
-    const type = event.parentMessageType === undefined
-      ? undefined
-      : normalizeFeishuMessageTypeToken(event.parentMessageType);
+    const type =
+      event.parentMessageType === undefined
+        ? undefined
+        : normalizeFeishuMessageTypeToken(event.parentMessageType);
     rows.push(
       `  <reply-to message_id="${escapeXmlAttribute(parentId)}"${
-        type === undefined
-          ? ''
-          : ` message_type="${escapeXmlAttribute(type)}"`
+        type === undefined ? '' : ` message_type="${escapeXmlAttribute(type)}"`
       } />`,
     );
   }

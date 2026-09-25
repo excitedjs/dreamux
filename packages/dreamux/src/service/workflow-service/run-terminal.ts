@@ -1,10 +1,7 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
-import type {
-  WorkflowRunStatus,
-  WorkflowTerminalStatus,
-} from './types.js';
+import type { WorkflowRunStatus, WorkflowTerminalStatus } from './types.js';
 
 interface WorkflowRunTerminalDeps {
   runId: string;
@@ -89,7 +86,9 @@ export class WorkflowRunTerminal {
     }
     this.reserveStop();
     await this.ensureTask();
-    return this.intent?.status ?? (this.deps.status() as WorkflowTerminalStatus);
+    return (
+      this.intent?.status ?? (this.deps.status() as WorkflowTerminalStatus)
+    );
   }
 
   request(
@@ -128,7 +127,9 @@ export class WorkflowRunTerminal {
           'workflow terminal notification failed; continuing teardown',
         );
       })
-      .then(() => this.deps.finalize(intent.status, intent.result, intent.error))
+      .then(() =>
+        this.deps.finalize(intent.status, intent.result, intent.error),
+      )
       .then(() => {
         this.announceSettled();
       })

@@ -84,11 +84,7 @@ export function mcpServerDescriptor(input: {
   return {
     name: input.name,
     command: input.command ?? dreamuxBinPath(input.env),
-    args: [
-      DREAMUX_MCP_SUBCOMMAND,
-      '--admin-socket',
-      input.adminSocketPath,
-    ],
+    args: [DREAMUX_MCP_SUBCOMMAND, '--admin-socket', input.adminSocketPath],
     env: { [DREAMUX_MCP_LEASE_ENV]: input.token },
   };
 }

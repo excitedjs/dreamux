@@ -69,8 +69,12 @@ function asOwner<T>(owner: string | null, fn: () => T): T {
 }
 
 /** Run one tap of any type to completion as a promise. */
-function invoke(tap: RegisteredTap, args: readonly unknown[]): Promise<unknown> {
-  if (tap.type !== 'async') return Promise.resolve().then(() => tap.fn(...args));
+function invoke(
+  tap: RegisteredTap,
+  args: readonly unknown[],
+): Promise<unknown> {
+  if (tap.type !== 'async')
+    return Promise.resolve().then(() => tap.fn(...args));
   return new Promise<void>((resolve, reject) => {
     tap.fn(...args, (err?: unknown) => {
       if (err !== undefined && err !== null && err !== false) reject(err);
@@ -90,7 +94,11 @@ const INTERCEPTOR_METHODS = [
   'register',
 ] as const;
 type InterceptorMethod = (typeof INTERCEPTOR_METHODS)[number];
-type InterceptorFailure = (owner: string | null, method: InterceptorMethod, err: unknown) => void;
+type InterceptorFailure = (
+  owner: string | null,
+  method: InterceptorMethod,
+  err: unknown,
+) => void;
 /** What a plugin interceptor method that returned a promise becomes. */
 type AsyncInterceptorResult = (
   owner: string | null,
@@ -129,9 +137,13 @@ function guardPluginInterceptors(
   onAsync: AsyncInterceptorResult,
 ): void {
   const rawIntercept = hook.intercept.bind(hook);
-  hook.intercept = ((interceptor: Partial<Record<InterceptorMethod, TapFn>>) => {
+  hook.intercept = ((
+    interceptor: Partial<Record<InterceptorMethod, TapFn>>,
+  ) => {
     const owner = owners.getStore() ?? null;
-    const guarded: Partial<Record<InterceptorMethod, TapFn>> = { ...interceptor };
+    const guarded: Partial<Record<InterceptorMethod, TapFn>> = {
+      ...interceptor,
+    };
     for (const method of INTERCEPTOR_METHODS) {
       const fn = interceptor[method];
       if (fn === undefined) continue;
@@ -140,7 +152,8 @@ function guardPluginInterceptors(
       // interceptor to already-registered taps) assigns this return value
       // straight into its tap list with no check for `undefined`.
       guarded[method] = (...args: unknown[]) => {
-        const fallback = (): unknown => (method === 'register' ? args[0] : undefined);
+        const fallback = (): unknown =>
+          method === 'register' ? args[0] : undefined;
         let result: unknown;
         try {
           result = asOwner(owner, () => fn.apply(interceptor, args));
@@ -174,7 +187,10 @@ function install(
     register: (tap) => {
       const owner = owners.getStore() ?? null;
       registered.push(owner);
-      return wrap(tap as unknown as RegisteredTap, owner) as unknown as typeof tap;
+      return wrap(
+        tap as unknown as RegisteredTap,
+        owner,
+      ) as unknown as typeof tap;
     },
   });
   guardPluginInterceptors(hook, onInterceptorFailure, onAsyncInterceptor);
@@ -198,7 +214,10 @@ function reportSkipped(
  * is logged with its owner and the remaining taps still run. Async taps become
  * promise taps so a failure never reaches the hook's own callback.
  */
-export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxLogger): H {
+export function isolatedTaps<H extends InterceptableHook>(
+  hook: H,
+  log: DreamuxLogger,
+): H {
   install(
     hook,
     (tap, owner) => {
@@ -237,9 +256,12 @@ export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxL
         },
       };
     },
-    (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+    (owner, method, err) =>
+      reportSkipped(log, hook, `intercept.${method}`, owner, err),
     (owner, method, result) => {
-      result.catch((err: unknown) => reportSkipped(log, hook, `intercept.${method}`, owner, err));
+      result.catch((err: unknown) =>
+        reportSkipped(log, hook, `intercept.${method}`, owner, err),
+      );
     },
   );
   return hook;
@@ -249,7 +271,10 @@ export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxL
  * `hooks.plugin.for(apiOwner)`: called while plugins load, so a throw fails
  * loading and is attributed to the tap's owner.
  */
-export function loadPhaseTaps<H extends InterceptableHook>(hook: H, apiOwner: string): H {
+export function loadPhaseTaps<H extends InterceptableHook>(
+  hook: H,
+  apiOwner: string,
+): H {
   install(
     hook,
     (tap, owner) => ({
@@ -315,9 +340,12 @@ export function loadPhaseTaps<H extends InterceptableHook>(hook: H, apiOwner: st
 class LaunchComposition implements LaunchDraft {
   readonly instructions: string[] = [];
   readonly skillSources: AgentRuntimeSkillSource[] = [];
-  private requiredRoots: Promise<readonly CanonicalSkillRoot[] | null> | undefined;
+  private requiredRoots:
+    Promise<readonly CanonicalSkillRoot[] | null> | undefined;
 
-  constructor(private readonly requiredSkillSources: readonly AgentRuntimeSkillSource[]) {}
+  constructor(
+    private readonly requiredSkillSources: readonly AgentRuntimeSkillSource[],
+  ) {}
 
   /**
    * Canonicalize every required root (the built-in roots and a TeamLeader
@@ -344,7 +372,11 @@ class LaunchComposition implements LaunchDraft {
           canonical.push(root!);
         } catch (err) {
           log.error(
-            { skillSource: source.name, path: source.path, err: errorInfo(err) },
+            {
+              skillSource: source.name,
+              path: source.path,
+              err: errorInfo(err),
+            },
             'a required skill root is unreadable; plugin skill roots are skipped for this launch',
           );
           return null;
@@ -359,7 +391,11 @@ class LaunchComposition implements LaunchDraft {
     return (await this.canonicalRequiredRoots(log)) !== null;
   }
 
-  async accept(sub: LaunchDraft, label: string, log: DreamuxLogger): Promise<void> {
+  async accept(
+    sub: LaunchDraft,
+    label: string,
+    log: DreamuxLogger,
+  ): Promise<void> {
     // The fence costs filesystem IO; a tap that adds no roots skips it.
     if (sub.skillSources.length > 0) {
       // launchDraftTaps only reaches this branch after requiredRootsReadable
@@ -412,7 +448,8 @@ export function launchDraftTaps(
           return;
         }
         const accepted =
-          sub.skillSources.length > 0 && !(await composition.requiredRootsReadable(log))
+          sub.skillSources.length > 0 &&
+          !(await composition.requiredRootsReadable(log))
             ? { instructions: sub.instructions, skillSources: [] }
             : sub;
         try {
@@ -422,9 +459,12 @@ export function launchDraftTaps(
         }
       },
     }),
-    (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+    (owner, method, err) =>
+      reportSkipped(log, hook, `intercept.${method}`, owner, err),
     (owner, method, result) => {
-      result.catch((err: unknown) => reportSkipped(log, hook, `intercept.${method}`, owner, err));
+      result.catch((err: unknown) =>
+        reportSkipped(log, hook, `intercept.${method}`, owner, err),
+      );
     },
   );
   return hook;

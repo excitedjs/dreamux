@@ -65,7 +65,12 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
   it('channel.list: identical result via admin.sock and the Channel invoker', async () => {
     const channels = [
-      { channel_id: 'primary', provider: 'npm:@example/primary', identity: '', live: true },
+      {
+        channel_id: 'primary',
+        provider: 'npm:@example/primary',
+        identity: '',
+        live: true,
+      },
       {
         channel_id: 'secondary',
         provider: 'npm:@example/secondary',
@@ -79,7 +84,9 @@ describe('adapter equivalence — one representative Command per namespace', () 
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
 
-    const viaAdmin = await admin.send('channel.list', { dispatcher_id: 'harness-d1' });
+    const viaAdmin = await admin.send('channel.list', {
+      dispatcher_id: 'harness-d1',
+    });
     const viaChannel = await lease.port.invoke.invoke('channel.list', {});
 
     expect(viaAdmin.ok).toBe(true);
@@ -95,7 +102,9 @@ describe('adapter equivalence — one representative Command per namespace', () 
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
 
-    const viaAdmin = await admin.send('team.list', { dispatcher_id: 'harness-d1' });
+    const viaAdmin = await admin.send('team.list', {
+      dispatcher_id: 'harness-d1',
+    });
     const viaChannel = await lease.port.invoke.invoke('team.list', {});
 
     expect(viaAdmin.ok).toBe(true);
@@ -117,7 +126,10 @@ describe('adapter equivalence — one representative Command per namespace', () 
     const agentViaAdmin = await admin.send('dispatcher.interrupt', {
       dispatcher_id: 'harness-d1',
     });
-    const agentViaChannel = await lease.port.invoke.invoke('dispatcher.interrupt', {});
+    const agentViaChannel = await lease.port.invoke.invoke(
+      'dispatcher.interrupt',
+      {},
+    );
     const leaderViaAdmin = await admin.send('team.interrupt', {
       dispatcher_id: 'harness-d1',
       team_name: 'alpha',
@@ -126,9 +138,15 @@ describe('adapter equivalence — one representative Command per namespace', () 
       team_name: 'alpha',
     });
 
-    expect(agentViaAdmin).toMatchObject({ ok: true, result: { status: 'idle' } });
+    expect(agentViaAdmin).toMatchObject({
+      ok: true,
+      result: { status: 'idle' },
+    });
     expect(agentViaChannel).toEqual({ status: 'idle' });
-    expect(leaderViaAdmin).toMatchObject({ ok: true, result: { status: 'interrupted' } });
+    expect(leaderViaAdmin).toMatchObject({
+      ok: true,
+      result: { status: 'interrupted' },
+    });
     expect(leaderViaChannel).toEqual({ status: 'interrupted' });
     // Team addressing is now part of the contract, not an omitted-argument
     // convention: each Command has exactly one recipient and reaches exactly
@@ -138,7 +156,9 @@ describe('adapter equivalence — one representative Command per namespace', () 
   });
 
   it('team.interrupt without team_name and team.submit without team_name are BAD_REQUEST on both adapters, before any handler runs', async () => {
-    const interruptTeamLeader = vi.fn(async () => ({ status: 'idle' as const }));
+    const interruptTeamLeader = vi.fn(async () => ({
+      status: 'idle' as const,
+    }));
     const submitToTeamLeader = vi.fn(async () => ({
       status: 'submitted',
       turn: { id: 'harness-turn-1' },
@@ -148,7 +168,11 @@ describe('adapter equivalence — one representative Command per namespace', () 
       turn: { id: 'harness-turn-1' },
     }));
     const harness = createCommandHarness({
-      dispatcherOverrides: { interruptTeamLeader, submitToTeamLeader, submitToAgent },
+      dispatcherOverrides: {
+        interruptTeamLeader,
+        submitToTeamLeader,
+        submitToAgent,
+      },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
@@ -168,9 +192,13 @@ describe('adapter equivalence — one representative Command per namespace', () 
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect(interruptResponse.ok).toBe(false);
-    expect((interruptResponse as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+    expect((interruptResponse as { error: { code: string } }).error.code).toBe(
+      'BAD_REQUEST',
+    );
     expect(submitResponse.ok).toBe(false);
-    expect((submitResponse as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+    expect((submitResponse as { error: { code: string } }).error.code).toBe(
+      'BAD_REQUEST',
+    );
     expect(interruptTeamLeader).not.toHaveBeenCalled();
     expect(submitToTeamLeader).not.toHaveBeenCalled();
     // A missing Team name must never fall through to the Dispatcher Agent.
@@ -204,7 +232,10 @@ describe('adapter equivalence — one representative Command per namespace', () 
       ok: true,
       result: { status: 'submitted', turn_id: 'agent-turn-1' },
     });
-    expect(viaChannel).toEqual({ status: 'submitted', turn_id: 'agent-turn-1' });
+    expect(viaChannel).toEqual({
+      status: 'submitted',
+      turn_id: 'agent-turn-1',
+    });
     expect(submitToAgent).toHaveBeenCalledTimes(2);
     expect(submitToTeamLeader).not.toHaveBeenCalled();
   });
@@ -239,8 +270,14 @@ describe('adapter equivalence — one representative Command per namespace', () 
     // must reach the handler through both adapters exactly as the caller sent
     // it. An omitted intent is an omitted key, not an empty string.
     expect(submitToTeamLeader).toHaveBeenCalledTimes(2);
-    const withIntent = submitToTeamLeader.mock.calls[0]![0] as Record<string, unknown>;
-    const withoutIntent = submitToTeamLeader.mock.calls[1]![0] as Record<string, unknown>;
+    const withIntent = submitToTeamLeader.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    const withoutIntent = submitToTeamLeader.mock.calls[1]![0] as Record<
+      string,
+      unknown
+    >;
     expect(withIntent).toMatchObject({
       teamId: 'alpha',
       intent: 'the durable recovery subject',
@@ -254,12 +291,16 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
   it('teammate.list: identical result via both adapters', async () => {
     const harness = createCommandHarness({
-      dispatcherOverrides: { teammates: { list: async () => [{ name: 'mate-1' }] } },
+      dispatcherOverrides: {
+        teammates: { list: async () => [{ name: 'mate-1' }] },
+      },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
 
-    const viaAdmin = await admin.send('teammate.list', { dispatcher_id: 'harness-d1' });
+    const viaAdmin = await admin.send('teammate.list', {
+      dispatcher_id: 'harness-d1',
+    });
     const viaChannel = await lease.port.invoke.invoke('teammate.list', {});
 
     expect(viaAdmin.ok).toBe(true);
@@ -273,7 +314,9 @@ describe('adapter equivalence — one representative Command per namespace', () 
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
 
-    const viaAdmin = await admin.send('workflow.list', { dispatcher_id: 'harness-d1' });
+    const viaAdmin = await admin.send('workflow.list', {
+      dispatcher_id: 'harness-d1',
+    });
     const viaChannel = await lease.port.invoke.invoke('workflow.list', {});
 
     expect(viaAdmin.ok).toBe(true);
@@ -298,13 +341,20 @@ describe('adapter equivalence — one representative Command per namespace', () 
       last_fired_at: null,
     };
     const harness = createCommandHarness({
-      dispatcherOverrides: { scheduler: { list: async () => ({ jobs: [job] }) } },
+      dispatcherOverrides: {
+        scheduler: { list: async () => ({ jobs: [job] }) },
+      },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
 
-    const viaAdmin = await admin.send('scheduler.cron.list', { dispatcher_id: 'harness-d1' });
-    const viaChannel = await lease.port.invoke.invoke('scheduler.cron.list', {});
+    const viaAdmin = await admin.send('scheduler.cron.list', {
+      dispatcher_id: 'harness-d1',
+    });
+    const viaChannel = await lease.port.invoke.invoke(
+      'scheduler.cron.list',
+      {},
+    );
 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
@@ -313,12 +363,16 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
   it('mcp.describe: identical result via both adapters, addressed by lease token rather than dispatcher_id', async () => {
     const harness = createCommandHarness();
-    const { token } = mintFakeMcpServer(harness.mcpLeases, { toolName: 'echo' });
+    const { token } = mintFakeMcpServer(harness.mcpLeases, {
+      toolName: 'echo',
+    });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
 
     const viaAdmin = await admin.send('mcp.describe', { token });
-    const viaChannel = await lease.port.invoke.invoke('mcp.describe', { token });
+    const viaChannel = await lease.port.invoke.invoke('mcp.describe', {
+      token,
+    });
 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
@@ -333,11 +387,17 @@ describe('adapter context is factual and never filters the catalog', () => {
     // channel_id, so its result must be byte-identical no matter which
     // adapter's context shape it is called with.
     const harness = createCommandHarness();
-    const { token } = mintFakeMcpServer(harness.mcpLeases, { toolName: 'ping' });
-
-    const viaAdminContext = await harness.registry.invoke(adminContext(), 'mcp.describe', {
-      token,
+    const { token } = mintFakeMcpServer(harness.mcpLeases, {
+      toolName: 'ping',
     });
+
+    const viaAdminContext = await harness.registry.invoke(
+      adminContext(),
+      'mcp.describe',
+      {
+        token,
+      },
+    );
     const viaChannelContext = await harness.registry.invoke(
       channelContext(),
       'mcp.describe',
@@ -387,14 +447,20 @@ describe('validation runs before the handler, on both adapters', () => {
       team_name: 'x',
       status: 'dissolving',
     }));
-    const harness = createCommandHarness({ dispatcherOverrides: { dissolveTeam } });
+    const harness = createCommandHarness({
+      dispatcherOverrides: { dissolveTeam },
+    });
     admin = await startHarnessAdminSocket(harness);
 
     // team.dissolve requires both team_name and note; this sends neither.
-    const response = await admin.send('team.dissolve', { dispatcher_id: 'harness-d1' });
+    const response = await admin.send('team.dissolve', {
+      dispatcher_id: 'harness-d1',
+    });
 
     expect(response.ok).toBe(false);
-    expect((response as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+    expect((response as { error: { code: string } }).error.code).toBe(
+      'BAD_REQUEST',
+    );
     expect(dissolveTeam).not.toHaveBeenCalled();
   });
 
@@ -404,7 +470,9 @@ describe('validation runs before the handler, on both adapters', () => {
       team_name: 'x',
       status: 'dissolving',
     }));
-    const harness = createCommandHarness({ dispatcherOverrides: { dissolveTeam } });
+    const harness = createCommandHarness({
+      dispatcherOverrides: { dissolveTeam },
+    });
     const lease = createHarnessChannelInvoker(harness);
 
     await expect(
@@ -419,7 +487,10 @@ describe('validation runs before the handler, on both adapters', () => {
     const tooDeep = hostileDeepPayload(COMMAND_PAYLOAD_BOUNDS.maxDepth + 4);
 
     await expect(
-      lease.port.invoke.invoke('team.submit', { team_name: 'x', text: tooDeep }),
+      lease.port.invoke.invoke('team.submit', {
+        team_name: 'x',
+        text: tooDeep,
+      }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
@@ -436,7 +507,9 @@ describe('validation runs before the handler, on both adapters', () => {
     });
 
     expect(response.ok).toBe(false);
-    expect((response as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+    expect((response as { error: { code: string } }).error.code).toBe(
+      'BAD_REQUEST',
+    );
   });
 
   it('COMMAND_PAYLOAD_BOUNDS.maxEntries rejects an object with more keys than the bound allows', async () => {
@@ -448,7 +521,11 @@ describe('validation runs before the handler, on both adapters', () => {
     }
 
     await expect(
-      lease.port.invoke.invoke('team.submit', { team_name: 'x', text: 'hi', attrs: wide }),
+      lease.port.invoke.invoke('team.submit', {
+        team_name: 'x',
+        text: 'hi',
+        attrs: wide,
+      }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 

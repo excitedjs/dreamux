@@ -45,19 +45,17 @@ export interface LoadedPlugin {
   readonly source: string;
   readonly plugin: DreamuxPlugin;
   /** Its `plugins[]` entry and index; `null` for an always-loaded plugin. */
-  readonly entry: { readonly index: number; readonly value: PluginConfigEntry } | null;
+  readonly entry: {
+    readonly index: number;
+    readonly value: PluginConfigEntry;
+  } | null;
   /** `config.read` result; set by {@link readPluginConfigs}. */
   config: unknown;
   readonly providers: readonly { kind: ProviderKind; name: string }[];
 }
 
 export type PluginLoadPhase =
-  | 'import'
-  | 'factory'
-  | 'contribute'
-  | 'config'
-  | 'server'
-  | 'api';
+  'import' | 'factory' | 'contribute' | 'config' | 'server' | 'api';
 
 export class PluginLoadError extends Error {
   constructor(
@@ -102,7 +100,9 @@ export function readPluginEntries(
   const value = raw['plugins'];
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
-    throw new Error(`dreamux config error in ${file}: plugins must be an array`);
+    throw new Error(
+      `dreamux config error in ${file}: plugins must be an array`,
+    );
   }
   return value.map((item: unknown, index) => {
     const prefix = `plugins[${index}]`;
@@ -171,7 +171,14 @@ export async function loadPlugins(options: {
       logger: options.logger,
       providerSources,
     });
-    loaded.push({ name: plugin.name, source, plugin, entry, config: undefined, providers });
+    loaded.push({
+      name: plugin.name,
+      source,
+      plugin,
+      entry,
+      config: undefined,
+      providers,
+    });
   }
   return loaded;
 }
@@ -230,7 +237,8 @@ async function constructPlugin(
       { cause: err },
     );
   }
-  const exportName = ref.source === 'npm' ? (ref.export ?? 'default') : 'default';
+  const exportName =
+    ref.source === 'npm' ? (ref.export ?? 'default') : 'default';
   const factory = module[exportName];
   if (typeof factory !== 'function') {
     throw new PluginLoadError(
@@ -243,9 +251,14 @@ async function constructPlugin(
   try {
     plugin = (factory as () => unknown)();
   } catch (err) {
-    throw new PluginLoadError(ref.raw, 'factory', `plugin factory threw: ${errorMessage(err)}`, {
-      cause: err,
-    });
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      `plugin factory threw: ${errorMessage(err)}`,
+      {
+        cause: err,
+      },
+    );
   }
   // `name` keys the same-name rule and every plugin log line.
   if (
@@ -272,7 +285,11 @@ function contributePlugin(
 ): { kind: ProviderKind; name: string }[] {
   const providers: { kind: ProviderKind; name: string }[] = [];
   if (plugin.contribute === undefined) return providers;
-  const contribute = (kind: ProviderKind, name: string, provider: unknown): void => {
+  const contribute = (
+    kind: ProviderKind,
+    name: string,
+    provider: unknown,
+  ): void => {
     const other = context.providerSources.get(name);
     if (other !== undefined) {
       throw new PluginLoadError(
@@ -292,8 +309,10 @@ function contributePlugin(
         contribute('channel', name, provider),
     },
     agentRuntimeProviders: {
-      contribute: <TConfig>(name: string, provider: AgentRuntimeProvider<TConfig>) =>
-        contribute('agentRuntime', name, provider),
+      contribute: <TConfig>(
+        name: string,
+        provider: AgentRuntimeProvider<TConfig>,
+      ) => contribute('agentRuntime', name, provider),
     },
   };
   let result: unknown;

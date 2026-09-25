@@ -1,6 +1,6 @@
-import type * as lark from '@larksuiteoapi/node-sdk'
+import type * as lark from '@larksuiteoapi/node-sdk';
 
-import type { TransportDiagnostics } from './diagnostics.js'
+import type { TransportDiagnostics } from './diagnostics.js';
 
 /**
  * Who this app is, as Feishu reports it.
@@ -16,7 +16,7 @@ import type { TransportDiagnostics } from './diagnostics.js'
  */
 
 // application/v6 owner.type: enterprise-member owner for a custom app.
-export const FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER = 2
+export const FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER = 2;
 
 /**
  * Raw identity of the app creator / owner, returned by
@@ -24,17 +24,17 @@ export const FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER = 2
  * `user_id_type=open_id`.
  */
 export interface FeishuAppOwnerIdentity {
-  creatorOpenId?: string
-  ownerOpenId?: string
-  ownerType?: number
+  creatorOpenId?: string;
+  ownerOpenId?: string;
+  ownerType?: number;
 }
 
 export interface FeishuBotInfo {
-  openId?: string
-  appName?: string | undefined
+  openId?: string;
+  appName?: string | undefined;
 }
 
-const BOT_INFO_ATTEMPTS = 3
+const BOT_INFO_ATTEMPTS = 3;
 
 export async function resolveBotInfo(
   client: lark.Client,
@@ -42,39 +42,42 @@ export async function resolveBotInfo(
 ): Promise<FeishuBotInfo | undefined> {
   for (let attempt = 1; attempt <= BOT_INFO_ATTEMPTS; attempt++) {
     try {
-      const res = await client.request<{ bot?: { open_id?: string, app_name?: string } }>({
+      const res = await client.request<{
+        bot?: { open_id?: string; app_name?: string };
+      }>({
         method: 'GET',
         url: '/open-apis/bot/v3/info',
-      })
-      const openId = res.bot?.open_id
-      const appName = res.bot?.app_name
+      });
+      const openId = res.bot?.open_id;
+      const appName = res.bot?.app_name;
       if (openId) {
         return {
           openId,
-          appName: appName !== undefined && appName !== '' ? appName : undefined,
-        }
+          appName:
+            appName !== undefined && appName !== '' ? appName : undefined,
+        };
       }
       diag.diagnostic(
         'bot info response carried no open_id — the next inbound chat message ' +
           'retries the lookup; until one succeeds, groups that require an ' +
           '@-mention drop every message',
-      )
-      return undefined
+      );
+      return undefined;
     } catch (err) {
       if (attempt < BOT_INFO_ATTEMPTS) {
-        await delay(attempt * 500)
-        continue
+        await delay(attempt * 500);
+        continue;
       }
       diag.diagnostic(
         `could not resolve the bot open_id after ${BOT_INFO_ATTEMPTS} ` +
           'attempts — the next inbound chat message retries the lookup; until ' +
           'one succeeds, groups that require an @-mention drop every message:',
         err,
-      )
-      return undefined
+      );
+      return undefined;
     }
   }
-  return undefined
+  return undefined;
 }
 
 /**
@@ -88,38 +91,38 @@ export async function resolveBotInfo(
  */
 export interface FeishuSelfIdentityCache {
   /** The cached identity, or `undefined` while it is still unresolved. */
-  readonly resolved: FeishuBotInfo | undefined
+  readonly resolved: FeishuBotInfo | undefined;
   /** Resolve while unresolved, sharing one in-flight bot-info lookup. */
-  ensureResolved(): Promise<void>
+  ensureResolved(): Promise<void>;
 }
 
 export function createSelfIdentityCache(
   client: lark.Client,
   diag: TransportDiagnostics,
 ): FeishuSelfIdentityCache {
-  let resolved: FeishuBotInfo | undefined
-  let inFlight: Promise<void> | undefined
+  let resolved: FeishuBotInfo | undefined;
+  let inFlight: Promise<void> | undefined;
 
   return {
     get resolved(): FeishuBotInfo | undefined {
-      return resolved
+      return resolved;
     },
 
     ensureResolved(): Promise<void> {
-      if (resolved !== undefined) return Promise.resolve()
+      if (resolved !== undefined) return Promise.resolve();
       inFlight ??= resolveBotInfo(client, diag)
         .then((info) => {
-          if (info?.openId !== undefined && info.openId !== '') resolved = info
+          if (info?.openId !== undefined && info.openId !== '') resolved = info;
         })
         // `resolveBotInfo` already reports its own failures; a lookup must
         // never turn into a rejected inbound dispatch.
         .catch(() => undefined)
         .finally(() => {
-          inFlight = undefined
-        })
-      return inFlight
+          inFlight = undefined;
+        });
+      return inFlight;
     },
-  }
+  };
 }
 
 export async function resolveAppOwner(
@@ -127,53 +130,54 @@ export async function resolveAppOwner(
   diag: TransportDiagnostics,
   appId: string,
 ): Promise<FeishuAppOwnerIdentity> {
-  const identity: FeishuAppOwnerIdentity = {}
+  const identity: FeishuAppOwnerIdentity = {};
   for (let attempt = 1; attempt <= BOT_INFO_ATTEMPTS; attempt++) {
     try {
       const res = await client.request<{
         data?: {
           app?: {
-            creator_id?: string
-            owner?: { owner_id?: string; type?: number; owner_type?: number }
-          }
-        }
+            creator_id?: string;
+            owner?: { owner_id?: string; type?: number; owner_type?: number };
+          };
+        };
       }>({
         method: 'GET',
         url: `/open-apis/application/v6/applications/${encodeURIComponent(appId)}`,
         params: { lang: 'zh_cn', user_id_type: 'open_id' },
-      })
-      const app = res.data?.app
+      });
+      const app = res.data?.app;
       if (typeof app?.creator_id === 'string' && app.creator_id !== '') {
-        identity.creatorOpenId = app.creator_id
+        identity.creatorOpenId = app.creator_id;
       }
-      const ownerId = app?.owner?.owner_id
-      const ownerType = app?.owner?.type ?? app?.owner?.owner_type
-      if (typeof ownerType === 'number') identity.ownerType = ownerType
+      const ownerId = app?.owner?.owner_id;
+      const ownerType = app?.owner?.type ?? app?.owner?.owner_type;
+      if (typeof ownerType === 'number') identity.ownerType = ownerType;
       if (
         typeof ownerId === 'string' &&
         ownerId !== '' &&
-        (ownerType === undefined || ownerType === FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER)
+        (ownerType === undefined ||
+          ownerType === FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER)
       ) {
-        identity.ownerOpenId = ownerId
+        identity.ownerOpenId = ownerId;
       }
-      return identity
+      return identity;
     } catch (err) {
       if (attempt < BOT_INFO_ATTEMPTS) {
-        await delay(attempt * 500)
-        continue
+        await delay(attempt * 500);
+        continue;
       }
       diag.diagnostic(
         'could not resolve the Feishu app owner via application/v6. ' +
           'Ensure the app has scope `application:application:self_manage` ' +
           'or `admin:app.info:readonly`:',
         err,
-      )
-      return identity
+      );
+      return identity;
     }
   }
-  return identity
+  return identity;
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

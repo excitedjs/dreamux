@@ -44,7 +44,9 @@ describe('claudeCodeSystemPromptAppendContent', () => {
     const forward = claudeCodeSystemPromptAppendContent(['first', 'second']);
     const reversed = claudeCodeSystemPromptAppendContent(['second', 'first']);
     expect(forward!.indexOf('first')).toBeLessThan(forward!.indexOf('second'));
-    expect(reversed!.indexOf('second')).toBeLessThan(reversed!.indexOf('first'));
+    expect(reversed!.indexOf('second')).toBeLessThan(
+      reversed!.indexOf('first'),
+    );
   });
 
   it('escapes &, <, > in fragment text without corrupting the wrapper tags', () => {
@@ -99,27 +101,36 @@ describe('claudeCodeResidentArgs --append-system-prompt', () => {
     );
     // Exactly one flag occurrence: fragments are joined into a single value,
     // never emitted as repeated flags.
-    expect(args.filter((arg) => arg === '--append-system-prompt')).toHaveLength(1);
+    expect(args.filter((arg) => arg === '--append-system-prompt')).toHaveLength(
+      1,
+    );
   });
 
   it('re-supplies the SAME --append-system-prompt content on a --resume spawn (recovery re-threads it, never drops it)', () => {
     const fragments = ['workflow fragment', 'identity fragment'];
-    const freshArgs = argsFor({ systemPromptAppend: fragments, freshSessionId: 'sid' });
+    const freshArgs = argsFor({
+      systemPromptAppend: fragments,
+      freshSessionId: 'sid',
+    });
     const resumeArgs = argsFor({
       systemPromptAppend: fragments,
       resumeSessionId: 'sid',
     });
-    const freshContent = freshArgs[freshArgs.indexOf('--append-system-prompt') + 1];
-    const resumeContent = resumeArgs[resumeArgs.indexOf('--append-system-prompt') + 1];
+    const freshContent =
+      freshArgs[freshArgs.indexOf('--append-system-prompt') + 1];
+    const resumeContent =
+      resumeArgs[resumeArgs.indexOf('--append-system-prompt') + 1];
     expect(resumeContent).toBe(freshContent);
     expect(resumeArgs).toContain('--resume');
   });
 
   it('never emits a native "replace system prompt" style flag: --append-system-prompt is the only prompt flag this CLI shape can produce', () => {
     const args = argsFor({ systemPromptAppend: ['x'], freshSessionId: 'sid' });
-    expect(args.some((arg) => /system-prompt/i.test(arg) && arg !== '--append-system-prompt')).toBe(
-      false,
-    );
+    expect(
+      args.some(
+        (arg) => /system-prompt/i.test(arg) && arg !== '--append-system-prompt',
+      ),
+    ).toBe(false);
   });
 
   it('omits the flag entirely when there is no append content to supply', () => {

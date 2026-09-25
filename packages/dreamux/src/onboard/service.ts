@@ -15,11 +15,7 @@ import {
   withServicePath,
 } from '../platform/paths.js';
 
-import {
-  ensureDirectory,
-  ensureTextFile,
-  writeTextFile,
-} from './ledger.js';
+import { ensureDirectory, ensureTextFile, writeTextFile } from './ledger.js';
 import type {
   CommandRunner,
   OnboardFileLedger,
@@ -240,7 +236,9 @@ export async function validateManagedServiceLaunch(
   const errors: string[] = [];
 
   try {
-    const version = await runner.capture(answers.nodeBin, ['--version'], { env });
+    const version = await runner.capture(answers.nodeBin, ['--version'], {
+      env,
+    });
     if (!nodeVersionSatisfies(version)) {
       errors.push(
         `managed service Node must be >=${MIN_SERVICE_NODE_VERSION}: ${answers.nodeBin} reported ${version.trim() || '<empty>'}`,
@@ -323,7 +321,9 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
   // process.env; platform/homeDir/env passed explicitly.
   const stableDirs = [
     dirname(answers.nodeBin),
-    ...serviceProviderBinChecks(answers).flatMap((check) => absoluteDir(check.bin)),
+    ...serviceProviderBinChecks(answers).flatMap((check) =>
+      absoluteDir(check.bin),
+    ),
     ...absoluteDir(answers.dreamuxBin),
   ];
   const sessionPath = answers.env?.['PATH'] ?? '';
@@ -352,7 +352,6 @@ async function assertExecutable(path: string, label: string): Promise<void> {
   if (await isExecutable(path)) return;
   throw new Error(`managed service executable is not runnable: ${label}`);
 }
-
 
 async function registerLaunchd(
   unitPath: string,
@@ -386,11 +385,9 @@ async function registerLaunchd(
     );
   }
   if (options.answers.startService) {
-    await options.runner.run(
-      'launchctl',
-      ['kickstart', '-k', serviceTarget],
-      { dryRun: options.answers.dryRun },
-    );
+    await options.runner.run('launchctl', ['kickstart', '-k', serviceTarget], {
+      dryRun: options.answers.dryRun,
+    });
   }
 }
 
@@ -407,7 +404,11 @@ async function registerSystemd(
   await options.runner.run('systemctl', enableArgs, {
     dryRun: options.answers.dryRun,
   });
-  options.ledger.record(unitPath, 'unchanged', 'systemd user service registered');
+  options.ledger.record(
+    unitPath,
+    'unchanged',
+    'systemd user service registered',
+  );
 
   // `systemctl --user enable` only schedules the service for an active login
   // session. `loginctl enable-linger` makes a user service boot without a login;
@@ -469,11 +470,20 @@ export async function removeUserService(
       throw new Error('launchd user service uninstall requires a numeric uid');
     }
     const serviceTarget = `gui/${uid}/${LAUNCHD_LABEL}`;
-    const loaded = await options.runner.check('launchctl', ['print', serviceTarget], {
-      dryRun,
-    });
+    const loaded = await options.runner.check(
+      'launchctl',
+      ['print', serviceTarget],
+      {
+        dryRun,
+      },
+    );
     if (loaded) {
-      await runServiceBestEffort(options.runner, 'launchctl', ['bootout', serviceTarget], dryRun);
+      await runServiceBestEffort(
+        options.runner,
+        'launchctl',
+        ['bootout', serviceTarget],
+        dryRun,
+      );
     }
   } else {
     await runServiceBestEffort(
@@ -488,7 +498,12 @@ export async function removeUserService(
   if (existed && !dryRun) await rm(unit.path, { force: true });
 
   if (unit.platform === 'systemd') {
-    await runServiceBestEffort(options.runner, 'systemctl', ['--user', 'daemon-reload'], dryRun);
+    await runServiceBestEffort(
+      options.runner,
+      'systemctl',
+      ['--user', 'daemon-reload'],
+      dryRun,
+    );
   }
 
   return { platform: unit.platform, unitPath: unit.path, removed: existed };
@@ -513,5 +528,8 @@ function systemdEscapeArg(value: string): string {
 }
 
 function systemdEscapeEnv(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll(' ', '\\x20');
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll(' ', '\\x20');
 }

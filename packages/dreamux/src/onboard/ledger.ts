@@ -28,7 +28,8 @@ export class TransparentFileLedger implements OnboardFileLedger {
     this.seen.set(path, {
       path,
       status: mergeStatus(existing.status, status),
-      reason: existing.reason === reason ? reason : `${existing.reason}; ${reason}`,
+      reason:
+        existing.reason === reason ? reason : `${existing.reason}; ${reason}`,
     });
   }
 }

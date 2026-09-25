@@ -171,7 +171,10 @@ export class AgentRuntimeStateStore {
     patch: (current: AgentEntityIdentity) => AgentIdentityUpdateInput,
   ): Promise<AgentEntityIdentity> {
     return this.enqueue(async () => {
-      this.identity = await this.store.update(this.identity, patch(this.identity));
+      this.identity = await this.store.update(
+        this.identity,
+        patch(this.identity),
+      );
       return this.identity;
     });
   }

@@ -296,7 +296,11 @@ function handleConnection(server: Server, sock: Socket): void {
   });
 }
 
-async function processLine(server: Server, sock: Socket, line: string): Promise<void> {
+async function processLine(
+  server: Server,
+  sock: Socket,
+  line: string,
+): Promise<void> {
   let req: AdminRequest;
   try {
     req = JSON.parse(line) as AdminRequest;
@@ -306,7 +310,9 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
   } catch (err) {
     // A line that cannot be framed never reached a Command: this is the one
     // genuine transport failure this adapter owns.
-    const error = new TransportError(err instanceof Error ? err.message : String(err));
+    const error = new TransportError(
+      err instanceof Error ? err.message : String(err),
+    );
     write(sock, { id: '?', ok: false, error: commandFailure(error) });
     return;
   }
@@ -380,7 +386,10 @@ function adminInvocation(req: AdminRequest): {
   payload: JsonValue;
 } {
   const params = req.params;
-  if (params !== undefined && (typeof params !== 'object' || Array.isArray(params))) {
+  if (
+    params !== undefined &&
+    (typeof params !== 'object' || Array.isArray(params))
+  ) {
     throw new ValidationError("request 'params' must be an object");
   }
   const { dispatcher_id: dispatcherId, ...rest } = params ?? {};

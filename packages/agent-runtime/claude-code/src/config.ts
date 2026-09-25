@@ -105,13 +105,19 @@ export function readDispatcherClaudeCodeConfig(
     prefix,
   );
   const defaults = defaultDispatcherClaudeCodeConfig();
-  const bin = readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
+  const bin =
+    readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
   if (bin.trim() === '') {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
-  const permissionMode = readOptionalString(rawClaude, 'permission_mode', file, prefix);
+  const permissionMode = readOptionalString(
+    rawClaude,
+    'permission_mode',
+    file,
+    prefix,
+  );
   if (
     permissionMode !== null &&
     !ALLOWED_CLAUDE_CODE_PERMISSION_MODES.has(permissionMode)

@@ -1,7 +1,4 @@
-import {
-  isScanDigest,
-  scanDigest,
-} from '@excitedjs/dreamux-utils';
+import { isScanDigest, scanDigest } from '@excitedjs/dreamux-utils';
 
 import { ClaudeActivityError } from './error.js';
 
@@ -92,8 +89,7 @@ function isEnvelope(value: unknown): value is ClaudeCursorEnvelope {
     Number.isSafeInteger(record['rw']) &&
     (record['rw'] as number) >= 0 &&
     (record['rp'] === null ||
-      (Number.isSafeInteger(record['rp']) &&
-        (record['rp'] as number) >= 0)) &&
+      (Number.isSafeInteger(record['rp']) && (record['rp'] as number) >= 0)) &&
     (record['rd'] === null || isScanDigest(record['rd'])) &&
     ((record['rp'] === null && record['rd'] === null) ||
       (record['rp'] !== null && record['rd'] !== null))

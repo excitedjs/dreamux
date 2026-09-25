@@ -188,7 +188,9 @@ export class TeamStore {
         ...current,
         ...(input.status !== undefined ? { status: input.status } : {}),
         ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
-        ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
+        ...(input.closeNote !== undefined
+          ? { close_note: input.closeNote }
+          : {}),
         ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
         ...(input.intent !== undefined ? { intent: input.intent } : {}),
         ...(input.cleanupForce !== undefined
@@ -279,7 +281,11 @@ export class TeamStore {
  * {@link TeamStore.get} answers `null`, so nothing routes to it, it receives no
  * turn, and it reserves no name.
  */
-function readTeam(dispatcherId: string, teamId: string, raw: string): TeamRecord {
+function readTeam(
+  dispatcherId: string,
+  teamId: string,
+  raw: string,
+): TeamRecord {
   const value = JSON.parse(raw) as Record<string, unknown>;
   if (
     value['version'] !== 1 ||
@@ -347,7 +353,8 @@ function isTeamStatus(value: unknown): boolean {
 }
 
 function isWorktreeCleanupState(value: unknown): boolean {
-  return value === 'not-managed' ||
+  return (
+    value === 'not-managed' ||
     value === 'managed-active' ||
     value === 'cleanup-pending' ||
     value === 'kept' ||
@@ -355,7 +362,8 @@ function isWorktreeCleanupState(value: unknown): boolean {
     value === 'retained-dirty' ||
     value === 'retained-unmerged' ||
     value === 'retained-unique-commits' ||
-    value === 'retained-error';
+    value === 'retained-error'
+  );
 }
 
 /**
@@ -404,7 +412,10 @@ function readCreateRequest(value: Record<string, unknown>): {
   if (requestId === null && payloadHash === null) {
     return { create_request_id: null, create_payload_hash: null };
   }
-  if (!isTeamCreateRequestId(requestId) || !isTeamCreatePayloadHash(payloadHash)) {
+  if (
+    !isTeamCreateRequestId(requestId) ||
+    !isTeamCreatePayloadHash(payloadHash)
+  ) {
     throw new Error('invalid Team creation request identity');
   }
   return {

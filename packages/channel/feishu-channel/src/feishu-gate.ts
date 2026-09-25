@@ -112,8 +112,8 @@ export type DropReason =
   | 'group_follow_user_stranger_not_mentioned'
   | 'group_pairing_slot_cap'
   // New drop reasons after the C3 rewrite:
-  | 'group_not_on_allowlist'           // rule 1: group not on allowlist at all
-  | 'group_user_not_on_allowlist'      // rule 2: user not on allowlist (dm=allowlist)
+  | 'group_not_on_allowlist' // rule 1: group not on allowlist at all
+  | 'group_user_not_on_allowlist' // rule 2: user not on allowlist (dm=allowlist)
   | 'group_pairing_stranger_not_mentioned' // rule 3: stranger in group, dm=pairing, not @
   | 'bot_untrusted'
   | 'unsupported_chat_type'
@@ -260,10 +260,7 @@ function pushWarn(
   return next;
 }
 
-function pushObserved(
-  observed: string[],
-  chat_id: string,
-): string[] {
+function pushObserved(observed: string[], chat_id: string): string[] {
   if (observed.includes(chat_id)) return observed;
   return [...observed, chat_id];
 }
@@ -324,7 +321,10 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
       pending: { ...state.pending, [token]: newEntry },
     };
     nextState = withLastGate(nextState, input, now, 'pair');
-    nextState = { ...nextState, observed_chats: pushObserved(nextState.observed_chats, input.chat_id) };
+    nextState = {
+      ...nextState,
+      observed_chats: pushObserved(nextState.observed_chats, input.chat_id),
+    };
     logs.push({
       level: 'info',
       msg: 'dm pairing: existing prompt',
@@ -363,8 +363,17 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
       ctx: { count: counts.dm, sender_id: input.sender_id },
     });
     let nextState: DispatcherAccessStateV3 = { ...state, warnings };
-    nextState = withLastGate(nextState, input, now, 'drop', 'dm_pairing_slot_cap');
-    nextState = { ...nextState, observed_chats: pushObserved(nextState.observed_chats, input.chat_id) };
+    nextState = withLastGate(
+      nextState,
+      input,
+      now,
+      'drop',
+      'dm_pairing_slot_cap',
+    );
+    nextState = {
+      ...nextState,
+      observed_chats: pushObserved(nextState.observed_chats, input.chat_id),
+    };
     return {
       action: {
         action: 'drop',
@@ -390,7 +399,10 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
     pending: { ...state.pending, [token]: entry },
   };
   nextState = withLastGate(nextState, input, now, 'pair');
-  nextState = { ...nextState, observed_chats: pushObserved(nextState.observed_chats, input.chat_id) };
+  nextState = {
+    ...nextState,
+    observed_chats: pushObserved(nextState.observed_chats, input.chat_id),
+  };
   logs.push({
     level: 'info',
     msg: 'dm pairing: new slot',

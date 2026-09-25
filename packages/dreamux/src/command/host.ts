@@ -24,7 +24,9 @@ export interface CoreCommandHost {
   /** The configured row, or `null` when no dispatcher carries that id. */
   dispatcherRow(dispatcherId: string): DispatcherRow | null;
   /** The current runtime projection of one dispatcher, live or persisted. */
-  dispatcherRuntimeStatus(dispatcherId: string): Promise<DispatcherRuntimeStatus>;
+  dispatcherRuntimeStatus(
+    dispatcherId: string,
+  ): Promise<DispatcherRuntimeStatus>;
   /** Get-or-build the per-dispatcher aggregate. */
   dispatcher(dispatcherId: string): DispatcherService;
   /**

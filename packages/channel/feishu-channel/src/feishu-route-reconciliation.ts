@@ -33,17 +33,19 @@ export function rejectedDeliveryNotice(
 }
 
 export class FeishuRouteReconciliation {
-  constructor(private readonly opts: {
-    dispatcherId: string;
-    channelId: string;
-    log: DreamuxLogger;
-    routing: FeishuRouting;
-    announceRoutesRemoved(input: {
-      teamName: string;
-      removed: readonly FeishuRemovedRoute[];
-      reason: 'team_closed' | 'route_ended';
-    }): void;
-  }) {}
+  constructor(
+    private readonly opts: {
+      dispatcherId: string;
+      channelId: string;
+      log: DreamuxLogger;
+      routing: FeishuRouting;
+      announceRoutesRemoved(input: {
+        teamName: string;
+        removed: readonly FeishuRemovedRoute[];
+        reason: 'team_closed' | 'route_ended';
+      }): void;
+    },
+  ) {}
 
   /**
    * Commit the removal of everything that reaches a Team — its routes and the
@@ -71,9 +73,8 @@ export class FeishuRouteReconciliation {
       reason: notice,
     };
     try {
-      const { removed, subscriptions } = await this.opts.routing.forgetTeam(
-        teamName,
-      );
+      const { removed, subscriptions } =
+        await this.opts.routing.forgetTeam(teamName);
       if (removed.length === 0 && subscriptions.length === 0) return;
       this.opts.log.info(
         {

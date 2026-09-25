@@ -33,10 +33,7 @@ import type {
   FeishuCotEventInput,
 } from '@excitedjs/feishu-transport';
 
-import {
-  cotLogScope,
-  type CotLogScope,
-} from './feishu-cot-diagnostics.js';
+import { cotLogScope, type CotLogScope } from './feishu-cot-diagnostics.js';
 import {
   runTerminalEvent,
   runStartedEvent,
@@ -230,9 +227,10 @@ export class FeishuCotAdapter {
 
   /** Pick one independent flavour label when this append-only card opens. */
   private openReceipt(key: string, state: CotState): void {
-    const label = FEISHU_COT_OPENING_LABELS[
-      Math.floor(Math.random() * FEISHU_COT_OPENING_LABELS.length)
-    ]!;
+    const label =
+      FEISHU_COT_OPENING_LABELS[
+        Math.floor(Math.random() * FEISHU_COT_OPENING_LABELS.length)
+      ]!;
     this.acceptOpeningActivityForState(
       key,
       state,
@@ -250,16 +248,36 @@ export class FeishuCotAdapter {
     if (found === null) return;
     switch (event.activity.kind) {
       case 'context.compacted':
-        acceptContextCompacted(this.activity, found.key, found.state, event.activity);
+        acceptContextCompacted(
+          this.activity,
+          found.key,
+          found.state,
+          event.activity,
+        );
         return;
       case 'turn.interrupted':
-        acceptTurnInterrupted(this.activity, found.key, found.state, event.activity);
+        acceptTurnInterrupted(
+          this.activity,
+          found.key,
+          found.state,
+          event.activity,
+        );
         return;
       case 'assistant.message':
-        acceptAssistantMessage(this.activity, found.key, found.state, event.activity);
+        acceptAssistantMessage(
+          this.activity,
+          found.key,
+          found.state,
+          event.activity,
+        );
         return;
       case 'tool.call':
-        acceptToolCallActivity(this.activity, found.key, found.state, event.activity);
+        acceptToolCallActivity(
+          this.activity,
+          found.key,
+          found.state,
+          event.activity,
+        );
         return;
       case 'token.usage':
         acceptTokenUsage(this.activity, found.key, found.state, event.activity);
@@ -299,7 +317,15 @@ export class FeishuCotAdapter {
   ): void {
     if (state.active === null) return;
     if (end.reason !== null) {
-      acceptDisplayText(this.activity, key, state, 'assistant', randomUUID(), end.reason, 'end');
+      acceptDisplayText(
+        this.activity,
+        key,
+        state,
+        'assistant',
+        randomUUID(),
+        end.reason,
+        'end',
+      );
     }
     state.openCalls.clear();
     this.detach(key, state, end.status);
@@ -309,14 +335,16 @@ export class FeishuCotAdapter {
   onTeamState(event: TeamStateEvent): void {
     if (this.closed) return;
     this.leaderFence.onTeamState(event, this.states, (key, state) =>
-      this.advanceAnchor(key, state, null));
+      this.advanceAnchor(key, state, null),
+    );
   }
 
   /** This Channel removed or moved a binding away from a Team. */
   onRouteReleased(input: { teamName: string; target: FeishuTarget }): void {
     if (this.closed) return;
     this.leaderFence.onRouteReleased(input, this.states, (key, state) =>
-      this.advanceAnchor(key, state, null));
+      this.advanceAnchor(key, state, null),
+    );
   }
 
   /** This Channel installed a binding, so the Team may present there again. */
@@ -442,21 +470,19 @@ export class FeishuCotAdapter {
         flushQueued: false,
         closed: false,
       };
-      if (!this.admitOutbox(
-        state,
-        created,
-        [runStartedEvent(created.id), ...events],
-      )) {
+      if (
+        !this.admitOutbox(state, created, [
+          runStartedEvent(created.id),
+          ...events,
+        ])
+      ) {
         return false;
       }
       state.active = created;
       this.enqueue(key, state, () => this.runCreate(state, created));
       return true;
     }
-    if (
-      presentation.closed ||
-      presentation.terminalIntent !== null
-    ) {
+    if (presentation.closed || presentation.terminalIntent !== null) {
       return false;
     }
     const accepted = this.admitOutbox(state, presentation, events);
@@ -570,18 +596,15 @@ export class FeishuCotAdapter {
         return;
       }
       let finishing = false;
-      if (!cotOutboxHasEvents(presentation.outbox) &&
-          presentation.terminalIntent !== null) {
+      if (
+        !cotOutboxHasEvents(presentation.outbox) &&
+        presentation.terminalIntent !== null
+      ) {
         const terminal = runTerminalEvent(
           presentation.id,
           presentation.terminalIntent,
         );
-        finishing = appendCotTerminalIfFits(
-          batch,
-          terminal,
-          cotId,
-          messageId,
-        );
+        finishing = appendCotTerminalIfFits(batch, terminal, cotId, messageId);
       }
       if (batch.length === 0) return;
       try {
@@ -657,7 +680,9 @@ export class FeishuCotAdapter {
   }
 }
 
-function inboundRecipient(teamName: string | null): CotRecipientIdentity | null {
+function inboundRecipient(
+  teamName: string | null,
+): CotRecipientIdentity | null {
   if (teamName === null) return { kind: 'dispatcher' };
   return typeof teamName === 'string' && teamName !== ''
     ? { kind: 'leader', teamName }

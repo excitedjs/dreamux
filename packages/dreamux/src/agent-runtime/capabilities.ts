@@ -91,7 +91,10 @@ function normalizeCapabilities(
 
 function normalizeTags(value: unknown, ref: string): readonly string[] {
   if (!Array.isArray(value)) {
-    throw new InvalidAgentRuntimeCapabilitiesError(ref, 'tags must be an array');
+    throw new InvalidAgentRuntimeCapabilitiesError(
+      ref,
+      'tags must be an array',
+    );
   }
   const seen = new Set<string>();
   const tags: string[] = [];

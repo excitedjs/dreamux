@@ -76,16 +76,15 @@ async function enrichParentMessageType(
 
   const probeBudget = work.remainingTimeMs() - FEISHU_RESOURCE_TIMEOUT_MS;
   if (probeBudget <= 0) return event;
-  const deadlineAt = Date.now() + Math.min(
-    PARENT_TYPE_PROBE_TIMEOUT_MS,
-    probeBudget,
-  );
+  const deadlineAt =
+    Date.now() + Math.min(PARENT_TYPE_PROBE_TIMEOUT_MS, probeBudget);
   const response = await readMessage(parentId, bot, work, log, deadlineAt);
   work.assertSessionActive();
   const parent = validRoot(response, parentId);
-  const parentMessageType = parent === undefined
-    ? undefined
-    : normalizeFeishuMessageTypeToken(parent.messageType);
+  const parentMessageType =
+    parent === undefined
+      ? undefined
+      : normalizeFeishuMessageTypeToken(parent.messageType);
   return parentMessageType === undefined
     ? event
     : { ...event, parentMessageType };
@@ -100,9 +99,14 @@ async function readMessage(
 ): Promise<FeishuMessageReadResponse | undefined> {
   if (bot.readMessage === undefined) return undefined;
   try {
-    return await runFeishuInboundWork(work, () => bot.readMessage?.({
-      messageId,
-    }) ?? Promise.resolve({ items: [] }), deadlineAt);
+    return await runFeishuInboundWork(
+      work,
+      () =>
+        bot.readMessage?.({
+          messageId,
+        }) ?? Promise.resolve({ items: [] }),
+      deadlineAt,
+    );
   } catch (error) {
     if (isFeishuOperationError(error, 'aborted')) throw error;
     log.debug(

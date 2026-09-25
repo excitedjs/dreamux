@@ -17,7 +17,11 @@ type AsyncMethod<This, Args extends unknown[], Result> = (
   ...args: Args
 ) => Promise<Result>;
 
-export function deduplicate<This extends object, Args extends unknown[], Result>(
+export function deduplicate<
+  This extends object,
+  Args extends unknown[],
+  Result,
+>(
   method: AsyncMethod<This, Args, Result>,
   _context: ClassMethodDecoratorContext<This, AsyncMethod<This, Args, Result>>,
 ): AsyncMethod<This, Args, Result> {

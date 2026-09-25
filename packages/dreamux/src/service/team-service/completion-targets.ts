@@ -33,32 +33,33 @@ export class TeamLeaderCompletionTargets {
   current(): CompletionInitiator {
     const { deps, recipientKey } = this;
     return {
-    recipientKey,
-    prepareCompletion: async (completion) => {
-      let prepared: PreparedCompletionDelivery;
-      try {
-        prepared = await deps.admit(() =>
-          deps.prepareLeaderCompletion(completion));
-      } catch (error) {
-        if (isTeamUnavailable(error)) return unsupportedCompletion();
-        throw error;
-      }
-      return Object.freeze({
-        submit: async () => {
-          try {
-            return await deps.admit(() => prepared.submit());
-          } catch (error) {
-            if (isTeamUnavailable(error)) {
-              return {
-                status: 'unsupported' as const,
-                reason: 'Team is closing or unavailable',
-              };
+      recipientKey,
+      prepareCompletion: async (completion) => {
+        let prepared: PreparedCompletionDelivery;
+        try {
+          prepared = await deps.admit(() =>
+            deps.prepareLeaderCompletion(completion),
+          );
+        } catch (error) {
+          if (isTeamUnavailable(error)) return unsupportedCompletion();
+          throw error;
+        }
+        return Object.freeze({
+          submit: async () => {
+            try {
+              return await deps.admit(() => prepared.submit());
+            } catch (error) {
+              if (isTeamUnavailable(error)) {
+                return {
+                  status: 'unsupported' as const,
+                  reason: 'Team is closing or unavailable',
+                };
+              }
+              throw error;
             }
-            throw error;
-          }
-        },
-      });
-    },
+          },
+        });
+      },
     };
   }
 }

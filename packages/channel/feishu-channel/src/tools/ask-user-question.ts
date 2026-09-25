@@ -21,7 +21,10 @@
  */
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 
-import type { AskUserOption, AskUserQuestionSpec } from '../feishu-ask-user-card.js';
+import type {
+  AskUserOption,
+  AskUserQuestionSpec,
+} from '../feishu-ask-user-card.js';
 import {
   asRecord,
   closedObjectSchema,
@@ -40,7 +43,7 @@ const MAX_OPTIONS = 4;
 /** The standing instruction for a tool whose answer never arrives in its result. */
 export const ASK_USER_NEXT_INSTRUCTION =
   'The question card has been sent. Do NOT do any further work and do NOT ' +
-  'guess an answer: end your turn now and wait. The user\'s answer arrives ' +
+  "guess an answer: end your turn now and wait. The user's answer arrives " +
   'later as a normal inbound message. If the user dismisses the card, that ' +
   'message will say so — drop the card and continue in plain conversation.';
 

@@ -45,7 +45,11 @@ export interface TurnCollector {
 export interface TurnSubscriptionOptions {
   onTokenUsage?: (usage: ThreadTokenUsage) => void;
   onItemStarted?: (turnId: string, item: ThreadItem) => void;
-  onItemCompleted?: (turnId: string, item: ThreadItem, occurredAt: number) => void;
+  onItemCompleted?: (
+    turnId: string,
+    item: ThreadItem,
+    occurredAt: number,
+  ) => void;
   onTerminal?: (turnId: string, terminal: CollectedTurn | Error) => void;
   /**
    * An `error` notification with no `turnId` — a connection-level protocol
@@ -81,7 +85,8 @@ export function subscribeTurnCollection(
 
   unsubscribe = client.onNotification((notif) => {
     const p = (notif.params ?? {}) as Record<string, unknown>;
-    const nThreadId = typeof p['threadId'] === 'string' ? (p['threadId'] as string) : null;
+    const nThreadId =
+      typeof p['threadId'] === 'string' ? (p['threadId'] as string) : null;
     const matches = nThreadId === threadId;
     if (closed || !matches) return;
     if (notif.method === 'thread/tokenUsage/updated') {
@@ -97,11 +102,17 @@ export function subscribeTurnCollection(
       const bucket = itemsByTurn.get(params.turnId) ?? [];
       bucket.push(params.item);
       itemsByTurn.set(params.turnId, bucket);
-      options.onItemCompleted?.(params.turnId, params.item, params.completedAtMs);
+      options.onItemCompleted?.(
+        params.turnId,
+        params.item,
+        params.completedAtMs,
+      );
     } else if (notif.method === 'turn/completed') {
       const params = notif.params as TurnCompletedNotification;
       if (params.turn.error != null) {
-        const failure = new Error(params.turn.error.message || 'codex turn failed');
+        const failure = new Error(
+          params.turn.error.message || 'codex turn failed',
+        );
         if (!rememberTerminal(terminalTurnIds, params.turn.id)) return;
         options.onTerminal?.(params.turn.id, failure);
         return;
@@ -170,7 +181,11 @@ export async function submitTurnStart(
   outputSchema?: Record<string, unknown>,
   effort?: string,
 ): Promise<TurnStartResponse> {
-  const input: UserInput[] = texts.map((text) => ({ type: 'text', text, text_elements: [] }));
+  const input: UserInput[] = texts.map((text) => ({
+    type: 'text',
+    text,
+    text_elements: [],
+  }));
   const params: Record<string, unknown> = { threadId, input };
   if (cwd !== null) params.cwd = cwd;
   if (outputSchema !== undefined) params.outputSchema = outputSchema;

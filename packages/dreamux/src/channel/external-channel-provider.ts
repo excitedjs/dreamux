@@ -61,8 +61,13 @@ export class ExternalChannelProviderLoadError extends Error {
 }
 
 export class ExternalChannelProviderContractError extends Error {
-  constructor(readonly providerRef: string, message: string) {
-    super(`invalid channel provider ${JSON.stringify(providerRef)}: ${message}`);
+  constructor(
+    readonly providerRef: string,
+    message: string,
+  ) {
+    super(
+      `invalid channel provider ${JSON.stringify(providerRef)}: ${message}`,
+    );
     this.name = 'ExternalChannelProviderContractError';
   }
 }
@@ -128,7 +133,9 @@ function assertOptionalOnboard(
 ): void {
   if (value === undefined) return;
   if (!isRecord(value) || typeof value['collect'] !== 'function') {
-    context.fail('provider.onboard.collect must be a function when onboard is present');
+    context.fail(
+      'provider.onboard.collect must be a function when onboard is present',
+    );
   }
 }
 

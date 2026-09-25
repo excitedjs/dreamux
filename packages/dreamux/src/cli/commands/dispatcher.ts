@@ -1,9 +1,6 @@
 import type { CommandModule } from 'yargs';
 
-import {
-  requiredDispatcherId,
-  withRequiredDispatcherId,
-} from './parse.js';
+import { requiredDispatcherId, withRequiredDispatcherId } from './parse.js';
 import {
   adminEnv,
   noopHandler,
@@ -54,12 +51,7 @@ function createDispatcherVerbCommand(
     handler: async (argv) => {
       await deps.execEntry(
         deps.serverCtlEntry,
-        [
-          'dispatcher',
-          verb,
-          '--id',
-          requiredDispatcherId(argv.id),
-        ],
+        ['dispatcher', verb, '--id', requiredDispatcherId(argv.id)],
         adminEnv(),
       );
     },

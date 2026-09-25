@@ -19,10 +19,7 @@ import type {
   DreamuxConfig,
 } from '../../config/config.js';
 import { errorInfo } from '../../platform/error-info.js';
-import {
-  dispatcherCacheDir,
-  dispatcherDir,
-} from '../../platform/paths.js';
+import { dispatcherCacheDir, dispatcherDir } from '../../platform/paths.js';
 
 export interface ChannelServiceOptions {
   dispatcherId: string;

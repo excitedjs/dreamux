@@ -124,6 +124,8 @@ export function workflowCommands(
   return [run, status, stop, list] as unknown as readonly AnyCoreCommand[];
 }
 
-function runIdInput(payload: Parameters<typeof commandPayload>[0]): WorkflowRunIdInput {
+function runIdInput(
+  payload: Parameters<typeof commandPayload>[0],
+): WorkflowRunIdInput {
   return { runId: workflowRunIdParam(commandPayload(payload)) };
 }

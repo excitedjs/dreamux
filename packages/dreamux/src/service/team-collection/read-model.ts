@@ -29,11 +29,13 @@ import type {
 
 /** Store-only Team list/summary/history projection; never materializes a runtime. */
 export class TeamCollectionReadModel {
-  constructor(private readonly opts: {
-    dispatcherId: string;
-    store: TeamStore;
-    log: DreamuxLogger;
-  }) {}
+  constructor(
+    private readonly opts: {
+      dispatcherId: string;
+      store: TeamStore;
+      log: DreamuxLogger;
+    },
+  ) {}
 
   async list(): Promise<TeamListRow[]> {
     const out: TeamListRow[] = [];
@@ -55,7 +57,8 @@ export class TeamCollectionReadModel {
         b.created_at - a.created_at ||
         a.team_name.localeCompare(b.team_name),
     );
-    const start = input.cursor !== undefined ? decodeTeamCursor(input.cursor) : 0;
+    const start =
+      input.cursor !== undefined ? decodeTeamCursor(input.cursor) : 0;
     const limit = clampTeamHistoryLimit(input.limit);
     const items = rows.slice(start, start + limit);
     const next = start + items.length;
@@ -113,9 +116,8 @@ export class TeamCollectionReadModel {
       updated_at: team.updated_at,
       closed_at: team.closed_at,
       close_note: team.close_note,
-      close_note_preview: team.close_note === null
-        ? null
-        : previewTeamText(team.close_note),
+      close_note_preview:
+        team.close_note === null ? null : previewTeamText(team.close_note),
       worktree_cleanup: team.worktree.cleanup_state,
     };
   }

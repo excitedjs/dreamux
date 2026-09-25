@@ -103,7 +103,9 @@ export async function readAgentActivity(
   };
 }
 
-function toEntityRecord(record: AgentActivityRecord): AgentEntityActivityRecord {
+function toEntityRecord(
+  record: AgentActivityRecord,
+): AgentEntityActivityRecord {
   return record.kind === 'assistant_message'
     ? {
         kind: 'assistant_message',
@@ -160,7 +162,9 @@ function recognizedActivityErrorReason(
     : null;
 }
 
-function validateActivityCursor(cursor: string | undefined): string | undefined {
+function validateActivityCursor(
+  cursor: string | undefined,
+): string | undefined {
   if (cursor === undefined) return undefined;
   if (cursor.length === 0 || !/^[A-Za-z0-9_-]+$/.test(cursor)) {
     throw new AgentActivityReadError('cursor_invalid');

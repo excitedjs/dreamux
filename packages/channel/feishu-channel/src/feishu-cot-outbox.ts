@@ -31,7 +31,10 @@ export function admitCotOutboxEvents(
   outbox: CotOutboxState,
   events: readonly FeishuCotEventInput[],
 ): CotOutboxAdmission {
-  const bytes = events.reduce((total, event) => total + cotEventBytes(event), 0);
+  const bytes = events.reduce(
+    (total, event) => total + cotEventBytes(event),
+    0,
+  );
   if (
     outbox.events.length + events.length > FEISHU_COT_OUTBOX_MAX_EVENTS ||
     outbox.bytes + bytes > FEISHU_COT_OUTBOX_MAX_BYTES
@@ -71,11 +74,13 @@ export function takeCotAppendBatch(
   ) {
     const next = outbox.events[0];
     if (next === undefined) break;
-    if (cotAppendBatchBytes({
-      cotId,
-      messageId,
-      events: [...batch, next],
-    }) > FEISHU_COT_APPEND_MAX_BYTES) {
+    if (
+      cotAppendBatchBytes({
+        cotId,
+        messageId,
+        events: [...batch, next],
+      }) > FEISHU_COT_APPEND_MAX_BYTES
+    ) {
       break;
     }
     outbox.events.shift();

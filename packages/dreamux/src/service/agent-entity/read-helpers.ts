@@ -77,7 +77,10 @@ export function matchesRecordQuery(
   row: AgentEntityRecordRow,
   input: Omit<AgentEntityHistoryQuery, 'dispatcherId'>,
 ): boolean {
-  if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
+  if (
+    input.name !== undefined &&
+    row.name !== validateTeamMateName(input.name)
+  ) {
     return false;
   }
   if (input.status !== undefined && row.status !== input.status) return false;
@@ -206,7 +209,10 @@ export function decodeCursor(cursor: string): number {
   throw new RuleViolation('invalid history cursor');
 }
 
-function recordRowMatchesText(row: AgentEntityRecordRow, grep: string): boolean {
+function recordRowMatchesText(
+  row: AgentEntityRecordRow,
+  grep: string,
+): boolean {
   const needle = grep.trim().toLowerCase();
   if (needle === '') return true;
   return [
@@ -220,7 +226,5 @@ function recordRowMatchesText(row: AgentEntityRecordRow, grep: string): boolean 
 
 function previewText(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 500
-    ? collapsed
-    : `${collapsed.slice(0, 497)}...`;
+  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
 }

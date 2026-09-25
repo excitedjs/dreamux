@@ -35,10 +35,12 @@ describe('the reply tool contract', () => {
 
     // The closed schema is what refuses an unknown argument upstream; parsing
     // additionally keeps one from reaching the send path if it ever did.
-    expect(def?.parse({
-      chat_id: 'oc_chat',
-      text: 'hi',
-      mention_user_ids: ['ou_example'],
-    })).toEqual({ chatId: 'oc_chat', text: 'hi' });
+    expect(
+      def?.parse({
+        chat_id: 'oc_chat',
+        text: 'hi',
+        mention_user_ids: ['ou_example'],
+      }),
+    ).toEqual({ chatId: 'oc_chat', text: 'hi' });
   });
 });

@@ -76,7 +76,9 @@ function fakeProviderRegistry(): ProviderRegistry {
     getCapabilities: () => ({ verbs: [], agent_runtimes: [] }),
     readRecentActivity: async () => [],
     createRuntime: () => {
-      throw new Error('fake agent runtime provider: createRuntime not implemented');
+      throw new Error(
+        'fake agent runtime provider: createRuntime not implemented',
+      );
     },
   });
   return registry;
@@ -88,7 +90,9 @@ const fakePluginModuleImporter: PluginModuleImporter = async () => ({
     contribute(host) {
       host.channelProviders.contribute('feishu', {
         createSession: () => {
-          throw new Error('fake channel provider: createSession not implemented');
+          throw new Error(
+            'fake channel provider: createSession not implemented',
+          );
         },
       } as unknown as ChannelProvider<unknown>);
     },
@@ -134,7 +138,9 @@ describe('config parser accepts the current shape and rejects a dangling agent r
 
   it('rejects a dispatcher whose agentRuntime does not match any agents[].id', async () => {
     await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      agents: [
+        { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+      ],
       dispatchers: [
         {
           id: 'flow',
@@ -157,7 +163,9 @@ describe('config parser accepts the current shape and rejects a dangling agent r
 
   it('rejects a dispatcher without a cwd, enabled or not, naming its id', async () => {
     await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      agents: [
+        { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+      ],
       dispatchers: [
         {
           id: 'flow',
@@ -182,32 +190,41 @@ describe('config parser accepts the current shape and rejects a dangling agent r
     ['an empty string', ''],
     ['a whitespace-only string', '   '],
     ['a non-string value', 42],
-  ])('rejects a dispatcher whose cwd is %s, like a missing one', async (_label, cwd) => {
-    await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
-      dispatchers: [
-        {
-          id: 'flow',
-          cwd,
-          agentRuntime: 'flow',
-          channels: [
-            {
-              id: 'primary',
-              provider: BUILTIN_FEISHU_PROVIDER_REF,
-              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
-            },
-          ],
-        },
-      ],
-    });
-    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
-      /dispatchers\[0\]\.cwd is required for dispatcher 'flow'/,
-    );
-  });
+  ])(
+    'rejects a dispatcher whose cwd is %s, like a missing one',
+    async (_label, cwd) => {
+      await writeConfig({
+        agents: [
+          { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+        ],
+        dispatchers: [
+          {
+            id: 'flow',
+            cwd,
+            agentRuntime: 'flow',
+            channels: [
+              {
+                id: 'primary',
+                provider: BUILTIN_FEISHU_PROVIDER_REF,
+                config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+              },
+            ],
+          },
+        ],
+      });
+      await expect(
+        loadConfig({ configDir, ...fakeOverrides() }),
+      ).rejects.toThrow(
+        /dispatchers\[0\]\.cwd is required for dispatcher 'flow'/,
+      );
+    },
+  );
 
   it('rejects a dispatcher with no agentRuntime at all', async () => {
     await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      agents: [
+        { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+      ],
       dispatchers: [
         {
           id: 'flow',
@@ -222,12 +239,16 @@ describe('config parser accepts the current shape and rejects a dangling agent r
         },
       ],
     });
-    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(/agentRuntime is required/);
+    await expect(loadConfig({ configDir, ...fakeOverrides() })).rejects.toThrow(
+      /agentRuntime is required/,
+    );
   });
 
   it('rejects the removed Core Collaboration Space policy block as a named incompatible-configuration error', async () => {
     await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      agents: [
+        { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+      ],
       dispatchers: [
         {
           id: 'flow',
@@ -262,7 +283,9 @@ describe('config parser accepts the current shape and rejects a dangling agent r
 
   it('rejects a dispatcher-level `runtime` block (moved to agents\\[\\])', async () => {
     await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      agents: [
+        { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+      ],
       dispatchers: [
         {
           id: 'flow',
@@ -292,14 +315,24 @@ describe('config parser accepts the current shape and rejects a dangling agent r
    * value.
    */
   for (const workspaceCase of [
-    { label: 'an omitted workspace block', workspace: undefined, enabled: false },
+    {
+      label: 'an omitted workspace block',
+      workspace: undefined,
+      enabled: false,
+    },
     { label: 'an empty workspace block', workspace: {}, enabled: false },
     { label: 'an explicit true', workspace: { enabled: true }, enabled: true },
-    { label: 'an explicit false', workspace: { enabled: false }, enabled: false },
+    {
+      label: 'an explicit false',
+      workspace: { enabled: false },
+      enabled: false,
+    },
   ]) {
     it(`resolves ${workspaceCase.label} to workspace.enabled=${workspaceCase.enabled}`, async () => {
       await writeConfig({
-        agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+        agents: [
+          { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+        ],
         dispatchers: [
           {
             id: 'flow',
@@ -325,7 +358,9 @@ describe('config parser accepts the current shape and rejects a dangling agent r
       expect(config.dispatchers[0]!.workspace).toEqual({
         enabled: workspaceCase.enabled,
       });
-      expect(defaultWorkspaceEnabled(config, 'flow')).toBe(workspaceCase.enabled);
+      expect(defaultWorkspaceEnabled(config, 'flow')).toBe(
+        workspaceCase.enabled,
+      );
     });
   }
 
@@ -346,7 +381,9 @@ describe('config parser accepts the current shape and rejects a dangling agent r
    */
   it('accepts a builtin:feishu channel through the real default provider registry', async () => {
     await writeConfig({
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      agents: [
+        { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+      ],
       dispatchers: [
         {
           id: 'flow',
@@ -469,7 +506,10 @@ describe('AgentEntityIdentity: round-trip through the current schema', () => {
     // directory itself is still the occupancy fact, so the name stays taken
     // even though `list()` cannot read a real identity out of it.
     await mkdir(collectionEntityDir(root, 'broken'), { recursive: true });
-    await writeFile(agentIdentityPath(collectionEntityDir(root, 'broken')), 'not json');
+    await writeFile(
+      agentIdentityPath(collectionEntityDir(root, 'broken')),
+      'not json',
+    );
 
     expect((await collection.names()).sort()).toEqual(['broken', 'reviewer']);
     const listed = await collection.list();
@@ -490,7 +530,10 @@ describe('TeamRecord: round-trip through the current schema', () => {
 
   function baseTeamInput(
     teamId: string,
-  ): Omit<TeamRecord, 'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'> {
+  ): Omit<
+    TeamRecord,
+    'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
+  > {
     return {
       dispatcher_id: 'flow',
       team_id: teamId,
@@ -576,9 +619,9 @@ describe('path contracts: exact directory shape for state (platform/paths.ts)', 
 
     const teammateDir = dispatcherTeamMateDir('flow');
     expect(teammateDir).toBe(join(flowDir, 'teammate'));
-    expect(agentIdentityPath(collectionEntityDir(teammateDir, 'reviewer'))).toBe(
-      join(teammateDir, 'reviewer', 'identity.json'),
-    );
+    expect(
+      agentIdentityPath(collectionEntityDir(teammateDir, 'reviewer')),
+    ).toBe(join(teammateDir, 'reviewer', 'identity.json'));
 
     const teamDir = dispatcherTeamDir('flow');
     expect(teamDir).toBe(join(flowDir, 'team'));
@@ -593,14 +636,19 @@ describe('path contracts: exact directory shape for state (platform/paths.ts)', 
     );
     expect(
       agentIdentityPath(
-        collectionEntityDir(dispatcherTeamTeamMateDir('flow', 'team-alpha'), 'builder'),
+        collectionEntityDir(
+          dispatcherTeamTeamMateDir('flow', 'team-alpha'),
+          'builder',
+        ),
       ),
     ).toBe(join(teamScope, 'teammate', 'builder', 'identity.json'));
   });
 
   it('two dispatcher ids never share a state directory (constructor-bound isolation)', () => {
     expect(dispatcherDir('flow-a')).not.toBe(dispatcherDir('flow-b'));
-    expect(dispatcherTeamMateDir('flow-a')).not.toBe(dispatcherTeamMateDir('flow-b'));
+    expect(dispatcherTeamMateDir('flow-a')).not.toBe(
+      dispatcherTeamMateDir('flow-b'),
+    );
   });
 });
 
@@ -656,7 +704,7 @@ describe('AgentIdentityStore: persistence root is constructor-bound, never recor
     expect(await storeB.read()).toBeNull();
   });
 
-  it('a record whose `name` disagrees with the store\'s expected (path-encoded) name is rejected', async () => {
+  it("a record whose `name` disagrees with the store's expected (path-encoded) name is rejected", async () => {
     const store = new AgentIdentityStore({
       dir: dirA,
       dispatcherId: 'flow',

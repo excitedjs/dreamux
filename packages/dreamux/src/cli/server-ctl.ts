@@ -64,21 +64,24 @@ async function main(): Promise<void> {
   if (response.ok) {
     console.log(JSON.stringify(response.result, null, 2));
   } else {
-    console.error(
-      `error: [${response.error.code}] ${response.error.message}`,
-    );
+    console.error(`error: [${response.error.code}] ${response.error.message}`);
     process.exit(1);
   }
 }
 
-function resolveMethod(obj: string | undefined, verb: string | undefined): string | null {
+function resolveMethod(
+  obj: string | undefined,
+  verb: string | undefined,
+): string | null {
   const o = obj ?? '';
   const v = verb ?? '';
   if (o === 'server' && v === 'status') return 'server.status';
   if (o === 'dispatcher') {
     switch (v) {
-      case 'list': return 'dispatcher.list';
-      case 'status': return 'dispatcher.status';
+      case 'list':
+        return 'dispatcher.list';
+      case 'status':
+        return 'dispatcher.status';
     }
   }
   return null;

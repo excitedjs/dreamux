@@ -17,7 +17,10 @@ import {
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { createLogger } from '../platform/logger.js';
 import { type LoadedPlugin, PluginLoadError } from '../plugin/loader.js';
-import { pluginDoctorChecks, pluginLoadFailureCheck } from './doctor-plugins.js';
+import {
+  pluginDoctorChecks,
+  pluginLoadFailureCheck,
+} from './doctor-plugins.js';
 import {
   providerBinChecksForConfig,
   runDispatcherProviderDiagnostics,
@@ -63,7 +66,7 @@ export interface DoctorOptions {
   homeDir?: string | undefined;
   uid?: number | undefined;
   nodeProbe?: ServiceNodeProbe;
-    userName?: string;
+  userName?: string;
 }
 
 export interface ServiceStatus {
@@ -122,7 +125,12 @@ export async function runDreamuxDoctor(
     detail: stateRoot(),
   });
   const doctorEnv = options.env ?? process.env;
-  for (const check of providerBinaryChecks(catalogs, config, doctorEnv, false)) {
+  for (const check of providerBinaryChecks(
+    catalogs,
+    config,
+    doctorEnv,
+    false,
+  )) {
     checks.push({
       name: check.name,
       ok: await runner.check(check.bin, check.args, { env: doctorEnv }),
@@ -137,7 +145,10 @@ export async function runDreamuxDoctor(
         detail: 'disabled; workspace cwd contract not enforced',
       });
     } else {
-      const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
+      const diagnosis = await diagnoseDispatcherWorkspace(
+        config,
+        dispatcher.id,
+      );
       checks.push({
         name: `dispatcher ${dispatcher.id} workspace`,
         ok: diagnosis.ok,
@@ -270,7 +281,11 @@ async function readConfigForDoctor(
   } catch (err) {
     if (err instanceof PluginLoadError) {
       checks.push(
-        { name: 'config', ok: false, detail: `not loaded: plugin "${err.plugin}" failed` },
+        {
+          name: 'config',
+          ok: false,
+          detail: `not loaded: plugin "${err.plugin}" failed`,
+        },
         pluginLoadFailureCheck(err),
       );
     } else {
@@ -330,7 +345,9 @@ async function readDispatchers(
   );
 }
 
-async function getServiceStatus(options: DoctorOptions): Promise<ServiceStatus> {
+async function getServiceStatus(
+  options: DoctorOptions,
+): Promise<ServiceStatus> {
   const runner = options.runner ?? new ExecaCommandRunner();
   const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
   if (unit.platform === 'launchd') {
@@ -496,7 +513,12 @@ async function addManagedServiceLaunchChecks(
       'ExecStart is missing in the installed service; rerun dreamux onboard',
     ),
   );
-  for (const check of providerBinaryChecks(catalogs, config, serviceEnv, true)) {
+  for (const check of providerBinaryChecks(
+    catalogs,
+    config,
+    serviceEnv,
+    true,
+  )) {
     checks.push(
       await checkHelpLaunch(
         check.name,
@@ -563,7 +585,9 @@ async function checkHelpLaunch(
   return {
     name,
     ok,
-    detail: ok ? command : `${command} failed under installed service environment; rerun dreamux onboard`,
+    detail: ok
+      ? command
+      : `${command} failed under installed service environment; rerun dreamux onboard`,
   };
 }
 

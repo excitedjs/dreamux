@@ -55,7 +55,10 @@ describe('versionManagerOfPath', () => {
     ['/home/u/.fnm/node-versions/v22/installation/bin/node', 'fnm'],
     ['/home/u/.local/state/fnm_multishells/12345_1/bin/node', 'fnm'],
     ['/home/u/.local/share/fnm/node-versions/v22/installation/bin/node', 'fnm'],
-    ['/Users/u/Library/Application Support/fnm/node-versions/v22/bin/node', 'fnm'],
+    [
+      '/Users/u/Library/Application Support/fnm/node-versions/v22/bin/node',
+      'fnm',
+    ],
     ['/home/u/.asdf/installs/nodejs/22.7.0/bin/node', 'asdf'],
     ['/home/u/.asdf/shims/node', 'asdf'],
     ['/home/u/.volta/tools/image/node/22.7.0/bin/node', 'volta'],
@@ -160,7 +163,8 @@ describe('selectServiceNodeBin', () => {
     const probe = probeFrom({
       executables: ['/usr/local/bin/node'],
       links: {
-        '/usr/local/bin/node': '/home/u/.fnm/node-versions/v22/installation/bin/node',
+        '/usr/local/bin/node':
+          '/home/u/.fnm/node-versions/v22/installation/bin/node',
       },
     });
 
@@ -236,7 +240,11 @@ describe('stabilizeHomebrewCellarNode', () => {
     const probe = probeFrom({ executables: ['/opt/homebrew/bin/node'] });
 
     expect(
-      await stabilizeHomebrewCellarNode('/opt/homebrew/bin/node', 'darwin', probe),
+      await stabilizeHomebrewCellarNode(
+        '/opt/homebrew/bin/node',
+        'darwin',
+        probe,
+      ),
     ).toBe('/opt/homebrew/bin/node');
   });
 });

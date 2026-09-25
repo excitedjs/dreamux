@@ -23,19 +23,14 @@ import {
 } from './feishu-binding-notification-card.js';
 import type { FeishuCotSessionSeam } from './feishu-cot-session.js';
 import type { FeishuSpaceRecord } from './routing/document.js';
-import type {
-  FeishuRemovedRoute,
-  FeishuRouting,
-} from './routing/index.js';
+import type { FeishuRemovedRoute, FeishuRouting } from './routing/index.js';
 import {
   chatTarget,
   isBindableTarget,
   sameTarget,
   type FeishuTarget,
 } from './routing/target.js';
-import type {
-  FeishuSpacePolicyInput,
-} from './tools/types.js';
+import type { FeishuSpacePolicyInput } from './tools/types.js';
 
 export interface FeishuBindingOperationsOptions {
   readonly routing: FeishuRouting;
@@ -72,7 +67,9 @@ export class FeishuBindingOperations {
           'group, or a topic inside one.',
       );
     }
-    const answer = await this.opts.invoke('team.status', { team_name: input.teamName });
+    const answer = await this.opts.invoke('team.status', {
+      team_name: input.teamName,
+    });
     const team = isPlainObject(answer) ? answer : null;
     if (team?.['status'] === 'closed') {
       throw new PublicInvokeFailure(
@@ -82,10 +79,14 @@ export class FeishuBindingOperations {
     }
     if (
       team === null ||
-      typeof team['team_name'] !== 'string' || team['team_name'] === '' ||
-      typeof team['leader_name'] !== 'string' || team['leader_name'] === '' ||
-      typeof team['leader_agent_runtime'] !== 'string' || team['leader_agent_runtime'] === '' ||
-      typeof team['runtime_cwd'] !== 'string' || team['runtime_cwd'] === '' ||
+      typeof team['team_name'] !== 'string' ||
+      team['team_name'] === '' ||
+      typeof team['leader_name'] !== 'string' ||
+      team['leader_name'] === '' ||
+      typeof team['leader_agent_runtime'] !== 'string' ||
+      team['leader_agent_runtime'] === '' ||
+      typeof team['runtime_cwd'] !== 'string' ||
+      team['runtime_cwd'] === '' ||
       team['leader_state'] === null
     ) {
       throw new PublicInvokeFailure(
@@ -102,7 +103,8 @@ export class FeishuBindingOperations {
         ? { requireOwner: input.requireOwner }
         : {}),
     });
-    const displaced = previousTeamName !== null && previousTeamName !== input.teamName;
+    const displaced =
+      previousTeamName !== null && previousTeamName !== input.teamName;
     if (displaced) {
       this.opts.cot.onRouteReleased({ teamName: previousTeamName, target });
     }
@@ -175,7 +177,10 @@ export class FeishuBindingOperations {
     removed: readonly FeishuRemovedRoute[];
     reason: 'team_closed' | 'route_ended';
   }): void {
-    const card = input.reason === 'team_closed' ? teamDissolvedCard : bindingRouteEndedCard;
+    const card =
+      input.reason === 'team_closed'
+        ? teamDissolvedCard
+        : bindingRouteEndedCard;
     for (const route of input.removed) {
       this.opts.cot.onRouteReleased({
         teamName: input.teamName,

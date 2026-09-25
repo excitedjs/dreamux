@@ -56,10 +56,11 @@ export class Dispatchers {
   private readonly commands: CoreCommandRegistry;
   private readonly homePathPrefixes: readonly string[];
   private readonly adminSocketPath: string | undefined;
-  private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  private readonly channelLoggerFactory: (
+    dispatcherId: string,
+  ) => DreamuxLogger;
   private readonly workflowLoggerFactory:
-    | ((dispatcherId: string) => DreamuxLogger)
-    | undefined;
+    ((dispatcherId: string) => DreamuxLogger) | undefined;
   private readonly dispatcherHook: SyncHook<[Dispatcher]>;
   private readonly log: DreamuxLogger;
   /**
@@ -127,29 +128,32 @@ export class Dispatchers {
   }
 
   async summarize(): Promise<DispatcherSummary[]> {
-    return Promise.all(this.dispatcherStore.list().map(async (row) => {
-      const service = this.services.get(row.dispatcher_id);
-      const live = service?.liveRuntimeStatus() ?? null;
-      if (live !== null) {
+    return Promise.all(
+      this.dispatcherStore.list().map(async (row) => {
+        const service = this.services.get(row.dispatcher_id);
+        const live = service?.liveRuntimeStatus() ?? null;
+        if (live !== null) {
+          return {
+            dispatcher_id: row.dispatcher_id,
+            channel_identity: row.channel_identity,
+            status:
+              live.status === null
+                ? 'stopped'
+                : runtimeStatusToIdentityStatus(live.status),
+            session_id: live.sessionId,
+            enabled: row.enabled === 1,
+          };
+        }
+        const identity = await this.rootIdentity(row.dispatcher_id).read();
         return {
           dispatcher_id: row.dispatcher_id,
           channel_identity: row.channel_identity,
-          status: live.status === null
-            ? 'stopped'
-            : runtimeStatusToIdentityStatus(live.status),
-          session_id: live.sessionId,
+          status: identity?.status ?? 'stopped',
+          session_id: identity?.session_id ?? null,
           enabled: row.enabled === 1,
         };
-      }
-      const identity = await this.rootIdentity(row.dispatcher_id).read();
-      return {
-        dispatcher_id: row.dispatcher_id,
-        channel_identity: row.channel_identity,
-        status: identity?.status ?? 'stopped',
-        session_id: identity?.session_id ?? null,
-        enabled: row.enabled === 1,
-      };
-    }));
+      }),
+    );
   }
 
   async status(id: string): Promise<DispatcherRuntimeStatus> {

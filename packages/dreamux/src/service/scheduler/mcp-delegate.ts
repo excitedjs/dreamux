@@ -69,9 +69,7 @@ export function createCronMcpDelegate(input: {
       // Resolving the owner is part of the call: a TeamLeader's scheduler lives
       // with a Team that may already be gone, and that Team states the fact —
       // missing or closed — in its own words.
-      return runDelegateTool(async () =>
-        serve(await input.scheduler(), call),
-      );
+      return runDelegateTool(async () => serve(await input.scheduler(), call));
     },
   };
 }
@@ -84,11 +82,15 @@ async function serve(
   switch (call.name) {
     case 'cron_create':
       return {
-        structured: cronJobResult(await scheduler.create(cronCreateRequest(args))),
+        structured: cronJobResult(
+          await scheduler.create(cronCreateRequest(args)),
+        ),
       };
     case 'cron_update':
       return {
-        structured: cronJobResult(await scheduler.update(cronUpdateRequest(args))),
+        structured: cronJobResult(
+          await scheduler.update(cronUpdateRequest(args)),
+        ),
       };
     case 'cron_list':
       return { structured: cronListResult(await scheduler.list()) };

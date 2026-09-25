@@ -1,7 +1,4 @@
-import {
-  type DispatcherConfig,
-  type DreamuxConfig,
-} from '../config/config.js';
+import { type DispatcherConfig, type DreamuxConfig } from '../config/config.js';
 
 export type DispatcherStatus = 'declared';
 
@@ -62,4 +59,3 @@ function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
     updated_at: now,
   };
 }
-

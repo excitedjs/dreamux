@@ -41,9 +41,10 @@ export function dispatcherSummary(
   return {
     dispatcher_id: row.dispatcher_id,
     channel_identity: row.channel_identity,
-    status: runtimeStatus !== null
-      ? runtimeStatusToIdentityStatus(runtimeStatus)
-      : (identity?.status ?? 'stopped'),
+    status:
+      runtimeStatus !== null
+        ? runtimeStatusToIdentityStatus(runtimeStatus)
+        : (identity?.status ?? 'stopped'),
     session_id: agent?.sessionId() ?? identity?.session_id ?? null,
     enabled: row.enabled === 1,
   };

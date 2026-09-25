@@ -13,7 +13,10 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { DreamuxLogger, RuntimeCompletion } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  RuntimeCompletion,
+} from '@excitedjs/dreamux-types';
 
 import {
   CompletionDeliveryPolicy,
@@ -92,12 +95,12 @@ describe('completion token routing: fold vs queue push cardinality', () => {
     expect(settlementA.kind).toBe('completion');
     expect(settlementB.kind).toBe('completion');
     // The contract is object identity, not structural equality.
-    expect(
-      settlementA.kind === 'completion' && settlementA.completion,
-    ).toBe(shared);
-    expect(
-      settlementB.kind === 'completion' && settlementB.completion,
-    ).toBe(shared);
+    expect(settlementA.kind === 'completion' && settlementA.completion).toBe(
+      shared,
+    );
+    expect(settlementB.kind === 'completion' && settlementB.completion).toBe(
+      shared,
+    );
 
     const router = policy();
     const recipient = new RecordingInitiator();
@@ -284,8 +287,16 @@ describe('completion token routing: per-recipient FIFO order', () => {
     const fast = new RecordingInitiator();
     const router = policy();
 
-    const slowDelivery = router.deliverRuntime(slow, nativeResult('slow'), fact('worker', 'slow'));
-    await router.deliverRuntime(fast, nativeResult('fast'), fact('worker', 'fast'));
+    const slowDelivery = router.deliverRuntime(
+      slow,
+      nativeResult('slow'),
+      fact('worker', 'slow'),
+    );
+    await router.deliverRuntime(
+      fast,
+      nativeResult('fast'),
+      fact('worker', 'fast'),
+    );
 
     // The fast recipient completed while the slow one is still gated.
     expect(fast.submitted).toHaveLength(1);
@@ -348,11 +359,17 @@ describe('completion token routing: close and stop produce no pushes', () => {
     const pending = controllableRuntimeSubmission();
     const token = pending.complete('answered just in time');
     const settlement = await pending.submission.settled;
-    expect(settlement.kind === 'completion' && settlement.completion).toBe(token);
+    expect(settlement.kind === 'completion' && settlement.completion).toBe(
+      token,
+    );
 
     const router = policy();
     const recipient = new RecordingInitiator();
-    await router.deliverRuntime(recipient, token, fact('worker', 'answered just in time'));
+    await router.deliverRuntime(
+      recipient,
+      token,
+      fact('worker', 'answered just in time'),
+    );
 
     expect(recipient.submitted).toHaveLength(1);
   });
@@ -362,10 +379,14 @@ describe('completion token routing: close and stop produce no pushes', () => {
     // native result. The close path must not manufacture a push storm.
     const router = policy();
     const recipient = new RecordingInitiator();
-    const pendings = Array.from({ length: 200 }, () => controllableRuntimeSubmission());
+    const pendings = Array.from({ length: 200 }, () =>
+      controllableRuntimeSubmission(),
+    );
 
     for (const pending of pendings) pending.stop();
-    const settlements = await Promise.all(pendings.map((p) => p.submission.settled));
+    const settlements = await Promise.all(
+      pendings.map((p) => p.submission.settled),
+    );
 
     expect(settlements.every((s) => s.kind === 'stopped')).toBe(true);
     const tokens = settlements.filter((s) => s.kind === 'completion');
@@ -377,15 +398,25 @@ describe('completion token routing: close and stop produce no pushes', () => {
   });
 
   it('delivers only the results observed before close in a mixed dissolve batch', async () => {
-    const answered = Array.from({ length: 3 }, () => controllableRuntimeSubmission());
-    const unanswered = Array.from({ length: 50 }, () => controllableRuntimeSubmission());
-    const tokens = answered.map((pending, index) => pending.complete(`answer-${index}`));
+    const answered = Array.from({ length: 3 }, () =>
+      controllableRuntimeSubmission(),
+    );
+    const unanswered = Array.from({ length: 50 }, () =>
+      controllableRuntimeSubmission(),
+    );
+    const tokens = answered.map((pending, index) =>
+      pending.complete(`answer-${index}`),
+    );
     for (const pending of unanswered) pending.stop();
 
     const router = policy();
     const recipient = new RecordingInitiator();
     for (const [index, token] of tokens.entries()) {
-      await router.deliverRuntime(recipient, token, fact('worker', `answer-${index}`));
+      await router.deliverRuntime(
+        recipient,
+        token,
+        fact('worker', `answer-${index}`),
+      );
     }
 
     expect(recipient.submitted.map((f) => f.result)).toEqual([

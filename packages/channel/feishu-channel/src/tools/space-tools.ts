@@ -132,12 +132,13 @@ export const bindSpaceDef: FeishuToolDef<BindSpaceInput> = {
       display: optionalString(obj, 'display'),
       leaderAgentRuntime: requireString(obj, 'leader_agent_runtime'),
       identity: optionalString(obj, 'identity'),
-      repo: repo === null
-        ? null
-        : {
-            path: requireString(repo, 'path'),
-            base_ref: optionalString(repo, 'base_ref'),
-          },
+      repo:
+        repo === null
+          ? null
+          : {
+              path: requireString(repo, 'path'),
+              base_ref: optionalString(repo, 'base_ref'),
+            },
     };
   },
   async handle(ctx, input) {
@@ -205,17 +206,18 @@ export const getSpaceDef: FeishuToolDef<{ spaceName: string }> = {
   },
   async handle(ctx, input) {
     const space = ctx.session.getSpace(input.spaceName);
-    const targets = space === undefined
-      ? []
-      : ctx.session
-          .listBindings()
-          .filter((row) => row.space_name === space.space_name)
-          .map((row) => ({
-            chat_id: row.chat_id,
-            thread_id: row.thread_id,
-            display: row.display,
-            team_name: row.team_name,
-          }));
+    const targets =
+      space === undefined
+        ? []
+        : ctx.session
+            .listBindings()
+            .filter((row) => row.space_name === space.space_name)
+            .map((row) => ({
+              chat_id: row.chat_id,
+              thread_id: row.thread_id,
+              display: row.display,
+              team_name: row.team_name,
+            }));
     return {
       space: space === undefined ? null : spaceView(space),
       targets,

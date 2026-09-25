@@ -29,10 +29,7 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import {
-  repoRequest,
-  repoWorktree,
-} from '../worktree/repo-request.js';
+import { repoRequest, repoWorktree } from '../worktree/repo-request.js';
 import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
@@ -128,7 +125,8 @@ async function create(
   const repo = repoWorktree(repoRequest(args, 'repo'));
   // A named repository request without an explicit path resolves to the
   // dispatcher's own workspace, exactly as the Command path does.
-  const repoCwd = repo === null ? null : repo.cwd ?? (await dispatcher.workspace());
+  const repoCwd =
+    repo === null ? null : (repo.cwd ?? (await dispatcher.workspace()));
   const result = await dispatcher.createTeam({
     // A tool call is one live request with no durable retry of its own, so the
     // request identity is minted per call: it gets the Team's duplicate
@@ -206,7 +204,9 @@ async function status(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   return {
-    structured: await dispatcher.getTeamStatus(teamNameParam(args, 'team_name')),
+    structured: await dispatcher.getTeamStatus(
+      teamNameParam(args, 'team_name'),
+    ),
   };
 }
 
@@ -250,7 +250,7 @@ function teamToolDescriptors(
     return [
       tool(
         'dissolve',
-        'Call this only when the Team\'s work is complete. Your system prompt names the Team\'s workspace and its cleanup mode. Under cleanup: delete-on-close Dreamux removes the managed worktree when the Team dissolves, so first check it for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Under cleanup: keep, and in a reused directory, nothing is removed and nothing blocks the dissolve. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. A non-forced request checks the managed delete-on-close worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
+        "Call this only when the Team's work is complete. Your system prompt names the Team's workspace and its cleanup mode. Under cleanup: delete-on-close Dreamux removes the managed worktree when the Team dissolves, so first check it for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Under cleanup: keep, and in a reused directory, nothing is removed and nothing blocks the dissolve. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team's Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. A non-forced request checks the managed delete-on-close worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
         {
           note: {
             type: 'string',
@@ -262,7 +262,7 @@ function teamToolDescriptors(
           force: {
             type: 'boolean',
             description:
-              'Only with the user\'s explicit confirmation in this conversation. ' +
+              "Only with the user's explicit confirmation in this conversation. " +
               'It only overrides a delete-on-close removal blocked by ' +
               'uncommitted, untracked, or unmerged work, by discarding that ' +
               'work; under cleanup: keep the checkout and its changes are ' +
@@ -282,7 +282,7 @@ function teamToolDescriptors(
   return [
     tool(
       'create',
-      'The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate the Team\'s work directory by the dispatcher\'s workspace policy (a fresh shared directory, or the dispatcher\'s own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel\'s own decision, made with that channel\'s tools. With `prompt`, returns a receipt at once and the TeamLeader\'s completion is pushed later as a new message; without it, the Team is created and nothing is submitted.',
+      "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate the Team's work directory by the dispatcher's workspace policy (a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader's first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel's own decision, made with that channel's tools. With `prompt`, returns a receipt at once and the TeamLeader's completion is pushed later as a new message; without it, the Team is created and nothing is submitted.",
       {
         name_prefix: {
           type: 'string',
@@ -293,7 +293,8 @@ function teamToolDescriptors(
         },
         repo: {
           ...repoInputSchema(),
-          description: 'Where the Team works; omit for the dispatcher\'s workspace default: a fresh shared directory, or the dispatcher\'s own directory when workspace isolation is disabled.',
+          description:
+            "Where the Team works; omit for the dispatcher's workspace default: a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled.",
         },
         leader_agent_runtime: {
           type: 'string',
@@ -308,7 +309,7 @@ function teamToolDescriptors(
           minLength: 1,
           maxLength: 2000,
           description:
-            'One-line subject of the Team\'s work; shown in list and history and ' +
+            "One-line subject of the Team's work; shown in list and history and " +
             'kept for recovery.',
         },
         identity: {
@@ -316,7 +317,7 @@ function teamToolDescriptors(
           minLength: 1,
           maxLength: 4000,
           description:
-            'Standing role and boundaries appended to the TeamLeader\'s system ' +
+            "Standing role and boundaries appended to the TeamLeader's system " +
             'prompt for every turn.',
         },
         prompt: {
@@ -324,7 +325,7 @@ function teamToolDescriptors(
           minLength: 1,
           maxLength: 20000,
           description:
-            'The TeamLeader\'s first turn; omit it and no TeamLeader process ' +
+            "The TeamLeader's first turn; omit it and no TeamLeader process " +
             'starts until a routed inbound or a later send arrives.',
         },
       },
@@ -337,7 +338,7 @@ function teamToolDescriptors(
     ),
     tool(
       'send',
-      'The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Submit a follow-up turn to a Team\'s TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel. Returns a receipt at once; the completion is pushed later as a new message.',
+      "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Submit a follow-up turn to a Team's TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel. Returns a receipt at once; the completion is pushed later as a new message.",
       {
         team_name: {
           type: 'string',
@@ -355,7 +356,7 @@ function teamToolDescriptors(
           type: 'string',
           minLength: 1,
           maxLength: 2000,
-          description: 'Replaces the Team\'s recorded subject before the turn.',
+          description: "Replaces the Team's recorded subject before the turn.",
         },
       },
       ['team_name', 'prompt'],
@@ -388,7 +389,7 @@ function teamToolDescriptors(
     ),
     tool(
       'status',
-      'Read one Team\'s current summary by its team_name, using the same fields returned by create.',
+      "Read one Team's current summary by its team_name, using the same fields returned by create.",
       {
         team_name: {
           type: 'string',
@@ -423,7 +424,8 @@ function teamToolDescriptors(
           type: 'string',
           minLength: 1,
           maxLength: 4096,
-          description: 'Case-insensitive substring of the source repository path.',
+          description:
+            'Case-insensitive substring of the source repository path.',
         },
         grep: {
           type: 'string',
@@ -436,12 +438,12 @@ function teamToolDescriptors(
         since: {
           type: 'integer',
           description:
-            'Epoch milliseconds; lower bound on a record\'s last update.',
+            "Epoch milliseconds; lower bound on a record's last update.",
         },
         until: {
           type: 'integer',
           description:
-            'Epoch milliseconds; upper bound on a record\'s last update.',
+            "Epoch milliseconds; upper bound on a record's last update.",
         },
         limit: {
           type: 'integer',
@@ -471,7 +473,7 @@ function teamToolDescriptors(
     ),
     tool(
       'dissolve',
-      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team\'s worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. A non-forced request checks such a worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
+      "Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team's worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. A non-forced request checks such a worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
       {
         team_name: {
           type: 'string',

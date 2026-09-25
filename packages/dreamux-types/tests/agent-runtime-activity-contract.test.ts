@@ -17,11 +17,10 @@ import type {
   AgentActivityRecord,
 } from '../src/agent-runtime.js';
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B
-  ? 1
-  : 0
-  ? true
-  : false;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
+    ? true
+    : false;
 
 function assertType<T extends true>(_proof?: T): void {
   // Compile-time-only: see agent-runtime-handle-contract.test.ts for the pattern's rationale.
@@ -51,7 +50,9 @@ describe('AgentActivityRecord exposes no tool arguments, results, or native-line
   });
 
   it('the record kind union is exactly assistant_message | tool', () => {
-    assertType<Equal<AgentActivityRecord['kind'], 'assistant_message' | 'tool'>>();
+    assertType<
+      Equal<AgentActivityRecord['kind'], 'assistant_message' | 'tool'>
+    >();
   });
 
   it('every record renders through an exhaustive switch that only reads name+status for tools', () => {
@@ -69,10 +70,12 @@ describe('AgentActivityRecord exposes no tool arguments, results, or native-line
       }
     }
 
-    expect(summarize({ kind: 'assistant_message', text: 'hi there' })).toBe('assistant:hi there');
-    expect(summarize({ kind: 'tool', name: 'search', status: 'completed' })).toBe(
-      'tool:search:completed',
+    expect(summarize({ kind: 'assistant_message', text: 'hi there' })).toBe(
+      'assistant:hi there',
     );
+    expect(
+      summarize({ kind: 'tool', name: 'search', status: 'completed' }),
+    ).toBe('tool:search:completed');
   });
 
   it('tool status is exactly started | completed | failed', () => {
@@ -129,14 +132,21 @@ describe('AgentActivityError reasons stay neutral — no path, native layout, or
     assertType<
       Equal<
         AgentActivityError['reason'],
-        'session_unavailable' | 'cursor_invalid' | 'activity_corrupt' | 'provider_failure'
+        | 'session_unavailable'
+        | 'cursor_invalid'
+        | 'activity_corrupt'
+        | 'provider_failure'
       >
     >();
   });
 
   it('callers branch on error.name rather than instanceof, per the declaration-only contract', () => {
-    function makeActivityError(reason: AgentActivityError['reason']): AgentActivityError {
-      const error = new Error(`activity read failed: ${reason}`) as AgentActivityError;
+    function makeActivityError(
+      reason: AgentActivityError['reason'],
+    ): AgentActivityError {
+      const error = new Error(
+        `activity read failed: ${reason}`,
+      ) as AgentActivityError;
       error.name = 'AgentActivityError';
       error.reason = reason;
       return error;

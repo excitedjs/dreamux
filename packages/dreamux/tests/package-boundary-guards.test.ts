@@ -42,8 +42,7 @@ interface RushProject {
  */
 function rushProjects(): RushProject[] {
   const raw = readFileSync(join(repoRoot, 'rush.json'), 'utf8');
-  const re =
-    /"packageName":\s*"([^"]+)"[\s\S]*?"projectFolder":\s*"([^"]+)"/g;
+  const re = /"packageName":\s*"([^"]+)"[\s\S]*?"projectFolder":\s*"([^"]+)"/g;
   const out: RushProject[] = [];
   for (let m = re.exec(raw); m !== null; m = re.exec(raw)) {
     out.push({ packageName: m[1]!, projectFolder: m[2]! });
@@ -108,7 +107,9 @@ describe('epic #209 package-boundary guards', () => {
   });
 
   it('a default @excitedjs/dreamux install bundles the built-in provider packages', () => {
-    const dreamux = projects.find((p) => p.packageName === '@excitedjs/dreamux');
+    const dreamux = projects.find(
+      (p) => p.packageName === '@excitedjs/dreamux',
+    );
     expect(dreamux).toBeDefined();
     const deps = (readManifest(dreamux!.projectFolder).dependencies ??
       {}) as Record<string, string>;
@@ -158,9 +159,9 @@ describe('epic #209 package-boundary guards', () => {
     const offenders = walkTs(coreSrc).filter((file) =>
       CORE_PROVIDER_PACKAGE_IMPORT.test(readFileSync(file, 'utf8')),
     );
-    expect(
-      offenders.map((file) => file.slice(repoRoot.length + 1)),
-    ).toEqual([]);
+    expect(offenders.map((file) => file.slice(repoRoot.length + 1))).toEqual(
+      [],
+    );
   });
 
   it('core source does not call provider-specific factories or classes directly', () => {
@@ -168,9 +169,9 @@ describe('epic #209 package-boundary guards', () => {
     const offenders = walkTs(coreSrc).filter((file) =>
       CORE_PROVIDER_FACTORY_CALL.test(readFileSync(file, 'utf8')),
     );
-    expect(
-      offenders.map((file) => file.slice(repoRoot.length + 1)),
-    ).toEqual([]);
+    expect(offenders.map((file) => file.slice(repoRoot.length + 1))).toEqual(
+      [],
+    );
   });
 
   it('core has no provider-specific runtime/channel adapter source tree', () => {
@@ -203,7 +204,9 @@ describe('no package ships a dev-tool runtime dependency', () => {
 });
 
 describe('dreamux-types stays declaration-only with tapable as its only runtime dependency', () => {
-  const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-types')!;
+  const project = projects.find(
+    (p) => p.packageName === '@excitedjs/dreamux-types',
+  )!;
   const manifest = readManifest(project.projectFolder);
 
   it('has tapable as its only runtime dependency', () => {
@@ -221,7 +224,9 @@ describe('dreamux-types stays declaration-only with tapable as its only runtime 
 });
 
 describe('dreamux-utils depends on no Dreamux package at all', () => {
-  const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-utils')!;
+  const project = projects.find(
+    (p) => p.packageName === '@excitedjs/dreamux-utils',
+  )!;
 
   it('has no runtime "dependencies" field at all', () => {
     const manifest = readManifest(project.projectFolder);
@@ -238,24 +243,33 @@ describe('dreamux-utils depends on no Dreamux package at all', () => {
     for (const file of files) {
       const imports = readFileSync(file, 'utf8')
         .split('\n')
-        .filter((line) => /^\s*import /.test(line) && line.includes('@excitedjs/'));
+        .filter(
+          (line) => /^\s*import /.test(line) && line.includes('@excitedjs/'),
+        );
       expect(imports, `${file} must import no Dreamux package`).toEqual([]);
     }
   });
 });
 
 describe('dreamux-plugin-bootstrap depends on @excitedjs/dreamux-types only, with tapable as a devDependency', () => {
-  const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-plugin-bootstrap')!;
+  const project = projects.find(
+    (p) => p.packageName === '@excitedjs/dreamux-plugin-bootstrap',
+  )!;
   const manifest = readManifest(project.projectFolder);
 
   it('has @excitedjs/dreamux-types as its only runtime dependency', () => {
-    expect(manifest['dependencies']).toEqual({ '@excitedjs/dreamux-types': 'workspace:*' });
+    expect(manifest['dependencies']).toEqual({
+      '@excitedjs/dreamux-types': 'workspace:*',
+    });
     expect(manifest['peerDependencies']).toBeUndefined();
     expect(manifest['optionalDependencies']).toBeUndefined();
   });
 
   it('keeps tapable a devDependency only: the plugin taps objects core hands it and never constructs a hook itself', () => {
-    const devDeps = (manifest['devDependencies'] ?? {}) as Record<string, string>;
+    const devDeps = (manifest['devDependencies'] ?? {}) as Record<
+      string,
+      string
+    >;
     expect(devDeps).toHaveProperty('tapable');
     const deps = (manifest['dependencies'] ?? {}) as Record<string, string>;
     expect(deps).not.toHaveProperty('tapable');
@@ -268,7 +282,7 @@ describe('dreamux-plugin-bootstrap depends on @excitedjs/dreamux-types only, wit
   });
 });
 
-describe('each package\'s public exports map is an intentional, pinned surface', () => {
+describe("each package's public exports map is an intentional, pinned surface", () => {
   // A new subpath export or a widened export condition is a deliberate,
   // reviewed decision, not something that should be able to happen as a side
   // effect of an unrelated change. Pinned to the CURRENT shape observed in
@@ -294,7 +308,7 @@ describe('each package\'s public exports map is an intentional, pinned surface',
   );
 });
 
-describe('each package\'s index.ts re-export set is an intentional, pinned surface', () => {
+describe("each package's index.ts re-export set is an intentional, pinned surface", () => {
   /**
    * Extracts every name a package's barrel makes public: named identifiers
    * from `export { a, type B, c as d } from '...'` blocks (the alias, i.e.
@@ -334,9 +348,9 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
       join(repoRoot, 'packages/dreamux-utils/src/index.ts'),
       'utf8',
     );
-    const modules = [...src.matchAll(/export \* from '(\.\/[a-z-]+\.js)';/g)].map(
-      (m) => m[1]!,
-    );
+    const modules = [
+      ...src.matchAll(/export \* from '(\.\/[a-z-]+\.js)';/g),
+    ].map((m) => m[1]!);
     expect(modules.sort()).toEqual(
       [
         './activity-scan.js',

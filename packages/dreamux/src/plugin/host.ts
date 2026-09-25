@@ -16,7 +16,12 @@ import type {
 import { HookMap, SyncHook } from 'tapable';
 
 import { errorMessage } from '../platform/error-info.js';
-import { isolatedTaps, loadPhaseTaps, runAsPlugin, tapOwners } from './hooks.js';
+import {
+  isolatedTaps,
+  loadPhaseTaps,
+  runAsPlugin,
+  tapOwners,
+} from './hooks.js';
 import { isThenable, type LoadedPlugin, PluginLoadError } from './loader.js';
 
 export type ServerHooks = ServerHost['hooks'];

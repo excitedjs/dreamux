@@ -142,7 +142,8 @@ export type FeishuSubmitOutcome =
  * else.
  */
 export interface SubmitOutcomeReport {
-  readonly kind: 'submitted' | 'not_admitted' | 'rejected' | 'ambiguous' | 'failed';
+  readonly kind:
+    'submitted' | 'not_admitted' | 'rejected' | 'ambiguous' | 'failed';
   readonly level: 'info' | 'warn' | 'error';
   readonly fields: Readonly<Record<string, unknown>>;
 }
@@ -221,10 +222,14 @@ export function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
   }
 }
 
-export function submissionProvesNoAdmission(outcome: FeishuSubmitOutcome): boolean {
-  return outcome.status === 'rejected' ||
+export function submissionProvesNoAdmission(
+  outcome: FeishuSubmitOutcome,
+): boolean {
+  return (
+    outcome.status === 'rejected' ||
     outcome.status === 'failed' ||
-    outcome.status === 'stopped';
+    outcome.status === 'stopped'
+  );
 }
 
 /** Read a rejected Command's code without assuming an error class. */

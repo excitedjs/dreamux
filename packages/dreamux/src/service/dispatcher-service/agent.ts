@@ -9,9 +9,7 @@ import type { ConversationProjection } from '../../channel/conversation-projecti
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
-import {
-  createTeammateService,
-} from '../teammate-service/factory.js';
+import { createTeammateService } from '../teammate-service/factory.js';
 import {
   assertDispatcherRootAgent,
   dispatcherRuntimeId,
@@ -97,9 +95,10 @@ export async function createDispatcherAgent(
       skillSources: [...builtinSkills, ...draft.skillSources],
       disabledFeatures: [DISABLE_FEATURE_CRON],
       systemPrompt: {
-        replace: [DREAMUX_DISPATCHER_BASE_INSTRUCTIONS, ...draft.instructions].join(
-          '\n\n',
-        ),
+        replace: [
+          DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+          ...draft.instructions,
+        ].join('\n\n'),
         append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS, ...draft.instructions],
       },
     },

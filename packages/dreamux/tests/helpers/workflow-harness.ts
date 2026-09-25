@@ -16,10 +16,18 @@ import { join } from 'node:path';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import type { CompletionDeliveryPolicy, CompletionInitiator, PreparedCompletionFact } from '../../src/service/completion-router/index.js';
+import type {
+  CompletionDeliveryPolicy,
+  CompletionInitiator,
+  PreparedCompletionFact,
+} from '../../src/service/completion-router/index.js';
 import type { CreateLockedTeammateOptions } from '../../src/service/teammate-collection/index.js';
 import type { SpawnTeamMateRequest } from '../../src/service/teammate-collection/types.js';
-import type { Turn, TurnAdmission, TurnOutcome } from '../../src/service/teammate-service/turn-recording.js';
+import type {
+  Turn,
+  TurnAdmission,
+  TurnOutcome,
+} from '../../src/service/teammate-service/turn-recording.js';
 import type { LockedTeammate } from '../../src/service/teammate-service/types.js';
 import type { WorkflowTeammateFactory } from '../../src/service/workflow-service/index.js';
 import type {
@@ -31,7 +39,10 @@ import type {
   WorkflowRunnerHandle,
   WorkflowRunnerHandlers,
 } from '../../src/service/workflow-service/runner-process.js';
-import type { CronJob, CronJobStore } from '../../src/service/scheduler/store.js';
+import type {
+  CronJob,
+  CronJobStore,
+} from '../../src/service/scheduler/store.js';
 
 /** A silent `DreamuxLogger` fake; individual methods can be spied by the caller. */
 export function silentLog(): DreamuxLogger {
@@ -88,7 +99,10 @@ export function fakeCompletionDelivery(): FakeCompletionDelivery {
   const delivered: PreparedCompletionFact[] = [];
   let deliverRuntimeCalls = 0;
   const policy = {
-    async deliver(_initiator: CompletionInitiator, fact: PreparedCompletionFact) {
+    async deliver(
+      _initiator: CompletionInitiator,
+      fact: PreparedCompletionFact,
+    ) {
       delivered.push(fact);
     },
     deliverRuntime() {
@@ -108,7 +122,9 @@ export function fakeCompletionDelivery(): FakeCompletionDelivery {
 /** A `CompletionInitiator` double whose `prepareCompletion` records nothing further. */
 export function fakeCompletionInitiator(): CompletionInitiator {
   return {
-    prepareCompletion: async () => ({ submit: async () => ({ status: 'accepted' as const }) }),
+    prepareCompletion: async () => ({
+      submit: async () => ({ status: 'accepted' as const }),
+    }),
   };
 }
 
@@ -118,14 +134,18 @@ export interface ControllableTurn {
 }
 
 /** A `Turn` whose `settled` promise the test resolves on its own schedule. */
-export function controllableTurn(overrides: Partial<Turn> = {}): ControllableTurn {
+export function controllableTurn(
+  overrides: Partial<Turn> = {},
+): ControllableTurn {
   let settle!: (outcome: TurnOutcome) => void;
   const settled = new Promise<TurnOutcome>((resolve) => {
     settle = resolve;
   });
   const turn: Turn = {
     id: overrides.id ?? `turn-${Math.random().toString(36).slice(2)}`,
-    runtime: overrides.runtime ?? ({ settled: Promise.resolve({ kind: 'stopped' }) } as Turn['runtime']),
+    runtime:
+      overrides.runtime ??
+      ({ settled: Promise.resolve({ kind: 'stopped' }) } as Turn['runtime']),
     settled,
     delivery: overrides.delivery ?? Promise.resolve(),
   };
@@ -146,7 +166,9 @@ export interface ControllableLockedTeammate {
  * time — `WorkflowRun` never calls `submit` more than once per Agent, but the
  * queue keeps the double honest if that ever changes.
  */
-export function controllableLockedTeammate(name: string): ControllableLockedTeammate {
+export function controllableLockedTeammate(
+  name: string,
+): ControllableLockedTeammate {
   const submitCalls: Array<{ prompt: string; source: string }> = [];
   const closeCalls: Array<{ note: string }> = [];
   const pendingAdmissions: TurnAdmission[] = [];
@@ -310,7 +332,11 @@ export function fixedRunIds(...ids: string[]): () => string {
 }
 
 /** A monotonically increasing clock a test can advance by hand. */
-export function manualClock(start = 1_000): { now: () => number; advance(ms: number): void; set(value: number): void } {
+export function manualClock(start = 1_000): {
+  now: () => number;
+  advance(ms: number): void;
+  set(value: number): void;
+} {
   let current = start;
   return {
     now: () => current,
@@ -395,11 +421,14 @@ export function fakeCronStore(initialJobs: readonly CronJob[]): FakeCronStore {
       return job === undefined ? null : cloneCronJob(job);
     },
     async create() {
-      throw new Error('fakeCronStore.create is not implemented; seed jobs via initialJobs');
+      throw new Error(
+        'fakeCronStore.create is not implemented; seed jobs via initialJobs',
+      );
     },
     async update(input: { id: string } & Partial<CronJob>) {
       const current = jobs.get(input.id);
-      if (current === undefined) throw new Error(`cron job '${input.id}' does not exist`);
+      if (current === undefined)
+        throw new Error(`cron job '${input.id}' does not exist`);
       const next: CronJob = { ...current, ...input, updated_at: Date.now() };
       jobs.set(input.id, next);
       return cloneCronJob(next);
@@ -454,12 +483,17 @@ export function gate(): { promise: Promise<void>; release: () => void } {
  */
 export async function waitUntil(
   predicate: () => boolean | Promise<boolean>,
-  { timeoutMs = 2_000, intervalMs = 5 }: { timeoutMs?: number; intervalMs?: number } = {},
+  {
+    timeoutMs = 2_000,
+    intervalMs = 5,
+  }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await predicate())) {
     if (Date.now() > deadline) {
-      throw new Error(`waitUntil: predicate did not become true within ${timeoutMs}ms`);
+      throw new Error(
+        `waitUntil: predicate did not become true within ${timeoutMs}ms`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

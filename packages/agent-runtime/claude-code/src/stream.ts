@@ -106,7 +106,8 @@ export function assistantText(message: unknown): string {
 function sumTokenCounts(...values: unknown[]): number | undefined {
   let total = 0;
   for (const value of values) {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+      return undefined;
     total += value;
   }
   return total;
@@ -119,7 +120,9 @@ function parseModelUsage(value: unknown): ResultEnvelope['tokenUsage'] {
   for (const model of Object.values(value)) {
     if (!isObject(model)) return undefined;
     const input = sumTokenCounts(
-      model['inputTokens'], model['cacheReadInputTokens'] ?? 0, model['cacheCreationInputTokens'] ?? 0,
+      model['inputTokens'],
+      model['cacheReadInputTokens'] ?? 0,
+      model['cacheCreationInputTokens'] ?? 0,
     );
     const output = sumTokenCounts(model['outputTokens']);
     if (input === undefined || output === undefined) return undefined;
@@ -133,9 +136,13 @@ function mainContextTokens(raw: JsonObject): number | null {
   const message = raw['message'];
   if (!isObject(message) || !isObject(message['usage'])) return null;
   const usage = message['usage'];
-  return sumTokenCounts(
-    usage['input_tokens'], usage['cache_read_input_tokens'] ?? 0, usage['cache_creation_input_tokens'] ?? 0,
-  ) ?? null;
+  return (
+    sumTokenCounts(
+      usage['input_tokens'],
+      usage['cache_read_input_tokens'] ?? 0,
+      usage['cache_creation_input_tokens'] ?? 0,
+    ) ?? null
+  );
 }
 
 function parseResult(o: JsonObject): ResultEnvelope {
@@ -226,7 +233,12 @@ export function parseLine(line: string): ParsedLine {
     case 'user':
       return { kind: 'user', raw: parsed };
     case 'result':
-      return { kind: 'result', uuid: str(parsed['uuid']), outcome: parseResult(parsed), raw: parsed };
+      return {
+        kind: 'result',
+        uuid: str(parsed['uuid']),
+        outcome: parseResult(parsed),
+        raw: parsed,
+      };
     case 'control_request': {
       const request = parsed['request'];
       return {
@@ -320,7 +332,10 @@ export function buildRemoteControlEnable(requestId: string): string {
  * `/stop` ends the turn the conversation is watching, and the messages someone
  * already sent are not that turn.
  */
-export function buildInterruptRequest(requestId: string, reason: string): string {
+export function buildInterruptRequest(
+  requestId: string,
+  reason: string,
+): string {
   return JSON.stringify({
     type: 'control_request',
     request_id: requestId,
@@ -338,7 +353,10 @@ export function buildInterruptRequest(requestId: string, reason: string): string
  * a build or mode does emit one, the runtime answers it rather than leaving the
  * turn waiting on an unanswered control request.
  */
-export function buildCanUseToolAllow(requestId: string, input: JsonObject): string {
+export function buildCanUseToolAllow(
+  requestId: string,
+  input: JsonObject,
+): string {
   return JSON.stringify({
     type: 'control_response',
     response: {
@@ -394,7 +412,8 @@ export class TurnAggregator {
         break;
       case 'assistant':
         if (line.text.length > 0) this.lastAssistantText = line.text;
-        if (line.raw['parent_tool_use_id'] == null) this.contextTokens = mainContextTokens(line.raw);
+        if (line.raw['parent_tool_use_id'] == null)
+          this.contextTokens = mainContextTokens(line.raw);
         break;
       case 'result':
         this.result = line.outcome;
@@ -417,7 +436,9 @@ export class TurnAggregator {
       terminalReason: r.terminalReason,
       errors: r.errors,
       hasStructuredOutput: r.hasStructuredOutput,
-      ...(r.tokenUsage === undefined ? {} : { tokenUsage: r.tokenUsage, contextTokens: this.contextTokens }),
+      ...(r.tokenUsage === undefined
+        ? {}
+        : { tokenUsage: r.tokenUsage, contextTokens: this.contextTokens }),
     };
   }
 

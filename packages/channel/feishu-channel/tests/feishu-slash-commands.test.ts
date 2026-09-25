@@ -39,18 +39,31 @@ function detect(input: {
  * and each one is a legal Team id.
  */
 const NUMERIC_LOOKING_TEAM_NAMES = [
-  'MyTeam', '123', '1e5', '0x1f', '2.50', '10.00', '1.', '12.', '0.0',
+  'MyTeam',
+  '123',
+  '1e5',
+  '0x1f',
+  '2.50',
+  '10.00',
+  '1.',
+  '12.',
+  '0.0',
 ];
 
 describe('Feishu slash command recognition', () => {
   it.each(NUMERIC_LOOKING_TEAM_NAMES)(
-    'preserves the exact bind argument %s', (name) => {
-      expect(detect({ text: `/BIND ${name}` })).toEqual({ name: 'bind', args: [name] });
+    'preserves the exact bind argument %s',
+    (name) => {
+      expect(detect({ text: `/BIND ${name}` })).toEqual({
+        name: 'bind',
+        args: [name],
+      });
     },
   );
 
   it.each(['--foo', '-abc', '--', '---', '--a=b', '-', '\\'])(
-    'parses %s without throwing outside command dispatch', (argument) => {
+    'parses %s without throwing outside command dispatch',
+    (argument) => {
       expect(() => detect({ text: `/bind ${argument}` })).not.toThrow();
       expect(detect({ text: `/bind ${argument}` })?.name).toBe('bind');
     },
@@ -62,17 +75,20 @@ describe('Feishu slash command recognition', () => {
   });
 
   it('recognizes a mention-prefixed command longest-key-first', () => {
-    expect(detect({
-      text: '@_user_10 /stop',
-      chatType: 'group',
-      botMentioned: true,
-      mentions: [{ ...mention, key: '@_user_1' }, mention],
-    })).toEqual({ name: 'stop', args: [] });
+    expect(
+      detect({
+        text: '@_user_10 /stop',
+        chatType: 'group',
+        botMentioned: true,
+        mentions: [{ ...mention, key: '@_user_1' }, mention],
+      }),
+    ).toEqual({ name: 'stop', args: [] });
   });
 
   it('parses trailing text and matches the command name case-insensitively', () => {
     expect(detect({ text: '/STOP now please' })).toEqual({
-      name: 'stop', args: ['now', 'please'],
+      name: 'stop',
+      args: ['now', 'please'],
     });
   });
 
@@ -89,17 +105,22 @@ describe('Feishu slash command recognition', () => {
   });
 
   it('recognizes a direct-message command without a mention', () => {
-    expect(detect({ text: '/dissolve' })).toEqual({ name: 'dissolve', args: [] });
+    expect(detect({ text: '/dissolve' })).toEqual({
+      name: 'dissolve',
+      args: [],
+    });
   });
 
   it('leaves a trusted bot command-shaped message on ordinary delivery', () => {
-    expect(detect({
-      text: '@_user_10 /dissolve',
-      chatType: 'group',
-      botMentioned: true,
-      senderKind: 'bot',
-      mentions: [mention],
-    })).toBeNull();
+    expect(
+      detect({
+        text: '@_user_10 /dissolve',
+        chatType: 'group',
+        botMentioned: true,
+        senderKind: 'bot',
+        mentions: [mention],
+      }),
+    ).toBeNull();
   });
 });
 
@@ -111,14 +132,17 @@ describe('Feishu slash command recognition', () => {
 type DispatchContext = Parameters<typeof dispatchFeishuSlashCommand>[1];
 function dispatch(
   command: FeishuSlashCommandName,
-  context: Pick<DispatchContext, 'plan' | 'invoke' | 'bindings'> & Partial<DispatchContext>,
+  context: Pick<DispatchContext, 'plan' | 'invoke' | 'bindings'> &
+    Partial<DispatchContext>,
   trailing = 'now please',
 ) {
   const invocation = detect({ text: `/${command} ${trailing}` });
   if (invocation === null) throw new Error(`unrecognized command /${command}`);
   return dispatchFeishuSlashCommand(invocation, {
     target: chatTarget('oc_command', 'group'),
-    bindChannel: async () => { throw new Error('unexpected bind'); },
+    bindChannel: async () => {
+      throw new Error('unexpected bind');
+    },
     resolveChatName: async () => undefined,
     ...context,
   });
@@ -127,10 +151,16 @@ function dispatch(
 describe('Feishu slash command dispatch', () => {
   it('shows its own usage for a bind with no argument and does not bind', async () => {
     const bindChannel = vi.fn<DispatchContext['bindChannel']>();
-    const reply = await dispatch('bind', {
-      plan: { kind: 'dispatcher', reason: 'no_binding' },
-      bindings: [], invoke: async () => ({}), bindChannel,
-    }, '');
+    const reply = await dispatch(
+      'bind',
+      {
+        plan: { kind: 'dispatcher', reason: 'no_binding' },
+        bindings: [],
+        invoke: async () => ({}),
+        bindChannel,
+      },
+      '',
+    );
     expect(reply).toEqual({ kind: 'text', text: 'Usage: /bind <team_name>' });
     expect(bindChannel).not.toHaveBeenCalled();
   });
@@ -138,17 +168,21 @@ describe('Feishu slash command dispatch', () => {
   it('lists every command with its English usage and summary', async () => {
     const reply = await dispatch('help', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
-      bindings: [], invoke: async () => { throw new Error('help must not call Core'); },
+      bindings: [],
+      invoke: async () => {
+        throw new Error('help must not call Core');
+      },
     });
     const expected: Record<FeishuSlashCommandName, string> = {
       bind: '- `/bind <team_name>` — Route this group to a Team.',
-      dissolve: '- `/dissolve` — Dissolve this conversation\'s bound Team.',
+      dissolve: "- `/dissolve` — Dissolve this conversation's bound Team.",
       help: '- `/help` — Show this list.',
       stop: '- `/stop` — Interrupt the current turn in this conversation.',
       teams: '- `/teams` — List running Teams.',
     };
     expect(reply).toEqual({
-      kind: 'text', text: ['**Dreamux commands**', ...Object.values(expected)].join('\n'),
+      kind: 'text',
+      text: ['**Dreamux commands**', ...Object.values(expected)].join('\n'),
     });
     for (const name of Object.keys(expected)) {
       expect(detect({ text: `/${name}` })?.name).toBe(name);
@@ -158,17 +192,23 @@ describe('Feishu slash command dispatch', () => {
   it('targets a bound Team for stop and renders idle distinctly', async () => {
     const calls: Array<{ command: string; payload: JsonValue }> = [];
     const reply = await dispatch('stop', {
-      plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
+      plan: {
+        kind: 'bound',
+        teamName: 'alpha',
+        matched: chatTarget('oc_a', 'group'),
+      },
       bindings: [],
       invoke: async (command, payload) => {
         calls.push({ command, payload });
         return { status: 'idle' };
       },
     });
-    expect(calls).toEqual([{
-      command: 'team.interrupt',
-      payload: { team_name: 'alpha' },
-    }]);
+    expect(calls).toEqual([
+      {
+        command: 'team.interrupt',
+        payload: { team_name: 'alpha' },
+      },
+    ]);
     expect(reply).toEqual({ kind: 'text', text: 'No turn is running.' });
   });
 
@@ -187,16 +227,25 @@ describe('Feishu slash command dispatch', () => {
 
   it('answers every Core command failure with one line', async () => {
     for (const command of ['stop', 'teams', 'dissolve'] as const) {
-      const plan = command === 'dissolve'
-        ? { kind: 'bound' as const, teamName: 'alpha', matched: chatTarget('oc_a', 'group') }
-        : { kind: 'dispatcher' as const, reason: 'no_binding' as const };
-      await expect(dispatch(command, {
-        plan,
-        bindings: [],
-        invoke: async () => { throw new Error('Core unavailable'); },
-      // Every command reports a failure the same way, including `/dissolve`:
-      // a Core it never reached did not refuse anything.
-      })).resolves.toEqual({
+      const plan =
+        command === 'dissolve'
+          ? {
+              kind: 'bound' as const,
+              teamName: 'alpha',
+              matched: chatTarget('oc_a', 'group'),
+            }
+          : { kind: 'dispatcher' as const, reason: 'no_binding' as const };
+      await expect(
+        dispatch(command, {
+          plan,
+          bindings: [],
+          invoke: async () => {
+            throw new Error('Core unavailable');
+          },
+          // Every command reports a failure the same way, including `/dissolve`:
+          // a Core it never reached did not refuse anything.
+        }),
+      ).resolves.toEqual({
         kind: 'text',
         text: `Command /${command} failed: Core unavailable`,
       });
@@ -204,31 +253,47 @@ describe('Feishu slash command dispatch', () => {
   });
 
   it('answers an accepted dissolve with nothing, and every other outcome with words', async () => {
-    await expect(dispatch('dissolve', {
-      plan: { kind: 'dispatcher', reason: 'not_bindable' },
-      bindings: [],
-      invoke: async () => ({}),
-    })).resolves.toEqual({
+    await expect(
+      dispatch('dissolve', {
+        plan: { kind: 'dispatcher', reason: 'not_bindable' },
+        bindings: [],
+        invoke: async () => ({}),
+      }),
+    ).resolves.toEqual({
       kind: 'text',
       text: 'This conversation has no bound Team.',
     });
-    await expect(dispatch('dissolve', {
-      plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
-      bindings: [],
-      invoke: async () => ({
-        accepted: true,
-        team_name: 'alpha',
-        status: 'submitted',
+    await expect(
+      dispatch('dissolve', {
+        plan: {
+          kind: 'bound',
+          teamName: 'alpha',
+          matched: chatTarget('oc_a', 'group'),
+        },
+        bindings: [],
+        invoke: async () => ({
+          accepted: true,
+          team_name: 'alpha',
+          status: 'submitted',
+        }),
+        // The Team's close reaches this Channel as a `team.state` closed event,
+        // which removes the routes and announces that to the conversation. A
+        // receipt here would be a second message about the one event.
       }),
-    // The Team's close reaches this Channel as a `team.state` closed event,
-    // which removes the routes and announces that to the conversation. A
-    // receipt here would be a second message about the one event.
-    })).resolves.toEqual({ kind: 'silent' });
-    await expect(dispatch('dissolve', {
-      plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
-      bindings: [],
-      invoke: async () => { throw new Error('worktree is dirty'); },
-    })).resolves.toEqual({
+    ).resolves.toEqual({ kind: 'silent' });
+    await expect(
+      dispatch('dissolve', {
+        plan: {
+          kind: 'bound',
+          teamName: 'alpha',
+          matched: chatTarget('oc_a', 'group'),
+        },
+        bindings: [],
+        invoke: async () => {
+          throw new Error('worktree is dirty');
+        },
+      }),
+    ).resolves.toEqual({
       kind: 'text',
       text: 'Command /dissolve failed: worktree is dirty',
     });
@@ -237,27 +302,35 @@ describe('Feishu slash command dispatch', () => {
   it('filters running Teams and renders stable colors with current chat names', async () => {
     const input = {
       plan: { kind: 'dispatcher', reason: 'not_bindable' } as const,
-      bindings: [{
-        target_kind: 'group' as const,
-        chat_id: 'oc_a',
-        thread_id: null,
-        display: null,
-        team_name: 'alpha',
-        origin: 'space' as const,
-        space_name: 'space',
-        created_at: 1,
-        updated_at: 1,
-      }],
+      bindings: [
+        {
+          target_kind: 'group' as const,
+          chat_id: 'oc_a',
+          thread_id: null,
+          display: null,
+          team_name: 'alpha',
+          origin: 'space' as const,
+          space_name: 'space',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
       resolveChatName: async () => 'Current chat name',
       invoke: async () => ({
         teams: [
           {
-            team_name: 'alpha', status: 'running', intent: 'Ship it',
-            source_repo: '/repos/example', leader_agent_runtime: 'codex',
+            team_name: 'alpha',
+            status: 'running',
+            intent: 'Ship it',
+            source_repo: '/repos/example',
+            leader_agent_runtime: 'codex',
           },
           {
-            team_name: 'closed', status: 'closed', intent: null,
-            source_repo: null, leader_agent_runtime: 'claude-code',
+            team_name: 'closed',
+            status: 'closed',
+            intent: null,
+            source_repo: null,
+            leader_agent_runtime: 'claude-code',
           },
         ],
       }),
@@ -274,23 +347,32 @@ describe('Feishu slash command dispatch', () => {
   it('falls back to the chat id when one current-name lookup fails', async () => {
     const reply = await dispatch('teams', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
-      bindings: [{
-        target_kind: 'group',
-        chat_id: 'oc_fallback',
-        thread_id: null,
-        display: null,
-        team_name: 'alpha',
-        origin: 'space',
-        space_name: 'space',
-        created_at: 1,
-        updated_at: 1,
-      }],
-      resolveChatName: async () => { throw new Error('lookup unavailable'); },
+      bindings: [
+        {
+          target_kind: 'group',
+          chat_id: 'oc_fallback',
+          thread_id: null,
+          display: null,
+          team_name: 'alpha',
+          origin: 'space',
+          space_name: 'space',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+      resolveChatName: async () => {
+        throw new Error('lookup unavailable');
+      },
       invoke: async () => ({
-        teams: [{
-          team_name: 'alpha', status: 'running', intent: null,
-          source_repo: null, leader_agent_runtime: 'codex',
-        }],
+        teams: [
+          {
+            team_name: 'alpha',
+            status: 'running',
+            intent: null,
+            source_repo: null,
+            leader_agent_runtime: 'codex',
+          },
+        ],
       }),
     });
     expect(JSON.stringify(reply)).toContain('oc_fallback');
@@ -301,10 +383,15 @@ describe('Feishu slash command dispatch', () => {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
       bindings: [],
       invoke: async () => ({
-        teams: [{
-          team_name: 'alpha_*', status: 'running', intent: '</text_tag>*intent*_',
-          source_repo: '/repos/<unsafe>', leader_agent_runtime: 'codex</text_tag>_*',
-        }],
+        teams: [
+          {
+            team_name: 'alpha_*',
+            status: 'running',
+            intent: '</text_tag>*intent*_',
+            source_repo: '/repos/<unsafe>',
+            leader_agent_runtime: 'codex</text_tag>_*',
+          },
+        ],
       }),
     });
     if (reply.kind !== 'card') throw new Error('expected card reply');
@@ -315,7 +402,9 @@ describe('Feishu slash command dispatch', () => {
         elements: Array<{
           header: { title: { content: string } };
           elements: Array<{
-            columns: Array<{ elements: Array<{ elements: Array<{ content: string }> }> }>;
+            columns: Array<{
+              elements: Array<{ elements: Array<{ content: string }> }>;
+            }>;
           }>;
         }>;
       };
@@ -324,7 +413,9 @@ describe('Feishu slash command dispatch', () => {
     const tile = panel.elements[0]!.columns[0]!.elements[0]!;
 
     expect(tile.elements[0]!.content).toContain('codex\\</text\\_tag\\>\\_\\*');
-    expect(tile.elements[1]!.content).toContain('\\</text\\_tag\\>\\*intent\\*\\_');
+    expect(tile.elements[1]!.content).toContain(
+      '\\</text\\_tag\\>\\*intent\\*\\_',
+    );
     expect(tile.elements[1]!.content).not.toContain('</text_tag>*intent*_');
     expect(panel.header.title.content).toContain('\\<unsafe\\>');
   });
@@ -347,10 +438,15 @@ describe('Feishu slash command dispatch', () => {
       ],
       resolveChatName: async () => 'Topic group',
       invoke: async () => ({
-        teams: [{
-          team_name: 'alpha', status: 'running', intent: null,
-          source_repo: null, leader_agent_runtime: 'codex',
-        }],
+        teams: [
+          {
+            team_name: 'alpha',
+            status: 'running',
+            intent: null,
+            source_repo: null,
+            leader_agent_runtime: 'codex',
+          },
+        ],
       }),
     });
     if (reply.kind !== 'card') throw new Error('expected card reply');
@@ -358,7 +454,9 @@ describe('Feishu slash command dispatch', () => {
       body: {
         elements: Array<{
           elements: Array<{
-            columns: Array<{ elements: Array<{ elements: Array<{ content: string }> }> }>;
+            columns: Array<{
+              elements: Array<{ elements: Array<{ content: string }> }>;
+            }>;
           }>;
         }>;
       };
@@ -370,7 +468,7 @@ describe('Feishu slash command dispatch', () => {
       '[📍 Topic group](https://applink.feishu.cn/client/thread/open' +
         '?open_chat_id=oc_group&open_thread_id=omt_topic' +
         '&openchatid=oc_group&openthreadid=omt_topic&thread_position=-1)' +
-        ' <font color=\'grey\'>· omt\\_topic</font>',
+        " <font color='grey'>· omt\\_topic</font>",
     ]);
   });
 });

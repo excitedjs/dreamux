@@ -31,9 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
   CompletionDeliveryPolicy,
@@ -77,12 +75,16 @@ describe('deliverCompletion is a Core-only callback, never part of the model env
     // switched to a hardcoded 'task-notification' string or a different
     // source entirely — tie the two together at the source-text level, the
     // same way the other shape guards in this file do.
-    const teammateServiceText = readSource('src/service/teammate-service/index.ts');
+    const teammateServiceText = readSource(
+      'src/service/teammate-service/index.ts',
+    );
     expect(teammateServiceText).toMatch(/source:\s*COMPLETION_SOURCE/u);
   });
 
   it('renders identically whether or not a deliverCompletion callback is attached', () => {
-    const deliverCompletion: TurnCompletionDelivery = vi.fn(async () => undefined);
+    const deliverCompletion: TurnCompletionDelivery = vi.fn(
+      async () => undefined,
+    );
     const body = 'TeamMate worker has finished its task. Output below:\n\ndone';
 
     const withCallback: TeammateSubmitInput = {
@@ -138,7 +140,9 @@ describe('completion ownership: never inferred from the transport adapter (failu
   });
 
   it('states deliverCompletionToDispatcher as a caller-supplied literal at both call sites, never a computed adapter check', () => {
-    const dispatcherServiceText = readSource('src/service/dispatcher-service/index.ts');
+    const dispatcherServiceText = readSource(
+      'src/service/dispatcher-service/index.ts',
+    );
     // submitToTeamLeader forwards the flag it was handed; it must never
     // recompute it by inspecting what kind of call carried the request.
     expect(dispatcherServiceText).toMatch(
@@ -150,7 +154,9 @@ describe('completion ownership: never inferred from the transport adapter (failu
 
     // The Agent-to-Team MCP delegate is a Core-side caller waiting for the
     // answer, so it states `true` outright.
-    const mcpDelegateText = readSource('src/service/team-collection/mcp-delegate.ts');
+    const mcpDelegateText = readSource(
+      'src/service/team-collection/mcp-delegate.ts',
+    );
     expect(mcpDelegateText).toMatch(/deliverCompletionToDispatcher:\s*true/u);
 
     // The Channel-facing `team.submit` Command has no Core-side waiter,
@@ -227,7 +233,10 @@ describe('null-token completion delivery: an internal failed/stopped turn still 
       status: 'completed',
       result: 'done',
     };
-    const token = completedCompletion(controllableRuntimeSubmission().submission, 'done');
+    const token = completedCompletion(
+      controllableRuntimeSubmission().submission,
+      'done',
+    );
 
     await router.deliverRuntime(recipient, null, failedFact());
     await router.deliverRuntime(recipient, token, completedFact);
@@ -261,7 +270,10 @@ describe('null-token completion delivery: an internal failed/stopped turn still 
       status: 'completed',
       result: 'done',
     };
-    const token = completedCompletion(controllableRuntimeSubmission().submission, 'done');
+    const token = completedCompletion(
+      controllableRuntimeSubmission().submission,
+      'done',
+    );
 
     await router.deliverRuntime(recipient, null, failedFact());
     // Register the SAME real token twice: this only collapses to one send if
@@ -309,7 +321,10 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
       await delivery;
 
       expect(warn).toHaveBeenCalledTimes(1);
-      const [fields, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
+      const [fields, message] = warn.mock.calls[0] as [
+        Record<string, unknown>,
+        string,
+      ];
       expect(message).toMatch(/timed out/u);
       expect(fields['timeout_ms']).toBe(50);
     } finally {
@@ -324,7 +339,9 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
       },
     };
 
-    await expect(policy().deliver(initiator, okCompletion)).resolves.toBeUndefined();
+    await expect(
+      policy().deliver(initiator, okCompletion),
+    ).resolves.toBeUndefined();
   });
 
   it('never rejects the producer-facing delivery after a persistently failing submit exhausts every retry', async () => {
@@ -338,7 +355,9 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
         }),
     };
 
-    await expect(policy().deliver(initiator, okCompletion)).resolves.toBeUndefined();
+    await expect(
+      policy().deliver(initiator, okCompletion),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -358,14 +377,15 @@ function noopLog(warn?: (...args: unknown[]) => void): DreamuxLogger {
   return log as DreamuxLogger;
 }
 
-
 describe('nothing on the completion path can gate presentation on role (failure-ledger #13)', () => {
   it('EntityTurnCoordinator holds no display code at all, so it cannot hold a role gate', () => {
     // The strongest form of the original claim. Display is keyed on the Agent
     // now and never passes through the push-back line, so the class that used
     // to carry a role and a projection carries neither: a `role ===
     // 'dispatcher'`-shaped filter has nowhere here to reappear.
-    const coordinatorText = readSource('src/service/teammate-service/turn-coordinator.ts');
+    const coordinatorText = readSource(
+      'src/service/teammate-service/turn-coordinator.ts',
+    );
     expect(coordinatorText).not.toContain('conversationProjection');
     expect(coordinatorText).not.toContain('TeammateRole');
     expect(coordinatorText).not.toContain('role');
@@ -380,7 +400,9 @@ describe('nothing on the completion path can gate presentation on role (failure-
     // asks not to wake. Where the line breaks and how the arguments are spaced
     // is the formatter's business, and pinning it made this assertion fail for
     // reasons that have nothing to do with the claim.
-    const teammateServiceText = readSource('src/service/teammate-service/index.ts');
+    const teammateServiceText = readSource(
+      'src/service/teammate-service/index.ts',
+    );
     expect(teammateServiceText).toMatch(
       /submitAdmitted\([^;]*COMPLETION_SOURCE[^;]*wake:\s*false/u,
     );

@@ -8,14 +8,12 @@ import {
   buildRunningTeamsCard,
   type RunningTeamRow,
 } from './feishu-running-teams-card.js';
-import type {
-  FeishuBindingView,
-  FeishuRoutingPlan,
-} from './routing/index.js';
+import type { FeishuBindingView, FeishuRoutingPlan } from './routing/index.js';
 import { containingChat, type FeishuTarget } from './routing/target.js';
 import type { FeishuBindingOperations } from './feishu-session-bindings.js';
 
-export type FeishuSlashCommandName = 'bind' | 'dissolve' | 'help' | 'stop' | 'teams';
+export type FeishuSlashCommandName =
+  'bind' | 'dissolve' | 'help' | 'stop' | 'teams';
 
 export interface FeishuSlashCommandInvocation {
   readonly name: FeishuSlashCommandName;
@@ -88,7 +86,7 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
   },
   dissolve: {
     usage: '/dissolve',
-    summary: 'Dissolve this conversation\'s bound Team.',
+    summary: "Dissolve this conversation's bound Team.",
     async execute(context) {
       if (context.plan.kind !== 'bound') {
         return { kind: 'text', text: 'This conversation has no bound Team.' };
@@ -111,7 +109,9 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       kind: 'text',
       text: [
         '**Dreamux commands**',
-        ...Object.values(COMMANDS).map((command) => `- \`${command.usage}\` — ${command.summary}`),
+        ...Object.values(COMMANDS).map(
+          (command) => `- \`${command.usage}\` — ${command.summary}`,
+        ),
       ].join('\n'),
     }),
   },
@@ -122,17 +122,19 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       if (context.plan.kind === 'provision') {
         return { kind: 'text', text: 'This conversation has no bound Team.' };
       }
-      const raw = context.plan.kind === 'bound'
-        ? await context.invoke('team.interrupt', {
-            team_name: context.plan.teamName,
-          })
-        : await context.invoke('dispatcher.interrupt', {});
+      const raw =
+        context.plan.kind === 'bound'
+          ? await context.invoke('team.interrupt', {
+              team_name: context.plan.teamName,
+            })
+          : await context.invoke('dispatcher.interrupt', {});
       const result = raw as { status: 'interrupted' | 'idle' };
       return {
         kind: 'text',
-        text: result.status === 'interrupted'
-          ? 'Current turn interrupted.'
-          : 'No turn is running.',
+        text:
+          result.status === 'interrupted'
+            ? 'Current turn interrupted.'
+            : 'No turn is running.',
       };
     },
   },
@@ -141,8 +143,9 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
     summary: 'List running Teams.',
     async execute(context) {
       const raw = await context.invoke('team.list', {});
-      const rows = (raw as unknown as { teams: RunningTeamRow[] }).teams
-        .filter((team) => team.status === 'running');
+      const rows = (raw as unknown as { teams: RunningTeamRow[] }).teams.filter(
+        (team) => team.status === 'running',
+      );
       return {
         kind: 'card',
         card: await buildRunningTeamsCard({
@@ -178,14 +181,19 @@ export function detectFeishuSlashCommand(input: {
   const names = Object.keys(COMMANDS) as FeishuSlashCommandName[];
   const name = names.find((name) => {
     const token = `/${name}`;
-    return lower.startsWith(token) &&
-      (lower.length === token.length || /^\s/u.test(lower.slice(token.length)));
+    return (
+      lower.startsWith(token) &&
+      (lower.length === token.length || /^\s/u.test(lower.slice(token.length)))
+    );
   });
-  return name === undefined ? null : {
-    name,
-    args: parser(text.slice(name.length + 1), PARSER_CONFIG)._
-      .map((value) => String(value)),
-  };
+  return name === undefined
+    ? null
+    : {
+        name,
+        args: parser(text.slice(name.length + 1), PARSER_CONFIG)._.map(
+          (value) => String(value),
+        ),
+      };
 }
 
 export async function dispatchFeishuSlashCommand(
@@ -193,7 +201,10 @@ export async function dispatchFeishuSlashCommand(
   context: Omit<CommandContext, 'args'>,
 ): Promise<FeishuSlashCommandReply> {
   try {
-    return await COMMANDS[invocation.name].execute({ ...context, args: invocation.args });
+    return await COMMANDS[invocation.name].execute({
+      ...context,
+      args: invocation.args,
+    });
   } catch (error) {
     return {
       kind: 'text',

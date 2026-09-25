@@ -27,10 +27,7 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 import { historyQuery } from '../agent-entity/history-query.js';
-import {
-  repoRequest,
-  repoWorktree,
-} from '../worktree/repo-request.js';
+import { repoRequest, repoWorktree } from '../worktree/repo-request.js';
 import { mapAgentActivityCommandError } from '../agent-entity/activity-errors.js';
 import type { AgentEntitySpawnResult } from '../agent-entity/types.js';
 import type { DispatcherService } from '../dispatcher-service/index.js';
@@ -167,7 +164,9 @@ async function spawn(
   if (scope.kind === 'team_leader') {
     // A Team TeamMate always inherits the Team's shared workspace, which is why
     // the leader catalog does not advertise `repo` at all.
-    result = await (await scope.team()).spawnTeamMate({
+    result = await (
+      await scope.team()
+    ).spawnTeamMate({
       name,
       prompt,
       intent,
@@ -177,7 +176,7 @@ async function spawn(
   } else {
     const repo = repoWorktree(repoRequest(args, 'repo'));
     const cwd =
-      repo === null ? null : repo.cwd ?? (await scope.dispatcher.workspace());
+      repo === null ? null : (repo.cwd ?? (await scope.dispatcher.workspace()));
     const worktree: TeamMateWorktreeRequest | null = repo?.worktree ?? null;
     result = await scope.dispatcher.teammates.spawn({
       name,
@@ -197,7 +196,9 @@ async function send(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const intent = optionalNonBlankString(args, 'intent');
-  const result = await (await teammates(scope)).send({
+  const result = await (
+    await teammates(scope)
+  ).send({
     name: agentEntityNameParam(args, 'name'),
     prompt: mustNonEmptyString(args, 'prompt'),
     ...(intent !== null ? { intent } : {}),
@@ -218,7 +219,9 @@ async function close(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const result = await (await teammates(scope)).close({
+  const result = await (
+    await teammates(scope)
+  ).close({
     name: agentEntityNameParam(args, 'name'),
     note: mustNonBlankString(args, 'note'),
   });
@@ -244,9 +247,9 @@ async function status(
 ): Promise<McpToolSuccess> {
   return {
     structured: {
-      teammate: await (await teammates(scope)).status(
-        agentEntityNameParam(args, 'name'),
-      ),
+      teammate: await (
+        await teammates(scope)
+      ).status(agentEntityNameParam(args, 'name')),
     },
   };
 }
@@ -287,7 +290,9 @@ async function workflowStatus(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const record = await (await workflows(scope)).status({
+  const record = await (
+    await workflows(scope)
+  ).status({
     run_id: workflowRunIdParam(args),
   });
   return { structured: workflowRunResult(record) };
@@ -297,7 +302,9 @@ async function workflowStop(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const result = await (await workflows(scope)).stop({
+  const result = await (
+    await workflows(scope)
+  ).stop({
     run_id: workflowRunIdParam(args),
   });
   return { structured: { run_id: result.run_id, status: result.status } };

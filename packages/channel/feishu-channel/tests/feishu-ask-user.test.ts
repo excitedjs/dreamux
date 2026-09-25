@@ -44,7 +44,10 @@ import {
   ASK_USER_NEXT_INSTRUCTION,
   askUserQuestionDef,
 } from '../src/tools/ask-user-question.js';
-import type { FeishuToolContext, FeishuToolSession } from '../src/tools/types.js';
+import type {
+  FeishuToolContext,
+  FeishuToolSession,
+} from '../src/tools/types.js';
 
 const QUESTIONS: readonly AskUserQuestionSpec[] = [
   {
@@ -65,7 +68,8 @@ const QUESTIONS: readonly AskUserQuestionSpec[] = [
   },
 ];
 
-const EXPLANATION = '# Context\n\n- Compare the options with <at user_id="ou_reader">Reader</at>.';
+const EXPLANATION =
+  '# Context\n\n- Compare the options with <at user_id="ou_reader">Reader</at>.';
 
 function expectExplanation(card: unknown, withoutText: unknown): void {
   const original = withoutText as { body: { elements: unknown[] } };
@@ -73,7 +77,10 @@ function expectExplanation(card: unknown, withoutText: unknown): void {
     ...original,
     body: {
       ...original.body,
-      elements: [{ tag: 'markdown', content: EXPLANATION }, ...original.body.elements],
+      elements: [
+        { tag: 'markdown', content: EXPLANATION },
+        ...original.body.elements,
+      ],
     },
   });
 }
@@ -95,7 +102,8 @@ function event(
 /** Every string leaf in a card tree, so a repaint can be asserted on text. */
 function stringLeaves(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') out.push(value);
-  else if (Array.isArray(value)) for (const item of value) stringLeaves(item, out);
+  else if (Array.isArray(value))
+    for (const item of value) stringLeaves(item, out);
   else if (value !== null && typeof value === 'object') {
     for (const item of Object.values(value)) stringLeaves(item, out);
   }
@@ -153,7 +161,11 @@ describe('ask-user registry', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
     const opened = registry.open({ text: EXPLANATION, questions: QUESTIONS });
     opened.activate('om_card');
-    const view = { requestId: opened.requestId, questions: QUESTIONS, answers: new Map() };
+    const view = {
+      requestId: opened.requestId,
+      questions: QUESTIONS,
+      answers: new Map(),
+    };
     expectExplanation(opened.card, buildAskUserCard(view));
 
     const value = {
@@ -163,17 +175,25 @@ describe('ask-user registry', () => {
     };
     const picked = registry.apply(event(DREAMUX_ASK_PICK_ACTION, value));
     if (picked.kind !== 'response') throw new Error('expected a response');
-    expectExplanation(picked.response.card?.data, buildAskUserCard({
-      ...view,
-      answers: new Map([[0, { kind: 'option', index: 1 }]]),
-    }));
+    expectExplanation(
+      picked.response.card?.data,
+      buildAskUserCard({
+        ...view,
+        answers: new Map([[0, { kind: 'option', index: 1 }]]),
+      }),
+    );
 
-    const other = registry.apply(event(DREAMUX_ASK_OTHER_ACTION, value, 'Use Postgres'));
+    const other = registry.apply(
+      event(DREAMUX_ASK_OTHER_ACTION, value, 'Use Postgres'),
+    );
     if (other.kind !== 'response') throw new Error('expected a response');
-    expectExplanation(other.response.card?.data, buildAskUserCard({
-      ...view,
-      answers: new Map([[0, { kind: 'other', text: 'Use Postgres' }]]),
-    }));
+    expectExplanation(
+      other.response.card?.data,
+      buildAskUserCard({
+        ...view,
+        answers: new Map([[0, { kind: 'other', text: 'Use Postgres' }]]),
+      }),
+    );
 
     const cleared = registry.apply(event(DREAMUX_ASK_OTHER_ACTION, value, ''));
     if (cleared.kind !== 'response') throw new Error('expected a response');
@@ -187,18 +207,23 @@ describe('ask-user registry', () => {
       const opened = registry.open({ text: EXPLANATION, questions: QUESTIONS });
       opened.activate('om_card');
       pickOption(registry, opened.requestId, 0, 0);
-      const settled = registry.apply(event(
-        outcome === 'submitted' ? DREAMUX_ASK_SUBMIT_ACTION : DREAMUX_ASK_CANCEL_ACTION,
-        { [DREAMUX_ASK_REQUEST_KEY]: opened.requestId },
-      ));
+      const settled = registry.apply(
+        event(
+          outcome === 'submitted'
+            ? DREAMUX_ASK_SUBMIT_ACTION
+            : DREAMUX_ASK_CANCEL_ACTION,
+          { [DREAMUX_ASK_REQUEST_KEY]: opened.requestId },
+        ),
+      );
       if (settled.kind !== 'settled') throw new Error('expected settled');
-      const withoutText = outcome === 'submitted'
-        ? buildAskUserSubmittedCard({
-          requestId: opened.requestId,
-          questions: QUESTIONS,
-          answers: new Map([[0, { kind: 'option', index: 0 }]]),
-        })
-        : buildAskUserClosedCard('cancelled');
+      const withoutText =
+        outcome === 'submitted'
+          ? buildAskUserSubmittedCard({
+              requestId: opened.requestId,
+              questions: QUESTIONS,
+              answers: new Map([[0, { kind: 'option', index: 0 }]]),
+            })
+          : buildAskUserClosedCard('cancelled');
       expectExplanation(settled.response.card?.data, withoutText);
       expect(settled.settlement.text).not.toContain(EXPLANATION);
     },
@@ -211,7 +236,9 @@ describe('ask-user registry', () => {
       timers,
       onExpire: (expiry) => expired.push(expiry),
     });
-    registry.open({ text: EXPLANATION, questions: QUESTIONS }).activate('om_card');
+    registry
+      .open({ text: EXPLANATION, questions: QUESTIONS })
+      .activate('om_card');
 
     timers.fire();
 
@@ -264,7 +291,9 @@ describe('ask-user registry', () => {
     );
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     expect(settled.kind).toBe('settled');
     if (settled.kind !== 'settled') return;
@@ -295,7 +324,9 @@ describe('ask-user registry', () => {
     pickOption(registry, requestId, 1, 0);
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     expect(settled.settlement.text).toContain('(left unanswered)');
@@ -306,11 +337,15 @@ describe('ask-user registry', () => {
     const requestId = openRound(registry);
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_CANCEL_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_CANCEL_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     expect(settled.settlement.outcome).toBe('cancelled');
-    expect(settled.settlement.text).toContain('Do not send another question card');
+    expect(settled.settlement.text).toContain(
+      'Do not send another question card',
+    );
   });
 
   it('settles a round exactly once, so a double click cannot deliver twice', () => {
@@ -318,10 +353,14 @@ describe('ask-user registry', () => {
     const requestId = openRound(registry);
     pickOption(registry, requestId, 0, 0);
     const first = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     const second = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
 
     expect(first.kind).toBe('settled');
@@ -371,7 +410,9 @@ describe('ask-user registry', () => {
     const { requestId } = opened;
 
     const empty = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     expect(empty.kind).toBe('response');
     if (empty.kind !== 'response') return;
@@ -390,7 +431,9 @@ describe('ask-user registry', () => {
       }),
     );
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     // One question answered, one not: still a submit, and still worth sending.
@@ -409,7 +452,9 @@ describe('ask-user registry', () => {
     pickOption(registry, requestId, 0, 0);
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     // `sourceId` is synthetic so one round settles once; it is not a Feishu
@@ -470,7 +515,9 @@ describe('ask-user registry', () => {
     const requestId = openRound(registry);
     pickOption(registry, requestId, 0, 0);
     registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
 
     timers.fire();
@@ -483,7 +530,10 @@ describe('ask-user registry', () => {
     const timers = manualTimers();
     const set = vi.spyOn(timers, 'set');
     openRound(createAskUserRegistry({ timers }));
-    expect(set).toHaveBeenCalledWith(expect.any(Function), ASK_USER_CARD_TTL_MS);
+    expect(set).toHaveBeenCalledWith(
+      expect.any(Function),
+      ASK_USER_CARD_TTL_MS,
+    );
   });
 });
 
@@ -560,7 +610,10 @@ describe('ask_user_question tool', () => {
 
   it('parses and passes the explanation to the session unchanged', async () => {
     const askUserQuestion = vi.fn().mockResolvedValue({ request_id: 'r1' });
-    const parsed = askUserQuestionDef.parse({ ...validArgs, text: EXPLANATION });
+    const parsed = askUserQuestionDef.parse({
+      ...validArgs,
+      text: EXPLANATION,
+    });
     expect(parsed.text).toBe(EXPLANATION);
     await askUserQuestionDef.handle(context({ askUserQuestion }), parsed);
     expect(askUserQuestion).toHaveBeenCalledWith({
@@ -570,13 +623,16 @@ describe('ask_user_question tool', () => {
     });
   });
 
-  it.each([undefined, null, ''])('omits an empty explanation (%s)', async (text) => {
-    const askUserQuestion = vi.fn().mockResolvedValue({ request_id: 'r1' });
-    const parsed = askUserQuestionDef.parse({ ...validArgs, text });
-    expect(parsed).not.toHaveProperty('text');
-    await askUserQuestionDef.handle(context({ askUserQuestion }), parsed);
-    expect(askUserQuestion.mock.calls[0]?.[0]).not.toHaveProperty('text');
-  });
+  it.each([undefined, null, ''])(
+    'omits an empty explanation (%s)',
+    async (text) => {
+      const askUserQuestion = vi.fn().mockResolvedValue({ request_id: 'r1' });
+      const parsed = askUserQuestionDef.parse({ ...validArgs, text });
+      expect(parsed).not.toHaveProperty('text');
+      await askUserQuestionDef.handle(context({ askUserQuestion }), parsed);
+      expect(askUserQuestion.mock.calls[0]?.[0]).not.toHaveProperty('text');
+    },
+  );
 
   it('needs a chat and questions, and offers a message and explanation', () => {
     const schema = askUserQuestionDef.inputSchema as {

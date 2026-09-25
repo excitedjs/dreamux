@@ -59,7 +59,9 @@ async function main(): Promise<void> {
 
   // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile, plugins } = await loadConfig({ providerRegistry });
+  const { config, configFile, plugins } = await loadConfig({
+    providerRegistry,
+  });
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });

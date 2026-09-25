@@ -11,7 +11,9 @@ export function requiredDispatcherId(value: unknown): string {
   return validateDispatcherId(requiredString(value, 'id'));
 }
 
-export function withRequiredDispatcherId<T>(y: Argv<T>): Argv<T & { id: string }> {
+export function withRequiredDispatcherId<T>(
+  y: Argv<T>,
+): Argv<T & { id: string }> {
   return y.option('id', {
     type: 'string',
     demandOption: true,

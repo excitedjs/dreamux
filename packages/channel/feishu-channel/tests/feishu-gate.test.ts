@@ -124,13 +124,19 @@ const BRANCH_CASES: TableCase[] = [
   {
     name: 'DM / allowlist + stranger → drop dm_not_on_allowlist',
     input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
-    statePatch: { dm_policy: 'allowlist' as DmPolicy, allow_users: [SENDER_KNOWN] },
+    statePatch: {
+      dm_policy: 'allowlist' as DmPolicy,
+      allow_users: [SENDER_KNOWN],
+    },
     expect: { action: 'drop', reason: 'dm_not_on_allowlist' },
   },
   {
     name: 'DM / allowlist + known user → deliver',
     input: { chat_type: 'p2p', sender_id: SENDER_KNOWN },
-    statePatch: { dm_policy: 'allowlist' as DmPolicy, allow_users: [SENDER_KNOWN] },
+    statePatch: {
+      dm_policy: 'allowlist' as DmPolicy,
+      allow_users: [SENDER_KNOWN],
+    },
     expect: { action: 'deliver' },
   },
   {
@@ -142,7 +148,10 @@ const BRANCH_CASES: TableCase[] = [
   {
     name: 'DM / pairing + known user → deliver (short-circuit allowlist)',
     input: { chat_type: 'p2p', sender_id: SENDER_KNOWN },
-    statePatch: { dm_policy: 'pairing' as DmPolicy, allow_users: [SENDER_KNOWN] },
+    statePatch: {
+      dm_policy: 'pairing' as DmPolicy,
+      allow_users: [SENDER_KNOWN],
+    },
     expect: { action: 'deliver' },
   },
   {
@@ -181,14 +190,22 @@ const BRANCH_CASES: TableCase[] = [
     name: 'GROUP / require_mention + not mentioned → drop group_bot_not_mentioned',
     input: { chat_type: 'group', bot_mentioned: false },
     statePatch: {
-      group: { policy: 'follow-user', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      group: {
+        policy: 'follow-user',
+        allow_chats: [CHAT_ALLOWED],
+        require_mention: true,
+      },
       allow_users: [SENDER_KNOWN],
     },
     expect: { action: 'drop', reason: 'group_bot_not_mentioned' },
   },
   {
     name: 'GROUP / require_mention=false + not mentioned + follow-user + allowed sender → deliver',
-    input: { chat_type: 'group', bot_mentioned: false, sender_id: SENDER_KNOWN },
+    input: {
+      chat_type: 'group',
+      bot_mentioned: false,
+      sender_id: SENDER_KNOWN,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: false },
       allow_users: [SENDER_KNOWN],
@@ -201,7 +218,11 @@ const BRANCH_CASES: TableCase[] = [
     name: 'GROUP / block → drop group_policy_block',
     input: { chat_type: 'group', bot_mentioned: true },
     statePatch: {
-      group: { policy: 'block' as GroupPolicy, allow_chats: [CHAT_ALLOWED], require_mention: false },
+      group: {
+        policy: 'block' as GroupPolicy,
+        allow_chats: [CHAT_ALLOWED],
+        require_mention: false,
+      },
       allow_users: [SENDER_KNOWN],
     },
     expect: { action: 'drop', reason: 'group_policy_block' },
@@ -213,18 +234,36 @@ const BRANCH_CASES: TableCase[] = [
   // groups drop; listed groups bypass dm_policy and allow_users after mention.
   {
     name: 'GROUP / allowlist + trusted chat + known sender → deliver',
-    input: { chat_type: 'group', chat_id: CHAT_ALLOWED, sender_id: SENDER_KNOWN, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      chat_id: CHAT_ALLOWED,
+      sender_id: SENDER_KNOWN,
+      bot_mentioned: true,
+    },
     statePatch: {
-      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      group: {
+        policy: 'allowlist',
+        allow_chats: [CHAT_ALLOWED],
+        require_mention: true,
+      },
       allow_users: [SENDER_KNOWN],
     },
     expect: { action: 'deliver' },
   },
   {
     name: 'GROUP / allowlist + trusted chat + stranger + mentioned → deliver without pairing',
-    input: { chat_type: 'group', chat_id: CHAT_ALLOWED, sender_id: SENDER_STRANGER, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      chat_id: CHAT_ALLOWED,
+      sender_id: SENDER_STRANGER,
+      bot_mentioned: true,
+    },
     statePatch: {
-      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      group: {
+        policy: 'allowlist',
+        allow_chats: [CHAT_ALLOWED],
+        require_mention: true,
+      },
     },
     expect: { action: 'deliver' },
   },
@@ -232,15 +271,28 @@ const BRANCH_CASES: TableCase[] = [
     name: 'GROUP / allowlist + non-allowlisted chat + not mentioned → drop rule1',
     input: { chat_type: 'group', chat_id: CHAT_STRANGER, bot_mentioned: false },
     statePatch: {
-      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: false },
+      group: {
+        policy: 'allowlist',
+        allow_chats: [CHAT_ALLOWED],
+        require_mention: false,
+      },
     },
     expect: { action: 'drop', reason: 'group_not_on_allowlist' },
   },
   {
     name: 'GROUP / allowlist + non-allowlisted chat + mentioned → drop rule1 (no group-kind pairing anymore)',
-    input: { chat_type: 'group', chat_id: CHAT_STRANGER, sender_id: SENDER_STRANGER, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      chat_id: CHAT_STRANGER,
+      sender_id: SENDER_STRANGER,
+      bot_mentioned: true,
+    },
     statePatch: {
-      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      group: {
+        policy: 'allowlist',
+        allow_chats: [CHAT_ALLOWED],
+        require_mention: true,
+      },
       // Even if the sender IS on allow_users, an untrusted chat is blocked.
       allow_users: [SENDER_STRANGER],
     },
@@ -252,7 +304,12 @@ const BRANCH_CASES: TableCase[] = [
   // follow-user = trusted chat OR the existing dm_policy sender path.
   {
     name: 'GROUP / follow-user + known sender (allow_users) → deliver',
-    input: { chat_type: 'group', sender_id: SENDER_KNOWN, bot_mentioned: true, chat_id: CHAT_STRANGER },
+    input: {
+      chat_type: 'group',
+      sender_id: SENDER_KNOWN,
+      bot_mentioned: true,
+      chat_id: CHAT_STRANGER,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
       allow_users: [SENDER_KNOWN],
@@ -261,16 +318,28 @@ const BRANCH_CASES: TableCase[] = [
   },
   {
     name: 'GROUP / follow-user + trusted chat + stranger → deliver without pairing',
-    input: { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      sender_id: SENDER_STRANGER,
+      bot_mentioned: true,
+    },
     statePatch: {
-      group: { policy: 'follow-user', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      group: {
+        policy: 'follow-user',
+        allow_chats: [CHAT_ALLOWED],
+        require_mention: true,
+      },
       allow_users: [],
     },
     expect: { action: 'deliver' },
   },
   {
     name: 'GROUP / follow-user + stranger + not mentioned → drop dm=pairing no mention',
-    input: { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: false },
+    input: {
+      chat_type: 'group',
+      sender_id: SENDER_STRANGER,
+      bot_mentioned: false,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: false },
     },
@@ -278,7 +347,12 @@ const BRANCH_CASES: TableCase[] = [
   },
   {
     name: 'GROUP / follow-user + stranger + mentioned → pair dm-kind (陌生人@bot → 个人授权请求)',
-    input: { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: true, chat_id: CHAT_STRANGER },
+    input: {
+      chat_type: 'group',
+      sender_id: SENDER_STRANGER,
+      bot_mentioned: true,
+      chat_id: CHAT_STRANGER,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
     },
@@ -288,7 +362,13 @@ const BRANCH_CASES: TableCase[] = [
   // ── GROUP: trusted bot ────────────────────────────────────────────────
   {
     name: 'GROUP / trusted bot sender + mentioned → deliver',
-    input: { chat_type: 'group', sender_id: 'peer-bot', is_bot_sender: true, trusted_bot: true, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      sender_id: 'peer-bot',
+      is_bot_sender: true,
+      trusted_bot: true,
+      bot_mentioned: true,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
     },
@@ -296,7 +376,13 @@ const BRANCH_CASES: TableCase[] = [
   },
   {
     name: 'GROUP / trusted bot sender + NOT mentioned → drop',
-    input: { chat_type: 'group', sender_id: 'peer-bot', is_bot_sender: true, trusted_bot: true, bot_mentioned: false },
+    input: {
+      chat_type: 'group',
+      sender_id: 'peer-bot',
+      is_bot_sender: true,
+      trusted_bot: true,
+      bot_mentioned: false,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: false },
     },
@@ -304,7 +390,13 @@ const BRANCH_CASES: TableCase[] = [
   },
   {
     name: 'GROUP / untrusted bot sender → drop bot_untrusted',
-    input: { chat_type: 'group', sender_id: 'unknown-bot', is_bot_sender: true, trusted_bot: false, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      sender_id: 'unknown-bot',
+      is_bot_sender: true,
+      trusted_bot: false,
+      bot_mentioned: true,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: false },
     },
@@ -319,7 +411,12 @@ const BRANCH_CASES: TableCase[] = [
   // @-mention by the SAME user DOES resend their existing dm-kind token.
   {
     name: 'GROUP / follow-user + stranger + already pending same sender → pair resend dm-kind',
-    input: { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: CHAT_STRANGER, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      sender_id: SENDER_STRANGER,
+      chat_id: CHAT_STRANGER,
+      bot_mentioned: true,
+    },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
       pending: {
@@ -376,7 +473,12 @@ const BRANCH_CASES: TableCase[] = [
   },
   {
     name: 'GROUP / follow-user + 10 DM pending full (10 不同陌生人各占一槽) → next new stranger drops dm_pairing_slot_cap',
-    input: { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: CHAT_STRANGER, bot_mentioned: true },
+    input: {
+      chat_type: 'group',
+      sender_id: SENDER_STRANGER,
+      chat_id: CHAT_STRANGER,
+      bot_mentioned: true,
+    },
     statePatch: (() => {
       const pending: Record<string, PendingPairingEntry> = {};
       for (let i = 0; i < MAX_PENDING_PER_KIND; i++) {
@@ -390,7 +492,11 @@ const BRANCH_CASES: TableCase[] = [
         };
       }
       return {
-        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+        group: {
+          policy: 'follow-user',
+          allow_chats: [],
+          require_mention: true,
+        },
         pending,
       };
     })(),
@@ -440,7 +546,12 @@ describe('A. Branch table — every distinct gate decision', () => {
 
 describe('A2. trusted allow_chats truth table', () => {
   for (const policy of ['allowlist', 'follow-user'] as const) {
-    for (const dmPolicy of ['disabled', 'all', 'allowlist', 'pairing'] as const) {
+    for (const dmPolicy of [
+      'disabled',
+      'all',
+      'allowlist',
+      'pairing',
+    ] as const) {
       it(`${policy} trusted chat delivers an exact human under dm_policy=${dmPolicy}`, () => {
         const access = state({
           dm_policy: dmPolicy,
@@ -471,7 +582,9 @@ describe('A2. trusted allow_chats truth table', () => {
         dm_policy: 'disabled',
         group: { policy, allow_chats: [CHAT_ALLOWED], require_mention: false },
       });
-      expect(gate({ bot_mentioned: false }, access).action).toEqual({ action: 'deliver' });
+      expect(gate({ bot_mentioned: false }, access).action).toEqual({
+        action: 'deliver',
+      });
     });
   }
 
@@ -495,19 +608,35 @@ describe('A2. trusted allow_chats truth table', () => {
 
   it('an untrusted follow-user chat retains the existing sender path', () => {
     const base = {
-      group: { policy: 'follow-user' as const, allow_chats: [], require_mention: false },
+      group: {
+        policy: 'follow-user' as const,
+        allow_chats: [],
+        require_mention: false,
+      },
       allow_users: [] as string[],
     };
-    expect(gate({ chat_id: CHAT_STRANGER }, state({ ...base, dm_policy: 'disabled' })).action)
-      .toMatchObject({ action: 'drop', reason: 'dm_disabled' });
-    expect(gate({ chat_id: CHAT_STRANGER }, state({ ...base, dm_policy: 'all' })).action)
-      .toEqual({ action: 'deliver' });
-    expect(gate({ chat_id: CHAT_STRANGER }, state({ ...base, dm_policy: 'allowlist' })).action)
-      .toMatchObject({ action: 'drop', reason: 'group_user_not_on_allowlist' });
-    expect(gate(
-      { chat_id: CHAT_STRANGER, bot_mentioned: true },
-      state({ ...base, dm_policy: 'pairing' }),
-    ).action).toMatchObject({ action: 'pair', kind: 'dm' });
+    expect(
+      gate(
+        { chat_id: CHAT_STRANGER },
+        state({ ...base, dm_policy: 'disabled' }),
+      ).action,
+    ).toMatchObject({ action: 'drop', reason: 'dm_disabled' });
+    expect(
+      gate({ chat_id: CHAT_STRANGER }, state({ ...base, dm_policy: 'all' }))
+        .action,
+    ).toEqual({ action: 'deliver' });
+    expect(
+      gate(
+        { chat_id: CHAT_STRANGER },
+        state({ ...base, dm_policy: 'allowlist' }),
+      ).action,
+    ).toMatchObject({ action: 'drop', reason: 'group_user_not_on_allowlist' });
+    expect(
+      gate(
+        { chat_id: CHAT_STRANGER, bot_mentioned: true },
+        state({ ...base, dm_policy: 'pairing' }),
+      ).action,
+    ).toMatchObject({ action: 'pair', kind: 'dm' });
   });
 });
 
@@ -529,7 +658,11 @@ describe('B. TTL double-guard', () => {
       dm_policy: 'pairing',
       pending: { deadtoken: expired },
     });
-    const result = gate({ chat_type: 'p2p', sender_id: SENDER_STRANGER }, access, NOW);
+    const result = gate(
+      { chat_type: 'p2p', sender_id: SENDER_STRANGER },
+      access,
+      NOW,
+    );
     expect(result.action.action).toBe('pair');
     if (result.action.action !== 'pair') throw new Error('unreachable');
     expect(result.action.is_resend).toBe(false);
@@ -539,7 +672,9 @@ describe('B. TTL double-guard', () => {
     // The new live entry is present under a different key
     const newToken = result.action.token;
     expect(result.nextState.pending[newToken]).toBeDefined();
-    expect(result.nextState.pending[newToken].expires_at).toBe(NOW + PAIRING_TTL_MS);
+    expect(result.nextState.pending[newToken].expires_at).toBe(
+      NOW + PAIRING_TTL_MS,
+    );
   });
 
   it('non-expired pending is counted as existing (resend with same token — dm-kind)', () => {
@@ -559,7 +694,12 @@ describe('B. TTL double-guard', () => {
       pending: { livetoken: live },
     });
     const result = gate(
-      { chat_type: 'group', chat_id: CHAT_STRANGER, sender_id: SENDER_STRANGER, bot_mentioned: true },
+      {
+        chat_type: 'group',
+        chat_id: CHAT_STRANGER,
+        sender_id: SENDER_STRANGER,
+        bot_mentioned: true,
+      },
       access,
       NOW,
     );
@@ -569,7 +709,9 @@ describe('B. TTL double-guard', () => {
     expect(result.action.token).toBe('livetoken');
     expect(result.action.prompt_message_id).toBeUndefined();
     // TTL refreshed from the user's pov
-    expect(result.nextState.pending.livetoken.expires_at).toBe(NOW + PAIRING_TTL_MS);
+    expect(result.nextState.pending.livetoken.expires_at).toBe(
+      NOW + PAIRING_TTL_MS,
+    );
     expect(result.nextState.pending.livetoken.replies).toBe(1);
   });
 
@@ -620,7 +762,11 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
       pending[`d${i}`] = makePendingEntry('dm', i, NOW);
     }
     const access = state({ dm_policy: 'pairing', pending });
-    const result = gate({ chat_type: 'p2p', sender_id: 'new-stranger' }, access, NOW);
+    const result = gate(
+      { chat_type: 'p2p', sender_id: 'new-stranger' },
+      access,
+      NOW,
+    );
     expect(result.action).toEqual({
       action: 'drop',
       reason: 'dm_pairing_slot_cap',
@@ -638,7 +784,12 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
       pending,
     });
     const result = gate(
-      { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: CHAT_STRANGER, bot_mentioned: true },
+      {
+        chat_type: 'group',
+        sender_id: SENDER_STRANGER,
+        chat_id: CHAT_STRANGER,
+        bot_mentioned: true,
+      },
       access,
       NOW,
     );
@@ -661,7 +812,12 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
       pending,
     });
     const result = gate(
-      { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: 'c-brand-new', bot_mentioned: true },
+      {
+        chat_type: 'group',
+        sender_id: SENDER_STRANGER,
+        chat_id: 'c-brand-new',
+        bot_mentioned: true,
+      },
       access,
       NOW,
     );
@@ -681,7 +837,11 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
       pending[`g${i}`] = makePendingEntry('group', i, NOW);
     }
     const access = state({ dm_policy: 'pairing', pending });
-    const result = gate({ chat_type: 'p2p', sender_id: 'new-stranger' }, access, NOW);
+    const result = gate(
+      { chat_type: 'p2p', sender_id: 'new-stranger' },
+      access,
+      NOW,
+    );
     expect(result.action.action).toBe('pair');
     if (result.action.action !== 'pair') throw new Error('unreachable');
     expect(result.action.kind).toBe('dm');
@@ -694,7 +854,11 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
       pending[`x${i}`] = makePendingEntry('dm', i, NOW, true);
     }
     const access = state({ dm_policy: 'pairing', pending });
-    const result = gate({ chat_type: 'p2p', sender_id: 'new-stranger' }, access, NOW);
+    const result = gate(
+      { chat_type: 'p2p', sender_id: 'new-stranger' },
+      access,
+      NOW,
+    );
     // All expired → pruned → quota free → new pair slot
     expect(result.action.action).toBe('pair');
     if (result.action.action !== 'pair') throw new Error('unreachable');
@@ -721,7 +885,12 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
     });
     // Same sender (dm-kind dedupe key is sender_id) → hits the exhausted slot.
     const result = gate(
-      { chat_type: 'group', sender_id: 'u-maxed', chat_id: 'c-any', bot_mentioned: true },
+      {
+        chat_type: 'group',
+        sender_id: 'u-maxed',
+        chat_id: 'c-any',
+        bot_mentioned: true,
+      },
       access,
       NOW,
     );
@@ -773,7 +942,9 @@ describe('D. v3 loader contract', () => {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
     });
     await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/v3/);
-    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/migration|CHANGELOG|access\.json/i);
+    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
+      /migration|CHANGELOG|access\.json/i,
+    );
   });
 
   it('v1 file → throws error mentioning v3', async () => {
@@ -790,7 +961,9 @@ describe('D. v3 loader contract', () => {
     const path = join(stateDir, 'access.json');
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, '{not json', 'utf8');
-    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/access\.json/);
+    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
+      /access\.json/,
+    );
   });
 
   it('shallow-loads a typo group policy but the gate fails closed before trusted delivery', async () => {
@@ -825,7 +998,11 @@ describe('D. v3 loader contract', () => {
     const s = state({
       dm_policy: 'allowlist',
       allow_users: ['u-1'],
-      group: { policy: 'allowlist', allow_chats: ['c-1'], require_mention: false },
+      group: {
+        policy: 'allowlist',
+        allow_chats: ['c-1'],
+        require_mention: false,
+      },
     });
     await saveDispatcherAccess(stateDir, s);
     const path = join(stateDir, 'access.json');
@@ -876,7 +1053,12 @@ describe('E. require_mention default', () => {
       allow_users: [SENDER_KNOWN],
     });
     const r = gate(
-      { chat_type: 'group', sender_id: SENDER_KNOWN, bot_mentioned: false, chat_id: CHAT_STRANGER },
+      {
+        chat_type: 'group',
+        sender_id: SENDER_KNOWN,
+        bot_mentioned: false,
+        chat_id: CHAT_STRANGER,
+      },
       access,
       NOW,
     );
@@ -888,7 +1070,12 @@ describe('E. require_mention default', () => {
       group: { policy: 'allowlist', allow_chats: [], require_mention: false },
     });
     const result = gate(
-      { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: false, chat_id: CHAT_STRANGER },
+      {
+        chat_type: 'group',
+        sender_id: SENDER_STRANGER,
+        bot_mentioned: false,
+        chat_id: CHAT_STRANGER,
+      },
       access,
       NOW,
     );
@@ -931,7 +1118,11 @@ describe('F. Misc constants and helpers', () => {
       // Drive the slot-cap drop path via dm-kind entries; it pushes a warning
       // per call while avoiding the same-sender existing-prompt branch.
       let access: DispatcherAccessStateV3 = state({
-        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+        group: {
+          policy: 'follow-user',
+          allow_chats: [],
+          require_mention: true,
+        },
       });
       const MAX_WARN = 200;
       const iterations = MAX_WARN + 50;
@@ -953,17 +1144,27 @@ describe('F. Misc constants and helpers', () => {
           pending,
         };
         const r = gate(
-          { chat_type: 'group', sender_id: senderId, chat_id: 'c-same-for-all', bot_mentioned: true },
+          {
+            chat_type: 'group',
+            sender_id: senderId,
+            chat_id: 'c-same-for-all',
+            bot_mentioned: true,
+          },
           seedAccess,
           NOW + i,
         );
-        expect(r.action).toMatchObject({ action: 'drop', reason: 'dm_pairing_slot_cap' });
+        expect(r.action).toMatchObject({
+          action: 'drop',
+          reason: 'dm_pairing_slot_cap',
+        });
         access = r.nextState;
       }
       expect(access.warnings.length).toBe(MAX_WARN);
       // Strict FIFO ordering: timestamps monotonically non-decreasing
       for (let i = 1; i < access.warnings.length; i++) {
-        expect(access.warnings[i].at).toBeGreaterThanOrEqual(access.warnings[i - 1].at);
+        expect(access.warnings[i].at).toBeGreaterThanOrEqual(
+          access.warnings[i - 1].at,
+        );
       }
       // Oldest kept warning should be the (iterations - MAX_WARN)-th one
       expect(access.warnings[0].at).toBe(NOW + (iterations - MAX_WARN));
@@ -981,36 +1182,64 @@ describe('F. Misc constants and helpers', () => {
     it('is emitted when dispatcher observes > 1 distinct chats, one-shot', () => {
       const start = state({
         allow_users: [SENDER_KNOWN],
-        group: { policy: 'follow-user', allow_chats: [], require_mention: false },
+        group: {
+          policy: 'follow-user',
+          allow_chats: [],
+          require_mention: false,
+        },
       });
       const r1 = gate(
-        { chat_type: 'group', sender_id: SENDER_KNOWN, chat_id: 'chat-a', bot_mentioned: false },
+        {
+          chat_type: 'group',
+          sender_id: SENDER_KNOWN,
+          chat_id: 'chat-a',
+          bot_mentioned: false,
+        },
         start,
         NOW,
       );
       expect(r1.action.action).toBe('deliver');
-      expect(r1.nextState.warnings.filter((w: DispatcherAccessStateV3['warnings'][number]) => w.msg === TRUST_DOMAIN_WARNING)).toEqual([]);
+      expect(
+        r1.nextState.warnings.filter(
+          (w: DispatcherAccessStateV3['warnings'][number]) =>
+            w.msg === TRUST_DOMAIN_WARNING,
+        ),
+      ).toEqual([]);
       expect(r1.nextState.observed_chats).toEqual(['chat-a']);
 
       const r2 = gate(
-        { chat_type: 'group', sender_id: SENDER_KNOWN, chat_id: 'chat-b', bot_mentioned: false },
+        {
+          chat_type: 'group',
+          sender_id: SENDER_KNOWN,
+          chat_id: 'chat-b',
+          bot_mentioned: false,
+        },
         r1.nextState,
         NOW + 1,
       );
       expect(r2.action.action).toBe('deliver');
       expect(r2.nextState.observed_chats).toEqual(['chat-a', 'chat-b']);
       expect(
-        r2.nextState.warnings.some((w: DispatcherAccessStateV3['warnings'][number]) => w.msg === TRUST_DOMAIN_WARNING),
+        r2.nextState.warnings.some(
+          (w: DispatcherAccessStateV3['warnings'][number]) =>
+            w.msg === TRUST_DOMAIN_WARNING,
+        ),
       ).toBe(true);
 
       // Third chat should NOT duplicate the one-shot warning
       const r3 = gate(
-        { chat_type: 'group', sender_id: SENDER_KNOWN, chat_id: 'chat-c', bot_mentioned: false },
+        {
+          chat_type: 'group',
+          sender_id: SENDER_KNOWN,
+          chat_id: 'chat-c',
+          bot_mentioned: false,
+        },
         r2.nextState,
         NOW + 2,
       );
       const trustWarnCount = r3.nextState.warnings.filter(
-        (w: DispatcherAccessStateV3['warnings'][number]) => w.msg === TRUST_DOMAIN_WARNING,
+        (w: DispatcherAccessStateV3['warnings'][number]) =>
+          w.msg === TRUST_DOMAIN_WARNING,
       ).length;
       expect(trustWarnCount).toBe(1);
     });

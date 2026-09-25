@@ -20,6 +20,11 @@ release workflows, anti-leak guardrails, lint gates, or changelog behavior.
   workflows.
 - **`@excitedjs/eslint-config` owns the source gates** — the synchronous
   blocking-IO ban and the 700-line file cap — for every package.
+- **`/.prettierrc.json` owns repo-wide formatting style**, checked via
+  `prettier --check` appended to each package's own `lint` script (not part
+  of the shared ESLint flat config) — generated files (`CHANGELOG.json`,
+  `dist/`, `.rush/`) and Markdown (including the model-facing skill prompts
+  under `packages/dreamux/skills/`) are excluded from the check.
 - **`/.gitleaks.toml` and `/.npmrc` are shared canonical guardrails** with the
   sibling repo, not per-repo tunables.
 - **`/packages/dreamux/package.json` owns the published surface**: the single
@@ -39,7 +44,7 @@ release workflows, anti-leak guardrails, lint gates, or changelog behavior.
   discovery through review, merge, and knowledge closeout.
 
 Source: `/.github/workflows/`, `/rush.json`, `/common/changes/`,
-`/packages/eslint-config/`, `/.gitleaks.toml`, `/.npmrc`,
+`/packages/eslint-config/`, `/.prettierrc.json`, `/.gitleaks.toml`, `/.npmrc`,
 `/packages/dreamux/package.json`.
 
 ## Contracts
@@ -143,6 +148,15 @@ TypeScript is not a source gate for module-edge shape — see
 `rush lint` is the authoritative bulk gate; the pre-commit hook lint-gates
 staged package `src/` and `tests/` TypeScript against each package's own flat
 config as a local pre-flight.
+
+`prettier --check` also runs inside each package's own `lint` script, appended
+after ESLint, against the repo-root `/.prettierrc.json` config. The exclusion
+globs (`CHANGELOG.json`, `dist/`, `.rush/`, Markdown) live in the script's own
+CLI args, not a `.prettierignore` file — Prettier's ignore-file lookup does not
+search upward from a package directory, so a root-level ignore file would not
+reach any package's `lint` invocation. The pre-commit hook itself is
+unchanged: it still lint-gates staged TypeScript with ESLint only, not
+prettier — formatting is caught by `rush lint`/CI, not locally per commit.
 
 Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.test.ts`,
 `/packages/dreamux/tsconfig.json`, `/common/git-hooks/pre-commit`.

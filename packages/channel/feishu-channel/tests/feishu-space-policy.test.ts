@@ -29,7 +29,11 @@ async function makeRouting(): Promise<FeishuRouting> {
     stateDir: dir,
   });
   await store.load();
-  return new FeishuRouting({ dispatcherId: 'disp-1', channelId: 'chan-1', store });
+  return new FeishuRouting({
+    dispatcherId: 'disp-1',
+    channelId: 'chan-1',
+    store,
+  });
 }
 
 describe('bindSpace — generation advances only on creation-fact changes', () => {

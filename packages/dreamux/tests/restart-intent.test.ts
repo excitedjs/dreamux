@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -66,7 +72,9 @@ describe('restart intent marker', () => {
       path,
     });
     expect(existsSync(path)).toBe(false);
-    expect(consumer.claim('flow', DEFAULT_RESTART_INTENT_TTL_MS + 1)).toBeNull();
+    expect(
+      consumer.claim('flow', DEFAULT_RESTART_INTENT_TTL_MS + 1),
+    ).toBeNull();
   });
 
   it('re-checks the TTL at claim time for late starters', async () => {

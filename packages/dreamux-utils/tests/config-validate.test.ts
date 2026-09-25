@@ -57,13 +57,23 @@ describe('describeType', () => {
 describe('rejectUnknownKeys', () => {
   it('is silent when every key is allowed', () => {
     expect(() =>
-      rejectUnknownKeys({ a: 1, b: 2 }, new Set(['a', 'b']), 'dreamux.json', ''),
+      rejectUnknownKeys(
+        { a: 1, b: 2 },
+        new Set(['a', 'b']),
+        'dreamux.json',
+        '',
+      ),
     ).not.toThrow();
   });
 
   it('throws the generic providerized-v2 message for an ordinary unknown key', () => {
     expect(() =>
-      rejectUnknownKeys({ oops: 1 }, new Set(['a']), 'dreamux.json', 'agents[0].'),
+      rejectUnknownKeys(
+        { oops: 1 },
+        new Set(['a']),
+        'dreamux.json',
+        'agents[0].',
+      ),
     ).toThrowError(
       'dreamux config error in dreamux.json: agents[0].oops is not supported by the providerized config v2 schema',
     );
@@ -90,7 +100,9 @@ describe('rejectUnknownKeys', () => {
         'dreamux.json',
         'dispatchers[3].',
       ),
-    ).toThrowError(/dispatchers\[3\]\.codex is not supported.*Rebuild this dispatcher/s);
+    ).toThrowError(
+      /dispatchers\[3\]\.codex is not supported.*Rebuild this dispatcher/s,
+    );
   });
 
   it('does NOT use the rebuild message for feishu/codex outside a dispatchers[N]. prefix', () => {
@@ -112,7 +124,9 @@ describe('rejectUnknownKeys', () => {
 
 describe('requireNonEmptyString', () => {
   it('returns the value when present and non-blank', () => {
-    expect(requireNonEmptyString({ name: 'alice' }, 'name', 'f.json')).toBe('alice');
+    expect(requireNonEmptyString({ name: 'alice' }, 'name', 'f.json')).toBe(
+      'alice',
+    );
   });
 
   it('rejects a missing key with the "must be a non-empty string" message', () => {
@@ -122,13 +136,17 @@ describe('requireNonEmptyString', () => {
   });
 
   it('rejects a whitespace-only value the same as missing', () => {
-    expect(() => requireNonEmptyString({ name: '   ' }, 'name', 'f.json')).toThrowError(
+    expect(() =>
+      requireNonEmptyString({ name: '   ' }, 'name', 'f.json'),
+    ).toThrowError(
       'dreamux config error in f.json: name must be a non-empty string',
     );
   });
 
   it('rejects a non-string value with the type it actually got', () => {
-    expect(() => requireNonEmptyString({ name: 42 }, 'name', 'f.json')).toThrowError(
+    expect(() =>
+      requireNonEmptyString({ name: 42 }, 'name', 'f.json'),
+    ).toThrowError(
       'dreamux config error in f.json: name must be a string (got number)',
     );
   });
@@ -136,7 +154,9 @@ describe('requireNonEmptyString', () => {
   it('honors the prefix when naming the offending field', () => {
     expect(() =>
       requireNonEmptyString({}, 'name', 'f.json', 'agents[0].'),
-    ).toThrowError('dreamux config error in f.json: agents[0].name must be a non-empty string');
+    ).toThrowError(
+      'dreamux config error in f.json: agents[0].name must be a non-empty string',
+    );
   });
 });
 
@@ -172,7 +192,9 @@ describe('readOptionalBoolean', () => {
   it('rejects a non-boolean value loudly instead of coercing it', () => {
     // "silently coerced" is explicitly the failure mode the repo rule forbids:
     // the string "true" must NOT become boolean true.
-    expect(() => readOptionalBoolean({ k: 'true' }, 'k', false, 'f.json')).toThrowError(
+    expect(() =>
+      readOptionalBoolean({ k: 'true' }, 'k', false, 'f.json'),
+    ).toThrowError(
       'dreamux config error in f.json: k must be a boolean (got string)',
     );
   });
@@ -184,17 +206,24 @@ describe('requireStringArray', () => {
   });
 
   it('returns a copy of the array when every element is a string', () => {
-    expect(requireStringArray({ k: ['a', 'b'] }, 'k', [], 'f.json')).toEqual(['a', 'b']);
+    expect(requireStringArray({ k: ['a', 'b'] }, 'k', [], 'f.json')).toEqual([
+      'a',
+      'b',
+    ]);
   });
 
   it('rejects a non-array value', () => {
-    expect(() => requireStringArray({ k: 'nope' }, 'k', [], 'f.json')).toThrowError(
+    expect(() =>
+      requireStringArray({ k: 'nope' }, 'k', [], 'f.json'),
+    ).toThrowError(
       'dreamux config error in f.json: k must be an array of strings (got string)',
     );
   });
 
   it('rejects a non-string element and names its index', () => {
-    expect(() => requireStringArray({ k: ['a', 2] }, 'k', [], 'f.json')).toThrowError(
+    expect(() =>
+      requireStringArray({ k: ['a', 2] }, 'k', [], 'f.json'),
+    ).toThrowError(
       'dreamux config error in f.json: k[1] must be a string (got number)',
     );
   });
@@ -209,17 +238,23 @@ describe('requireStringRecord', () => {
   });
 
   it('returns the object when every value is a string', () => {
-    expect(requireStringRecord({ k: { x: 'y' } }, 'k', {}, 'f.json')).toEqual({ x: 'y' });
+    expect(requireStringRecord({ k: { x: 'y' } }, 'k', {}, 'f.json')).toEqual({
+      x: 'y',
+    });
   });
 
   it('rejects a non-object value (including arrays)', () => {
-    expect(() => requireStringRecord({ k: ['a'] }, 'k', {}, 'f.json')).toThrowError(
+    expect(() =>
+      requireStringRecord({ k: ['a'] }, 'k', {}, 'f.json'),
+    ).toThrowError(
       'dreamux config error in f.json: k must be an object of strings (got array)',
     );
   });
 
   it('rejects a non-string entry value and names the dotted key', () => {
-    expect(() => requireStringRecord({ k: { x: 5 } }, 'k', {}, 'f.json')).toThrowError(
+    expect(() =>
+      requireStringRecord({ k: { x: 5 } }, 'k', {}, 'f.json'),
+    ).toThrowError(
       'dreamux config error in f.json: k.x must be a string (got number)',
     );
   });
@@ -259,7 +294,9 @@ describe('requirePositiveInt', () => {
 describe('readProviderConfigObject', () => {
   it('returns the raw object unchanged when it is a plain object', () => {
     const raw = { a: 1 };
-    expect(readProviderConfigObject(raw, 'f.json', 'agents[0].codex')).toBe(raw);
+    expect(readProviderConfigObject(raw, 'f.json', 'agents[0].codex')).toBe(
+      raw,
+    );
   });
 
   it('returns {} for an undefined block when allowMissing is set', () => {
@@ -271,7 +308,9 @@ describe('readProviderConfigObject', () => {
   });
 
   it('rejects an undefined block when allowMissing is not set', () => {
-    expect(() => readProviderConfigObject(undefined, 'f.json', 'agents[0].codex')).toThrowError(
+    expect(() =>
+      readProviderConfigObject(undefined, 'f.json', 'agents[0].codex'),
+    ).toThrowError(
       'dreamux config error in f.json: agents[0].codex must be an object (got undefined)',
     );
   });
@@ -280,7 +319,11 @@ describe('readProviderConfigObject', () => {
     // allowMissing only waives the undefined case; a wrong-shaped present value
     // must still fail loud rather than being coerced into {}.
     expect(() =>
-      readProviderConfigObject([1, 2], 'f.json', 'agents[0].codex', { allowMissing: true }),
-    ).toThrowError('dreamux config error in f.json: agents[0].codex must be an object (got array)');
+      readProviderConfigObject([1, 2], 'f.json', 'agents[0].codex', {
+        allowMissing: true,
+      }),
+    ).toThrowError(
+      'dreamux config error in f.json: agents[0].codex must be an object (got array)',
+    );
   });
 });

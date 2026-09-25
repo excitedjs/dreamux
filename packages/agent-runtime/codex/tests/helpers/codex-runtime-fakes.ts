@@ -136,7 +136,9 @@ export class FakeCodexWsClient {
     // admitted-but-not-yet-acknowledged submit converges instead of hanging.
     for (const [, queue] of this.gates) {
       for (const gate of [...queue]) {
-        gate.reject(new Error('fake codex client closed while request was pending'));
+        gate.reject(
+          new Error('fake codex client closed while request was pending'),
+        );
       }
       queue.length = 0;
     }
@@ -185,7 +187,10 @@ export class FakeCodexWsClient {
       return {
         thread: { id, path: `/fake/sessions/${id}.jsonl` },
         model: this.options.model ?? 'test-model',
-        reasoningEffort: this.options.reasoningEffort === undefined ? 'low' : this.options.reasoningEffort,
+        reasoningEffort:
+          this.options.reasoningEffort === undefined
+            ? 'low'
+            : this.options.reasoningEffort,
       } as R;
     }
     if (method === 'thread/resume') {
@@ -196,21 +201,32 @@ export class FakeCodexWsClient {
       return {
         thread: { id: threadId, path: `/fake/sessions/${threadId}.jsonl` },
         model: this.options.model ?? 'test-model',
-        reasoningEffort: this.options.reasoningEffort === undefined ? 'low' : this.options.reasoningEffort,
+        reasoningEffort:
+          this.options.reasoningEffort === undefined
+            ? 'low'
+            : this.options.reasoningEffort,
       } as R;
     }
     if (method === 'model/list') {
       return {
-        data: this.options.models ?? [{
-          model: 'test-model',
-          defaultReasoningEffort: 'medium',
-          supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map((reasoningEffort) => ({ reasoningEffort })),
-        }],
+        data: this.options.models ?? [
+          {
+            model: 'test-model',
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(
+              (reasoningEffort) => ({ reasoningEffort }),
+            ),
+          },
+        ],
         nextCursor: null,
       } as R;
     }
     if (method === 'config/read') {
-      return { config: { model_reasoning_effort: this.options.configuredEffort ?? null } } as R;
+      return {
+        config: {
+          model_reasoning_effort: this.options.configuredEffort ?? null,
+        },
+      } as R;
     }
     if (method === 'turn/start') {
       const p = params as {
@@ -222,9 +238,10 @@ export class FakeCodexWsClient {
       this.turnStartCalls += 1;
       const turnId = scripted ?? `turn-${this.nextTurnId++}`;
       if (this.options.autoComplete !== false) {
-        const text = p.outputSchema === undefined
-          ? p.input[0]?.text ?? ''
-          : '{"values":{}}';
+        const text =
+          p.outputSchema === undefined
+            ? (p.input[0]?.text ?? '')
+            : '{"values":{}}';
         queueMicrotask(() => this.emitCompleted(p.threadId, turnId, text));
       }
       return { turn: { id: turnId } } as R;
@@ -233,8 +250,15 @@ export class FakeCodexWsClient {
     throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
   }
 
-  emitTokenUsage(threadId: string, turnId: string, tokenUsage: ThreadTokenUsage): void {
-    this.emit({ method: 'thread/tokenUsage/updated', params: { threadId, turnId, tokenUsage } });
+  emitTokenUsage(
+    threadId: string,
+    turnId: string,
+    tokenUsage: ThreadTokenUsage,
+  ): void {
+    this.emit({
+      method: 'thread/tokenUsage/updated',
+      params: { threadId, turnId, tokenUsage },
+    });
   }
 
   emitCompleted(threadId: string, turnId: string, text: string): void {
@@ -249,7 +273,10 @@ export class FakeCodexWsClient {
     });
     this.emit({
       method: 'turn/completed',
-      params: { threadId, turn: { id: turnId, items: [], status: 'completed' } },
+      params: {
+        threadId,
+        turn: { id: turnId, items: [], status: 'completed' },
+      },
     });
   }
 
@@ -272,7 +299,10 @@ export class FakeCodexWsClient {
   emitTurnFailed(threadId: string, turnId: string, message: string): void {
     this.emit({
       method: 'turn/completed',
-      params: { threadId, turn: { id: turnId, status: 'failed', error: { message } } },
+      params: {
+        threadId,
+        turn: { id: turnId, status: 'failed', error: { message } },
+      },
     });
   }
 
@@ -297,9 +327,10 @@ export class FakeCodexWsClient {
   ): void {
     this.emit({
       method: phase === 'started' ? 'item/started' : 'item/completed',
-      params: phase === 'started'
-        ? { threadId, turnId, item }
-        : { threadId, turnId, completedAtMs: Date.now(), item },
+      params:
+        phase === 'started'
+          ? { threadId, turnId, item }
+          : { threadId, turnId, completedAtMs: Date.now(), item },
     });
   }
 
@@ -312,7 +343,9 @@ export class FakeCodexWsClient {
 export class FakeCodexProcess {
   reapCalls = 0;
   startCalls = 0;
-  private exitHandlers: Array<(exit: { code: number | null; signal: NodeJS.Signals | null }) => void> = [];
+  private exitHandlers: Array<
+    (exit: { code: number | null; signal: NodeJS.Signals | null }) => void
+  > = [];
   private releaseStart: (() => void) | null = null;
   private rejectStart: ((error: Error) => void) | null = null;
   private startGate: Promise<void> | null = null;
@@ -328,11 +361,21 @@ export class FakeCodexProcess {
     } = {},
   ) {}
 
-  onExit(handler: (exit: { code: number | null; signal: NodeJS.Signals | null }) => void): void {
+  onExit(
+    handler: (exit: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void,
+  ): void {
     this.exitHandlers.push(handler);
   }
 
-  simulateExit(exit: { code: number | null; signal: NodeJS.Signals | null } = { code: null, signal: 'SIGKILL' }): void {
+  simulateExit(
+    exit: { code: number | null; signal: NodeJS.Signals | null } = {
+      code: null,
+      signal: 'SIGKILL',
+    },
+  ): void {
     for (const handler of [...this.exitHandlers]) handler(exit);
   }
 

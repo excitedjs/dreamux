@@ -4,9 +4,7 @@ export const DEFAULT_WORKFLOW_MAX_CONCURRENCY = 16;
 export const MIN_WORKFLOW_MAX_CONCURRENCY = 1;
 export const MAX_WORKFLOW_MAX_CONCURRENCY = 16;
 
-export function parseWorkflowMaxConcurrency(
-  value: unknown,
-): number {
+export function parseWorkflowMaxConcurrency(value: unknown): number {
   if (value === undefined) {
     return DEFAULT_WORKFLOW_MAX_CONCURRENCY;
   }

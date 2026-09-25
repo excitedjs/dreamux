@@ -103,12 +103,12 @@ export function teammateToolDescriptors(
         since: {
           type: 'integer',
           description:
-            'Epoch milliseconds; lower bound on a record\'s last update.',
+            "Epoch milliseconds; lower bound on a record's last update.",
         },
         until: {
           type: 'integer',
           description:
-            'Epoch milliseconds; upper bound on a record\'s last update.',
+            "Epoch milliseconds; upper bound on a record's last update.",
         },
         limit: {
           type: 'integer',
@@ -151,7 +151,7 @@ export function teammateToolDescriptors(
     ),
     tool(
       'status',
-      'Read one TeamMate\'s identity and live runtime status by its concrete name, for an explicit check.',
+      "Read one TeamMate's identity and live runtime status by its concrete name, for an explicit check.",
       {
         name: {
           type: 'string',
@@ -169,7 +169,7 @@ export function teammateToolDescriptors(
     ),
     tool(
       'last',
-      'Read a TeamMate\'s recent activity without starting or resuming it. Returns assistant messages and tool records oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages and set include_tools=false to omit tool records.',
+      "Read a TeamMate's recent activity without starting or resuming it. Returns assistant messages and tool records oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages and set include_tools=false to omit tool records.",
       {
         name: {
           type: 'string',
@@ -187,8 +187,7 @@ export function teammateToolDescriptors(
           type: 'string',
           minLength: 1,
           maxLength: 4096,
-          description:
-            'next_cursor from the previous page, for older records.',
+          description: 'next_cursor from the previous page, for older records.',
         },
         include_tools: {
           type: 'boolean',
@@ -243,17 +242,19 @@ export function teammateToolDescriptors(
       type: 'string',
       minLength: 1,
       maxLength: 64,
-      description: 'Requested label; the concrete name comes back in the result.',
+      description:
+        'Requested label; the concrete name comes back in the result.',
     },
     prompt: {
       type: 'string',
       minLength: 1,
       maxLength: 20000,
-      description: 'The TeamMate\'s first turn.',
+      description: "The TeamMate's first turn.",
     },
     agent_runtime: {
       type: 'string',
-      description: 'Agent runtime id from get_capabilities.agent_runtimes[].id.',
+      description:
+        'Agent runtime id from get_capabilities.agent_runtimes[].id.',
     },
     intent: {
       type: 'string',
@@ -268,7 +269,7 @@ export function teammateToolDescriptors(
       minLength: 1,
       maxLength: 4000,
       description:
-        'Standing role and boundaries appended to the TeamMate\'s system ' +
+        "Standing role and boundaries appended to the TeamMate's system " +
         'prompt for every turn.',
     },
   };
@@ -276,7 +277,7 @@ export function teammateToolDescriptors(
     spawnProperties['repo'] = {
       ...repoInputSchema(),
       description:
-        'Where the TeamMate works; omit for the dispatcher\'s workspace default: a fresh per-TeamMate directory, or the dispatcher\'s own directory when workspace isolation is disabled.',
+        "Where the TeamMate works; omit for the dispatcher's workspace default: a fresh per-TeamMate directory, or the dispatcher's own directory when workspace isolation is disabled.",
     };
   }
   // The pointer to the hand-down skill opens the description of the tool the

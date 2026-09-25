@@ -11,8 +11,8 @@
 
 // ── contract/ — the pure types (the future `@excitedjs/channel-contract`
 //    extraction point when a second platform lands) ──
-export type { Mention } from './contract/types.js'
-export type { OutboundTarget } from './contract/outbound.js'
+export type { Mention } from './contract/types.js';
+export type { OutboundTarget } from './contract/outbound.js';
 
 // ── parse/ — Feishu content → one text body, plus the comment-event and
 //    document-reference decodes ──
@@ -23,25 +23,22 @@ export {
   type ParsedInbound,
   type InboundResource,
   type InboundResourceType,
-} from './parse/content.js'
+} from './parse/content.js';
 export {
   normalizeBotMemberAddedEvent,
   BOT_MEMBER_ADDED_EVENT_TYPE,
   type FeishuBotMemberAddedEvent,
-} from './parse/bot-member.js'
+} from './parse/bot-member.js';
 export {
   normalizeCommentEvent,
   DOC_COMMENT_EVENT_TYPE,
   type FeishuCommentEvent,
-} from './parse/comment.js'
+} from './parse/comment.js';
 export {
   parseFeishuDocumentRef,
   type FeishuDocumentRef,
-} from './parse/document-ref.js'
-export {
-  isBotMentioned,
-  isBotSenderType,
-} from './parse/mentions.js'
+} from './parse/document-ref.js';
+export { isBotMentioned, isBotSenderType } from './parse/mentions.js';
 
 // ── transport/ — the Feishu SDK boundary (the only lark importer) ──
 export {
@@ -70,7 +67,7 @@ export {
   type FeishuMessageReadResponse,
   type InboundRoutes,
   type RouteHandler,
-} from './transport/feishu.js'
+} from './transport/feishu.js';
 export {
   FEISHU_COT_APPEND_MAX_EVENTS,
   FeishuCotApiError,
@@ -83,8 +80,8 @@ export {
   type FeishuCotCreateInput,
   type FeishuCotCreateResult,
   type FeishuCotEventInput,
-} from './transport/cot.js'
-export type { TransportLogger } from './transport/diagnostics.js'
+} from './transport/cot.js';
+export type { TransportLogger } from './transport/diagnostics.js';
 
 // ── small shared util ──
-export { isRecord, asString } from './json.js'
+export { isRecord, asString } from './json.js';

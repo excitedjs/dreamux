@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ExecaCommandRunner } from '../src/onboard/commands.js';
-import { adminContext, createCommandHarness } from './helpers/command-harness.js';
+import {
+  adminContext,
+  createCommandHarness,
+} from './helpers/command-harness.js';
 
 /**
  * The 'reads a stopped Dispatcher through the real Server host without
@@ -16,7 +19,12 @@ import { adminContext, createCommandHarness } from './helpers/command-harness.js
 describe('channel.list', () => {
   it('returns every configured Channel in order, including one without an identity', async () => {
     const channels = [
-      { channel_id: 'primary', provider: 'npm:@example/primary', identity: '', live: true },
+      {
+        channel_id: 'primary',
+        provider: 'npm:@example/primary',
+        identity: '',
+        live: true,
+      },
       {
         channel_id: 'secondary',
         provider: 'npm:@example/secondary',
@@ -39,7 +47,10 @@ describe('channel.list', () => {
 
     await expect(
       harness.port.invoke(adminContext(), 'channel.list', {}),
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('dispatcher_id') });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('dispatcher_id'),
+    });
     expect(harness.dispatcherLookups).toEqual([]);
   });
 
@@ -47,11 +58,14 @@ describe('channel.list', () => {
     const harness = createCommandHarness();
 
     await expect(
-      harness.port.invoke(adminContext('unknown-dispatcher'), 'channel.list', {}),
+      harness.port.invoke(
+        adminContext('unknown-dispatcher'),
+        'channel.list',
+        {},
+      ),
     ).rejects.toMatchObject({ code: 'DISPATCHER_NOT_FOUND' });
     expect(harness.dispatcherLookups).toEqual([]);
   });
-
 });
 
 describe('ExecaCommandRunner', () => {
@@ -85,4 +99,3 @@ describe('ExecaCommandRunner', () => {
     ).resolves.toBe(true);
   });
 });
-

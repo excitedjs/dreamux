@@ -1,7 +1,4 @@
-import {
-  isScanDigest,
-  scanDigest,
-} from '@excitedjs/dreamux-utils';
+import { isScanDigest, scanDigest } from '@excitedjs/dreamux-utils';
 
 import { CodexActivityError } from './error.js';
 

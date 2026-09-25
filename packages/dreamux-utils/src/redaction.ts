@@ -69,18 +69,27 @@ const INLINE_SECRET_RE = new RegExp(
   String.raw`(["']?\b(?:` +
     SECRET_KEY_NAMES +
     String.raw`)\b["']?)(\s*[:=]\s*)(` +
-    String.raw`"(?:[^"\\]|\\.)*"` + '|' +
-    String.raw`'[^']*'` + '|' +
-    BACKTICK + `[^${BACKTICK}]*` + BACKTICK + '|' +
-    String.raw`[^\s,;"'` + BACKTICK + String.raw`)\]}]+)`,
+    String.raw`"(?:[^"\\]|\\.)*"` +
+    '|' +
+    String.raw`'[^']*'` +
+    '|' +
+    BACKTICK +
+    `[^${BACKTICK}]*` +
+    BACKTICK +
+    '|' +
+    String.raw`[^\s,;"'` +
+    BACKTICK +
+    String.raw`)\]}]+)`,
   'giu',
 );
 
 const SECRET_KEY_NAME_RE = new RegExp(`(?:${SECRET_KEY_NAMES})`, 'iu');
 
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
-const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
-const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
+const PRIVATE_KEY_RE =
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
+const JWT_RE =
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
 const COMMON_ACCESS_KEY_RE = /\b(?:AKIA|ASIA|AKLT)[A-Z0-9]{12,}\b/gu;
 
 /**
@@ -104,7 +113,10 @@ const PATH_TOKEN_CHARACTER_RE = /[\p{L}\p{N}_.~\\/-]/u;
  * surface an already-damaged value — a JSON result that no longer parses —
  * with no way to get it back.
  */
-export interface RedactedText { value: string; redacted: boolean }
+export interface RedactedText {
+  value: string;
+  redacted: boolean;
+}
 
 /**
  * Whether a field's *name* says its value is a secret.
@@ -216,13 +228,15 @@ export function redactJson(
     // plain `out[key] = ...` would not: a payload carrying its own `__proto__`
     // member — ordinary data, which is exactly what `JSON.parse` builds it as —
     // would reach the prototype setter instead and disappear from the result.
-    const entries = Object.entries(node).map(([key, child]): [string, JsonValue] => {
-      if (isSecretKeyName(key)) {
-        redacted = true;
-        return [key, '<redacted>'];
-      }
-      return [key, walk(child)];
-    });
+    const entries = Object.entries(node).map(
+      ([key, child]): [string, JsonValue] => {
+        if (isSecretKeyName(key)) {
+          redacted = true;
+          return [key, '<redacted>'];
+        }
+        return [key, walk(child)];
+      },
+    );
     return Object.fromEntries(entries);
   };
   return value === null

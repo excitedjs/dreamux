@@ -54,7 +54,9 @@ describe('team.create dispatch reminder', () => {
 
     expect(result.ok).toBe(true);
     expect(result).toMatchObject({ text: TEAM_DISPATCH_SUCCESS_REMINDER });
-    expect(result).toMatchObject({ text: expect.stringMatching(/do not poll.*completion/i) });
+    expect(result).toMatchObject({
+      text: expect.stringMatching(/do not poll.*completion/i),
+    });
   });
 
   it('says nothing when no prompt was given', async () => {
@@ -63,7 +65,6 @@ describe('team.create dispatch reminder', () => {
     expect(result.ok).toBe(true);
     expect(result).not.toHaveProperty('text');
   });
-
 });
 
 describe('team.send dispatch reminder', () => {
@@ -81,7 +82,9 @@ describe('team.send dispatch reminder', () => {
       structured: { status: 'submitted', turn_id: 'harness-turn-1' },
       text: TEAM_DISPATCH_SUCCESS_REMINDER,
     });
-    expect(result).toMatchObject({ text: expect.stringMatching(/automatically push.*Do not poll/) });
+    expect(result).toMatchObject({
+      text: expect.stringMatching(/automatically push.*Do not poll/),
+    });
   });
 
   it.each(['duplicate', 'stopped', 'skipped', 'failed', 'ambiguous'])(
@@ -89,7 +92,10 @@ describe('team.send dispatch reminder', () => {
     async (status) => {
       const delegate = createTeamMcpDelegate({
         dispatcher: createFakeDispatcher({
-          submitToTeamLeader: async () => ({ status, error: new Error('not admitted') }),
+          submitToTeamLeader: async () => ({
+            status,
+            error: new Error('not admitted'),
+          }),
         }),
         caller: { kind: 'dispatcher' },
       });
@@ -103,61 +109,83 @@ describe('team.send dispatch reminder', () => {
   );
 });
 
-describe.each(['dispatcher', 'team_leader'] as const)('%s TeamMate dispatch reminders', (kind) => {
-  function delegateFor(overrides: FakeDispatcherOverrides = {}) {
-    const dispatcher = createFakeDispatcher(overrides);
-    return createTeamMateMcpDelegate(kind === 'dispatcher'
-      ? { kind, dispatcher }
-      : {
-          kind,
-          team: async () => ({
-            teammates: dispatcher.teammates,
-            spawnTeamMate: dispatcher.teammates.spawn,
-            workflows: dispatcher.workflows,
-          }) as unknown as TeamLeaderHandle,
-        });
-  }
+describe.each(['dispatcher', 'team_leader'] as const)(
+  '%s TeamMate dispatch reminders',
+  (kind) => {
+    function delegateFor(overrides: FakeDispatcherOverrides = {}) {
+      const dispatcher = createFakeDispatcher(overrides);
+      return createTeamMateMcpDelegate(
+        kind === 'dispatcher'
+          ? { kind, dispatcher }
+          : {
+              kind,
+              team: async () =>
+                ({
+                  teammates: dispatcher.teammates,
+                  spawnTeamMate: dispatcher.teammates.spawn,
+                  workflows: dispatcher.workflows,
+                }) as unknown as TeamLeaderHandle,
+            },
+      );
+    }
 
-  describe.each(['spawn', 'send'])('%s', (name) => {
-    it.each(['submitted', 'duplicate', 'stopped', 'failed', 'ambiguous'])(
-      'preserves the %s receipt and guides only submitted work',
-      async (status) => {
-        const receipt = { teammate: {}, status };
-        const delegate = delegateFor({
-          teammates: { spawn: async () => receipt, send: async () => receipt },
-        });
-        const result = await delegate.call({
-          name,
-          arguments: name === 'spawn'
-            ? { name_prefix: 'reviewer', intent: 'review the change', prompt: 'review' }
-            : { name: 'reviewer-1', prompt: 'continue' },
-        });
-        expect(result).toMatchObject({ ok: true, structured: receipt });
-        if (status === 'submitted') {
-          expect(result).toMatchObject({ text: TEAMMATE_DISPATCH_SUCCESS_REMINDER });
-          expect(result).toMatchObject({ text: expect.stringMatching(/automatically push.*Do not poll/) });
-        } else {
-          expect(result).not.toHaveProperty('text');
-        }
-      },
-    );
-  });
-
-  it('keeps the workflow run id and requires waiting for system completion', async () => {
-    const result = await delegateFor().call({
-      name: 'workflow_run',
-      arguments: { script: 'export default async () => "done";' },
+    describe.each(['spawn', 'send'])('%s', (name) => {
+      it.each(['submitted', 'duplicate', 'stopped', 'failed', 'ambiguous'])(
+        'preserves the %s receipt and guides only submitted work',
+        async (status) => {
+          const receipt = { teammate: {}, status };
+          const delegate = delegateFor({
+            teammates: {
+              spawn: async () => receipt,
+              send: async () => receipt,
+            },
+          });
+          const result = await delegate.call({
+            name,
+            arguments:
+              name === 'spawn'
+                ? {
+                    name_prefix: 'reviewer',
+                    intent: 'review the change',
+                    prompt: 'review',
+                  }
+                : { name: 'reviewer-1', prompt: 'continue' },
+          });
+          expect(result).toMatchObject({ ok: true, structured: receipt });
+          if (status === 'submitted') {
+            expect(result).toMatchObject({
+              text: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+            });
+            expect(result).toMatchObject({
+              text: expect.stringMatching(/automatically push.*Do not poll/),
+            });
+          } else {
+            expect(result).not.toHaveProperty('text');
+          }
+        },
+      );
     });
-    expect(result).toEqual({
-      ok: true,
-      structured: { run_id: 'harness-run-1' },
-      text: WORKFLOW_RUN_SUCCESS_REMINDER,
-    });
-    expect(result).toMatchObject({ text: expect.stringMatching(/do not call or poll.*wait for the system push/) });
-  });
 
-  it('does not attach dispatch guidance to a read', async () => {
-    const result = await delegateFor().call({ name: 'list', arguments: {} });
-    expect(result).toEqual({ ok: true, structured: { teammates: [] } });
-  });
-});
+    it('keeps the workflow run id and requires waiting for system completion', async () => {
+      const result = await delegateFor().call({
+        name: 'workflow_run',
+        arguments: { script: 'export default async () => "done";' },
+      });
+      expect(result).toEqual({
+        ok: true,
+        structured: { run_id: 'harness-run-1' },
+        text: WORKFLOW_RUN_SUCCESS_REMINDER,
+      });
+      expect(result).toMatchObject({
+        text: expect.stringMatching(
+          /do not call or poll.*wait for the system push/,
+        ),
+      });
+    });
+
+    it('does not attach dispatch guidance to a read', async () => {
+      const result = await delegateFor().call({ name: 'list', arguments: {} });
+      expect(result).toEqual({ ok: true, structured: { teammates: [] } });
+    });
+  },
+);

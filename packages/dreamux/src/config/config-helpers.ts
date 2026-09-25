@@ -78,7 +78,10 @@ export function channelProviderRefs(raw: unknown): string[] {
   for (const dispatcher of dispatchers) {
     if (!isPlainObject(dispatcher)) continue;
     out.push(
-      ...providerRefsFrom(dispatcher['channels'], (channel) => channel['provider']),
+      ...providerRefsFrom(
+        dispatcher['channels'],
+        (channel) => channel['provider'],
+      ),
     );
   }
   return out;

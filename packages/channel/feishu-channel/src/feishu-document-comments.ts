@@ -97,7 +97,10 @@ export interface FeishuDocumentCommentsOptions {
     teamName: string | null,
     submission: FeishuSubmission,
   ): Promise<FeishuSubmitOutcome>;
-  fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMetaResult>;
+  fetchDocMeta(
+    fileToken: string,
+    fileType: string,
+  ): Promise<FeishuDocMetaResult>;
   resolveWikiNode(token: string): Promise<FeishuWikiNode | null>;
   /** The comment's own text; `null` when Feishu's thread does not hold it. */
   fetchDocCommentText(
@@ -380,10 +383,12 @@ export class FeishuDocumentComments {
     deadlineAt: number,
   ): Promise<string> {
     try {
-      return await runFeishuBoundedOperation({
-        deadlineAt,
-        operation: () => this.opts.resolveUserName(openId),
-      }) ?? '';
+      return (
+        (await runFeishuBoundedOperation({
+          deadlineAt,
+          operation: () => this.opts.resolveUserName(openId),
+        })) ?? ''
+      );
     } catch {
       // The name is decoration on an event that is already identified by ids.
       return '';
@@ -405,12 +410,13 @@ export class FeishuDocumentComments {
     try {
       const comment = await runFeishuBoundedOperation({
         deadlineAt,
-        operation: () => this.opts.fetchDocCommentText({
-          fileToken: event.fileToken,
-          fileType: event.fileType,
-          commentId: event.commentId,
-          replyId: event.replyId,
-        }),
+        operation: () =>
+          this.opts.fetchDocCommentText({
+            fileToken: event.fileToken,
+            fileType: event.fileType,
+            commentId: event.commentId,
+            replyId: event.replyId,
+          }),
       });
       if (comment !== null) return comment;
       this.opts.log.info(
@@ -515,7 +521,10 @@ function documentCommentAttrs(
     ['notice_type', event.replyId === '' ? 'add_comment' : 'add_reply'],
     ['anchor', anchor === undefined ? '' : anchor.kind],
     ['anchor_id', anchor?.kind === 'content' ? anchor.anchorId : ''],
-    ['anchor_deleted', anchor?.kind === 'content' && anchor.deleted ? 'true' : ''],
+    [
+      'anchor_deleted',
+      anchor?.kind === 'content' && anchor.deleted ? 'true' : '',
+    ],
     ['mentioned', event.mentionedBot ? 'true' : 'false'],
     ['sender_id', event.commenterId],
     ['sender_name', senderName],
@@ -552,8 +561,11 @@ function documentCommentBody(comment: FeishuDocCommentText | null): string {
         `${escapeXmlText(anchor.preview)}\n</quote>`,
     );
   }
-  const content = comment === null ? '' : renderCommentSegments(comment.segments);
-  blocks.push(content === '' ? '<content />' : `<content>\n${content}\n</content>`);
+  const content =
+    comment === null ? '' : renderCommentSegments(comment.segments);
+  blocks.push(
+    content === '' ? '<content />' : `<content>\n${content}\n</content>`,
+  );
   return blocks.join('\n');
 }
 
@@ -569,8 +581,10 @@ function renderCommentSegments(
   segments: readonly FeishuCommentSegment[],
 ): string {
   return segments
-    .map((segment) => segment.kind === 'text'
-      ? escapeXmlText(segment.text)
-      : renderFeishuMention(segment.openId, ''))
+    .map((segment) =>
+      segment.kind === 'text'
+        ? escapeXmlText(segment.text)
+        : renderFeishuMention(segment.openId, ''),
+    )
     .join('');
 }

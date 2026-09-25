@@ -8,11 +8,7 @@ import { parseWorkflowMaxConcurrency } from './limits.js';
 
 export type WorkflowCallerKind = 'dispatcher' | 'team_leader';
 
-export type WorkflowRunStatus =
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'stopped';
+export type WorkflowRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 export type WorkflowTerminalStatus = Exclude<WorkflowRunStatus, 'running'>;
 
@@ -96,7 +92,9 @@ export function workflowRunInput(params: CommandPayload): WorkflowRunInput {
   const script = optionalNonBlankString(params, 'script');
   const scriptPath = optionalNonBlankString(params, 'scriptPath');
   if (script === null && scriptPath === null) {
-    throw new ValidationError('a workflow run requires either script or scriptPath');
+    throw new ValidationError(
+      'a workflow run requires either script or scriptPath',
+    );
   }
   return {
     ...(script !== null ? { script } : {}),
@@ -121,7 +119,9 @@ export function workflowRunIdParam(params: CommandPayload): string {
  * output schema is closed, so an additive internal field would otherwise fail
  * output validation instead of being quietly ignored.
  */
-export function workflowRunResult(record: WorkflowRunRecord): WorkflowRunRecord {
+export function workflowRunResult(
+  record: WorkflowRunRecord,
+): WorkflowRunRecord {
   return {
     version: record.version,
     run_id: record.run_id,

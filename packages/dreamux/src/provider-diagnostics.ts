@@ -8,11 +8,12 @@ import type {
 import type { AgentRuntimeProviderCatalog } from './agent-runtime/catalog.js';
 import { hostRuntimePaths } from './agent-runtime/host-paths.js';
 import type { ChannelProviderCatalog } from './channel/catalog.js';
-import { dispatcherAgent, type DispatcherConfig, type DreamuxConfig } from './config/config.js';
 import {
-  dispatcherCacheDir,
-  dispatcherDir,
-} from './platform/paths.js';
+  dispatcherAgent,
+  type DispatcherConfig,
+  type DreamuxConfig,
+} from './config/config.js';
+import { dispatcherCacheDir, dispatcherDir } from './platform/paths.js';
 import type { CommandRunner } from './onboard/types.js';
 
 export type ProviderDiagnosticKind = 'agentRuntime' | 'channel';
@@ -51,7 +52,9 @@ export async function runDispatcherProviderDiagnostics(
 ): Promise<ProviderDiagnosticReport[]> {
   const { config, dispatcher, catalogs, runner, env, scope } = options;
   const agent = dispatcherAgent(config, dispatcher.id);
-  const runtimeProvider = catalogs.agentRuntime.resolve(agent.provider).implementation;
+  const runtimeProvider = catalogs.agentRuntime.resolve(
+    agent.provider,
+  ).implementation;
   const runtimeDiagnostic = runtimeProvider.diagnostic;
   const runtimeResult =
     runtimeDiagnostic === undefined
@@ -115,9 +118,8 @@ export function providerBinChecksForConfig(
   };
 
   for (const [agentId, agent] of Object.entries(options.config.agents)) {
-    const diagnostic = options.catalogs.agentRuntime.resolve(
-      agent.provider,
-    ).implementation.diagnostic;
+    const diagnostic = options.catalogs.agentRuntime.resolve(agent.provider)
+      .implementation.diagnostic;
     if (diagnostic === undefined) continue;
     for (const check of diagnostic.binChecks({
       runtime_id: agentId,
@@ -132,9 +134,8 @@ export function providerBinChecksForConfig(
 
   for (const dispatcher of options.config.dispatchers) {
     for (const channel of dispatcher.channels) {
-      const diagnostic = options.catalogs.channel.resolve(
-        channel.provider,
-      ).implementation.diagnostic;
+      const diagnostic = options.catalogs.channel.resolve(channel.provider)
+        .implementation.diagnostic;
       if (diagnostic === undefined) continue;
       for (const check of diagnostic.binChecks(
         channelDiagnosticContext(

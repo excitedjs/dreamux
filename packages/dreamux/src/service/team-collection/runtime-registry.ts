@@ -39,8 +39,14 @@ export class TeamRuntimeRegistry {
     { service: TeamService; lifecycle: TeamSchedulerLifecycle }
   >();
   private readonly materialized = new Set<TeamService>();
-  private readonly closedSubscriptions = new Map<TeamService, ClosedSubscription>();
-  private readonly constructing = new Map<string, Promise<TeamService | null>>();
+  private readonly closedSubscriptions = new Map<
+    TeamService,
+    ClosedSubscription
+  >();
+  private readonly constructing = new Map<
+    string,
+    Promise<TeamService | null>
+  >();
   /** `created` hook runs still in flight; stop waits for them. */
   private readonly createdHooks = new InFlightWork();
 
@@ -125,7 +131,9 @@ export class TeamRuntimeRegistry {
    */
   private fireCreated(service: TeamService, requestId: string | null): void {
     this.createdHooks.track(
-      Promise.resolve().then(() => service.hooks.created.promise({ requestId })),
+      Promise.resolve().then(() =>
+        service.hooks.created.promise({ requestId }),
+      ),
     );
   }
 
@@ -189,7 +197,10 @@ export class TeamRuntimeRegistry {
       // Removed or deliberately kept is the end of it. Anything else is a
       // directory this attempt made and nobody now owns, so it is reported the
       // same way a raised failure is — once, with where it is and why it stayed.
-      if (cleaned.cleanup_state !== 'deleted' && cleaned.cleanup_state !== 'kept') {
+      if (
+        cleaned.cleanup_state !== 'deleted' &&
+        cleaned.cleanup_state !== 'kept'
+      ) {
         this.opts.collection.log.warn(
           {
             dispatcher_id: this.opts.dispatcherId,
@@ -289,7 +300,8 @@ export class TeamRuntimeRegistry {
   }
 
   stopSchedulers(): void {
-    for (const scheduler of this.schedulers.values()) scheduler.lifecycle.stop();
+    for (const scheduler of this.schedulers.values())
+      scheduler.lifecycle.stop();
   }
 
   /**

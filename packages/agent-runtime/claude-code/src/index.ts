@@ -28,10 +28,7 @@ export {
   type TurnSubmitOptions,
 } from './supervisor.js';
 
-export {
-  ClaudeCodeStreamRpc,
-  type ClaudeCodeStreamRpcOptions,
-} from './rpc.js';
+export { ClaudeCodeStreamRpc, type ClaudeCodeStreamRpcOptions } from './rpc.js';
 
 export {
   LineBuffer,
@@ -44,11 +41,7 @@ export {
   buildControlAck,
 } from './stream.js';
 
-export type {
-  JsonObject,
-  ParsedLine,
-  ResultEnvelope,
-} from './types.js';
+export type { JsonObject, ParsedLine, ResultEnvelope } from './types.js';
 
 export {
   claudeCodeMcpConfig,

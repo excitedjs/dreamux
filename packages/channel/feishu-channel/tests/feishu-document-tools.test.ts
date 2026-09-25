@@ -30,9 +30,11 @@ describe('the document tools are one definition for both callers', () => {
       unsubscribeDocumentDef,
       listSubscriptionsDef,
     ]) {
-      const properties = (def.inputSchema as {
-        properties: Record<string, unknown>;
-      }).properties;
+      const properties = (
+        def.inputSchema as {
+          properties: Record<string, unknown>;
+        }
+      ).properties;
       expect(Object.keys(properties)).not.toContain('team_name');
     }
   });

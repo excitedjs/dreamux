@@ -35,10 +35,7 @@ import type { CoreCommandHost } from './command/host.js';
 import { McpLeaseRegistry } from './service/mcp/leases.js';
 import { CoreCommandPort } from './command/port.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import {
-  Dispatchers,
-  type DispatcherService,
-} from './service/index.js';
+import { Dispatchers, type DispatcherService } from './service/index.js';
 import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
 import {
   collectShutdownFailure,
@@ -131,7 +128,9 @@ export class Server {
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
-  private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  private readonly channelLoggerFactory: (
+    dispatcherId: string,
+  ) => DreamuxLogger;
   /**
    * The one Agent-facing MCP lease registry for this process.
    *
@@ -227,7 +226,8 @@ export class Server {
       homePathPrefixes,
       adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory: this.channelLoggerFactory,
-      dispatcherHook: (this.opts.hooks ?? createServerHooks(this.log)).dispatcher,
+      dispatcherHook: (this.opts.hooks ?? createServerHooks(this.log))
+        .dispatcher,
       workflowLoggerFactory: this.opts.workflowLoggerFactory,
       log: this.log,
     });
@@ -371,7 +371,8 @@ function assertRuntimeImplementationsLoaded(
     const ref = dispatcherAgent(config, dispatcher.id).provider;
     let loaded = false;
     try {
-      loaded = registry.getImplementation(registry.resolve(ref).id) !== undefined;
+      loaded =
+        registry.getImplementation(registry.resolve(ref).id) !== undefined;
     } catch {
       loaded = false;
     }

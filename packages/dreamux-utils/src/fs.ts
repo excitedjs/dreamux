@@ -43,9 +43,17 @@ export async function writeAtomic(
     await rename(tmp, final);
   } catch (err) {
     if (fd) {
-      try { await fd.close(); } catch { /* swallow */ }
+      try {
+        await fd.close();
+      } catch {
+        /* swallow */
+      }
     }
-    try { await rm(tmp, { force: true }); } catch { /* swallow */ }
+    try {
+      await rm(tmp, { force: true });
+    } catch {
+      /* swallow */
+    }
     throw err;
   }
 }

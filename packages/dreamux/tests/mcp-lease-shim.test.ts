@@ -23,14 +23,24 @@ import { describe, expect, it } from 'vitest';
 
 import { AdminClientError } from '../src/admin/client.js';
 import { runDreamuxMcp } from '../src/mcp/shim.js';
-import { McpLeaseRegistry, McpLeaseRevokedError } from '../src/service/mcp/leases.js';
+import {
+  McpLeaseRegistry,
+  McpLeaseRevokedError,
+} from '../src/service/mcp/leases.js';
 import type {
   McpDelegateCall,
   McpDelegateResult,
   McpServerDelegate,
 } from '../src/service/mcp/types.js';
-import { callTool, connectMcpClient, listedTools } from './helpers/mcp-client.js';
-import { createCommandHarness, startHarnessAdminSocket } from './helpers/command-harness.js';
+import {
+  callTool,
+  connectMcpClient,
+  listedTools,
+} from './helpers/mcp-client.js';
+import {
+  createCommandHarness,
+  startHarnessAdminSocket,
+} from './helpers/command-harness.js';
 
 /**
  * An `AgentRuntimeGenerationLease`-shaped fake. Every registry code path this
@@ -48,11 +58,13 @@ interface Spy {
   describeCallCount(): number;
 }
 
-function spyDelegate(input: {
-  name?: string;
-  tools?: unknown[];
-  call?: (call: McpDelegateCall) => Promise<McpDelegateResult>;
-} = {}): Spy {
+function spyDelegate(
+  input: {
+    name?: string;
+    tools?: unknown[];
+    call?: (call: McpDelegateCall) => Promise<McpDelegateResult>;
+  } = {},
+): Spy {
   let describeCalls = 0;
   const calls: McpDelegateCall[] = [];
   const tools =
@@ -104,15 +116,23 @@ describe('McpLeaseRegistry — admission edge', () => {
   it('dispatches an admitted call to the delegate with the arguments unchanged', async () => {
     const registry = new McpLeaseRegistry();
     const spy = spyDelegate({
-      call: async (call) => ({ ok: true, structured: { echoed: call.arguments } }),
+      call: async (call) => ({
+        ok: true,
+        structured: { echoed: call.arguments },
+      }),
     });
     const minted = registry.mint(fakeLease(), spy.delegate);
     const result = await registry.invoke(minted!.token, {
       name: 'echo_tool',
       arguments: { value: 'hi' },
     });
-    expect(result).toEqual({ ok: true, structured: { echoed: { value: 'hi' } } });
-    expect(spy.calls).toEqual([{ name: 'echo_tool', arguments: { value: 'hi' } }]);
+    expect(result).toEqual({
+      ok: true,
+      structured: { echoed: { value: 'hi' } },
+    });
+    expect(spy.calls).toEqual([
+      { name: 'echo_tool', arguments: { value: 'hi' } },
+    ]);
   });
 
   it('release() revokes synchronously: catalog() and invoke() fail, and the delegate is never reached again', async () => {
@@ -136,13 +156,18 @@ describe('McpLeaseRegistry — admission edge', () => {
     expect(spy.calls).toHaveLength(1); // unchanged — the revoked call never dispatched
 
     // Releasing an already-released (or never-minted) token is a documented no-op.
-    expect(() => registry.release([minted.token, 'never-issued'])).not.toThrow();
+    expect(() =>
+      registry.release([minted.token, 'never-issued']),
+    ).not.toThrow();
   });
 
   it('a stale generation alone revokes admission, without an explicit release() call', () => {
     const registry = new McpLeaseRegistry();
     let current = true;
-    const minted = registry.mint(fakeLease(() => current), spyDelegate().delegate)!;
+    const minted = registry.mint(
+      fakeLease(() => current),
+      spyDelegate().delegate,
+    )!;
     expect(() => registry.catalog(minted.token)).not.toThrow();
     current = false;
     expect(() => registry.catalog(minted.token)).toThrow(McpLeaseRevokedError);
@@ -151,8 +176,14 @@ describe('McpLeaseRegistry — admission edge', () => {
   it('two independently-leased generations are isolated: revoking one leaves the other admitting', async () => {
     const registry = new McpLeaseRegistry();
     let generationOneCurrent = true;
-    const one = registry.mint(fakeLease(() => generationOneCurrent), spyDelegate({ name: 's1' }).delegate)!;
-    const two = registry.mint(fakeLease(() => true), spyDelegate({ name: 's2' }).delegate)!;
+    const one = registry.mint(
+      fakeLease(() => generationOneCurrent),
+      spyDelegate({ name: 's1' }).delegate,
+    )!;
+    const two = registry.mint(
+      fakeLease(() => true),
+      spyDelegate({ name: 's2' }).delegate,
+    )!;
     generationOneCurrent = false;
     expect(() => registry.catalog(one.token)).toThrow(McpLeaseRevokedError);
     expect(() => registry.catalog(two.token)).not.toThrow();
@@ -160,7 +191,9 @@ describe('McpLeaseRegistry — admission edge', () => {
 
   it('mint reads describe() exactly once and freezes a canonical copy, immune to later mutation', () => {
     const registry = new McpLeaseRegistry();
-    const mutableTools = [{ name: 'echo_tool', inputSchema: { type: 'object' } }];
+    const mutableTools = [
+      { name: 'echo_tool', inputSchema: { type: 'object' } },
+    ];
     const spy = spyDelegate({ tools: mutableTools });
     const minted = registry.mint(fakeLease(), spy.delegate)!;
     expect(spy.describeCallCount()).toBe(1);
@@ -168,7 +201,10 @@ describe('McpLeaseRegistry — admission edge', () => {
     // Mutate what the delegate itself still holds; the registry copied through
     // Core's own JSON boundary at mint time, so this must not be visible.
     mutableTools[0]!.name = 'renamed-after-mint';
-    mutableTools.push({ name: 'smuggled_tool', inputSchema: { type: 'object' } });
+    mutableTools.push({
+      name: 'smuggled_tool',
+      inputSchema: { type: 'object' },
+    });
 
     const catalog = registry.catalog(minted.token);
     expect(catalog.tools.map((t) => t.name)).toEqual(['echo_tool']);
@@ -231,12 +267,16 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
       });
       const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
 
-      const connection = await connectMcpClient(serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }));
+      const connection = await connectMcpClient(
+        serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
+      );
       try {
         const tools = await listedTools(connection.client);
         expect(tools.map((t) => t.name)).toEqual(['echo_tool']);
 
-        const result = await callTool(connection.client, 'echo_tool', { value: 'hi' });
+        const result = await callTool(connection.client, 'echo_tool', {
+          value: 'hi',
+        });
         expect(result).toEqual({
           content: [{ type: 'text', text: 'said it back' }],
           structuredContent: { echoed: 'hi' },
@@ -257,9 +297,13 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
         call: async () => ({ ok: false, message: 'that Team is closed' }),
       });
       const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
-      const connection = await connectMcpClient(serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }));
+      const connection = await connectMcpClient(
+        serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
+      );
       try {
-        const result = await callTool(connection.client, 'echo_tool', { value: 'x' });
+        const result = await callTool(connection.client, 'echo_tool', {
+          value: 'x',
+        });
         expect(result).toMatchObject({
           isError: true,
           content: [{ type: 'text', text: 'that Team is closed' }],
@@ -278,13 +322,19 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
     try {
       const spy = spyDelegate({
         call: async () => {
-          throw new Error('internal stack trace with a secret path /Users/ops/.dreamux');
+          throw new Error(
+            'internal stack trace with a secret path /Users/ops/.dreamux',
+          );
         },
       });
       const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
-      const connection = await connectMcpClient(serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }));
+      const connection = await connectMcpClient(
+        serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
+      );
       try {
-        const result = await callTool(connection.client, 'echo_tool', { value: 'x' });
+        const result = await callTool(connection.client, 'echo_tool', {
+          value: 'x',
+        });
         expect(result.isError).toBe(true);
         const text = (result.content as { text?: string }[])[0]?.text ?? '';
         // Core does not own this failure, so it reports the code it assigns and
@@ -306,14 +356,18 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
     try {
       const spy = spyDelegate();
       const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
-      const connection = await connectMcpClient(serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }));
+      const connection = await connectMcpClient(
+        serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
+      );
       try {
         await callTool(connection.client, 'echo_tool', { value: 'first' });
         expect(spy.calls).toHaveLength(1);
 
         harness.mcpLeases.release([minted.token]);
 
-        const result = await callTool(connection.client, 'echo_tool', { value: 'second' });
+        const result = await callTool(connection.client, 'echo_tool', {
+          value: 'second',
+        });
         expect(result.isError).toBe(true);
         const text = (result.content as { text?: string }[])[0]?.text ?? '';
         expect(text).toMatch(/^MCP_LEASE_REVOKED: /);
@@ -340,14 +394,18 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
           transport: serverTransport,
           log: () => {},
         }),
-      ).rejects.toMatchObject({ code: 'MCP_LEASE_REVOKED' } satisfies Partial<AdminClientError>);
+      ).rejects.toMatchObject({
+        code: 'MCP_LEASE_REVOKED',
+      } satisfies Partial<AdminClientError>);
     } finally {
       await admin.close();
     }
   });
 
   it('rejects synchronously with no lease token, touching neither the socket nor a transport', async () => {
-    await expect(runDreamuxMcp({ lease: '' })).rejects.toThrow(/requires a lease token/);
+    await expect(runDreamuxMcp({ lease: '' })).rejects.toThrow(
+      /requires a lease token/,
+    );
   });
 
   it('reports the transport failure it observed when the admin socket disappears mid-session', async () => {
@@ -355,11 +413,15 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
     const admin = await startHarnessAdminSocket(harness);
     const spy = spyDelegate();
     const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
-    const connection = await connectMcpClient(serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }));
+    const connection = await connectMcpClient(
+      serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
+    );
     try {
       // describe() already happened while the socket was up; now it is gone.
       await admin.close();
-      const result = await callTool(connection.client, 'echo_tool', { value: 'x' });
+      const result = await callTool(connection.client, 'echo_tool', {
+        value: 'x',
+      });
       expect(result).toMatchObject({ isError: true });
       const text = (result.content as { text?: string }[])[0]?.text ?? '';
       // The one failure this process observes for itself keeps its own code and
@@ -385,14 +447,23 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
         // matter what a tool's own schema permits, not that a closed schema
         // happens to reject the forged fields first.
         tools: [{ name: 'echo_tool', inputSchema: { type: 'object' } }],
-        call: async (call) => ({ ok: true, structured: { servedBy: 'legit', arguments: call.arguments } }),
+        call: async (call) => ({
+          ok: true,
+          structured: { servedBy: 'legit', arguments: call.arguments },
+        }),
       });
       const other = spyDelegate({ name: 'other' });
-      const legitimateMinted = harness.mcpLeases.mint(fakeLease(), legitimate.delegate)!;
+      const legitimateMinted = harness.mcpLeases.mint(
+        fakeLease(),
+        legitimate.delegate,
+      )!;
       harness.mcpLeases.mint(fakeLease(), other.delegate); // a second, unrelated live generation
 
       const connection = await connectMcpClient(
-        serveShim({ lease: legitimateMinted.token, adminSocketPath: admin.socketPath }),
+        serveShim({
+          lease: legitimateMinted.token,
+          adminSocketPath: admin.socketPath,
+        }),
       );
       try {
         // A model-controlled argument bag can contain anything, including
@@ -404,7 +475,11 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
           dispatcher_id: 'attacker-dispatcher',
           caller: { kind: 'dispatcher' },
         };
-        const result = await callTool(connection.client, 'echo_tool', forgedArguments);
+        const result = await callTool(
+          connection.client,
+          'echo_tool',
+          forgedArguments,
+        );
         expect(result.structuredContent).toEqual({
           servedBy: 'legit',
           arguments: forgedArguments,

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { RuntimeCompletion, RuntimeSubmission } from '@excitedjs/dreamux-types';
+import type {
+  RuntimeCompletion,
+  RuntimeSubmission,
+} from '@excitedjs/dreamux-types';
 
 import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
 import type { TurnCompletionDelivery } from '../src/service/teammate-service/turn-recording.js';
@@ -93,10 +96,11 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
       markStarted = resolve;
     });
     const delivery = vi.fn(
-      () => new Promise<void>((resolve) => {
-        finishDelivery = resolve;
-        markStarted();
-      }),
+      () =>
+        new Promise<void>((resolve) => {
+          finishDelivery = resolve;
+          markStarted();
+        }),
     );
     let owed = true;
     const turn = makeTurn(runtime.submission, delivery, () => owed);
@@ -197,8 +201,9 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
 
     // The token is provider-owned and frozen: a later mutation attempt cannot
     // rewrite what this turn already reported or what it hands to delivery.
-    expect(() => Object.assign(completion, { resultText: 'mutated' }))
-      .toThrow(TypeError);
+    expect(() => Object.assign(completion, { resultText: 'mutated' })).toThrow(
+      TypeError,
+    );
 
     await turn.delivery;
     expect(settled).toEqual({

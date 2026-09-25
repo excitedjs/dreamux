@@ -7,7 +7,7 @@
  * persisted access state (which lives in the host's channel layer now).
  */
 
-import type { Mention } from '../contract/types.js'
+import type { Mention } from '../contract/types.js';
 
 /**
  * True when `senderType` identifies a Feishu bot or app.
@@ -15,7 +15,7 @@ import type { Mention } from '../contract/types.js'
  * messages in some event contexts; both are non-human senders.
  */
 export function isBotSenderType(senderType: string | undefined): boolean {
-  return senderType === 'bot' || senderType === 'app'
+  return senderType === 'bot' || senderType === 'app';
 }
 
 /** True when one of `mentions` resolves to the bot's own open_id. */
@@ -23,6 +23,6 @@ export function isBotMentioned(
   mentions: Mention[] | undefined,
   botOpenId: string | undefined,
 ): boolean {
-  if (!mentions || !botOpenId) return false
-  return mentions.some((m) => (m.id?.open_id ?? m.id?.union_id) === botOpenId)
+  if (!mentions || !botOpenId) return false;
+  return mentions.some((m) => (m.id?.open_id ?? m.id?.union_id) === botOpenId);
 }

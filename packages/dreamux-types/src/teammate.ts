@@ -27,11 +27,7 @@ export type TeammateRole = 'dispatcher' | 'teammate' | 'team_leader';
 export type TeamContainedRole = Exclude<TeammateRole, 'dispatcher'>;
 
 export type TeammateStatus =
-  | 'starting'
-  | 'running'
-  | 'degraded'
-  | 'stopped'
-  | 'closed';
+  'starting' | 'running' | 'degraded' | 'stopped' | 'closed';
 
 export interface TeammateStateEvent {
   readonly schemaVersion: 1;

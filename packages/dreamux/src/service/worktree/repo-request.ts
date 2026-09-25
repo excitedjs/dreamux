@@ -7,7 +7,10 @@
  * this layer owns. Both caller-facing surfaces — the canonical Commands and the
  * MCP delegates — read the same shape through these two functions.
  */
-import type { JsonSchema, TeamCreateRepoRequest } from '@excitedjs/dreamux-types';
+import type {
+  JsonSchema,
+  TeamCreateRepoRequest,
+} from '@excitedjs/dreamux-types';
 
 import { ValidationError } from '../../command/errors.js';
 import {
@@ -59,7 +62,9 @@ export function repoRequest(
   const obj = value as CommandPayload;
   const mode = mustString(obj, 'mode');
   if (mode !== 'reuse-cwd' && mode !== 'managed') {
-    throw new ValidationError(`param '${key}.mode' must be 'reuse-cwd' or 'managed'`);
+    throw new ValidationError(
+      `param '${key}.mode' must be 'reuse-cwd' or 'managed'`,
+    );
   }
   const path = optionalString(obj, 'path');
   if (mode === 'reuse-cwd') {
@@ -74,7 +79,9 @@ export function repoRequest(
   }
   const cleanup = optionalString(obj, 'cleanup');
   if (cleanup !== null && cleanup !== 'keep' && cleanup !== 'delete-on-close') {
-    throw new ValidationError(`param '${key}.cleanup' must be 'keep' or 'delete-on-close'`);
+    throw new ValidationError(
+      `param '${key}.cleanup' must be 'keep' or 'delete-on-close'`,
+    );
   }
   const baseRef = optionalString(obj, 'base_ref');
   const branch = optionalString(obj, 'branch');
@@ -99,7 +106,8 @@ export function repoWorktree(
 ): { cwd: string | null; worktree: TeamMateWorktreeRequest } | null {
   if (repo === null) return null;
   const cwd = repo.path ?? null;
-  if (repo.mode === 'reuse-cwd') return { cwd, worktree: { mode: 'reuse-cwd' } };
+  if (repo.mode === 'reuse-cwd')
+    return { cwd, worktree: { mode: 'reuse-cwd' } };
   return {
     cwd,
     worktree: {

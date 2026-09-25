@@ -24,7 +24,10 @@ import {
   type ServiceRemoveResult,
 } from '../onboard/service.js';
 import { TransparentFileLedger } from '../onboard/ledger.js';
-import type { CommandRunner, OnboardFileLedgerEntry } from '../onboard/types.js';
+import type {
+  CommandRunner,
+  OnboardFileLedgerEntry,
+} from '../onboard/types.js';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
   type DreamuxConfig,
@@ -38,10 +41,7 @@ import {
   type ProviderDiagnosticCatalogs,
 } from '../provider-diagnostics.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
-import {
-  probeStandardExecDirs,
-  type ExecDirProbe,
-} from '../platform/paths.js';
+import { probeStandardExecDirs, type ExecDirProbe } from '../platform/paths.js';
 
 export interface DaemonInstallOptions {
   startService?: boolean;
@@ -108,10 +108,7 @@ export async function runDaemonInstall(
       ...check,
       bin: dryRun
         ? check.bin
-        : await resolveServiceExecutable(
-            check.bin,
-            resolveEnv,
-          ),
+        : await resolveServiceExecutable(check.bin, resolveEnv),
     })),
   );
   // Pin the managed service to a stable system Node (issue #83) rather than the

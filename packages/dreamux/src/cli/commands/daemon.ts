@@ -77,7 +77,10 @@ function createDaemonInstallCommand(): CommandModule<{}, DaemonInstallArgv> {
   };
 }
 
-function createDaemonUninstallCommand(): CommandModule<{}, DaemonUninstallArgv> {
+function createDaemonUninstallCommand(): CommandModule<
+  {},
+  DaemonUninstallArgv
+> {
   return {
     command: 'uninstall',
     describe:

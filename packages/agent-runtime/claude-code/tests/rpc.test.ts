@@ -3,11 +3,25 @@ import type { Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeStreamRpc } from '../src/rpc.js';
 import type { ClaudeCodeStreamRpcOptions } from '../src/rpc.js';
-import type { ClaudeProtocolEvent, CommandLifecycleState } from '../src/types.js';
-import type { RuntimeAdmission, RuntimeCompletion, RuntimeSubmission } from '@excitedjs/dreamux-types';
+import type {
+  ClaudeProtocolEvent,
+  CommandLifecycleState,
+} from '../src/types.js';
+import type {
+  RuntimeAdmission,
+  RuntimeCompletion,
+  RuntimeSubmission,
+} from '@excitedjs/dreamux-types';
 
-interface Input { uuid: string; message: { content: Array<{ text: string }> } }
-interface ControlFrame { type: string; request_id: string; request: Record<string, unknown> }
+interface Input {
+  uuid: string;
+  message: { content: Array<{ text: string }> };
+}
+interface ControlFrame {
+  type: string;
+  request_id: string;
+  request: Record<string, unknown>;
+}
 type WriteCallback = (error?: Error | null) => void;
 
 function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
@@ -33,27 +47,74 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
     },
   };
   const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
-    sessionId: 'session', turnTimeoutMs: 1_000, reapOnTimeout: reap,
-    onProtocolEvent: (event) => events.push(event), ...options,
+    sessionId: 'session',
+    turnTimeoutMs: 1_000,
+    reapOnTimeout: reap,
+    onProtocolEvent: (event) => events.push(event),
+    ...options,
   });
   rpcs.push(rpc);
   const emit = (...lines: Record<string, unknown>[]) => {
-    rpc.onStdoutChunk(lines.map((line) => `${JSON.stringify(line)}\n`).join(''));
+    rpc.onStdoutChunk(
+      lines.map((line) => `${JSON.stringify(line)}\n`).join(''),
+    );
   };
   const lifecycle = (uuid: string, ...states: CommandLifecycleState[]) => {
-    emit(...states.map((state) => ({ type: 'command_lifecycle', command_uuid: uuid, state })));
+    emit(
+      ...states.map((state) => ({
+        type: 'command_lifecycle',
+        command_uuid: uuid,
+        state,
+      })),
+    );
   };
-  const init = (supported = true) => emit({ type: 'system', subtype: 'init', session_id: 'session', capabilities: supported ? ['msg_lifecycle_v1'] : [] });
-  const result = (text: string, uuid?: string, extra: Record<string, unknown> = {}) => {
-    emit({ type: 'result', subtype: 'success', result: text, uuid: 'result-uuid', user_message_uuid: uuid, ...extra });
+  const init = (supported = true) =>
+    emit({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'session',
+      capabilities: supported ? ['msg_lifecycle_v1'] : [],
+    });
+  const result = (
+    text: string,
+    uuid?: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    emit({
+      type: 'result',
+      subtype: 'success',
+      result: text,
+      uuid: 'result-uuid',
+      user_message_uuid: uuid,
+      ...extra,
+    });
   };
-  const assistant = (text: string) => emit({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  const assistant = (text: string) =>
+    emit({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
   const send = (uuid: string) => accepted(rpc.submit(uuid, {}, uuid));
   const results = () => events.filter((event) => event.kind === 'result');
   const controlOk = (requestId: string) => {
-    emit({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: {} } });
+    emit({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: requestId, response: {} },
+    });
   };
-  return { rpc, stdin, writes, controls, events, reap, emit, lifecycle, init, result, assistant, send, results, controlOk };
+  return {
+    rpc,
+    stdin,
+    writes,
+    controls,
+    events,
+    reap,
+    emit,
+    lifecycle,
+    init,
+    result,
+    assistant,
+    send,
+    results,
+    controlOk,
+  };
 }
 
 const rpcs: ClaudeCodeStreamRpc[] = [];
@@ -62,19 +123,28 @@ afterEach(() => {
   vi.useRealTimers();
 });
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-async function accepted(admission: Promise<RuntimeAdmission>): Promise<RuntimeSubmission> {
+async function accepted(
+  admission: Promise<RuntimeAdmission>,
+): Promise<RuntimeSubmission> {
   const value = await admission;
-  if (value.status !== 'submitted') throw new Error(`expected submitted, received ${value.status}`);
+  if (value.status !== 'submitted')
+    throw new Error(`expected submitted, received ${value.status}`);
   return value.submission;
 }
-async function completion(submission: RuntimeSubmission): Promise<RuntimeCompletion> {
+async function completion(
+  submission: RuntimeSubmission,
+): Promise<RuntimeCompletion> {
   const settlement = await submission.settled;
-  if (settlement.kind !== 'completion') throw new Error(`expected completion, received ${settlement.kind}`);
+  if (settlement.kind !== 'completion')
+    throw new Error(`expected completion, received ${settlement.kind}`);
   return settlement.completion;
 }
 const nativeFailure = {
-  type: 'result', subtype: 'error_during_execution', is_error: true,
-  terminal_reason: 'model_error', errors: ['native model failure'],
+  type: 'result',
+  subtype: 'error_during_execution',
+  is_error: true,
+  terminal_reason: 'model_error',
+  errors: ['native model failure'],
 };
 /**
  * What an accepted interrupt leaves behind, captured verbatim from claude
@@ -84,9 +154,14 @@ const nativeFailure = {
  */
 function interruptArtifact(commandUuid: string): Record<string, unknown> {
   return {
-    type: 'result', subtype: 'error_during_execution', is_error: true,
-    stop_reason: 'tool_use', terminal_reason: 'aborted_tools',
-    errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    stop_reason: 'tool_use',
+    terminal_reason: 'aborted_tools',
+    errors: [
+      '[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use',
+    ],
     uuid: 'interrupt-result-uuid',
     user_message_uuid: commandUuid,
   };
@@ -96,26 +171,57 @@ describe('native usage boundaries', () => {
   it('forwards native totals before settlement without extra requests or cross-result accumulation', async () => {
     const order: string[] = [];
     const events: ClaudeProtocolEvent[] = [];
-    const h = harness({ onProtocolEvent: (event) => {
-      events.push(event);
-      if (event.kind === 'result') order.push('result');
-    } });
+    const h = harness({
+      onProtocolEvent: (event) => {
+        events.push(event);
+        if (event.kind === 'result') order.push('result');
+      },
+    });
     h.init();
     for (const [index, uuid] of ['A', 'B'].entries()) {
       const submission = await h.send(uuid);
-      void submission.settled.then(() => { order.push('settle'); });
+      void submission.settled.then(() => {
+        order.push('settle');
+      });
       h.lifecycle(uuid, 'started');
-      h.emit({ type: 'assistant', parent_tool_use_id: null,
-        message: { content: [], usage: { input_tokens: 500 + index, cache_read_input_tokens: 14_000 } } });
-      h.result('answer', uuid, { modelUsage: { main: { inputTokens: 20_000 + index * 10_000, outputTokens: 69 } } });
+      h.emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [],
+          usage: { input_tokens: 500 + index, cache_read_input_tokens: 14_000 },
+        },
+      });
+      h.result('answer', uuid, {
+        modelUsage: {
+          main: { inputTokens: 20_000 + index * 10_000, outputTokens: 69 },
+        },
+      });
       h.lifecycle(uuid, 'completed');
-      await expect(completion(submission)).resolves.toEqual({ status: 'completed', resultText: 'answer' });
+      await expect(completion(submission)).resolves.toEqual({
+        status: 'completed',
+        resultText: 'answer',
+      });
     }
-    expect(events.filter((event) => event.kind === 'result').map((event) => event.outcome)).toMatchObject([
-      { tokenUsage: { inputTokens: 20_000, outputTokens: 69 }, contextTokens: 14_500 },
-      { tokenUsage: { inputTokens: 30_000, outputTokens: 69 }, contextTokens: 14_501 },
+    expect(
+      events
+        .filter((event) => event.kind === 'result')
+        .map((event) => event.outcome),
+    ).toMatchObject([
+      {
+        tokenUsage: { inputTokens: 20_000, outputTokens: 69 },
+        contextTokens: 14_500,
+      },
+      {
+        tokenUsage: { inputTokens: 30_000, outputTokens: 69 },
+        contextTokens: 14_501,
+      },
     ]);
-    expect(events.filter((event) => event.kind === 'result').map((event) => event.uuid)).toEqual(['result-uuid', 'result-uuid']);
+    expect(
+      events
+        .filter((event) => event.kind === 'result')
+        .map((event) => event.uuid),
+    ).toEqual(['result-uuid', 'result-uuid']);
     expect(order).toEqual(['result', 'settle', 'result', 'settle']);
     expect(h.writes).toHaveLength(2);
     expect(h.controls).toEqual([]);
@@ -126,10 +232,18 @@ describe('native usage boundaries', () => {
     h.init();
     const submission = await h.send('A');
     h.lifecycle('A', 'started');
-    h.emit({ ...interruptArtifact('A'), modelUsage: { main: { inputTokens: 200, outputTokens: 10 } } });
-    expect(h.events.find((event) => event.kind === 'interrupted')).toMatchObject({
+    h.emit({
+      ...interruptArtifact('A'),
+      modelUsage: { main: { inputTokens: 200, outputTokens: 10 } },
+    });
+    expect(
+      h.events.find((event) => event.kind === 'interrupted'),
+    ).toMatchObject({
       uuid: 'interrupt-result-uuid',
-      outcome: { tokenUsage: { inputTokens: 200, outputTokens: 10 }, contextTokens: null },
+      outcome: {
+        tokenUsage: { inputTokens: 200, outputTokens: 10 },
+        contextTokens: null,
+      },
     });
     await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
     expect(h.results()).toEqual([]);
@@ -161,19 +275,29 @@ describe('resident request admission and settlement', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it.each([{}, { user_message_uuid: 'internal' }, { origin: { kind: 'task-notification' } }])('answers consumed background steers regardless of result metadata %j', async (extra) => {
-    const h = harness();
-    h.init();
-    h.assistant('background answer');
-    const b = await h.send('B');
-    const c = await h.send('C');
-    h.lifecycle('B', 'queued', 'started', 'completed');
-    h.lifecycle('C', 'queued', 'started', 'completed');
-    h.result('', undefined, extra);
-    const [first, second] = await Promise.all([completion(b), completion(c)]);
-    expect(first).toEqual({ status: 'completed', resultText: 'background answer' });
-    expect(second).toBe(first);
-  });
+  it.each([
+    {},
+    { user_message_uuid: 'internal' },
+    { origin: { kind: 'task-notification' } },
+  ])(
+    'answers consumed background steers regardless of result metadata %j',
+    async (extra) => {
+      const h = harness();
+      h.init();
+      h.assistant('background answer');
+      const b = await h.send('B');
+      const c = await h.send('C');
+      h.lifecycle('B', 'queued', 'started', 'completed');
+      h.lifecycle('C', 'queued', 'started', 'completed');
+      h.result('', undefined, extra);
+      const [first, second] = await Promise.all([completion(b), completion(c)]);
+      expect(first).toEqual({
+        status: 'completed',
+        resultText: 'background answer',
+      });
+      expect(second).toBe(first);
+    },
+  );
 
   it('retains a completed request until its answer arrives, without gating other inputs', async () => {
     const h = harness();
@@ -218,15 +342,18 @@ describe('resident request admission and settlement', () => {
     const a = await h.send('A');
     callback(new Error('late write error'));
     h.result('accepted natively');
-    expect(await completion(a)).toMatchObject({ resultText: 'accepted natively' });
+    expect(await completion(a)).toMatchObject({
+      resultText: 'accepted natively',
+    });
   });
 
   it('lets a result callback submit the next request without attributing the previous answer to it', async () => {
     let next!: Promise<RuntimeSubmission>;
     const h = harness({
       onProtocolEvent: (event) => {
-        if (event.kind === 'result' && event.outcome.text === 'A answer') next = h.send('B');
-      }
+        if (event.kind === 'result' && event.outcome.text === 'A answer')
+          next = h.send('B');
+      },
     });
     const a = await h.send('A');
     h.lifecycle('A', 'started');
@@ -243,7 +370,11 @@ describe('resident request admission and settlement', () => {
   });
 
   it('preserves an observed result when its callback stops the session', async () => {
-    const h = harness({ onProtocolEvent: (event) => { if (event.kind === 'result') h.rpc.stop(); } });
+    const h = harness({
+      onProtocolEvent: (event) => {
+        if (event.kind === 'result') h.rpc.stop();
+      },
+    });
     const a = await h.send('A');
     h.lifecycle('A', 'started');
     h.result('observed');
@@ -252,24 +383,27 @@ describe('resident request admission and settlement', () => {
 });
 
 describe('supported compatibility inputs', () => {
-  it.each(['queued', 'refused', 'discarded'] as const)('answers a no-start matching UUID independently of B being %s', async (state) => {
-    const h = harness();
-    const a = await h.send('A');
-    h.init();
-    const b = await h.send('B');
-    h.lifecycle('B', state);
-    h.result('A answer', 'A');
-    expect(await completion(a)).toMatchObject({ resultText: 'A answer' });
-    if (state === 'queued') {
-      const settled = vi.fn();
-      void b.settled.then(settled);
-      await tick();
-      expect(settled).not.toHaveBeenCalled();
-      h.lifecycle('B', 'started');
-      h.result('B answer', 'B');
-      expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
-    } else await expect(b.settled).resolves.toMatchObject({ kind: 'failed' });
-  });
+  it.each(['queued', 'refused', 'discarded'] as const)(
+    'answers a no-start matching UUID independently of B being %s',
+    async (state) => {
+      const h = harness();
+      const a = await h.send('A');
+      h.init();
+      const b = await h.send('B');
+      h.lifecycle('B', state);
+      h.result('A answer', 'A');
+      expect(await completion(a)).toMatchObject({ resultText: 'A answer' });
+      if (state === 'queued') {
+        const settled = vi.fn();
+        void b.settled.then(settled);
+        await tick();
+        expect(settled).not.toHaveBeenCalled();
+        h.lifecycle('B', 'started');
+        h.result('B answer', 'B');
+        expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
+      } else await expect(b.settled).resolves.toMatchObject({ kind: 'failed' });
+    },
+  );
 
   it('combines a no-start matching UUID with every started fold member', async () => {
     const h = harness();
@@ -281,28 +415,36 @@ describe('supported compatibility inputs', () => {
     expect(await completion(b)).toBe(await completion(a));
   });
 
-  it.each([true])('never uses a foreign UUID as sole-request fallback with lifecycle=%s', async (supported) => {
-    const h = harness();
-    h.init(supported);
-    const a = await h.send('A');
-    const settled = vi.fn();
-    void a.settled.then(settled);
-    h.result('foreign', 'internal');
-    await tick();
-    expect(settled).not.toHaveBeenCalled();
-    if (supported) {
-      h.result('unbound');
+  it.each([true])(
+    'never uses a foreign UUID as sole-request fallback with lifecycle=%s',
+    async (supported) => {
+      const h = harness();
+      h.init(supported);
+      const a = await h.send('A');
+      const settled = vi.fn();
+      void a.settled.then(settled);
+      h.result('foreign', 'internal');
       await tick();
       expect(settled).not.toHaveBeenCalled();
-    }
-    h.result('actual', supported ? 'A' : undefined);
-    expect(await completion(a)).toMatchObject({ resultText: 'actual' });
-  });
+      if (supported) {
+        h.result('unbound');
+        await tick();
+        expect(settled).not.toHaveBeenCalled();
+      }
+      h.result('actual', supported ? 'A' : undefined);
+      expect(await completion(a)).toMatchObject({ resultText: 'actual' });
+    },
+  );
 
   it('uses the older system-subtype lifecycle as consumption evidence', async () => {
     const h = harness();
     const a = await h.send('A');
-    h.emit({ type: 'system', subtype: 'command_lifecycle', command_uuid: 'A', state: 'started' });
+    h.emit({
+      type: 'system',
+      subtype: 'command_lifecycle',
+      command_uuid: 'A',
+      state: 'started',
+    });
     h.result('answer');
     expect(await completion(a)).toMatchObject({ resultText: 'answer' });
   });
@@ -331,11 +473,13 @@ describe('interrupting outstanding work', () => {
     const a = await h.send('A');
     h.lifecycle('A', 'started');
     const interrupted = h.rpc.interrupt('Stopped from Feishu.');
-    expect(h.controls).toEqual([{
-      type: 'control_request',
-      request_id: h.controls[0]!.request_id,
-      request: { subtype: 'interrupt', reason: 'Stopped from Feishu.' },
-    }]);
+    expect(h.controls).toEqual([
+      {
+        type: 'control_request',
+        request_id: h.controls[0]!.request_id,
+        request: { subtype: 'interrupt', reason: 'Stopped from Feishu.' },
+      },
+    ]);
     // Queued input behind the interrupt is claude's to keep: the request names
     // no cancellation of it.
     expect(h.controls[0]!.request).not.toHaveProperty('cancel_queued');
@@ -390,23 +534,26 @@ describe('interrupting outstanding work', () => {
   it.each([
     { how: 'stop', settlement: { kind: 'stopped' } },
     { how: 'fail', settlement: { kind: 'failed' } },
-  ])('answers an outstanding interrupt when the session ends by $how', async ({ how, settlement }) => {
-    const h = harness();
-    h.init();
-    const a = await h.send('A');
-    h.lifecycle('A', 'started');
-    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+  ])(
+    'answers an outstanding interrupt when the session ends by $how',
+    async ({ how, settlement }) => {
+      const h = harness();
+      h.init();
+      const a = await h.send('A');
+      h.lifecycle('A', 'started');
+      const interrupted = h.rpc.interrupt('Stopped from Feishu.');
 
-    // Claude never answers the control request; the session ends first. The ask
-    // is answered here or `/stop` waits on a session that is already gone.
-    const failure = new Error('claude stdout closed');
-    if (how === 'stop') h.rpc.stop();
-    else h.rpc.fail(failure);
+      // Claude never answers the control request; the session ends first. The ask
+      // is answered here or `/stop` waits on a session that is already gone.
+      const failure = new Error('claude stdout closed');
+      if (how === 'stop') h.rpc.stop();
+      else h.rpc.fail(failure);
 
-    if (how === 'stop') await expect(interrupted).resolves.toBe(true);
-    else await expect(interrupted).rejects.toBe(failure);
-    await expect(a.settled).resolves.toMatchObject(settlement);
-  });
+      if (how === 'stop') await expect(interrupted).resolves.toBe(true);
+      else await expect(interrupted).rejects.toBe(failure);
+      await expect(a.settled).resolves.toMatchObject(settlement);
+    },
+  );
 
   it('reads an aborted turn as interrupted even after the ask was already spent', async () => {
     const h = harness();
@@ -419,7 +566,9 @@ describe('interrupting outstanding work', () => {
 
     // A answers normally first, which spends the session's ask.
     h.result('finished anyway', 'A');
-    expect(await completion(a)).toMatchObject({ resultText: 'finished anyway' });
+    expect(await completion(a)).toMatchObject({
+      resultText: 'finished anyway',
+    });
 
     // B is aborted afterwards. A session-level mark would have been gone by
     // now and reported this as a failure; the turn's own reason is not.
@@ -441,7 +590,10 @@ describe('native failure and transport lifetime', () => {
     const b = await h.send('B');
     h.lifecycle('B', 'queued', 'cancelled');
     await expect(b.settled).resolves.toMatchObject({
-      kind: 'failed', error: expect.objectContaining({ message: 'claude command was cancelled' }),
+      kind: 'failed',
+      error: expect.objectContaining({
+        message: 'claude command was cancelled',
+      }),
     });
     expect(h.events.some((event) => event.kind === 'interrupted')).toBe(false);
     h.result('', 'A');
@@ -465,7 +617,10 @@ describe('native failure and transport lifetime', () => {
     h.emit(nativeFailure);
     h.lifecycle('A', 'cancelled');
     const failed = await completion(a);
-    expect(failed).toMatchObject({ status: 'failed', error: expect.objectContaining({ message: 'native model failure' }) });
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: expect.objectContaining({ message: 'native model failure' }),
+    });
     expect(await completion(b)).toBe(failed);
   });
 
@@ -497,10 +652,13 @@ describe('native failure and transport lifetime', () => {
 
   it('emits no further protocol callback when a lifecycle observer stops the session', async () => {
     const events: ClaudeProtocolEvent[] = [];
-    const h = harness({ onProtocolEvent: (event) => {
-      events.push(event);
-      if (event.kind === 'command_lifecycle' && event.state === 'cancelled') h.rpc.stop();
-    } });
+    const h = harness({
+      onProtocolEvent: (event) => {
+        events.push(event);
+        if (event.kind === 'command_lifecycle' && event.state === 'cancelled')
+          h.rpc.stop();
+      },
+    });
     const a = await h.send('A');
     h.lifecycle('A', 'started', 'cancelled', 'completed');
     await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
@@ -510,20 +668,28 @@ describe('native failure and transport lifetime', () => {
     ]);
   });
 
-  it.each(['throw', 'callback'])('reports an ambiguous native write failure through %s', async (mode) => {
-    const h = harness();
-    h.stdin.onWrite = (_input, callback) => {
-      const error = new Error('write failed');
-      if (mode === 'throw') throw error; else callback(error);
-    };
-    await expect(h.rpc.submit('A')).resolves.toMatchObject({ status: 'ambiguous' });
-    expect(h.reap).not.toHaveBeenCalled();
-  });
+  it.each(['throw', 'callback'])(
+    'reports an ambiguous native write failure through %s',
+    async (mode) => {
+      const h = harness();
+      h.stdin.onWrite = (_input, callback) => {
+        const error = new Error('write failed');
+        if (mode === 'throw') throw error;
+        else callback(error);
+      };
+      await expect(h.rpc.submit('A')).resolves.toMatchObject({
+        status: 'ambiguous',
+      });
+      expect(h.reap).not.toHaveBeenCalled();
+    },
+  );
 
   it('reports a proven failure before writing to an unavailable child', async () => {
     const h = harness();
     h.stdin.writable = false;
-    await expect(h.rpc.submit('A')).resolves.toMatchObject({ status: 'failed' });
+    await expect(h.rpc.submit('A')).resolves.toMatchObject({
+      status: 'failed',
+    });
     expect(h.writes).toHaveLength(0);
   });
 });
@@ -543,32 +709,68 @@ describe('idle policy and result contract', () => {
   });
 
   it.each([
-    { extra: { session_id: 'foreign' }, schema: false, message: 'pinned native session' },
+    {
+      extra: { session_id: 'foreign' },
+      schema: false,
+      message: 'pinned native session',
+    },
     { extra: {}, schema: true, message: 'structured_output' },
-    { extra: { subtype: 'error_during_execution', errors: ['model failure'] }, schema: false, message: 'model failure' },
-  ])('fails completion for a violated result contract %j', async ({ extra, schema, message }) => {
-    const h = harness({ outputSchemaEnabled: schema });
-    const a = await h.send('A');
-    h.lifecycle('A', 'started');
-    h.result('answer', 'A', extra);
-    expect(await completion(a)).toMatchObject({ status: 'failed', error: expect.objectContaining({ message: expect.stringContaining(message) }) });
-  });
+    {
+      extra: { subtype: 'error_during_execution', errors: ['model failure'] },
+      schema: false,
+      message: 'model failure',
+    },
+  ])(
+    'fails completion for a violated result contract %j',
+    async ({ extra, schema, message }) => {
+      const h = harness({ outputSchemaEnabled: schema });
+      const a = await h.send('A');
+      h.lifecycle('A', 'started');
+      h.result('answer', 'A', extra);
+      expect(await completion(a)).toMatchObject({
+        status: 'failed',
+        error: expect.objectContaining({
+          message: expect.stringContaining(message),
+        }),
+      });
+    },
+  );
 
   it('preserves structured null as a successful JSON result', async () => {
     const h = harness({ outputSchemaEnabled: true });
     const a = await h.send('A');
     h.result('unused', 'A', { structured_output: null });
-    expect(await completion(a)).toEqual({ status: 'completed', resultText: 'null' });
+    expect(await completion(a)).toEqual({
+      status: 'completed',
+      resultText: 'null',
+    });
   });
 
   it('keeps Remote Control and tool permission replies independent of requests', () => {
     const urls: string[] = [];
     const h = harness({ onRemoteControlUrl: (url) => urls.push(url) });
     h.rpc.enableRemoteControl();
-    h.emit({ type: 'control_response', response: { subtype: 'success', request_id: h.controls[0]!.request_id, response: { session_url: 'https://example.invalid/session' } } });
-    h.emit({ type: 'control_request', request_id: 'permission', request: { subtype: 'can_use_tool', input: { command: 'pwd' } } });
+    h.emit({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: h.controls[0]!.request_id,
+        response: { session_url: 'https://example.invalid/session' },
+      },
+    });
+    h.emit({
+      type: 'control_request',
+      request_id: 'permission',
+      request: { subtype: 'can_use_tool', input: { command: 'pwd' } },
+    });
     expect(urls).toEqual(['https://example.invalid/session']);
-    expect(h.controls[1]).toMatchObject({ type: 'control_response', response: { request_id: 'permission', response: { behavior: 'allow', updatedInput: { command: 'pwd' } } } });
+    expect(h.controls[1]).toMatchObject({
+      type: 'control_response',
+      response: {
+        request_id: 'permission',
+        response: { behavior: 'allow', updatedInput: { command: 'pwd' } },
+      },
+    });
     expect(h.writes).toEqual([]);
     expect(h.results()).toEqual([]);
   });

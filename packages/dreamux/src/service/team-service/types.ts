@@ -5,11 +5,7 @@ import type {
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
-import {
-  STRING,
-  enumOf,
-  objectSchema,
-} from '../../command/schema.js';
+import { STRING, enumOf, objectSchema } from '../../command/schema.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type { DreamuxConfig } from '../../config/config.js';
@@ -137,7 +133,13 @@ export function teamClosedFact(record: TeamRecord): TeamClosedFact {
  */
 export const teamSubmitResultOutput = objectSchema(
   {
-    status: enumOf(['submitted', 'duplicate', 'stopped', 'failed', 'ambiguous']),
+    status: enumOf([
+      'submitted',
+      'duplicate',
+      'stopped',
+      'failed',
+      'ambiguous',
+    ]),
     turn_id: STRING,
     error: objectSchema({ code: STRING, message: STRING }, ['code', 'message']),
   },

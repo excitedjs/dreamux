@@ -1,6 +1,9 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import { teamCronJobsPath, teamMateCollectionDir } from '../../platform/paths.js';
+import {
+  teamCronJobsPath,
+  teamMateCollectionDir,
+} from '../../platform/paths.js';
 import { AgentEntityCollectionStore } from '../agent-entity/identity-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { CompletionInitiator } from '../completion-router/index.js';

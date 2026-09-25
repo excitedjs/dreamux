@@ -33,11 +33,10 @@ import type {
  * naive `A extends B ? B extends A : false`) stays correct across unions and
  * optional members, which a naive mutual-extends check can misjudge.
  */
-type Equal<A, B> = (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B
-  ? 1
-  : 0
-  ? true
-  : false;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
+    ? true
+    : false;
 
 /**
  * The vehicle for a compile-time-only assertion: calling `assertType<Equal<A,
@@ -60,7 +59,9 @@ describe('AgentRuntime live handle exposes exactly start, submit, interrupt, sto
     // `getStatus`, `getCheckpoint`, `wasCheckpointResumed`, `getContext`, or a
     // handle-level `getCapabilities`/`providerRef` were reintroduced, this
     // equality would fail to compile.
-    assertType<Equal<keyof AgentRuntime, 'start' | 'submit' | 'interrupt' | 'stop'>>();
+    assertType<
+      Equal<keyof AgentRuntime, 'start' | 'submit' | 'interrupt' | 'stop'>
+    >();
   });
 
   it('a fake object with the four actions satisfies AgentRuntime end-to-end', async () => {
@@ -71,7 +72,9 @@ describe('AgentRuntime live handle exposes exactly start, submit, interrupt, sto
       kind: 'completion',
       completion: { status: 'completed', resultText: 'ack' },
     };
-    const submission: RuntimeSubmission = { settled: Promise.resolve(settlement) };
+    const submission: RuntimeSubmission = {
+      settled: Promise.resolve(settlement),
+    };
 
     // This object literal is checked against the full `AgentRuntime` shape by
     // TypeScript's excess-property check: it would be a compile error to omit
@@ -81,7 +84,9 @@ describe('AgentRuntime live handle exposes exactly start, submit, interrupt, sto
       async start(): Promise<AgentRuntimeStartOutcome> {
         return { continuity: 'fresh' };
       },
-      async submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
+      async submit(
+        input: AgentRuntimeSubmissionInput,
+      ): Promise<RuntimeAdmission> {
         seenInput = input;
         return { status: 'submitted', submission };
       },
@@ -129,15 +134,28 @@ describe('RuntimeAdmission is exactly submitted | stopped | skipped | failed | a
 
   it('only the submitted branch carries a RuntimeSubmission; failed/ambiguous carry an Error', () => {
     assertType<
-      Equal<keyof Extract<RuntimeAdmission, { status: 'submitted' }>, 'status' | 'submission'>
-    >();
-    assertType<Equal<keyof Extract<RuntimeAdmission, { status: 'stopped' }>, 'status'>>();
-    assertType<Equal<keyof Extract<RuntimeAdmission, { status: 'skipped' }>, 'status'>>();
-    assertType<
-      Equal<keyof Extract<RuntimeAdmission, { status: 'failed' }>, 'status' | 'error'>
+      Equal<
+        keyof Extract<RuntimeAdmission, { status: 'submitted' }>,
+        'status' | 'submission'
+      >
     >();
     assertType<
-      Equal<keyof Extract<RuntimeAdmission, { status: 'ambiguous' }>, 'status' | 'error'>
+      Equal<keyof Extract<RuntimeAdmission, { status: 'stopped' }>, 'status'>
+    >();
+    assertType<
+      Equal<keyof Extract<RuntimeAdmission, { status: 'skipped' }>, 'status'>
+    >();
+    assertType<
+      Equal<
+        keyof Extract<RuntimeAdmission, { status: 'failed' }>,
+        'status' | 'error'
+      >
+    >();
+    assertType<
+      Equal<
+        keyof Extract<RuntimeAdmission, { status: 'ambiguous' }>,
+        'status' | 'error'
+      >
     >();
   });
 
@@ -165,13 +183,19 @@ describe('RuntimeAdmission is exactly submitted | stopped | skipped | failed | a
     }
 
     const submission: RuntimeSubmission = {
-      settled: Promise.resolve<RuntimeSubmissionSettlement>({ kind: 'stopped' }),
+      settled: Promise.resolve<RuntimeSubmissionSettlement>({
+        kind: 'stopped',
+      }),
     };
     expect(classify({ status: 'submitted', submission })).toBe('submitted');
     expect(classify({ status: 'stopped' })).toBe('stopped');
     expect(classify({ status: 'skipped' })).toBe('skipped');
-    expect(classify({ status: 'failed', error: new Error('boom') })).toBe('failed');
-    expect(classify({ status: 'ambiguous', error: new Error('boom') })).toBe('ambiguous');
+    expect(classify({ status: 'failed', error: new Error('boom') })).toBe(
+      'failed',
+    );
+    expect(classify({ status: 'ambiguous', error: new Error('boom') })).toBe(
+      'ambiguous',
+    );
   });
 });
 
@@ -186,17 +210,29 @@ describe('RuntimeCompletion has no displaySubmission member', () => {
   });
 
   it('the failed branch carries only status/error', () => {
-    assertType<Equal<keyof Extract<RuntimeCompletion, { status: 'failed' }>, 'status' | 'error'>>();
+    assertType<
+      Equal<
+        keyof Extract<RuntimeCompletion, { status: 'failed' }>,
+        'status' | 'error'
+      >
+    >();
   });
 });
 
 describe('RuntimeSubmissionSettlement is exactly completion | failed | stopped', () => {
   it('the kind union has no extra member', () => {
-    assertType<Equal<RuntimeSubmissionSettlement['kind'], 'completion' | 'failed' | 'stopped'>>();
+    assertType<
+      Equal<
+        RuntimeSubmissionSettlement['kind'],
+        'completion' | 'failed' | 'stopped'
+      >
+    >();
   });
 
   it('every settlement resolves through an exhaustive switch', () => {
-    function describeSettlement(settlement: RuntimeSubmissionSettlement): string {
+    function describeSettlement(
+      settlement: RuntimeSubmissionSettlement,
+    ): string {
       switch (settlement.kind) {
         case 'completion':
           return settlement.completion.status;
@@ -215,7 +251,9 @@ describe('RuntimeSubmissionSettlement is exactly completion | failed | stopped',
         completion: { status: 'completed', resultText: null },
       }),
     ).toBe('completed');
-    expect(describeSettlement({ kind: 'failed', error: new Error('nope') })).toBe('nope');
+    expect(
+      describeSettlement({ kind: 'failed', error: new Error('nope') }),
+    ).toBe('nope');
     expect(describeSettlement({ kind: 'stopped' })).toBe('stopped');
   });
 });

@@ -33,7 +33,9 @@ class ScriptedInitiator implements CompletionInitiator {
     return Object.freeze({
       submit: async () => {
         this.submitCalls += 1;
-        const outcome = this.outcomes.shift() ?? { status: 'accepted' as const };
+        const outcome = this.outcomes.shift() ?? {
+          status: 'accepted' as const,
+        };
         if (outcome instanceof Error) throw outcome;
         return outcome;
       },
@@ -150,7 +152,9 @@ describe('CompletionDeliveryPolicy', () => {
       },
     };
 
-    await expect(policy().deliver(initiator, completion)).resolves.toBeUndefined();
+    await expect(
+      policy().deliver(initiator, completion),
+    ).resolves.toBeUndefined();
   });
 
   it('bounds preparation and observes a rejection that arrives after timeout', async () => {
@@ -196,13 +200,17 @@ describe('CompletionDeliveryPolicy', () => {
   it('reuses one prepared payload while bounding every proven-safe retry', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const second = deferred<CompletionDeliveryResult>();
-    const outcomes: Array<CompletionDeliveryResult | Promise<CompletionDeliveryResult>> = [
+    const outcomes: Array<
+      CompletionDeliveryResult | Promise<CompletionDeliveryResult>
+    > = [
       { status: 'failed', error: new Error('safe first failure') },
       second.promise,
     ];
     const prepared = Object.freeze({
-      submit: vi.fn(async (): Promise<CompletionDeliveryResult> =>
-        outcomes.shift() ?? { status: 'accepted' }),
+      submit: vi.fn(
+        async (): Promise<CompletionDeliveryResult> =>
+          outcomes.shift() ?? { status: 'accepted' },
+      ),
     });
     const initiator: CompletionInitiator = {
       prepareCompletion: vi.fn(async () => prepared),
@@ -213,7 +221,10 @@ describe('CompletionDeliveryPolicy', () => {
     await vi.advanceTimersByTimeAsync(100);
     await delivery;
 
-    second.resolve({ status: 'failed', error: new Error('late second failure') });
+    second.resolve({
+      status: 'failed',
+      error: new Error('late second failure'),
+    });
     await Promise.resolve();
     expect(initiator.prepareCompletion).toHaveBeenCalledTimes(1);
     expect(prepared.submit).toHaveBeenCalledTimes(2);

@@ -59,13 +59,15 @@ export interface FeishuExtension<S> {
  * step as a built-in tool; the handler receives this instance's state instead
  * of the built-in tool session. Refuse by throwing `PublicInvokeFailure`.
  */
-export type FeishuExtensionTool<S, TInput = unknown> =
-  Omit<FeishuToolDef<TInput>, 'handle'> & {
-    handle(
-      ctx: { readonly caller: ChannelMcpCaller; readonly state: S },
-      input: TInput,
-    ): Promise<FeishuToolResult>;
-  };
+export type FeishuExtensionTool<S, TInput = unknown> = Omit<
+  FeishuToolDef<TInput>,
+  'handle'
+> & {
+  handle(
+    ctx: { readonly caller: ChannelMcpCaller; readonly state: S },
+    input: TInput,
+  ): Promise<FeishuToolResult>;
+};
 
 /**
  * What a card action handler wants forwarded to the conversation's Team, as an

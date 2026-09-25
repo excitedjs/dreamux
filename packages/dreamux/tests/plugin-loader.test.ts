@@ -54,7 +54,9 @@ const silentLog = {
  * `DreamuxPluginApis` with; the typed map only accepts declared names.
  */
 function forPlugin(host: ServerHost, name: string): SyncHook<[unknown]> {
-  return (host.hooks.plugin as unknown as HookMap<SyncHook<[unknown]>>).for(name);
+  return (host.hooks.plugin as unknown as HookMap<SyncHook<[unknown]>>).for(
+    name,
+  );
 }
 
 const FEISHU_PACKAGE = '@excitedjs/feishu-channel';
@@ -69,7 +71,9 @@ const fakeRuntimeProvider = {
   getCapabilities: () => ({ verbs: [], agent_runtimes: [] }),
   readRecentActivity: async () => [],
   createRuntime: () => {
-    throw new Error('fake agent runtime provider: createRuntime not implemented');
+    throw new Error(
+      'fake agent runtime provider: createRuntime not implemented',
+    );
   },
 } as unknown as AgentRuntimeProvider<unknown>;
 
@@ -89,7 +93,8 @@ function importer(
 ): PluginModuleImporter {
   return async (packageName) => {
     const module = modules[packageName];
-    if (module === undefined) throw new Error(`no fake module for ${packageName}`);
+    if (module === undefined)
+      throw new Error(`no fake module for ${packageName}`);
     return module;
   };
 }
@@ -109,7 +114,10 @@ async function load(
     registry,
     entries,
     logger: silentLog,
-    importModule: importer({ [FEISHU_PACKAGE]: { default: fakeFeishu() }, ...modules }),
+    importModule: importer({
+      [FEISHU_PACKAGE]: { default: fakeFeishu() },
+      ...modules,
+    }),
   });
 }
 
@@ -128,7 +136,12 @@ describe('readPluginEntries', () => {
     expect(readPluginEntries({}, 'config.json')).toBeUndefined();
     expect(
       readPluginEntries(
-        { plugins: ['builtin:bootstrap', { ref: 'npm:@acme/x#make', config: { a: 1 } }] },
+        {
+          plugins: [
+            'builtin:bootstrap',
+            { ref: 'npm:@acme/x#make', config: { a: 1 } },
+          ],
+        },
         'config.json',
       ),
     ).toEqual([
@@ -139,8 +152,14 @@ describe('readPluginEntries', () => {
 
   it.each([
     [{ plugins: 'builtin:bootstrap' }, /plugins must be an array/],
-    [{ plugins: [42] }, /plugins\[0\] must be a plugin ref string or \{ ref, config \}/],
-    [{ plugins: [{ ref: 'builtin:bootstrap', extra: true }] }, /plugins\[0\]\.extra/],
+    [
+      { plugins: [42] },
+      /plugins\[0\] must be a plugin ref string or \{ ref, config \}/,
+    ],
+    [
+      { plugins: [{ ref: 'builtin:bootstrap', extra: true }] },
+      /plugins\[0\]\.extra/,
+    ],
     [{ plugins: [{ config: {} }] }, /plugins\[0\]\.ref/],
     [{ plugins: ['file:./local'] }, /plugins\[0\]\.ref/],
   ])('rejects a malformed plugins value %j', (raw, message) => {
@@ -153,7 +172,9 @@ describe('loadPlugins', () => {
     const loaded = await load(
       [{ ref: 'builtin:bootstrap' }, { ref: 'npm:@acme/x#make' }],
       {
-        '@excitedjs/dreamux-plugin-bootstrap': { default: () => ({ name: 'bootstrap' }) },
+        '@excitedjs/dreamux-plugin-bootstrap': {
+          default: () => ({ name: 'bootstrap' }),
+        },
         '@acme/x': { make: () => ({ name: 'acme' }), default: 'not a factory' },
       },
     );
@@ -195,7 +216,10 @@ describe('loadPlugins', () => {
           default: (): DreamuxPlugin => ({
             name: 'acme',
             contribute: (host) =>
-              host.agentRuntimeProviders.contribute('codex', fakeRuntimeProvider),
+              host.agentRuntimeProviders.contribute(
+                'codex',
+                fakeRuntimeProvider,
+              ),
           }),
         },
       }),
@@ -212,7 +236,8 @@ describe('loadPlugins', () => {
         '@acme/a': {
           default: (): DreamuxPlugin => ({
             name: 'acme',
-            contribute: (host) => host.channelProviders.contribute('feishu', fakeChannelProvider),
+            contribute: (host) =>
+              host.channelProviders.contribute('feishu', fakeChannelProvider),
           }),
         },
       }),
@@ -223,13 +248,37 @@ describe('loadPlugins', () => {
   });
 
   it.each([
-    ['an unknown built-in plugin', 'builtin:nope', {}, 'import', /unknown built-in plugin/],
-    ['a failing import', 'npm:@acme/missing', {}, 'import', /could not import package/],
-    ['a non-function export', 'npm:@acme/a', { '@acme/a': { default: {} } }, 'factory', /plugin factory function/],
+    [
+      'an unknown built-in plugin',
+      'builtin:nope',
+      {},
+      'import',
+      /unknown built-in plugin/,
+    ],
+    [
+      'a failing import',
+      'npm:@acme/missing',
+      {},
+      'import',
+      /could not import package/,
+    ],
+    [
+      'a non-function export',
+      'npm:@acme/a',
+      { '@acme/a': { default: {} } },
+      'factory',
+      /plugin factory function/,
+    ],
     [
       'a throwing factory',
       'npm:@acme/a',
-      { '@acme/a': { default: () => { throw new Error('boom'); } } },
+      {
+        '@acme/a': {
+          default: () => {
+            throw new Error('boom');
+          },
+        },
+      },
       'factory',
       /plugin factory threw: boom/,
     ],
@@ -243,7 +292,16 @@ describe('loadPlugins', () => {
     [
       'a throwing contribute',
       'npm:@acme/a',
-      { '@acme/a': { default: () => ({ name: 'acme', contribute: () => { throw new Error('boom'); } }) } },
+      {
+        '@acme/a': {
+          default: () => ({
+            name: 'acme',
+            contribute: () => {
+              throw new Error('boom');
+            },
+          }),
+        },
+      },
       'contribute',
       /boom/,
     ],
@@ -255,18 +313,24 @@ describe('loadPlugins', () => {
           default: (): DreamuxPlugin => ({
             name: 'acme',
             contribute: (host: ContributeHost) =>
-              host.channelProviders.contribute('Not Valid!', fakeChannelProvider),
+              host.channelProviders.contribute(
+                'Not Valid!',
+                fakeChannelProvider,
+              ),
           }),
         },
       },
       'contribute',
       /builtin id must be/,
     ],
-  ])('fails with a PluginLoadError on %s', async (_label, ref, modules, phase, message) => {
-    const err = await loadError(load([{ ref }], modules));
-    expect(err.phase).toBe(phase);
-    expect(err.message).toMatch(message);
-  });
+  ])(
+    'fails with a PluginLoadError on %s',
+    async (_label, ref, modules, phase, message) => {
+      const err = await loadError(load([{ ref }], modules));
+      expect(err.phase).toBe(phase);
+      expect(err.message).toMatch(message);
+    },
+  );
 
   it.each([
     ['an unknown built-in plugin', 'builtin:nope'],
@@ -315,7 +379,9 @@ describe('readPluginConfigs', () => {
       },
     });
     readPluginConfigs(loaded, 'config.json');
-    expect(loaded.find((p) => p.name === 'acme')?.config).toEqual({ seen: undefined });
+    expect(loaded.find((p) => p.name === 'acme')?.config).toEqual({
+      seen: undefined,
+    });
   });
 
   it('attributes a throwing config.read to the plugin and its entry', async () => {
@@ -339,40 +405,49 @@ describe('readPluginConfigs', () => {
     }
     expect(caught).toBeInstanceOf(PluginLoadError);
     expect((caught as PluginLoadError).phase).toBe('config');
-    expect((caught as Error).message).toContain('plugins[0].config: size must be a number');
+    expect((caught as Error).message).toContain(
+      'plugins[0].config: size must be a number',
+    );
   });
 });
 
 describe('startPlugins', () => {
   it('publishes each api after every server ran, so a plugin may tap an api loaded after it', async () => {
     const calls: string[] = [];
-    const loaded = await load([{ ref: 'npm:@acme/a' }, { ref: 'npm:@acme/b' }], {
-      '@acme/a': {
-        default: (): DreamuxPlugin => ({
-          name: 'acme',
-          server(host) {
-            calls.push('acme server');
-            forPlugin(host, 'beta').tap('read beta', (api: unknown) => {
-              calls.push(`acme got ${String(api)}`);
-            });
-          },
-        }),
+    const loaded = await load(
+      [{ ref: 'npm:@acme/a' }, { ref: 'npm:@acme/b' }],
+      {
+        '@acme/a': {
+          default: (): DreamuxPlugin => ({
+            name: 'acme',
+            server(host) {
+              calls.push('acme server');
+              forPlugin(host, 'beta').tap('read beta', (api: unknown) => {
+                calls.push(`acme got ${String(api)}`);
+              });
+            },
+          }),
+        },
+        '@acme/b': {
+          default: (): DreamuxPlugin => ({
+            name: 'beta',
+            api: 'beta-api',
+            server() {
+              calls.push('beta server');
+            },
+          }),
+        },
       },
-      '@acme/b': {
-        default: (): DreamuxPlugin => ({
-          name: 'beta',
-          api: 'beta-api',
-          server() {
-            calls.push('beta server');
-          },
-        }),
-      },
-    });
+    );
 
     const started = startPlugins(loaded, silentLog);
 
     expect(calls).toEqual(['acme server', 'beta server', 'acme got beta-api']);
-    expect(started.tapOwners().plugin).toEqual({ feishu: [], acme: [], beta: ['acme'] });
+    expect(started.tapOwners().plugin).toEqual({
+      feishu: [],
+      acme: [],
+      beta: ['acme'],
+    });
   });
 
   it("passes a plugin's own config and a logger bound with plugin: <name> to its server", async () => {
@@ -420,21 +495,24 @@ describe('startPlugins', () => {
   });
 
   it('fails startPlugins when a consumer tap on hooks.plugin.for(name) throws, attributed to the tapping plugin', async () => {
-    const loaded = await load([{ ref: 'npm:@acme/a' }, { ref: 'npm:@acme/b' }], {
-      '@acme/a': {
-        default: (): DreamuxPlugin => ({
-          name: 'acme',
-          server(host) {
-            forPlugin(host, 'beta').tap('read beta', () => {
-              throw new Error('boom');
-            });
-          },
-        }),
+    const loaded = await load(
+      [{ ref: 'npm:@acme/a' }, { ref: 'npm:@acme/b' }],
+      {
+        '@acme/a': {
+          default: (): DreamuxPlugin => ({
+            name: 'acme',
+            server(host) {
+              forPlugin(host, 'beta').tap('read beta', () => {
+                throw new Error('boom');
+              });
+            },
+          }),
+        },
+        '@acme/b': {
+          default: (): DreamuxPlugin => ({ name: 'beta', api: 'beta-api' }),
+        },
       },
-      '@acme/b': {
-        default: (): DreamuxPlugin => ({ name: 'beta', api: 'beta-api' }),
-      },
-    });
+    );
 
     let caught: unknown;
     try {
@@ -464,7 +542,7 @@ describe('startPlugins', () => {
     expect(started.tapOwners().dispatcher).toEqual(['acme']);
   });
 
-  it('wraps a throwing server as that plugin\'s load failure', async () => {
+  it("wraps a throwing server as that plugin's load failure", async () => {
     const loaded = await load([{ ref: 'npm:@acme/a' }], {
       '@acme/a': {
         default: (): DreamuxPlugin => ({
@@ -492,10 +570,14 @@ describe('plugins[] through loadConfig', () => {
     await rm(configDir, { recursive: true, force: true });
   });
 
-  function baseConfig(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  function baseConfig(
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
     return {
       ...extra,
-      agents: [{ id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} }],
+      agents: [
+        { id: 'flow', provider: BUILTIN_CODEX_PROVIDER_REF, config: {} },
+      ],
       dispatchers: [
         {
           id: 'flow',
@@ -514,7 +596,9 @@ describe('plugins[] through loadConfig', () => {
   }
 
   async function writeConfig(body: unknown): Promise<void> {
-    await writeFile(join(configDir, 'config.json'), JSON.stringify(body), { mode: 0o600 });
+    await writeFile(join(configDir, 'config.json'), JSON.stringify(body), {
+      mode: 0o600,
+    });
   }
 
   it('runs import, contribute, provider validation, then config.read, and a contributed provider resolves as builtin:<name>', async () => {
@@ -533,7 +617,10 @@ describe('plugins[] through loadConfig', () => {
             name: 'acme',
             contribute(host) {
               calls.push('contribute');
-              host.agentRuntimeProviders.contribute('acme-runtime', fakeRuntimeProvider);
+              host.agentRuntimeProviders.contribute(
+                'acme-runtime',
+                fakeRuntimeProvider,
+              );
             },
             config: {
               read(raw) {
@@ -561,13 +648,21 @@ describe('plugins[] through loadConfig', () => {
   });
 
   it('round-trips plugins[] through stringifyConfig in both entry forms', async () => {
-    const plugins = ['builtin:bootstrap', { ref: 'npm:@acme/a', config: { size: 2 } }];
+    const plugins = [
+      'builtin:bootstrap',
+      { ref: 'npm:@acme/a', config: { size: 2 } },
+    ];
     await writeConfig(baseConfig({ plugins }));
     const pluginModuleImporter = importer({
       [FEISHU_PACKAGE]: { default: fakeFeishu() },
-      '@excitedjs/dreamux-plugin-bootstrap': { default: () => ({ name: 'bootstrap' }) },
+      '@excitedjs/dreamux-plugin-bootstrap': {
+        default: () => ({ name: 'bootstrap' }),
+      },
       '@acme/a': {
-        default: (): DreamuxPlugin => ({ name: 'acme', config: { read: (raw) => raw } }),
+        default: (): DreamuxPlugin => ({
+          name: 'acme',
+          config: { read: (raw) => raw },
+        }),
       },
     });
 
@@ -576,7 +671,10 @@ describe('plugins[] through loadConfig', () => {
       providerRegistry: codexRegistry(),
       pluginModuleImporter,
     });
-    const written = JSON.parse(stringifyConfig(config)) as Record<string, unknown>;
+    const written = JSON.parse(stringifyConfig(config)) as Record<
+      string,
+      unknown
+    >;
 
     expect(written['plugins']).toEqual(plugins);
     expect(Object.keys(written)[0]).toBe('plugins');
@@ -587,7 +685,9 @@ describe('plugins[] through loadConfig', () => {
     const { config } = await loadConfig({
       configDir,
       providerRegistry: codexRegistry(),
-      pluginModuleImporter: importer({ [FEISHU_PACKAGE]: { default: fakeFeishu() } }),
+      pluginModuleImporter: importer({
+        [FEISHU_PACKAGE]: { default: fakeFeishu() },
+      }),
     });
     expect(JSON.parse(stringifyConfig(config))).not.toHaveProperty('plugins');
   });
@@ -597,7 +697,9 @@ describe('plugins[] through loadConfig', () => {
     const { config } = await loadConfig({
       configDir,
       providerRegistry: codexRegistry(),
-      pluginModuleImporter: importer({ [FEISHU_PACKAGE]: { default: fakeFeishu() } }),
+      pluginModuleImporter: importer({
+        [FEISHU_PACKAGE]: { default: fakeFeishu() },
+      }),
     });
     expect(JSON.parse(stringifyConfig(config))).toHaveProperty('plugins', []);
   });
@@ -608,7 +710,9 @@ describe('plugins[] through loadConfig', () => {
       loadConfig({
         configDir,
         providerRegistry: codexRegistry(),
-        pluginModuleImporter: importer({ [FEISHU_PACKAGE]: { default: fakeFeishu() } }),
+        pluginModuleImporter: importer({
+          [FEISHU_PACKAGE]: { default: fakeFeishu() },
+        }),
       }),
     ).rejects.toThrow(/nonsense/);
   });
@@ -622,11 +726,12 @@ describe('plugins[] through loadConfig', () => {
       loadConfig({
         configDir,
         providerRegistry: createBuiltinProviderRegistry(),
-        pluginModuleImporter: importer({ [FEISHU_PACKAGE]: { default: fakeFeishu() } }),
+        pluginModuleImporter: importer({
+          [FEISHU_PACKAGE]: { default: fakeFeishu() },
+        }),
       }),
     ).rejects.toThrow(
       /no loaded plugin contributes provider "builtin:acme-runtime" and Dreamux does not ship it/,
     );
   });
-
 });

@@ -18,9 +18,12 @@ describe('beforeTeamLeaderLaunch: lazy TeamLeader materialization after a failed
     const team = await bootDissolveTeam();
     try {
       let tapCalls = 0;
-      team.service.hooks.beforeTeamLeaderLaunch.tapPromise('alpha', async () => {
-        tapCalls += 1;
-      });
+      team.service.hooks.beforeTeamLeaderLaunch.tapPromise(
+        'alpha',
+        async () => {
+          tapCalls += 1;
+        },
+      );
 
       team.setCommitFails(true);
       await team.service.dissolve({

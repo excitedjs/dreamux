@@ -11,10 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type {
-  ChannelCoreEvent,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { ChannelCoreEvent, DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { DispatcherCoreEventPublisher } from '../../src/service/dispatcher-core-events/index.js';
 import type {
@@ -27,8 +24,14 @@ import type { AgentIdentityCreateInput } from '../../src/service/agent-entity/id
 /** A `DreamuxLogger` that swallows every call but keeps them for assertions. */
 export interface CapturingLogger {
   readonly logger: DreamuxLogger;
-  readonly warnCalls: Array<{ fields: Record<string, unknown>; message?: string }>;
-  readonly errorCalls: Array<{ fields: Record<string, unknown>; message?: string }>;
+  readonly warnCalls: Array<{
+    fields: Record<string, unknown>;
+    message?: string;
+  }>;
+  readonly errorCalls: Array<{
+    fields: Record<string, unknown>;
+    message?: string;
+  }>;
 }
 
 export function createCapturingLogger(): CapturingLogger {
@@ -42,12 +45,17 @@ export function createCapturingLogger(): CapturingLogger {
     if (typeof fieldsOrMessage === 'string') {
       bucket.push({ fields: {}, message: fieldsOrMessage });
     } else {
-      bucket.push({ fields: fieldsOrMessage, ...(message !== undefined ? { message } : {}) });
+      bucket.push({
+        fields: fieldsOrMessage,
+        ...(message !== undefined ? { message } : {}),
+      });
     }
   };
   const logger: DreamuxLogger = {
-    error: (a: Record<string, unknown> | string, b?: string) => record(errorCalls, a, b),
-    warn: (a: Record<string, unknown> | string, b?: string) => record(warnCalls, a, b),
+    error: (a: Record<string, unknown> | string, b?: string) =>
+      record(errorCalls, a, b),
+    warn: (a: Record<string, unknown> | string, b?: string) =>
+      record(warnCalls, a, b),
     info: () => {},
     debug: () => {},
     trace: () => {},
@@ -140,6 +148,8 @@ export function makeIdentityStore(input: {
     dispatcherId: input.dispatcherId ?? 'dispatcher-fixture',
     expectedName: input.expectedName ?? null,
     log: input.log ?? createCapturingLogger().logger,
-    ...(input.onPersisted !== undefined ? { onPersisted: input.onPersisted } : {}),
+    ...(input.onPersisted !== undefined
+      ? { onPersisted: input.onPersisted }
+      : {}),
   });
 }

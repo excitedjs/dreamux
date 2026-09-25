@@ -1,11 +1,6 @@
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import {
-  TeammateService,
-} from './index.js';
-import type {
-  TeammateServiceDeps,
-  TeammateServiceOptions,
-} from './types.js';
+import { TeammateService } from './index.js';
+import type { TeammateServiceDeps, TeammateServiceOptions } from './types.js';
 
 export interface CreateTeammateServiceInput extends TeammateServiceDeps {
   dispatcherId: string;

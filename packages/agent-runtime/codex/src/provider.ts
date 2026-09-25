@@ -1,9 +1,6 @@
 import { codexMcpServerArgs } from './mcp-config.js';
 import { CodexWsClient } from './rpc.js';
-import {
-  CodexProcess,
-  type CodexProcessOptions,
-} from './supervisor.js';
+import { CodexProcess, type CodexProcessOptions } from './supervisor.js';
 import { CodexRuntime } from './runtime.js';
 import type { CodexRuntimeDeps } from './runtime-deps.js';
 import {
@@ -109,7 +106,11 @@ export function createCodexAgentRuntimeProvider(
     },
     config: {
       read(rawConfig, context) {
-        return readDispatcherCodexConfig(rawConfig, context.file, context.prefix);
+        return readDispatcherCodexConfig(
+          rawConfig,
+          context.file,
+          context.prefix,
+        );
       },
     },
     readRecentActivity: (query, context) =>
@@ -124,7 +125,9 @@ export function createCodexAgentRuntimeProvider(
         ...codexMcpServerArgs(context.mcpServers),
       ];
       const paths = context.paths;
-      const systemPromptReplace = codexSystemPromptReplace(context.systemPrompt);
+      const systemPromptReplace = codexSystemPromptReplace(
+        context.systemPrompt,
+      );
       const systemPromptAppend = codexSystemPromptAppend(context.systemPrompt);
       // Bind the output schema once, here. A compile failure is a create-time
       // error; no later submission can change or renegotiate the schema.

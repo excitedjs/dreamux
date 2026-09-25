@@ -6,10 +6,10 @@
 
 /** True when `v` is a non-null object, and therefore safe to index. */
 export function isRecord(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object'
+  return v !== null && typeof v === 'object';
 }
 
 /** `v` when it is a string, otherwise the empty string. */
 export function asString(v: unknown): string {
-  return typeof v === 'string' ? v : ''
+  return typeof v === 'string' ? v : '';
 }

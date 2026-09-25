@@ -21,6 +21,13 @@ Dreamux monorepo.
   the repository decision records and tests.
 - Do not introduce formatting churn. This package is for lint policy, not code
   style rewrites.
+  - Waived once, for the code-organization refactor's stage-3 formatting
+    commit (ruling R2 in
+    `.agents/tasks/architecture/code-organization-refactor/rulings.md`),
+    which reformatted this package's own files to the repo-root
+    `/.prettierrc.json` and wired `prettier --check` into a new `"lint"`
+    script here. Style is owned by that root file; this package's boundary
+    (ESLint rules, not style) is unchanged, and the waiver does not repeat.
 
 ## Upstream / Downstream Contract
 

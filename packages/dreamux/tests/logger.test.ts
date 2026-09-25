@@ -8,15 +8,18 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 
-import {
-  createLogger,
-  loggerToLevelFn,
-} from '../src/platform/logger.js';
+import { createLogger, loggerToLevelFn } from '../src/platform/logger.js';
 
 function captureSink(): { sink: Writable; text: () => string } {
   const chunks: string[] = [];
@@ -58,15 +61,16 @@ describe('logger factory', () => {
     logger.info('x');
     // The defensive re-tighten is a fire-and-forget async chmod (createLogger
     // stays synchronous, the gate bans *Sync), so poll until it lands.
-    await vi.waitFor(() =>
-      expect(statSync(filePath).mode & 0o777).toBe(0o600),
-    );
+    await vi.waitFor(() => expect(statSync(filePath).mode & 0o777).toBe(0o600));
   });
 
   it('redacts credential fields by default', () => {
     const { sink, text } = captureSink();
     const logger = createLogger({ destination: sink });
-    logger.info({ app_secret: 'top-secret-value', feishu: { app_secret: 'nested' } }, 'cfg');
+    logger.info(
+      { app_secret: 'top-secret-value', feishu: { app_secret: 'nested' } },
+      'cfg',
+    );
     const out = text();
     expect(out).not.toContain('top-secret-value');
     expect(out).not.toContain('nested');
@@ -77,7 +81,10 @@ describe('logger factory', () => {
     const { sink, text } = captureSink();
     const logger = createLogger({ destination: sink });
     // The server logs ids only; a body would only appear if a caller passed it.
-    logger.info({ chat_id: 'chat-a', message_id: 'm1', reason: 'bot not mentioned' }, 'drop');
+    logger.info(
+      { chat_id: 'chat-a', message_id: 'm1', reason: 'bot not mentioned' },
+      'drop',
+    );
     const out = text();
     expect(out).toContain('chat-a');
     expect(out).not.toContain('the actual message body text');

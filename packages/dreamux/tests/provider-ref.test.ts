@@ -11,7 +11,11 @@ import {
 describe('parseProviderRef — builtin', () => {
   it('parses a builtin id', () => {
     const ref = parseProviderRef('builtin:feishu');
-    expect(ref).toEqual({ source: 'builtin', id: 'feishu', raw: 'builtin:feishu' });
+    expect(ref).toEqual({
+      source: 'builtin',
+      id: 'feishu',
+      raw: 'builtin:feishu',
+    });
   });
 
   it('parses a kebab-case builtin id', () => {
@@ -20,7 +24,9 @@ describe('parseProviderRef — builtin', () => {
   });
 
   it('rejects a builtin ref with an export', () => {
-    expect(() => parseProviderRef('builtin:feishu#x')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('builtin:feishu#x')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 
   it('rejects an empty builtin id', () => {
@@ -28,12 +34,18 @@ describe('parseProviderRef — builtin', () => {
   });
 
   it('rejects an uppercase / invalid builtin id', () => {
-    expect(() => parseProviderRef('builtin:Feishu')).toThrow(InvalidProviderRefError);
-    expect(() => parseProviderRef('builtin:-bad')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('builtin:Feishu')).toThrow(
+      InvalidProviderRefError,
+    );
+    expect(() => parseProviderRef('builtin:-bad')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 
   it('rejects a builtin id starting with a digit (must start with a letter)', () => {
-    expect(() => parseProviderRef('builtin:1feishu')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('builtin:1feishu')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 
   it('accepts a builtin id with internal digits and dashes', () => {
@@ -66,7 +78,9 @@ describe('parseProviderRef — npm (reserved syntax)', () => {
   });
 
   it('parses a scoped package with a named export', () => {
-    const ref = parseProviderRef('npm:@example/dreamux-provider#feishuLikeChannel');
+    const ref = parseProviderRef(
+      'npm:@example/dreamux-provider#feishuLikeChannel',
+    );
     expect(ref).toEqual({
       source: 'npm',
       package: '@example/dreamux-provider',
@@ -77,11 +91,15 @@ describe('parseProviderRef — npm (reserved syntax)', () => {
 
   it('rejects an empty package', () => {
     expect(() => parseProviderRef('npm:')).toThrow(InvalidProviderRefError);
-    expect(() => parseProviderRef('npm:#export')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('npm:#export')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 
   it('rejects a malformed scope', () => {
-    expect(() => parseProviderRef('npm:@/name')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('npm:@/name')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 
   it('rejects a non-identifier export', () => {
@@ -91,11 +109,15 @@ describe('parseProviderRef — npm (reserved syntax)', () => {
   });
 
   it('rejects an uppercase package name (npm packages are lowercase)', () => {
-    expect(() => parseProviderRef('npm:UpperCase')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('npm:UpperCase')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 
   it('rejects a scope with no package name segment', () => {
-    expect(() => parseProviderRef('npm:@scope/')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('npm:@scope/')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 });
 
@@ -113,7 +135,9 @@ describe('parseProviderRef — malformed', () => {
   });
 
   it('rejects an unknown source', () => {
-    expect(() => parseProviderRef('file:./local')).toThrow(InvalidProviderRefError);
+    expect(() => parseProviderRef('file:./local')).toThrow(
+      InvalidProviderRefError,
+    );
   });
 
   it('carries the offending ref on the error', () => {

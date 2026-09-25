@@ -10,10 +10,7 @@ import type { ProjectedAgent } from '../../channel/conversation-projection.js';
 
 import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
 import { errorMessage } from '../../platform/error-info.js';
-import {
-  toRecordRow,
-  toStatus,
-} from '../agent-entity/read-helpers.js';
+import { toRecordRow, toStatus } from '../agent-entity/read-helpers.js';
 import { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
 import {
   requireLifecycleText,
@@ -24,7 +21,10 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
 } from '../agent-entity/types.js';
-import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
+import {
+  ClosedFactPublisher,
+  type ClosedSubscription,
+} from '../closed-fact.js';
 import type {
   CompletionDeliveryResult,
   PreparedCompletionDelivery,
@@ -38,7 +38,10 @@ import {
 } from '../shutdown-errors.js';
 import { COMPLETION_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
-import type { AdmissionLedger, AgentEntityLedgerKey } from './admission-ledger.js';
+import type {
+  AdmissionLedger,
+  AgentEntityLedgerKey,
+} from './admission-ledger.js';
 import { buildCompletionTurnText } from './completion-renderer.js';
 import { TeammateRuntimeOwner } from './runtime-owner.js';
 import { renderSubmission, type TeammateSubmitInput } from './submission.js';
@@ -162,13 +165,17 @@ export class TeammateService {
       throw new Error(`TeamMate ${JSON.stringify(this.name)} is not active`);
     }
     if (this.lockToken !== null) {
-      throw new Error(`TeamMate ${JSON.stringify(this.name)} is already locked`);
+      throw new Error(
+        `TeamMate ${JSON.stringify(this.name)} is already locked`,
+      );
     }
     if (!this.ordinaryMutations.idle) {
       throw new Error(`TeamMate ${JSON.stringify(this.name)} is being mutated`);
     }
     if (this.turns.hasUnsettledCurrent()) {
-      throw new Error(`TeamMate ${JSON.stringify(this.name)} has an active Turn`);
+      throw new Error(
+        `TeamMate ${JSON.stringify(this.name)} has an active Turn`,
+      );
     }
     const token = Object.freeze({});
     this.lockToken = token;
@@ -201,8 +208,10 @@ export class TeammateService {
     },
   ): Promise<AgentEntitySendResult> {
     const { resolveCompletionDelivery, ...submission } = input;
-    const delivery = submission.deliverCompletion ??
-      await resolveCompletionDelivery?.() ?? null;
+    const delivery =
+      submission.deliverCompletion ??
+      (await resolveCompletionDelivery?.()) ??
+      null;
     const turn = await this.submitInput({
       ...submission,
       ...(delivery !== null ? { deliverCompletion: delivery } : {}),
@@ -287,7 +296,9 @@ export class TeammateService {
     if (wake) {
       await this.runtimeOwner.ensureStarted();
     } else if (
-      (await this.runtimeOwner.existingRuntimeAfterStart().catch(() => null)) === null
+      (await this.runtimeOwner
+        .existingRuntimeAfterStart()
+        .catch(() => null)) === null
     ) {
       return { status: 'stopped' };
     }
@@ -360,9 +371,9 @@ export class TeammateService {
       return unsupportedPreparedCompletion('teammate is not writable');
     }
     try {
-      const runtime = await this.runtimeOwner.existingRuntimeAfterStart().catch(
-        () => null,
-      );
+      const runtime = await this.runtimeOwner
+        .existingRuntimeAfterStart()
+        .catch(() => null);
       if (runtime === null) {
         return unsupportedPreparedCompletion('teammate runtime not running');
       }
@@ -374,9 +385,13 @@ export class TeammateService {
       // says the same in facts, so a display can show one line without parsing
       // that prose back apart.
       return Object.freeze({
-        submit: () => this.submitCompletionInput(body, completion.kind === 'teammate'
-          ? { kind: 'teammate_completion', producer: completion.source }
-          : { kind: 'workflow_completion' }),
+        submit: () =>
+          this.submitCompletionInput(
+            body,
+            completion.kind === 'teammate'
+              ? { kind: 'teammate_completion', producer: completion.source }
+              : { kind: 'workflow_completion' },
+          ),
       });
     } finally {
       leave();
@@ -431,10 +446,14 @@ export class TeammateService {
     // while `hostStop` is set, or its turn would settle later with the fence
     // gone and report a stop nobody is left to read.
     const failures: unknown[] = [];
-    await collectShutdownFailure(failures, () => this.runtimeOwner.stopRuntime());
+    await collectShutdownFailure(failures, () =>
+      this.runtimeOwner.stopRuntime(),
+    );
     await this.turns.drainAdmissions();
     await this.ordinaryMutations.drain();
-    await collectShutdownFailure(failures, () => this.turns.convergeRetainedTurns());
+    await collectShutdownFailure(failures, () =>
+      this.turns.convergeRetainedTurns(),
+    );
     throwShutdownFailures(
       failures,
       `TeamMate ${JSON.stringify(this.name)} did not converge during host stop`,
@@ -473,10 +492,7 @@ export class TeammateService {
   private effectiveIdentityStatus(
     identity: AgentEntityIdentity,
   ): AgentEntityIdentityStatus {
-    if (
-      this.phase === 'closing' &&
-      this.runtimeOwner.hasNoRuntimeAuthority()
-    ) {
+    if (this.phase === 'closing' && this.runtimeOwner.hasNoRuntimeAuthority()) {
       return 'stopped';
     }
     return identity.status;
@@ -574,7 +590,8 @@ export class TeammateService {
         );
       }
       this.phase = 'closed';
-      if (token === null) this.closed.publish(teammateClosedFact(this.current(), closedAt));
+      if (token === null)
+        this.closed.publish(teammateClosedFact(this.current(), closedAt));
       return Promise.resolve({ teammate: this.status() });
     }
     if (this.phase === 'active') this.phase = 'closing';
@@ -656,11 +673,12 @@ export class TeammateService {
 
   private mustWorktrees(): WorktreeManager {
     if (this.deps.worktrees === undefined) {
-      throw new Error(`agent ${JSON.stringify(this.name)} has no worktree manager`);
+      throw new Error(
+        `agent ${JSON.stringify(this.name)} has no worktree manager`,
+      );
     }
     return this.deps.worktrees;
   }
-
 }
 
 function unsupportedPreparedCompletion(

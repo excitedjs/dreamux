@@ -21,9 +21,7 @@ import type {
   AgentEntityIdentity,
   AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
-import {
-  createTeammateService,
-} from '../teammate-service/factory.js';
+import { createTeammateService } from '../teammate-service/factory.js';
 import {
   assertTeamScopedAgent,
   childAgentRuntimeId,
@@ -99,10 +97,7 @@ export interface TeamLeaderForTeamDeps extends Omit<
    * owns every object they reach. The Team supplies its identity; it does not
    * assemble a tool surface.
    */
-  leaderMcp(input: {
-    teamId: string;
-    leaderName: string;
-  }): TeammateAgentMcp;
+  leaderMcp(input: { teamId: string; leaderName: string }): TeammateAgentMcp;
   /** This Team's `beforeTeamLeaderLaunch` hook, run at each leader construction. */
   beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }
@@ -234,7 +229,7 @@ function teamLeaderSystemPrompt(
 ): AgentRuntimeSystemPrompt {
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
-    'Your Dreamux MCP servers: `teammate` (this Team\'s members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel\'s own tools).',
+    "Your Dreamux MCP servers: `teammate` (this Team's members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel's own tools).",
     teamWorkspaceSentence(workspace),
     ...pluginInstructions,
   ];
@@ -249,7 +244,10 @@ function teamLeaderSystemPrompt(
  * dissolves never reads about dissolving.
  */
 function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
-  const kind = workspace.mode === 'managed' ? 'a managed git worktree' : 'a reused directory';
+  const kind =
+    workspace.mode === 'managed'
+      ? 'a managed git worktree'
+      : 'a reused directory';
   return `Your Team's workspace ${workspace.path} is ${kind} (cleanup: ${workspace.cleanup}).`;
 }
 

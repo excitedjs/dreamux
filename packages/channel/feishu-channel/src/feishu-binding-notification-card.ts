@@ -44,7 +44,11 @@ export function bindingBoundCard(input: {
       elements: [
         { ...textBlock(input.teamName, 'heading-4', 'green'), margin: '0px' },
         {
-          ...textBlock(`Bound to ${targetDisplay} · ${binding}`, 'normal', 'grey'),
+          ...textBlock(
+            `Bound to ${targetDisplay} · ${binding}`,
+            'normal',
+            'grey',
+          ),
           margin: GROUP_MARGIN,
         },
         factRow([
@@ -52,9 +56,15 @@ export function bindingBoundCard(input: {
           ['TeamLeader', input.leaderName],
           ['Agent Runtime', input.agentRuntime],
         ]),
-        ...(input.previousTeamName === undefined ? [] : [
-          textBlock(`Previous Team: ${input.previousTeamName}`, 'normal', 'grey'),
-        ]),
+        ...(input.previousTeamName === undefined
+          ? []
+          : [
+              textBlock(
+                `Previous Team: ${input.previousTeamName}`,
+                'normal',
+                'grey',
+              ),
+            ]),
         detailPanel(
           "**<font color='green'>Runtime cwd</font>**",
           input.runtimeCwd,
@@ -77,10 +87,17 @@ export function bindingUnboundCard(input: {
     config: {
       update_multi: true,
       width_mode: 'default',
-      summary: { content: `${targetDisplay} unbound from Team ${input.teamName}` },
+      summary: {
+        content: `${targetDisplay} unbound from Team ${input.teamName}`,
+      },
     },
     header: {
-      ...routeHeader(`Dreamux ${binding} unbound`, 'grey', 'Unbound', 'neutral'),
+      ...routeHeader(
+        `Dreamux ${binding} unbound`,
+        'grey',
+        'Unbound',
+        'neutral',
+      ),
       icon: { tag: 'standard_icon', token: 'close_outlined', color: 'grey' },
     },
     body: {
@@ -120,8 +137,17 @@ export function teamDissolvedCard(input: {
       summary: { content: `Team ${input.teamName} dissolved; routes removed` },
     },
     header: {
-      ...routeHeader('Dreamux team dissolved', 'orange', 'Team dissolved', 'orange'),
-      icon: { tag: 'standard_icon', token: 'warning_outlined', color: 'orange' },
+      ...routeHeader(
+        'Dreamux team dissolved',
+        'orange',
+        'Team dissolved',
+        'orange',
+      ),
+      icon: {
+        tag: 'standard_icon',
+        token: 'warning_outlined',
+        color: 'orange',
+      },
     },
     body: {
       direction: 'vertical',
@@ -129,7 +155,11 @@ export function teamDissolvedCard(input: {
       elements: [
         { ...textBlock(input.teamName, 'heading-4', 'orange'), margin: '0px' },
         {
-          ...textBlock('Team closed; routes removed automatically', 'normal', 'grey'),
+          ...textBlock(
+            'Team closed; routes removed automatically',
+            'normal',
+            'grey',
+          ),
           margin: GROUP_MARGIN,
         },
         factRow([
@@ -160,7 +190,11 @@ export function bindingRouteEndedCard(input: {
     fields: [
       line('Target', 'Target', input.display ?? describeTarget(input.target)),
       line('Team', 'Team', input.teamName),
-      line('Status', 'Status', 'This conversation is no longer routed to this Team.'),
+      line(
+        'Status',
+        'Status',
+        'This conversation is no longer routed to this Team.',
+      ),
     ],
   });
 }
@@ -174,7 +208,9 @@ function routeHeader(
   return {
     title: { tag: 'plain_text', content: title },
     template,
-    text_tag_list: [{ tag: 'text_tag', text: { tag: 'plain_text', content: status }, color }],
+    text_tag_list: [
+      { tag: 'text_tag', text: { tag: 'plain_text', content: status }, color },
+    ],
   };
 }
 
@@ -186,7 +222,13 @@ function textBlock(
 ) {
   return {
     tag: 'div',
-    text: { tag: 'plain_text', content, text_size: textSize, text_color: textColor, text_align: textAlign },
+    text: {
+      tag: 'plain_text',
+      content,
+      text_size: textSize,
+      text_color: textColor,
+      text_align: textAlign,
+    },
   };
 }
 
@@ -216,28 +258,32 @@ function detailPanel(labelMarkdown: string, value: string, background: string) {
     tag: 'column_set',
     flex_mode: 'none',
     margin: '0px',
-    columns: [{
-      tag: 'column',
-      width: 'weighted',
-      weight: 1,
-      background_style: background,
-      padding: '8px 10px 8px 10px',
-      vertical_spacing: '2px',
-      elements: [
-        { tag: 'markdown', content: labelMarkdown },
-        textBlock(value, 'normal'),
-      ],
-    }],
+    columns: [
+      {
+        tag: 'column',
+        width: 'weighted',
+        weight: 1,
+        background_style: background,
+        padding: '8px 10px 8px 10px',
+        vertical_spacing: '2px',
+        elements: [
+          { tag: 'markdown', content: labelMarkdown },
+          textBlock(value, 'normal'),
+        ],
+      },
+    ],
   };
 }
 
 export function spaceBoundCard(space: FeishuSpaceRecord): unknown {
-  const workspace = space.repo === null
-    ? 'Dispatcher 默认工作区'
-    : `从 ${space.repo.path} 创建的托管 worktree`;
-  const enWorkspace = space.repo === null
-    ? 'dispatcher default workspace'
-    : `managed worktree from ${space.repo.path}`;
+  const workspace =
+    space.repo === null
+      ? 'Dispatcher 默认工作区'
+      : `从 ${space.repo.path} 创建的托管 worktree`;
+  const enWorkspace =
+    space.repo === null
+      ? 'dispatcher default workspace'
+      : `managed worktree from ${space.repo.path}`;
   return buildFeishuStatusCard({
     template: 'green',
     title: 'Dreamux 协作空间已绑定',
@@ -245,7 +291,11 @@ export function spaceBoundCard(space: FeishuSpaceRecord): unknown {
     fields: [
       line('协作空间', 'Space', space.space_name),
       line('群聊', 'Group', space.display ?? space.container_chat_id),
-      line('TeamLeader 运行时', 'TeamLeader runtime', space.leader_agent_runtime),
+      line(
+        'TeamLeader 运行时',
+        'TeamLeader runtime',
+        space.leader_agent_runtime,
+      ),
       line('工作区', 'Workspace', workspace, enWorkspace),
       line(
         '基础引用',

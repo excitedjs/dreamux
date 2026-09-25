@@ -220,7 +220,8 @@ export class TeammateRuntimeOwner {
             peers: this.deps.peers,
             worktrees: this.mustWorktrees(),
             identity: current,
-          }));
+          }),
+        );
       }
       identity = await this.state.update({
         status: 'starting',

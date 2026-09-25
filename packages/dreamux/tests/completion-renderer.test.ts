@@ -79,7 +79,10 @@ describe('buildCompletionTurnText', () => {
       'long, so the full result was saved to a file:\n\n';
     expect(text.startsWith(prefix)).toBe(true);
     expect(text.slice(prefix.length)).toMatch(
-      new RegExp(`^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`, 'u'),
+      new RegExp(
+        `^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`,
+        'u',
+      ),
     );
   });
 });

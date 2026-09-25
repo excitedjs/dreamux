@@ -100,11 +100,17 @@ export function schedulerCommands(
     output: objectSchema({ jobs: arrayOf(OBJECT) }, ['jobs']),
     parse: (payload) => cronOwnerInput(commandPayload(payload)),
     async execute(context, input) {
-      return cronListResult(await (await schedulerFor(host, context, input)).list());
+      return cronListResult(
+        await (await schedulerFor(host, context, input)).list(),
+      );
     },
   };
 
-  const create: CoreCommandDefinition<'scheduler.cron.create', CronCreateInput, CronJob> = {
+  const create: CoreCommandDefinition<
+    'scheduler.cron.create',
+    CronCreateInput,
+    CronJob
+  > = {
     name: 'scheduler.cron.create',
     version: 1,
     input: objectSchema(
@@ -139,7 +145,11 @@ export function schedulerCommands(
     },
   };
 
-  const update: CoreCommandDefinition<'scheduler.cron.update', CronUpdateInput, CronJob> = {
+  const update: CoreCommandDefinition<
+    'scheduler.cron.update',
+    CronUpdateInput,
+    CronJob
+  > = {
     name: 'scheduler.cron.update',
     version: 1,
     input: objectSchema(

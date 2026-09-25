@@ -152,9 +152,11 @@ export function parseLaunchdPid(raw: string): number | null {
 export function parseLaunchdDetail(raw: string): string | null {
   const state = raw.match(/\bstate = ([^\n]+)/)?.[1]?.trim();
   const reason = raw.match(/\breason = ([^\n]+)/)?.[1]?.trim();
-  return [state, reason]
-    .filter((value) => value !== undefined && value !== '')
-    .join(', ') || null;
+  return (
+    [state, reason]
+      .filter((value) => value !== undefined && value !== '')
+      .join(', ') || null
+  );
 }
 
 export function parseSystemdProperties(raw: string): Record<string, string> {

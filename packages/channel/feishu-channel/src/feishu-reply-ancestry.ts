@@ -7,7 +7,11 @@ export function replyAncestryParentId(
   event: FeishuInboundEvent,
 ): string | undefined {
   const parentId = event.parentId;
-  if (parentId === undefined || parentId === '' || parentId === event.messageId) {
+  if (
+    parentId === undefined ||
+    parentId === '' ||
+    parentId === event.messageId
+  ) {
     return undefined;
   }
   if (

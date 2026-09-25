@@ -24,7 +24,11 @@ export class ClaudeCodeControlRpc {
     private readonly stdin: Writable,
     private readonly options: {
       log?:
-        | ((level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void)
+        | ((
+            level: 'info' | 'warn' | 'error',
+            msg: string,
+            err?: unknown,
+          ) => void)
         | undefined;
       onRemoteControlUrl?: ((url: string) => void) | undefined;
     },
@@ -48,12 +52,15 @@ export class ClaudeCodeControlRpc {
     });
     const pending: PendingInterrupt = { requestId, promise, resolve, reject };
     this.pendingInterrupt = pending;
-    this.stdin.write(`${buildInterruptRequest(requestId, reason)}\n`, (error) => {
-      if (error != null && this.pendingInterrupt === pending) {
-        this.pendingInterrupt = null;
-        reject(error);
-      }
-    });
+    this.stdin.write(
+      `${buildInterruptRequest(requestId, reason)}\n`,
+      (error) => {
+        if (error != null && this.pendingInterrupt === pending) {
+          this.pendingInterrupt = null;
+          reject(error);
+        }
+      },
+    );
     return promise;
   }
 
@@ -76,7 +83,9 @@ export class ClaudeCodeControlRpc {
   enableRemoteControl(): void {
     if (!this.stdin.writable) return;
     this.remoteControlRequestId = randomUUID();
-    this.stdin.write(`${buildRemoteControlEnable(this.remoteControlRequestId)}\n`);
+    this.stdin.write(
+      `${buildRemoteControlEnable(this.remoteControlRequestId)}\n`,
+    );
   }
 
   onControlRequest(
@@ -114,7 +123,8 @@ export class ClaudeCodeControlRpc {
     if (interrupt !== null && requestId === interrupt.requestId) {
       this.pendingInterrupt = null;
       if (ok) interrupt.resolve(true);
-      else interrupt.reject(new Error(error ?? 'claude interrupt request failed'));
+      else
+        interrupt.reject(new Error(error ?? 'claude interrupt request failed'));
       return;
     }
     if (requestId !== this.remoteControlRequestId) return;

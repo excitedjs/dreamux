@@ -6,10 +6,7 @@ import {
 } from '@modelcontextprotocol/client';
 import type { Transport as ServerTransport } from '@modelcontextprotocol/server';
 
-export type McpProtocolVersion =
-  | '2026-07-28'
-  | '2025-11-25'
-  | '2025-06-18';
+export type McpProtocolVersion = '2026-07-28' | '2025-11-25' | '2025-06-18';
 
 export interface ConnectedMcpClient {
   client: Client;
@@ -20,7 +17,8 @@ export async function connectMcpClient(
   runServer: (transport: ServerTransport) => Promise<void>,
   protocolVersion: McpProtocolVersion = '2025-11-25',
 ): Promise<ConnectedMcpClient> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   const run = runServer(serverTransport);
   const client = new Client(
     { name: 'dreamux-test-client', version: '1.0.0' },

@@ -28,7 +28,10 @@ export function rejectUnknownKeys(
   for (const key of Object.keys(obj)) {
     if (allowed.has(key)) continue;
     const name = `${prefix}${key}`;
-    if (/^dispatchers\[\d+\]\.$/.test(prefix) && (key === 'feishu' || key === 'codex')) {
+    if (
+      /^dispatchers\[\d+\]\.$/.test(prefix) &&
+      (key === 'feishu' || key === 'codex')
+    ) {
       throw new Error(
         `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
           'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +

@@ -42,7 +42,8 @@ export function createScanBudget(input: {
 }): ScanBudget {
   const maxEntries = input.maxEntries ?? SCAN_DISCOVERY_MAX_ENTRIES;
   const now = input.now ?? Date.now;
-  const deadline = now() + (input.maxElapsedMs ?? SCAN_DISCOVERY_MAX_ELAPSED_MS);
+  const deadline =
+    now() + (input.maxElapsedMs ?? SCAN_DISCOVERY_MAX_ELAPSED_MS);
   let inspected = 0;
   return {
     inspect(entries = 1): void {

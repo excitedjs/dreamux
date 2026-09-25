@@ -68,10 +68,14 @@ export default function createBootstrapPlugin(): DreamuxPlugin {
         });
 
         dispatcher.hooks.team.tap('bootstrap', (team) => {
-          team.hooks.beforeTeamLeaderLaunch.tapPromise('bootstrap', async (draft) => {
-            const profile = await readProfile(dir);
-            if (complete(profile)) draft.instructions.push(renderProfile(dir, profile));
-          });
+          team.hooks.beforeTeamLeaderLaunch.tapPromise(
+            'bootstrap',
+            async (draft) => {
+              const profile = await readProfile(dir);
+              if (complete(profile))
+                draft.instructions.push(renderProfile(dir, profile));
+            },
+          );
         });
       });
     },

@@ -7,9 +7,7 @@ const PACKAGE_ROOT = dirname(dirname(HERE));
 const PACKAGE_BIN_DIR = join(PACKAGE_ROOT, 'bin');
 const DREAMUX_BIN = join(PACKAGE_BIN_DIR, 'dreamux');
 
-export function dreamuxBinPath(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function dreamuxBinPath(env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env['DREAMUX_BIN'];
   return fromEnv !== undefined && fromEnv !== ''
     ? resolve(fromEnv)
@@ -36,7 +34,9 @@ export async function resolveExecutableOnPath(
   const candidates =
     bin.includes(sep) || bin.includes('/')
       ? [isAbsolute(bin) ? bin : resolve(bin)]
-      : (env['PATH'] ?? '').split(':').flatMap((dir) => (dir === '' ? [] : [join(dir, bin)]));
+      : (env['PATH'] ?? '')
+          .split(':')
+          .flatMap((dir) => (dir === '' ? [] : [join(dir, bin)]));
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);

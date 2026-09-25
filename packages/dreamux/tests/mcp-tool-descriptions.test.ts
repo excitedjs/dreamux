@@ -53,22 +53,16 @@ const CATALOGS: Record<string, readonly unknown[]> = {
   'team (dispatcher)': createTeamMcpDelegate({
     dispatcher: {} as never,
     caller: { kind: 'dispatcher' },
-  })
-    .describe()
-    .tools,
+  }).describe().tools,
   'team (team_leader)': createTeamMcpDelegate({
     dispatcher: {} as never,
     caller: { kind: 'team_leader', teamId: 'team-x', leaderName: 'leader-x' },
-  })
-    .describe()
-    .tools,
+  }).describe().tools,
   cron: createCronMcpDelegate({
     scheduler: async () => {
       throw new Error('unused');
     },
-  })
-    .describe()
-    .tools,
+  }).describe().tools,
 };
 
 const SKILL_DESCRIPTION_SOURCES: Record<string, string> = {
@@ -123,7 +117,7 @@ const HAND_OFF_SENTENCES: readonly [string, string, string][] = [
   [
     'team (dispatcher)',
     'create',
-    'With `prompt`, returns a receipt at once and the TeamLeader\'s completion ' +
+    "With `prompt`, returns a receipt at once and the TeamLeader's completion " +
       'is pushed later as a new message; without it, the Team is created and ' +
       'nothing is submitted.',
   ],
@@ -139,10 +133,7 @@ const HAND_OFF_SENTENCES: readonly [string, string, string][] = [
  * Every property of an object schema by dotted path, descending into nested
  * object schemas that declare their own properties.
  */
-function inputProperties(
-  schema: unknown,
-  prefix: string,
-): [string, unknown][] {
+function inputProperties(schema: unknown, prefix: string): [string, unknown][] {
   if (!isPlainObject(schema) || !isPlainObject(schema['properties'])) {
     return [];
   }
@@ -154,12 +145,12 @@ function inputProperties(
 
 function frontmatterDescription(skillMarkdownPath: string): string {
   const frontmatter =
-    /^---\n([\s\S]*?)\n---\n/.exec(readFileSync(skillMarkdownPath, 'utf8'))?.[1] ??
-    '';
+    /^---\n([\s\S]*?)\n---\n/.exec(
+      readFileSync(skillMarkdownPath, 'utf8'),
+    )?.[1] ?? '';
   return (
-    frontmatter
-      .split('\n')
-      .find((line) => line.startsWith('description:')) ?? ''
+    frontmatter.split('\n').find((line) => line.startsWith('description:')) ??
+    ''
   );
 }
 
@@ -189,22 +180,37 @@ describe('creation tool repository inputs', () => {
     ['team (dispatcher)', 'create'],
   ] as const) {
     it(`${catalog} ${name} exposes repository controls without a slug`, () => {
-      const tool = (CATALOGS[catalog] as readonly AdvertisedTool[])
-        .find((advertised) => advertised.name === name)!;
+      const tool = (CATALOGS[catalog] as readonly AdvertisedTool[]).find(
+        (advertised) => advertised.name === name,
+      )!;
       const properties = inputProperties(tool.inputSchema, '');
-      expect(properties.map(([path]) => path).filter((path) => path.startsWith('repo.')).sort())
-        .toEqual(['repo.base_ref', 'repo.branch', 'repo.cleanup', 'repo.mode', 'repo.path']);
+      expect(
+        properties
+          .map(([path]) => path)
+          .filter((path) => path.startsWith('repo.'))
+          .sort(),
+      ).toEqual([
+        'repo.base_ref',
+        'repo.branch',
+        'repo.cleanup',
+        'repo.mode',
+        'repo.path',
+      ]);
       expect(tool.description).not.toMatch(/slug/i);
       const branch = properties.find(([path]) => path === 'repo.branch')?.[1];
-      expect(branch).toMatchObject({ description: expect.not.stringMatching(/slug/i) });
+      expect(branch).toMatchObject({
+        description: expect.not.stringMatching(/slug/i),
+      });
     });
   }
 
   it('keeps TeamLeader spawn in the shared workspace without a repo input', () => {
-    const tool = (CATALOGS['teammate (team_leader)'] as readonly AdvertisedTool[])
-      .find((advertised) => advertised.name === 'spawn')!;
-    expect(inputProperties(tool.inputSchema, '').map(([path]) => path))
-      .not.toContain('repo');
+    const tool = (
+      CATALOGS['teammate (team_leader)'] as readonly AdvertisedTool[]
+    ).find((advertised) => advertised.name === 'spawn')!;
+    expect(
+      inputProperties(tool.inputSchema, '').map(([path]) => path),
+    ).not.toContain('repo');
   });
 });
 
@@ -257,8 +263,9 @@ describe('what only the Dispatcher role prompts still carry', () => {
 describe('a hand-off says the completion comes back later', () => {
   for (const [catalog, name, sentence] of HAND_OFF_SENTENCES) {
     it(`states it on ${catalog} "${name}"`, () => {
-      const tool = (CATALOGS[catalog] as readonly AdvertisedTool[] | undefined)
-        ?.find((advertised) => advertised.name === name);
+      const tool = (
+        CATALOGS[catalog] as readonly AdvertisedTool[] | undefined
+      )?.find((advertised) => advertised.name === name);
       expect(tool, `${catalog} advertises no tool "${name}"`).toBeDefined();
       expect(tool?.description).toContain(sentence);
     });

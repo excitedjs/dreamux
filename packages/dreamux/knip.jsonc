@@ -41,6 +41,6 @@
     "nsTypes": "warn",
     "enumMembers": "warn",
     "namespaceMembers": "warn",
-    "duplicates": "warn"
-  }
+    "duplicates": "warn",
+  },
 }

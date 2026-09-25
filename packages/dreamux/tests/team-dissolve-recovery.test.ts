@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { TeamClosing, type TeamClosingDeps } from '../src/service/team-service/closing.js';
-import { leaderForOpenTeam, type TeamLeaderForTeamDeps } from '../src/service/team-service/leader-agent.js';
+import {
+  TeamClosing,
+  type TeamClosingDeps,
+} from '../src/service/team-service/closing.js';
+import {
+  leaderForOpenTeam,
+  type TeamLeaderForTeamDeps,
+} from '../src/service/team-service/leader-agent.js';
 import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
 import type { SchedulerService } from '../src/service/scheduler/service.js';
 import type { TeammateCollection } from '../src/service/teammate-collection/index.js';
@@ -37,9 +43,7 @@ const record = {
 
 const eligible: WorktreeCleanupAssessment = { status: 'eligible' };
 
-const blocked = (
-  reason: 'dirty' | 'unmerged',
-): WorktreeCleanupAssessment => ({
+const blocked = (reason: 'dirty' | 'unmerged'): WorktreeCleanupAssessment => ({
   status: 'blocked',
   reason,
   worktree: record.worktree,
@@ -55,15 +59,20 @@ interface ClosingHarness {
   held: () => TeammateService | null;
 }
 
-function harness(overrides: {
-  commit?: () => Promise<TeamRecord>;
-  deleteStoreFile?: () => Promise<void>;
-  assess?: () => Promise<WorktreeCleanupAssessment>;
-} = {}): ClosingHarness {
+function harness(
+  overrides: {
+    commit?: () => Promise<TeamRecord>;
+    deleteStoreFile?: () => Promise<void>;
+    assess?: () => Promise<WorktreeCleanupAssessment>;
+  } = {},
+): ClosingHarness {
   const order: string[] = [];
-  const wrapper = (): TeammateService => ({
-    stopForHost: async () => { order.push('leader.stopForHost'); },
-  }) as unknown as TeammateService;
+  const wrapper = (): TeammateService =>
+    ({
+      stopForHost: async () => {
+        order.push('leader.stopForHost');
+      },
+    }) as unknown as TeammateService;
   // Mirrors the Team's own wiring: a Team holding no wrapper materializes one
   // from the durable identity, lets it go, and only then closes it. The Team
   // starts out holding the one it was rebuilt with.
@@ -74,8 +83,12 @@ function harness(overrides: {
     order.push(`leader.materialize#${built}`);
     return wrapper();
   };
-  const workflowStart = vi.fn(async () => { order.push('workflows.start'); });
-  const schedulerStart = vi.fn(async () => { order.push('scheduler.start'); });
+  const workflowStart = vi.fn(async () => {
+    order.push('workflows.start');
+  });
+  const schedulerStart = vi.fn(async () => {
+    order.push('scheduler.start');
+  });
   const deleteStoreFile = vi.fn(async () => {
     order.push('scheduler.deleteStoreFile');
     await (overrides.deleteStoreFile?.() ?? Promise.resolve());
@@ -85,23 +98,36 @@ function harness(overrides: {
     dispatcherId: 'dispatcher-1',
     workflows: {
       closeAdmission: () => {},
-      stopAll: async () => { order.push('workflows.stopAll'); },
+      stopAll: async () => {
+        order.push('workflows.stopAll');
+      },
       start: workflowStart,
     } as unknown as WorkflowService,
     scheduler: {
-      stop: () => { order.push('scheduler.stop'); },
+      stop: () => {
+        order.push('scheduler.stop');
+      },
       start: schedulerStart,
       deleteStoreFile,
     } as unknown as SchedulerService,
     members: {
-      stopAllForDissolve: async () => { order.push('members.stopAll'); },
-      closeAllForDissolve: async () => { order.push('members.close'); },
+      stopAllForDissolve: async () => {
+        order.push('members.stopAll');
+      },
+      closeAllForDissolve: async () => {
+        order.push('members.close');
+      },
     } as unknown as TeammateCollection,
     worktrees: {
       assessCleanup: overrides.assess ?? (async () => eligible),
     } as unknown as WorktreeManager,
     record: () => record,
-    commit: overrides.commit ?? (async () => { order.push('record.commit'); return record; }),
+    commit:
+      overrides.commit ??
+      (async () => {
+        order.push('record.commit');
+        return record;
+      }),
     log: silentLog,
     leader: () => holding,
     closeLeaderForDissolve: async () => {
@@ -130,10 +156,14 @@ const dissolveInput = {
 describe('a dissolve whose record never closed leaves the Team on disk', () => {
   it('cancels scheduled work with the scheduler, before the record commit', async () => {
     const h = harness({
-      commit: async () => { throw new Error('store write failed'); },
+      commit: async () => {
+        throw new Error('store write failed');
+      },
     });
 
-    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow('store write failed');
+    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow(
+      'store write failed',
+    );
 
     expect(h.order).toEqual([
       // stop
@@ -157,23 +187,33 @@ describe('a dissolve whose record never closed leaves the Team on disk', () => {
 
   it('builds no leader and starts no runtime when the commit fails', async () => {
     const h = harness({
-      commit: async () => { throw new Error('store write failed'); },
+      commit: async () => {
+        throw new Error('store write failed');
+      },
     });
 
-    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow('store write failed');
+    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow(
+      'store write failed',
+    );
 
     // One wrapper existed and was closed. Nothing replaced it, and nothing was
     // started: the next ordinary use is what materializes a leader again.
-    expect(h.order.filter((step) => step.startsWith('leader.materialize'))).toEqual([]);
+    expect(
+      h.order.filter((step) => step.startsWith('leader.materialize')),
+    ).toEqual([]);
     expect(h.held()).toBeNull();
   });
 
   it('reopens Workflow and scheduler admission from what survived', async () => {
     const h = harness({
-      commit: async () => { throw new Error('store write failed'); },
+      commit: async () => {
+        throw new Error('store write failed');
+      },
     });
 
-    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow('store write failed');
+    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow(
+      'store write failed',
+    );
 
     expect(h.workflowStart).toHaveBeenCalledTimes(1);
     expect(h.schedulerStart).toHaveBeenCalledTimes(1);
@@ -181,10 +221,14 @@ describe('a dissolve whose record never closed leaves the Team on disk', () => {
 
   it('leaves every member closed rather than reopening them', async () => {
     const h = harness({
-      commit: async () => { throw new Error('store write failed'); },
+      commit: async () => {
+        throw new Error('store write failed');
+      },
     });
 
-    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow('store write failed');
+    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow(
+      'store write failed',
+    );
 
     expect(h.order.filter((step) => step.startsWith('members.'))).toEqual([
       'members.stopAll',
@@ -194,10 +238,14 @@ describe('a dissolve whose record never closed leaves the Team on disk', () => {
 
   it('fails the dissolve when the cron store could not be deleted', async () => {
     const h = harness({
-      deleteStoreFile: async () => { throw new Error('cron store delete failed'); },
+      deleteStoreFile: async () => {
+        throw new Error('cron store delete failed');
+      },
     });
 
-    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow('cron store delete failed');
+    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow(
+      'cron store delete failed',
+    );
 
     // The surviving file is the durable fact, and only a Team that stayed open
     // is ever rebuilt to see it: admission comes back over exactly that state.
@@ -211,14 +259,16 @@ describe('a dissolve whose record never closed leaves the Team on disk', () => {
     });
     const h = harness({ commit });
 
-    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow('store write failed');
+    await expect(h.closing.dissolve(dissolveInput)).rejects.toThrow(
+      'store write failed',
+    );
     commit.mockImplementation(async () => record);
     await expect(h.closing.dissolve(dissolveInput)).resolves.toBeUndefined();
 
     expect(h.order.filter((step) => step === 'leader.close')).toHaveLength(2);
-    expect(h.order.filter((step) => step.startsWith('leader.materialize'))).toEqual([
-      'leader.materialize#2',
-    ]);
+    expect(
+      h.order.filter((step) => step.startsWith('leader.materialize')),
+    ).toEqual(['leader.materialize#2']);
     expect(h.deleteStoreFile).toHaveBeenCalledTimes(2);
   });
 });
@@ -246,12 +296,15 @@ describe('an open Team materializes its leader from the identity at its root', (
   } {
     const read = vi.fn(async () => identity);
     return {
-      deps: { identities: { read } } as unknown as Omit<TeamLeaderForTeamDeps, 'identity'>,
+      deps: { identities: { read } } as unknown as Omit<
+        TeamLeaderForTeamDeps,
+        'identity'
+      >,
       read,
     };
   }
 
-  it('refuses an identity that is not this Team\'s leader', async () => {
+  it("refuses an identity that is not this Team's leader", async () => {
     const { deps } = leaderDeps({
       dispatcher_id: 'dispatcher-1',
       team_id: 'alpha',

@@ -13,7 +13,6 @@ import { errorInfo } from '../platform/error-info.js';
 import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-events/index.js';
 import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
 
-
 /**
  * The projected Agent: its durable identity plus the runtime role its owner
  * derived. Role arrives with the call because only the Service that
@@ -92,7 +91,11 @@ export function createConversationProjection(input: {
       const scope = actorScope(agent);
       if (scope === null || !input.coreEvents.hasSources()) return;
       guarded(agent, 'input', () => {
-        const content = redactText(admitted.text, identity.cwd, input.homePathPrefixes);
+        const content = redactText(
+          admitted.text,
+          identity.cwd,
+          input.homePathPrefixes,
+        );
         const event: TeammateInputEvent = {
           ...scope,
           kind: 'teammate.input',
@@ -118,7 +121,11 @@ export function createConversationProjection(input: {
           ...scope,
           kind: 'teammate.activity',
           occurredAt: activity.occurredAt,
-          activity: projectedActivity(activity, identity.cwd, input.homePathPrefixes),
+          activity: projectedActivity(
+            activity,
+            identity.cwd,
+            input.homePathPrefixes,
+          ),
         };
         input.coreEvents.publish(identity.dispatcher_id, event);
       });
@@ -169,13 +176,18 @@ function projectedActivity(
     case 'token.usage':
       return activity;
     case 'assistant.message':
-      return { ...activity, text: redactText(activity.text, cwd, homePathPrefixes).value };
+      return {
+        ...activity,
+        text: redactText(activity.text, cwd, homePathPrefixes).value,
+      };
     case 'tool.call':
       return {
         ...activity,
         summary: redact(activity.summary),
         invocation: redact(activity.invocation),
-        items: activity.items.map((item) => redactText(item, cwd, homePathPrefixes).value),
+        items: activity.items.map(
+          (item) => redactText(item, cwd, homePathPrefixes).value,
+        ),
         // A call's payloads arrive as structure, so they are walked rather
         // than read as one string: a key that names a secret is answered by
         // its name, and every string leaf is ordinary text by the time it is

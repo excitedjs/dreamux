@@ -23,10 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
 
-const PACKAGE_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-);
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const PKG_BIN_DREAMUX = join(PACKAGE_ROOT, 'bin', 'dreamux');
 
@@ -45,7 +42,10 @@ beforeAll(() => {
   }
 });
 
-function runHelp(binPath: string, cwd: string): {
+function runHelp(
+  binPath: string,
+  cwd: string,
+): {
   status: number | null;
   stdout: string;
   stderr: string;
@@ -143,6 +143,8 @@ describe('packages/dreamux/bin/dreamux', () => {
   it('execs plain node against the compiled dist target', () => {
     const script = readFileSync(PKG_BIN_DREAMUX, 'utf8');
     expect(script).toContain('NODE_BIN="${DREAMUX_NODE_BIN:-node}"');
-    expect(script).toMatch(/exec env DREAMUX_BIN="\$DREAMUX_BIN" "\$NODE_BIN" "\$TARGET"/);
+    expect(script).toMatch(
+      /exec env DREAMUX_BIN="\$DREAMUX_BIN" "\$NODE_BIN" "\$TARGET"/,
+    );
   });
 });

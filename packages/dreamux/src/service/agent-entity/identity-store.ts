@@ -208,12 +208,18 @@ export class AgentIdentityStore {
   ): Promise<AgentEntityIdentity> {
     const updated: AgentEntityIdentity = {
       ...identity,
-      ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
+      ...(input.agentRuntime !== undefined
+        ? { agent_runtime: input.agentRuntime }
+        : {}),
       ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
       ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
-      ...(input.sourceRepo !== undefined ? { source_repo: input.sourceRepo } : {}),
+      ...(input.sourceRepo !== undefined
+        ? { source_repo: input.sourceRepo }
+        : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
-      ...(input.runtimeCwd !== undefined ? { runtime_cwd: input.runtimeCwd } : {}),
+      ...(input.runtimeCwd !== undefined
+        ? { runtime_cwd: input.runtimeCwd }
+        : {}),
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
       ...(input.identityPrompt !== undefined
@@ -399,7 +405,8 @@ function readIdentity(
   raw: string,
 ): AgentEntityIdentity {
   const value = JSON.parse(raw) as Record<string, unknown>;
-  const storedName = typeof value['name'] === 'string' ? value['name'] : expectedName;
+  const storedName =
+    typeof value['name'] === 'string' ? value['name'] : expectedName;
   if (
     typeof value['agent_runtime'] !== 'string' &&
     typeof value['provider_ref'] === 'string'
@@ -454,9 +461,12 @@ function readIdentity(
     created_at: record['created_at'] as number,
     updated_at: record['updated_at'] as number,
     status: readStatus(record['status'], storedName),
-    last_error: typeof record['last_error'] === 'string' ? record['last_error'] : null,
-    closed_at: typeof record['closed_at'] === 'number' ? record['closed_at'] : null,
-    close_note: typeof record['close_note'] === 'string' ? record['close_note'] : null,
+    last_error:
+      typeof record['last_error'] === 'string' ? record['last_error'] : null,
+    closed_at:
+      typeof record['closed_at'] === 'number' ? record['closed_at'] : null,
+    close_note:
+      typeof record['close_note'] === 'string' ? record['close_note'] : null,
   };
 }
 
@@ -548,7 +558,7 @@ function readWorktreeCleanupState(
     WORKTREE_CLEANUP_STATES.has(
       value as AgentEntityWorktreeIdentity['cleanup_state'],
     )
-    ? value as AgentEntityWorktreeIdentity['cleanup_state']
+    ? (value as AgentEntityWorktreeIdentity['cleanup_state'])
     : null;
 }
 

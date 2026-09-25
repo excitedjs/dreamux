@@ -9,10 +9,7 @@
  */
 import { EventEmitter } from 'node:events';
 
-import type {
-  ChannelCoreEvent,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { ChannelCoreEvent, DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
   createScopedChannelEventSource,
@@ -31,11 +28,13 @@ export class DispatcherCoreEventBus extends EventEmitter {
   readonly publisher: DispatcherCoreEventPublisher;
   private readonly sources = new Set<ScopedChannelEventSourceLease>();
 
-  constructor(private readonly opts: {
-    dispatcherId: string;
-    log: DreamuxLogger;
-    maxSources: number;
-  }) {
+  constructor(
+    private readonly opts: {
+      dispatcherId: string;
+      log: DreamuxLogger;
+      maxSources: number;
+    },
+  ) {
     super();
     if (opts.maxSources > this.getMaxListeners()) {
       this.setMaxListeners(opts.maxSources);

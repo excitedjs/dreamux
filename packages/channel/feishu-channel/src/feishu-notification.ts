@@ -35,12 +35,13 @@ export async function sendBindingNotification(input: {
       const result = await runFeishuBoundedOperation({
         signal: lifecycleSignal,
         deadlineAt: Date.now() + FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS,
-        operation: () => sendCard(input.handle, {
-          target: input.outbound,
-          card: input.card,
-          signal: requestController.signal,
-          mode: 'background',
-        }),
+        operation: () =>
+          sendCard(input.handle, {
+            target: input.outbound,
+            card: input.card,
+            signal: requestController.signal,
+            mode: 'background',
+          }),
       });
       return result.messageIds[0];
     } catch (err) {

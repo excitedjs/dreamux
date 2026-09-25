@@ -80,14 +80,15 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
-  const serviceNodeBin = answers.registerService && !answers.dryRun
-    ? await selectServiceNodeBin({
-        platform,
-        currentNodeBin: process.execPath,
-        runner,
-        probe: options.nodeProbe,
-      })
-    : process.execPath;
+  const serviceNodeBin =
+    answers.registerService && !answers.dryRun
+      ? await selectServiceNodeBin({
+          platform,
+          currentNodeBin: process.execPath,
+          runner,
+          probe: options.nodeProbe,
+        })
+      : process.execPath;
 
   await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
@@ -112,12 +113,9 @@ export async function runOnboard(
     'dispatcher state directory',
     { dryRun: answers.dryRun },
   );
-  await ensureDirectory(
-    answers.dispatcherCwd,
-    ledger,
-    'dispatcher cwd',
-    { dryRun: answers.dryRun },
-  );
+  await ensureDirectory(answers.dispatcherCwd, ledger, 'dispatcher cwd', {
+    dryRun: answers.dryRun,
+  });
   // Bundled Dreamux skills are no longer symlinked into the workspace
   // (`<cwd>/.codex/skills`) at onboard time (issue #209 slice 6). Core now
   // injects them at runtime by role via the create context's `skillSources`
@@ -136,7 +134,10 @@ export async function runOnboard(
       )
     : [];
   const providerBinChecks =
-    answers.registerService && !answers.dryRun && loaded !== null && catalogs !== null
+    answers.registerService &&
+    !answers.dryRun &&
+    loaded !== null &&
+    catalogs !== null
       ? await resolveProviderBinChecks(
           loaded.config,
           catalogs,
@@ -280,23 +281,23 @@ async function runDispatcherDoctor(
     return {
       ok: false,
       detail: answers.dispatcherId,
-      errors: [`onboarded dispatcher '${answers.dispatcherId}' was not found in config`],
+      errors: [
+        `onboarded dispatcher '${answers.dispatcherId}' was not found in config`,
+      ],
       reports: [],
     };
   }
   const doctorEnv = answers.registerService
     ? managedServiceEnvironment(answers)
     : env;
-  const reports = await runDispatcherProviderDiagnostics(
-    {
-      config: loaded.config,
-      dispatcher,
-      catalogs,
-      runner,
-      env: doctorEnv,
-      scope: answers.registerService ? 'managedService' : 'foreground',
-    },
-  );
+  const reports = await runDispatcherProviderDiagnostics({
+    config: loaded.config,
+    dispatcher,
+    catalogs,
+    runner,
+    env: doctorEnv,
+    scope: answers.registerService ? 'managedService' : 'foreground',
+  });
   const errors = providerDiagnosticErrors(reports);
   return {
     ok: errors.length === 0,
@@ -306,7 +307,9 @@ async function runDispatcherDoctor(
   };
 }
 
-function providerDiagnosticErrors(reports: ProviderDiagnosticReport[]): string[] {
+function providerDiagnosticErrors(
+  reports: ProviderDiagnosticReport[],
+): string[] {
   return reports.flatMap((report) => {
     const prefix = `${report.kind} ${report.id} (${report.provider})`;
     if (report.result.errors.length > 0) {

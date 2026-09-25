@@ -73,7 +73,14 @@ describe('the generic failure vocabulary', () => {
   });
 
   it('a DreamuxError carries no layer, category, or retry taxonomy — only a stable code and a message', () => {
-    const forbiddenKeys = ['layer', 'category', 'retryable', 'retry', 'audience', 'scope'];
+    const forbiddenKeys = [
+      'layer',
+      'category',
+      'retryable',
+      'retry',
+      'audience',
+      'scope',
+    ];
     const instances: DreamuxError[] = [
       new ValidationError('x'),
       new TransportError('x'),
@@ -169,7 +176,10 @@ describe('a known business error survives to the caller with its own code — th
       });
 
       await expect(
-        lease.port.invoke.invoke('team.dissolve', { team_name: 'ghost', note: 'cleanup' }),
+        lease.port.invoke.invoke('team.dissolve', {
+          team_name: 'ghost',
+          note: 'cleanup',
+        }),
       ).rejects.toMatchObject({
         code: 'TEAM_NOT_FOUND',
         message: "no Team 'ghost'",
@@ -203,7 +213,10 @@ describe('a known business error survives to the caller with its own code — th
       });
 
       await expect(
-        lease.port.invoke.invoke('team.submit', { team_name: 'alpha', text: 'hello' }),
+        lease.port.invoke.invoke('team.submit', {
+          team_name: 'alpha',
+          text: 'hello',
+        }),
       ).rejects.toMatchObject({
         code: 'TEAM_CLOSED',
         message: "Team 'alpha' is closed",
@@ -217,7 +230,9 @@ describe('a known business error survives to the caller with its own code — th
     const harness = createCommandHarness({
       dispatcherOverrides: {
         createTeam: async () => {
-          throw new IdempotencyConflictError('request_id replayed with a different payload');
+          throw new IdempotencyConflictError(
+            'request_id replayed with a different payload',
+          );
         },
       },
     });
@@ -236,8 +251,12 @@ describe('a known business error survives to the caller with its own code — th
     const harness = createCommandHarness({ dispatcherRow: null });
     const admin = await startHarnessAdminSocket(harness);
     try {
-      const viaAdmin = await admin.send('dispatcher.status', { dispatcher_id: 'harness-d1' });
-      expect((viaAdmin as { error: { code: string } }).error.code).toBe('DISPATCHER_NOT_FOUND');
+      const viaAdmin = await admin.send('dispatcher.status', {
+        dispatcher_id: 'harness-d1',
+      });
+      expect((viaAdmin as { error: { code: string } }).error.code).toBe(
+        'DISPATCHER_NOT_FOUND',
+      );
     } finally {
       await admin.close();
     }
@@ -314,7 +333,9 @@ describe('admin.sock transport failures vs server-side invalid params', () => {
     try {
       const response = await admin.sendRaw('{not valid json');
       expect(response.ok).toBe(false);
-      expect((response as { error: { code: string } }).error.code).toBe('TRANSPORT_ERROR');
+      expect((response as { error: { code: string } }).error.code).toBe(
+        'TRANSPORT_ERROR',
+      );
     } finally {
       await admin.close();
     }
@@ -329,10 +350,16 @@ describe('admin.sock transport failures vs server-side invalid params', () => {
       // catches before any Command is reached — still ValidationError, since
       // the request *did* reach a transport boundary that could read it.
       const response = await admin.sendRaw(
-        JSON.stringify({ id: 'req-x', method: 'server.status', params: 'oops' }),
+        JSON.stringify({
+          id: 'req-x',
+          method: 'server.status',
+          params: 'oops',
+        }),
       );
       expect(response.ok).toBe(false);
-      expect((response as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+      expect((response as { error: { code: string } }).error.code).toBe(
+        'BAD_REQUEST',
+      );
     } finally {
       await admin.close();
     }
@@ -378,12 +405,14 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       socketPath: '/tmp/dreamux-command-harness-no-such-socket.sock',
       timeoutMs: 2_000,
     });
-    await expect(invoker.invoke('server.status', {})).rejects.toSatisfy((error: unknown) => {
-      expect(error).toBeInstanceOf(TransportError);
-      expect((error as TransportError).code).toBe('TRANSPORT_ERROR');
-      expect(error).not.toBeInstanceOf(AdminClientError);
-      return true;
-    });
+    await expect(invoker.invoke('server.status', {})).rejects.toSatisfy(
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(TransportError);
+        expect((error as TransportError).code).toBe('TRANSPORT_ERROR');
+        expect(error).not.toBeInstanceOf(AdminClientError);
+        return true;
+      },
+    );
   });
 
   it('a malformed reply line is TransportError — the request never delivered an answer', async () => {
@@ -393,7 +422,10 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       });
     });
     try {
-      const invoker = adminJsonInvoker({ socketPath: stub.socketPath, timeoutMs: 2_000 });
+      const invoker = adminJsonInvoker({
+        socketPath: stub.socketPath,
+        timeoutMs: 2_000,
+      });
       await expect(invoker.invoke('server.status', {})).rejects.toMatchObject({
         code: 'TRANSPORT_ERROR',
       });
@@ -407,7 +439,10 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       // Accept, then say nothing — the request never gets a response line.
     });
     try {
-      const invoker = adminJsonInvoker({ socketPath: stub.socketPath, timeoutMs: 200 });
+      const invoker = adminJsonInvoker({
+        socketPath: stub.socketPath,
+        timeoutMs: 200,
+      });
       await expect(invoker.invoke('server.status', {})).rejects.toMatchObject({
         code: 'TRANSPORT_ERROR',
       });
@@ -423,7 +458,10 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       });
     });
     try {
-      const invoker = adminJsonInvoker({ socketPath: stub.socketPath, timeoutMs: 2_000 });
+      const invoker = adminJsonInvoker({
+        socketPath: stub.socketPath,
+        timeoutMs: 2_000,
+      });
       await expect(invoker.invoke('server.status', {})).rejects.toMatchObject({
         code: 'TRANSPORT_ERROR',
       });
@@ -461,20 +499,26 @@ describe('CoreCommandPort — the shared admission fence', () => {
     const { port, executed } = harnessPort();
     port.closeAdmission();
 
-    await expect(port.invoke({ source: 'admin_socket' }, 'harness.slow', {})).rejects.toThrow(
-      ServerShuttingDownError,
-    );
+    await expect(
+      port.invoke({ source: 'admin_socket' }, 'harness.slow', {}),
+    ).rejects.toThrow(ServerShuttingDownError);
     expect(executed).not.toHaveBeenCalled();
   });
 
   it('an invocation admitted before the fence keeps running, and drain() waits for it to settle', async () => {
     const { port, release, executed } = harnessPort();
-    const inFlight = port.invoke({ source: 'admin_socket' }, 'harness.slow', {});
+    const inFlight = port.invoke(
+      { source: 'admin_socket' },
+      'harness.slow',
+      {},
+    );
     port.closeAdmission();
 
     // Racing the fence: a second call issued right after closeAdmission is
     // refused outright — never an ambiguous partial mutation.
-    await expect(port.invoke({ source: 'channel' }, 'harness.slow', {})).rejects.toMatchObject({
+    await expect(
+      port.invoke({ source: 'channel' }, 'harness.slow', {}),
+    ).rejects.toMatchObject({
       code: 'SERVER_SHUTTING_DOWN',
     });
     expect(executed).not.toHaveBeenCalled();
@@ -526,9 +570,13 @@ describe('CoreCommandPort — the shared admission fence', () => {
       harness.port.closeAdmission();
 
       const viaAdmin = await admin.send('server.status');
-      expect((viaAdmin as { error: { code: string } }).error.code).toBe('SERVER_SHUTTING_DOWN');
+      expect((viaAdmin as { error: { code: string } }).error.code).toBe(
+        'SERVER_SHUTTING_DOWN',
+      );
 
-      await expect(lease.port.invoke.invoke('server.status', {})).rejects.toMatchObject({
+      await expect(
+        lease.port.invoke.invoke('server.status', {}),
+      ).rejects.toMatchObject({
         code: 'SERVER_SHUTTING_DOWN',
       });
     } finally {

@@ -17,7 +17,11 @@
 
 import { homedir } from 'node:os';
 
-import { LAUNCHD_LABEL, serviceUnitPath, SYSTEMD_UNIT } from '../onboard/service.js';
+import {
+  LAUNCHD_LABEL,
+  serviceUnitPath,
+  SYSTEMD_UNIT,
+} from '../onboard/service.js';
 import type { CommandRunner, ServicePlatform } from '../onboard/types.js';
 
 export type DaemonVerb = 'start' | 'stop' | 'restart';
@@ -58,7 +62,9 @@ export async function controlUserService(
     throw new Error('launchd user service control requires a numeric uid');
   }
   const target = `gui/${uid}/${LAUNCHD_LABEL}`;
-  const loaded = await options.runner.check('launchctl', ['print', target], { dryRun });
+  const loaded = await options.runner.check('launchctl', ['print', target], {
+    dryRun,
+  });
 
   if (verb === 'stop') {
     if (loaded) {
@@ -75,7 +81,8 @@ export async function controlUserService(
     commands.push({ command: 'launchctl', args });
     if (verb === 'start') return { platform: 'launchd', verb, commands };
   }
-  const args = verb === 'restart' ? ['kickstart', '-k', target] : ['kickstart', target];
+  const args =
+    verb === 'restart' ? ['kickstart', '-k', target] : ['kickstart', target];
   await options.runner.run('launchctl', args, { dryRun });
   commands.push({ command: 'launchctl', args });
   return { platform: 'launchd', verb, commands };

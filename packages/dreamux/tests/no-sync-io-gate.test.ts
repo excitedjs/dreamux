@@ -110,7 +110,7 @@ describe('no-sync-io lint gate (issue #85)', () => {
       [
         "import { mkdtempSync } from 'node:fs';",
         "import { tmpdir } from 'node:os';",
-        "export const dir = mkdtempSync(tmpdir());",
+        'export const dir = mkdtempSync(tmpdir());',
         '',
       ].join('\n'),
     );
@@ -210,7 +210,7 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
   });
 
   it.each(gatedProjects.map((p) => [p.packageName, p.projectFolder] as const))(
-    '%s: n/no-sync fires on synchronous fs IO in src/**, using that package\'s OWN eslint.config.js',
+    "%s: n/no-sync fires on synchronous fs IO in src/**, using that package's OWN eslint.config.js",
     async (_name, projectFolder) => {
       // Each package gets its own `new ESLint({ cwd })` rooted at ITS package
       // directory, so this resolves and exercises that package's real
@@ -231,8 +231,12 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
         ].join('\n'),
         { filePath: join(pkgRoot, 'src/__cross_pkg_gate_fixture__.ts') },
       );
-      const rules = results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
-      expect(rules, `${projectFolder} src/** sync-IO gate`).toContain('n/no-sync');
+      const rules = results.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
+      );
+      expect(rules, `${projectFolder} src/** sync-IO gate`).toContain(
+        'n/no-sync',
+      );
     },
   );
 
@@ -246,15 +250,18 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
         [
           "import { mkdtempSync } from 'node:fs';",
           "import { tmpdir } from 'node:os';",
-          "export const dir = mkdtempSync(tmpdir());",
+          'export const dir = mkdtempSync(tmpdir());',
           '',
         ].join('\n'),
         { filePath: join(pkgRoot, 'tests/__cross_pkg_gate_fixture__.ts') },
       );
-      const fsRules = fsResults.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
-      expect(fsRules, `${projectFolder} tests/** sync-fs exemption`).not.toContain(
-        'n/no-sync',
+      const fsRules = fsResults.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
       );
+      expect(
+        fsRules,
+        `${projectFolder} tests/** sync-fs exemption`,
+      ).not.toContain('n/no-sync');
 
       const cpResults = await eslint.lintText(
         [
@@ -264,7 +271,9 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
         ].join('\n'),
         { filePath: join(pkgRoot, 'tests/__cross_pkg_gate_cp_fixture__.ts') },
       );
-      const cpRules = cpResults.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
+      const cpRules = cpResults.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
+      );
       expect(
         cpRules,
         `${projectFolder} tests/** sync child_process ban`,
@@ -309,7 +318,10 @@ describe('the core/provider import-boundary rules are wired via the same real es
 
   it.each([
     ['@excitedjs/agent-runtime-codex', 'packages/agent-runtime/codex'],
-    ['@excitedjs/agent-runtime-claude-code', 'packages/agent-runtime/claude-code'],
+    [
+      '@excitedjs/agent-runtime-claude-code',
+      'packages/agent-runtime/claude-code',
+    ],
     ['@excitedjs/feishu-channel', 'packages/channel/feishu-channel'],
     ['@excitedjs/feishu-transport', 'packages/channel/feishu-transport'],
     ['@excitedjs/dreamux-plugin-bootstrap', 'packages/plugins/bootstrap'],
@@ -326,7 +338,9 @@ describe('the core/provider import-boundary rules are wired via the same real es
         ].join('\n'),
         { filePath: join(pkgRoot, 'src/__provider_boundary_fixture__.ts') },
       );
-      const rules = results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
+      const rules = results.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
+      );
       expect(rules, `${projectFolder} provider-import-boundary`).toContain(
         'no-restricted-imports',
       );

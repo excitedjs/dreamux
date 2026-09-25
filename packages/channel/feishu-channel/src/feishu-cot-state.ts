@@ -195,7 +195,9 @@ export class LeaderLifecycleFence {
 }
 
 function isTeamLeaderOf(state: CotState, teamName: string): boolean {
-  return state.identity.kind === 'leader' && state.identity.teamName === teamName;
+  return (
+    state.identity.kind === 'leader' && state.identity.teamName === teamName
+  );
 }
 
 /**

@@ -29,7 +29,10 @@ import type {
   ConversationInput,
   ConversationProjection,
 } from '../src/channel/conversation-projection.js';
-import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
+import type {
+  DreamuxConfig,
+  ResolvedAgentConfig,
+} from '../src/config/config.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { AGENT_TASK_SOURCE } from '../src/service/submission-sources.js';
 import { TeamService } from '../src/service/team-service/index.js';
@@ -137,16 +140,24 @@ async function bootTeam(options: {
         async submit() {
           const pending = controllableRuntimeSubmission();
           pending.complete(null);
-          return { status: 'submitted' as const, submission: pending.submission };
+          return {
+            status: 'submitted' as const,
+            submission: pending.submission,
+          };
         },
-        async interrupt() { return { status: 'idle' as const }; },
+        async interrupt() {
+          return { status: 'idle' as const };
+        },
         async stop() {},
       };
     },
   } as unknown as AgentRuntimeProvider<unknown>;
   const config: DreamuxConfig = {
     agents: {
-      [RUNTIME_ID]: { provider: 'fake', config: {} } as unknown as ResolvedAgentConfig,
+      [RUNTIME_ID]: {
+        provider: 'fake',
+        config: {},
+      } as unknown as ResolvedAgentConfig,
     },
     dispatchers: [],
   };
@@ -212,12 +223,14 @@ describe('TeamService.submitToLeader: the leader starts inside the submission', 
   it('reports idle without creating or starting a dormant leader runtime', async () => {
     const team = await bootTeam({ status: 'running' });
 
-    await expect(team.service.interruptLeader()).resolves.toEqual({ status: 'idle' });
+    await expect(team.service.interruptLeader()).resolves.toEqual({
+      status: 'idle',
+    });
     expect(team.runtimeCreates()).toBe(0);
     expect(team.runtimeStarts()).toBe(0);
   });
 
-  it('announces the input, then ends it with the provider\'s start error', async () => {
+  it("announces the input, then ends it with the provider's start error", async () => {
     const team = await bootTeam({
       status: 'starting',
       startError: new Error('codex app-server exited before it answered'),
@@ -237,12 +250,14 @@ describe('TeamService.submitToLeader: the leader starts inside the submission', 
       'input:first work for the leader',
       'activity:turn.ended',
     ]);
-    expect(team.activities).toEqual([{
-      kind: 'turn.ended',
-      occurredAt: expect.any(Number),
-      status: 'failed',
-      reason: 'codex app-server exited before it answered',
-    }]);
+    expect(team.activities).toEqual([
+      {
+        kind: 'turn.ended',
+        occurredAt: expect.any(Number),
+        status: 'failed',
+        reason: 'codex app-server exited before it answered',
+      },
+    ]);
     // The Team is still the recoverable tail of its creation: its leader has
     // not taken a turn.
     expect((await team.service.status()).status).toBe('starting');

@@ -118,12 +118,7 @@ export interface AgentRuntimePathContext {
  * `@excitedjs/dreamux`.
  */
 export type AgentRuntimeStatus =
-  | 'declared'
-  | 'starting'
-  | 'ready'
-  | 'degraded'
-  | 'stopping'
-  | 'stopped';
+  'declared' | 'starting' | 'ready' | 'degraded' | 'stopping' | 'stopped';
 
 /** One authoritative runtime fact pushed into the Core-owned state sink. */
 export type AgentRuntimeStateUpdate =
@@ -166,11 +161,7 @@ export interface AgentRuntimeStateLeaseRevokedError extends Error {
  * vocabulary. `null` means the runtime has no such classification for this call.
  */
 export type RuntimeToolAction =
-  | 'read'
-  | 'list_files'
-  | 'search'
-  | 'edit'
-  | 'run';
+  'read' | 'list_files' | 'search' | 'edit' | 'run';
 
 /** One accepted provider submission. Its identity never implies folding. */
 export interface RuntimeSubmission {
@@ -220,9 +211,9 @@ interface NativeActivity<K extends string> {
  * own display limits where it sends.
  */
 export type RuntimeActivity =
-  | NativeActivity<'assistant.message'> & {
+  | (NativeActivity<'assistant.message'> & {
       readonly text: string;
-    }
+    })
   /**
    * The runtime compacted its context. Carries no summary or compaction
    * metadata. Live-only: the cold activity reader never produces this.
@@ -236,7 +227,7 @@ export type RuntimeActivity =
    * marker. Live-only: the cold activity reader never produces this.
    */
   | NativeActivity<'turn.interrupted'>
-  | NativeActivity<'tool.call'> & {
+  | (NativeActivity<'tool.call'> & {
       readonly toolName: string;
       readonly action: RuntimeToolAction | null;
       /**
@@ -267,7 +258,7 @@ export type RuntimeActivity =
       readonly arguments: JsonValue | null;
       readonly result: JsonValue | null;
       readonly error: string | null;
-    }
+    })
   /**
    * The native runtime's cumulative token counters for its live session,
    * at the turn they were observed for. Runners that fold several native
@@ -280,7 +271,7 @@ export type RuntimeActivity =
    * performs no subtraction. Live-only: the cold activity reader never
    * replays this, and a dropped snapshot simply widens the next delta.
    */
-  | NativeActivity<'token.usage'> & {
+  | (NativeActivity<'token.usage'> & {
       readonly inputTokens: number;
       readonly outputTokens: number;
       /** The last response's context footprint, and the native window when the runtime reports one; `null` when the runtime gives no context signal. */
@@ -288,7 +279,7 @@ export type RuntimeActivity =
         readonly usedTokens: number;
         readonly windowTokens: number | null;
       } | null;
-    }
+    })
   | {
       /**
        * The runtime stopped producing for the turn it was running, whatever

@@ -106,7 +106,11 @@ describe('dispatcher.hooks.beforeLaunch', () => {
     beforeLaunch.tapPromise('alpha', async (draft) => {
       alphaTapCalls += 1;
       draft.instructions.push('from alpha');
-      draft.skillSources.push({ name: 'alpha', path: pluginSkills, source: 'alpha' });
+      draft.skillSources.push({
+        name: 'alpha',
+        path: pluginSkills,
+        source: 'alpha',
+      });
     });
     beforeLaunch.tapPromise('broken', async (draft) => {
       draft.instructions.push('half written');
@@ -117,7 +121,10 @@ describe('dispatcher.hooks.beforeLaunch', () => {
       id: 'flow',
       config: {
         agents: {
-          'fake-runtime': { provider: 'fake', config: {} } as unknown as ResolvedAgentConfig,
+          'fake-runtime': {
+            provider: 'fake',
+            config: {},
+          } as unknown as ResolvedAgentConfig,
         },
         dispatchers: [],
       },
@@ -125,13 +132,20 @@ describe('dispatcher.hooks.beforeLaunch', () => {
         resolve: () => ({ implementation: provider }),
       } as unknown as Catalog,
       log: silentLog,
-      mcp: { leases: {}, delegates: [], adminSocketPath: '' } as unknown as TeammateAgentMcp,
+      mcp: {
+        leases: {},
+        delegates: [],
+        adminSocketPath: '',
+      } as unknown as TeammateAgentMcp,
       identity,
       identities,
       admissions: new AdmissionLedger(),
       conversationProjection: createConversationProjection({
-        coreEvents: new DispatcherCoreEventBus({ dispatcherId: 'flow', log: silentLog, maxSources: 1 })
-          .publisher,
+        coreEvents: new DispatcherCoreEventBus({
+          dispatcherId: 'flow',
+          log: silentLog,
+          maxSources: 1,
+        }).publisher,
         log: silentLog,
         homePathPrefixes: [],
       }),
@@ -141,7 +155,9 @@ describe('dispatcher.hooks.beforeLaunch', () => {
 
     expect(launches).toHaveLength(1);
     const launched = launches[0]!;
-    expect(launched.systemPrompt?.replace?.endsWith('\n\nfrom alpha')).toBe(true);
+    expect(launched.systemPrompt?.replace?.endsWith('\n\nfrom alpha')).toBe(
+      true,
+    );
     expect(launched.systemPrompt?.append?.slice(1)).toEqual(['from alpha']);
     expect(JSON.stringify(launched.systemPrompt)).not.toContain('half written');
     expect(launched.skillSources.map((source) => source.name)).toEqual([

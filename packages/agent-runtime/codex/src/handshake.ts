@@ -104,11 +104,7 @@ export async function performInitializeHandshake(
  * Race `p` against a timeout. Rejects with `Error(msg)` if the timeout wins.
  * The timer is `unref`ed so it doesn't keep the event loop alive on its own.
  */
-function withTimeout<T>(
-  p: Promise<T>,
-  ms: number,
-  msg: string,
-): Promise<T> {
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(msg)), ms);
     timer.unref();

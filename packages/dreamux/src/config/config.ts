@@ -46,14 +46,14 @@ import {
 export { expandHome } from './config-helpers.js';
 
 export interface DreamuxConfig {
-    /**
-     * The raw `plugins[]` entries, present iff the file has a `plugins` key.
-     * Kept only so `stringifyConfig` round-trips them; the loaded plugins
-     * travel in {@link LoadConfigResult.plugins}.
-     */
-    plugins?: PluginConfigEntry[] | undefined;
-    agents: Record<string, ResolvedAgentConfig>;
-    dispatchers: DispatcherConfig[];
+  /**
+   * The raw `plugins[]` entries, present iff the file has a `plugins` key.
+   * Kept only so `stringifyConfig` round-trips them; the loaded plugins
+   * travel in {@link LoadConfigResult.plugins}.
+   */
+  plugins?: PluginConfigEntry[] | undefined;
+  agents: Record<string, ResolvedAgentConfig>;
+  dispatchers: DispatcherConfig[];
 }
 
 export interface DreamuxWorkspaceConfig {
@@ -62,8 +62,8 @@ export interface DreamuxWorkspaceConfig {
 
 export interface ResolvedAgentConfig {
   provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig | undefined;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig | undefined;
 }
 
 export interface DispatcherConfig {
@@ -72,15 +72,15 @@ export interface DispatcherConfig {
   enabled: boolean;
   workspace: DreamuxWorkspaceConfig;
   channels: DispatcherChannelConfig[];
-    agentRuntime: string;
+  agentRuntime: string;
 }
 
 export interface DispatcherChannelConfig {
   id: string;
   provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig | undefined;
-    identity?: string;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig | undefined;
+  identity?: string;
 }
 
 export type DispatcherProviderConfig = Record<string, unknown>;
@@ -98,7 +98,9 @@ export function dispatcherAgent(
   config: DreamuxConfig,
   dispatcherId: string,
 ): ResolvedAgentConfig {
-  const dispatcher = config.dispatchers.find((entry) => entry.id === dispatcherId)!;
+  const dispatcher = config.dispatchers.find(
+    (entry) => entry.id === dispatcherId,
+  )!;
   return config.agents[dispatcher.agentRuntime]!;
 }
 
@@ -109,11 +111,11 @@ export const BUILT_IN_DEFAULTS: DreamuxConfig = {
 export const DEFAULT_CONFIG_JSON = stringifyConfig(BUILT_IN_DEFAULTS);
 
 export interface ConfigPathOverrides {
-    configDir?: string;
-    providerRegistry?: ProviderRegistry;
-    externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
-    externalChannelModuleImporter?: ExternalChannelModuleImporter;
-    pluginModuleImporter?: PluginModuleImporter;
+  configDir?: string;
+  providerRegistry?: ProviderRegistry;
+  externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
+  externalChannelModuleImporter?: ExternalChannelModuleImporter;
+  pluginModuleImporter?: PluginModuleImporter;
 }
 
 export interface LoadConfigResult {
@@ -153,13 +155,22 @@ export async function loadOrInitConfig(
   await assertNoLegacyTomlOnly(overrides);
   await mkdir(dirname(file), { recursive: true });
 
-  const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
+  const createdOnThisBoot = await atomicWriteIfAbsent(
+    file,
+    DEFAULT_CONFIG_JSON,
+  );
   const { config, plugins } = await readConfigFile(
     file,
     providerRegistry,
     overrides,
   );
-  return { config, configFile: file, createdOnThisBoot, providerRegistry, plugins };
+  return {
+    config,
+    configFile: file,
+    createdOnThisBoot,
+    providerRegistry,
+    plugins,
+  };
 }
 
 export async function loadConfig(
@@ -326,10 +337,17 @@ async function mergeWithDefaults(
   providerRegistry: ProviderRegistry,
 ): Promise<DreamuxConfig> {
   if (!isPlainObject(raw)) {
-    throw new Error(`dreamux config error in ${file}: top-level must be an object`);
+    throw new Error(
+      `dreamux config error in ${file}: top-level must be an object`,
+    );
   }
   rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['plugins', 'agents', 'dispatchers']), file, '');
+  rejectUnknownKeys(
+    raw,
+    new Set(['plugins', 'agents', 'dispatchers']),
+    file,
+    '',
+  );
 
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   const dispatchers = await readDispatchers(
@@ -366,8 +384,8 @@ export function defaultWorkspaceEnabled(
   dispatcherId: string,
 ): boolean {
   return (
-    config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)?.workspace
-      .enabled ?? false
+    config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)
+      ?.workspace.enabled ?? false
   );
 }
 
@@ -417,9 +435,14 @@ async function readAgents(
       prefix,
       providerRegistry,
     );
-    const rawConfig = readProviderConfigObject(raw['config'], file, `${prefix}config`, {
-      allowMissing: true,
-    });
+    const rawConfig = readProviderConfigObject(
+      raw['config'],
+      file,
+      `${prefix}config`,
+      {
+        allowMissing: true,
+      },
+    );
     const runtimeProvider = asAgentRuntimeProvider(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
@@ -480,7 +503,14 @@ async function readDispatchers(
     }
     rejectUnknownKeys(
       raw,
-      new Set(['id', 'cwd', 'enabled', 'workspace', 'channels', 'agentRuntime']),
+      new Set([
+        'id',
+        'cwd',
+        'enabled',
+        'workspace',
+        'channels',
+        'agentRuntime',
+      ]),
       file,
       prefix,
     );
@@ -540,7 +570,12 @@ function resolveAgentRuntime(
         `and set ${prefix}agentRuntime to that agent's id, then rebuild ${file}.`,
     );
   }
-  const agentRuntimeId = requireNonEmptyString(raw, 'agentRuntime', file, prefix);
+  const agentRuntimeId = requireNonEmptyString(
+    raw,
+    'agentRuntime',
+    file,
+    prefix,
+  );
   if (!Object.prototype.hasOwnProperty.call(agents, agentRuntimeId)) {
     const known = Object.keys(agents);
     const knownHint =

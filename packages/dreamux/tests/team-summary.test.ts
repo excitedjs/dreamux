@@ -5,7 +5,10 @@ import type { TeamRecord } from '../src/service/team-collection/types.js';
 import { minimalTeamRecordInput } from './helpers/team-harness.js';
 
 function record(worktree?: TeamRecord['worktree']): TeamRecord {
-  const base = minimalTeamRecordInput({ dispatcherId: 'dsp', teamId: 'team-view' });
+  const base = minimalTeamRecordInput({
+    dispatcherId: 'dsp',
+    teamId: 'team-view',
+  });
   return {
     ...base,
     ...(worktree === undefined ? {} : { worktree }),
@@ -18,16 +21,20 @@ function record(worktree?: TeamRecord['worktree']): TeamRecord {
 
 describe('canonical Team summary projection', () => {
   it('names a managed delete-on-close worktree by its mode and cleanup mode, not only its lifecycle state', () => {
-    const summary = teamSummary(record({
-      mode: 'managed',
-      slug: 'team-view',
-      path: '/tmp/team-view',
-      branch: 'dreamux/team-view',
-      base_ref: 'HEAD',
-      cleanup: 'delete-on-close',
-      cleanup_state: 'managed-active',
-      cleanup_error: null,
-    }), null, 0);
+    const summary = teamSummary(
+      record({
+        mode: 'managed',
+        slug: 'team-view',
+        path: '/tmp/team-view',
+        branch: 'dreamux/team-view',
+        base_ref: 'HEAD',
+        cleanup: 'delete-on-close',
+        cleanup_state: 'managed-active',
+        cleanup_error: null,
+      }),
+      null,
+      0,
+    );
     expect(summary).toMatchObject({
       worktree_cleanup: 'managed-active',
       worktree_mode: 'managed',

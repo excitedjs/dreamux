@@ -1,4 +1,11 @@
-import { access, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 import { execa } from 'execa';
@@ -24,9 +31,7 @@ import type {
   TeamMateWorktreeRequest,
 } from '../teammate-collection/types.js';
 
-export type WorktreeCleanupBlockedReason =
-  | 'dirty'
-  | 'unmerged';
+export type WorktreeCleanupBlockedReason = 'dirty' | 'unmerged';
 
 export type WorktreeCleanupAssessment =
   | {
@@ -129,8 +134,11 @@ export class WorktreeManager {
     }
     const sourceRepo = await this.repoRoot(sourceCwd);
     const canonicalRepoRoot = await realpath(sourceRepo);
-    const slug = validateWorktreeSlug(input.request?.slug ?? input.teammateName);
-    const branch = input.request?.branch ?? `dreamux/${teamMateNameSegment(slug)}`;
+    const slug = validateWorktreeSlug(
+      input.request?.slug ?? input.teammateName,
+    );
+    const branch =
+      input.request?.branch ?? `dreamux/${teamMateNameSegment(slug)}`;
     const baseRef = input.request?.base_ref ?? 'HEAD';
     const path = managedWorktreePath({
       dispatcherWorkspace,
@@ -230,7 +238,8 @@ export class WorktreeManager {
       const assessment = await this.assessCleanup(identity);
       if (assessment.status === 'terminal') return assessment.worktree;
       if (assessment.status === 'blocked' && !force) return assessment.worktree;
-      const repo = identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
+      const repo =
+        identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
       if (force) await assertRemovableWorktree({ repo, path: worktree.path });
       await git(repo, [
         'worktree',
@@ -278,8 +287,8 @@ export class WorktreeManager {
         worktree: { ...worktree, cleanup_state: 'kept', cleanup_error: null },
       };
     }
-    const repo = identity.source_repo ??
-      (await this.repoRoot(identity.source_cwd));
+    const repo =
+      identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
     if (!(await pathExists(worktree.path))) {
       const registered = (await listWorktrees(repo)).some(
         (entry) => resolve(entry.path) === resolve(worktree.path),
@@ -287,7 +296,11 @@ export class WorktreeManager {
       if (!registered) {
         return {
           status: 'terminal',
-          worktree: { ...worktree, cleanup_state: 'deleted', cleanup_error: null },
+          worktree: {
+            ...worktree,
+            cleanup_state: 'deleted',
+            cleanup_error: null,
+          },
         };
       }
     }
@@ -309,7 +322,9 @@ export class WorktreeManager {
    * tampered boundary file would otherwise let worktree contents leak into the
    * dispatcher repo view.
    */
-  private async ensureWorkspaceBoundary(dispatcherWorkspace: string): Promise<void> {
+  private async ensureWorkspaceBoundary(
+    dispatcherWorkspace: string,
+  ): Promise<void> {
     await mkdir(managedWorkspaceDir(dispatcherWorkspace), { recursive: true });
     const gitignore = managedWorkspaceGitignorePath(dispatcherWorkspace);
     if (await boundaryGitignoreIsSafe(gitignore)) return;
@@ -339,7 +354,9 @@ const BOUNDARY_GITIGNORE_CONTENT =
  * could un-ignore worktree content (PR #186 review P2). A missing file is
  * unsafe (nothing is ignored yet). Comments and blank lines are ignored.
  */
-async function boundaryGitignoreIsSafe(gitignorePath: string): Promise<boolean> {
+async function boundaryGitignoreIsSafe(
+  gitignorePath: string,
+): Promise<boolean> {
   let content: string;
   try {
     content = await readFile(gitignorePath, 'utf8');
@@ -359,19 +376,17 @@ async function boundaryGitignoreIsSafe(gitignorePath: string): Promise<boolean> 
 
 async function retainedState(
   worktree: AgentEntityWorktreeIdentity,
-): Promise<
-  | Extract<
-      AgentEntityWorktreeCleanupState,
-      'retained-dirty' | 'retained-unmerged'
-    >
-  | null
-> {
+): Promise<Extract<
+  AgentEntityWorktreeCleanupState,
+  'retained-dirty' | 'retained-unmerged'
+> | null> {
   const unmerged = await git(worktree.path, ['ls-files', '-u']);
   if (unmerged.stdout.trim() !== '') return 'retained-unmerged';
-  const status = await git(
-    worktree.path,
-    ['status', '--porcelain=v1', '-uall'],
-  );
+  const status = await git(worktree.path, [
+    'status',
+    '--porcelain=v1',
+    '-uall',
+  ]);
   if (status.stdout.trim() !== '') return 'retained-dirty';
   return null;
 }
@@ -467,10 +482,7 @@ async function listWorktrees(
   return entries;
 }
 
-async function git(
-  cwd: string,
-  args: string[],
-): Promise<{ stdout: string }> {
+async function git(cwd: string, args: string[]): Promise<{ stdout: string }> {
   return execa('git', args, { cwd });
 }
 

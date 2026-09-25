@@ -90,7 +90,9 @@ describe('closeMembersForDissolve: live members close through their own entity',
     const store = await newStore();
     await seedIdentity(store, 'held-1');
     const held = fakeHeldMember('held-1');
-    const rosterIdentity = await store.entity('held-1').read() as AgentEntityIdentity;
+    const rosterIdentity = (await store
+      .entity('held-1')
+      .read()) as AgentEntityIdentity;
     const entitySpy = vi.spyOn(store, 'entity');
 
     await closeMembersForDissolve({
@@ -119,8 +121,8 @@ describe('closeMembersForDissolve: cold (record-only) members are normalized dir
       note: 'team dissolved',
       held: [],
       roster: [
-        await store.entity('cold-1').read() as AgentEntityIdentity,
-        await store.entity('cold-2').read() as AgentEntityIdentity,
+        (await store.entity('cold-1').read()) as AgentEntityIdentity,
+        (await store.entity('cold-2').read()) as AgentEntityIdentity,
       ],
       store,
     });
@@ -140,7 +142,9 @@ describe('closeMembersForDissolve: cold (record-only) members are normalized dir
 
   it('leaves an already-closed identity completely untouched', async () => {
     const store = await newStore();
-    const before = await seedIdentity(store, 'already-closed', { status: 'closed' });
+    const before = await seedIdentity(store, 'already-closed', {
+      status: 'closed',
+    });
     const entitySpy = vi.spyOn(store, 'entity');
 
     await closeMembersForDissolve({
@@ -151,13 +155,16 @@ describe('closeMembersForDissolve: cold (record-only) members are normalized dir
       store,
     });
 
-    const after = await readFile(join(store.root, 'already-closed', 'identity.json'), 'utf8').catch(
-      () => null,
-    );
+    const after = await readFile(
+      join(store.root, 'already-closed', 'identity.json'),
+      'utf8',
+    ).catch(() => null);
     // Not written at all: the skip happens before any store call for this
     // identity, so its exact `updated_at` / `close_note` from before this
     // dissolve survive unchanged.
-    expect(entitySpy.mock.calls.map((call) => call[0])).not.toContain('already-closed');
+    expect(entitySpy.mock.calls.map((call) => call[0])).not.toContain(
+      'already-closed',
+    );
     expect(after).not.toBeNull();
     const parsed = JSON.parse(after as string) as AgentEntityIdentity;
     expect(parsed.close_note).toBe('closed before this dissolve');
@@ -177,8 +184,8 @@ describe('closeMembersForDissolve: cold (record-only) members are normalized dir
         note: 'team dissolved',
         held: [failing],
         roster: [
-          await store.entity('held-fails').read() as AgentEntityIdentity,
-          await store.entity('cold-3').read() as AgentEntityIdentity,
+          (await store.entity('held-fails').read()) as AgentEntityIdentity,
+          (await store.entity('cold-3').read()) as AgentEntityIdentity,
         ],
         store,
       }),

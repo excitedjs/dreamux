@@ -100,7 +100,7 @@ function bannedSyncImports(groups, message) {
  */
 const SYNC_DESTRUCTURE_SELECTOR = {
   selector:
-    "VariableDeclarator > ObjectPattern > Property[key.name=/Sync$/][computed=false]",
+    'VariableDeclarator > ObjectPattern > Property[key.name=/Sync$/][computed=false]',
   message:
     'Destructuring a synchronous (*Sync) member is banned in runtime/CLI source (issue #85). Use the node:fs/promises (async) API instead.',
 };

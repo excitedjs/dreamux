@@ -45,7 +45,12 @@ export type ParsedLine =
       kind: 'compact_boundary';
       raw: JsonObject;
     }
-  | { kind: 'result'; uuid: string | null; outcome: ResultEnvelope; raw: JsonObject }
+  | {
+      kind: 'result';
+      uuid: string | null;
+      outcome: ResultEnvelope;
+      raw: JsonObject;
+    }
   | {
       kind: 'command_lifecycle';
       commandUuid: string | null;
@@ -67,16 +72,16 @@ export type ParsedLine =
       error: string | null;
       raw: JsonObject;
     }
-  | { kind: 'other'; type: string | null; subtype: string | null; raw: JsonObject }
+  | {
+      kind: 'other';
+      type: string | null;
+      subtype: string | null;
+      raw: JsonObject;
+    }
   | { kind: 'parse_error'; raw: string };
 
 export type CommandLifecycleState =
-  | 'queued'
-  | 'started'
-  | 'completed'
-  | 'cancelled'
-  | 'discarded'
-  | 'refused';
+  'queued' | 'started' | 'completed' | 'cancelled' | 'discarded' | 'refused';
 
 /** The terminal `result` envelope, reduced to what the runtime records per turn. */
 export interface ResultEnvelope {
@@ -109,7 +114,10 @@ export interface ResultEnvelope {
    * not return a validated structured object.
    */
   readonly hasStructuredOutput: boolean;
-  readonly tokenUsage?: { readonly inputTokens: number; readonly outputTokens: number };
+  readonly tokenUsage?: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
 }
 
 /** Per-turn stdin delivery options. Currently empty: no delivery variant is submitted. */
@@ -131,7 +139,10 @@ export interface TurnOutcome {
    * was returned.
    */
   readonly hasStructuredOutput: boolean;
-  readonly tokenUsage?: { readonly inputTokens: number; readonly outputTokens: number };
+  readonly tokenUsage?: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
   readonly contextTokens?: number | null;
 }
 
@@ -178,7 +189,11 @@ export type ClaudeActivityLine = Extract<
 >;
 
 export type ClaudeProtocolEvent =
-  | { readonly kind: 'interrupted'; readonly uuid: string | null; readonly outcome: TurnOutcome }
+  | {
+      readonly kind: 'interrupted';
+      readonly uuid: string | null;
+      readonly outcome: TurnOutcome;
+    }
   | {
       /** Public native observation; lifecycle alone does not supply a completion. */
       readonly kind: 'command_lifecycle';

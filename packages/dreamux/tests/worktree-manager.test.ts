@@ -1,5 +1,12 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -141,16 +148,22 @@ describe('WorktreeManager.prepare(): entity-based naming', () => {
           teammateName: name,
           cwd: repo,
           dispatcherWorkspace: workspace,
-          request: { mode: 'managed', ...(branch === undefined ? {} : { branch }) },
+          request: {
+            mode: 'managed',
+            ...(branch === undefined ? {} : { branch }),
+          },
         });
         const expectedBranch = branch ?? `dreamux/${name}`;
         expect(basename(result.runtimeCwd)).toBe(name);
         expect(result.worktree.slug).toBe(name);
         expect(result.worktree.branch).toBe(expectedBranch);
         expect(result.worktree.cleanup).toBe('delete-on-close');
-        expect((await git(result.runtimeCwd, ['branch', '--show-current'])).trim())
-          .toBe(expectedBranch);
-        expect(await readFile(join(result.runtimeCwd, 'a.txt'), 'utf8')).toBe('hello\n');
+        expect(
+          (await git(result.runtimeCwd, ['branch', '--show-current'])).trim(),
+        ).toBe(expectedBranch);
+        expect(await readFile(join(result.runtimeCwd, 'a.txt'), 'utf8')).toBe(
+          'hello\n',
+        );
       });
     }
   }
@@ -171,7 +184,10 @@ describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery'
     teamId: string;
     worktree: TeamRecord['worktree'];
     force: boolean;
-  }): Omit<TeamRecord, 'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'> {
+  }): Omit<
+    TeamRecord,
+    'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
+  > {
     return {
       dispatcher_id: 'flow',
       team_id: input.teamId,
@@ -302,7 +318,9 @@ describe('WorktreeManager: force cleanup bounds', () => {
     };
     const result = await manager.cleanup(identity, { force: true });
     expect(result.cleanup_state).toBe('retained-error');
-    expect(result.cleanup_error).toMatch(/refusing to remove the source repository/);
+    expect(result.cleanup_error).toMatch(
+      /refusing to remove the source repository/,
+    );
     // The repo is untouched: still a readable git repo with its commit.
     expect(await pathIsDirectory(repo)).toBe(true);
     expect((await git(repo, ['log', '--oneline'])).trim()).not.toBe('');

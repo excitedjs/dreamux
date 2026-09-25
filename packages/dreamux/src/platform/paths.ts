@@ -36,12 +36,18 @@
 
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep, delimiter } from 'node:path';
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+  delimiter,
+} from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  assertUnixSocketPathBudget,
-} from '@excitedjs/dreamux-utils';
+import { assertUnixSocketPathBudget } from '@excitedjs/dreamux-utils';
 
 import { pathExists } from './fs-errors.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
@@ -56,7 +62,7 @@ export const BUNDLED_SKILL_NAMES = [
   'teamwork',
 ] as const;
 
-export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];
+export type BundledSkillName = (typeof BUNDLED_SKILL_NAMES)[number];
 
 /**
  * The dreamux home root. Overridable via the `DREAMUX_ROOT` environment variable
@@ -72,7 +78,10 @@ export function dreamuxRoot(): string {
 /** Lexical containment: is `candidate` at or under `root` (both resolved)? */
 function pathIsAtOrUnder(root: string, candidate: string): boolean {
   const rel = relative(resolve(root), resolve(candidate));
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
+  return (
+    rel === '' ||
+    (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+  );
 }
 
 /**
@@ -99,7 +108,9 @@ export async function canonicalPath(path: string): Promise<string> {
  * canonicalizes both the root and `path` with `realpath` before the containment
  * check, so a workspace that symlinks into `~/.dreamux` is still rejected.
  */
-export async function isRealPathUnderDreamuxRoot(path: string): Promise<boolean> {
+export async function isRealPathUnderDreamuxRoot(
+  path: string,
+): Promise<boolean> {
   const [realRoot, realPath] = await Promise.all([
     canonicalPath(dreamuxRoot()),
     canonicalPath(path),
@@ -360,9 +371,10 @@ export function validateWorkflowRunId(runId: string): string {
 
 /** The workflow collection root for one dispatcher or Team scope. */
 export function workflowScopeDir(input: WorkflowScopePathInput): string {
-  const ownerDir = input.teamId === null
-    ? dispatcherDir(input.dispatcherId)
-    : dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
+  const ownerDir =
+    input.teamId === null
+      ? dispatcherDir(input.dispatcherId)
+      : dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
   return join(ownerDir, 'workflow');
 }
 

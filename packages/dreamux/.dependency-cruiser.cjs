@@ -151,11 +151,11 @@ const namedEdgeRules = [
     name: 'team-service-not-to-team-collection-owner',
     comment:
       'Eviction and live-instance cache materialization are owned by ' +
-      'TeamCollection: team-service/ must not import team-collection/\'s ' +
+      "TeamCollection: team-service/ must not import team-collection/'s " +
       'cache owner (runtime-registry.ts) or facade (index.ts). ' +
-      'team-service/ legitimately imports team-collection/\'s shared record ' +
+      "team-service/ legitimately imports team-collection/'s shared record " +
       '/ error / store TYPES (same persisted domain), so this only bans the ' +
-      'two files that would let a Service reach its owner\'s live-instance ' +
+      "two files that would let a Service reach its owner's live-instance " +
       'table (see tests/collection-ownership.test.ts).',
     severity: 'warn',
     from: { path: '^src/service/team-service/' },
@@ -175,7 +175,7 @@ const namedEdgeRules = [
     name: 'channel-not-to-team-or-teammate',
     comment:
       'Channel decides where a message goes by naming a Team; it must not ' +
-      'reach into a Team/TeamMate owner\'s internals to implement lifecycle ' +
+      "reach into a Team/TeamMate owner's internals to implement lifecycle " +
       'policy itself (see tests/collection-ownership.test.ts).',
     severity: 'warn',
     from: { path: ['^src/channel/', '^src/service/channel-service/'] },
@@ -197,7 +197,9 @@ const namedEdgeRules = [
       'tests/workflow-service.test.ts).',
     severity: 'warn',
     from: { path: '^src/service/workflow-service/' },
-    to: { path: ['^src/service/team-collection/', '^src/service/team-service/'] },
+    to: {
+      path: ['^src/service/team-collection/', '^src/service/team-service/'],
+    },
   },
   {
     name: 'channel-service-mcp-delegates-single-importer',
@@ -205,7 +207,7 @@ const namedEdgeRules = [
       'channelMcpDelegates() (service/channel-service/mcp-delegates.ts) is ' +
       'consumed only by the Dispatcher-agent/TeamLeader role assembly ' +
       '(service/dispatcher-service/mcp-delegates.ts), never the ordinary ' +
-      'TeamMate one, so Channel MCP cannot leak into an ordinary TeamMate\'s ' +
+      "TeamMate one, so Channel MCP cannot leak into an ordinary TeamMate's " +
       'tool set (see tests/channel-service.test.ts, ' +
       'tests/mcp-delegate-catalog.test.ts).',
     severity: 'warn',
@@ -216,7 +218,7 @@ const namedEdgeRules = [
     name: 'types-file-not-to-command',
     comment:
       'A file named types.ts declares data contracts; it must not import ' +
-      'command/\'s Command-wiring machinery.',
+      "command/'s Command-wiring machinery.",
     severity: 'warn',
     from: { path: 'types\\.ts$' },
     to: { path: '^src/command/' },

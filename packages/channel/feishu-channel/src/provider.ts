@@ -190,8 +190,10 @@ function describeExtensions(extensions: FeishuExtensionRegistry): string {
         .map((tool) => `${tool.name}[${tool.callers.join(',')}]`)
         .join(', ');
       const actions = ext.cardActions.map((action) => action.key).join(', ');
-      return `${ext.name} (tools: ${tools === '' ? 'none' : tools}; ` +
-        `card actions: ${actions === '' ? 'none' : actions})`;
+      return (
+        `${ext.name} (tools: ${tools === '' ? 'none' : tools}; ` +
+        `card actions: ${actions === '' ? 'none' : actions})`
+      );
     })
     .join('; ');
 }

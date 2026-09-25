@@ -136,7 +136,10 @@ export class TeammateCollection implements TeammateOps {
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
   private readonly subscriptions = new Map<string, ClosedSubscription>();
-  private readonly materializations = new Map<string, Promise<ResolvedTeamMate>>();
+  private readonly materializations = new Map<
+    string,
+    Promise<ResolvedTeamMate>
+  >();
   /**
    * TeamMates built for a `send` that has not reopened them yet.
    *
@@ -275,7 +278,9 @@ export class TeammateCollection implements TeammateOps {
     return this.liveEntity(identity.name)?.status() ?? toStatus(identity, null);
   }
 
-  async history(input: AgentEntityHistoryQuery): Promise<AgentEntityHistoryResult> {
+  async history(
+    input: AgentEntityHistoryQuery,
+  ): Promise<AgentEntityHistoryResult> {
     const rows: AgentEntityRecordRow[] = [];
     for (const identity of await this.rosterList()) {
       const entity = this.liveEntity(identity.name);
@@ -283,9 +288,7 @@ export class TeammateCollection implements TeammateOps {
       if (matchesRecordQuery(row, input)) rows.push(row);
     }
     rows.sort(
-      (a, b) =>
-        b.updated_at - a.updated_at ||
-        a.name.localeCompare(b.name),
+      (a, b) => b.updated_at - a.updated_at || a.name.localeCompare(b.name),
     );
     const start = input.cursor !== undefined ? decodeCursor(input.cursor) : 0;
     const limit = clampHistoryLimit(input.limit);
@@ -418,10 +421,13 @@ export class TeammateCollection implements TeammateOps {
     );
     const teamId = this.teamScope ?? undefined;
     if (teamId !== undefined && input.sharedWorkspace === undefined) {
-      throw new Error('Team-scoped TeamMate spawn requires a shared team workspace');
+      throw new Error(
+        'Team-scoped TeamMate spawn requires a shared team workspace',
+      );
     }
     const agentRuntime =
-      input.agentRuntime ?? defaultAgentRuntime(this.opts.config, this.dispatcherId);
+      input.agentRuntime ??
+      defaultAgentRuntime(this.opts.config, this.dispatcherId);
     // The name prefix follows the collection this Collection was bound to, not
     // anything read back out of a record.
     const name = await this.opts.names.allocate({
@@ -438,7 +444,9 @@ export class TeammateCollection implements TeammateOps {
     };
     const existing = this.liveEntity(name);
     if (existing !== null || this.materializations.has(name)) {
-      throw new Error(`TeamMate ${JSON.stringify(name)} is already materializing`);
+      throw new Error(
+        `TeamMate ${JSON.stringify(name)} is already materializing`,
+      );
     }
     return this.trackMaterialization(name, async () => {
       const identity = await this.createIdentity(input, allocation);
@@ -545,10 +553,7 @@ export class TeammateCollection implements TeammateOps {
   private subscribeEntity(entity: TeammateService): ClosedSubscription {
     const source = entity;
     return entity.onClosed((fact) => {
-      if (
-        this.entities.get(fact.name) === source &&
-        source.isRetired()
-      ) {
+      if (this.entities.get(fact.name) === source && source.isRetired()) {
         this.entities.delete(fact.name);
         this.subscriptions.get(fact.name)?.unsubscribe();
         this.subscriptions.delete(fact.name);
@@ -577,7 +582,8 @@ export class TeammateCollection implements TeammateOps {
     const inFlight = this.materializations.get(teammateName);
     if (inFlight !== undefined) return inFlight;
     return this.trackMaterialization(teammateName, () =>
-      this.materializeEntity(teammateName));
+      this.materializeEntity(teammateName),
+    );
   }
 
   /**
@@ -631,7 +637,8 @@ export class TeammateCollection implements TeammateOps {
   private async rosterList(): Promise<AgentEntityIdentity[]> {
     const identities = await this.store.list();
     return identities.filter((identity) =>
-      this.assertInCollection(identity, false));
+      this.assertInCollection(identity, false),
+    );
   }
 
   /**
@@ -663,7 +670,9 @@ export class TeammateCollection implements TeammateOps {
       policy.deliverRuntime(initiator, completion, fact);
   }
 
-  private async closeAfterFailedCreation(entity: TeammateService): Promise<void> {
+  private async closeAfterFailedCreation(
+    entity: TeammateService,
+  ): Promise<void> {
     try {
       await entity.close({ note: 'TeamMate creation failed' });
     } catch (cleanupError) {

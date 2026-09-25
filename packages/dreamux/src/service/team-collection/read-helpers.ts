@@ -8,14 +8,18 @@ export function matchesTeamHistoryQuery(
   row: TeamHistoryRow,
   input: Omit<TeamHistoryQuery, 'dispatcherId'>,
 ): boolean {
-  if (input.name !== undefined && row.team_name !== validateTeamId(input.name)) {
+  if (
+    input.name !== undefined &&
+    row.team_name !== validateTeamId(input.name)
+  ) {
     return false;
   }
   if (input.status !== undefined && row.status !== input.status) return false;
   if (input.repo !== undefined) {
     const needle = input.repo.toLowerCase();
     const hit =
-      row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
+      row.source_repo !== null &&
+      row.source_repo.toLowerCase().includes(needle);
     if (!hit) return false;
   }
   if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {

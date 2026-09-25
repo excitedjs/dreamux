@@ -17,7 +17,10 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { CoreCommandContext, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  CoreCommandContext,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
 
 import { runDreamuxMcp } from '../src/mcp/shim.js';
 import { McpLeaseRegistry } from '../src/service/mcp/leases.js';
@@ -95,7 +98,11 @@ async function throughTheShim(
       }),
     );
     try {
-      const result = await callTool(connection.client, call.name, call.arguments);
+      const result = await callTool(
+        connection.client,
+        call.name,
+        call.arguments,
+      );
       return {
         text: toolText(result),
         isError: result.isError === true,
@@ -132,7 +139,9 @@ function teamDelegate(overrides: FakeDispatcherOverrides): McpServerDelegate {
   });
 }
 
-function teammateDelegate(overrides: FakeDispatcherOverrides): McpServerDelegate {
+function teammateDelegate(
+  overrides: FakeDispatcherOverrides,
+): McpServerDelegate {
   return createTeamMateMcpDelegate({
     kind: 'dispatcher',
     dispatcher: createFakeDispatcher(overrides),
@@ -269,7 +278,9 @@ describe('a failure Core does not own reaches the caller with its own message', 
     // The native fact survives whole: Core owns neither the reason nor a
     // recovery it would have to invent to say anything more.
     expect(message).toContain('ENOENT');
-    expect(message).toContain('/Users/ops/.dreamux/state/team/blue/record.json');
+    expect(message).toContain(
+      '/Users/ops/.dreamux/state/team/blue/record.json',
+    );
     expect(message).not.toContain('Whether this call took effect is unknown');
     expect(message).not.toMatch(/failure id/i);
   });
@@ -360,7 +371,11 @@ describe('every advertised tool answers both kinds of failure the same way', () 
 
   /** Arguments good enough to pass each tool's own input reading. */
   const ARGS: Readonly<Record<string, Record<string, unknown>>> = {
-    create: { name_prefix: 'blue', intent: 'ship it', leader_agent_runtime: 'r1' },
+    create: {
+      name_prefix: 'blue',
+      intent: 'ship it',
+      leader_agent_runtime: 'r1',
+    },
     send: { team_name: 'blue-1a2b', prompt: 'go', name: 'mate-9z' },
     status: { team_name: 'blue-1a2b', name: 'mate-9z' },
     history: {},
@@ -395,11 +410,17 @@ describe('every advertised tool answers both kinds of failure the same way', () 
         throw new ValidationError("param 'anything' is wrong");
       });
       const delegate = build(stated);
-      const tools = delegate.describe().tools as ReadonlyArray<{ name: string }>;
+      const tools = delegate.describe().tools as ReadonlyArray<{
+        name: string;
+      }>;
       expect(tools.length).toBeGreaterThan(0);
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(build(stated), tool.name, ARGS[tool.name] ?? {}),
+          await throughTheRegistry(
+            build(stated),
+            tool.name,
+            ARGS[tool.name] ?? {},
+          ),
         );
         expect(message, `tool '${tool.name}'`).toMatch(/^BAD_REQUEST: /);
         expect(message, `tool '${tool.name}'`).not.toMatch(UNCLASSIFIED);
@@ -408,13 +429,21 @@ describe('every advertised tool answers both kinds of failure the same way', () 
 
     it(`${server}: an unstated failure keeps its own words on every tool it advertises`, async () => {
       const unstated = poisonedWith(() => {
-        throw new TypeError('cannot read properties of undefined (reading nope)');
+        throw new TypeError(
+          'cannot read properties of undefined (reading nope)',
+        );
       });
       const delegate = build(unstated);
-      const tools = delegate.describe().tools as ReadonlyArray<{ name: string }>;
+      const tools = delegate.describe().tools as ReadonlyArray<{
+        name: string;
+      }>;
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(build(unstated), tool.name, ARGS[tool.name] ?? {}),
+          await throughTheRegistry(
+            build(unstated),
+            tool.name,
+            ARGS[tool.name] ?? {},
+          ),
         );
         expect(message, `tool '${tool.name}'`).toBe(
           'INTERNAL: cannot read properties of undefined (reading nope)',
@@ -441,7 +470,11 @@ describe('the admission boundary answers everything, including what never reache
           {
             name: 'post',
             description: 'post a message',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
           },
         ],
       }),
@@ -467,7 +500,11 @@ describe('the admission boundary answers everything, including what never reache
           {
             name: 'post',
             description: 'post a message',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
           },
         ],
       }),
@@ -493,7 +530,11 @@ describe('the admission boundary answers everything, including what never reache
           {
             name: 'post',
             description: 'post a message',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
           },
         ],
       }),
@@ -665,7 +706,11 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     operation: string;
     overrides: FakeDispatcherOverrides;
     command: { name: string; params: Record<string, unknown> };
-    tool: { delegate: 'team' | 'teammate' | 'cron'; name: string; args: Record<string, unknown> };
+    tool: {
+      delegate: 'team' | 'teammate' | 'cron';
+      name: string;
+      args: Record<string, unknown>;
+    };
     /**
      * What the owning object actually answered, in public form. Both surfaces
      * are checked against it rather than only against each other: two adapters
@@ -711,13 +756,20 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       operation: 'team.status',
       overrides: { getTeamStatus: async () => teamSummary },
       command: { name: 'team.status', params: { team_name: 'blue-1a2b' } },
-      tool: { delegate: 'team', name: 'status', args: { team_name: 'blue-1a2b' } },
+      tool: {
+        delegate: 'team',
+        name: 'status',
+        args: { team_name: 'blue-1a2b' },
+      },
       expected: teamSummary,
     },
     {
       operation: 'team.history',
       overrides: { getTeamHistory: async () => historyPage },
-      command: { name: 'team.history', params: { status: 'closed', limit: 10 } },
+      command: {
+        name: 'team.history',
+        params: { status: 'closed', limit: 10 },
+      },
       tool: {
         delegate: 'team',
         name: 'history',
@@ -754,7 +806,11 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         },
       },
       command: { name: 'teammate.history', params: { status: 'closed' } },
-      tool: { delegate: 'teammate', name: 'history', args: { status: 'closed' } },
+      tool: {
+        delegate: 'teammate',
+        name: 'history',
+        args: { status: 'closed' },
+      },
       expected: { items: [teammateRow], next_cursor: null },
     },
     {
@@ -765,7 +821,9 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
             teammate: teammateRow,
             requested_records: 5,
             returned_records: 1,
-            records: [{ kind: 'assistant_message', text: 'hi', occurred_at: null }],
+            records: [
+              { kind: 'assistant_message', text: 'hi', occurred_at: null },
+            ],
             next_cursor: null,
             truncated: false,
           }),
@@ -823,7 +881,9 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     },
     {
       operation: 'cron.delete',
-      overrides: { scheduler: { delete: async (id: string) => ({ id, deleted: true }) } },
+      overrides: {
+        scheduler: { delete: async (id: string) => ({ id, deleted: true }) },
+      },
       command: { name: 'scheduler.cron.delete', params: { id: 'job-1' } },
       tool: { delegate: 'cron', name: 'cron_delete', args: { id: 'job-1' } },
       expected: { id: 'job-1', deleted: true },
@@ -835,13 +895,16 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     overrides: FakeDispatcherOverrides;
   }): McpServerDelegate {
     if (entry.tool.delegate === 'team') return teamDelegate(entry.overrides);
-    if (entry.tool.delegate === 'teammate') return teammateDelegate(entry.overrides);
+    if (entry.tool.delegate === 'teammate')
+      return teammateDelegate(entry.overrides);
     return cronDelegate(entry.overrides);
   }
 
   for (const entry of cases) {
     it(`${entry.operation}: both surfaces answer the same owning object with the same value`, async () => {
-      const harness = createCommandHarness({ dispatcherOverrides: entry.overrides });
+      const harness = createCommandHarness({
+        dispatcherOverrides: entry.overrides,
+      });
       const viaCommand = await harness.registry.invoke(
         adminContext(),
         entry.command.name,
@@ -868,7 +931,11 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     operation: string;
     overrides: FakeDispatcherOverrides;
     command: { name: string; params: Record<string, unknown> };
-    tool: { delegate: 'team' | 'teammate' | 'cron'; name: string; args: Record<string, unknown> };
+    tool: {
+      delegate: 'team' | 'teammate' | 'cron';
+      name: string;
+      args: Record<string, unknown>;
+    };
     raised: StatedFailure;
   }[] = [
     {
@@ -891,7 +958,10 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
           },
         },
       },
-      command: { name: 'teammate.submit', params: { name: 'ghost', prompt: 'go' } },
+      command: {
+        name: 'teammate.submit',
+        params: { name: 'ghost', prompt: 'go' },
+      },
       tool: {
         delegate: 'teammate',
         name: 'send',
@@ -917,7 +987,9 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       overrides: {
         workflows: {
           status: async () => {
-            throw new WorkflowRunNotFoundError("workflow run 'gone' does not exist");
+            throw new WorkflowRunNotFoundError(
+              "workflow run 'gone' does not exist",
+            );
           },
         },
       },
@@ -927,13 +999,17 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         name: 'workflow_status',
         args: { run_id: 'gone' },
       },
-      raised: new WorkflowRunNotFoundError("workflow run 'gone' does not exist"),
+      raised: new WorkflowRunNotFoundError(
+        "workflow run 'gone' does not exist",
+      ),
     },
   ];
 
   for (const entry of failureCases) {
     it(`${entry.operation}: the same code, reason, and action reach a scripted caller and a model`, async () => {
-      const harness = createCommandHarness({ dispatcherOverrides: entry.overrides });
+      const harness = createCommandHarness({
+        dispatcherOverrides: entry.overrides,
+      });
       await expect(
         harness.registry.invoke(
           adminContext(),
@@ -1054,7 +1130,9 @@ describe('the admin socket and the in-process Channel port answer the same way',
       createCommandHarness({ dispatcherOverrides: overrides }),
     );
     await expect(
-      lease.port.invoke.invoke('team.status', { team_name: 'ghost-a1b2' } as never),
+      lease.port.invoke.invoke('team.status', {
+        team_name: 'ghost-a1b2',
+      } as never),
     ).rejects.toMatchObject(expected);
   });
 
@@ -1088,10 +1166,14 @@ describe('the admin socket and the in-process Channel port answer the same way',
       logs,
     );
     await expect(
-      lease.port.invoke.invoke('team.status', { team_name: 'blue-1a2b' } as never),
+      lease.port.invoke.invoke('team.status', {
+        team_name: 'blue-1a2b',
+      } as never),
     ).rejects.toMatchObject({ code: 'INTERNAL', message: NATIVE });
     // The port that observed it logged the whole value, without an identifier.
-    const record = logs.find((entry) => entry.fields['command'] === 'team.status');
+    const record = logs.find(
+      (entry) => entry.fields['command'] === 'team.status',
+    );
     expect(record, 'the channel port did not log the failure').toBeDefined();
     expect(record!.fields).not.toHaveProperty('failure_id');
     expect((record!.fields['err'] as { message: string }).message).toBe(NATIVE);
@@ -1185,10 +1267,14 @@ describe('a whitespace-only argument is a bad request, never an internal failure
     what: string;
     method: string;
     params: Record<string, unknown>;
-    tool: { delegate: () => McpServerDelegate; name: string; args: Record<string, unknown> };
+    tool: {
+      delegate: () => McpServerDelegate;
+      name: string;
+      args: Record<string, unknown>;
+    };
   }[] = [
     {
-      what: "team.create name_prefix",
+      what: 'team.create name_prefix',
       method: 'team.create',
       params: {
         request_id: 'req-1',
@@ -1199,7 +1285,11 @@ describe('a whitespace-only argument is a bad request, never an internal failure
       tool: {
         delegate: () => teamDelegate({}),
         name: 'create',
-        args: { name_prefix: BLANK, intent: 'ship it', leader_agent_runtime: 'r1' },
+        args: {
+          name_prefix: BLANK,
+          intent: 'ship it',
+          leader_agent_runtime: 'r1',
+        },
       },
     },
     {
@@ -1214,7 +1304,11 @@ describe('a whitespace-only argument is a bad request, never an internal failure
       tool: {
         delegate: () => teamDelegate({}),
         name: 'create',
-        args: { name_prefix: 'blue', intent: BLANK, leader_agent_runtime: 'r1' },
+        args: {
+          name_prefix: 'blue',
+          intent: BLANK,
+          leader_agent_runtime: 'r1',
+        },
       },
     },
     {
@@ -1253,11 +1347,19 @@ describe('a whitespace-only argument is a bad request, never an internal failure
     it(`${entry.what}: BAD_REQUEST on the Command and on the tool`, async () => {
       const harness = createCommandHarness();
       await expect(
-        harness.registry.invoke(adminContext(), entry.method, entry.params as never),
+        harness.registry.invoke(
+          adminContext(),
+          entry.method,
+          entry.params as never,
+        ),
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
       const message = refusalMessage(
-        await throughTheRegistry(entry.tool.delegate(), entry.tool.name, entry.tool.args),
+        await throughTheRegistry(
+          entry.tool.delegate(),
+          entry.tool.name,
+          entry.tool.args,
+        ),
       );
       expect(message.startsWith('BAD_REQUEST: ')).toBe(true);
       expect(message).not.toMatch(UNCLASSIFIED);
@@ -1267,7 +1369,9 @@ describe('a whitespace-only argument is a bad request, never an internal failure
   it('an unusable Team history page is the caller`s mistake on both', async () => {
     const harness = createCommandHarness();
     await expect(
-      harness.registry.invoke(adminContext(), 'team.history', { limit: 0 } as never),
+      harness.registry.invoke(adminContext(), 'team.history', {
+        limit: 0,
+      } as never),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     const message = refusalMessage(
@@ -1286,12 +1390,13 @@ describe('a whitespace-only argument is a bad request, never an internal failure
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     const message = refusalMessage(
-      await throughTheRegistry(teamDelegate({}), 'history', { cursor: 'not-a-cursor' }),
+      await throughTheRegistry(teamDelegate({}), 'history', {
+        cursor: 'not-a-cursor',
+      }),
     );
     expect(message.startsWith('BAD_REQUEST: ')).toBe(true);
     expect(message).not.toMatch(UNCLASSIFIED);
   });
-
 });
 
 // ---------------------------------------------------------------------------
@@ -1311,7 +1416,9 @@ describe('a failed or ambiguous submission reports the runtime`s own message', (
   });
 
   it('the Team receipt carries the native message under its own code', () => {
-    expect(teamSubmitResult({ status: 'failed', error: new Error(NATIVE) })).toEqual({
+    expect(
+      teamSubmitResult({ status: 'failed', error: new Error(NATIVE) }),
+    ).toEqual({
       status: 'failed',
       error: { code: 'TEAM_SUBMIT_FAILED', message: NATIVE },
     });

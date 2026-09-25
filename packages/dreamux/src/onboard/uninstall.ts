@@ -75,11 +75,26 @@ export async function runUninstall(
     reason: `${removal.platform} unit`,
   });
 
-  await removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
+  await removeOwnedDirectory(
+    stateDir,
+    entries,
+    'dreamux state directory',
+    dryRun,
+  );
   await removeOwnedDirectory(runDir, entries, 'dreamux run directory', dryRun);
-  await removeOwnedDirectory(cacheDir, entries, 'dreamux cache directory', dryRun);
+  await removeOwnedDirectory(
+    cacheDir,
+    entries,
+    'dreamux cache directory',
+    dryRun,
+  );
   await removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
-  await removeOwnedDirectory(configDir, entries, 'dreamux config directory', dryRun);
+  await removeOwnedDirectory(
+    configDir,
+    entries,
+    'dreamux config directory',
+    dryRun,
+  );
 
   return {
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
@@ -161,10 +176,7 @@ function normalizePath(path: string): string {
 }
 
 function operatorStateRoots(): string[] {
-  return uniquePaths([
-    joinHome('.codex'),
-    joinHome('.claude'),
-  ]);
+  return uniquePaths([joinHome('.codex'), joinHome('.claude')]);
 }
 
 function joinHome(child: string): string {

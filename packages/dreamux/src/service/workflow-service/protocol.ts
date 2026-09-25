@@ -28,9 +28,7 @@ export interface WorkflowAbortMessage {
 }
 
 export type WorkflowRunnerParentMessage =
-  | WorkflowRunStartMessage
-  | WorkflowAgentResultMessage
-  | WorkflowAbortMessage;
+  WorkflowRunStartMessage | WorkflowAgentResultMessage | WorkflowAbortMessage;
 
 export interface WorkflowAgentStartMessage {
   type: 'agent_start';
@@ -58,6 +56,4 @@ export type WorkflowRunResultMessage =
     };
 
 export type WorkflowRunnerChildMessage =
-  | WorkflowAgentStartMessage
-  | WorkflowEmitMessage
-  | WorkflowRunResultMessage;
+  WorkflowAgentStartMessage | WorkflowEmitMessage | WorkflowRunResultMessage;

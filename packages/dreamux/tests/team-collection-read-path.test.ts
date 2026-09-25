@@ -13,7 +13,7 @@ import type { DreamuxConfig } from '../src/config/config.js';
  * Stage 2a Item 6.
  */
 describe('Team-scoped TeamMate workspace borrowing', () => {
-  it('borrows the Team runtime directory as reuse-cwd/keep, never copying the Team worktree\'s own identity', async () => {
+  it("borrows the Team runtime directory as reuse-cwd/keep, never copying the Team worktree's own identity", async () => {
     const teamManagedWorktree = {
       mode: 'managed' as const,
       slug: 'team-slug',
@@ -36,7 +36,9 @@ describe('Team-scoped TeamMate workspace borrowing', () => {
     };
     const config: DreamuxConfig = { agents: {}, dispatchers: [] };
     const untouchedWorktrees = {
-      prepare: () => { throw new Error('must not be called for a shared-workspace spawn'); },
+      prepare: () => {
+        throw new Error('must not be called for a shared-workspace spawn');
+      },
       prepareDefaultWorkspace: () => {
         throw new Error('must not be called for a shared-workspace spawn');
       },

@@ -38,12 +38,14 @@ import {
 
 const DISPATCHER_ID = 'dispatcher-fixture';
 
-function baseScope(overrides: Partial<{
-  teammateName: string;
-  role: 'dispatcher' | 'teammate' | 'team_leader';
-  teamName: string | null;
-  turn_id: string;
-}> = {}) {
+function baseScope(
+  overrides: Partial<{
+    teammateName: string;
+    role: 'dispatcher' | 'teammate' | 'team_leader';
+    teamName: string | null;
+    turn_id: string;
+  }> = {},
+) {
   return {
     schemaVersion: 1 as const,
     occurredAt: Date.now(),
@@ -108,8 +110,16 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
 }
 
 function makeTeamRecordInput(
-  overrides: Partial<Omit<TeamRecord, 'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'>> = {},
-): Omit<TeamRecord, 'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'> {
+  overrides: Partial<
+    Omit<
+      TeamRecord,
+      'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
+    >
+  > = {},
+): Omit<
+  TeamRecord,
+  'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
+> {
   return {
     dispatcher_id: DISPATCHER_ID,
     team_id: 'alpha',
@@ -176,18 +186,31 @@ describe('the published Core event catalog is exactly four kinds', () => {
     const base = baseScope();
     for (const kind of rejectedKinds) {
       const event = { ...base, kind } as unknown as ChannelCoreEvent;
-      expect(sealChannelCoreEvent(event), `kind ${kind} must be rejected`).toBeNull();
+      expect(
+        sealChannelCoreEvent(event),
+        `kind ${kind} must be rejected`,
+      ).toBeNull();
     }
   });
 
   it('rejects a schemaVersion other than 1', () => {
-    const event = { ...catalogFixtures()['teammate.state'], schemaVersion: 2 } as unknown as ChannelCoreEvent;
+    const event = {
+      ...catalogFixtures()['teammate.state'],
+      schemaVersion: 2,
+    } as unknown as ChannelCoreEvent;
     expect(sealChannelCoreEvent(event)).toBeNull();
   });
 
   it('rejects a non-finite occurredAt', () => {
-    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
-      const event = { ...catalogFixtures()['teammate.state'], occurredAt: bad } as unknown as ChannelCoreEvent;
+    for (const bad of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      const event = {
+        ...catalogFixtures()['teammate.state'],
+        occurredAt: bad,
+      } as unknown as ChannelCoreEvent;
       expect(sealChannelCoreEvent(event)).toBeNull();
     }
   });
@@ -239,7 +262,9 @@ describe('teammate.state covers every Agent entity kind, with role a runtime pro
         dir,
         onPersisted: (identity) => persistedStatuses.push(identity.status),
       });
-      const created = await store.create(makeIdentityCreateInput({ name: 'scout', status: 'starting' }));
+      const created = await store.create(
+        makeIdentityCreateInput({ name: 'scout', status: 'starting' }),
+      );
       expect(persistedStatuses).toEqual(['starting']);
 
       const running = await store.update(created, { status: 'running' });
@@ -299,9 +324,14 @@ describe('teammate.state covers every Agent entity kind, with role a runtime pro
     // parameter is typed to exclude 'team_leader' entirely, which is the
     // compile-time half of "a Dispatcher/dispatcher TeamMate never reports as
     // a team_leader".
-    const methodStart = dispatcherServiceSource.indexOf('private publishAgentState(');
+    const methodStart = dispatcherServiceSource.indexOf(
+      'private publishAgentState(',
+    );
     expect(methodStart).toBeGreaterThan(-1);
-    const methodBody = dispatcherServiceSource.slice(methodStart, methodStart + 600);
+    const methodBody = dispatcherServiceSource.slice(
+      methodStart,
+      methodStart + 600,
+    );
     expect(methodBody).toContain("role: 'dispatcher' | 'teammate'");
     expect(methodBody).toContain("kind: 'teammate.state'");
     expect(methodBody).toContain('teamName: identity.team_id');
@@ -324,8 +354,15 @@ describe('team.state is the redundant Team aggregate', () => {
     const root = await makeTempDir('team-store-create');
     try {
       const publisher = createCapturingPublisher();
-      const roster = vi.fn(async (): Promise<readonly TeamStateTeammateSummary[]> => []);
-      const store = new TeamStore({ root, dispatcherId: DISPATCHER_ID, coreEvents: publisher, roster });
+      const roster = vi.fn(
+        async (): Promise<readonly TeamStateTeammateSummary[]> => [],
+      );
+      const store = new TeamStore({
+        root,
+        dispatcherId: DISPATCHER_ID,
+        coreEvents: publisher,
+        roster,
+      });
 
       await store.create(makeTeamRecordInput());
 
@@ -347,8 +384,15 @@ describe('team.state is the redundant Team aggregate', () => {
     const root = await makeTempDir('team-store-no-sources');
     try {
       const publisher = createCapturingPublisher(false);
-      const roster = vi.fn(async (): Promise<readonly TeamStateTeammateSummary[]> => []);
-      const store = new TeamStore({ root, dispatcherId: DISPATCHER_ID, coreEvents: publisher, roster });
+      const roster = vi.fn(
+        async (): Promise<readonly TeamStateTeammateSummary[]> => [],
+      );
+      const store = new TeamStore({
+        root,
+        dispatcherId: DISPATCHER_ID,
+        coreEvents: publisher,
+        roster,
+      });
 
       await store.create(makeTeamRecordInput());
 
@@ -363,8 +407,15 @@ describe('team.state is the redundant Team aggregate', () => {
     const root = await makeTempDir('team-store-lifecycle');
     try {
       const publisher = createCapturingPublisher();
-      const roster = vi.fn(async (): Promise<readonly TeamStateTeammateSummary[]> => []);
-      const store = new TeamStore({ root, dispatcherId: DISPATCHER_ID, coreEvents: publisher, roster });
+      const roster = vi.fn(
+        async (): Promise<readonly TeamStateTeammateSummary[]> => [],
+      );
+      const store = new TeamStore({
+        root,
+        dispatcherId: DISPATCHER_ID,
+        coreEvents: publisher,
+        roster,
+      });
       const created = await store.create(makeTeamRecordInput());
       expect(created).not.toBeNull();
       if (created === null) throw new Error('unreachable');
@@ -381,12 +432,14 @@ describe('team.state is the redundant Team aggregate', () => {
   });
 });
 
-describe('activity from a revoked runtime generation can never reach a replacement runtime\'s COT stream', () => {
+describe("activity from a revoked runtime generation can never reach a replacement runtime's COT stream", () => {
   it('AgentRuntimeStateStore revokes the prior lease the instant a new generation opens, and revocation never un-happens', async () => {
     const dir = await makeTempDir('runtime-generation-lease');
     try {
       const store = makeIdentityStore({ dir });
-      const identity = await store.create(makeIdentityCreateInput({ name: 'scout' }));
+      const identity = await store.create(
+        makeIdentityCreateInput({ name: 'scout' }),
+      );
       const state = new AgentRuntimeStateStore(store, identity);
 
       const generationOne = state.leaseRuntimeGeneration();
@@ -411,14 +464,22 @@ describe('activity from a revoked runtime generation can never reach a replaceme
     // exactly what a regression here would silently remove, so it is the
     // absence/ordering this guard proves.
     const source = await readFile(
-      new URL('../src/service/teammate-service/runtime-owner.ts', import.meta.url),
+      new URL(
+        '../src/service/teammate-service/runtime-owner.ts',
+        import.meta.url,
+      ),
       'utf8',
     );
     const sinkStart = source.indexOf('private generationActivitySink');
     expect(sinkStart).toBeGreaterThan(-1);
-    const sinkBody = source.slice(sinkStart, source.indexOf('private resolveLaunch'));
+    const sinkBody = source.slice(
+      sinkStart,
+      source.indexOf('private resolveLaunch'),
+    );
     const guardIndex = sinkBody.indexOf('lease.isCurrent()');
-    const logIndex = sinkBody.indexOf('dropped Agent Runtime activity from a revoked runtime generation');
+    const logIndex = sinkBody.indexOf(
+      'dropped Agent Runtime activity from a revoked runtime generation',
+    );
     const forwardIndex = sinkBody.indexOf('projectActivity(');
     expect(guardIndex).toBeGreaterThan(-1);
     expect(logIndex).toBeGreaterThan(guardIndex);

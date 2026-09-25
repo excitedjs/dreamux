@@ -1,10 +1,7 @@
 import { constants } from 'node:fs';
 import { open, realpath, type FileHandle } from 'node:fs/promises';
 
-import {
-  isPathWithin,
-  readBytesAt,
-} from '@excitedjs/dreamux-utils';
+import { isPathWithin, readBytesAt } from '@excitedjs/dreamux-utils';
 
 import { ClaudeActivityError } from './error.js';
 

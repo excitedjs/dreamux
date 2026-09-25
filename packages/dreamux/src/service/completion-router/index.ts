@@ -1,4 +1,7 @@
-import type { DreamuxLogger, RuntimeCompletion } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  RuntimeCompletion,
+} from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
 
@@ -19,8 +22,7 @@ export interface WorkflowCompletionFact extends CompletionFactBase {
 }
 
 export type PreparedCompletionFact =
-  | TeammateCompletionFact
-  | WorkflowCompletionFact;
+  TeammateCompletionFact | WorkflowCompletionFact;
 
 export type CompletionDeliveryResult =
   | { status: 'accepted' }
@@ -153,8 +155,9 @@ export class CompletionDeliveryPolicy {
     completion: PreparedCompletionFact,
   ): Promise<void> {
     const previous = this.recipientTails.get(recipientKey) ?? Promise.resolve();
-    const delivery = previous.catch(() => undefined).then(() =>
-      this.deliverPrepared(initiator, completion));
+    const delivery = previous
+      .catch(() => undefined)
+      .then(() => this.deliverPrepared(initiator, completion));
     this.recipientTails.set(recipientKey, delivery);
     return delivery;
   }

@@ -47,7 +47,10 @@ import {
 } from './leader-agent.js';
 import { errorInfo } from '../../platform/error-info.js';
 import { isolatedTaps, launchDraftTaps } from '../../plugin/hooks.js';
-import { ClosedFactPublisher, type ClosedSubscription } from '../closed-fact.js';
+import {
+  ClosedFactPublisher,
+  type ClosedSubscription,
+} from '../closed-fact.js';
 import { TeamClosing } from './closing.js';
 import { TeamWorktreeCleanup } from '../team-collection/worktree-cleanup.js';
 import { TeamLeaderCompletionTargets } from './completion-targets.js';
@@ -68,7 +71,10 @@ import {
   type TeamServiceCreateOutput,
   type TeamServiceDeps,
 } from './types.js';
-import type { WorkflowService, WorkflowOps } from '../workflow-service/index.js';
+import type {
+  WorkflowService,
+  WorkflowOps,
+} from '../workflow-service/index.js';
 
 /**
  * A single team entity (issue #233): holds its own {@link TeamRecord}, *has a*
@@ -361,7 +367,8 @@ export class TeamService implements Team {
     // aggregate from this roster, and an aggregate that omitted the Team's
     // existing members would be a false fact, not a partial one.
     await service.roster.seed(restorable ? identity : null, () =>
-      service.members());
+      service.members(),
+    );
     if (restorable && identity !== null) {
       // Aligned: take the identity exactly as stored — no restamp, no rewrite.
       service.leader_ = await restoreTeamLeaderAgentForTeam({
@@ -455,7 +462,9 @@ export class TeamService implements Team {
     // Published before it runs, so the fence is up from this moment and no
     // caller sees a Team that still looks open. Observed, never awaited: the
     // operation belongs to this Team, so its failure is this Team's to report.
-    const task = Promise.resolve().then(() => this.runDissolve({ ...input, note }));
+    const task = Promise.resolve().then(() =>
+      this.runDissolve({ ...input, note }),
+    );
     this.dissolveTask = task;
     void task.catch(() => {});
     return this.dissolveReceipt();
@@ -480,7 +489,11 @@ export class TeamService implements Team {
     } catch (error) {
       this.dissolveTask = null;
       this.deps.log.error(
-        { dispatcher_id: this.deps.dispatcherId, team_id: this.id, err: errorInfo(error) },
+        {
+          dispatcher_id: this.deps.dispatcherId,
+          team_id: this.id,
+          err: errorInfo(error),
+        },
         'Team dissolve failed',
       );
       throw error;
@@ -493,7 +506,11 @@ export class TeamService implements Team {
       await this.cleanup.settle(this.id);
     } catch (error) {
       this.deps.log.error(
-        { dispatcher_id: this.deps.dispatcherId, team_id: this.id, err: errorInfo(error) },
+        {
+          dispatcher_id: this.deps.dispatcherId,
+          team_id: this.id,
+          err: errorInfo(error),
+        },
         'Team managed worktree cleanup failed',
       );
     }
@@ -532,7 +549,9 @@ export class TeamService implements Team {
   ): Promise<TurnAdmission> {
     return this.admit(async () => {
       const { initiator, ...submission } = input;
-      const admission = await (await this.leaderService()).submitInput({
+      const admission = await (
+        await this.leaderService()
+      ).submitInput({
         ...submission,
         deliverCompletion:
           initiator !== undefined
@@ -670,7 +689,8 @@ export class TeamService implements Team {
   }
 
   private mustRecord(): TeamRecord {
-    if (this.record === null) throw new Error(`Team ${JSON.stringify(this.id)} is not booted`);
+    if (this.record === null)
+      throw new Error(`Team ${JSON.stringify(this.id)} is not booted`);
     return this.record;
   }
 
@@ -680,12 +700,16 @@ export class TeamService implements Team {
     this.leaderBuild ??= leaderForOpenTeam({
       ...this.leaderAgentBase(),
       record: this.mustRecord(),
-    }).finally(() => { this.leaderBuild = null; });
+    }).finally(() => {
+      this.leaderBuild = null;
+    });
     this.leader_ = await this.leaderBuild;
     return this.leader_;
   }
 
-  private static schedulerLifecycleFor(service: TeamService): TeamSchedulerLifecycle {
+  private static schedulerLifecycleFor(
+    service: TeamService,
+  ): TeamSchedulerLifecycle {
     return {
       start: () => service.scheduler_.start(),
       stop: () => service.scheduler_.stop(),

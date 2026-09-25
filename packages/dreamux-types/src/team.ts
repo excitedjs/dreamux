@@ -6,7 +6,10 @@
  * Channel use; every other canonical Team Command keeps its current domain
  * behavior and is defined by its own domain-owned Command module in Core.
  */
-import type { AgentRuntimeSkillSource, AgentRuntimeStatus } from './agent-runtime.js';
+import type {
+  AgentRuntimeSkillSource,
+  AgentRuntimeStatus,
+} from './agent-runtime.js';
 import type { ChannelCommandError } from './command.js';
 import type { TeamContainedRole, TeammateStatus } from './teammate.js';
 
@@ -157,11 +160,7 @@ export interface TeamSubmitCommand extends SubmitCommand {
  */
 export interface TeamSubmitResult {
   readonly status:
-    | 'submitted'
-    | 'duplicate'
-    | 'stopped'
-    | 'failed'
-    | 'ambiguous';
+    'submitted' | 'duplicate' | 'stopped' | 'failed' | 'ambiguous';
   readonly turn_id?: string;
   readonly error?: ChannelCommandError;
 }

@@ -12,7 +12,8 @@
     "index.js"
   ],
   "scripts": {
-    "build": "node -e \"\""
+    "build": "node -e \"\"",
+    "lint": "prettier --check . '!**/*.md' '!**/dist/**' '!**/CHANGELOG.json' '!**/.rush/**'"
   },
   "dependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
@@ -23,6 +24,7 @@
     "eslint": "^9.39.0"
   },
   "devDependencies": {
-    "eslint": "^9.39.0"
+    "eslint": "^9.39.0",
+    "prettier": "^3.9.9"
   }
 }

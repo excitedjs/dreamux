@@ -24,11 +24,11 @@ const RUN_STATUSES = new Set<WorkflowRunStatus>([
   'failed',
   'stopped',
 ]);
-const AGENT_STATUSES = new Set<WorkflowAgentStatus>(['queued', ...RUN_STATUSES]);
-const CALLER_KINDS = new Set<WorkflowCallerKind>([
-  'dispatcher',
-  'team_leader',
+const AGENT_STATUSES = new Set<WorkflowAgentStatus>([
+  'queued',
+  ...RUN_STATUSES,
 ]);
+const CALLER_KINDS = new Set<WorkflowCallerKind>(['dispatcher', 'team_leader']);
 
 /** Scope-local record store. Journal events are owned separately by WorkflowJournal. */
 export class WorkflowRunStore {
@@ -49,7 +49,9 @@ export class WorkflowRunStore {
       { mode: 0o600 },
     );
     if (!published) {
-      throw new Error(`workflow run ${JSON.stringify(record.run_id)} already exists`);
+      throw new Error(
+        `workflow run ${JSON.stringify(record.run_id)} already exists`,
+      );
     }
   }
 
@@ -137,7 +139,11 @@ function parseRecord(
   return record;
 }
 
-function parseAgent(raw: unknown, path: string, position: number): WorkflowAgentRecord {
+function parseAgent(
+  raw: unknown,
+  path: string,
+  position: number,
+): WorkflowAgentRecord {
   if (!isRecord(raw)) {
     throw new Error(`invalid agent ${position} in workflow record ${path}`);
   }
@@ -223,7 +229,10 @@ function nullableNumberField(
   path: string,
 ): number | null {
   const value = record[field];
-  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value))) {
+  if (
+    value !== null &&
+    (typeof value !== 'number' || !Number.isFinite(value))
+  ) {
     throw new Error(`invalid ${field} in workflow record ${path}`);
   }
   return value as number | null;

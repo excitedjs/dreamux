@@ -27,7 +27,8 @@ export const FEISHU_COT_APPEND_MAX_BYTES = 64 * 1_024;
 const TEXT_MESSAGE_EVENT_GROUP_MAX_BYTES = 224 * 1_024;
 /** What an event's content keeps free for its ids and keys beside the one string being fitted. */
 const EVENT_CONTENT_RESERVE_BYTES = 256;
-const TITLE_MAX_BYTES = FEISHU_COT_EVENT_CONTENT_MAX_BYTES - EVENT_CONTENT_RESERVE_BYTES;
+const TITLE_MAX_BYTES =
+  FEISHU_COT_EVENT_CONTENT_MAX_BYTES - EVENT_CONTENT_RESERVE_BYTES;
 const COT_EVENT_ENCODING_RESERVE_BYTES = 128;
 const COT_REQUEST_ENCODING_RESERVE_BYTES = 512;
 
@@ -117,18 +118,22 @@ export function textMessageEvents(input: {
     eventType: 'TEXT_MESSAGE_END',
     content: { messageId },
   });
-  const contentEvents = splitForEventContent(
-    input.content,
-    (delta) => ({ messageId, delta }),
-  ).map((content) => checkedEvent({
-    eventType: 'TEXT_MESSAGE_CONTENT',
-    content,
-  }));
+  const contentEvents = splitForEventContent(input.content, (delta) => ({
+    messageId,
+    delta,
+  })).map((content) =>
+    checkedEvent({
+      eventType: 'TEXT_MESSAGE_CONTENT',
+      content,
+    }),
+  );
   if (contentEvents.length === 0) return [];
   return boundedTextMessageEventGroup(start, contentEvents, end, messageId);
 }
 
-export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventInput[] {
+export function toolCallStartEvents(
+  event: CotToolCallActivity,
+): FeishuCotEventInput[] {
   const toolCallId = opaqueDisplayId('call', event.id);
   const presentation = toolPresentation(event);
   const events = [
@@ -154,7 +159,9 @@ export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventI
   return events;
 }
 
-export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEventInput[] {
+export function toolCallResultEvents(
+  event: CotToolCallActivity,
+): FeishuCotEventInput[] {
   const messageId = opaqueDisplayId('result', event.id);
   const toolCallId = opaqueDisplayId('call', event.id);
   const presentation = toolPresentation(event);
@@ -164,13 +171,16 @@ export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEvent
   // alone, whatever its status: they already say what it touched, and the
   // client cannot fold a code segment away beside them, so a diff and an
   // output below them would bury the row that was supposed to be a glance.
-  const content: unknown = presentation.items !== null
-    ? { type: 'list', ...presentation.items }
-    : toolResultContent(
-      failed,
-      presentation.arguments,
-      toolResultOutput(failed ? event.error ?? event.result : event.result),
-    );
+  const content: unknown =
+    presentation.items !== null
+      ? { type: 'list', ...presentation.items }
+      : toolResultContent(
+          failed,
+          presentation.arguments,
+          toolResultOutput(
+            failed ? (event.error ?? event.result) : event.result,
+          ),
+        );
   const projected = {
     eventType: 'TOOL_CALL_RESULT',
     content: {
@@ -209,20 +219,24 @@ export function cotEventContentBytes(event: FeishuCotEventInput): number {
  */
 export function cotEventBytes(event: FeishuCotEventInput): number {
   const semanticContent = JSON.stringify(event.content);
-  return jsonBytes(event.eventType) + jsonBytes(semanticContent) +
-    COT_EVENT_ENCODING_RESERVE_BYTES;
+  return (
+    jsonBytes(event.eventType) +
+    jsonBytes(semanticContent) +
+    COT_EVENT_ENCODING_RESERVE_BYTES
+  );
 }
 
-export function cotAppendBatchBytes(
-  input: {
-    readonly cotId: string;
-    readonly messageId: string;
-    readonly events: readonly FeishuCotEventInput[];
-  },
-): number {
-  return input.events.reduce((total, event) => total + cotEventBytes(event), 0) +
-    jsonBytes(input.messageId) + jsonBytes(input.cotId) +
-    COT_REQUEST_ENCODING_RESERVE_BYTES;
+export function cotAppendBatchBytes(input: {
+  readonly cotId: string;
+  readonly messageId: string;
+  readonly events: readonly FeishuCotEventInput[];
+}): number {
+  return (
+    input.events.reduce((total, event) => total + cotEventBytes(event), 0) +
+    jsonBytes(input.messageId) +
+    jsonBytes(input.cotId) +
+    COT_REQUEST_ENCODING_RESERVE_BYTES
+  );
 }
 
 function checkedEvent(event: FeishuCotEventInput): FeishuCotEventInput {
@@ -241,7 +255,6 @@ function opaqueDisplayId(kind: string, source: string): string {
     .slice(0, 18);
   return `${kind}-${digest}`;
 }
-
 
 /**
  * What came back, as the card shows it: a structured value pretty-printed as
@@ -297,8 +310,8 @@ function toolResultContent(
   argumentCode: CotCodeSegment | null,
   output: ToolResultOutput | null,
 ): unknown {
-  const maxBytes = FEISHU_COT_EVENT_CONTENT_MAX_BYTES -
-    EVENT_CONTENT_RESERVE_BYTES;
+  const maxBytes =
+    FEISHU_COT_EVENT_CONTENT_MAX_BYTES - EVENT_CONTENT_RESERVE_BYTES;
   let code = argumentCode;
   let result = output;
   let content = toolResultSegments(failed, code, result);
@@ -340,9 +353,11 @@ function toolResultSegments(
   }
   segments.push({ type: 'text', text: RESULT_HEADER });
   if (result !== null) {
-    segments.push(result.kind === 'json'
-      ? { type: 'code', language: 'json', code: result.text }
-      : { type: 'text', text: result.text });
+    segments.push(
+      result.kind === 'json'
+        ? { type: 'code', language: 'json', code: result.text }
+        : { type: 'text', text: result.text },
+    );
   } else {
     segments.push({ type: 'text', text: failed ? 'Failed' : 'Complete' });
   }
@@ -356,7 +371,6 @@ function shrinkForContentBudget(value: string, overflowBytes: number): string {
   );
   return truncateEscaped(value, target);
 }
-
 
 function splitForEventContent(
   text: string,
@@ -399,7 +413,8 @@ function boundedTextMessageEventGroup(
     accepted.push(event);
     bytes += eventBytes;
   }
-  if (accepted.length === contentEvents.length) return [start, ...accepted, end];
+  if (accepted.length === contentEvents.length)
+    return [start, ...accepted, end];
 
   const marker = checkedEvent({
     eventType: 'TEXT_MESSAGE_CONTENT',
@@ -415,7 +430,6 @@ function boundedTextMessageEventGroup(
   }
   return [start, ...accepted, marker, end];
 }
-
 
 function jsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), 'utf8');

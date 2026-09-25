@@ -15,9 +15,7 @@ import type {
 } from './types.js';
 import { validateTeamId } from './types.js';
 import { allocateConcreteNameAsync } from '../name-allocator.js';
-import {
-  TeamService,
-} from '../team-service/index.js';
+import { TeamService } from '../team-service/index.js';
 import {
   IdempotencyConflictError,
   TeamClosedError,
@@ -93,8 +91,7 @@ export class TeamCollection {
     return allocateConcreteNameAsync({
       kind: 'team',
       base: namePrefix,
-      accept: async (candidate) =>
-        (await this.store.get(candidate)) === null,
+      accept: async (candidate) => (await this.store.get(candidate)) === null,
       generateSuffix: this.opts.nameSuffixGenerator,
     });
   }
@@ -200,9 +197,7 @@ export class TeamCollection {
     return this.reads.list();
   }
 
-  async history(
-    input: TeamHistoryQuery,
-  ): Promise<TeamHistoryResult> {
+  async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
     return this.reads.history(input);
   }
 
@@ -322,7 +317,6 @@ export class TeamCollection {
     }
     return this.get(id);
   }
-
 
   private async mustTeam(teamId: string): Promise<TeamRecord> {
     const team = await this.store.get(validateTeamId(teamId));

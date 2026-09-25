@@ -1,4 +1,7 @@
-import type { RuntimeAdmission, RuntimeSubmission } from '@excitedjs/dreamux-types';
+import type {
+  RuntimeAdmission,
+  RuntimeSubmission,
+} from '@excitedjs/dreamux-types';
 
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import {
@@ -92,11 +95,13 @@ export class EntityTurnCoordinator {
    */
   async convergeRetainedTurns(): Promise<void> {
     await Promise.resolve();
-    const unsettled = [...this.retainedTurns].filter((turn) => !turn.isSettled());
+    const unsettled = [...this.retainedTurns].filter(
+      (turn) => !turn.isSettled(),
+    );
     if (unsettled.length > 0) {
       throw new Error(
         `runtime stop returned with ${unsettled.length} unsettled submission(s) for ` +
-        `${this.opts.identity().name}: ${unsettled.map((turn) => turn.id).join(', ')}`,
+          `${this.opts.identity().name}: ${unsettled.map((turn) => turn.id).join(', ')}`,
       );
     }
     for (const turn of [...this.retainedTurns]) await turn.ensureDelivery();
@@ -122,9 +127,12 @@ export class EntityTurnCoordinator {
       this.opts.owesCompletion,
     );
     this.retainedTurns.add(turn);
-    void turn.ensureDelivery().finally(() => {
-      this.retainedTurns.delete(turn);
-    }).catch(() => undefined);
+    void turn
+      .ensureDelivery()
+      .finally(() => {
+        this.retainedTurns.delete(turn);
+      })
+      .catch(() => undefined);
     return turn;
   }
 }

@@ -30,7 +30,10 @@ export class TeamWorktreeCleanup {
    */
   async settle(teamId: string): Promise<void> {
     const record = await this.opts.store.get(teamId);
-    if (record === null || record.worktree.cleanup_state !== 'cleanup-pending') {
+    if (
+      record === null ||
+      record.worktree.cleanup_state !== 'cleanup-pending'
+    ) {
       return;
     }
     const cleaned = await this.opts.worktrees.cleanup(

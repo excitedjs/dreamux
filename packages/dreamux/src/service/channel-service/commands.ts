@@ -26,17 +26,26 @@ interface ChannelListResult {
   channels: ChannelMetadata[];
 }
 
-export function channelCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
+export function channelCommands(
+  host: CoreCommandHost,
+): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<'channel.list', void, ChannelListResult> = {
     name: 'channel.list',
     version: 1,
     input: NO_INPUT,
     output: objectSchema(
       {
-        channels: arrayOf(objectSchema(
-          { channel_id: STRING, provider: STRING, identity: STRING, live: BOOLEAN },
-          ['channel_id', 'provider', 'identity', 'live'],
-        )),
+        channels: arrayOf(
+          objectSchema(
+            {
+              channel_id: STRING,
+              provider: STRING,
+              identity: STRING,
+              live: BOOLEAN,
+            },
+            ['channel_id', 'provider', 'identity', 'live'],
+          ),
+        ),
       },
       ['channels'],
     ),

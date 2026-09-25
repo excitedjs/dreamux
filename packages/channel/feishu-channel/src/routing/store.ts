@@ -83,9 +83,7 @@ export class FeishuRoutingStore {
         });
         return this.document;
       }
-      throw new Error(
-        `failed to read ${this.path}: ${(err as Error).message}`,
-      );
+      throw new Error(`failed to read ${this.path}: ${(err as Error).message}`);
     }
     let parsed: unknown;
     try {
@@ -135,7 +133,10 @@ export class FeishuRoutingStore {
       );
       this.document = next;
     });
-    this.tail = commit.then(() => undefined, () => undefined);
+    this.tail = commit.then(
+      () => undefined,
+      () => undefined,
+    );
     return commit;
   }
 
@@ -190,8 +191,9 @@ function validated(
     bindings: document.bindings,
     spaces: document.spaces,
     subscriptions: document.subscriptions ?? [],
-    updated_at: typeof document.updated_at === 'number'
-      ? document.updated_at
-      : Date.now(),
+    updated_at:
+      typeof document.updated_at === 'number'
+        ? document.updated_at
+        : Date.now(),
   };
 }

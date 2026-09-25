@@ -126,7 +126,10 @@ async function bootTeam(): Promise<{
     announceTeam: () => {},
     store: {
       get: async () => record,
-      update: async (previous: TeamRecord, patch: Partial<TeamRecord> & { status?: string }) => {
+      update: async (
+        previous: TeamRecord,
+        patch: Partial<TeamRecord> & { status?: string },
+      ) => {
         if (fail && patch.status === 'closed') {
           throw new Error('store write failed');
         }
@@ -135,7 +138,12 @@ async function bootTeam(): Promise<{
       },
       publishRosterState: () => {},
     },
-    log: { ...silentLog, error: () => { settleAll(); } },
+    log: {
+      ...silentLog,
+      error: () => {
+        settleAll();
+      },
+    },
     workflowLog: silentLog,
   } as unknown as TeamServiceDeps;
 
@@ -204,7 +212,8 @@ describe('a Team whose dissolve never committed a closed record', () => {
     await settled;
 
     const read = vi.spyOn(
-      (team.service as unknown as { leaderIdentity: AgentIdentityStore }).leaderIdentity,
+      (team.service as unknown as { leaderIdentity: AgentIdentityStore })
+        .leaderIdentity,
       'read',
     );
     let reads: number;

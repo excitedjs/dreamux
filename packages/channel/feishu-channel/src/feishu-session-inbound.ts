@@ -11,10 +11,7 @@
  * ack) live in `feishu-session-ops.ts`.
  */
 
-import {
-  isBotMentioned,
-  isBotSenderType,
-} from '@excitedjs/feishu-transport';
+import { isBotMentioned, isBotSenderType } from '@excitedjs/feishu-transport';
 import type { FeishuInboundEvent } from './bot.js';
 import { formatFeishuMessageForRuntime } from './feishu-message.js';
 import { isFeishuOperationError } from './feishu-bounded-operation.js';
@@ -88,7 +85,9 @@ function classifyInbound(event: FeishuInboundEvent): ClassifiedInbound {
 }
 
 function pairingTokenLogFields(token: string): Record<string, unknown> {
-  return { pairing_token_len: PAIRING_TOKEN_REGEX.test(token) ? 6 : token.length };
+  return {
+    pairing_token_len: PAIRING_TOKEN_REGEX.test(token) ? 6 : token.length,
+  };
 }
 
 export async function onMessage(
@@ -174,7 +173,7 @@ export async function onMessage(
     is_bot_sender: senderIsBot,
     trusted_bot:
       senderIsBot && classification.chatType === 'group'
-        ? trustedBots?.has(event.senderId) ?? false
+        ? (trustedBots?.has(event.senderId) ?? false)
         : false,
     bot_mentioned: botMentioned,
   };
@@ -232,9 +231,10 @@ export async function onMessage(
       } catch (err) {
         log(h).error(
           {
-            err: err instanceof Error
-              ? { message: err.message, stack: err.stack }
-              : { message: String(err) },
+            err:
+              err instanceof Error
+                ? { message: err.message, stack: err.stack }
+                : { message: String(err) },
             ...pairingTokenLogFields(action.token),
             prompt_message_id: action.prompt_message_id,
             kind: action.kind,
@@ -255,7 +255,8 @@ export async function onMessage(
             [action.token]: {
               ...existing,
               expires_at: Date.now() + PAIRING_TTL_MS,
-              prompt_message_id: existing.prompt_message_id ?? action.prompt_message_id,
+              prompt_message_id:
+                existing.prompt_message_id ?? action.prompt_message_id,
             },
           },
         });
@@ -296,7 +297,10 @@ export async function onMessage(
     await h.accessMutex.lock(async () => {
       const latest = await loadDispatcherAccess(h.opts.stateDir);
       // Approved mid-window? Skip entirely.
-      if (action.kind === 'dm' && latest.allow_users.includes(inbound.sender_id)) {
+      if (
+        action.kind === 'dm' &&
+        latest.allow_users.includes(inbound.sender_id)
+      ) {
         return;
       }
       if (
@@ -368,9 +372,8 @@ async function deliverAcceptedMessage(
   const work = createFeishuInboundWork(h.sessionFence);
   try {
     work.assertSessionActive();
-    const route = await runFeishuInboundWork(
-      work,
-      () => h.targetRouter.projectInbound(acceptedEvent, work.signal),
+    const route = await runFeishuInboundWork(work, () =>
+      h.targetRouter.projectInbound(acceptedEvent, work.signal),
     );
     work.assertSessionActive();
     if (command !== null) {
@@ -415,10 +418,7 @@ async function deliverAcceptedMessage(
 
     if (!work.isSessionActive()) return;
     reportDelivery(h, acceptedEvent, outcome);
-    if (
-      outcome.status === 'unsubmitted' ||
-      outcome.status === 'rejected'
-    ) {
+    if (outcome.status === 'unsubmitted' || outcome.status === 'rejected') {
       // A Collaboration Space run that never produced a Team, or a submission
       // the just-provisioned Team refused. No Dispatcher fallback: answer the
       // triggering message in place. The notice names no reason — the raw
@@ -463,12 +463,12 @@ async function buildSubmission(
   const namedEvent = await enrichSenderName(h, acceptedEvent, work);
   const event = await enrichFeishuInbound(namedEvent, h.bot, work, log(h));
   work.assertSessionActive();
-  const pending = event.chatType === 'group'
-    ? await pendingBaseline(h.opts.stateDir, event.chatId)
-    : null;
-  const injectBots = pending !== null &&
-    pending.needsBaseline &&
-    pending.trusted.length > 0;
+  const pending =
+    event.chatType === 'group'
+      ? await pendingBaseline(h.opts.stateDir, event.chatId)
+      : null;
+  const injectBots =
+    pending !== null && pending.needsBaseline && pending.trusted.length > 0;
   const formatted = await formatFeishuMessageForRuntime(event, {
     cacheDir: h.opts.attachmentCacheDir,
     resourceFetcher: h.bot,
@@ -478,11 +478,12 @@ async function buildSubmission(
   work.assertSessionActive();
   const clearBaseline =
     injectBots && pending !== null && formatted.groupBotsRendered
-      ? async (): Promise<void> => clearBaselineIfCurrent(
-          h.opts.stateDir,
-          event.chatId,
-          pending.generation,
-        )
+      ? async (): Promise<void> =>
+          clearBaselineIfCurrent(
+            h.opts.stateDir,
+            event.chatId,
+            pending.generation,
+          )
       : null;
   return {
     submission: {
@@ -551,19 +552,25 @@ async function enrichSenderName(
     const known = [...listing.trusted, ...listing.known].find(
       (bot) => bot.openId === event.senderId && bot.name !== undefined,
     );
-    return known?.name === undefined ? event : { ...event, senderName: known.name };
+    return known?.name === undefined
+      ? event
+      : { ...event, senderName: known.name };
   }
 
-  if (event.senderId === '' || h.bot.resolveUserName === undefined) return event;
+  if (event.senderId === '' || h.bot.resolveUserName === undefined)
+    return event;
   const remaining = work.remainingTimeMs();
   if (remaining === 0) return event;
   try {
     const name = await runFeishuInboundWork(
       work,
-      () => h.bot.resolveUserName?.(event.senderId) ?? Promise.resolve(undefined),
+      () =>
+        h.bot.resolveUserName?.(event.senderId) ?? Promise.resolve(undefined),
       Date.now() + Math.min(FEISHU_USER_NAME_LOOKUP_TIMEOUT_MS, remaining),
     );
-    return name === undefined || name === '' ? event : { ...event, senderName: name };
+    return name === undefined || name === ''
+      ? event
+      : { ...event, senderName: name };
   } catch (error) {
     if (isFeishuOperationError(error, 'aborted')) throw error;
     return event;

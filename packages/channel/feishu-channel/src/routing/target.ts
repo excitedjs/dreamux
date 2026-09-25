@@ -51,9 +51,7 @@ export function targetKey(target: FeishuTarget): string {
  * topic falls back to its own group and stops. There is no chain to walk and no
  * inherited binding beyond the conversation the message is visibly in.
  */
-export function resolutionChain(
-  target: FeishuTarget,
-): readonly FeishuTarget[] {
+export function resolutionChain(target: FeishuTarget): readonly FeishuTarget[] {
   return target.kind === 'topic' ? [target, containingChat(target)] : [target];
 }
 

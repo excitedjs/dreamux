@@ -8,13 +8,19 @@ import { vi } from 'vitest';
 import { AgentIdentityStore } from '../../src/service/agent-entity/identity-store.js';
 import type { AgentEntityIdentity } from '../../src/service/agent-entity/types.js';
 import { TeamService } from '../../src/service/team-service/index.js';
-import { TeamClosing, type TeamClosingDeps } from '../../src/service/team-service/closing.js';
+import {
+  TeamClosing,
+  type TeamClosingDeps,
+} from '../../src/service/team-service/closing.js';
 import type { TeamServiceDeps } from '../../src/service/team-service/types.js';
 import type { TeammateService } from '../../src/service/teammate-service/index.js';
 import type { SchedulerService } from '../../src/service/scheduler/service.js';
 import type { TeammateCollection } from '../../src/service/teammate-collection/index.js';
 import type { WorkflowService } from '../../src/service/workflow-service/index.js';
-import type { TeamDissolveCommand, TeamRecord } from '../../src/service/team-collection/types.js';
+import type {
+  TeamDissolveCommand,
+  TeamRecord,
+} from '../../src/service/team-collection/types.js';
 import {
   reuseCwdWorktree,
   WorktreeManager,
@@ -78,12 +84,14 @@ export interface ClosingHarness {
  * FIFO (repeating its last entry once exhausted), so a test can make the
  * TeamLeader check pass and the final post-stop assessment fail.
  */
-export function closingHarness(overrides: {
-  record?: TeamRecord;
-  assessSequence?: WorktreeCleanupAssessment[];
-  commit?: () => Promise<TeamRecord>;
-  deleteStoreFile?: () => Promise<void>;
-} = {}): ClosingHarness {
+export function closingHarness(
+  overrides: {
+    record?: TeamRecord;
+    assessSequence?: WorktreeCleanupAssessment[];
+    commit?: () => Promise<TeamRecord>;
+    deleteStoreFile?: () => Promise<void>;
+  } = {},
+): ClosingHarness {
   const record = overrides.record ?? fakeTeamRecord();
   const order: string[] = [];
   let assessCallCount = 0;
@@ -107,10 +115,11 @@ export function closingHarness(overrides: {
     order.push('scheduler.start');
   });
   const commit = vi.fn(
-    overrides.commit ?? (async () => {
-      order.push('record.commit');
-      return record;
-    }),
+    overrides.commit ??
+      (async () => {
+        order.push('record.commit');
+        return record;
+      }),
   );
   const deleteStoreFile = vi.fn(async () => {
     order.push('scheduler.deleteStoreFile');
@@ -122,17 +131,25 @@ export function closingHarness(overrides: {
     dispatcherId: record.dispatcher_id,
     workflows: {
       closeAdmission: () => {},
-      stopAll: async () => { order.push('workflows.stopAll'); },
+      stopAll: async () => {
+        order.push('workflows.stopAll');
+      },
       start: workflowStart,
     } as unknown as WorkflowService,
     scheduler: {
-      stop: () => { order.push('scheduler.stop'); },
+      stop: () => {
+        order.push('scheduler.stop');
+      },
       start: schedulerStart,
       deleteStoreFile,
     } as unknown as SchedulerService,
     members: {
-      stopAllForDissolve: async () => { order.push('members.stopAll'); },
-      closeAllForDissolve: async () => { order.push('members.close'); },
+      stopAllForDissolve: async () => {
+        order.push('members.stopAll');
+      },
+      closeAllForDissolve: async () => {
+        order.push('members.close');
+      },
     } as unknown as TeammateCollection,
     worktrees: { assessCleanup } as unknown as WorktreeManager,
     record: () => record,
@@ -141,9 +158,10 @@ export function closingHarness(overrides: {
     // A fixed, never-null leader wrapper: this harness is about *ordering*,
     // not about the leader-materialization churn `team-dissolve-recovery.test.ts`
     // already covers.
-    leader: () => ({
-      stopForHost: leaderStopForHost,
-    }) as unknown as TeammateService,
+    leader: () =>
+      ({
+        stopForHost: leaderStopForHost,
+      }) as unknown as TeammateService,
     closeLeaderForDissolve: leaderClose,
   };
   return {
@@ -157,7 +175,9 @@ export function closingHarness(overrides: {
   };
 }
 
-export function fakeTeamRecord(overrides: Partial<TeamRecord> = {}): TeamRecord {
+export function fakeTeamRecord(
+  overrides: Partial<TeamRecord> = {},
+): TeamRecord {
   return {
     dispatcher_id: 'dispatcher-1',
     team_id: 'alpha',
@@ -325,14 +345,23 @@ export async function bootDissolveTeam(): Promise<DissolveTeamHarness> {
     teamId,
     leaderName,
     teamRoot,
-    leader: () => (service as unknown as { leader_: TeammateService | null }).leader_,
+    leader: () =>
+      (service as unknown as { leader_: TeammateService | null }).leader_,
     durableLeaderIdentity: () => identities.read(),
-    setAssessment: (fn) => { assess = fn; },
-    setCommitFails: (fails) => { commitFails = fails; },
+    setAssessment: (fn) => {
+      assess = fn;
+    },
+    setCommitFails: (fails) => {
+      commitFails = fails;
+    },
     waitClosed: () =>
-      new Promise<void>((resolve) => { closedWaiters.push(resolve); }),
+      new Promise<void>((resolve) => {
+        closedWaiters.push(resolve);
+      }),
     waitDissolveFailed: () =>
-      new Promise<void>((resolve) => { failureWaiters.push(resolve); }),
+      new Promise<void>((resolve) => {
+        failureWaiters.push(resolve);
+      }),
     cleanup: async () => {
       if (previousDreamuxRoot === undefined) delete process.env['DREAMUX_ROOT'];
       else process.env['DREAMUX_ROOT'] = previousDreamuxRoot;

@@ -178,9 +178,10 @@ export const listChatBotsDef: FeishuToolDef<{ chatId: string }> = {
   },
 };
 
-function toJson(
-  bot: { open_id: string; name?: string },
-): Record<string, string> {
+function toJson(bot: {
+  open_id: string;
+  name?: string;
+}): Record<string, string> {
   return {
     open_id: bot.open_id,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),

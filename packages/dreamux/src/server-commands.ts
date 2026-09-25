@@ -25,7 +25,9 @@ interface ServerStatus {
   dispatchers: DispatcherSummary[];
 }
 
-export function serverCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
+export function serverCommands(
+  host: CoreCommandHost,
+): readonly AnyCoreCommand[] {
   const status: CoreCommandDefinition<'server.status', void, ServerStatus> = {
     name: 'server.status',
     version: 1,

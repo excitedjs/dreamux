@@ -12,7 +12,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { DreamuxLogger, JsonValue, TeamSubmitCommand } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  JsonValue,
+  TeamSubmitCommand,
+} from '@excitedjs/dreamux-types';
 
 import type { RestartIntentConsumer } from '../src/daemon/restart-intent.js';
 import {
@@ -80,14 +84,23 @@ describe('TeammateSubmitInput: the locked model-facing submission signature', ()
   });
 
   it('rejects a channelInput wrapper (the removed multi-shape submission surface)', () => {
-    // @ts-expect-error channelInput wrapper was deleted; the four model-facing
-    // fields are flat on TeammateSubmitInput, not nested under a per-producer key.
-    acceptSubmitInput({ source: 'channel', text: 'x', channelInput: { chat: 'g' } });
+    acceptSubmitInput({
+      source: 'channel',
+      text: 'x',
+      // @ts-expect-error channelInput wrapper was deleted; the four
+      // model-facing fields are flat on TeammateSubmitInput, not nested
+      // under a per-producer key.
+      channelInput: { chat: 'g' },
+    });
   });
 
   it('rejects a scheduledInput wrapper', () => {
-    // @ts-expect-error scheduledInput wrapper was deleted the same way.
-    acceptSubmitInput({ source: 'cron', text: 'x', scheduledInput: { fire: 1 } });
+    acceptSubmitInput({
+      source: 'cron',
+      text: 'x',
+      // @ts-expect-error scheduledInput wrapper was deleted the same way.
+      scheduledInput: { fire: 1 },
+    });
   });
 
   it('rejects a controlInput wrapper', () => {
@@ -122,8 +135,12 @@ describe('TeammateSubmitInput: the locked model-facing submission signature', ()
   });
 
   it('rejects a caller-supplied AbortSignal', () => {
-    // @ts-expect-error there is no cancellation seam on the submission input.
-    acceptSubmitInput({ source: 'channel', text: 'x', signal: new AbortController().signal });
+    acceptSubmitInput({
+      source: 'channel',
+      text: 'x',
+      // @ts-expect-error there is no cancellation seam on the submission input.
+      signal: new AbortController().signal,
+    });
   });
 
   it('rejects a caller-supplied logging label', () => {
@@ -142,7 +159,11 @@ describe('renderSubmission: the one paired-root envelope', () => {
 
   it('renders an explicit empty attrs object identically to an omitted one', () => {
     const withOmitted = renderSubmission({ source: 'channel', text: 'hi' });
-    const withEmpty = renderSubmission({ source: 'channel', attrs: {}, text: 'hi' });
+    const withEmpty = renderSubmission({
+      source: 'channel',
+      attrs: {},
+      text: 'hi',
+    });
     expect(withEmpty).toBe(withOmitted);
     expect(withOmitted).toBe('<channel>hi</channel>');
   });
@@ -169,7 +190,9 @@ describe('renderSubmission: the one paired-root envelope', () => {
       attrs: { chat: 'general' },
       text: 'line one\nline two',
     });
-    expect(rendered).toBe('<channel chat="general">line one\nline two</channel>');
+    expect(rendered).toBe(
+      '<channel chat="general">line one\nline two</channel>',
+    );
   });
 
   it('never rewrites XML entities in the body', () => {
@@ -181,7 +204,10 @@ describe('renderSubmission: the one paired-root envelope', () => {
   });
 
   it('never wraps the body in CDATA', () => {
-    const rendered = renderSubmission({ source: 'channel', text: 'plain text' });
+    const rendered = renderSubmission({
+      source: 'channel',
+      text: 'plain text',
+    });
     expect(rendered).not.toContain('CDATA');
   });
 
@@ -218,7 +244,9 @@ describe('renderSubmission: the one paired-root envelope', () => {
   });
 
   it('omits the reminder entirely when absent or empty', () => {
-    expect(renderSubmission({ source: 'channel', text: 'hi' })).not.toContain('reminder');
+    expect(renderSubmission({ source: 'channel', text: 'hi' })).not.toContain(
+      'reminder',
+    );
     expect(
       renderSubmission({ source: 'channel', text: 'hi', reminder: '' }),
     ).not.toContain('reminder');
@@ -228,12 +256,18 @@ describe('renderSubmission: the one paired-root envelope', () => {
     expect(() => renderSubmission({ source: 'bad name', text: 'x' })).toThrow(
       /not a safe tag name/,
     );
-    expect(() => renderSubmission({ source: '<channel>', text: 'x' })).toThrow();
+    expect(() =>
+      renderSubmission({ source: '<channel>', text: 'x' }),
+    ).toThrow();
   });
 
   it('fails loud on an unsafe attribute name instead of degrading', () => {
     expect(() =>
-      renderSubmission({ source: 'channel', attrs: { 'bad name': 'v' }, text: 'x' }),
+      renderSubmission({
+        source: 'channel',
+        attrs: { 'bad name': 'v' },
+        text: 'x',
+      }),
     ).toThrow(/not a safe tag name/);
   });
 
@@ -325,7 +359,10 @@ describe('parseChannelSubmission + channelSubmitInput: the ingress boundary shar
   });
 
   it('carries the caller attrs through to the envelope unchanged', () => {
-    const result = channelInput({ ...base, attrs: { title: 'second', chat: 'general' } });
+    const result = channelInput({
+      ...base,
+      attrs: { title: 'second', chat: 'general' },
+    });
     expect(result.attrs).toEqual({ title: 'second', chat: 'general' });
   });
 
@@ -347,7 +384,10 @@ describe('parseChannelSubmission + channelSubmitInput: the ingress boundary shar
 
 describe('Command-boundary admission normalization (team-collection/projections.ts)', () => {
   function submitted(): TurnAdmission {
-    return { status: 'submitted', turn: { id: 'turn-1' } } as unknown as TurnAdmission;
+    return {
+      status: 'submitted',
+      turn: { id: 'turn-1' },
+    } as unknown as TurnAdmission;
   }
 
   it('reports a real turn_id only for a newly submitted turn', () => {
@@ -371,7 +411,9 @@ describe('Command-boundary admission normalization (team-collection/projections.
   });
 
   it('reports a plain `stopped` unchanged', () => {
-    expect(teamSubmitResult({ status: 'stopped' })).toEqual({ status: 'stopped' });
+    expect(teamSubmitResult({ status: 'stopped' })).toEqual({
+      status: 'stopped',
+    });
   });
 
   it('`failed` proves pre-admission: a distinct code from `ambiguous`, no turn_id', () => {
@@ -409,13 +451,18 @@ function acceptTeamSubmitCommand(_input: TeamSubmitCommand): void {}
 
 describe('SYSTEM_SOURCE is unreachable from the one ordinary caller-facing submit surface', () => {
   it('rejects a source field on team.submit — the Command schema has none to select `system` (or anything else) with', () => {
-    // @ts-expect-error `TeamSubmitCommand` (dreamux-types/src/team.ts) declares
-    // team_name/attrs/text/reminder/intent/source_id and nothing else. There is
-    // no `source` field for a caller to set, so `system` (Core-reserved) is
-    // structurally as unreachable through this surface as any other source name
-    // — Core always supplies its own source (CHANNEL_SOURCE or
-    // AGENT_TASK_SOURCE) when it turns this Command into a submission.
-    acceptTeamSubmitCommand({ team_name: 'flow', text: 'hi', source: 'system' });
+    acceptTeamSubmitCommand({
+      team_name: 'flow',
+      text: 'hi',
+      // @ts-expect-error `TeamSubmitCommand` (dreamux-types/src/team.ts)
+      // declares team_name/attrs/text/reminder/intent/source_id and nothing
+      // else. There is no `source` field for a caller to set, so `system`
+      // (Core-reserved) is structurally as unreachable through this surface
+      // as any other source name — Core always supplies its own source
+      // (CHANNEL_SOURCE or AGENT_TASK_SOURCE) when it turns this Command
+      // into a submission.
+      source: 'system',
+    });
   });
 });
 
@@ -426,7 +473,10 @@ describe('SYSTEM_SOURCE: the one Core-reserved producer', () => {
       startContinuity: () => 'resumed' as const,
       submitInput: async (input: TeammateSubmitInput) => {
         submitted.push(input);
-        return { status: 'submitted', turn: { id: 't1' } } as unknown as TurnAdmission;
+        return {
+          status: 'submitted',
+          turn: { id: 't1' },
+        } as unknown as TurnAdmission;
       },
     } as unknown as TeammateService;
     const restartIntent = {
@@ -457,7 +507,10 @@ describe('SYSTEM_SOURCE: the one Core-reserved producer', () => {
       startContinuity: () => 'fresh' as const,
       submitInput: async (input: TeammateSubmitInput) => {
         submitted.push(input);
-        return { status: 'submitted', turn: { id: 't1' } } as unknown as TurnAdmission;
+        return {
+          status: 'submitted',
+          turn: { id: 't1' },
+        } as unknown as TurnAdmission;
       },
     } as unknown as TeammateService;
     const restartIntent = {

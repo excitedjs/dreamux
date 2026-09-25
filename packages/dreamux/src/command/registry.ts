@@ -172,7 +172,10 @@ function assertSchemaDefinition(
  * produces an arbitrarily large one, so a generic limit here would only be an
  * arbitrary cutoff. Domain-owned pagination is the answer when one is needed.
  */
-function canonicalResult(definition: AnyCoreCommand, output: unknown): JsonValue {
+function canonicalResult(
+  definition: AnyCoreCommand,
+  output: unknown,
+): JsonValue {
   try {
     return canonicalJsonValue(output, JSON_VALUE_UNBOUNDED);
   } catch (error) {

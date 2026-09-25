@@ -30,7 +30,9 @@ function resolverWith(...loaded: string[]): ChannelProviderResolver {
   return {
     resolve(ref: string): unknown {
       if (!set.has(ref)) {
-        throw new Error(`channel provider ${JSON.stringify(ref)} is not supported`);
+        throw new Error(
+          `channel provider ${JSON.stringify(ref)} is not supported`,
+        );
       }
       return {};
     },
@@ -84,7 +86,7 @@ describe('assertRunnableChannelShape', () => {
    * `WrongChannelProviderKindError`/`UnsupportedChannelProviderError` reason
    * propagates through the guard's message rather than a test-only stand-in.
    */
-  it('propagates the real catalog\'s wrong-kind reason through the guard message', () => {
+  it("propagates the real catalog's wrong-kind reason through the guard message", () => {
     const registry = new ProviderRegistry();
     registry.register({
       id: 'npm:@example/wrong-kind#create',
@@ -95,7 +97,10 @@ describe('assertRunnableChannelShape', () => {
 
     expect(() =>
       assertRunnableChannelShape(
-        { id: 'flow', channels: [channel('primary', 'npm:@example/wrong-kind#create')] },
+        {
+          id: 'flow',
+          channels: [channel('primary', 'npm:@example/wrong-kind#create')],
+        },
         catalog,
       ),
     ).toThrow(/is a agentRuntime provider, expected channel/);
@@ -109,12 +114,18 @@ describe('assertRunnableChannelShape', () => {
       ref: parseProviderRef('npm:@example/real#create'),
     };
     registry.register(descriptor);
-    registry.registerImplementation(descriptor.id, createFakeChannelProvider().provider);
+    registry.registerImplementation(
+      descriptor.id,
+      createFakeChannelProvider().provider,
+    );
     const catalog = new ChannelProviderCatalog({ registry });
 
     expect(() =>
       assertRunnableChannelShape(
-        { id: 'flow', channels: [channel('primary', 'npm:@example/real#create')] },
+        {
+          id: 'flow',
+          channels: [channel('primary', 'npm:@example/real#create')],
+        },
         catalog,
       ),
     ).not.toThrow();
@@ -131,7 +142,10 @@ describe('assertRunnableChannelShape', () => {
 
     expect(() =>
       assertRunnableChannelShape(
-        { id: 'flow', channels: [channel('primary', 'npm:@example/unloaded#create')] },
+        {
+          id: 'flow',
+          channels: [channel('primary', 'npm:@example/unloaded#create')],
+        },
         catalog,
       ),
     ).toThrow(/has no channel implementation wired/);

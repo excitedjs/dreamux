@@ -22,13 +22,17 @@ import {
 
 describe('bind_channel — Dispatcher vs TeamLeader are disjoint definitions', () => {
   it('the TeamLeader input schema has no team_name property at all', () => {
-    const props = (leaderBindChannelDef.inputSchema as { properties: Record<string, unknown> })
-      .properties;
+    const props = (
+      leaderBindChannelDef.inputSchema as {
+        properties: Record<string, unknown>;
+      }
+    ).properties;
     expect(Object.hasOwn(props, 'team_name')).toBe(false);
     // The Dispatcher schema does require one.
-    const dispatcherProps = (
-      bindChannelDef.inputSchema as { properties: Record<string, unknown>; required: string[] }
-    );
+    const dispatcherProps = bindChannelDef.inputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
     expect(dispatcherProps.required).toContain('team_name');
   });
 
@@ -43,16 +47,20 @@ describe('bind_channel — Dispatcher vs TeamLeader are disjoint definitions', (
 
 describe('unbind_channel — TeamLeader self-release', () => {
   it('the TeamLeader input schema has no team_name property', () => {
-    const props = (leaderUnbindChannelDef.inputSchema as { properties: Record<string, unknown> })
-      .properties;
+    const props = (
+      leaderUnbindChannelDef.inputSchema as {
+        properties: Record<string, unknown>;
+      }
+    ).properties;
     expect(Object.hasOwn(props, 'team_name')).toBe(false);
   });
 });
 
 describe('list_bindings — query parameters narrow one table read', () => {
   it('rejects a target_kind no binding can be installed with, naming what is accepted', () => {
-    expect(() => listBindingsDef.parse({ target_kind: 'p2p' }))
-      .toThrow(/target_kind must be one of: group, topic/);
+    expect(() => listBindingsDef.parse({ target_kind: 'p2p' })).toThrow(
+      /target_kind must be one of: group, topic/,
+    );
   });
 
   it('advertises the four filters as optional', () => {

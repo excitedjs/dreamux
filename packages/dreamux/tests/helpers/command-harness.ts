@@ -33,7 +33,10 @@ import type { CoreCommandHost } from '../../src/command/host.js';
 import type { TeamListRow } from '../../src/service/team-collection/types.js';
 import { CoreCommandPort } from '../../src/command/port.js';
 import { CoreCommands } from '../../src/command/registry.js';
-import { createAdminSocketServer, type AdminSocketServer } from '../../src/admin/socket.js';
+import {
+  createAdminSocketServer,
+  type AdminSocketServer,
+} from '../../src/admin/socket.js';
 import type { AdminResponse } from '../../src/admin/protocol.js';
 import { createChannelCorePort } from '../../src/channel/core-port.js';
 import { McpLeaseRegistry } from '../../src/service/mcp/leases.js';
@@ -177,25 +180,24 @@ export function createFakeDispatcher(
     start: overrides.start ?? (async () => {}),
     runtimeStatus: overrides.runtimeStatus ?? (() => ({ status: 'running' })),
     workspace: overrides.workspace ?? (async () => '/tmp/harness-workspace'),
-    createTeam:
-      overrides.createTeam ??
-      (async () => harnessTeamSummary()),
+    createTeam: overrides.createTeam ?? (async () => harnessTeamSummary()),
     submitToTeamLeader:
       overrides.submitToTeamLeader ??
       (async () => ({ status: 'submitted', turn: { id: 'harness-turn-1' } })),
     submitToAgent:
       overrides.submitToAgent ??
       (async () => ({ status: 'submitted', turn: { id: 'harness-turn-1' } })),
-    interruptAgent: overrides.interruptAgent ?? (async () => ({ status: 'idle' })),
+    interruptAgent:
+      overrides.interruptAgent ?? (async () => ({ status: 'idle' })),
     interruptTeamLeader:
       overrides.interruptTeamLeader ?? (async () => ({ status: 'idle' })),
     listTeams: overrides.listTeams ?? (async () => []),
     listChannels: overrides.listChannels ?? (() => []),
     getTeamStatus:
-      overrides.getTeamStatus ??
-      (async () => harnessTeamSummary()),
+      overrides.getTeamStatus ?? (async () => harnessTeamSummary()),
     getTeamHistory:
-      overrides.getTeamHistory ?? (async () => ({ items: [], next_cursor: null })),
+      overrides.getTeamHistory ??
+      (async () => ({ items: [], next_cursor: null })),
     dissolveTeam:
       overrides.dissolveTeam ??
       (async () => ({
@@ -217,7 +219,8 @@ export function createFakeDispatcher(
       list: overrides.teammates?.list ?? (async () => []),
       status: overrides.teammates?.status ?? (async () => ({})),
       history:
-        overrides.teammates?.history ?? (async () => ({ items: [], next_cursor: null })),
+        overrides.teammates?.history ??
+        (async () => ({ items: [], next_cursor: null })),
       last:
         overrides.teammates?.last ??
         (async () => ({
@@ -229,10 +232,12 @@ export function createFakeDispatcher(
           truncated: false,
         })),
       getCapabilities:
-        overrides.teammates?.getCapabilities ?? (() => ({ verbs: [], agent_runtimes: [] })),
+        overrides.teammates?.getCapabilities ??
+        (() => ({ verbs: [], agent_runtimes: [] })),
     },
     workflows: {
-      run: overrides.workflows?.run ?? (async () => ({ run_id: 'harness-run-1' })),
+      run:
+        overrides.workflows?.run ?? (async () => ({ run_id: 'harness-run-1' })),
       status: overrides.workflows?.status ?? (async () => ({})),
       stop: overrides.workflows?.stop ?? (async () => ({})),
       list: overrides.workflows?.list ?? (async () => ({})),
@@ -244,12 +249,15 @@ export function createFakeDispatcher(
   return fake as unknown as DispatcherService;
 }
 
-function fakeSchedulerCommands(overrides: FakeDispatcherOverrides['scheduler']) {
+function fakeSchedulerCommands(
+  overrides: FakeDispatcherOverrides['scheduler'],
+) {
   return {
     list: overrides?.list ?? (async () => ({ jobs: [] })),
     create: overrides?.create ?? (async () => ({})),
     update: overrides?.update ?? (async () => ({})),
-    delete: overrides?.delete ?? (async (id: string) => ({ id, deleted: true })),
+    delete:
+      overrides?.delete ?? (async (id: string) => ({ id, deleted: true })),
   };
 }
 
@@ -272,12 +280,16 @@ export interface CommandHarness {
 }
 
 /** Build one full harness: host, registry, and the admitted port, wired together exactly as `Server` wires them. */
-export function createCommandHarness(options: HarnessOptions = {}): CommandHarness {
+export function createCommandHarness(
+  options: HarnessOptions = {},
+): CommandHarness {
   const dispatcher = createFakeDispatcher(options.dispatcherOverrides);
   const dispatcherLookups: string[] = [];
   const mcpLeases = new McpLeaseRegistry();
   const row =
-    options.dispatcherRow === undefined ? harnessDispatcherRow() : options.dispatcherRow;
+    options.dispatcherRow === undefined
+      ? harnessDispatcherRow()
+      : options.dispatcherRow;
   const host: CoreCommandHost = {
     summarize: options.summarize ?? (async () => []),
     dispatcherRow: (id: string) => (id === row?.dispatcher_id ? row : null),
@@ -308,7 +320,11 @@ export function channelContext(
   dispatcherId: string = HARNESS_DISPATCHER_ID,
   channelId: string = HARNESS_CHANNEL_ID,
 ): CoreCommandContext {
-  return { source: 'channel', dispatcher_id: dispatcherId, channel_id: channelId };
+  return {
+    source: 'channel',
+    dispatcher_id: dispatcherId,
+    channel_id: channelId,
+  };
 }
 
 /** A no-op `ChannelEventSource`: the Command half of the port is under test, never the event half. */
@@ -368,7 +384,10 @@ export interface HarnessAdminSocket {
   readonly server: AdminSocketServer;
   /** Everything the socket adapter logged instead of putting on the wire. */
   readonly logs: CapturedLog[];
-  send(method: string, params?: Record<string, unknown>): Promise<AdminResponse>;
+  send(
+    method: string,
+    params?: Record<string, unknown>,
+  ): Promise<AdminResponse>;
   /** Send a raw line, bypassing JSON construction — for framing-failure tests. */
   sendRaw(line: string): Promise<AdminResponse>;
   close(): Promise<void>;
@@ -424,7 +443,13 @@ export async function startHarnessAdminSocket(
   ): Promise<AdminResponse> {
     seq += 1;
     const id = `req-${seq}`;
-    return sendRaw(JSON.stringify({ id, method, ...(params !== undefined ? { params } : {}) }));
+    return sendRaw(
+      JSON.stringify({
+        id,
+        method,
+        ...(params !== undefined ? { params } : {}),
+      }),
+    );
   }
 
   return {
@@ -454,19 +479,24 @@ export function mintFakeMcpServer(
   const delegate: McpServerDelegate = {
     name: options.name ?? 'harness-mcp-server',
     describe: () => ({
-      identity: { name: options.name ?? 'harness-mcp-server', version: '1.0.0' },
+      identity: {
+        name: options.name ?? 'harness-mcp-server',
+        version: '1.0.0',
+      },
       tools: [{ name: toolName, inputSchema: { type: 'object' } }],
     }),
     call:
       options.call ??
       (async (call) => ({ ok: true, structured: { echoed: call.arguments } })),
   };
-  const lease = { isCurrent: options.isCurrent ?? (() => true) } as unknown as Parameters<
-    McpLeaseRegistry['mint']
-  >[0];
+  const lease = {
+    isCurrent: options.isCurrent ?? (() => true),
+  } as unknown as Parameters<McpLeaseRegistry['mint']>[0];
   const minted = mcpLeases.mint(lease, delegate);
   if (minted === null) {
-    throw new Error('harness MCP delegate advertised no tools; mint returned null');
+    throw new Error(
+      'harness MCP delegate advertised no tools; mint returned null',
+    );
   }
   return { token: minted.token };
 }

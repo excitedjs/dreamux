@@ -82,7 +82,8 @@ describe('core provider-id / channel-id neutrality', () => {
     // that changes behavior BY provider id — so it is asserted as a second,
     // narrow, explicitly-named carve-out rather than silently widening the
     // registry allowance.
-    const idPattern = /'codex'|"codex"|'claude-code'|"claude-code"|'feishu'|"feishu"/;
+    const idPattern =
+      /'codex'|"codex"|'claude-code'|"claude-code"|'feishu'|"feishu"/;
     const offenders = allCoreFiles.filter((file) =>
       idPattern.test(stripComments(readFileSync(file, 'utf8'))),
     );
@@ -148,7 +149,8 @@ describe('core provider-id / channel-id neutrality', () => {
     // Kind-agnostic count over the source, so a spec declared outside
     // BUILTIN_PROVIDERS also shows up as a diff here.
     const src = readFileSync(join(coreSrc, 'registry/builtins.ts'), 'utf8');
-    const specMatches = src.match(/\{ id: '[a-z-]+', kind: '[a-zA-Z]+' \}/g) ?? [];
+    const specMatches =
+      src.match(/\{ id: '[a-z-]+', kind: '[a-zA-Z]+' \}/g) ?? [];
     expect(specMatches).toHaveLength(2);
   });
 
@@ -199,10 +201,12 @@ describe('core provider-id / channel-id neutrality', () => {
     // The kinds Core switches on must be the neutral RuntimeActivity literals
     // dreamux-types declares. This positive check makes the absence check
     // above trustworthy. It is type-level, enforced by typecheck:tests.
-    expectTypeOf<Extract<RuntimeActivity, { kind: 'assistant.message' }>['kind']>()
-      .toEqualTypeOf<'assistant.message'>();
-    expectTypeOf<Extract<RuntimeActivity, { kind: 'tool.call' }>['kind']>()
-      .toEqualTypeOf<'tool.call'>();
+    expectTypeOf<
+      Extract<RuntimeActivity, { kind: 'assistant.message' }>['kind']
+    >().toEqualTypeOf<'assistant.message'>();
+    expectTypeOf<
+      Extract<RuntimeActivity, { kind: 'tool.call' }>['kind']
+    >().toEqualTypeOf<'tool.call'>();
   });
 });
 
@@ -229,7 +233,8 @@ describe('generic MCP transport has no tool-name branch', () => {
       "message === ''",
       "version === ''",
     ];
-    const toolNameBranch = /\bcase\s+'[a-z][a-zA-Z_.]*'\s*:|\bname\s*===\s*'[a-z][a-zA-Z_.]{2,}'/g;
+    const toolNameBranch =
+      /\bcase\s+'[a-z][a-zA-Z_.]*'\s*:|\bname\s*===\s*'[a-z][a-zA-Z_.]{2,}'/g;
     const offenders: string[] = [];
     for (const file of mcpFiles) {
       let clean = stripComments(readFileSync(file, 'utf8'));

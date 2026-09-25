@@ -10,12 +10,13 @@ import {
 import { deduplicate } from '../deduplicate.js';
 import { InFlightWork } from '../in-flight-work.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
-import type {
-  CreateLockedTeammateOptions,
-} from '../teammate-collection/index.js';
+import type { CreateLockedTeammateOptions } from '../teammate-collection/index.js';
 import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
 import type { LockedTeammate } from '../teammate-service/types.js';
-import { canonicalJsonValue, JSON_VALUE_UNBOUNDED } from '../../platform/json-value.js';
+import {
+  canonicalJsonValue,
+  JSON_VALUE_UNBOUNDED,
+} from '../../platform/json-value.js';
 import {
   validateWorkflowRunId,
   workflowRunJournalPath,
@@ -110,7 +111,9 @@ export class WorkflowService implements WorkflowOps {
     return this.runCreations.track(this.createRun(input));
   }
 
-  private async createRun(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
+  private async createRun(
+    input: WorkflowRunInput,
+  ): Promise<WorkflowRunAccepted> {
     await this.initialize();
     if (!this.accepting) throw new Error('workflow admission is closed');
     const maxConcurrency = parseWorkflowMaxConcurrency(input.max_concurrency);
@@ -145,11 +148,13 @@ export class WorkflowService implements WorkflowOps {
       updated_at: now,
       ended_at: null,
     };
-    const createRunner = this.opts.createRunner ?? ((handlers) =>
-      new ForkedWorkflowRunner(
-        this.opts.runnerEntryPath ?? workflowRunnerEntryPath(),
-        handlers,
-      ));
+    const createRunner =
+      this.opts.createRunner ??
+      ((handlers) =>
+        new ForkedWorkflowRunner(
+          this.opts.runnerEntryPath ?? workflowRunnerEntryPath(),
+          handlers,
+        ));
     const run = new WorkflowRun({
       record,
       store: this.store,
@@ -357,8 +362,10 @@ function agentMatchesJournalResult(
 }
 
 async function resolveWorkflowScript(input: WorkflowRunInput): Promise<string> {
-  const hasScript = typeof input.script === 'string' && input.script.trim() !== '';
-  const hasScriptPath = typeof input.scriptPath === 'string' && input.scriptPath.trim() !== '';
+  const hasScript =
+    typeof input.script === 'string' && input.script.trim() !== '';
+  const hasScriptPath =
+    typeof input.scriptPath === 'string' && input.scriptPath.trim() !== '';
   if (!hasScript && !hasScriptPath) {
     throw new Error('workflow script or scriptPath must be provided');
   }

@@ -46,15 +46,15 @@
  * structurally and is injected AS-IS, with no per-boundary adapter.
  */
 export interface TransportLogger {
-  error(fields: Record<string, unknown>, message?: string): void
-  warn(fields: Record<string, unknown>, message?: string): void
-  info(fields: Record<string, unknown>, message?: string): void
-  debug(fields: Record<string, unknown>, message?: string): void
-  trace(fields: Record<string, unknown>, message?: string): void
+  error(fields: Record<string, unknown>, message?: string): void;
+  warn(fields: Record<string, unknown>, message?: string): void;
+  info(fields: Record<string, unknown>, message?: string): void;
+  debug(fields: Record<string, unknown>, message?: string): void;
+  trace(fields: Record<string, unknown>, message?: string): void;
 }
 
 /** Levels a connection-lifecycle line is routed at on the injected path. */
-type ConnectionLevel = 'info' | 'error'
+type ConnectionLevel = 'info' | 'error';
 
 /**
  * Per-instance diagnostics sinks `createFeishuTransport` wires its own
@@ -66,42 +66,45 @@ export interface TransportDiagnostics {
    * timestamp. Injected path: routed at `level` (default `info`; failures pass
    * `error`) with the host's own timestamp.
    */
-  connection(line: string, level?: ConnectionLevel): void
+  connection(line: string, level?: ConnectionLevel): void;
   /**
    * A best-effort failure the transport degrades past (doc-comment / metadata
    * fetch, bot-info resolution, socket close). Default path: stderr, with `err`
    * passed as a trailing `console.error` arg so its stack still prints. Injected
    * path: routed at `warn` with `err` serialized into a structured field.
    */
-  diagnostic(message: string, err?: unknown): void
+  diagnostic(message: string, err?: unknown): void;
 }
 
 /** Source tag stamped on injected WebSocket connection-lifecycle lines. */
-const CONNECTION_SOURCE = 'feishu-transport-connection'
+const CONNECTION_SOURCE = 'feishu-transport-connection';
 /** Source tag stamped on injected best-effort failure diagnostics (non-connection). */
-const DIAGNOSTIC_SOURCE = 'feishu-transport-diagnostic'
+const DIAGNOSTIC_SOURCE = 'feishu-transport-diagnostic';
 
 /**
  * Build the per-instance diagnostics for a transport. With no `logger` the
  * returned sinks reproduce the historical stderr behavior byte-for-byte; with a
  * `logger` they route structured into it.
  */
-export function createTransportDiagnostics(logger?: TransportLogger): TransportDiagnostics {
+export function createTransportDiagnostics(
+  logger?: TransportLogger,
+): TransportDiagnostics {
   if (logger === undefined) {
     return {
       connection: (line) => {
-        console.error(`[feishu-transport] ${new Date().toISOString()} ${line}`)
+        console.error(`[feishu-transport] ${new Date().toISOString()} ${line}`);
       },
       diagnostic: (message, err) => {
-        if (err !== undefined) console.error(`[feishu-transport] ${message}`, err)
-        else console.error(`[feishu-transport] ${message}`)
+        if (err !== undefined)
+          console.error(`[feishu-transport] ${message}`, err);
+        else console.error(`[feishu-transport] ${message}`);
       },
-    }
+    };
   }
 
   return {
     connection: (line, level = 'info') => {
-      logger[level]({ source: CONNECTION_SOURCE }, line)
+      logger[level]({ source: CONNECTION_SOURCE }, line);
     },
     diagnostic: (message, err) => {
       logger.warn(
@@ -109,9 +112,9 @@ export function createTransportDiagnostics(logger?: TransportLogger): TransportD
           ? { source: DIAGNOSTIC_SOURCE, err: serializeErr(err) }
           : { source: DIAGNOSTIC_SOURCE },
         message,
-      )
+      );
     },
-  }
+  };
 }
 
 /** Serialize an error into a logger-safe field (message + stack when present). */
@@ -119,7 +122,7 @@ function serializeErr(err: unknown): { message: string; stack?: string } {
   if (err instanceof Error) {
     return err.stack !== undefined
       ? { message: err.message, stack: err.stack }
-      : { message: err.message }
+      : { message: err.message };
   }
-  return { message: String(err) }
+  return { message: String(err) };
 }

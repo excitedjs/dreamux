@@ -17,7 +17,12 @@ import {
 
 describe('Collaboration Space tools — Dispatcher-only catalog', () => {
   it('none of the four tools are ever offered to a TeamLeader', () => {
-    for (const def of [bindSpaceDef, unbindSpaceDef, getSpaceDef, listSpacesDef]) {
+    for (const def of [
+      bindSpaceDef,
+      unbindSpaceDef,
+      getSpaceDef,
+      listSpacesDef,
+    ]) {
       expect(def.callers).toEqual(['dispatcher']);
       expect(def.callers).not.toContain('team_leader');
     }

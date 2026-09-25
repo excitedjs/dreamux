@@ -13,10 +13,7 @@
  * producer's dedupe window — and the attributes are passed through untouched
  * for the model.
  */
-import type {
-  JsonSchema,
-  SubmitCommand,
-} from '@excitedjs/dreamux-types';
+import type { JsonSchema, SubmitCommand } from '@excitedjs/dreamux-types';
 
 import { ValidationError } from '../command/errors.js';
 import {
@@ -30,7 +27,10 @@ import {
   STRING,
   boundedString,
 } from '../command/schema.js';
-import { isSafeTagName, type TeammateSubmitInput } from './teammate-service/submission.js';
+import {
+  isSafeTagName,
+  type TeammateSubmitInput,
+} from './teammate-service/submission.js';
 import { CHANNEL_SOURCE } from './submission-sources.js';
 
 /**
@@ -49,7 +49,9 @@ const MAX_SOURCE_ID_LENGTH = 512;
  * can state "open names, string values" — let alone start-tag safety. The parse
  * owns the precise contract, the same split `skill_sources` already uses.
  */
-export const CHANNEL_SUBMISSION_PROPERTIES: Readonly<Record<string, JsonSchema>> = {
+export const CHANNEL_SUBMISSION_PROPERTIES: Readonly<
+  Record<string, JsonSchema>
+> = {
   attrs: OBJECT,
   text: NON_EMPTY_STRING,
   reminder: STRING,
@@ -57,9 +59,7 @@ export const CHANNEL_SUBMISSION_PROPERTIES: Readonly<Record<string, JsonSchema>>
 };
 
 /** Parse one validated payload into the shared submit Command fields. */
-export function parseChannelSubmission(
-  payload: CommandPayload,
-): SubmitCommand {
+export function parseChannelSubmission(payload: CommandPayload): SubmitCommand {
   const attrs = submissionAttrs(payload);
   const reminder = optionalString(payload, 'reminder');
   const sourceId = optionalString(payload, 'source_id');

@@ -6,31 +6,50 @@ import type { RuntimeActivity } from '@excitedjs/dreamux-types';
 
 type NativeTurnEnd = Extract<RuntimeActivity, { kind: 'turn.ended' }>;
 function outcome(overrides: Partial<TurnOutcome> = {}): TurnOutcome {
-  return { isError: false, terminalReason: null, text: 'answer', sessionId: 'session', subtype: 'success', errors: [], hasStructuredOutput: false, ...overrides };
+  return {
+    isError: false,
+    terminalReason: null,
+    text: 'answer',
+    sessionId: 'session',
+    subtype: 'success',
+    errors: [],
+    hasStructuredOutput: false,
+    ...overrides,
+  };
 }
 function makeHarness() {
   const activityEvents: RuntimeActivity[] = [];
   const nativeEnds: NativeTurnEnd[] = [];
   const activity = { tools: new Map() };
   return {
-    activityEvents, nativeEnds,
+    activityEvents,
+    nativeEnds,
     fire(event: ClaudeProtocolEvent) {
-      handleProtocolEvent(event, { activity, activitySink: (item) => {
-        if (item.kind === 'turn.ended') nativeEnds.push(item);
-        else activityEvents.push(item);
-      } });
+      handleProtocolEvent(event, {
+        activity,
+        activitySink: (item) => {
+          if (item.kind === 'turn.ended') nativeEnds.push(item);
+          else activityEvents.push(item);
+        },
+      });
     },
   };
 }
 
-function streamAssistantText(text: string, messageId = 'msg-1'): ClaudeProtocolEvent {
+function streamAssistantText(
+  text: string,
+  messageId = 'msg-1',
+): ClaudeProtocolEvent {
   return {
     kind: 'stream',
     line: {
       kind: 'assistant',
       text,
       sessionId: 'thread-1',
-      raw: { uuid: messageId, message: { id: 'api-message', content: [{ type: 'text', text }] } },
+      raw: {
+        uuid: messageId,
+        message: { id: 'api-message', content: [{ type: 'text', text }] },
+      },
     },
   };
 }
@@ -100,7 +119,16 @@ describe('handleProtocolEvent live activity', () => {
       kind: 'stream',
       line: {
         kind: 'compact_boundary',
-        raw: { uuid: 'compact-uuid', type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 14950, post_tokens: 1789 } },
+        raw: {
+          uuid: 'compact-uuid',
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact_metadata: {
+            trigger: 'auto',
+            pre_tokens: 14950,
+            post_tokens: 1789,
+          },
+        },
       },
     });
     // The summary rides right behind the boundary as a synthetic `user`
@@ -113,12 +141,20 @@ describe('handleProtocolEvent live activity', () => {
           type: 'user',
           isSynthetic: true,
           isReplay: true,
-          message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context.' },
+          message: {
+            role: 'user',
+            content:
+              'This session is being continued from a previous conversation that ran out of context.',
+          },
         },
       },
     });
     expect(h.activityEvents).toEqual([
-      { kind: 'context.compacted', occurredAt: expect.any(Number), id: 'compact-uuid' },
+      {
+        kind: 'context.compacted',
+        occurredAt: expect.any(Number),
+        id: 'compact-uuid',
+      },
     ]);
   });
 
@@ -141,17 +177,32 @@ describe('handleProtocolEvent live activity', () => {
     const h = makeHarness();
     h.fire(streamToolUse('call-1', 'Read', { file_path: '/tmp/x' }));
     h.fire(streamToolResult('call-1', 'file contents', false));
-    expect(h.activityEvents).toEqual(['started', 'completed'].map((status) => ({
-      kind: 'tool.call', occurredAt: expect.any(Number), id: 'call-1',
-      toolName: 'Read', action: 'read', summary: '/tmp/x', invocation: null,
-      items: ['/tmp/x'], status, arguments: { file_path: '/tmp/x' },
-      result: status === 'completed' ? 'file contents' : null, error: null,
-    })));
+    expect(h.activityEvents).toEqual(
+      ['started', 'completed'].map((status) => ({
+        kind: 'tool.call',
+        occurredAt: expect.any(Number),
+        id: 'call-1',
+        toolName: 'Read',
+        action: 'read',
+        summary: '/tmp/x',
+        invocation: null,
+        items: ['/tmp/x'],
+        status,
+        arguments: { file_path: '/tmp/x' },
+        result: status === 'completed' ? 'file contents' : null,
+        error: null,
+      })),
+    );
   });
 
   it('carries the display facts derived from the tool input on both the started and the result activity', () => {
     const h = makeHarness();
-    h.fire(streamToolUse('call-1', 'Bash', { command: 'git status --short', description: 'Show working tree status' }));
+    h.fire(
+      streamToolUse('call-1', 'Bash', {
+        command: 'git status --short',
+        description: 'Show working tree status',
+      }),
+    );
     h.fire(streamToolResult('call-1', 'M src/a.ts', false));
     expect(h.activityEvents).toHaveLength(2);
     for (const activity of h.activityEvents) {
@@ -199,10 +250,17 @@ describe('handleProtocolEvent live activity', () => {
     // result the CLI emits a `user` envelope whose only content is a text
     // block carrying the entire SKILL.md. The old mapping read the block
     // type alone and put that on the card as the agent's own words.
-    h.fire(streamUserEnvelope(
-      [{ type: 'text', text: 'Base directory for this skill: ~/.claude/skills/team-workflow\n\n# Team Workflow\n...' }],
-      'msg-3',
-    ));
+    h.fire(
+      streamUserEnvelope(
+        [
+          {
+            type: 'text',
+            text: 'Base directory for this skill: ~/.claude/skills/team-workflow\n\n# Team Workflow\n...',
+          },
+        ],
+        'msg-3',
+      ),
+    );
     expect(h.activityEvents.map((activity) => activity.kind)).toEqual([
       'tool.call',
       'tool.call',
@@ -218,10 +276,20 @@ describe('handleProtocolEvent live activity', () => {
   it('still correlates a tool_result that shares its user envelope with injected text', () => {
     const h = makeHarness();
     h.fire(streamToolUse('call-1', 'Read', { file_path: 'x' }));
-    h.fire(streamUserEnvelope([
-      { type: 'tool_result', tool_use_id: 'call-1', content: 'file contents', is_error: false },
-      { type: 'text', text: '<system-reminder>injected context</system-reminder>' },
-    ]));
+    h.fire(
+      streamUserEnvelope([
+        {
+          type: 'tool_result',
+          tool_use_id: 'call-1',
+          content: 'file contents',
+          is_error: false,
+        },
+        {
+          type: 'text',
+          text: '<system-reminder>injected context</system-reminder>',
+        },
+      ]),
+    );
     expect(h.activityEvents).toHaveLength(2);
     expect(h.activityEvents[1]!).toMatchObject({
       kind: 'tool.call',
@@ -229,27 +297,78 @@ describe('handleProtocolEvent live activity', () => {
       status: 'completed',
       result: 'file contents',
     });
-    expect(h.activityEvents.some((activity) => activity.kind === 'assistant.message')).toBe(false);
+    expect(
+      h.activityEvents.some(
+        (activity) => activity.kind === 'assistant.message',
+      ),
+    ).toBe(false);
   });
 
-  it('reports none of a subagent\'s envelopes, and keeps the main agent\'s own Agent call', () => {
+  it("reports none of a subagent's envelopes, and keeps the main agent's own Agent call", () => {
     const h = makeHarness();
     // Observed on the wire (Claude Code 2.1.272): every envelope a subagent
     // produces carries the spawning Agent call's id in `parent_tool_use_id`,
     // and a background subagent's text arrives too, after the main result.
-    const subagent = (kind: 'assistant' | 'user', content: unknown[]): ClaudeProtocolEvent => {
-      const raw = { type: kind, parent_tool_use_id: 'agent-call', message: { role: kind, content } };
-      return { kind: 'stream', line: kind === 'assistant' ? { kind, text: '', sessionId: 'thread-1', raw } : { kind, raw } };
+    const subagent = (
+      kind: 'assistant' | 'user',
+      content: unknown[],
+    ): ClaudeProtocolEvent => {
+      const raw = {
+        type: kind,
+        parent_tool_use_id: 'agent-call',
+        message: { role: kind, content },
+      };
+      return {
+        kind: 'stream',
+        line:
+          kind === 'assistant'
+            ? { kind, text: '', sessionId: 'thread-1', raw }
+            : { kind, raw },
+      };
     };
-    h.fire(streamToolUse('agent-call', 'Agent', { description: 'Run the probe', prompt: 'echo probe' }));
+    h.fire(
+      streamToolUse('agent-call', 'Agent', {
+        description: 'Run the probe',
+        prompt: 'echo probe',
+      }),
+    );
     h.fire(subagent('user', [{ type: 'text', text: 'echo probe' }]));
-    h.fire(subagent('assistant', [{ type: 'tool_use', id: 'sub-call', name: 'Bash', input: { command: 'echo probe' } }]));
-    h.fire(subagent('user', [{ type: 'tool_result', tool_use_id: 'sub-call', content: 'probe', is_error: false }]));
+    h.fire(
+      subagent('assistant', [
+        {
+          type: 'tool_use',
+          id: 'sub-call',
+          name: 'Bash',
+          input: { command: 'echo probe' },
+        },
+      ]),
+    );
+    h.fire(
+      subagent('user', [
+        {
+          type: 'tool_result',
+          tool_use_id: 'sub-call',
+          content: 'probe',
+          is_error: false,
+        },
+      ]),
+    );
     h.fire(subagent('assistant', [{ type: 'text', text: 'ok' }]));
     h.fire(streamToolResult('agent-call', 'ok', false, 'msg-main'));
     expect(h.activityEvents).toEqual([
-      expect.objectContaining({ kind: 'tool.call', id: 'agent-call', toolName: 'Agent', status: 'started' }),
-      expect.objectContaining({ kind: 'tool.call', id: 'agent-call', toolName: 'Agent', status: 'completed', result: 'ok' }),
+      expect.objectContaining({
+        kind: 'tool.call',
+        id: 'agent-call',
+        toolName: 'Agent',
+        status: 'started',
+      }),
+      expect.objectContaining({
+        kind: 'tool.call',
+        id: 'agent-call',
+        toolName: 'Agent',
+        status: 'completed',
+        result: 'ok',
+      }),
     ]);
   });
 });
@@ -267,41 +386,97 @@ describe('handleProtocolEvent live activity', () => {
 describe('handleProtocolEvent token usage', () => {
   it('keeps native interruption markers before usage and the interrupted end', () => {
     const events: RuntimeActivity[] = [];
-    handleProtocolEvent({
-      kind: 'interrupted', uuid: 'result-uuid', outcome: outcome({ isError: true, tokenUsage: { inputTokens: 100, outputTokens: 5 } }),
-    }, { activity: { tools: new Map() }, activitySink: (fact) => { events.push(fact); } });
-    expect(events).toEqual([
-      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'result-uuid' },
+    handleProtocolEvent(
       {
-        kind: 'token.usage', occurredAt: expect.any(Number), id: 'result-uuid',
-        inputTokens: 100, outputTokens: 5, context: null,
+        kind: 'interrupted',
+        uuid: 'result-uuid',
+        outcome: outcome({
+          isError: true,
+          tokenUsage: { inputTokens: 100, outputTokens: 5 },
+        }),
       },
-      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+      {
+        activity: { tools: new Map() },
+        activitySink: (fact) => {
+          events.push(fact);
+        },
+      },
+    );
+    expect(events).toEqual([
+      {
+        kind: 'turn.interrupted',
+        occurredAt: expect.any(Number),
+        id: 'result-uuid',
+      },
+      {
+        kind: 'token.usage',
+        occurredAt: expect.any(Number),
+        id: 'result-uuid',
+        inputTokens: 100,
+        outputTokens: 5,
+        context: null,
+      },
+      {
+        kind: 'turn.ended',
+        occurredAt: expect.any(Number),
+        status: 'interrupted',
+        reason: null,
+      },
     ]);
   });
-
 });
 
 describe('handleProtocolEvent native turn end', () => {
-  it.each(['result', 'interrupted'] as const)('still ends a %s with no envelope uuid', (kind) => {
-    const events: RuntimeActivity[] = [];
-    const event = { kind, uuid: null, outcome: outcome({ tokenUsage: { inputTokens: 10, outputTokens: 5 } }), commandUuids: [] };
-    handleProtocolEvent(event, { activity: { tools: new Map() }, activitySink: (fact) => { events.push(fact); } });
-    expect(events).toEqual([{
-      kind: 'turn.ended', occurredAt: expect.any(Number),
-      status: kind === 'interrupted' ? 'interrupted' : 'completed', reason: null,
-    }]);
-  });
+  it.each(['result', 'interrupted'] as const)(
+    'still ends a %s with no envelope uuid',
+    (kind) => {
+      const events: RuntimeActivity[] = [];
+      const event = {
+        kind,
+        uuid: null,
+        outcome: outcome({ tokenUsage: { inputTokens: 10, outputTokens: 5 } }),
+        commandUuids: [],
+      };
+      handleProtocolEvent(event, {
+        activity: { tools: new Map() },
+        activitySink: (fact) => {
+          events.push(fact);
+        },
+      });
+      expect(events).toEqual([
+        {
+          kind: 'turn.ended',
+          occurredAt: expect.any(Number),
+          status: kind === 'interrupted' ? 'interrupted' : 'completed',
+          reason: null,
+        },
+      ]);
+    },
+  );
 
   it('reports a text-free interrupt marker before the end when no metrics are available', () => {
     const events: RuntimeActivity[] = [];
-    handleProtocolEvent({ kind: 'interrupted', uuid: 'result-uuid', outcome: outcome() }, {
-      activity: { tools: new Map() },
-      activitySink: (fact) => { events.push(fact); },
-    });
+    handleProtocolEvent(
+      { kind: 'interrupted', uuid: 'result-uuid', outcome: outcome() },
+      {
+        activity: { tools: new Map() },
+        activitySink: (fact) => {
+          events.push(fact);
+        },
+      },
+    );
     expect(events).toEqual([
-      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'result-uuid' },
-      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+      {
+        kind: 'turn.interrupted',
+        occurredAt: expect.any(Number),
+        id: 'result-uuid',
+      },
+      {
+        kind: 'turn.ended',
+        occurredAt: expect.any(Number),
+        status: 'interrupted',
+        reason: null,
+      },
     ]);
   });
 

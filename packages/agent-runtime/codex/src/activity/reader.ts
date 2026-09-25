@@ -126,9 +126,7 @@ export async function readCodexRecentActivity(
   }
 
   return {
-    records: scan.collected
-      .map((entry) => entry.entry.record)
-      .reverse(),
+    records: scan.collected.map((entry) => entry.entry.record).reverse(),
     ...(nextCursor !== undefined ? { nextCursor } : {}),
     truncated: scan.truncated,
   };
@@ -136,11 +134,7 @@ export async function readCodexRecentActivity(
 
 function resolveLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_RECORD_LIMIT;
-  if (
-    !Number.isInteger(limit) ||
-    limit < 1 ||
-    limit > MAX_RECORD_LIMIT
-  ) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORD_LIMIT) {
     throw new CodexActivityError(
       'invalid',
       `Codex activity limit must be an integer in 1..${MAX_RECORD_LIMIT}`,
@@ -225,11 +219,7 @@ async function scanRecords(input: {
     segmentIndex < input.lineage.length;
     segmentIndex += 1
   ) {
-    if (
-      Date.now() > deadline ||
-      bytesRemaining <= 0 ||
-      recordsRemaining <= 0
-    ) {
+    if (Date.now() > deadline || bytesRemaining <= 0 || recordsRemaining <= 0) {
       boundsHit = true;
       break;
     }

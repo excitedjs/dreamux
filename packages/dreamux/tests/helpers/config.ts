@@ -62,7 +62,9 @@ export function testConfigFileObject(input: {
     dispatchers: (input.dispatchers ?? []).map((dispatcher) => ({
       id: dispatcher.id,
       cwd: dispatcher.cwd ?? placeholderCwd(dispatcher.id),
-      ...(dispatcher.enabled !== undefined ? { enabled: dispatcher.enabled } : {}),
+      ...(dispatcher.enabled !== undefined
+        ? { enabled: dispatcher.enabled }
+        : {}),
       ...(dispatcher.workspace !== undefined
         ? { workspace: dispatcher.workspace }
         : {}),
@@ -86,21 +88,25 @@ export function testConfigFileObject(input: {
  * `codex` overrides the agent's config block; `feishu` overrides the channel
  * secrets. Agent id == dispatcher id.
  */
-export function testSingleDispatcherFileObject(options: {
-  id?: string;
-  cwd?: string;
-  enabled?: boolean;
-  codex?: Record<string, unknown>;
-  feishu?: { app_id: string; app_secret: string };
-  agentProvider?: string;
-  channelProvider?: string;
-} = {}): Record<string, unknown> {
+export function testSingleDispatcherFileObject(
+  options: {
+    id?: string;
+    cwd?: string;
+    enabled?: boolean;
+    codex?: Record<string, unknown>;
+    feishu?: { app_id: string; app_secret: string };
+    agentProvider?: string;
+    channelProvider?: string;
+  } = {},
+): Record<string, unknown> {
   const id = options.id ?? 'flow';
   return testConfigFileObject({
     agents: [
       {
         id,
-        ...(options.agentProvider !== undefined ? { provider: options.agentProvider } : {}),
+        ...(options.agentProvider !== undefined
+          ? { provider: options.agentProvider }
+          : {}),
         config: options.codex ?? {},
       },
     ],

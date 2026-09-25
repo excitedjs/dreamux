@@ -7,14 +7,14 @@ import type {
 } from '../completion-router/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import type { TeammateCollection } from '../teammate-collection/index.js';
-import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
+import {
+  WorkflowService,
+  type WorkflowOps,
+} from '../workflow-service/index.js';
 
 interface DispatcherWorkflowDeps {
   dispatcherId: string;
-  teammates: Pick<
-    TeammateCollection,
-    'createLocked'
-  >;
+  teammates: Pick<TeammateCollection, 'createLocked'>;
   teams: Pick<
     TeamCollection,
     'startWorkflows' | 'recoverWorkflows' | 'closeWorkflowAdmissions'

@@ -151,7 +151,12 @@ async function loadOneProviderPackage<TProvider, TFactoryContext>(
     );
   }
   const packageName = resolvePackageName(ref, spec);
-  const module = await importProviderModule(ref, packageName, importModule, spec);
+  const module = await importProviderModule(
+    ref,
+    packageName,
+    importModule,
+    spec,
+  );
   const factory = selectFactoryExport(ref, module, spec);
   const seedDescriptor: ProviderDescriptor = existing ?? {
     id: seedDescriptorId(ref),

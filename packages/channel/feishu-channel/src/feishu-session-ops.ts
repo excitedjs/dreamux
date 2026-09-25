@@ -137,7 +137,10 @@ function errInfo(err: unknown): { message: string; stack?: string } {
 
 const log = (h: SessionHandle): DreamuxLogger => h.opts.log;
 
-function openIdLogFields(name: string, openId: string): Record<string, unknown> {
+function openIdLogFields(
+  name: string,
+  openId: string,
+): Record<string, unknown> {
   return { [`${name}_len`]: openId.length };
 }
 
@@ -449,8 +452,15 @@ async function deliverExtensionForward(
       attrs: forward.attrs,
     });
     const report = describeSubmitOutcome(outcome);
-    const scope = { dispatcher_id: h.opts.dispatcherId, chat_id: target.chatId, feishu_extension: extensionName };
-    log(h)[report.level]({ ...scope, ...report.fields }, EXTENSION_FORWARD_MESSAGES[report.kind]);
+    const scope = {
+      dispatcher_id: h.opts.dispatcherId,
+      chat_id: target.chatId,
+      feishu_extension: extensionName,
+    };
+    log(h)[report.level](
+      { ...scope, ...report.fields },
+      EXTENSION_FORWARD_MESSAGES[report.kind],
+    );
   } catch (err) {
     log(h).error(
       {
@@ -557,7 +567,12 @@ export async function handleCardAction(
   if (extension !== undefined) {
     const { response, forward } = await extension.invoke(event);
     if (forward !== undefined) {
-      void deliverExtensionForward(h, extension.extensionName, event.openMessageId, forward);
+      void deliverExtensionForward(
+        h,
+        extension.extensionName,
+        event.openMessageId,
+        forward,
+      );
     }
     return response;
   }
@@ -584,7 +599,9 @@ export async function handleCardAction(
 
   const operatorOpenId = event.operatorOpenId ?? '';
   if (operatorOpenId === '') {
-    return { toast: { type: 'error', content: '身份解析失败：未获取到你的 open_id' } };
+    return {
+      toast: { type: 'error', content: '身份解析失败：未获取到你的 open_id' },
+    };
   }
 
   let ownerSet: Set<string>;
@@ -647,10 +664,10 @@ export async function handleCardAction(
   }
 
   const duplicate = result.details?.['duplicate'] === true;
-  return rawCardActionResponse(
-    buildPairingSuccessCard({ duplicate }),
-    { type: 'success', content: result.message },
-  );
+  return rawCardActionResponse(buildPairingSuccessCard({ duplicate }), {
+    type: 'success',
+    content: result.message,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────

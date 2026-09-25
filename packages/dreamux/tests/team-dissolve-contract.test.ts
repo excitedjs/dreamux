@@ -43,7 +43,9 @@ describe('the admitted ordering TeamClosing owns per caller kind', () => {
   it('a dispatcher-triggered dissolve rechecks the worktree after every runtime stops', async () => {
     const h = closingHarness();
 
-    await expect(h.closing.dissolve(dispatcherDissolve)).resolves.toBeUndefined();
+    await expect(
+      h.closing.dissolve(dispatcherDissolve),
+    ).resolves.toBeUndefined();
 
     expect(h.order).toEqual([
       'workflows.stopAll',
@@ -67,7 +69,9 @@ describe('the admitted ordering TeamClosing owns per caller kind', () => {
   it('a TeamLeader self-dissolve stops its other children first, checks while it is still alive, then stops itself', async () => {
     const h = closingHarness();
 
-    await expect(h.closing.dissolve(teamLeaderDissolve)).resolves.toBeUndefined();
+    await expect(
+      h.closing.dissolve(teamLeaderDissolve),
+    ).resolves.toBeUndefined();
 
     expect(h.order).toEqual([
       // A TeamLeader cannot ask "may I reclaim this workspace" about itself
@@ -101,8 +105,12 @@ describe('the admitted ordering TeamClosing owns per caller kind', () => {
       ],
     });
 
-    await expect(h.closing.requireReclaimableWorktree()).resolves.toBeUndefined();
-    await expect(h.closing.dissolve(dispatcherDissolve)).rejects.toThrow(/is dirty/);
+    await expect(
+      h.closing.requireReclaimableWorktree(),
+    ).resolves.toBeUndefined();
+    await expect(h.closing.dissolve(dispatcherDissolve)).rejects.toThrow(
+      /is dirty/,
+    );
 
     // The stop already ran (nothing is undone), but nothing durable closed.
     expect(h.order).toContain('leader.stopForHost');
@@ -119,11 +127,16 @@ describe('the admitted ordering TeamClosing owns per caller kind', () => {
     const h = closingHarness({
       assessSequence: [
         { status: 'eligible' },
-        blockedAssessment('unmerged', { mode: 'managed', path: '/repo' } as never),
+        blockedAssessment('unmerged', {
+          mode: 'managed',
+          path: '/repo',
+        } as never),
       ],
     });
 
-    await expect(h.closing.dissolve(teamLeaderDissolve)).rejects.toThrow(/is unmerged/);
+    await expect(h.closing.dissolve(teamLeaderDissolve)).rejects.toThrow(
+      /is unmerged/,
+    );
 
     expect(h.order).toContain('leader.stopForHost');
     expect(h.order).not.toContain('members.close');
@@ -135,8 +148,14 @@ describe('the admitted ordering TeamClosing owns per caller kind', () => {
     const dispatcherForce = closingHarness();
     const teamLeaderForce = closingHarness();
 
-    await dispatcherForce.closing.dissolve({ ...dispatcherDissolve, force: true });
-    await teamLeaderForce.closing.dissolve({ ...teamLeaderDissolve, force: true });
+    await dispatcherForce.closing.dissolve({
+      ...dispatcherDissolve,
+      force: true,
+    });
+    await teamLeaderForce.closing.dissolve({
+      ...teamLeaderDissolve,
+      force: true,
+    });
 
     // `force` replaces the preflight question rather than answering it, for
     // either caller: there is nothing left that distinguishes who asked.
@@ -147,7 +166,9 @@ describe('the admitted ordering TeamClosing owns per caller kind', () => {
 
   it('force never lets a blocked assessment stop the dissolve', async () => {
     const h = closingHarness({
-      assessSequence: [blockedAssessment('dirty', { mode: 'managed', path: '/repo' } as never)],
+      assessSequence: [
+        blockedAssessment('dirty', { mode: 'managed', path: '/repo' } as never),
+      ],
     });
 
     await expect(
@@ -163,8 +184,14 @@ describe('no idle-drain machinery in the dissolve path', () => {
     const targets = [
       new URL('../src/service/team-service/closing.ts', import.meta.url),
       new URL('../src/service/team-service/index.ts', import.meta.url),
-      new URL('../src/service/teammate-collection/dissolve-members.ts', import.meta.url),
-      new URL('../src/service/team-collection/worktree-cleanup.ts', import.meta.url),
+      new URL(
+        '../src/service/teammate-collection/dissolve-members.ts',
+        import.meta.url,
+      ),
+      new URL(
+        '../src/service/team-collection/worktree-cleanup.ts',
+        import.meta.url,
+      ),
     ];
     for (const target of targets) {
       const text = await readFile(target, 'utf8');
@@ -217,14 +244,18 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
           blockedAssessment('dirty', fakeTeamRecord().worktree),
         );
 
-        await expect(team.service.dissolve({
-          requester,
-          force: false,
-          note: 'blocked dissolve',
-        })).rejects.toThrow(/dirty/u);
+        await expect(
+          team.service.dissolve({
+            requester,
+            force: false,
+            note: 'blocked dissolve',
+          }),
+        ).rejects.toThrow(/dirty/u);
 
         expect((await team.service.status()).status).toBe('running');
-        await expect(team.service.admit(async () => 'open')).resolves.toBe('open');
+        await expect(team.service.admit(async () => 'open')).resolves.toBe(
+          'open',
+        );
       } finally {
         await team.cleanup();
       }
@@ -264,7 +295,11 @@ describe('FORCE WORKTREE SEMANTICS', () => {
 
     // Never deletes the branch or its commits.
     const branch = prepared.worktree.branch as string;
-    const rev = await git(sourceRepo, ['rev-parse', '--verify', `refs/heads/${branch}`]);
+    const rev = await git(sourceRepo, [
+      'rev-parse',
+      '--verify',
+      `refs/heads/${branch}`,
+    ]);
     expect(rev.trim()).not.toBe('');
     const log = await git(sourceRepo, ['log', branch, '--oneline']);
     expect(log).toContain('initial');
@@ -329,7 +364,9 @@ describe('FORCE WORKTREE SEMANTICS', () => {
     );
 
     expect(cleaned.cleanup_state).toBe('retained-error');
-    expect(cleaned.cleanup_error).toMatch(/refusing to remove the source repository/);
+    expect(cleaned.cleanup_error).toMatch(
+      /refusing to remove the source repository/,
+    );
     await expect(access(sourceRepo)).resolves.toBeUndefined();
     const log = await git(sourceRepo, ['log', '--oneline']);
     expect(log).toContain('initial');
@@ -378,7 +415,11 @@ describe('DURABLE-FACT RECOVERY: the cron store deletion is not rolled back by a
       // The commit that would durably say `closed` fails; everything the
       // close already did to get there is not this failure's to undo.
       team.setCommitFails(true);
-      team.service.dissolve({ requester: 'dispatcher', force: true, note: 'x' });
+      team.service.dissolve({
+        requester: 'dispatcher',
+        force: true,
+        note: 'x',
+      });
       await team.waitDissolveFailed();
 
       // The Team's own lifecycle fact says it is still open — the one thing
@@ -387,7 +428,9 @@ describe('DURABLE-FACT RECOVERY: the cron store deletion is not rolled back by a
 
       // The cron store file itself is gone from disk: `deleteStoreFile` ran
       // and committed before the failed final write, and nothing restored it.
-      await expect(access(join(team.teamRoot, 'cron-jobs.json'))).rejects.toThrow();
+      await expect(
+        access(join(team.teamRoot, 'cron-jobs.json')),
+      ).rejects.toThrow();
 
       // Ordinary access to the still-open Team's scheduler sees the durable
       // fact directly: no job is re-armed, because there is no store left to
@@ -420,7 +463,10 @@ describe('DURABLE-FACT RECOVERY: the cron store deletion is not rolled back by a
 describe('TeamWorktreeCleanup.settle: the pending fact is the whole restart-recovery authority', () => {
   function fakeStore(overrides: {
     record: TeamRecord | null;
-    update?: (record: TeamRecord, patch: Record<string, unknown>) => Promise<TeamRecord>;
+    update?: (
+      record: TeamRecord,
+      patch: Record<string, unknown>,
+    ) => Promise<TeamRecord>;
   }): TeamStore {
     return {
       get: async () => overrides.record,
@@ -435,7 +481,11 @@ describe('TeamWorktreeCleanup.settle: the pending fact is the whole restart-reco
 
   it('does nothing when the record has no pending cleanup — no worktree call, no write', async () => {
     const record = fakeTeamRecord({
-      worktree: { mode: 'managed', path: '/repo', cleanup_state: 'deleted' } as never,
+      worktree: {
+        mode: 'managed',
+        path: '/repo',
+        cleanup_state: 'deleted',
+      } as never,
     });
     const cleanupCall = vi.fn();
     const updateCall = vi.fn();
@@ -458,7 +508,11 @@ describe('TeamWorktreeCleanup.settle: the pending fact is the whole restart-reco
 
   it('reclaims a pending worktree with the force authorization the pending record carries, then clears it', async () => {
     const record = fakeTeamRecord({
-      worktree: { mode: 'managed', path: '/repo', cleanup_state: 'cleanup-pending' } as never,
+      worktree: {
+        mode: 'managed',
+        path: '/repo',
+        cleanup_state: 'cleanup-pending',
+      } as never,
       worktree_cleanup_force: true,
     } as never);
     const cleanupCall = vi.fn(async () => ({
@@ -484,7 +538,11 @@ describe('TeamWorktreeCleanup.settle: the pending fact is the whole restart-reco
     // The authorization travels with the pending work it authorized: the
     // record's own `worktree_cleanup_force`, not a fresh caller decision.
     expect(cleanupCall).toHaveBeenCalledWith(
-      { source_cwd: record.repo_cwd, source_repo: record.source_repo, worktree: record.worktree },
+      {
+        source_cwd: record.repo_cwd,
+        source_repo: record.source_repo,
+        worktree: record.worktree,
+      },
       { force: true },
     );
     // And it is cleared once spent, so a later ordinary reclaim of the same
@@ -496,7 +554,11 @@ describe('TeamWorktreeCleanup.settle: the pending fact is the whole restart-reco
 
   it('throws without writing a second fact when the reclaim itself fails, leaving the pending record standing for the next start', async () => {
     const record = fakeTeamRecord({
-      worktree: { mode: 'managed', path: '/repo', cleanup_state: 'cleanup-pending' } as never,
+      worktree: {
+        mode: 'managed',
+        path: '/repo',
+        cleanup_state: 'cleanup-pending',
+      } as never,
     });
     const updateCall = vi.fn();
     const cleanup = new TeamWorktreeCleanup({

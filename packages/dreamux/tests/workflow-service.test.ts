@@ -64,16 +64,25 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
-async function writeJournalLines(path: string, lines: readonly unknown[]): Promise<void> {
+async function writeJournalLines(
+  path: string,
+  lines: readonly unknown[],
+): Promise<void> {
   const { mkdir, writeFile } = await import('node:fs/promises');
   const { dirname } = await import('node:path');
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`, {
-    mode: 0o600,
-  });
+  await writeFile(
+    path,
+    `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`,
+    {
+      mode: 0o600,
+    },
+  );
 }
 
-function baseRecord(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
+function baseRecord(
+  overrides: Partial<WorkflowRunRecord> = {},
+): WorkflowRunRecord {
   return {
     version: 1,
     run_id: 'run-a',
@@ -103,21 +112,24 @@ function neverCreateRunner(): never {
 
 describe('WorkflowService.start() reads committed durable facts only', () => {
   it('converges a running record with no committed terminal journal to stopped, backfilling the journal, without creating a runner', async () => {
-    await writeJson(recordPath('run-a'), baseRecord({
-      agents: [
-        {
-          index: 0,
-          name: 'agent-1',
-          label: null,
-          phase: null,
-          status: 'running',
-          result: null,
-          error: null,
-          created_at: 1,
-          settled_at: null,
-        },
-      ],
-    }));
+    await writeJson(
+      recordPath('run-a'),
+      baseRecord({
+        agents: [
+          {
+            index: 0,
+            name: 'agent-1',
+            label: null,
+            phase: null,
+            status: 'running',
+            result: null,
+            error: null,
+            created_at: 1,
+            settled_at: null,
+          },
+        ],
+      }),
+    );
     await writeJournalLines(journalPath('run-a'), [
       {
         kind: 'run',
@@ -148,13 +160,17 @@ describe('WorkflowService.start() reads committed durable facts only', () => {
 
     const status = await service.status({ run_id: 'run-a' });
     expect(status.status).toBe('stopped');
-    expect(status.error).toMatch(/Dreamux stopped before the workflow reached a terminal result/);
+    expect(status.error).toMatch(
+      /Dreamux stopped before the workflow reached a terminal result/,
+    );
     expect(status.ended_at).toBe(5_000);
     expect(status.agents[0]?.status).toBe('stopped');
     expect(status.agents[0]?.settled_at).toBe(5_000);
 
     // Durably written, not only held in memory.
-    const onDisk = JSON.parse(await readFile(recordPath('run-a'), 'utf8')) as WorkflowRunRecord;
+    const onDisk = JSON.parse(
+      await readFile(recordPath('run-a'), 'utf8'),
+    ) as WorkflowRunRecord;
     expect(onDisk.status).toBe('stopped');
 
     const journalLines = (await readFile(journalPath('run-a'), 'utf8'))
@@ -170,26 +186,29 @@ describe('WorkflowService.start() reads committed durable facts only', () => {
   });
 
   it('converges a running record whose journal already committed a terminal event, without creating a runner', async () => {
-    await writeJson(recordPath('run-a'), baseRecord({
-      agents: [
-        {
-          index: 0,
-          name: 'agent-1',
-          label: null,
-          phase: null,
-          status: 'completed',
-          result: { answer: 42 },
-          error: null,
-          created_at: 1,
-          settled_at: 2,
-        },
-      ],
-      // Stale: the process crashed after the journal committed the terminal
-      // event but before the record.json write landed.
-      status: 'running',
-      result: null,
-      ended_at: null,
-    }));
+    await writeJson(
+      recordPath('run-a'),
+      baseRecord({
+        agents: [
+          {
+            index: 0,
+            name: 'agent-1',
+            label: null,
+            phase: null,
+            status: 'completed',
+            result: { answer: 42 },
+            error: null,
+            created_at: 1,
+            settled_at: 2,
+          },
+        ],
+        // Stale: the process crashed after the journal committed the terminal
+        // event but before the record.json write landed.
+        status: 'running',
+        result: null,
+        ended_at: null,
+      }),
+    );
     await writeJournalLines(journalPath('run-a'), [
       {
         kind: 'run',
@@ -285,7 +304,11 @@ describe('journal + terminal settlement: exactly one terminal outcome', () => {
     // A late run_result from a runner that is already being torn down must
     // not reopen or re-terminate an already-terminal run.
     const runner = runnerFactory.runners[0]!;
-    runner.emit({ type: 'run_result', status: 'completed', result: { ok: true } });
+    runner.emit({
+      type: 'run_result',
+      status: 'completed',
+      result: { ok: true },
+    });
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     const status = await service.status({ run_id: 'run-a' });
@@ -343,7 +366,10 @@ describe('owner-side exact-instance eviction', () => {
     // landed, but `settled`, and therefore eviction, has not fired).
     await waitUntil(() => deliverCalls >= 1);
 
-    await rm(workflowRunDir({ ...SCOPE, runId: 'run-x' }), { recursive: true, force: true });
+    await rm(workflowRunDir({ ...SCOPE, runId: 'run-x' }), {
+      recursive: true,
+      force: true,
+    });
 
     const acceptedB = await service.run({ script: 'noop' });
     expect(acceptedB.run_id).toBe('run-x');
@@ -377,7 +403,12 @@ describe('owner-side exact-instance eviction', () => {
     // checks for an actual call/field, not the word appearing in a comment.
     // Only `WorkflowService` (index.ts) performs the exact-instance eviction.
     const { readFile: read } = await import('node:fs/promises');
-    for (const file of ['run.ts', 'run-terminal.ts', 'run-support.ts', 'runner-process.ts']) {
+    for (const file of [
+      'run.ts',
+      'run-terminal.ts',
+      'run-support.ts',
+      'runner-process.ts',
+    ]) {
       const source = await read(
         new URL(`../src/service/workflow-service/${file}`, import.meta.url),
         'utf8',
@@ -406,7 +437,12 @@ describe('Workflow terminal delivery across stop races', () => {
     await service.run({ script: 'noop' });
 
     const runner = runnerFactory.runners[0]!;
-    runner.emit({ type: 'agent_start', index: 0, prompt: 'do it', options: {} });
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'do it',
+      options: {},
+    });
     await waitUntil(() => agent.submitCalls.length >= 1);
 
     const turn = controllableTurn();
@@ -420,7 +456,10 @@ describe('Workflow terminal delivery across stop races', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(resolved).toBe(false); // still converging the accepted turn
 
-    turn.settle({ status: 'completed', resultText: JSON.stringify({ done: true }) });
+    turn.settle({
+      status: 'completed',
+      resultText: JSON.stringify({ done: true }),
+    });
     const stopResult = await stopPromise;
     expect(stopResult.status).toBe('stopped');
 
@@ -450,7 +489,10 @@ describe('Workflow terminal delivery across stop races', () => {
     runner.emit({ type: 'run_result', status: 'failed', error: 'boom' });
     await waitUntil(() => delivery.delivered.length >= 1);
 
-    expect(delivery.delivered[0]).toMatchObject({ kind: 'workflow', status: 'failed' });
+    expect(delivery.delivered[0]).toMatchObject({
+      kind: 'workflow',
+      status: 'failed',
+    });
     expect(String(delivery.delivered[0]?.result)).toContain('boom');
     expect(delivery.deliverRuntimeCalls).toBe(0);
   });
@@ -530,7 +572,11 @@ describe('Workflow terminal delivery across stop races', () => {
       await allowRunnerStop.promise;
       await originalStop();
     };
-    runner.emit({ type: 'run_result', status: 'failed', error: 'natural failure' });
+    runner.emit({
+      type: 'run_result',
+      status: 'failed',
+      error: 'natural failure',
+    });
     await stopEntered.promise;
 
     const stopping = service.stopAll();
@@ -644,13 +690,20 @@ describe('team-scoped Workflow member creation: a narrow createLocked capability
     // The handle stays locked while the workflow still owns it.
     expect(order).toEqual(['submit:task']);
 
-    turn.settle({ status: 'completed', resultText: JSON.stringify({ ok: true }) });
+    turn.settle({
+      status: 'completed',
+      resultText: JSON.stringify({ ok: true }),
+    });
     runner.emit({ type: 'run_result', status: 'completed', result: null });
     await waitUntil(() => order.includes('unlock'));
 
     // The lock is released only by terminal cleanup, and only after the
     // handle is closed — never before, never independently of a spawn.
-    expect(order).toEqual(['submit:task', 'close:Workflow run-a completed', 'unlock']);
+    expect(order).toEqual([
+      'submit:task',
+      'close:Workflow run-a completed',
+      'unlock',
+    ]);
 
     // The one call this made against the teammates capability carried the
     // operation-owned system-prompt fragment and the requested schema,
@@ -660,13 +713,17 @@ describe('team-scoped Workflow member creation: a narrow createLocked capability
     expect(rawFactory.calls[0]?.options?.systemPromptAppend).toEqual([
       WORKFLOW_AGENT_SYSTEM_PROMPT,
     ]);
-    expect(rawFactory.calls[0]?.options?.outputSchema).toEqual({ type: 'object' });
+    expect(rawFactory.calls[0]?.options?.outputSchema).toEqual({
+      type: 'object',
+    });
   });
 
   it('contributes the schema and the system-prompt fragment identically across different agentType steps', async () => {
     const runnerFactory = fakeWorkflowRunnerFactory();
     const delivery = fakeCompletionDelivery();
-    const teammates = fakeTeammateFactory((input) => controllableLockedTeammate(input.name).handle);
+    const teammates = fakeTeammateFactory(
+      (input) => controllableLockedTeammate(input.name).handle,
+    );
     const service = new WorkflowService({
       ...SCOPE,
       callerKind: 'dispatcher',
@@ -704,7 +761,9 @@ describe('team-scoped Workflow member creation: a narrow createLocked capability
 
     for (const call of teammates.calls) {
       expect(call.options?.outputSchema).toEqual(schema);
-      expect(call.options?.systemPromptAppend).toEqual([WORKFLOW_AGENT_SYSTEM_PROMPT]);
+      expect(call.options?.systemPromptAppend).toEqual([
+        WORKFLOW_AGENT_SYSTEM_PROMPT,
+      ]);
     }
   });
 
@@ -756,7 +815,10 @@ describe('WorkflowService.stopAll() owns shutdown convergence', () => {
     await service.stopAll();
 
     const listed = await service.list();
-    expect(listed.runs.map((run) => run.status).sort()).toEqual(['stopped', 'stopped']);
+    expect(listed.runs.map((run) => run.status).sort()).toEqual([
+      'stopped',
+      'stopped',
+    ]);
     for (const runner of runnerFactory.runners) {
       expect(runner.stopped).toBe(true);
     }

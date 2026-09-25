@@ -40,10 +40,7 @@ import { chmod } from 'node:fs/promises';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { isSecretKeyName } from '@excitedjs/dreamux-utils';
-import pino, {
-  type DestinationStream,
-  type LoggerOptions,
-} from 'pino';
+import pino, { type DestinationStream, type LoggerOptions } from 'pino';
 
 import { errorInfo } from './error-info.js';
 

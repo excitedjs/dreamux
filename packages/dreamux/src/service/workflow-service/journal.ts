@@ -82,7 +82,9 @@ export class WorkflowJournal {
   }
 
   resultEvents(): Promise<readonly WorkflowAgentResultJournalEvent[]> {
-    return this.enqueue(async () => [...(await this.loadFacts()).results.values()]);
+    return this.enqueue(async () => [
+      ...(await this.loadFacts()).results.values(),
+    ]);
   }
 
   ensureAgentResult(
@@ -176,7 +178,9 @@ function parseJournalFacts(
     try {
       value = JSON.parse(line);
     } catch (error) {
-      throw new Error(`invalid workflow journal row in ${path}`, { cause: error });
+      throw new Error(`invalid workflow journal row in ${path}`, {
+        cause: error,
+      });
     }
     if (!isObject(value)) continue;
     if (value['kind'] === 'result') {
@@ -217,7 +221,7 @@ function normalizeAgentResultEvent(
 ): WorkflowAgentResultJournalEvent {
   return {
     ...event,
-    result: event.status === 'completed' ? event.result ?? null : null,
+    result: event.status === 'completed' ? (event.result ?? null) : null,
   };
 }
 
@@ -239,7 +243,7 @@ function normalizeTerminalEvent(
 ): WorkflowTerminalJournalEvent {
   return {
     ...event,
-    result: event.status === 'completed' ? event.result ?? null : null,
+    result: event.status === 'completed' ? (event.result ?? null) : null,
   };
 }
 

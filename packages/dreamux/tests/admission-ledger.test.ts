@@ -12,7 +12,10 @@ import {
   AdmissionLedger,
   type AgentEntityLedgerKey,
 } from '../src/service/teammate-service/admission-ledger.js';
-import type { Turn, TurnAdmission } from '../src/service/teammate-service/turn-recording.js';
+import type {
+  Turn,
+  TurnAdmission,
+} from '../src/service/teammate-service/turn-recording.js';
 
 function entity(name = 'worker'): AgentEntityLedgerKey {
   return { dispatcherId: 'flow', teamId: null, name };
@@ -134,7 +137,10 @@ describe('AdmissionLedger: commit on submitted/ambiguous, release on failed/stop
       const first = await ledger.admit(entity(), 'src-1', async () => {
         calls += 1;
         return status === 'failed'
-          ? { status: 'failed' as const, error: new Error('pre-admission failure') }
+          ? {
+              status: 'failed' as const,
+              error: new Error('pre-admission failure'),
+            }
           : { status };
       });
       expect(first.status).toBe(status);
@@ -170,11 +176,14 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     const ledger = new AdmissionLedger();
     const a = entity('agent-a');
     const b = entity('agent-b');
-    await ledger.admit(a, 'shared-src', async () => submittedAdmission('a-turn'));
+    await ledger.admit(a, 'shared-src', async () =>
+      submittedAdmission('a-turn'),
+    );
     // A different entity's identical sourceId is a fresh admission: the
     // entity itself is part of the key, so committing `a` never touches `b`.
     const admissionForB = await ledger.admit(b, 'shared-src', async () =>
-      submittedAdmission('b-turn'));
+      submittedAdmission('b-turn'),
+    );
     expect(admissionForB.status).toBe('submitted');
   });
 
@@ -183,12 +192,17 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     const filler = entity('filler');
     const watched = entity('watched');
 
-    const watchedAdmission = await ledger.admit(watched, 'watched-src', async () =>
-      submittedAdmission('watched-turn'));
+    const watchedAdmission = await ledger.admit(
+      watched,
+      'watched-src',
+      async () => submittedAdmission('watched-turn'),
+    );
     expect(watchedAdmission.status).toBe('submitted');
     // Immediately after commit, a repeat is still a duplicate.
     expect(
-      await ledger.admit(watched, 'watched-src', async () => submittedAdmission('x')),
+      await ledger.admit(watched, 'watched-src', async () =>
+        submittedAdmission('x'),
+      ),
     ).toEqual({ status: 'duplicate' });
 
     // Push exactly ADMISSION_SOURCE_WINDOW more DIFFERENT commits through a
@@ -196,11 +210,14 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     // touch `watched`'s reservation; because it is one shared, bounded
     // window, this evicts `watched-src` once the window is exceeded.
     for (let i = 0; i < ADMISSION_SOURCE_WINDOW; i += 1) {
-      await ledger.admit(filler, `filler-src-${i}`, async () => submittedAdmission(`f${i}`));
+      await ledger.admit(filler, `filler-src-${i}`, async () =>
+        submittedAdmission(`f${i}`),
+      );
     }
 
     const afterEviction = await ledger.admit(watched, 'watched-src', async () =>
-      submittedAdmission('watched-turn-2'));
+      submittedAdmission('watched-turn-2'),
+    );
     // The oldest committed key was evicted by the shared window filling up
     // with a completely different entity's admissions — proof there is no
     // second, per-entity registry keeping `watched-src` alive on its own.
@@ -210,7 +227,9 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
   it('never survives a restart: a fresh ledger instance has no memory of a prior one’s commits', async () => {
     const before = new AdmissionLedger();
     const target = entity();
-    await before.admit(target, 'src-1', async () => submittedAdmission('turn-1'));
+    await before.admit(target, 'src-1', async () =>
+      submittedAdmission('turn-1'),
+    );
     expect(
       await before.admit(target, 'src-1', async () => submittedAdmission('x')),
     ).toEqual({ status: 'duplicate' });
@@ -218,7 +237,8 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     // A process restart replaces the ledger object; nothing durable backs it.
     const after = new AdmissionLedger();
     const admission = await after.admit(target, 'src-1', async () =>
-      submittedAdmission('turn-1-again'));
+      submittedAdmission('turn-1-again'),
+    );
     expect(admission.status).toBe('submitted');
   });
 });

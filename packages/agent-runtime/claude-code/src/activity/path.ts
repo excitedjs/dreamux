@@ -1,21 +1,12 @@
 import { execFile } from 'node:child_process';
 import { opendir, realpath } from 'node:fs/promises';
-import {
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
 import { isPathWithin } from '@excitedjs/dreamux-utils';
 
-import {
-  createClaudeScanBudget,
-  type ClaudeScanBudget,
-} from './budget.js';
+import { createClaudeScanBudget, type ClaudeScanBudget } from './budget.js';
 import { ClaudeActivityError } from './error.js';
 import { claudeNativePathHash } from './native-hash.js';
 import {
@@ -108,11 +99,7 @@ export async function locateClaudeHistory(input: {
   });
   for (const candidate of candidates) {
     try {
-      return await validateClaudeHistoryPath(
-        candidate,
-        input.sessionId,
-        roots,
-      );
+      return await validateClaudeHistoryPath(candidate, input.sessionId, roots);
     } catch (error) {
       if (
         error instanceof ClaudeActivityError &&
@@ -170,8 +157,7 @@ function sanitizePath(name: string): string {
   const sanitized = name.replace(/[^a-zA-Z0-9]/g, '-');
   if (sanitized.length <= MAX_SANITIZED_LENGTH) return sanitized;
   return (
-    `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-` +
-    claudeNativePathHash(name)
+    `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-` + claudeNativePathHash(name)
   );
 }
 
@@ -200,8 +186,7 @@ async function discoveryCandidates(input: {
     pushUnique(result, seen, exact);
     const sanitized = sanitizePath(canonical.normalize('NFC'));
     if (sanitized.length <= MAX_SANITIZED_LENGTH) return;
-    const prefix =
-      sanitized.slice(0, MAX_SANITIZED_LENGTH) + '-';
+    const prefix = sanitized.slice(0, MAX_SANITIZED_LENGTH) + '-';
     const entries = await readProjects();
     for (const entry of entries) {
       if (entry.startsWith(prefix)) {
@@ -328,10 +313,7 @@ async function canonicalizeProspectivePath(path: string): Promise<string> {
   while (true) {
     try {
       const canonicalAncestor = await realpath(ancestor);
-      return resolve(
-        canonicalAncestor,
-        relative(ancestor, absolutePath),
-      );
+      return resolve(canonicalAncestor, relative(ancestor, absolutePath));
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') {
@@ -372,11 +354,7 @@ async function canonicalExistingRoot(root: string): Promise<string> {
   }
 }
 
-function pushUnique(
-  result: string[],
-  seen: Set<string>,
-  value: string,
-): void {
+function pushUnique(result: string[], seen: Set<string>, value: string): void {
   if (seen.has(value)) return;
   seen.add(value);
   result.push(value);

@@ -108,9 +108,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const generation = this.generation;
     const task = this.startRuntime(generation);
     this.startTask = task;
-    void task.finally(() => {
-      if (this.startTask === task) this.startTask = null;
-    }).catch(() => undefined);
+    void task
+      .finally(() => {
+        if (this.startTask === task) this.startTask = null;
+      })
+      .catch(() => undefined);
     return task;
   }
 
@@ -251,8 +253,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    */
   async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
     const session = this.session;
-    if (this.stopped || session === null || !session.isAlive()) return { status: 'idle' };
-    return await session.interrupt('Interrupted by Dreamux user command.')
+    if (this.stopped || session === null || !session.isAlive())
+      return { status: 'idle' };
+    return (await session.interrupt('Interrupted by Dreamux user command.'))
       ? { status: 'interrupted' }
       : { status: 'idle' };
   }
@@ -265,13 +268,19 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     } catch (error) {
       if (this.stopped) return { status: 'stopped' };
       this.setStatus('degraded', error);
-      return { status: 'failed', error: error instanceof Error ? error : new Error(String(error)) };
+      return {
+        status: 'failed',
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
     }
     if (this.stopped) return { status: 'stopped' };
     const admission = await session.submit(text);
     if (
-      !this.stopped && this.session === session && session.isAlive() &&
-      admission.status === 'submitted' && this.status !== 'ready'
+      !this.stopped &&
+      this.session === session &&
+      session.isAlive() &&
+      admission.status === 'submitted' &&
+      this.status !== 'ready'
     ) {
       this.setStatus('ready');
     }
@@ -282,9 +291,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     admission: Promise<RuntimeAdmission>,
   ): Promise<RuntimeAdmission> {
     this.pendingAdmissions.add(admission);
-    void admission.finally(() => {
-      this.pendingAdmissions.delete(admission);
-    }).catch(() => undefined);
+    void admission
+      .finally(() => {
+        this.pendingAdmissions.delete(admission);
+      })
+      .catch(() => undefined);
     return admission;
   }
 
@@ -309,9 +320,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const generation = this.generation;
     const starting = this.createSession(generation);
     this.sessionStarting = starting;
-    void starting.finally(() => {
-      if (this.sessionStarting === starting) this.sessionStarting = null;
-    }).catch(() => undefined);
+    void starting
+      .finally(() => {
+        if (this.sessionStarting === starting) this.sessionStarting = null;
+      })
+      .catch(() => undefined);
     return starting;
   }
 
@@ -324,10 +337,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       this.assertGeneration(generation);
     }
     const resuming = this.resumeOnNextSpawn;
-    const candidateSessionId =
-      resuming
-        ? this.threadId!
-        : (this.deps.generateSessionId?.() ?? randomUUID());
+    const candidateSessionId = resuming
+      ? this.threadId!
+      : (this.deps.generateSessionId?.() ?? randomUUID());
     const args = claudeCodeResidentArgs({
       config: this.config,
       mcpConfigJson: this.mcpConfigJson,
@@ -335,8 +347,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         ? { resumeSessionId: candidateSessionId }
         : { freshSessionId: candidateSessionId }),
       systemPromptAppend: this.deps.systemPromptAppend,
-      skillAddDirs:
-        this.skillAddDirRoot === null ? [] : [this.skillAddDirRoot],
+      skillAddDirs: this.skillAddDirRoot === null ? [] : [this.skillAddDirRoot],
       disableFeatures: this.deps.disableFeatures,
       outputSchema: this.deps.outputSchema,
     });
@@ -370,10 +381,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       this.assertGeneration(generation);
       // Publish resolves only after the durable write, so awaiting it here is
       // what makes the session durable before start resolves.
-      await this.fence.publish(() => this.deps.state.publish({
-        kind: 'session',
-        sessionId: candidateSessionId,
-      }));
+      await this.fence.publish(() =>
+        this.deps.state.publish({
+          kind: 'session',
+          sessionId: candidateSessionId,
+        }),
+      );
       this.assertGeneration(generation);
       this.threadId = candidateSessionId;
       this.resumeOnNextSpawn = true;
@@ -394,7 +407,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   /** React to an unexpected resident-child exit: degrade and drop the session. */
-  private async onSessionExit(session: ClaudeCodeSession, error: Error): Promise<void> {
+  private async onSessionExit(
+    session: ClaudeCodeSession,
+    error: Error,
+  ): Promise<void> {
     if (this.session !== session) return; // already replaced/stopped
     if (this.stopped) return;
     this.log('error', 'claude-code resident child exited unexpectedly');
@@ -411,7 +427,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     }
   }
 
-  private onProtocolEvent(event: ClaudeProtocolEvent, activity: NativeActivityState): void {
+  private onProtocolEvent(
+    event: ClaudeProtocolEvent,
+    activity: NativeActivityState,
+  ): void {
     if (this.stopped) return;
     handleProtocolEvent(event, {
       activity,
@@ -460,11 +479,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     err?: unknown,
   ): Promise<void> {
     this.status = status;
-    await this.fence.publish(() => this.deps.state.publish({
-      kind: 'status',
-      status,
-      ...(err !== undefined ? { lastError: errMessage(err) } : {}),
-    }));
+    await this.fence.publish(() =>
+      this.deps.state.publish({
+        kind: 'status',
+        status,
+        ...(err !== undefined ? { lastError: errMessage(err) } : {}),
+      }),
+    );
   }
 
   /**
@@ -504,11 +525,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // late background transition must not reopen it.
     if (this.fence.isFenced) return;
     this.status = status;
-    this.fence.publishDetached(() => this.deps.state.publish({
-      kind: 'status',
-      status,
-      ...(err !== undefined ? { lastError: errMessage(err) } : {}),
-    }));
+    this.fence.publishDetached(() =>
+      this.deps.state.publish({
+        kind: 'status',
+        status,
+        ...(err !== undefined ? { lastError: errMessage(err) } : {}),
+      }),
+    );
   }
 
   private log(

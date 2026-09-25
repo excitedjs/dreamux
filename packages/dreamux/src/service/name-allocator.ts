@@ -32,10 +32,7 @@ const BASE36 = 'abcdefghijklmnopqrstuvwxyz0123456789';
  * byte-identical to every name already allocated.
  */
 export type ConcreteNameKind =
-  | 'team'
-  | 'team-leader'
-  | 'team-teammate'
-  | 'dispatcher-teammate';
+  'team' | 'team-leader' | 'team-teammate' | 'dispatcher-teammate';
 
 /** Random generator hook so tests can force collisions deterministically. */
 export type SuffixGenerator = () => string;
@@ -54,10 +51,7 @@ export function slugifyName(base: string): string {
 
 /** A CSPRNG-backed lowercase base36 suffix with a 4-8 character length. */
 export function generateNameSuffix(): string {
-  const length = randomInt(
-    NAME_SUFFIX_MIN_LENGTH,
-    NAME_SUFFIX_MAX_LENGTH + 1,
-  );
+  const length = randomInt(NAME_SUFFIX_MIN_LENGTH, NAME_SUFFIX_MAX_LENGTH + 1);
   const bytes = randomBytes(length);
   let out = '';
   for (let i = 0; i < length; i += 1) {

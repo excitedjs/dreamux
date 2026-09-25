@@ -108,22 +108,28 @@ export class EntityTurn implements Turn {
      */
     private readonly owed: () => boolean,
   ) {
-    this.settled = runtime.settled.then((settlement): TurnOutcome => {
-      if (settlement.kind === 'completion') {
-        this.selectedCompletion = settlement.completion;
+    this.settled = runtime.settled.then(
+      (settlement): TurnOutcome => {
+        if (settlement.kind === 'completion') {
+          this.selectedCompletion = settlement.completion;
+          return this.settle(
+            settlement.completion.status === 'completed'
+              ? {
+                  status: 'completed',
+                  resultText: settlement.completion.resultText,
+                }
+              : { status: 'failed', error: settlement.completion.error },
+          );
+        }
         return this.settle(
-          settlement.completion.status === 'completed'
-            ? { status: 'completed', resultText: settlement.completion.resultText }
-            : { status: 'failed', error: settlement.completion.error },
+          settlement.kind === 'failed'
+            ? { status: 'failed', error: settlement.error }
+            : { status: 'stopped' },
         );
-      }
-      return this.settle(
-        settlement.kind === 'failed'
-          ? { status: 'failed', error: settlement.error }
-          : { status: 'stopped' },
-      );
-    }, (error: unknown): TurnOutcome =>
-      this.settle({ status: 'failed', error: asError(error) }));
+      },
+      (error: unknown): TurnOutcome =>
+        this.settle({ status: 'failed', error: asError(error) }),
+    );
   }
 
   get delivery(): Promise<void> {
@@ -183,7 +189,8 @@ export class EntityTurn implements Turn {
       result: outcome.status === 'completed' ? outcome.resultText : null,
     };
     this.deliveryTask = Promise.resolve().then(() =>
-      this.deliveryClosure!(completion, fact));
+      this.deliveryClosure!(completion, fact),
+    );
     void this.deliveryTask.catch(() => undefined);
   }
 }
@@ -227,7 +234,10 @@ export function asCompletionDeliveryResult(
     case 'ambiguous':
       return { status: 'ambiguous', error: result.error };
     case 'skipped':
-      return { status: 'failed', error: new Error('completion delivery unexpectedly skipped') };
+      return {
+        status: 'failed',
+        error: new Error('completion delivery unexpectedly skipped'),
+      };
   }
 }
 

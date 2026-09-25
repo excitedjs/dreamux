@@ -195,7 +195,9 @@ function questionPanel(
       title: markdown(
         `<text_tag color='${chosen === undefined ? 'blue' : 'green'}'>` +
           `${question.header}</text_tag> **${question.question}**` +
-          (chosen === undefined ? '' : ` <font color='grey'>· ${chosen}</font>`),
+          (chosen === undefined
+            ? ''
+            : ` <font color='grey'>· ${chosen}</font>`),
       ),
       width: 'fill',
       vertical_align: 'center',
@@ -206,8 +208,8 @@ function questionPanel(
 
 /** The live question card. One unanswered question is open at a time. */
 export function buildAskUserCard(view: AskUserRequestView): unknown {
-  const answered = view.questions.filter(
-    (_, index) => view.answers.has(index),
+  const answered = view.questions.filter((_, index) =>
+    view.answers.has(index),
   ).length;
   const openIndex = view.questions.findIndex(
     (_, index) => !view.answers.has(index),

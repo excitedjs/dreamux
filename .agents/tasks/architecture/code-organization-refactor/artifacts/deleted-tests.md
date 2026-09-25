@@ -2390,3 +2390,109 @@ dreamux's own copy; corrected to the current path) and two bare commit-hash
 citations in this ledger's own Item-14 section (rephrased to describe the
 harness-preparation commit without naming its hash, per the KB's no-commit-hash
 rule for `.agents/tasks/`).
+
+## Stage 3 — Item 2 (formatter reformat)
+
+R2: `prettier --write` applied per package (root `.prettierrc.json`, one key:
+`singleQuote: true`, everything else default — see rulings.md's R2 entry). No
+logic changed; two source-text pattern-match cases broke because the
+declarations they regex-match wrapped across multiple lines under the
+80-column default `printWidth`.
+
+- **File / cases:** `packages/dreamux/tests/collection-ownership.test.ts`,
+  describe block `Collections own the store, the factory, and the
+  materialization cache; Services do not duplicate it` —
+  `it('TeamCollection (runtime-registry.ts) is the sole holder of the live
+  TeamService cache and its construction dedupe')` and
+  `it('TeammateCollection (index.ts) is the sole holder of the live
+  TeammateService cache and its materialization dedupe')` (2 cases; each
+  case's other assertions in the same block still passed, but a `toMatch`
+  failure fails the whole `it`, so the whole case is what R43 calls a
+  "failing test case").
+  **Contract pinned:** TeamCollection's `runtime-registry.ts` declares
+  `private readonly cache = new Map<string, TeamService>` and
+  `private readonly constructing = new Map<string, Promise<TeamService |
+  null>>` (the live-instance cache and the construction-dedupe map);
+  TeammateCollection's `index.ts` declares `private readonly entities = new
+  Map<string, TeammateService>`, the `type ResolvedTeamMate = TeammateService
+  | AgentEntityIdentity` union, and `private readonly materializations = new
+  Map<string, Promise<ResolvedTeamMate>>` (the live-instance cache and the
+  materialization-dedupe map) — proof that a Collection, not its Service,
+  owns both caches.
+  **Still holds — restore at final #453 test pass.** Both declarations are
+  still present and unchanged in meaning; only their line-wrapping changed
+  (`constructing`/`materializations` each now wrap their generic type across
+  3 lines instead of 1, e.g. `private readonly constructing = new Map<\n
+  string,\n    Promise<TeamService | null>\n  >();`). The regex literals in
+  the deleted cases assumed a single physical line.
+  **Failure:** `expect(registrySrc).toMatch(/private readonly constructing =
+  new Map<string, Promise<TeamService \| null>>/)` and
+  `expect(collectionSrc).toMatch(/private readonly materializations = new
+  Map<string, Promise<ResolvedTeamMate>>/)` no longer match the reformatted
+  source text (confirmed via `grep -n -A3` against the post-`--write` files —
+  the declarations are present, just wrapped). Restoration recipe for the
+  final PR: rebuild each regex to tolerate Prettier's line-wrap (e.g. match
+  `new Map<\s*$` plus the following two lines, or drop the literal generic
+  argument list from the pattern and assert the surrounding structure
+  instead) and restore both cases verbatim otherwise.
+  **Also checked, no collateral found:** every other assertion in this file,
+  and every other candidate file from the stage's targeted 16-file list
+  (`packages/dreamux/tests/bin-launcher.test.ts`,
+  `bundled-skill-sources.test.ts`, `completion-delivery.test.ts`,
+  `core-provider-neutrality.test.ts`,
+  `feishu-allow-chats-release-contract.test.ts`,
+  `internal-content-scan.test.ts`, `logger.test.ts`, `log-hygiene.test.ts`,
+  `mcp-tool-descriptions.test.ts`, `no-sync-io-gate.test.ts`,
+  `package-boundary-guards.test.ts`, `restart-intent.test.ts`,
+  `packages/dreamux-types/tests/deleted-surfaces-absence.test.ts`,
+  `packages/dreamux-utils/tests/json-invoke.test.ts`,
+  `packages/channel/feishu-channel/tests/feishu-gate.test.ts`), passed both
+  before and after `--write` — run by explicit path with vitest, once as the
+  pre-`--write` baseline and once after, per the stage plan's before/after
+  rule. `packages/dreamux/tests/codex-live.test.ts` (issue #63 live gate) is
+  outside this targeted list and was not run by this item's vitest check —
+  but it was not left untouched: it received the same package-wide
+  `prettier --write` pass as every other file under
+  `packages/dreamux/tests/`. Confirmed by diff: only line-wrapping (a union
+  type's two arms collapsed onto one line, two object-literal returns and a
+  `.split().map()` chain rewrapped, three `toEqual` object-literal args
+  reflowed) — no assertion value, import, or logic line changed. Not
+  deleted, no HIGH-RISK entry: this item made no contract-affecting change
+  to it.
+
+**`@ts-expect-error` directive relocation (not a deletion, logged for
+accuracy):** five sites across two files had their `@ts-expect-error`
+comment moved by hand after `--write`, because the mechanical reformat left
+the directive floating over a line that no longer errors — the call or type
+expression it targeted wrapped onto a later line, so the directive was
+repositioned to the specific line the error now falls on rather than the
+statement's first line. Sites:
+`packages/dreamux/tests/submission-envelope.test.ts` (4 — the `channelInput`
+wrapper rejection, the `scheduledInput` wrapper rejection, the
+caller-supplied `AbortSignal` rejection, and the
+`SYSTEM_SOURCE`-unreachable-via-`source` rejection) and
+`packages/channel/feishu-channel/tests/public-api.test.ts` (1 —
+`RemovedFakeFeishuBotMustStayUnexported`). No assertion, target type, or
+directive wording changed in any of the five — only the comment's physical
+line. Same mechanism and same class of fix as the `eslint-disable-next-line`
+repositioning noted below (`registry/registry.ts:24→27` etc.), which the
+stage plan pre-authorizes as formatting mechanics, not a logic or
+test-assertion change; the plan text did not originally name
+`@ts-expect-error` alongside it — this note and the plan doc
+(`.workspace/refactor/s3-format-plan.md`) both now do. **Not ruled:**
+whether a directive relocation counts as an R43 test edit is not settled
+here — treated as reformat fallout by analogy to the pre-authorized
+`eslint-disable-next-line` case, since it changes no assertion, target, or
+name. If ruled otherwise at the final pass, both files are in scope for R43
+deletion at that point, not before.
+
+**Verification:** `eslint .` run directly (not via `rush lint`) in every one
+of the 9 touched packages reports 0 errors (6 pre-existing
+`no-dumping-ground-filename` warnings across `dreamux`, `feishu-channel`, and
+the two agent-runtime packages are filename-based, unrelated to formatting,
+and were not introduced by this item). All 11 repo-wide
+`eslint-disable-next-line` sites still suppress their intended line (lines
+shifted by wrapping in a few files, e.g. `registry/registry.ts:24→27`, but no
+`no-restricted-syntax`/unused-directive re-fired). None of the six
+`packages/dreamux/src` files closest to the 700-code-line `max-lines` cap
+(nor `platform/paths.ts`) trip the rule after reformatting.

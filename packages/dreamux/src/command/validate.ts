@@ -87,7 +87,10 @@ export function validateJsonSchema(value: unknown, schema: JsonSchema): void {
 function check(value: unknown, schema: JsonSchema, path: string): void {
   for (const name of Object.keys(schema)) {
     if (!SUPPORTED_KEYWORDS.has(name)) {
-      throw new SchemaViolation(path, `schema uses unsupported keyword '${name}'`);
+      throw new SchemaViolation(
+        path,
+        `schema uses unsupported keyword '${name}'`,
+      );
     }
   }
   const types = declaredTypes(schema, path);
@@ -112,7 +115,10 @@ function checkEnum(value: unknown, schema: JsonSchema, path: string): void {
   }
   const values = allowed as unknown as readonly JsonValue[];
   if (!values.some((entry) => entry === value)) {
-    throw new SchemaViolation(path, `${describe(value)} is not an allowed value`);
+    throw new SchemaViolation(
+      path,
+      `${describe(value)} is not an allowed value`,
+    );
   }
 }
 
@@ -224,9 +230,9 @@ function checkRequired(
 function declaredTypes(schema: JsonSchema, path: string): string[] | null {
   const declared = keyword(schema, 'type');
   if (declared === undefined) return null;
-  const names = (
-    Array.isArray(declared) ? declared : [declared]
-  ) as unknown as readonly JsonValue[];
+  const names = (Array.isArray(declared)
+    ? declared
+    : [declared]) as unknown as readonly JsonValue[];
   const out: string[] = [];
   for (const name of names) {
     if (typeof name !== 'string' || !TYPE_NAMES.has(name)) {
@@ -307,7 +313,10 @@ function numericKeyword(
 export function validateSchemaDefinition(schema: JsonSchema, path = ''): void {
   for (const name of Object.keys(schema)) {
     if (!SUPPORTED_KEYWORDS.has(name)) {
-      throw new SchemaViolation(path, `schema uses unsupported keyword '${name}'`);
+      throw new SchemaViolation(
+        path,
+        `schema uses unsupported keyword '${name}'`,
+      );
     }
   }
   declaredTypes(schema, path);
@@ -335,7 +344,10 @@ function defineEnum(schema: JsonSchema, path: string): void {
   }
   if (allowed.length === 0) {
     // An empty enum admits nothing, so the property could never be supplied.
-    throw new SchemaViolation(path, 'schema enum must allow at least one value');
+    throw new SchemaViolation(
+      path,
+      'schema enum must allow at least one value',
+    );
   }
 }
 

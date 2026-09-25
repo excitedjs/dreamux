@@ -35,7 +35,9 @@ if (
 }
 for (const name of expectedServiceExports) {
   if (typeof serviceModule[name] !== 'function') {
-    throw new Error(`dreamux built service facade export ${name} is not a value`);
+    throw new Error(
+      `dreamux built service facade export ${name} is not a value`,
+    );
   }
 }
 

@@ -34,8 +34,7 @@ export interface ClaudeCodeStreamRpcOptions {
   reapOnTimeout: (error: Error) => void;
   onRemoteControlUrl?: ((url: string) => void) | undefined;
   onProtocolEvent?:
-    | import('./types.js').ClaudeCodeSessionSpec['onProtocolEvent']
-    | undefined;
+    import('./types.js').ClaudeCodeSessionSpec['onProtocolEvent'] | undefined;
 }
 
 /**
@@ -46,7 +45,10 @@ export interface ClaudeCodeStreamRpcOptions {
  * own `interrupt` control request: the other documented cause, a permission
  * callback denying with `interrupt`, cannot happen where every callback allows.
  */
-const INTERRUPT_TERMINAL_REASONS = new Set(['aborted_streaming', 'aborted_tools']);
+const INTERRUPT_TERMINAL_REASONS = new Set([
+  'aborted_streaming',
+  'aborted_tools',
+]);
 
 /**
  * One resident transport, one association from UUID to unanswered request.
@@ -85,11 +87,16 @@ export class ClaudeCodeStreamRpc {
     commandUuid: string = randomUUID(),
   ): Promise<RuntimeAdmission> {
     if (this.closed || !this.stdin.writable) {
-      return Promise.resolve({ status: 'failed', error: new Error('claude resident child is not running') });
+      return Promise.resolve({
+        status: 'failed',
+        error: new Error('claude resident child is not running'),
+      });
     }
     let settle!: PendingRequest['settle'];
     const submission = Object.freeze({
-      settled: new Promise<RuntimeSubmissionSettlement>((resolve) => { settle = resolve; }),
+      settled: new Promise<RuntimeSubmissionSettlement>((resolve) => {
+        settle = resolve;
+      }),
     });
     return new Promise<RuntimeAdmission>((admit) => {
       const request: PendingRequest = { submission, settle, admit };
@@ -99,10 +106,13 @@ export class ClaudeCodeStreamRpc {
       this.requests.set(commandUuid, request);
       this.armIdleTimer();
       try {
-        this.stdin.write(`${buildUserMessage(prompt, options, commandUuid)}\n`, (error) => {
-          if (error != null) this.failWrite(commandUuid, request, error);
-          else this.acceptRequest(request);
-        });
+        this.stdin.write(
+          `${buildUserMessage(prompt, options, commandUuid)}\n`,
+          (error) => {
+            if (error != null) this.failWrite(commandUuid, request, error);
+            else this.acceptRequest(request);
+          },
+        );
       } catch (error) {
         this.failWrite(commandUuid, request, asError(error));
       }
@@ -142,11 +152,16 @@ export class ClaudeCodeStreamRpc {
     this.close({ kind: 'stopped' });
   }
 
-  private close(settlement: Exclude<RuntimeSubmissionSettlement, { kind: 'completion' }>): void {
+  private close(
+    settlement: Exclude<RuntimeSubmissionSettlement, { kind: 'completion' }>,
+  ): void {
     this.closed = true;
-    const error = settlement.kind === 'failed'
-      ? settlement.error
-      : new Error('claude resident session stopped before write acknowledgement');
+    const error =
+      settlement.kind === 'failed'
+        ? settlement.error
+        : new Error(
+            'claude resident session stopped before write acknowledgement',
+          );
     // Every request here has already been written: submit() writes to stdin
     // synchronously, in the same tick as registration, so nothing in this map
     // is ever unwritten. What is unknown is only whether claude received or
@@ -239,16 +254,27 @@ export class ClaudeCodeStreamRpc {
           this.acceptRequest(request);
           // Consumed commands can report cancelled before their failure result.
           // Keep the result's members; lifecycle alone cannot supply its outcome.
-          if (state === 'discarded' || state === 'refused' ||
-              (state === 'cancelled' && !this.consumed.has(commandUuid))) {
+          if (
+            state === 'discarded' ||
+            state === 'refused' ||
+            (state === 'cancelled' && !this.consumed.has(commandUuid))
+          ) {
             this.requests.delete(commandUuid);
-            request.settle({ kind: 'failed', error: new Error(`claude command was ${state}`) });
+            request.settle({
+              kind: 'failed',
+              error: new Error(`claude command was ${state}`),
+            });
             this.clearIdleIfEmpty();
           }
         }
         // An unconsumed command's cancellation cannot discard generating text.
-        if (state === 'cancelled' && this.consumed.has(commandUuid)) this.aggregator.discard();
-        this.options.onProtocolEvent?.({ kind: 'command_lifecycle', commandUuid, state });
+        if (state === 'cancelled' && this.consumed.has(commandUuid))
+          this.aggregator.discard();
+        this.options.onProtocolEvent?.({
+          kind: 'command_lifecycle',
+          commandUuid,
+          state,
+        });
         break;
       }
       case 'result': {
@@ -282,28 +308,51 @@ export class ClaudeCodeStreamRpc {
           this.interruptRequested = false;
           this.control.settleInterrupt(undefined, interrupted);
         }
-        const completion = interrupted || answered.length === 0 ? null : completionFromTurnOutcome(
-          outcome, this.options.sessionId, this.options.outputSchemaEnabled === true,
-        );
+        const completion =
+          interrupted || answered.length === 0
+            ? null
+            : completionFromTurnOutcome(
+                outcome,
+                this.options.sessionId,
+                this.options.outputSchemaEnabled === true,
+              );
         // Remove the answered requests before callbacks can admit or stop work.
         // Native end is still delivered before these submissions settle.
-        this.options.onProtocolEvent?.(interrupted
-          ? { kind: 'interrupted', uuid: line.uuid, outcome }
-          : { kind: 'result', uuid: line.uuid, outcome });
+        this.options.onProtocolEvent?.(
+          interrupted
+            ? { kind: 'interrupted', uuid: line.uuid, outcome }
+            : { kind: 'result', uuid: line.uuid, outcome },
+        );
         for (const request of answered) {
           this.acceptRequest(request);
-          request.settle(interrupted ? { kind: 'stopped' } : { kind: 'completion', completion: completion! });
+          request.settle(
+            interrupted
+              ? { kind: 'stopped' }
+              : { kind: 'completion', completion: completion! },
+          );
         }
         break;
       }
       case 'control_request':
-        this.control.onControlRequest(line.requestId, line.subtype, line.request);
+        this.control.onControlRequest(
+          line.requestId,
+          line.subtype,
+          line.request,
+        );
         break;
       case 'control_response':
-        this.control.onControlResponse(line.requestId, line.ok, line.response, line.error);
+        this.control.onControlResponse(
+          line.requestId,
+          line.ok,
+          line.response,
+          line.error,
+        );
         break;
       case 'parse_error':
-        this.options.log?.('warn', `claude stream-json parse error: ${line.raw}`);
+        this.options.log?.(
+          'warn',
+          `claude stream-json parse error: ${line.raw}`,
+        );
         break;
       default:
         break;

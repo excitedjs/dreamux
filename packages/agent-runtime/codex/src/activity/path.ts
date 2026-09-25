@@ -5,15 +5,9 @@ import { createZstdDecompress } from 'node:zlib';
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
 import { isPathWithin } from '@excitedjs/dreamux-utils';
 
-import {
-  createCodexScanBudget,
-  type CodexScanBudget,
-} from './budget.js';
+import { createCodexScanBudget, type CodexScanBudget } from './budget.js';
 import { CodexActivityError } from './error.js';
-import {
-  openCodexRollout,
-  type CodexOpenedRollout,
-} from './opened-file.js';
+import { openCodexRollout, type CodexOpenedRollout } from './opened-file.js';
 
 const ROLLOUT_FILENAME =
   /^rollout-[^/]+-[0-9a-f-]{36}(?:_[0-9a-f-]{36})?\.jsonl(?:\.zst)?$/i;
@@ -103,11 +97,7 @@ export async function locateCodexRollout(
 ): Promise<CodexValidatedRollout> {
   if (locator !== null && locator !== undefined) {
     try {
-      return await validateCodexRolloutPath(
-        locator,
-        expectedSessionId,
-        roots,
-      );
+      return await validateCodexRolloutPath(locator, expectedSessionId, roots);
     } catch (error) {
       if (
         !(error instanceof CodexActivityError) ||
@@ -117,11 +107,7 @@ export async function locateCodexRollout(
       }
     }
   }
-  const candidates = await discoverRollouts(
-    roots,
-    expectedSessionId,
-    budget,
-  );
+  const candidates = await discoverRollouts(roots, expectedSessionId, budget);
   for (const candidate of candidates) {
     try {
       return await validateCodexRolloutPath(
@@ -132,8 +118,7 @@ export async function locateCodexRollout(
     } catch (error) {
       if (
         error instanceof CodexActivityError &&
-        (error.detail === 'session_mismatch' ||
-          error.detail === 'not_found')
+        (error.detail === 'session_mismatch' || error.detail === 'not_found')
       ) {
         continue;
       }
@@ -165,8 +150,7 @@ export async function findCodexRolloutById(
     } catch (error) {
       if (
         error instanceof CodexActivityError &&
-        (error.detail === 'session_mismatch' ||
-          error.detail === 'not_found')
+        (error.detail === 'session_mismatch' || error.detail === 'not_found')
       ) {
         continue;
       }
@@ -212,11 +196,9 @@ export async function readCodexRolloutText(
     }
   } catch (error) {
     if (error instanceof CodexActivityError) throw error;
-    throw new CodexActivityError(
-      'unreadable',
-      'Codex activity is unreadable',
-      { cause: error },
-    );
+    throw new CodexActivityError('unreadable', 'Codex activity is unreadable', {
+      cause: error,
+    });
   } finally {
     stream.destroy();
     source.destroy();
@@ -265,10 +247,7 @@ async function readCodexSessionMetadata(
     stream.destroy();
     source.destroy();
   }
-  throw new CodexActivityError(
-    'invalid',
-    'Codex activity metadata is invalid',
-  );
+  throw new CodexActivityError('invalid', 'Codex activity metadata is invalid');
 }
 
 async function discoverRollouts(
@@ -360,10 +339,7 @@ async function canonicalExistingRoots(
     if (canonical !== null) result.push(canonical);
   }
   if (result.length === 0) {
-    throw new CodexActivityError(
-      'not_found',
-      'Codex activity is unavailable',
-    );
+    throw new CodexActivityError('not_found', 'Codex activity is unavailable');
   }
   return result;
 }
@@ -401,8 +377,7 @@ async function validateCodexRollout(input: {
     }
     return {
       path: opened.path,
-      root:
-        canonicalRoots.find((root) => isPathWithin(root, opened.path))!,
+      root: canonicalRoots.find((root) => isPathWithin(root, opened.path))!,
       sessionId: metadata.sessionId,
       rolloutId,
       historyBase: metadata.historyBase,
@@ -421,8 +396,7 @@ function metadataFromLine(
   if (value?.['type'] !== 'session_meta') return null;
   const payload = asRecord(value['payload']);
   const meta = asRecord(payload?.['meta']) ?? payload;
-  const id =
-    stringValue(meta?.['id']) ?? stringValue(meta?.['session_id']);
+  const id = stringValue(meta?.['id']) ?? stringValue(meta?.['session_id']);
   if (id === null) {
     throw new CodexActivityError(
       'invalid',
@@ -431,9 +405,7 @@ function metadataFromLine(
   }
   const historyBaseRecord = asRecord(meta?.['history_base']);
   const rolloutId = stringValue(historyBaseRecord?.['thread_id']);
-  const endByteOffset = numberValue(
-    historyBaseRecord?.['end_byte_offset'],
-  );
+  const endByteOffset = numberValue(historyBaseRecord?.['end_byte_offset']);
   return {
     sessionId: id,
     historyBase:

@@ -162,7 +162,11 @@ export class RestartIntentConsumer {
    * never replays). This is the only reader of the marker file.
    */
   static async load(
-    options: { now: number; path?: string; warn?: (message: string) => void } = {
+    options: {
+      now: number;
+      path?: string;
+      warn?: (message: string) => void;
+    } = {
       now: 0,
     },
   ): Promise<RestartIntentConsumer> {

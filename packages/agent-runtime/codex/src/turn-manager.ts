@@ -7,7 +7,10 @@ import {
   type TurnCollector,
 } from './events.js';
 import type { CodexOutputSchemaCodec } from './output-schema-codec.js';
-import type { CodexReasoningEffort, SubmissionEffort } from './reasoning-effort.js';
+import type {
+  CodexReasoningEffort,
+  SubmissionEffort,
+} from './reasoning-effort.js';
 import type { CodexWsClient } from './rpc.js';
 import { toolDisplay } from './tool-display.js';
 import type { ThreadItem, ThreadTokenUsage } from './types.js';
@@ -68,11 +71,13 @@ export class TurnManager {
   private readonly log: NonNullable<TurnManagerOptions['log']>;
 
   constructor(private readonly opts: TurnManagerOptions) {
-    this.log = opts.log ?? ((level, message, error) => {
-      const prefix = `[turn-manager ${opts.dispatcherId}] ${level}`;
-      if (error === undefined) console.error(prefix, message);
-      else console.error(prefix, message, error);
-    });
+    this.log =
+      opts.log ??
+      ((level, message, error) => {
+        const prefix = `[turn-manager ${opts.dispatcherId}] ${level}`;
+        if (error === undefined) console.error(prefix, message);
+        else console.error(prefix, message, error);
+      });
   }
 
   /**
@@ -88,9 +93,12 @@ export class TurnManager {
   interrupt(): Promise<AgentRuntimeInterruptOutcome> {
     return this.enqueueDecision(async () => {
       if (this.stopped) return { status: 'idle' };
-      const active = [...this.nativeTurns].reverse().find(
-        ([, record]) => record.terminal === null && record.completion === null,
-      );
+      const active = [...this.nativeTurns]
+        .reverse()
+        .find(
+          ([, record]) =>
+            record.terminal === null && record.completion === null,
+        );
       const threadId = this.opts.getThreadId();
       if (active === undefined || threadId === null) return { status: 'idle' };
       await interruptTurn(this.opts.client, threadId, active[0]);
@@ -102,7 +110,8 @@ export class TurnManager {
     this.stopped = true;
     this.collector?.dispose();
     this.collector = null;
-    while (this.pendingAdmissions.size > 0) await Promise.allSettled([...this.pendingAdmissions]);
+    while (this.pendingAdmissions.size > 0)
+      await Promise.allSettled([...this.pendingAdmissions]);
     // The collector is gone, so nothing will ever report a turn codex started
     // and never finished: this teardown reports one interrupted end, without
     // asking whether a turn was open. The manager keeps no such answer; a
@@ -125,9 +134,14 @@ export class TurnManager {
     description: string,
   ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
-    if (this.protocolFailure !== null) return { status: 'failed', error: this.protocolFailure };
+    if (this.protocolFailure !== null)
+      return { status: 'failed', error: this.protocolFailure };
     const threadId = this.opts.getThreadId();
-    if (threadId === null) return { status: 'failed', error: new Error('input submitted without thread_id') };
+    if (threadId === null)
+      return {
+        status: 'failed',
+        error: new Error('input submitted without thread_id'),
+      };
     let asked: SubmissionEffort;
     try {
       asked = await this.opts.reasoning.effortFor(text);
@@ -135,7 +149,8 @@ export class TurnManager {
       return { status: 'failed', error: asError(error) };
     }
     if (this.stopped) return { status: 'stopped' };
-    if (this.protocolFailure !== null) return { status: 'failed', error: this.protocolFailure };
+    if (this.protocolFailure !== null)
+      return { status: 'failed', error: this.protocolFailure };
     const deferred = createRuntimeSubmission();
     this.ensureCollector(threadId);
     const admissionId = this.nextNativeAdmission++;
@@ -152,14 +167,21 @@ export class TurnManager {
       );
     } catch (error) {
       const normalized = asError(error);
-      this.log('error', `turn/start submission failed for ${description}: ${normalized.message}`, normalized);
+      this.log(
+        'error',
+        `turn/start submission failed for ${description}: ${normalized.message}`,
+        normalized,
+      );
       this.inFlightNativeAdmissions.delete(admissionId);
       this.releaseCompletedRecords(admissionId);
       this.releaseOrphanTurnsIfIdle();
       return { status: 'ambiguous', error: normalized };
     }
     const observed = this.nativeTurns.get(response.turn.id);
-    if (this.stopped && (observed === undefined || observed.terminal === null)) {
+    if (
+      this.stopped &&
+      (observed === undefined || observed.terminal === null)
+    ) {
       deferred.settle({ kind: 'stopped' });
     } else {
       this.bindSubmission(response.turn.id, deferred);
@@ -172,7 +194,10 @@ export class TurnManager {
 
   private enqueueDecision<T>(operation: () => Promise<T>): Promise<T> {
     const task = this.decisionTail.then(operation, operation);
-    this.decisionTail = task.then(() => undefined, () => undefined);
+    this.decisionTail = task.then(
+      () => undefined,
+      () => undefined,
+    );
     return task;
   }
 
@@ -185,9 +210,13 @@ export class TurnManager {
   private ensureCollector(threadId: string): void {
     if (this.collector !== null) return;
     this.collector = subscribeTurnCollection(this.opts.client, threadId, {
-      onTokenUsage: (usage) => { this.tokenUsage = usage ?? null; },
-      onItemStarted: (turnId, item) => this.observeItem(turnId, item, 'started', Date.now()),
-      onItemCompleted: (turnId, item, occurredAt) => this.observeItem(turnId, item, 'completed', occurredAt),
+      onTokenUsage: (usage) => {
+        this.tokenUsage = usage ?? null;
+      },
+      onItemStarted: (turnId, item) =>
+        this.observeItem(turnId, item, 'started', Date.now()),
+      onItemCompleted: (turnId, item, occurredAt) =>
+        this.observeItem(turnId, item, 'completed', occurredAt),
       onTerminal: (turnId, terminal) => this.observeTerminal(turnId, terminal),
       onUnscopedFailure: (error) => this.failProtocol(error),
     });
@@ -209,11 +238,15 @@ export class TurnManager {
       this.failRecord(turnId, record, this.protocolFailure);
       return;
     }
-    if (record.completion !== null) deferred.settle({ kind: 'completion', completion: record.completion });
+    if (record.completion !== null)
+      deferred.settle({ kind: 'completion', completion: record.completion });
     this.drainTerminalOrder();
   }
 
-  private observeTerminal(turnId: string, terminal: CollectedTurn | Error): void {
+  private observeTerminal(
+    turnId: string,
+    terminal: CollectedTurn | Error,
+  ): void {
     // An accepted interrupt is not a terminal of its own: codex answers it with
     // an ordinary `turn/completed` whose only mark is `status: "interrupted"`
     // (measured against codex-cli 0.153.4; see `TurnStatus`). Both the marker
@@ -244,7 +277,10 @@ export class TurnManager {
     );
     this.unboundObservedTurnIds.delete(turnId);
     const record = this.nativeTurns.get(turnId) ?? {
-      representative: null, members: [], completion: null, terminal: null,
+      representative: null,
+      members: [],
+      completion: null,
+      terminal: null,
       releaseAfterAdmissions: null,
     };
     if (record.terminal !== null || record.completion !== null) return;
@@ -275,7 +311,11 @@ export class TurnManager {
     }
   }
 
-  private finalize(turnId: string, record: NativeTurnRecord, terminal: CollectedTurn | Error): void {
+  private finalize(
+    turnId: string,
+    record: NativeTurnRecord,
+    terminal: CollectedTurn | Error,
+  ): void {
     if (record.completion !== null) return;
     // Push-back only, and it decides nothing the card shows: an unbound turn
     // has no submission to settle, so `drainTerminalOrder` releases it instead
@@ -287,11 +327,14 @@ export class TurnManager {
     } else {
       const codec = this.opts.codec;
       let completedTurn = terminal;
-      try { if (codec !== null) completedTurn = restoreCollectedTurn(terminal, codec); }
-      catch (error) {
+      try {
+        if (codec !== null)
+          completedTurn = restoreCollectedTurn(terminal, codec);
+      } catch (error) {
         completion = Object.freeze({ status: 'failed', error: asError(error) });
         record.completion = completion;
-        for (const member of record.members) member.settle({ kind: 'completion', completion });
+        for (const member of record.members)
+          member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
         this.releaseRecordIfReady(turnId, record);
@@ -304,7 +347,8 @@ export class TurnManager {
       });
     }
     record.completion = completion;
-    for (const member of record.members) member.settle({ kind: 'completion', completion });
+    for (const member of record.members)
+      member.settle({ kind: 'completion', completion });
     record.members.length = 0;
     record.terminal = null;
     this.releaseRecordIfReady(turnId, record);
@@ -326,8 +370,13 @@ export class TurnManager {
     }
   }
 
-  private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
-    for (const member of record.members) member.settle({ kind: 'failed', error });
+  private failRecord(
+    turnId: string,
+    record: NativeTurnRecord,
+    error: Error,
+  ): void {
+    for (const member of record.members)
+      member.settle({ kind: 'failed', error });
     record.members.length = 0;
     this.nativeTurns.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
@@ -342,7 +391,11 @@ export class TurnManager {
   }
 
   private releaseRecordIfReady(turnId: string, record: NativeTurnRecord): void {
-    if (record.completion === null || (record.releaseAfterAdmissions?.size ?? 0) > 0) return;
+    if (
+      record.completion === null ||
+      (record.releaseAfterAdmissions?.size ?? 0) > 0
+    )
+      return;
     this.nativeTurns.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
@@ -367,13 +420,19 @@ export class TurnManager {
    * everything it could not eventually attribute. The agent is the subject,
    * and it is known before any submission binds.
    */
-  private observeItem(turnId: string, item: ThreadItem, phase: 'started' | 'completed', occurredAt: number): void {
+  private observeItem(
+    turnId: string,
+    item: ThreadItem,
+    phase: 'started' | 'completed',
+    occurredAt: number,
+  ): void {
     const activity = itemActivity(item, phase, occurredAt);
     if (activity !== null) this.emitActivity(activity);
     const record = this.nativeTurns.get(turnId);
     if (record !== undefined && record.representative !== null) return;
     this.unboundObservedTurnIds.add(turnId);
-    if (this.inFlightNativeAdmissions.size === 0) this.releaseOrphanTurnsIfIdle();
+    if (this.inFlightNativeAdmissions.size === 0)
+      this.releaseOrphanTurnsIfIdle();
   }
 
   /** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
@@ -402,15 +461,24 @@ export class TurnManager {
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
-    this.emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason });
+    this.emitActivity({
+      kind: 'turn.ended',
+      occurredAt: Date.now(),
+      status,
+      reason,
+    });
   }
 
-  private trackAdmission(admission: Promise<RuntimeAdmission>): Promise<RuntimeAdmission> {
+  private trackAdmission(
+    admission: Promise<RuntimeAdmission>,
+  ): Promise<RuntimeAdmission> {
     this.pendingAdmissions.add(admission);
-    void admission.finally(() => {
-      this.pendingAdmissions.delete(admission);
-      this.drainTerminalOrder();
-    }).catch(() => undefined);
+    void admission
+      .finally(() => {
+        this.pendingAdmissions.delete(admission);
+        this.drainTerminalOrder();
+      })
+      .catch(() => undefined);
     return admission;
   }
 }
@@ -418,8 +486,20 @@ export class TurnManager {
 function createRuntimeSubmission(): SubmissionDeferred {
   let resolve!: (settlement: RuntimeSubmissionSettlement) => void;
   let settled = false;
-  const submission = Object.freeze({ settled: new Promise<RuntimeSubmissionSettlement>((value) => { resolve = value; }) });
-  return { submission, settle(settlement) { if (settled) return false; settled = true; resolve(settlement); return true; } };
+  const submission = Object.freeze({
+    settled: new Promise<RuntimeSubmissionSettlement>((value) => {
+      resolve = value;
+    }),
+  });
+  return {
+    submission,
+    settle(settlement) {
+      if (settled) return false;
+      settled = true;
+      resolve(settlement);
+      return true;
+    },
+  };
 }
 
 /**
@@ -446,7 +526,12 @@ function itemActivity(
   const itemId = typeof item.id === 'string' && item.id !== '' ? item.id : null;
   if (itemId === null) return null;
   if (item.type === 'agentMessage') {
-    if (phase !== 'completed' || typeof item.text !== 'string' || item.text === '') return null;
+    if (
+      phase !== 'completed' ||
+      typeof item.text !== 'string' ||
+      item.text === ''
+    )
+      return null;
     return {
       kind: 'assistant.message',
       occurredAt,
@@ -464,8 +549,11 @@ function itemActivity(
   }
   const toolName = toolNameFor(item);
   if (toolName === null) return null;
-  const failed = phase === 'completed' &&
-    (item['status'] === 'failed' || item['error'] != null || item['success'] === false);
+  const failed =
+    phase === 'completed' &&
+    (item['status'] === 'failed' ||
+      item['error'] != null ||
+      item['success'] === false);
   const error = failed ? renderProviderError(item['error']) : null;
   return {
     kind: 'tool.call',
@@ -501,14 +589,19 @@ function argumentsFor(item: ThreadItem): JsonValue | null {
     });
   }
   return toJsonValue(
-    item['arguments'] ?? item['input'] ?? item['command'] ?? item['changes'] ?? null,
+    item['arguments'] ??
+      item['input'] ??
+      item['command'] ??
+      item['changes'] ??
+      null,
   );
 }
 
 function resultFor(item: ThreadItem): JsonValue | null {
   const result = item['result'] ?? item['output'] ?? item['aggregatedOutput'];
   if (result !== undefined) return toJsonValue(result);
-  if (item.type === 'dynamicToolCall') return normalizeInputTextItems(item['contentItems']);
+  if (item.type === 'dynamicToolCall')
+    return normalizeInputTextItems(item['contentItems']);
   return null;
 }
 
@@ -516,7 +609,8 @@ function normalizeInputTextItems(value: unknown): JsonValue | null {
   if (!Array.isArray(value)) return toJsonValue(value);
   if (value.length === 0) return null;
   const texts = value.map((entry) => {
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry))
+      return null;
     const record = entry as Record<string, unknown>;
     return record['type'] === 'inputText' && typeof record['text'] === 'string'
       ? record['text']
@@ -531,7 +625,9 @@ function renderProviderError(value: unknown): string | null {
   if (value == null) return null;
   const normalized = normalizeInputTextItems(value);
   if (normalized === null) return null;
-  return typeof normalized === 'string' ? normalized : JSON.stringify(normalized);
+  return typeof normalized === 'string'
+    ? normalized
+    : JSON.stringify(normalized);
 }
 
 function toolNameFor(item: ThreadItem): string | null {
@@ -550,20 +646,37 @@ function toolNameFor(item: ThreadItem): string | null {
 
 function toJsonValue(value: unknown): JsonValue | null {
   if (value === undefined) return null;
-  try { return JSON.parse(JSON.stringify(value)) as JsonValue; } catch { return String(value); }
+  try {
+    return JSON.parse(JSON.stringify(value)) as JsonValue;
+  } catch {
+    return String(value);
+  }
 }
 
-function restoreCollectedTurn(turn: CollectedTurn, codec: CodexOutputSchemaCodec): CollectedTurn {
+function restoreCollectedTurn(
+  turn: CollectedTurn,
+  codec: CodexOutputSchemaCodec,
+): CollectedTurn {
   const text = extractAssistantText(turn);
-  if (text === null) throw new Error('codex outputSchema restoration failed: completed turn has no assistant JSON text');
+  if (text === null)
+    throw new Error(
+      'codex outputSchema restoration failed: completed turn has no assistant JSON text',
+    );
   const restoredText = codec.restore(text);
   let replaced = false;
-  const items = [...turn.items].reverse().map((item) => {
-    if (replaced || item.type !== 'agentMessage' || item.text !== text) return item;
-    replaced = true;
-    return { ...item, text: restoredText };
-  }).reverse();
-  if (!replaced) throw new Error('codex outputSchema restoration failed: assistant JSON text was not found');
+  const items = [...turn.items]
+    .reverse()
+    .map((item) => {
+      if (replaced || item.type !== 'agentMessage' || item.text !== text)
+        return item;
+      replaced = true;
+      return { ...item, text: restoredText };
+    })
+    .reverse();
+  if (!replaced)
+    throw new Error(
+      'codex outputSchema restoration failed: assistant JSON text was not found',
+    );
   return { ...turn, items };
 }
 
@@ -572,7 +685,10 @@ function restoreCollectedTurn(turn: CollectedTurn, codec: CodexOutputSchemaCodec
  * token.usage activity. Snapshot values are the app-server's session totals;
  * the runtime differences nothing and keeps no usage history.
  */
-function tokenUsageActivity(turnId: string, usage: ThreadTokenUsage | null): RuntimeActivity | null {
+function tokenUsageActivity(
+  turnId: string,
+  usage: ThreadTokenUsage | null,
+): RuntimeActivity | null {
   const input = usage?.total?.inputTokens;
   const output = usage?.total?.outputTokens;
   if (!isTokenCount(input) || !isTokenCount(output)) return null;
@@ -584,7 +700,9 @@ function tokenUsageActivity(turnId: string, usage: ThreadTokenUsage | null): Run
   // used count here would make it indistinguishable from runtimes whose window
   // is structurally always absent.
   const hasContext =
-    isTokenCount(contextUsed) && isTokenCount(contextWindow) && contextWindow > 0;
+    isTokenCount(contextUsed) &&
+    isTokenCount(contextWindow) &&
+    contextWindow > 0;
   return {
     kind: 'token.usage',
     occurredAt: Date.now(),

@@ -110,7 +110,11 @@ interface TeamDissolveInput {
 }
 
 export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
-  const create: CoreCommandDefinition<'team.create', TeamCreateInput, TeamSummary> = {
+  const create: CoreCommandDefinition<
+    'team.create',
+    TeamCreateInput,
+    TeamSummary
+  > = {
     name: 'team.create',
     version: 1,
     input: objectSchema(
@@ -164,15 +168,18 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
     async execute(context, input) {
       const dispatcher = mustDispatcher(host, context);
-      const skillSources = await normalizeSkillSources(input.parsedSkillSources, {
-        requiredSources: TEAM_LEADER_REQUIRED_SKILL_SOURCES,
-      });
+      const skillSources = await normalizeSkillSources(
+        input.parsedSkillSources,
+        {
+          requiredSources: TEAM_LEADER_REQUIRED_SKILL_SOURCES,
+        },
+      );
       const { command } = input;
       const repo = repoWorktree(command.repo ?? null);
       // A named repository request without an explicit path resolves to the
       // dispatcher's own workspace, exactly as the existing creation path does.
       const repoCwd =
-        repo === null ? null : repo.cwd ?? (await dispatcher.workspace());
+        repo === null ? null : (repo.cwd ?? (await dispatcher.workspace()));
       // No catch: an idempotency conflict, a closed Team, and a missing Team
       // already state themselves, and anything else must reach the boundary
       // that logs it with its stack, name, and cause intact.
@@ -193,7 +200,11 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const submit: CoreCommandDefinition<'team.submit', TeamSubmitInput, TeamSubmitResult> = {
+  const submit: CoreCommandDefinition<
+    'team.submit',
+    TeamSubmitInput,
+    TeamSubmitResult
+  > = {
     name: 'team.submit',
     version: 1,
     input: objectSchema(
@@ -248,14 +259,10 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
   > = {
     name: 'team.interrupt',
     version: 1,
-    input: objectSchema(
-      { team_name: NON_EMPTY_STRING },
-      ['team_name'],
-    ),
-    output: objectSchema(
-      { status: enumOf(['interrupted', 'idle']) },
-      ['status'],
-    ),
+    input: objectSchema({ team_name: NON_EMPTY_STRING }, ['team_name']),
+    output: objectSchema({ status: enumOf(['interrupted', 'idle']) }, [
+      'status',
+    ]),
     parse(payload) {
       return {
         teamName: teamNameParam(commandPayload(payload), 'team_name'),
@@ -266,7 +273,11 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const list: CoreCommandDefinition<'team.list', void, { teams: TeamListRow[] }> = {
+  const list: CoreCommandDefinition<
+    'team.list',
+    void,
+    { teams: TeamListRow[] }
+  > = {
     name: 'team.list',
     version: 1,
     input: objectSchema({}),
@@ -280,13 +291,14 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const status: CoreCommandDefinition<'team.status', TeamNameInput, TeamSummary> = {
+  const status: CoreCommandDefinition<
+    'team.status',
+    TeamNameInput,
+    TeamSummary
+  > = {
     name: 'team.status',
     version: 1,
-    input: objectSchema(
-      { team_name: NON_EMPTY_STRING },
-      ['team_name'],
-    ),
+    input: objectSchema({ team_name: NON_EMPTY_STRING }, ['team_name']),
     output: OBJECT,
     parse(payload) {
       return { teamName: teamNameParam(commandPayload(payload), 'team_name') };

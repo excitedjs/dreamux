@@ -22,7 +22,10 @@ import { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { DispatcherInputSourceLifecycle } from './input-source-lifecycle.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';
 import { admittedTeammateOps } from './teammate-ops.js';
-import { teamLeaderHandle, type TeamLeaderHandle } from './team-leader-handle.js';
+import {
+  teamLeaderHandle,
+  type TeamLeaderHandle,
+} from './team-leader-handle.js';
 import {
   dispatcherAgentMcpDelegates,
   teamLeaderMcpDelegates,
@@ -97,8 +100,10 @@ export type { TeamLeaderHandle };
  * completion is the Dispatcher's own fact, stated by
  * `deliverCompletionToDispatcher` rather than supplied by a caller.
  */
-export interface TeamSubmitRequest
-  extends Omit<TeammateSubmitInput, 'deliverCompletion'> {
+export interface TeamSubmitRequest extends Omit<
+  TeammateSubmitInput,
+  'deliverCompletion'
+> {
   teamId: string;
 }
 
@@ -363,7 +368,9 @@ export class DispatcherService implements Dispatcher {
     try {
       this.scheduler_.stop();
       this.teams.stopSchedulers();
-      await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
+      await collectShutdownFailure(failures, () =>
+        this.workflowOwner.stopAll(),
+      );
       const teamStopError = await stopTeamRuntimes({
         dispatcherId: this.id,
         teams: this.teams,
@@ -386,20 +393,29 @@ export class DispatcherService implements Dispatcher {
       // Before channels close: a `created` tap's work (binding a chat to the
       // new Team, say) needs a live channel. Runtimes are stopped and
       // admission is closed, so a tap cannot hang on a Turn or a Command.
-      await collectShutdownFailure(failures, () => this.teams.drainCreatedHooks());
+      await collectShutdownFailure(failures, () =>
+        this.teams.drainCreatedHooks(),
+      );
       this.coreEvents.revokeSources();
       await collectShutdownFailure(failures, () =>
-        this.channels.closeAll(this.log));
+        this.channels.closeAll(this.log),
+      );
       await collectShutdownFailure(failures, () =>
-        this.inputSources.closePreparedChannels());
+        this.inputSources.closePreparedChannels(),
+      );
       this.channels.clear();
       await collectShutdownFailure(failures, () =>
-        this.inputSources.waitForSettledStart());
+        this.inputSources.waitForSettledStart(),
+      );
       await collectShutdownFailure(failures, () => this.admittedTasks.drain());
       // Again after the admitted drain, which ends every create that could
       // still start a `created` hook run.
-      await collectShutdownFailure(failures, () => this.teams.drainCreatedHooks());
-      await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
+      await collectShutdownFailure(failures, () =>
+        this.teams.drainCreatedHooks(),
+      );
+      await collectShutdownFailure(failures, () =>
+        this.workflowOwner.stopAll(),
+      );
       const lateTeamStopError = await stopTeamRuntimes({
         dispatcherId: this.id,
         teams: this.teams,
@@ -435,12 +451,14 @@ export class DispatcherService implements Dispatcher {
   /** Public Channel metadata in configuration order, without starting sessions. */
   listChannels(): ChannelMetadata[] {
     const live = this.channels.live();
-    return this.channels.configuredChannels().map((channel): ChannelMetadata => ({
-      channel_id: channel.id,
-      provider: channel.provider,
-      identity: channel.identity ?? '',
-      live: live.has(channel.id),
-    }));
+    return this.channels
+      .configuredChannels()
+      .map((channel): ChannelMetadata => ({
+        channel_id: channel.id,
+        provider: channel.provider,
+        identity: channel.identity ?? '',
+        live: live.has(channel.id),
+      }));
   }
 
   liveRuntimeStatus(): LiveDispatcherRuntimeStatus | null {
@@ -505,8 +523,9 @@ export class DispatcherService implements Dispatcher {
   }
 
   teamScheduler(teamId: string) {
-    return this.admitOperation(async () =>
-      (await this.teams.open(teamId)).scheduler);
+    return this.admitOperation(
+      async () => (await this.teams.open(teamId)).scheduler,
+    );
   }
 
   createTeam(input: {
@@ -542,7 +561,9 @@ export class DispatcherService implements Dispatcher {
   }
 
   /** Submit one turn to this dispatcher's own agent, as its caller stated it. */
-  submitToAgent(input: Omit<TeamSubmitRequest, 'teamId'>): Promise<TurnAdmission> {
+  submitToAgent(
+    input: Omit<TeamSubmitRequest, 'teamId'>,
+  ): Promise<TurnAdmission> {
     return this.admitOperation(() => this.mustAgent().submitInput(input));
   }
 
@@ -554,7 +575,8 @@ export class DispatcherService implements Dispatcher {
   /** Interrupt one Team's leader. */
   interruptTeamLeader(teamId: string) {
     return this.admitOperation(async () =>
-      (await this.teams.open(teamId)).interruptLeader());
+      (await this.teams.open(teamId)).interruptLeader(),
+    );
   }
 
   listTeams() {
@@ -602,14 +624,11 @@ export class DispatcherService implements Dispatcher {
     note: string;
     force?: boolean;
   }): Promise<TeamDissolveReceipt> {
-    return this.submitDissolve(
-      () => this.teams.open(input.teamId),
-      {
-        note: input.note,
-        force: input.force === true,
-        requester: 'team_leader',
-      },
-    );
+    return this.submitDissolve(() => this.teams.open(input.teamId), {
+      note: input.note,
+      force: input.force === true,
+      requester: 'team_leader',
+    });
   }
 
   /**

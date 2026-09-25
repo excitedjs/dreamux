@@ -61,8 +61,9 @@ describe('workflow runner', () => {
     const compiled = compileWorkflowScript(source);
 
     await expect(
-      new Script(compiled, { filename: 'submitted-workflow.mjs' })
-        .runInNewContext(),
+      new Script(compiled, {
+        filename: 'submitted-workflow.mjs',
+      }).runInNewContext(),
     ).rejects.toMatchObject({
       stack: expect.stringContaining('submitted-workflow.mjs:8'),
     });
@@ -89,8 +90,9 @@ describe('workflow runner', () => {
     const compiled = compileWorkflowScript(source);
 
     await expect(
-      new Script(compiled, { filename: 'short-line-workflow.mjs' })
-        .runInNewContext(),
+      new Script(compiled, {
+        filename: 'short-line-workflow.mjs',
+      }).runInNewContext(),
     ).rejects.toMatchObject({
       stack: expect.stringContaining('short-line-workflow.mjs:15'),
     });
@@ -121,24 +123,24 @@ describe('workflow runner', () => {
       ].join('\n'),
     ],
   ])('preserves strict execution for %s', async (_layout, metadata) => {
-    const assignment = await runScript([
-      metadata,
-      'workflowStrictLeak = 1;',
-      'return null;',
-    ].join('\n'));
+    const assignment = await runScript(
+      [metadata, 'workflowStrictLeak = 1;', 'return null;'].join('\n'),
+    );
 
     expect(assignment.result).toEqual({
       type: 'run_result',
       status: 'failed',
       error: 'workflowStrictLeak is not defined',
     });
-    const thisSemantics = await runScript([
-      metadata,
-      'return {',
-      '  topLevel: this === undefined,',
-      '  nested: (function() { return this === undefined; })(),',
-      '};',
-    ].join('\n'));
+    const thisSemantics = await runScript(
+      [
+        metadata,
+        'return {',
+        '  topLevel: this === undefined,',
+        '  nested: (function() { return this === undefined; })(),',
+        '};',
+      ].join('\n'),
+    );
     expect(thisSemantics.result).toEqual({
       type: 'run_result',
       status: 'completed',
@@ -313,11 +315,12 @@ describe('workflow runner', () => {
       status: 'completed',
       result: { value: 42, phase: 'finish' },
     });
-    expect(execution.messages.filter((message) => message.type === 'emit'))
-      .toEqual([
-        { type: 'emit', kind: 'phase', message: 'prepare' },
-        { type: 'emit', kind: 'phase', message: 'finish' },
-      ]);
+    expect(
+      execution.messages.filter((message) => message.type === 'emit'),
+    ).toEqual([
+      { type: 'emit', kind: 'phase', message: 'prepare' },
+      { type: 'emit', kind: 'phase', message: 'finish' },
+    ]);
   });
 
   it('passes stable original items and zero-based indexes to every pipeline stage', async () => {
@@ -424,8 +427,11 @@ describe('workflow runner', () => {
     ['boolean', true],
     ['null', null],
     ['omitted', undefined],
-  ])('exposes %s args with direct JavaScript semantics', async (_kind, args) => {
-    const execution = await runScript(`
+  ])(
+    'exposes %s args with direct JavaScript semantics',
+    async (_kind, args) => {
+      const execution = await runScript(
+        `
       export const meta = { name: 'args', description: 'direct JSON args' };
       return {
         value: args,
@@ -434,25 +440,30 @@ describe('workflow runner', () => {
         mapped: Array.isArray(args) ? args.map((value) => String(value)) : null,
         type: typeof args,
       };
-    `, args);
+    `,
+        args,
+      );
 
-    expect(execution.result).toEqual({
-      type: 'run_result',
-      status: 'completed',
-      result: {
-        value: args,
-        question:
-          args === null
-            ? null
-            : typeof args === 'object' && !Array.isArray(args)
-              ? (args as { question?: unknown }).question
-              : undefined,
-        isArray: Array.isArray(args),
-        mapped: Array.isArray(args) ? args.map((value) => String(value)) : null,
-        type: typeof args,
-      },
-    });
-  });
+      expect(execution.result).toEqual({
+        type: 'run_result',
+        status: 'completed',
+        result: {
+          value: args,
+          question:
+            args === null
+              ? null
+              : typeof args === 'object' && !Array.isArray(args)
+                ? (args as { question?: unknown }).question
+                : undefined,
+          isArray: Array.isArray(args),
+          mapped: Array.isArray(args)
+            ? args.map((value) => String(value))
+            : null,
+          type: typeof args,
+        },
+      });
+    },
+  );
 
   it('accepts 4096 helper inputs and rejects 4097 before invoking work', async () => {
     const execution = await runScript(`
@@ -575,8 +586,9 @@ describe('workflow runner', () => {
         status: 'failed',
         error,
       });
-      expect(execution.messages.some((message) => message.type === 'agent_start'))
-        .toBe(false);
+      expect(
+        execution.messages.some((message) => message.type === 'agent_start'),
+      ).toBe(false);
     },
   );
 
@@ -599,12 +611,22 @@ describe('workflow runner', () => {
 
   it('executes both issue #318 acceptance fixtures unmodified', async () => {
     const deepResearch = await readFile(
-      join(PACKAGE_ROOT, 'tests', 'fixtures', 'workflows', 'deep-research-max.mjs'),
+      join(
+        PACKAGE_ROOT,
+        'tests',
+        'fixtures',
+        'workflows',
+        'deep-research-max.mjs',
+      ),
       'utf8',
     );
     const deepExecution = await runScript(
       deepResearch,
-      { question: 'How does fixture compatibility work?', angles: 1, maxSources: 1 },
+      {
+        question: 'How does fixture compatibility work?',
+        angles: 1,
+        maxSources: 1,
+      },
       (message, child) => {
         if (message.type !== 'agent_start') return;
         let result: unknown;
@@ -614,18 +636,22 @@ describe('workflow runner', () => {
           };
         } else if (message.prompt.startsWith('Research angle')) {
           result = {
-            sources: [{
-              url: 'https://example.com/source',
-              title: 'Example source',
-              why: 'fixture',
-            }],
+            sources: [
+              {
+                url: 'https://example.com/source',
+                title: 'Example source',
+                why: 'fixture',
+              },
+            ],
           };
         } else if (message.prompt.startsWith('Fetch ')) {
           result = {
-            claims: [{
-              text: 'The fixture executed.',
-              quote: 'The fixture executed.',
-            }],
+            claims: [
+              {
+                text: 'The fixture executed.',
+                quote: 'The fixture executed.',
+              },
+            ],
           };
         } else if (message.prompt.startsWith('You are skeptic')) {
           result = { refuted: false, reasoning: 'synthetic verification' };
@@ -651,7 +677,13 @@ describe('workflow runner', () => {
     });
 
     const codeReview = await readFile(
-      join(PACKAGE_ROOT, 'tests', 'fixtures', 'workflows', 'code-review-max.mjs'),
+      join(
+        PACKAGE_ROOT,
+        'tests',
+        'fixtures',
+        'workflows',
+        'code-review-max.mjs',
+      ),
       'utf8',
     );
     let emittedFinding = false;
@@ -671,13 +703,15 @@ describe('workflow runner', () => {
           result = {
             findings: emittedFinding
               ? []
-              : [{
-                  file: 'src/example.ts',
-                  line: 1,
-                  title: 'Synthetic issue',
-                  detail: 'Fixture finding',
-                  reason: 'bug',
-                }],
+              : [
+                  {
+                    file: 'src/example.ts',
+                    line: 1,
+                    title: 'Synthetic issue',
+                    detail: 'Fixture finding',
+                    reason: 'bug',
+                  },
+                ],
           };
           emittedFinding = true;
         } else if (message.prompt.startsWith('Confidence-score')) {
@@ -694,12 +728,14 @@ describe('workflow runner', () => {
       type: 'run_result',
       status: 'completed',
       result: {
-        issues: [{
-          file: 'src/example.ts',
-          confidence: 100,
-          votes: 3,
-          index: 0,
-        }],
+        issues: [
+          {
+            file: 'src/example.ts',
+            confidence: 100,
+            votes: 3,
+            index: 0,
+          },
+        ],
         report: '### Code review\nFound 1 issue.',
       },
     });
@@ -709,18 +745,21 @@ describe('workflow runner', () => {
     ['Date.now()', 'Date.now() is disabled in workflows'],
     ['new Date()', 'new Date() without arguments is disabled in workflows'],
     ['Math.random()', 'Math.random() is disabled in workflows'],
-  ])('fails loudly for nondeterministic expression %s', async (expression, error) => {
-    const execution = await runScript(`
+  ])(
+    'fails loudly for nondeterministic expression %s',
+    async (expression, error) => {
+      const execution = await runScript(`
       export const meta = { name: 'invalid', description: 'invalid' };
       return ${expression};
     `);
 
-    expect(execution.result).toEqual({
-      type: 'run_result',
-      status: 'failed',
-      error,
-    });
-  });
+      expect(execution.result).toEqual({
+        type: 'run_result',
+        status: 'failed',
+        error,
+      });
+    },
+  );
 
   it('rejects static imports before agents start', async () => {
     const execution = await runScript(`
@@ -735,8 +774,9 @@ describe('workflow runner', () => {
       status: 'failed',
       error: 'workflow imports are disabled',
     });
-    expect(execution.messages.some((message) => message.type === 'agent_start'))
-      .toBe(false);
+    expect(
+      execution.messages.some((message) => message.type === 'agent_start'),
+    ).toBe(false);
   });
 
   it('fails dynamic import only when its expression executes', async () => {
@@ -793,9 +833,9 @@ describe('workflow runner', () => {
       status: 'failed',
       error: 'workflow script must start with export const meta',
     });
-    expect(
-      execution.messages.some((m) => m.type === 'agent_start'),
-    ).toBe(false);
+    expect(execution.messages.some((m) => m.type === 'agent_start')).toBe(
+      false,
+    );
   });
 
   it('force-stops a workflow that blocks the VM event loop', async () => {
@@ -804,10 +844,7 @@ describe('workflow runner', () => {
       resolveReady = resolveReadyPromise;
     });
     let resolveExit:
-      | ((exit: {
-          code: number | null;
-          signal: NodeJS.Signals | null;
-        }) => void)
+      | ((exit: { code: number | null; signal: NodeJS.Signals | null }) => void)
       | undefined;
     const exited = new Promise<{
       code: number | null;
@@ -881,7 +918,10 @@ interface RunnerExecution {
 async function runScript(
   script: string,
   args: unknown = undefined,
-  onMessage?: (message: WorkflowRunnerChildMessage, child: ChildProcess) => void,
+  onMessage?: (
+    message: WorkflowRunnerChildMessage,
+    child: ChildProcess,
+  ) => void,
 ): Promise<RunnerExecution> {
   const child = fork(RUNNER_PATH, [], {
     execArgv: ['--experimental-vm-modules'],
@@ -921,7 +961,11 @@ async function runScript(
     5_000,
     'workflow runner result',
   );
-  const exit = await withTimeout(waitForExit(child), 2_000, 'workflow runner exit');
+  const exit = await withTimeout(
+    waitForExit(child),
+    2_000,
+    'workflow runner exit',
+  );
   liveChildren.delete(child);
   return { result, messages, exit };
 }

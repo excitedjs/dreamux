@@ -7,10 +7,11 @@ import { InFlightWork } from '../in-flight-work.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
+import type { CreateLockedTeammateOptions } from '../teammate-collection/index.js';
 import type {
-  CreateLockedTeammateOptions,
-} from '../teammate-collection/index.js';
-import type { Turn, TurnAdmission } from '../teammate-service/turn-recording.js';
+  Turn,
+  TurnAdmission,
+} from '../teammate-service/turn-recording.js';
 import type { LockedTeammate } from '../teammate-service/types.js';
 import { WORKFLOW_AGENT_SYSTEM_PROMPT } from './agent-policy.js';
 import {
@@ -145,7 +146,9 @@ export class WorkflowRun {
   }
 
   /** Resolves once this run is durably terminal; the owner reads it to evict. */
-  get settled(): Promise<void> { return this.terminal.settled; }
+  get settled(): Promise<void> {
+    return this.terminal.settled;
+  }
 
   snapshot(): WorkflowRunRecord {
     return structuredClone(this.record);
@@ -198,10 +201,8 @@ export class WorkflowRun {
       );
       return;
     }
-    if (
-      this.runnerTerminalMessageSeen ||
-      this.terminal.requested !== null
-    ) return;
+    if (this.runnerTerminalMessageSeen || this.terminal.requested !== null)
+      return;
     if (message.type === 'run_result') this.runnerTerminalMessageSeen = true;
     const task = this.runnerMessageTail
       .then(() => this.handleRunnerMessage(message))
@@ -223,7 +224,8 @@ export class WorkflowRun {
         if (
           this.record.status !== 'running' ||
           this.terminal.requested !== null
-        ) return;
+        )
+          return;
         await this.mutate(async () => {
           if (message.kind === 'phase') this.record.phase = message.message;
           else this.record.last_log = message.message;
@@ -240,14 +242,16 @@ export class WorkflowRun {
         if (this.terminal.requested !== null) return;
         await this.terminal.request(
           message.status === 'completed' ? 'completed' : 'failed',
-          message.status === 'completed' ? message.result ?? null : null,
+          message.status === 'completed' ? (message.result ?? null) : null,
           message.status === 'completed' ? null : message.error,
         );
         return;
     }
   }
 
-  private async handleAgentStart(message: WorkflowAgentStartMessage): Promise<void> {
+  private async handleAgentStart(
+    message: WorkflowAgentStartMessage,
+  ): Promise<void> {
     if (
       !this.terminal.accepting ||
       this.record.status !== 'running' ||
@@ -257,7 +261,10 @@ export class WorkflowRun {
       return;
     }
     if (this.calls.has(message.index)) {
-      await this.sendAgentError(message.index, 'duplicate workflow agent index');
+      await this.sendAgentError(
+        message.index,
+        'duplicate workflow agent index',
+      );
       return;
     }
     if (this.calls.size >= MAX_AGENTS) {
@@ -338,7 +345,8 @@ export class WorkflowRun {
 
       const materialization = this.deps.createLocked(
         {
-          name: nonEmpty(call.options.label) ??
+          name:
+            nonEmpty(call.options.label) ??
             `workflow-${this.record.run_id}-${call.record.index + 1}`,
           prompt,
           intent:
@@ -410,11 +418,7 @@ export class WorkflowRun {
             ? publicError
             : undefined,
         ).catch((persistenceError: unknown) => {
-          this.terminal.observe(
-            'failed',
-            null,
-            errorMessage(persistenceError),
-          );
+          this.terminal.observe('failed', null, errorMessage(persistenceError));
         });
       }
     } finally {
@@ -429,11 +433,12 @@ export class WorkflowRun {
     if (admission.status !== 'submitted') {
       const stopped =
         admission.status === 'stopped' || admission.status === 'skipped';
-      const error = admission.status === 'failed' || admission.status === 'ambiguous'
-        ? admission.error.message
-        : stopped
-          ? null
-          : `workflow agent submission ${admission.status}`;
+      const error =
+        admission.status === 'failed' || admission.status === 'ambiguous'
+          ? admission.error.message
+          : stopped
+            ? null
+            : `workflow agent submission ${admission.status}`;
       const runnerError =
         (admission.status === 'failed' || admission.status === 'ambiguous') &&
         isUnsupportedFeatureError(admission.error, 'outputSchema')
@@ -455,7 +460,15 @@ export class WorkflowRun {
     } catch (error) {
       const persistenceError = errorMessage(error);
       await this.terminal.failAfterNotification(persistenceError, () =>
-        this.completeAgent(call, 'failed', null, persistenceError, persistenceError, true));
+        this.completeAgent(
+          call,
+          'failed',
+          null,
+          persistenceError,
+          persistenceError,
+          true,
+        ),
+      );
       return;
     }
     if (outcome.status !== 'completed') {
@@ -501,7 +514,8 @@ export class WorkflowRun {
     status: Extract<WorkflowAgentStatus, 'completed' | 'failed' | 'stopped'>,
     result: unknown,
     error: string | null,
-    runnerError?: string, deliverWhileTerminal = false,
+    runnerError?: string,
+    deliverWhileTerminal = false,
   ): Promise<void> {
     if (call.completed) return;
     call.resultCandidate ??= {
@@ -564,16 +578,19 @@ export class WorkflowRun {
     const runnerStopResults = await Promise.allSettled([this.runner.stop()]);
     await this.materializations.drain();
 
-    const handles = [...new Set(
-      [...this.calls.values()]
-        .map((call) => call.handle)
-        .filter((handle): handle is LockedTeammate => handle !== null),
-    )].filter((handle) => !this.unlockedHandles.has(handle));
+    const handles = [
+      ...new Set(
+        [...this.calls.values()]
+          .map((call) => call.handle)
+          .filter((handle): handle is LockedTeammate => handle !== null),
+      ),
+    ].filter((handle) => !this.unlockedHandles.has(handle));
     const closeResults = await Promise.allSettled(
       handles.map(async (handle) =>
         handle.close({
           note: `Workflow ${this.record.run_id} ${requestedStatus}`,
-        })),
+        }),
+      ),
     );
     if (closeResults.some((close) => close.status === 'rejected')) {
       throwSettledFailures(
@@ -657,9 +674,8 @@ export class WorkflowRun {
           run_id: this.record.run_id,
           status: candidate.status,
           agent_count: candidate.agents.length,
-          err: candidate.error === null
-            ? undefined
-            : { message: candidate.error },
+          err:
+            candidate.error === null ? undefined : { message: candidate.error },
         },
         'workflow run terminal',
       );

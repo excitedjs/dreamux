@@ -45,7 +45,9 @@ describe('Feishu inbound work fencing', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
     const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 25 });
+    const work = createFeishuInboundWork(session(controller), {
+      timeoutMs: 25,
+    });
     works.push(work);
 
     const result = runFeishuInboundWork(
@@ -62,18 +64,22 @@ describe('Feishu inbound work fencing', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
     const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 100 });
+    const work = createFeishuInboundWork(session(controller), {
+      timeoutMs: 100,
+    });
     works.push(work);
     let calls = 0;
 
-    await expect(runFeishuInboundWork(
-      work,
-      async () => {
-        calls += 1;
-        return 'unexpected';
-      },
-      Date.now(),
-    )).rejects.toBeInstanceOf(Error);
+    await expect(
+      runFeishuInboundWork(
+        work,
+        async () => {
+          calls += 1;
+          return 'unexpected';
+        },
+        Date.now(),
+      ),
+    ).rejects.toBeInstanceOf(Error);
     expect(calls).toBe(0);
   });
 
@@ -88,7 +94,9 @@ describe('Feishu inbound work fencing', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
     const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 10 });
+    const work = createFeishuInboundWork(session(controller), {
+      timeoutMs: 10,
+    });
     works.push(work);
 
     let releaseOperation: (value: string) => void = () => undefined;
@@ -126,7 +134,9 @@ describe('Feishu inbound work fencing', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
     const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 1_000 });
+    const work = createFeishuInboundWork(session(controller), {
+      timeoutMs: 1_000,
+    });
     works.push(work);
     const lateValues: string[] = [];
 

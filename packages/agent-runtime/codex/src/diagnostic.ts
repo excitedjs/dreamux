@@ -26,10 +26,13 @@ import { representativeCodexSocketPath } from './internal/socket.js';
 import { resolveCodexBinPath } from './bin.js';
 import { MIN_CODEX_VERSION, codexVersionSatisfies } from './version.js';
 
-type CodexDiagnosticContext = AgentRuntimeDiagnosticContext<DispatcherCodexConfig>;
+type CodexDiagnosticContext =
+  AgentRuntimeDiagnosticContext<DispatcherCodexConfig>;
 
 function codexBinCheckName(scope: CodexDiagnosticContext['scope']): string {
-  return scope === 'managedService' ? 'managed service Codex binary' : 'codex binary';
+  return scope === 'managedService'
+    ? 'managed service Codex binary'
+    : 'codex binary';
 }
 
 async function checkCodexVersion(
@@ -62,12 +65,18 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
         },
       ];
     },
-    async runDiagnostic(context, runner): Promise<AgentRuntimeDiagnosticResult> {
+    async runDiagnostic(
+      context,
+      runner,
+    ): Promise<AgentRuntimeDiagnosticResult> {
       const cliArgs = codexArgsToCli(codexArgsFromConfig(context.config));
       const socketDirs = context.paths?.runtimeSocketDirs() ?? [];
       const homeContext = dispatcherCodexHomeDoctorContext(context.runtime_id, {
         codexCliArgs: cliArgs,
-        socketPath: representativeCodexSocketPath(socketDirs, context.runtime_id),
+        socketPath: representativeCodexSocketPath(
+          socketDirs,
+          context.runtime_id,
+        ),
       });
       const home = await validateDispatcherCodexHome(homeContext, {
         env: context.env,

@@ -21,7 +21,9 @@ export class UnsupportedChannelProviderError extends Error {
     readonly providerRef: string,
     readonly reason: string,
   ) {
-    super(`channel provider ${JSON.stringify(providerRef)} is not supported: ${reason}`);
+    super(
+      `channel provider ${JSON.stringify(providerRef)} is not supported: ${reason}`,
+    );
     this.name = 'UnsupportedChannelProviderError';
   }
 }
@@ -68,7 +70,9 @@ export class ChannelProviderCatalog {
     return this.registry
       .listByKind('channel')
       .map((descriptor) => this.channelProviderForDescriptor(descriptor))
-      .filter((provider): provider is ChannelProvider<unknown> => provider !== null);
+      .filter(
+        (provider): provider is ChannelProvider<unknown> => provider !== null,
+      );
   }
 
   resolve(ref: string): RegisteredChannelProvider {

@@ -26,8 +26,7 @@
 import { describe, it, expect } from 'vitest';
 
 export type Detection =
-  | { state: 'ok'; version: string }
-  | { state: 'missing'; reason: string };
+  { state: 'ok'; version: string } | { state: 'missing'; reason: string };
 
 /**
  * Pure-ish decision logic, split out so it can be unit-tested without
@@ -36,15 +35,24 @@ export type Detection =
  */
 export function classifyDetection(rawOutput: string | null): Detection {
   if (rawOutput === null) {
-    return { state: 'missing', reason: 'codex CLI did not respond to --version' };
+    return {
+      state: 'missing',
+      reason: 'codex CLI did not respond to --version',
+    };
   }
   const m = rawOutput.match(/(\d+\.\d+\.\d+)/);
-  if (!m) return { state: 'missing', reason: `unparseable codex --version output: ${rawOutput}` };
+  if (!m)
+    return {
+      state: 'missing',
+      reason: `unparseable codex --version output: ${rawOutput}`,
+    };
   return { state: 'ok', version: m[1]! };
 }
 
 function versionAtLeast(version: string, min: string): boolean {
-  const actualParts = version.split('.').map((part) => Number.parseInt(part, 10));
+  const actualParts = version
+    .split('.')
+    .map((part) => Number.parseInt(part, 10));
   const minParts = min.split('.').map((part) => Number.parseInt(part, 10));
   for (let i = 0; i < Math.max(actualParts.length, minParts.length); i += 1) {
     const actual = actualParts[i] ?? 0;
@@ -60,9 +68,18 @@ function versionAtLeast(version: string, min: string): boolean {
 // deleted) live gate's skip/fail-loud decision relied on.
 describe('codex detection logic', () => {
   it('classifies parseable versions as ok', () => {
-    expect(classifyDetection('codex-cli 0.135.0')).toEqual({ state: 'ok', version: '0.135.0' });
-    expect(classifyDetection('codex-cli 0.136.0')).toEqual({ state: 'ok', version: '0.136.0' });
-    expect(classifyDetection('codex-cli 1.0.0')).toEqual({ state: 'ok', version: '1.0.0' });
+    expect(classifyDetection('codex-cli 0.135.0')).toEqual({
+      state: 'ok',
+      version: '0.135.0',
+    });
+    expect(classifyDetection('codex-cli 0.136.0')).toEqual({
+      state: 'ok',
+      version: '0.136.0',
+    });
+    expect(classifyDetection('codex-cli 1.0.0')).toEqual({
+      state: 'ok',
+      version: '1.0.0',
+    });
   });
 
   it('classifies missing/unparseable inputs as missing', () => {

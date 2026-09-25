@@ -73,17 +73,19 @@ export class FeishuCotIoHandle {
     }
   }
 
-  async completeWithError(
-    card: { readonly cotId: string; readonly messageId: string },
-  ): Promise<void> {
+  async completeWithError(card: {
+    readonly cotId: string;
+    readonly messageId: string;
+  }): Promise<void> {
     try {
       await runFeishuBoundedOperation({
         deadlineAt: Date.now() + FEISHU_COT_OPERATION_TIMEOUT_MS,
-        operation: () => this.client.completeCot({
-          cotId: card.cotId,
-          messageId: card.messageId,
-          reason: 'error',
-        }),
+        operation: () =>
+          this.client.completeCot({
+            cotId: card.cotId,
+            messageId: card.messageId,
+            reason: 'error',
+          }),
       });
     } catch (error) {
       this.logFailure('complete', error);

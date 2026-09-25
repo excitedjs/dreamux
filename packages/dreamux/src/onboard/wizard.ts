@@ -212,7 +212,9 @@ function parseChannelSelections(
   const providers = new Set<string>();
   for (const entry of out) {
     if (ids.has(entry.id)) {
-      throw new Error(`onboard channel id '${entry.id}' is declared more than once`);
+      throw new Error(
+        `onboard channel id '${entry.id}' is declared more than once`,
+      );
     }
     ids.add(entry.id);
     if (providers.has(entry.provider)) {
@@ -236,7 +238,8 @@ function parseProviderSelection(
   const id = eq >= 0 ? trimmed.slice(0, eq).trim() : defaultId;
   const provider = eq >= 0 ? trimmed.slice(eq + 1).trim() : trimmed;
   if (id === '') throw new Error(`--${optionName} id must not be empty`);
-  if (provider === '') throw new Error(`--${optionName} provider must not be empty`);
+  if (provider === '')
+    throw new Error(`--${optionName} provider must not be empty`);
   return { id, provider };
 }
 
@@ -331,7 +334,9 @@ function parseConfigJsonMap(
   for (const raw of optionValues(input)) {
     const { id, json } = splitConfigJson(raw, defaultId, optionName);
     if (out.has(id)) {
-      throw new Error(`--${optionName} for id '${id}' is declared more than once`);
+      throw new Error(
+        `--${optionName} for id '${id}' is declared more than once`,
+      );
     }
     const parsed = parseJsonObject(json, optionName);
     out.set(id, parsed);
@@ -355,7 +360,10 @@ function splitConfigJson(
   return { id, json };
 }
 
-function parseJsonObject(raw: string, optionName: string): Record<string, unknown> {
+function parseJsonObject(
+  raw: string,
+  optionName: string,
+): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -375,7 +383,11 @@ function parseJsonObject(raw: string, optionName: string): Record<string, unknow
  */
 async function onboardProviderRegistry(): Promise<ProviderRegistry> {
   const registry = createBuiltinProviderRegistry();
-  await loadPlugins({ registry, entries: [], logger: createLogger({ name: 'onboard' }) });
+  await loadPlugins({
+    registry,
+    entries: [],
+    logger: createLogger({ name: 'onboard' }),
+  });
   return registry;
 }
 
@@ -475,10 +487,7 @@ async function promptConfirm(
   return unwrapPrompt(value);
 }
 
-async function promptSecret(
-  label: string,
-  required = true,
-): Promise<string> {
+async function promptSecret(label: string, required = true): Promise<string> {
   const value = await password({
     message: label,
     validate: (input) =>

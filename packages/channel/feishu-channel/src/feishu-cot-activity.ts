@@ -13,7 +13,10 @@ import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 import type { CotLogScope } from './feishu-cot-diagnostics.js';
 
 type CotToolCallActivity = Extract<RuntimeActivity, { kind: 'tool.call' }>;
-type CotAssistantMessage = Extract<RuntimeActivity, { kind: 'assistant.message' }>;
+type CotAssistantMessage = Extract<
+  RuntimeActivity,
+  { kind: 'assistant.message' }
+>;
 type CotTokenUsage = Extract<RuntimeActivity, { kind: 'token.usage' }>;
 import {
   textMessageEvents,
@@ -105,8 +108,10 @@ export function acceptToolCallActivity(
   const events = toolCallResultEvents(event);
   state.openCalls.delete(event.id);
   if (events.length === 0) return;
-  if (sink.admitOutbox(state, presentation, events) &&
-      presentation.phase === 'writing') {
+  if (
+    sink.admitOutbox(state, presentation, events) &&
+    presentation.phase === 'writing'
+  ) {
     sink.scheduleFlush(key, state, presentation);
   }
 }
@@ -119,7 +124,15 @@ export function acceptAssistantMessage(
   event: CotAssistantMessage,
 ): void {
   if (!presentable(state)) return;
-  acceptDisplayText(sink, key, state, 'assistant', event.id, event.text, 'message');
+  acceptDisplayText(
+    sink,
+    key,
+    state,
+    'assistant',
+    event.id,
+    event.text,
+    'message',
+  );
 }
 
 /** A compaction is one line, never the summary the runtime wrote for itself. */
@@ -129,7 +142,14 @@ export function acceptContextCompacted(
   state: CotState,
   event: Extract<RuntimeActivity, { kind: 'context.compacted' }>,
 ): void {
-  acceptFixedLabel(sink, key, state, event.id, 'COMPACTED SESSION', 'compacted');
+  acceptFixedLabel(
+    sink,
+    key,
+    state,
+    event.id,
+    'COMPACTED SESSION',
+    'compacted',
+  );
 }
 
 /** The interrupt line on this recipient's card, in Claude Code's own words. */
@@ -139,7 +159,14 @@ export function acceptTurnInterrupted(
   state: CotState,
   event: Extract<RuntimeActivity, { kind: 'turn.interrupted' }>,
 ): void {
-  acceptFixedLabel(sink, key, state, event.id, '[Request interrupted by user]', 'interrupted');
+  acceptFixedLabel(
+    sink,
+    key,
+    state,
+    event.id,
+    '[Request interrupted by user]',
+    'interrupted',
+  );
 }
 
 function acceptFixedLabel(
@@ -166,7 +193,15 @@ export function acceptTokenUsage(
   event: CotTokenUsage,
 ): void {
   if (!presentable(state)) return;
-  acceptDisplayText(sink, key, state, 'assistant', event.id, tokenUsageSummary(event), 'usage');
+  acceptDisplayText(
+    sink,
+    key,
+    state,
+    'assistant',
+    event.id,
+    tokenUsageSummary(event),
+    'usage',
+  );
 }
 
 /** Render cumulative counters in the runtime's historical one-line shape. */
@@ -174,9 +209,10 @@ export function tokenUsageSummary(event: CotTokenUsage): string {
   const context = event.context;
   let contextUsage = 'n/a';
   if (context !== null) {
-    contextUsage = context.windowTokens !== null && context.windowTokens > 0
-      ? `${Math.round(context.usedTokens / context.windowTokens * 100)}%`
-      : formatTokenCount(context.usedTokens);
+    contextUsage =
+      context.windowTokens !== null && context.windowTokens > 0
+        ? `${Math.round((context.usedTokens / context.windowTokens) * 100)}%`
+        : formatTokenCount(context.usedTokens);
   }
   const total = event.inputTokens + event.outputTokens;
   return `Context usage ${contextUsage} | Token usage: total=${formatTokenCount(total)} input=${formatTokenCount(event.inputTokens)} output=${formatTokenCount(event.outputTokens)}`;
@@ -208,7 +244,15 @@ export function acceptInputMessage(
   input: { readonly displayId: string; readonly content: string },
 ): void {
   if (!presentable(state)) return;
-  acceptDisplayText(sink, key, state, 'user', input.displayId, input.content, 'input');
+  acceptDisplayText(
+    sink,
+    key,
+    state,
+    'user',
+    input.displayId,
+    input.content,
+    'input',
+  );
 }
 
 export function acceptDisplayText(
@@ -220,7 +264,12 @@ export function acceptDisplayText(
   content: string,
   namespace: string,
 ): void {
-  const events = textMessageEvents({ namespace, sourceId: displayId, role, content });
+  const events = textMessageEvents({
+    namespace,
+    sourceId: displayId,
+    role,
+    content,
+  });
   if (events.length === 0) {
     sink.debug(
       sink.logScope(state),

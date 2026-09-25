@@ -33,7 +33,8 @@ export interface CodexRuntimeDeps {
   allocateSocketPath: (id: string) => string;
   skillSources?: readonly AgentRuntimeSkillSource[];
   codexBinPath?: string;
-  codexProcessFactory?: ((opts: CodexProcessOptions) => CodexProcess) | undefined;
+  codexProcessFactory?:
+    ((opts: CodexProcessOptions) => CodexProcess) | undefined;
   codexClientFactory?: ((socketPath: string) => CodexWsClient) | undefined;
   codexHomeDoctor?:
     | ((info: { runtimeId: string; cwd: string }) => void | Promise<void>)

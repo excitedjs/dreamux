@@ -12,7 +12,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 /** The one activity member this presentation layer renders. */
-export type CotToolCallActivity = Extract<RuntimeActivity, { kind: 'tool.call' }>;
+export type CotToolCallActivity = Extract<
+  RuntimeActivity,
+  { kind: 'tool.call' }
+>;
 
 /** What the pills of a result's item list may spend before the rest is folded into a `more` pill. */
 export const TOOL_ITEMS_SOFT_MAX_BYTES = 512;
@@ -41,7 +44,6 @@ export function inputDisplayContent(event: TeammateInputEvent): string {
   if (event.source === SYSTEM_SOURCE) return 'SYSTEM RESTARTED';
   return event.content;
 }
-
 
 /** One pill of a `list` result segment, as the COT Message Brief shapes it. */
 export interface CotListItem {
@@ -86,7 +88,8 @@ interface ToolPresentation {
  * uses the built-ins a runtime's tool actions map onto, and the library's
  * `app-default_outlined` for a call nothing could label.
  */
-export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'app-default_outlined';
+export type CotToolIcon =
+  'search' | 'bash' | 'read' | 'write' | 'app-default_outlined';
 
 const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   read: 'Read',
@@ -119,15 +122,17 @@ const ACTION_VERBS: Readonly<Record<RuntimeToolAction, string>> = {
 };
 
 export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
-  const actionName = event.action === null
-    ? event.toolName
-    : ACTION_TOOL_NAMES[event.action];
+  const actionName =
+    event.action === null ? event.toolName : ACTION_TOOL_NAMES[event.action];
   const title = runtimeToolTitle(event);
   // A call with neither an action nor a label — an MCP tool, today — shows
   // its name behind the generic app icon.
-  const icon: CotToolIcon | undefined = event.action === null
-    ? (title === null ? 'app-default_outlined' : undefined)
-    : ACTION_ICONS[event.action];
+  const icon: CotToolIcon | undefined =
+    event.action === null
+      ? title === null
+        ? 'app-default_outlined'
+        : undefined
+      : ACTION_ICONS[event.action];
   return {
     toolCallName: actionName,
     icon,
@@ -198,7 +203,8 @@ export function prettyJson(text: string): string | null {
 function itemList(event: CotToolCallActivity): CotItemList | null {
   if (event.items.length === 0) return null;
   const icon = event.action === null ? undefined : ACTION_ICONS[event.action];
-  const pill = (text: string): CotListItem => (icon === undefined ? { text } : { text, icon });
+  const pill = (text: string): CotListItem =>
+    icon === undefined ? { text } : { text, icon };
   const items: CotListItem[] = [];
   let bytes = 0;
   for (const [index, item] of event.items.entries()) {
@@ -208,8 +214,12 @@ function itemList(event: CotToolCallActivity): CotItemList | null {
         return { items, more: { text: `+${event.items.length - index}` } };
       }
       const rest = event.items.length - index - 1;
-      const truncated = [pill(truncateEscaped(item, TOOL_ITEMS_SOFT_MAX_BYTES))];
-      return rest === 0 ? { items: truncated } : { items: truncated, more: { text: `+${rest}` } };
+      const truncated = [
+        pill(truncateEscaped(item, TOOL_ITEMS_SOFT_MAX_BYTES)),
+      ];
+      return rest === 0
+        ? { items: truncated }
+        : { items: truncated, more: { text: `+${rest}` } };
     }
     items.push(pill(item));
   }
@@ -251,7 +261,9 @@ const NO_BREAK_SPACE = '\u00a0';
  * character, not the entity: two bytes of the event budget instead of six.
  */
 export function preserveSpacing(text: string): string {
-  return text.replace(/^ +| {2,}/gmu, (run) => NO_BREAK_SPACE.repeat(run.length));
+  return text.replace(/^ +| {2,}/gmu, (run) =>
+    NO_BREAK_SPACE.repeat(run.length),
+  );
 }
 
 export function truncateEscaped(value: string, maxBytes: number): string {

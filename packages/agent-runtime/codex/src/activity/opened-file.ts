@@ -70,11 +70,9 @@ export async function openCodexRollout(
   } catch (error) {
     await handle.close().catch(() => undefined);
     if (error instanceof CodexActivityError) throw error;
-    throw new CodexActivityError(
-      'unreadable',
-      'Codex activity is unreadable',
-      { cause: error },
-    );
+    throw new CodexActivityError('unreadable', 'Codex activity is unreadable', {
+      cause: error,
+    });
   }
 }
 
@@ -94,9 +92,7 @@ function classifyOpenError(error: unknown): CodexActivityError {
       { cause: error },
     );
   }
-  return new CodexActivityError(
-    'unreadable',
-    'Codex activity is unreadable',
-    { cause: error },
-  );
+  return new CodexActivityError('unreadable', 'Codex activity is unreadable', {
+    cause: error,
+  });
 }

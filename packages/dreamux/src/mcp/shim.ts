@@ -64,7 +64,9 @@ export interface DreamuxMcpShimOptions {
   log?: (message: string) => void;
 }
 
-export async function runDreamuxMcp(opts: DreamuxMcpShimOptions): Promise<void> {
+export async function runDreamuxMcp(
+  opts: DreamuxMcpShimOptions,
+): Promise<void> {
   if (opts.lease === '') {
     throw new Error('the Dreamux MCP shim requires a lease token');
   }
@@ -84,12 +86,10 @@ export async function runDreamuxMcp(opts: DreamuxMcpShimOptions): Promise<void> 
   );
   await runMcpServer({
     identity: description.identity,
-    tools: tools.map(
-      (tool): McpToolDefinition => ({
-        ...tool,
-        handler: (args) => callTool(core, opts.lease, tool.name, args),
-      }),
-    ),
+    tools: tools.map((tool): McpToolDefinition => ({
+      ...tool,
+      handler: (args) => callTool(core, opts.lease, tool.name, args),
+    })),
     input: opts.input,
     output: opts.output,
     transport: opts.transport,

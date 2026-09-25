@@ -93,7 +93,11 @@ export interface FakeFeishuBot extends FeishuBot {
   ): void;
   setMessageRead(
     messageId: string,
-    response: FeishuMessageReadResponse | Error | Promise<FeishuMessageReadResponse> | null,
+    response:
+      | FeishuMessageReadResponse
+      | Error
+      | Promise<FeishuMessageReadResponse>
+      | null,
   ): void;
 }
 
@@ -111,7 +115,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let appOwner: FeishuAppOwnerIdentity = {};
   const messageResources = new Map<
     string,
-    FeishuMessageResourceResponse | Promise<FeishuMessageResourceResponse> | Error
+    | FeishuMessageResourceResponse
+    | Promise<FeishuMessageResourceResponse>
+    | Error
   >();
   const messageReads = new Map<
     string,
@@ -272,7 +278,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       if (routes === null) throw new Error('fake bot not started');
       await routes.onMessage(event);
     },
-    async injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void> {
+    async injectBotMemberAdded(
+      event: FeishuBotMemberAddedEvent,
+    ): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');
       await routes.onBotMemberAdded?.(event);
     },
@@ -296,7 +304,10 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     setAppOwner(owner: FeishuAppOwnerIdentity): void {
       appOwner = owner;
     },
-    setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void {
+    setChatMode(
+      chatId: string,
+      mode: FeishuChatMode | Error | undefined,
+    ): void {
       if (mode === undefined) chatModes.delete(chatId);
       else chatModes.set(chatId, mode);
     },
@@ -323,7 +334,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       if (delay === null) reactionDelays.delete(emoji);
       else reactionDelays.set(emoji, delay);
     },
-  setMessageResource(
+    setMessageResource(
       fileKey: string,
       resource:
         | FeishuMessageResourceResponse
@@ -336,7 +347,11 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setMessageRead(
       messageId: string,
-      response: FeishuMessageReadResponse | Error | Promise<FeishuMessageReadResponse> | null,
+      response:
+        | FeishuMessageReadResponse
+        | Error
+        | Promise<FeishuMessageReadResponse>
+        | null,
     ): void {
       if (response === null) messageReads.delete(messageId);
       else messageReads.set(messageId, response);

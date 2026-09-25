@@ -193,16 +193,13 @@ export class FeishuProvisioning {
     if (binding === undefined) {
       return {
         status: 'unsubmitted',
-        message:
-          `provisioning for ${describeTarget(input.target)} installed no route`,
+        message: `provisioning for ${describeTarget(input.target)} installed no route`,
       };
     }
     return this.opts.submitter.submit(binding.team_name, input.submission);
   }
 
-  private async createTeam(
-    input: ProvisioningRequest,
-  ): Promise<TeamSummary> {
+  private async createTeam(input: ProvisioningRequest): Promise<TeamSummary> {
     const { space, target } = input;
     return (await this.opts.invoke('team.create', {
       // The inbound Feishu message id, used bare: it is globally unique, so it

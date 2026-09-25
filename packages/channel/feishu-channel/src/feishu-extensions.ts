@@ -55,12 +55,13 @@ export class FeishuExtensionRegistry {
         );
       }
       for (const kind of tool.callers) {
-        const other = findFeishuTool(tool.name, kind) !== undefined
-          ? 'built-in Feishu tool'
-          : this.toolOwner(tool.name, kind) ??
-            (offersTool(ext.tools.slice(0, index), tool.name, kind)
-              ? 'another tool of the same extension'
-              : undefined);
+        const other =
+          findFeishuTool(tool.name, kind) !== undefined
+            ? 'built-in Feishu tool'
+            : (this.toolOwner(tool.name, kind) ??
+              (offersTool(ext.tools.slice(0, index), tool.name, kind)
+                ? 'another tool of the same extension'
+                : undefined));
         if (other !== undefined) {
           throw new Error(
             `Feishu extension "${ext.name}" tool "${tool.name}" ` +
@@ -81,10 +82,10 @@ export class FeishuExtensionRegistry {
         action.key === DREAMUX_PAIRING_CARD_ACTION ||
         DREAMUX_ASK_ACTIONS.has(action.key)
           ? 'built-in Feishu card action'
-          : this.actionOwner(action.key) ??
+          : (this.actionOwner(action.key) ??
             (ext.cardActions.slice(0, index).some((a) => a.key === action.key)
               ? 'another card action of the same extension'
-              : undefined);
+              : undefined));
       if (other !== undefined) {
         throw new Error(
           `Feishu extension "${ext.name}" card action "${action.key}" ` +
@@ -111,7 +112,9 @@ export class FeishuExtensionRegistry {
     name: string,
     kind: ChannelMcpCaller['kind'],
   ): string | undefined {
-    const owner = this.extensions.find((ext) => offersTool(ext.tools, name, kind));
+    const owner = this.extensions.find((ext) =>
+      offersTool(ext.tools, name, kind),
+    );
     return owner === undefined ? undefined : `extension "${owner.name}"`;
   }
 
@@ -128,7 +131,9 @@ function offersTool(
   name: string,
   kind: ChannelMcpCaller['kind'],
 ): boolean {
-  return tools.some((tool) => tool.name === name && tool.callers.includes(kind));
+  return tools.some(
+    (tool) => tool.name === name && tool.callers.includes(kind),
+  );
 }
 
 export interface FeishuExtensionInitializeInput {

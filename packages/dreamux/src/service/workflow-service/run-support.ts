@@ -52,7 +52,13 @@ export function normalizeAgentOptions(
   options: WorkflowAgentOptions,
 ): WorkflowAgentOptions {
   const normalized: WorkflowAgentOptions = {};
-  for (const key of ['label', 'phase', 'agentType', 'intent', 'identity'] as const) {
+  for (const key of [
+    'label',
+    'phase',
+    'agentType',
+    'intent',
+    'identity',
+  ] as const) {
     const value = options[key];
     if (value === undefined) continue;
     if (typeof value !== 'string') {

@@ -133,7 +133,9 @@ export class SchedulerService {
     return this.admit(() => this.doDelete(id));
   }
 
-  private async doDelete(id: string): Promise<{ id: string; deleted: boolean }> {
+  private async doDelete(
+    id: string,
+  ): Promise<{ id: string; deleted: boolean }> {
     this.clearTimer(id);
     const deleted = await this.store.delete(id);
     this.log.info(
@@ -281,7 +283,10 @@ export class SchedulerService {
       sourceId: this.nextFireSourceId(current.id),
     });
     if (result.status !== 'submitted' && result.status !== 'ambiguous') {
-      await this.armMissed(current, `scheduled submission returned ${result.status}`);
+      await this.armMissed(
+        current,
+        `scheduled submission returned ${result.status}`,
+      );
       return;
     }
     if (result.status === 'ambiguous') {
@@ -479,7 +484,11 @@ function validateCron(pattern: string, tz: string, recurring: boolean): void {
   });
 }
 
-function nextRunAfter(pattern: string, tz: string, afterMs: number): number | null {
+function nextRunAfter(
+  pattern: string,
+  tz: string,
+  afterMs: number,
+): number | null {
   const next = cronFor(pattern, tz).nextRun(new Date(afterMs));
   return next?.getTime() ?? null;
 }

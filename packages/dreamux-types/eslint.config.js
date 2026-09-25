@@ -20,7 +20,9 @@
 // update this list together with the decision record (the rule moves on
 // purpose, it is not silently bypassed). The selector matches only a declared
 // property KEY, never a comment or a string-literal example.
-import baseConfig, { SYNC_DESTRUCTURE_SELECTOR } from '@excitedjs/eslint-config';
+import baseConfig, {
+  SYNC_DESTRUCTURE_SELECTOR,
+} from '@excitedjs/eslint-config';
 
 /** Provider-specific field names that must not appear as a contract property key. */
 const PROVIDER_FIELD_NAME = [

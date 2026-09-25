@@ -29,7 +29,10 @@ export function minimalTeamRecordInput(input: {
   createRequestId?: string | null;
   createPayloadHash?: string | null;
   runtimeCwd?: string;
-}): Omit<TeamRecord, 'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'> {
+}): Omit<
+  TeamRecord,
+  'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
+> {
   const runtimeCwd = input.runtimeCwd ?? '/tmp/dreamux-harness-unused-cwd';
   return {
     dispatcher_id: input.dispatcherId,

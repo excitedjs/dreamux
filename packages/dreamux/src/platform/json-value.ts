@@ -70,7 +70,9 @@ export function canonicalJsonValue(
   // the result is always a JSON document rather than `undefined`.
   const text = JSON.stringify(validated) as string;
   if (Buffer.byteLength(text, 'utf8') > bounds.maxBytes) {
-    throw new JsonValueError(`value exceeds the ${bounds.maxBytes}-byte budget`);
+    throw new JsonValueError(
+      `value exceeds the ${bounds.maxBytes}-byte budget`,
+    );
   }
   // Parsing back is what makes the canonical value the persisted value: it also
   // restores an own `"__proto__"` key as plain data, which building an object
@@ -106,10 +108,14 @@ function validateJsonValue(
   if (type !== 'object') {
     // `undefined`, functions, and symbols vanish or turn into `null` in a JSON
     // round trip; BigInt throws. None of them survive as the same value.
-    throw new JsonValueError(`values of type ${type} are not JSON-serializable`);
+    throw new JsonValueError(
+      `values of type ${type} are not JSON-serializable`,
+    );
   }
   if (depth >= bounds.maxDepth) {
-    throw new JsonValueError(`value nests deeper than ${bounds.maxDepth} levels`);
+    throw new JsonValueError(
+      `value nests deeper than ${bounds.maxDepth} levels`,
+    );
   }
   const container = value as object;
   if (seen.has(container)) throw new JsonValueError('value contains a cycle');
@@ -133,7 +139,9 @@ function validateJsonValue(
       throw new JsonValueError('objects must not carry own symbol keys');
     }
     if (Object.getOwnPropertyNames(value).length !== entries.length) {
-      throw new JsonValueError('objects must not carry non-enumerable own keys');
+      throw new JsonValueError(
+        'objects must not carry non-enumerable own keys',
+      );
     }
     const out = Object.create(null) as Record<string, JsonValue>;
     for (const [key, entry] of entries) {
@@ -203,7 +211,9 @@ function deepFreeze(value: JsonValue): JsonValue {
   return Object.freeze(value);
 }
 
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }

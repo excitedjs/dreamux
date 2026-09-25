@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import * as feishuChannel from '../src/index.js';
 
-// @ts-expect-error -- test doubles must not return to the published package API.
-export type RemovedFakeFeishuBotMustStayUnexported = import('../src/index.js').FakeFeishuBot;
+export type RemovedFakeFeishuBotMustStayUnexported =
+  // @ts-expect-error -- test doubles must not return to the published package API.
+  import('../src/index.js').FakeFeishuBot;
 
 /**
  * Every runtime binding `src/index.ts` currently exports, sorted. This is the
@@ -82,7 +83,9 @@ describe('@excitedjs/feishu-channel public API', () => {
 
   it('does not retain automatic inbound reaction constants', () => {
     expect(Object.hasOwn(feishuChannel, 'RECEIVED_REACTION_EMOJI')).toBe(false);
-    expect(Object.hasOwn(feishuChannel, 'IN_PROGRESS_REACTION_EMOJI')).toBe(false);
+    expect(Object.hasOwn(feishuChannel, 'IN_PROGRESS_REACTION_EMOJI')).toBe(
+      false,
+    );
   });
 
   it('exports exactly the intentional public surface — no more, no less', () => {
@@ -106,7 +109,9 @@ describe('@excitedjs/feishu-channel public API', () => {
   });
 
   it('retains the gate input ABI and requires prior exact-human classification', () => {
-    type PublicGateInput = Parameters<typeof feishuChannel.dreamuxFeishuGate>[1];
+    type PublicGateInput = Parameters<
+      typeof feishuChannel.dreamuxFeishuGate
+    >[1];
     const input: PublicGateInput = {
       chat_type: 'group',
       sender_id: 'ou_human',

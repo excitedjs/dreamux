@@ -32,11 +32,10 @@ import type {
   TeammateStateEvent,
 } from '../src/teammate.js';
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B
-  ? 1
-  : 0
-  ? true
-  : false;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
+    ? true
+    : false;
 
 function assertType<T extends true>(_proof?: T): void {
   // Compile-time-only: see agent-runtime-handle-contract.test.ts for the pattern's rationale.
@@ -48,7 +47,9 @@ function assertNever(value: never): never {
 
 describe('TeammateRole / TeamContainedRole carry no team_member vocabulary', () => {
   it('TeammateRole is exactly dispatcher | teammate | team_leader', () => {
-    assertType<Equal<TeammateRole, 'dispatcher' | 'teammate' | 'team_leader'>>();
+    assertType<
+      Equal<TeammateRole, 'dispatcher' | 'teammate' | 'team_leader'>
+    >();
   });
 
   it('TeamContainedRole excludes dispatcher and is exactly teammate | team_leader', () => {
@@ -77,10 +78,16 @@ describe('TeammateRole / TeamContainedRole carry no team_member vocabulary', () 
 describe('TeamCreateRepoRequest is the complete existing Team-creation repo policy', () => {
   it('reuse-cwd carries only mode + optional path', () => {
     assertType<
-      Equal<Extract<TeamCreateRepoRequest, { mode: 'reuse-cwd' }>['path'], string | undefined>
+      Equal<
+        Extract<TeamCreateRepoRequest, { mode: 'reuse-cwd' }>['path'],
+        string | undefined
+      >
     >();
     const reuseCwd: TeamCreateRepoRequest = { mode: 'reuse-cwd' };
-    const reuseCwdWithPath: TeamCreateRepoRequest = { mode: 'reuse-cwd', path: '/work/dir' };
+    const reuseCwdWithPath: TeamCreateRepoRequest = {
+      mode: 'reuse-cwd',
+      path: '/work/dir',
+    };
     expect(reuseCwd.mode).toBe('reuse-cwd');
     expect(reuseCwdWithPath.path).toBe('/work/dir');
   });
@@ -107,7 +114,9 @@ describe('TeamCreateRepoRequest is the complete existing Team-creation repo poli
   it('cleanup is exactly keep | delete-on-close', () => {
     assertType<
       Equal<
-        NonNullable<Extract<TeamCreateRepoRequest, { mode: 'managed' }>['cleanup']>,
+        NonNullable<
+          Extract<TeamCreateRepoRequest, { mode: 'managed' }>['cleanup']
+        >,
         'keep' | 'delete-on-close'
       >
     >();
@@ -124,8 +133,12 @@ describe('TeamCreateRepoRequest is the complete existing Team-creation repo poli
           return assertNever(request);
       }
     }
-    expect(describeRepoRequest({ mode: 'reuse-cwd' })).toBe('reuse-cwd:default');
-    expect(describeRepoRequest({ mode: 'managed', slug: 's1' })).toBe('managed:s1');
+    expect(describeRepoRequest({ mode: 'reuse-cwd' })).toBe(
+      'reuse-cwd:default',
+    );
+    expect(describeRepoRequest({ mode: 'managed', slug: 's1' })).toBe(
+      'managed:s1',
+    );
   });
 });
 
@@ -146,7 +159,12 @@ describe('TeamCreateCommand carries restart-durable request identity and leader 
     assertType<Equal<TeamSummary['status'], TeamStatus>>();
     assertType<Equal<TeamSummary['leader_agent_runtime'], string>>();
     assertType<Equal<TeamSummary['runtime_cwd'], string>>();
-    assertType<Equal<TeamSummary['leader_state'], import('../src/teammate.js').TeammateStatus | null>>();
+    assertType<
+      Equal<
+        TeamSummary['leader_state'],
+        import('../src/teammate.js').TeammateStatus | null
+      >
+    >();
   });
 });
 
@@ -167,7 +185,10 @@ describe('SubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared paylo
     // unconstructable Team Command (compile-time, asserted above).
     expect(missingName.text).toBe('team-bound text');
 
-    const shared: Pick<TeamSubmitCommand, 'attrs' | 'text' | 'reminder' | 'source_id' | 'intent'> = {
+    const shared: Pick<
+      TeamSubmitCommand,
+      'attrs' | 'text' | 'reminder' | 'source_id' | 'intent'
+    > = {
       attrs: { chat_id: 'chat-1' },
       text: 'team-bound text',
       reminder: 'stand up a review',
@@ -216,17 +237,24 @@ describe('SubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared paylo
           return assertNever(result.status);
       }
     }
-    expect(summarize({ status: 'submitted', turn_id: 't1' })).toBe('submitted:t1');
+    expect(summarize({ status: 'submitted', turn_id: 't1' })).toBe(
+      'submitted:t1',
+    );
     expect(summarize({ status: 'duplicate' })).toBe('duplicate');
     expect(
-      summarize({ status: 'failed', error: { code: 'TEAM_NOT_FOUND', message: 'gone' } }),
+      summarize({
+        status: 'failed',
+        error: { code: 'TEAM_NOT_FOUND', message: 'gone' },
+      }),
     ).toBe('failed:TEAM_NOT_FOUND');
   });
 });
 
 describe('TeamStateEvent republishes an aggregate with a bounded teammate summary', () => {
   it('status is exactly starting | running | closed', () => {
-    assertType<Equal<TeamStateEvent['status'], 'starting' | 'running' | 'closed'>>();
+    assertType<
+      Equal<TeamStateEvent['status'], 'starting' | 'running' | 'closed'>
+    >();
   });
 
   it('TeamStateTeammateSummary.role is the Team-contained subset (no dispatcher row in a Team)', () => {
@@ -253,18 +281,62 @@ describe('TeamStateEvent republishes an aggregate with a bounded teammate summar
 describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
   it('shares RuntimeActivity and spells every event member in camelCase', () => {
     assertType<Equal<TeammateActivityEvent['activity'], RuntimeActivity>>();
-    assertType<Equal<keyof TeammateActorScope,
-      'schemaVersion' | 'occurredAt' | 'teammateName' | 'role' | 'teamName'>>();
-    assertType<Equal<keyof TeamStateEvent,
-      'schemaVersion' | 'kind' | 'occurredAt' | 'teamName' | 'leaderName' | 'status' | 'teammates'>>();
-    assertType<Equal<keyof TeamStateTeammateSummary, 'teammateName' | 'role' | 'status'>>();
-    assertType<Equal<keyof TeammateStateEvent, keyof TeammateActorScope | 'kind' | 'status'>>();
-    assertType<Equal<keyof Exclude<RuntimeActivity, { kind: 'turn.ended' }>, 'kind' | 'occurredAt' | 'id'>>();
-    assertType<Equal<keyof Extract<RuntimeActivity, { kind: 'tool.call' }>,
-      'kind' | 'occurredAt' | 'id' | 'toolName' | 'action' | 'summary' | 'invocation' | 'items'
-      | 'status' | 'arguments' | 'result' | 'error'>>();
-    assertType<Equal<keyof Extract<RuntimeActivity, { kind: 'turn.ended' }>,
-      'kind' | 'occurredAt' | 'status' | 'reason'>>();
+    assertType<
+      Equal<
+        keyof TeammateActorScope,
+        'schemaVersion' | 'occurredAt' | 'teammateName' | 'role' | 'teamName'
+      >
+    >();
+    assertType<
+      Equal<
+        keyof TeamStateEvent,
+        | 'schemaVersion'
+        | 'kind'
+        | 'occurredAt'
+        | 'teamName'
+        | 'leaderName'
+        | 'status'
+        | 'teammates'
+      >
+    >();
+    assertType<
+      Equal<keyof TeamStateTeammateSummary, 'teammateName' | 'role' | 'status'>
+    >();
+    assertType<
+      Equal<
+        keyof TeammateStateEvent,
+        keyof TeammateActorScope | 'kind' | 'status'
+      >
+    >();
+    assertType<
+      Equal<
+        keyof Exclude<RuntimeActivity, { kind: 'turn.ended' }>,
+        'kind' | 'occurredAt' | 'id'
+      >
+    >();
+    assertType<
+      Equal<
+        keyof Extract<RuntimeActivity, { kind: 'tool.call' }>,
+        | 'kind'
+        | 'occurredAt'
+        | 'id'
+        | 'toolName'
+        | 'action'
+        | 'summary'
+        | 'invocation'
+        | 'items'
+        | 'status'
+        | 'arguments'
+        | 'result'
+        | 'error'
+      >
+    >();
+    assertType<
+      Equal<
+        keyof Extract<RuntimeActivity, { kind: 'turn.ended' }>,
+        'kind' | 'occurredAt' | 'status' | 'reason'
+      >
+    >();
   });
 
   it('TeammateStateEvent.teamName is null only for a Dispatcher, which never joins a Team', () => {
@@ -339,7 +411,10 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
 
     // The body still carries the whole notification the model reads; the
     // notice is the same fact stated as data, for a display that shows one line.
-    expect(callback.notice).toEqual({ kind: 'teammate_completion', producer: 'tm-1' });
+    expect(callback.notice).toEqual({
+      kind: 'teammate_completion',
+      producer: 'tm-1',
+    });
     expect(callback.content).toContain('has finished its task');
     // A Workflow push-back names no producer: the operator's display shows none.
     assertType<
@@ -352,7 +427,10 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
 
   it('teammate.activity nests the whole runtime vocabulary under one kind, addressed by the actor alone', () => {
     assertType<
-      Equal<keyof TeammateActivityEvent, keyof TeammateActorScope | 'kind' | 'activity'>
+      Equal<
+        keyof TeammateActivityEvent,
+        keyof TeammateActorScope | 'kind' | 'activity'
+      >
     >();
 
     const scope: TeammateActorScope = {

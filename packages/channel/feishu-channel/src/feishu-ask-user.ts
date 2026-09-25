@@ -34,7 +34,10 @@ import {
   type AskUserAnswer,
   type AskUserQuestionSpec,
 } from './feishu-ask-user-card.js';
-import { DREAMUX_ACTION_KEY, type FeishuCardActionResponse } from './feishu-pairing-card.js';
+import {
+  DREAMUX_ACTION_KEY,
+  type FeishuCardActionResponse,
+} from './feishu-pairing-card.js';
 
 const REQUEST_ID_BYTES = 8;
 
@@ -176,11 +179,7 @@ function submittedText(round: OpenRound): string {
       chosen ?? '(left unanswered)'
     }`;
   });
-  return [
-    'The user answered the question card:',
-    '',
-    ...lines,
-  ].join('\n');
+  return ['The user answered the question card:', '', ...lines].join('\n');
 }
 
 /**
@@ -202,7 +201,7 @@ function expiredText(): string {
   return [
     'The question card expired with no answer from the user.',
     '',
-    'Stop where you are and take no further action. Wait for the user\'s next',
+    "Stop where you are and take no further action. Wait for the user's next",
     'message, and decide only then whether to ask again with a new card.',
   ].join('\n');
 }
@@ -232,7 +231,10 @@ export function createAskUserRegistry(
   function closeRound(
     round: OpenRound,
     outcome: AskUserSettlement['outcome'],
-    by?: { cardMessageId?: string | undefined; operatorOpenId?: string | undefined },
+    by?: {
+      cardMessageId?: string | undefined;
+      operatorOpenId?: string | undefined;
+    },
   ): AskUserSettlement {
     rounds.delete(round.requestId);
     if (round.timer !== undefined) timers.clear(round.timer);
@@ -254,7 +256,6 @@ export function createAskUserRegistry(
       operatorOpenId: by?.operatorOpenId,
     };
   }
-
 
   function settle(
     round: OpenRound,
@@ -318,7 +319,9 @@ export function createAskUserRegistry(
       const action = String(event.actionValue[DREAMUX_ACTION_KEY] ?? '');
       if (!DREAMUX_ASK_ACTIONS.has(action)) return { kind: 'ignored' };
 
-      const requestId = String(event.actionValue[DREAMUX_ASK_REQUEST_KEY] ?? '');
+      const requestId = String(
+        event.actionValue[DREAMUX_ASK_REQUEST_KEY] ?? '',
+      );
       const round = rounds.get(requestId);
       if (round === undefined) {
         // The round is gone: settled already, expired, or lost with a previous
@@ -350,7 +353,9 @@ export function createAskUserRegistry(
         return settle(round, 'cancelled', event);
       }
 
-      const questionIndex = asIndex(event.actionValue[DREAMUX_ASK_QUESTION_KEY]);
+      const questionIndex = asIndex(
+        event.actionValue[DREAMUX_ASK_QUESTION_KEY],
+      );
       const question =
         questionIndex === undefined
           ? undefined
@@ -364,11 +369,17 @@ export function createAskUserRegistry(
         const option =
           optionIndex === undefined ? undefined : question.options[optionIndex];
         if (optionIndex === undefined || option === undefined) {
-          return { kind: 'response', response: toast('error', '这个选项已失效') };
+          return {
+            kind: 'response',
+            response: toast('error', '这个选项已失效'),
+          };
         }
         // Single-select, and an option and free text answer the same question:
         // whichever came last is the answer.
-        round.answers.set(questionIndex, { kind: 'option', index: optionIndex });
+        round.answers.set(questionIndex, {
+          kind: 'option',
+          index: optionIndex,
+        });
         return { kind: 'response', response: repaint(round, option.label) };
       }
 

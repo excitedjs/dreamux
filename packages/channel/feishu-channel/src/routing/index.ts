@@ -100,11 +100,13 @@ export interface FeishuRemovedRoute {
 }
 
 export class FeishuRouting {
-  constructor(private readonly opts: {
-    readonly dispatcherId: string;
-    readonly channelId: string;
-    readonly store: FeishuRoutingStore;
-  }) {}
+  constructor(
+    private readonly opts: {
+      readonly dispatcherId: string;
+      readonly channelId: string;
+      readonly store: FeishuRoutingStore;
+    },
+  ) {}
 
   // ── Resolution ─────────────────────────────────────────────────────────
 
@@ -135,9 +137,10 @@ export class FeishuRouting {
     if (!isBindableTarget(target)) {
       return { kind: 'dispatcher', reason: 'not_bindable' };
     }
-    const space = containerChatId === null
-      ? undefined
-      : this.spaceForContainer(containerChatId);
+    const space =
+      containerChatId === null
+        ? undefined
+        : this.spaceForContainer(containerChatId);
     return space === undefined
       ? { kind: 'dispatcher', reason: 'no_binding' }
       : { kind: 'provision', space };
@@ -338,9 +341,10 @@ export class FeishuRouting {
       display: row.display,
       team_name: row.team_name,
       origin: row.origin,
-      space_name: row.space_id === null
-        ? null
-        : spaces.get(row.space_id)?.space_name ?? null,
+      space_name:
+        row.space_id === null
+          ? null
+          : (spaces.get(row.space_id)?.space_name ?? null),
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));

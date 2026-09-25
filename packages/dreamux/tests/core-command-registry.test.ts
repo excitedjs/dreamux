@@ -58,9 +58,9 @@ describe('createCoreCommandRegistry — the catalog', () => {
     }
     // Nothing in the whole Core Collaboration Space family survived, not only
     // the three spot-checked names above.
-    expect([...names].some((name) => name.startsWith('collaboration_space.'))).toBe(
-      false,
-    );
+    expect(
+      [...names].some((name) => name.startsWith('collaboration_space.')),
+    ).toBe(false);
   });
 
   it('every domain module contributes names inside its own dotted namespace', () => {
@@ -80,26 +80,39 @@ describe('createCoreCommandRegistry — the catalog', () => {
       'mcp.': 'mcp.',
     };
     for (const name of harness.registry.names()) {
-      const owningPrefix = Object.keys(byPrefix).find((prefix) => name.startsWith(prefix));
+      const owningPrefix = Object.keys(byPrefix).find((prefix) =>
+        name.startsWith(prefix),
+      );
       expect(owningPrefix, `unexpected namespace for ${name}`).toBeDefined();
     }
   });
 });
 
 describe('CoreCommands — one authority, not a second one', () => {
-  const noop: Pick<CoreCommandDefinition<string, unknown, unknown>, 'parse' | 'execute'> = {
+  const noop: Pick<
+    CoreCommandDefinition<string, unknown, unknown>,
+    'parse' | 'execute'
+  > = {
     parse: (payload) => payload,
     execute: async () => ({}),
   };
 
-  function minimal(name: string): CoreCommandDefinition<string, unknown, unknown> {
-    return { name, version: 1, input: NO_INPUT, output: objectSchema({}), ...noop };
+  function minimal(
+    name: string,
+  ): CoreCommandDefinition<string, unknown, unknown> {
+    return {
+      name,
+      version: 1,
+      input: NO_INPUT,
+      output: objectSchema({}),
+      ...noop,
+    };
   }
 
   it('rejects two definitions registered under the same name', () => {
-    expect(() => new CoreCommands([minimal('dup.name'), minimal('dup.name')])).toThrow(
-      /dup\.name.*registered twice/,
-    );
+    expect(
+      () => new CoreCommands([minimal('dup.name'), minimal('dup.name')]),
+    ).toThrow(/dup\.name.*registered twice/);
   });
 
   it('fails loud at construction on a malformed declared input schema, before any invocation', () => {
@@ -107,7 +120,9 @@ describe('CoreCommands — one authority, not a second one', () => {
       name: 'bad.input',
       version: 1,
       // `type: 'not-a-real-type'` is not a JSON Schema this validator accepts.
-      input: { type: 'not-a-real-type' } as unknown as ReturnType<typeof objectSchema>,
+      input: { type: 'not-a-real-type' } as unknown as ReturnType<
+        typeof objectSchema
+      >,
       output: objectSchema({}),
       ...noop,
     };
@@ -119,7 +134,9 @@ describe('CoreCommands — one authority, not a second one', () => {
       name: 'bad.output',
       version: 1,
       input: NO_INPUT,
-      output: { type: 'not-a-real-type' } as unknown as ReturnType<typeof objectSchema>,
+      output: { type: 'not-a-real-type' } as unknown as ReturnType<
+        typeof objectSchema
+      >,
       ...noop,
     };
     expect(() => new CoreCommands([malformed])).toThrow(/bad\.output/);
@@ -128,7 +145,11 @@ describe('CoreCommands — one authority, not a second one', () => {
   it('rejects an unknown Command name with its own stable UNKNOWN_METHOD code', async () => {
     const harness = createCommandHarness();
     await expect(
-      harness.registry.invoke({ source: 'admin_socket' }, 'not.a.real.command', {}),
+      harness.registry.invoke(
+        { source: 'admin_socket' },
+        'not.a.real.command',
+        {},
+      ),
     ).rejects.toMatchObject({ code: 'UNKNOWN_METHOD' });
   });
 
@@ -139,7 +160,14 @@ describe('CoreCommands — one authority, not a second one', () => {
     // not a description of them — proves no domain module smuggled a second
     // property onto the shared contract.
     const host = createCommandHarness().host;
-    const allowedKeys = new Set(['name', 'version', 'input', 'output', 'parse', 'execute']);
+    const allowedKeys = new Set([
+      'name',
+      'version',
+      'input',
+      'output',
+      'parse',
+      'execute',
+    ]);
     const allDefinitions = [
       ...serverCommands(host),
       ...dispatcherCommands(host),
@@ -153,9 +181,10 @@ describe('CoreCommands — one authority, not a second one', () => {
     expect(allDefinitions.length).toBeGreaterThan(0);
     for (const definition of allDefinitions) {
       for (const key of Object.keys(definition)) {
-        expect(allowedKeys.has(key), `${definition.name} declared unexpected key '${key}'`).toBe(
-          true,
-        );
+        expect(
+          allowedKeys.has(key),
+          `${definition.name} declared unexpected key '${key}'`,
+        ).toBe(true);
       }
     }
   });
@@ -177,13 +206,17 @@ describe('result canonicalization — no registry-wide output byte cap', () => {
     const approxBytes = JSON.stringify(bigSummary).length;
     expect(approxBytes).toBeGreaterThan(256 * 1024);
 
-    const harness = createCommandHarness({ summarize: async () => bigSummary as never });
+    const harness = createCommandHarness({
+      summarize: async () => bigSummary as never,
+    });
     const result = await harness.registry.invoke(
       { source: 'admin_socket' },
       'server.status',
       {},
     );
-    expect((result as { dispatchers: unknown[] }).dispatchers).toHaveLength(5_000);
+    expect((result as { dispatchers: unknown[] }).dispatchers).toHaveLength(
+      5_000,
+    );
   });
 
   it('reports a JSON-representable result that violates its OWN declared output schema as INTERNAL', async () => {
@@ -203,7 +236,11 @@ describe('result canonicalization — no registry-wide output byte cap', () => {
     };
     const registry = new CoreCommands([schemaViolator]);
     await expect(
-      registry.invoke({ source: 'admin_socket' }, 'harness.schema_violating_output', {}),
+      registry.invoke(
+        { source: 'admin_socket' },
+        'harness.schema_violating_output',
+        {},
+      ),
     ).rejects.toMatchObject({ code: 'INTERNAL' });
   });
 
@@ -238,7 +275,9 @@ describe('dispatcher-scoped Commands resolve through the host, not a second look
   });
 
   it('fails loud with DISPATCHER_NOT_FOUND for a dispatcher_id the host does not carry — never INTERNAL', async () => {
-    const harness = createCommandHarness({ dispatcherRow: harnessDispatcherRow() });
+    const harness = createCommandHarness({
+      dispatcherRow: harnessDispatcherRow(),
+    });
     await expect(
       harness.registry.invoke(
         { source: 'admin_socket', dispatcher_id: 'no-such-dispatcher' },
@@ -251,7 +290,11 @@ describe('dispatcher-scoped Commands resolve through the host, not a second look
   it('a dispatcher-scoped Command with no dispatcher_id at all is BAD_REQUEST, not a silent default', async () => {
     const harness = createCommandHarness();
     await expect(
-      harness.registry.invoke({ source: 'admin_socket' }, 'dispatcher.status', {}),
+      harness.registry.invoke(
+        { source: 'admin_socket' },
+        'dispatcher.status',
+        {},
+      ),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });

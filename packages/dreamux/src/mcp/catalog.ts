@@ -21,10 +21,7 @@
  * names, that each schema compiles through the same SDK adapter registration
  * uses, and that annotations and icons carry only the keys MCP defines.
  */
-import {
-  validateMcpJsonSchema,
-  type McpToolMetadata,
-} from './server.js';
+import { validateMcpJsonSchema, type McpToolMetadata } from './server.js';
 
 /**
  * A tool descriptor after validation. `inputSchema`/`outputSchema` stay opaque
@@ -82,7 +79,9 @@ export function validateMcpToolCatalog(
   const seen = new Set<string>();
   return tools.map((entry, index) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new Error(`${label} descriptor at index ${index} must be an object`);
+      throw new Error(
+        `${label} descriptor at index ${index} must be an object`,
+      );
     }
     const obj = entry as Record<string, unknown>;
     for (const key of Object.keys(obj)) {
@@ -102,7 +101,10 @@ export function validateMcpToolCatalog(
       throw new Error(`${label} descriptor name '${name}' is duplicated`);
     }
     seen.add(name);
-    const inputSchema = requireSchemaObject(obj['inputSchema'], `${name}.inputSchema`);
+    const inputSchema = requireSchemaObject(
+      obj['inputSchema'],
+      `${name}.inputSchema`,
+    );
     const outputSchema =
       obj['outputSchema'] === undefined
         ? undefined
@@ -177,7 +179,9 @@ function validateIcons(value: unknown, name: string): McpToolMetadata['icons'] {
     const icon = entry as Record<string, unknown>;
     for (const key of Object.keys(icon)) {
       if (!ALLOWED_ICON_KEYS.has(key)) {
-        throw new Error(`${name}.icons[${index}] has unknown property '${key}'`);
+        throw new Error(
+          `${name}.icons[${index}] has unknown property '${key}'`,
+        );
       }
     }
     if (typeof icon['src'] !== 'string' || icon['src'] === '') {
@@ -205,7 +209,9 @@ function validateIcons(value: unknown, name: string): McpToolMetadata['icons'] {
       icon['theme'] !== 'light' &&
       icon['theme'] !== 'dark'
     ) {
-      throw new Error(`${name}.icons[${index}].theme must be 'light' or 'dark'`);
+      throw new Error(
+        `${name}.icons[${index}].theme must be 'light' or 'dark'`,
+      );
     }
     return icon as NonNullable<McpToolMetadata['icons']>[number];
   });
@@ -222,7 +228,11 @@ function assertJsonCompatible(
   path: string,
   ancestors: Set<object>,
 ): void {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean'
+  ) {
     return;
   }
   if (typeof value === 'number') {

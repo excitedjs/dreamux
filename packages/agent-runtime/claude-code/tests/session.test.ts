@@ -4,14 +4,27 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDefaultClaudeCodeSession, type ClaudeCodeSession } from '../src/supervisor.js';
+import {
+  createDefaultClaudeCodeSession,
+  type ClaudeCodeSession,
+} from '../src/supervisor.js';
 import type { ClaudeProtocolEvent } from '../src/types.js';
-import type { RuntimeAdmission, RuntimeSubmission } from '@excitedjs/dreamux-types';
+import type {
+  RuntimeAdmission,
+  RuntimeSubmission,
+} from '@excitedjs/dreamux-types';
 
-const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-claude-stream.mjs');
-async function accepted(admission: Promise<RuntimeAdmission>): Promise<RuntimeSubmission> {
+const FIXTURE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  'fixtures',
+  'fake-claude-stream.mjs',
+);
+async function accepted(
+  admission: Promise<RuntimeAdmission>,
+): Promise<RuntimeSubmission> {
   const value = await admission;
-  if (value.status !== 'submitted') throw new Error(`expected submission, got ${value.status}`);
+  if (value.status !== 'submitted')
+    throw new Error(`expected submission, got ${value.status}`);
   return value.submission;
 }
 
@@ -28,11 +41,21 @@ describe('resident session over real pipes', () => {
     await Promise.all(sessions.map((session) => session.stop()));
     await rm(dir, { recursive: true, force: true });
   });
-  function makeSession(mode: 'echo' | 'stall', timeout = 5_000, onRemoteControlUrl?: (url: string) => void) {
+  function makeSession(
+    mode: 'echo' | 'stall',
+    timeout = 5_000,
+    onRemoteControlUrl?: (url: string) => void,
+  ) {
     const session = createDefaultClaudeCodeSession({
-      bin: process.execPath, args: [FIXTURE, mode], cwd: dir, env: process.env,
-      stderrLogPath: join(dir, 'stderr.log'), sessionId: 'fake-sess-1', turnTimeoutMs: timeout,
-      remoteControl: onRemoteControlUrl !== undefined, onRemoteControlUrl,
+      bin: process.execPath,
+      args: [FIXTURE, mode],
+      cwd: dir,
+      env: process.env,
+      stderrLogPath: join(dir, 'stderr.log'),
+      sessionId: 'fake-sess-1',
+      turnTimeoutMs: timeout,
+      remoteControl: onRemoteControlUrl !== undefined,
+      onRemoteControlUrl,
       onProtocolEvent: (event) => events.push(event),
     });
     sessions.push(session);
@@ -43,18 +66,28 @@ describe('resident session over real pipes', () => {
     const session = makeSession('echo');
     await session.start();
     const a = await accepted(session.submit('hello', {}, 'A'));
-    await expect(a.settled).resolves.toEqual({ kind: 'completion', completion: { status: 'completed', resultText: 'echo:hello' } });
+    await expect(a.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'echo:hello' },
+    });
     const b = await accepted(session.submit('again', {}, 'B'));
-    await expect(b.settled).resolves.toEqual({ kind: 'completion', completion: { status: 'completed', resultText: 'echo:again' } });
+    await expect(b.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'echo:again' },
+    });
     expect(session.isAlive()).toBe(true);
-    expect(events.filter((event) => event.kind === 'command_lifecycle')).toEqual([
+    expect(
+      events.filter((event) => event.kind === 'command_lifecycle'),
+    ).toEqual([
       { kind: 'command_lifecycle', commandUuid: 'A', state: 'started' },
       { kind: 'command_lifecycle', commandUuid: 'A', state: 'completed' },
       { kind: 'command_lifecycle', commandUuid: 'B', state: 'started' },
       { kind: 'command_lifecycle', commandUuid: 'B', state: 'completed' },
     ]);
     const resultIndex = events.findIndex((event) => event.kind === 'result');
-    const assistantIndex = events.findIndex((event) => event.kind === 'stream' && event.line.kind === 'assistant');
+    const assistantIndex = events.findIndex(
+      (event) => event.kind === 'stream' && event.line.kind === 'assistant',
+    );
     expect(assistantIndex).toBeGreaterThanOrEqual(0);
     expect(assistantIndex).toBeLessThan(resultIndex);
   });
@@ -67,7 +100,8 @@ describe('resident session over real pipes', () => {
     const b = await accepted(session.submit('same'));
     const second = await b.settled;
     expect(second).toEqual(first);
-    if (first.kind !== 'completion' || second.kind !== 'completion') throw new Error('expected completions');
+    if (first.kind !== 'completion' || second.kind !== 'completion')
+      throw new Error('expected completions');
     expect(second.completion).not.toBe(first.completion);
   });
 
@@ -84,13 +118,18 @@ describe('resident session over real pipes', () => {
 
   it('enables Remote Control independently of request settlement', async () => {
     let resolveUrl!: (url: string) => void;
-    const url = new Promise<string>((resolve) => { resolveUrl = resolve; });
+    const url = new Promise<string>((resolve) => {
+      resolveUrl = resolve;
+    });
     const session = makeSession('echo', 5_000, resolveUrl);
     await session.start();
     await expect(url).resolves.toBe('https://example.invalid/session/fake');
     expect(events.filter((event) => event.kind === 'result')).toEqual([]);
     const request = await accepted(session.submit('after control'));
-    await expect(request.settled).resolves.toMatchObject({ kind: 'completion', completion: { resultText: 'echo:after control' } });
+    await expect(request.settled).resolves.toMatchObject({
+      kind: 'completion',
+      completion: { resultText: 'echo:after control' },
+    });
   });
 
   it('fails silent requests, reports the timeout once and reaps the child', async () => {
@@ -99,13 +138,18 @@ describe('resident session over real pipes', () => {
     session.setOnExit((error) => failures.push(error));
     await session.start();
     const request = await accepted(session.submit('stall'));
-    await expect(request.settled).resolves.toMatchObject({ kind: 'failed', error: expect.objectContaining({ message: expect.stringContaining('no stream activity') }) });
+    await expect(request.settled).resolves.toMatchObject({
+      kind: 'failed',
+      error: expect.objectContaining({
+        message: expect.stringContaining('no stream activity'),
+      }),
+    });
     expect(failures).toHaveLength(1);
     expect(session.isAlive()).toBe(false);
     await expect(session.submit('after timeout')).resolves.toMatchObject({
-      status: 'failed', error: failures[0],
+      status: 'failed',
+      error: failures[0],
     });
     expect(events.filter((event) => event.kind === 'result')).toEqual([]);
   });
 });
-

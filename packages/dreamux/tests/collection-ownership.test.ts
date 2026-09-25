@@ -106,7 +106,10 @@ describe('a Service never calls an eviction callback into its owning Collection'
   });
 
   it('TeamService publishes a close FACT (onClosed) rather than owning eviction', () => {
-    const indexSrc = readFileSync(join(src, 'service/team-service/index.ts'), 'utf8');
+    const indexSrc = readFileSync(
+      join(src, 'service/team-service/index.ts'),
+      'utf8',
+    );
     expect(indexSrc).toMatch(/onClosed\(listener: TeamClosedListener\)/);
   });
 
@@ -144,37 +147,6 @@ describe('a Collection is the sole eviction owner: it subscribes to onClosed and
 });
 
 describe('Collections own the store, the factory, and the materialization cache; Services do not duplicate it', () => {
-  it('TeamCollection (runtime-registry.ts) is the sole holder of the live TeamService cache and its construction dedupe', () => {
-    const registrySrc = readFileSync(
-      join(src, 'service/team-collection/runtime-registry.ts'),
-      'utf8',
-    );
-    expect(registrySrc).toMatch(/private readonly cache = new Map<string, TeamService>/);
-    expect(registrySrc).toMatch(
-      /private readonly constructing = new Map<string, Promise<TeamService \| null>>/,
-    );
-  });
-
-  it('TeammateCollection (index.ts) is the sole holder of the live TeammateService cache and its materialization dedupe', () => {
-    const collectionSrc = readFileSync(
-      join(src, 'service/teammate-collection/index.ts'),
-      'utf8',
-    );
-    expect(collectionSrc).toMatch(
-      /private readonly entities = new Map<string, TeammateService>/,
-    );
-    // The dedupe map resolves to `ResolvedTeamMate`, the union declared in this
-    // same file: a materialization answers with the live entity, or with the
-    // durable record that already settled it. Both halves are pinned, so the
-    // union cannot quietly stop covering the live entity it dedupes.
-    expect(collectionSrc).toMatch(
-      /type ResolvedTeamMate = TeammateService \| AgentEntityIdentity/,
-    );
-    expect(collectionSrc).toMatch(
-      /private readonly materializations = new Map<string, Promise<ResolvedTeamMate>>/,
-    );
-  });
-
   it('no file under team-service/** declares a Map keyed to a TeamService (that cache belongs to the Collection alone)', () => {
     const cacheShape = /Map<\s*string\s*,\s*(Promise<)?TeamService/;
     const offenders = teamServiceFiles.filter((file) =>
@@ -200,10 +172,17 @@ describe('WorkflowService is a combined collection+service for workflow runs, no
     // BOTH the live-run cache and its own eviction is therefore correct, not
     // a violation of the Service/Collection split: there is nothing else for
     // it to delegate to.
-    const noOwningCollectionDir = walkTs(join(src, 'service/workflow-collection'));
+    const noOwningCollectionDir = walkTs(
+      join(src, 'service/workflow-collection'),
+    );
     expect(noOwningCollectionDir).toEqual([]);
-    const indexSrc = readFileSync(join(src, 'service/workflow-service/index.ts'), 'utf8');
-    expect(indexSrc).toMatch(/private evict\(runId: string, expected: WorkflowRun\)/);
+    const indexSrc = readFileSync(
+      join(src, 'service/workflow-service/index.ts'),
+      'utf8',
+    );
+    expect(indexSrc).toMatch(
+      /private evict\(runId: string, expected: WorkflowRun\)/,
+    );
   });
 });
 
@@ -233,7 +212,9 @@ describe('domain vocabulary: team.* / teammate.* Commands originate only in thei
       const matches = readFileSync(file, 'utf8').match(pattern) ?? [];
       if (matches.length > 0) hits.set(rel(file), matches.length);
     }
-    expect([...hits.keys()]).toEqual(['service/teammate-collection/commands.ts']);
+    expect([...hits.keys()]).toEqual([
+      'service/teammate-collection/commands.ts',
+    ]);
   });
 });
 

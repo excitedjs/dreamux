@@ -61,7 +61,11 @@ interface DispatcherStatusResult {
 export function dispatcherCommands(
   host: CoreCommandHost,
 ): readonly AnyCoreCommand[] {
-  const list: CoreCommandDefinition<'dispatcher.list', void, DispatcherListResult> = {
+  const list: CoreCommandDefinition<
+    'dispatcher.list',
+    void,
+    DispatcherListResult
+  > = {
     name: 'dispatcher.list',
     version: 1,
     input: NO_INPUT,
@@ -90,7 +94,13 @@ export function dispatcherCommands(
         session_id: NULLABLE_STRING,
         last_error: NULLABLE_STRING,
       },
-      ['dispatcher_id', 'channel_identity', 'status', 'session_id', 'last_error'],
+      [
+        'dispatcher_id',
+        'channel_identity',
+        'status',
+        'session_id',
+        'last_error',
+      ],
     ),
     parse(payload) {
       commandPayload(payload);
@@ -138,10 +148,9 @@ export function dispatcherCommands(
     name: 'dispatcher.interrupt',
     version: 1,
     input: NO_INPUT,
-    output: objectSchema(
-      { status: enumOf(['interrupted', 'idle']) },
-      ['status'],
-    ),
+    output: objectSchema({ status: enumOf(['interrupted', 'idle']) }, [
+      'status',
+    ]),
     parse(payload) {
       commandPayload(payload);
     },
@@ -150,5 +159,10 @@ export function dispatcherCommands(
     },
   };
 
-  return [list, status, submit, interrupt] as unknown as readonly AnyCoreCommand[];
+  return [
+    list,
+    status,
+    submit,
+    interrupt,
+  ] as unknown as readonly AnyCoreCommand[];
 }

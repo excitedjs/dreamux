@@ -69,7 +69,11 @@ export class FeishuTargetRouter {
   ): Promise<FeishuInboundRoute> {
     assertRoutingActive(signal);
     const route = await this.project(
-      { chatId: event.chatId, chatType: event.chatType, threadId: event.threadId },
+      {
+        chatId: event.chatId,
+        chatType: event.chatType,
+        threadId: event.threadId,
+      },
       signal,
     );
     assertRoutingActive(signal);

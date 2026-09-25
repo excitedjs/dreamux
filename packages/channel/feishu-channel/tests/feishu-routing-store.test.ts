@@ -12,13 +12,22 @@
  * serialize concurrent preparations, and publish only after persistence
  * succeeds.
  */
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { FeishuRoutingStore, routingDocumentFilename } from '../src/routing/store.js';
+import {
+  FeishuRoutingStore,
+  routingDocumentFilename,
+} from '../src/routing/store.js';
 
 let dir: string;
 
@@ -115,7 +124,7 @@ describe('FeishuRoutingStore — commit authority', () => {
     ]);
   });
 
-  it('serializes concurrent updates: the second mutator sees the first mutator\'s change as its base', async () => {
+  it("serializes concurrent updates: the second mutator sees the first mutator's change as its base", async () => {
     const store = newStore('chan-concurrent');
     await store.load();
 
@@ -310,7 +319,12 @@ describe('FeishuRoutingStore — the subscriptions section', () => {
     const reloaded = newStore(channelId);
     await reloaded.load();
     expect(reloaded.current.subscriptions).toEqual([
-      { file_token: 'doc_tok', file_type: 'docx', team_name: null, created_at: 7 },
+      {
+        file_token: 'doc_tok',
+        file_type: 'docx',
+        team_name: null,
+        created_at: 7,
+      },
     ]);
   });
 });

@@ -17,10 +17,12 @@ describe('Codex systemPrompt mapping', () => {
   });
 
   it('keeps append-only prompt out of baseInstructions', () => {
-    expect(codexSystemPromptReplace({ append: ['architecture reviewer'] }))
-      .toBeUndefined();
-    expect(codexSystemPromptAppend({ append: ['architecture reviewer'] }))
-      .toEqual(['architecture reviewer']);
+    expect(
+      codexSystemPromptReplace({ append: ['architecture reviewer'] }),
+    ).toBeUndefined();
+    expect(
+      codexSystemPromptAppend({ append: ['architecture reviewer'] }),
+    ).toEqual(['architecture reviewer']);
   });
 
   it('treats empty append arrays and empty append items as no append', () => {
@@ -41,18 +43,22 @@ describe('Codex systemPrompt mapping', () => {
   });
 
   it('uses replace-only prompt as baseInstructions', () => {
-    expect(codexSystemPromptReplace({ replace: 'complete base prompt' }))
-      .toBe('complete base prompt');
-    expect(codexSystemPromptAppend({ replace: 'complete base prompt' }))
-      .toBeUndefined();
+    expect(codexSystemPromptReplace({ replace: 'complete base prompt' })).toBe(
+      'complete base prompt',
+    );
+    expect(
+      codexSystemPromptAppend({ replace: 'complete base prompt' }),
+    ).toBeUndefined();
   });
 
   it('wraps each append item separately and escapes XML text', () => {
     expect(
-      codexThreadInstructions({ systemPromptAppend: [
-        'Default TeamLeader identity.',
-        'Use <danger> & never close </developer-reminder>',
-      ] }).developerInstructions,
+      codexThreadInstructions({
+        systemPromptAppend: [
+          'Default TeamLeader identity.',
+          'Use <danger> & never close </developer-reminder>',
+        ],
+      }).developerInstructions,
     ).toBe(
       '<developer-reminder>\n' +
         'Default TeamLeader identity.\n' +

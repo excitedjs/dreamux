@@ -60,7 +60,11 @@ function catalogWith(
 ): ChannelProviderCatalog {
   const registry = new ProviderRegistry();
   for (const { ref, id, provider } of registrations) {
-    const descriptor = { id: id ?? ref, kind: 'channel' as const, ref: parseProviderRef(ref) };
+    const descriptor = {
+      id: id ?? ref,
+      kind: 'channel' as const,
+      ref: parseProviderRef(ref),
+    };
     registry.register(descriptor);
     registry.registerImplementation(descriptor.id, provider);
   }
@@ -122,7 +126,9 @@ describe('external channel provider loader (registration and fail-loud ordering)
 
     // Proof the kind/ref check ran before any implementation-level work.
     expect(importCalled).toBe(false);
-    expect(registry.getImplementation('npm:@example/chan#create')).toBeUndefined();
+    expect(
+      registry.getImplementation('npm:@example/chan#create'),
+    ).toBeUndefined();
   });
 
   it('rejects a contract failure (missing createSession) without a partial registration', async () => {
@@ -136,7 +142,10 @@ describe('external channel provider loader (registration and fail-loud ordering)
         registry,
         refs: ['npm:@example/broken#create'],
         importModule: async () => ({
-          create: (ctx: { ref: string }) => ({ ref: ctx.ref, notASession: true }),
+          create: (ctx: { ref: string }) => ({
+            ref: ctx.ref,
+            notASession: true,
+          }),
         }),
       }),
     ).rejects.toThrow(ExternalChannelProviderContractError);
@@ -155,9 +164,14 @@ describe('channelMcpDelegates (Channel MCP injection)', () => {
       mcp: {
         describe: (_config, context) => {
           seenCallers.push(context.caller);
-          return [fakeChannelToolRegistration({ name: 'send', target: 'provider' })];
+          return [
+            fakeChannelToolRegistration({ name: 'send', target: 'provider' }),
+          ];
         },
-        providerInvoke: async (call: ChannelMcpCall, context: ChannelMcpCallContext) => ({
+        providerInvoke: async (
+          call: ChannelMcpCall,
+          context: ChannelMcpCallContext,
+        ) => ({
           ok: true,
           value: { echoed: call.name, caller: context.caller },
         }),
@@ -183,13 +197,19 @@ describe('channelMcpDelegates (Channel MCP injection)', () => {
     // `primary` is the operator's own string, which the model has nowhere to
     // look up; the provider is what it can associate these tools with. Both
     // model-visible names are the provider's.
-    expect(delegates.map((delegate) => delegate.name)).toEqual(['channel-feishu']);
-    expect(delegates[0]!.describe().identity.name).toBe('dreamux-channel-feishu');
+    expect(delegates.map((delegate) => delegate.name)).toEqual([
+      'channel-feishu',
+    ]);
+    expect(delegates[0]!.describe().identity.name).toBe(
+      'dreamux-channel-feishu',
+    );
   });
 
   it('composes a caller-specific catalog for a dispatcher caller', async () => {
     const { result, seenCallers } = mcpProviderWithCaller();
-    const catalog = catalogWith([{ ref: 'npm:@example/chan#create', provider: result.provider }]);
+    const catalog = catalogWith([
+      { ref: 'npm:@example/chan#create', provider: result.provider },
+    ]);
     const delegates = channelMcpDelegates({
       dispatcherId: 'flow',
       channels: [channelConfig('primary', 'npm:@example/chan#create')],
@@ -211,12 +231,18 @@ describe('channelMcpDelegates (Channel MCP injection)', () => {
 
   it('composes a distinct, Team-scoped catalog for a TeamLeader caller', () => {
     const { result, seenCallers } = mcpProviderWithCaller();
-    const catalog = catalogWith([{ ref: 'npm:@example/chan#create', provider: result.provider }]);
+    const catalog = catalogWith([
+      { ref: 'npm:@example/chan#create', provider: result.provider },
+    ]);
     channelMcpDelegates({
       dispatcherId: 'flow',
       channels: [channelConfig('primary', 'npm:@example/chan#create')],
       channelProviders: catalog,
-      caller: { kind: 'team_leader', team_name: 'alpha', leader_name: 'leader-alpha' },
+      caller: {
+        kind: 'team_leader',
+        team_name: 'alpha',
+        leader_name: 'leader-alpha',
+      },
       sessionMcp: () => null,
       dispatch: (task) => task(),
     });
@@ -228,7 +254,9 @@ describe('channelMcpDelegates (Channel MCP injection)', () => {
 
   it('yields no delegate for a channel whose provider composes no MCP capability', () => {
     const plain = createFakeChannelProvider();
-    const catalog = catalogWith([{ ref: 'npm:@example/plain#create', provider: plain.provider }]);
+    const catalog = catalogWith([
+      { ref: 'npm:@example/plain#create', provider: plain.provider },
+    ]);
     const delegates = channelMcpDelegates({
       dispatcherId: 'flow',
       channels: [channelConfig('primary', 'npm:@example/plain#create')],
@@ -245,11 +273,17 @@ describe('channelMcpDelegates (Channel MCP injection)', () => {
     // by there being no call site at all in the TeamMate delegate assembly,
     // not by a runtime flag a TeamMate-scoped call could theoretically flip.
     const dispatcherAssembly = await readFile(
-      new URL('../src/service/dispatcher-service/mcp-delegates.ts', import.meta.url),
+      new URL(
+        '../src/service/dispatcher-service/mcp-delegates.ts',
+        import.meta.url,
+      ),
       'utf8',
     );
     const teammateAssembly = await readFile(
-      new URL('../src/service/teammate-collection/mcp-delegate.ts', import.meta.url),
+      new URL(
+        '../src/service/teammate-collection/mcp-delegate.ts',
+        import.meta.url,
+      ),
       'utf8',
     );
     expect(dispatcherAssembly).toMatch(/channelMcpDelegates\(/);

@@ -3,7 +3,7 @@ import type {
   AgentRuntimeSkillSource,
   AgentRuntimeStatus,
   JsonValue,
-} from "@excitedjs/dreamux-types";
+} from '@excitedjs/dreamux-types';
 import { RuleViolation } from '../../platform/errors.js';
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -45,11 +45,7 @@ export function assertNotReservedAgentName(name: string): void {
 }
 
 export type AgentEntityIdentityStatus =
-  | "starting"
-  | "running"
-  | "degraded"
-  | "closed"
-  | "stopped";
+  'starting' | 'running' | 'degraded' | 'closed' | 'stopped';
 
 /**
  * Role is deliberately NOT a persisted identity field and has no type here.
@@ -94,12 +90,12 @@ export interface AgentEntityIdentity {
 }
 
 export interface AgentEntityRepoView {
-  mode: AgentEntityWorktreeIdentity["mode"];
+  mode: AgentEntityWorktreeIdentity['mode'];
   path: string;
   source_repo: string | null;
   branch: string | null;
   base_ref: string | null;
-  cleanup: "keep" | "delete-on-close";
+  cleanup: 'keep' | 'delete-on-close';
   cleanup_state: AgentEntityWorktreeCleanupState;
 }
 
@@ -136,29 +132,29 @@ export interface CreateTeamLeaderInput {
 }
 
 export type AgentEntityWorktreeCleanupState =
-  | "not-managed"
-  | "managed-active"
-  | "cleanup-pending"
-  | "kept"
-  | "deleted"
-  | "retained-dirty"
-  | "retained-unmerged"
-  | "retained-unique-commits"
-  | "retained-error";
+  | 'not-managed'
+  | 'managed-active'
+  | 'cleanup-pending'
+  | 'kept'
+  | 'deleted'
+  | 'retained-dirty'
+  | 'retained-unmerged'
+  | 'retained-unique-commits'
+  | 'retained-error';
 
 export interface AgentEntityWorktreeIdentity {
-  mode: "reuse-cwd" | "managed";
+  mode: 'reuse-cwd' | 'managed';
   slug: string | null;
   path: string;
   branch: string | null;
   base_ref: string | null;
-  cleanup: "keep" | "delete-on-close";
+  cleanup: 'keep' | 'delete-on-close';
   cleanup_state: AgentEntityWorktreeCleanupState;
   cleanup_error: string | null;
 }
 
 export interface AgentEntitySubmissionResult {
-  status: "submitted" | "duplicate" | "stopped" | "failed" | "ambiguous";
+  status: 'submitted' | 'duplicate' | 'stopped' | 'failed' | 'ambiguous';
   error?: string;
 }
 
@@ -188,7 +184,7 @@ export interface AgentEntityHistoryQuery {
 }
 
 export interface AgentEntityResumeHint {
-  tool: "send";
+  tool: 'send';
   name: string;
 }
 
@@ -277,7 +273,7 @@ export interface AgentEntityCapabilities {
 export function validateAgentEntityName(name: string): string {
   if (!TEAMMATE_NAME_PATTERN.test(name)) {
     throw new RuleViolation(
-      "Agent entity name must be 1-64 ASCII letters, digits, dots, underscores, " +
+      'Agent entity name must be 1-64 ASCII letters, digits, dots, underscores, ' +
         `or dashes, starting with a letter or digit: ${name}`,
     );
   }
@@ -294,7 +290,7 @@ export function validateAgentEntityName(name: string): string {
 export const validateTeamMateName = validateAgentEntityName;
 
 export function requireLifecycleText(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
@@ -305,11 +301,11 @@ export function optionalLifecycleText(
   label: string,
 ): string | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== "string") {
+  if (typeof value !== 'string') {
     throw new Error(`${label} must be a string`);
   }
   const trimmed = value.trim();
-  if (trimmed === "") {
+  if (trimmed === '') {
     throw new Error(`${label} must be a non-empty string`);
   }
   return trimmed;
@@ -319,16 +315,16 @@ export function runtimeStatusToIdentityStatus(
   status: AgentRuntimeStatus,
 ): AgentEntityIdentityStatus {
   switch (status) {
-    case "ready":
-      return "running";
-    case "starting":
-      return "starting";
-    case "degraded":
-      return "degraded";
-    case "stopping":
-    case "stopped":
-      return "stopped";
-    case "declared":
-      return "stopped";
+    case 'ready':
+      return 'running';
+    case 'starting':
+      return 'starting';
+    case 'degraded':
+      return 'degraded';
+    case 'stopping':
+    case 'stopped':
+      return 'stopped';
+    case 'declared':
+      return 'stopped';
   }
 }

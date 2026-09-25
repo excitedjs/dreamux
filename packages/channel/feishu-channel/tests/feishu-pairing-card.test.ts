@@ -111,9 +111,7 @@ describe('buildPairingApprovalCard — the token never becomes visible card text
       elements: Array<{ text?: { content: string } }>;
     };
     const body = rendered.elements.find((el) => el.text !== undefined);
-    expect(body?.text?.content).toContain(
-      '<at id="ou_requester_123"></at>',
-    );
+    expect(body?.text?.content).toContain('<at id="ou_requester_123"></at>');
   });
 
   it('strips markup-significant characters from a hostile requester open_id instead of forging the <at> tag', () => {
@@ -152,15 +150,21 @@ describe('buildPairingSuccessCard', () => {
 
   it('distinguishes a fresh approval from a duplicate (already-allowed) approval in both languages', () => {
     const fresh = buildPairingSuccessCard({ duplicate: false }) as {
-      elements: Array<{ text?: { content: string; i18n_content?: { en_us: string } } }>;
+      elements: Array<{
+        text?: { content: string; i18n_content?: { en_us: string } };
+      }>;
     };
     const dup = buildPairingSuccessCard({ duplicate: true }) as {
-      elements: Array<{ text?: { content: string; i18n_content?: { en_us: string } } }>;
+      elements: Array<{
+        text?: { content: string; i18n_content?: { en_us: string } };
+      }>;
     };
     const freshBody = fresh.elements.find((el) => el.text !== undefined)?.text;
     const dupBody = dup.elements.find((el) => el.text !== undefined)?.text;
     expect(freshBody?.content).not.toBe(dupBody?.content);
-    expect(freshBody?.i18n_content?.en_us).not.toBe(dupBody?.i18n_content?.en_us);
+    expect(freshBody?.i18n_content?.en_us).not.toBe(
+      dupBody?.i18n_content?.en_us,
+    );
   });
 });
 

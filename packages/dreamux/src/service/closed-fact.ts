@@ -44,7 +44,10 @@ export class ClosedFactPublisher<Fact extends object> {
 
   private deliver(listener: ClosedListener<Fact>, fact: Fact): void {
     const failed = (error: unknown): void => {
-      this.log.warn({ closed: fact, err: errorInfo(error) }, 'closed listener failed');
+      this.log.warn(
+        { closed: fact, err: errorInfo(error) },
+        'closed listener failed',
+      );
     };
     try {
       void Promise.resolve(listener(fact)).catch(failed);

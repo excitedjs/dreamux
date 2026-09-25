@@ -71,10 +71,7 @@ export function parseCodexArgs(
   // extraArgs are appended. codex's CLI is order-sensitive for `-c key=value`
   // overrides — last write wins — so the dispatcher value overrides a same-key
   // default.
-  const extraArgs = [
-    ...(defaults.extraArgs ?? []),
-    ...perDispatcherExtra,
-  ];
+  const extraArgs = [...(defaults.extraArgs ?? []), ...perDispatcherExtra];
 
   return validateCodexArgs({ approvalPolicy: 'never', sandboxMode, extraArgs });
 }

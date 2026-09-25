@@ -40,7 +40,9 @@ describe('Team and TeamMate concrete-name allocation', () => {
   ];
 
   it('slugifies an agent-supplied base into the name charset', () => {
-    expect(slugifyName('Review The Auth Change')).toBe('review-the-auth-change');
+    expect(slugifyName('Review The Auth Change')).toBe(
+      'review-the-auth-change',
+    );
     expect(slugifyName('  weird@@name!! ')).toBe('weird-name');
     // Junk/empty bases fall back to a non-empty slug rather than producing ''.
     expect(slugifyName('')).toBe('tm');
@@ -77,7 +79,11 @@ describe('Team and TeamMate concrete-name allocation', () => {
   it('applies the current role prefix: none for team/dispatcher-teammate, tm-/tl- for the rest', () => {
     // A dispatcher-scoped TeamMate carries no prefix at all.
     expect(
-      buildConcreteName({ kind: 'dispatcher-teammate', base: 'reviewer', suffix: 'abcd' }),
+      buildConcreteName({
+        kind: 'dispatcher-teammate',
+        base: 'reviewer',
+        suffix: 'abcd',
+      }),
     ).toBe('reviewer-abcd');
     // A Team's own name carries no prefix either.
     expect(
@@ -86,7 +92,11 @@ describe('Team and TeamMate concrete-name allocation', () => {
     // A Team-scoped TeamMate is durably tagged `tm-` (the durable address, not
     // a description of the retired `team_member` role vocabulary).
     expect(
-      buildConcreteName({ kind: 'team-teammate', base: 'builder', suffix: 'abcd1234' }),
+      buildConcreteName({
+        kind: 'team-teammate',
+        base: 'builder',
+        suffix: 'abcd1234',
+      }),
     ).toBe('tm-builder-abcd1234');
     // A TeamLeader names from the team slug (with `tl-`), not the base.
     expect(
@@ -101,7 +111,11 @@ describe('Team and TeamMate concrete-name allocation', () => {
 
   it('a team-leader falls back to the base when no teamSlug is supplied', () => {
     expect(
-      buildConcreteName({ kind: 'team-leader', base: 'fallback-base', suffix: 'abcd' }),
+      buildConcreteName({
+        kind: 'team-leader',
+        base: 'fallback-base',
+        suffix: 'abcd',
+      }),
     ).toBe('tl-fallback-base-abcd');
   });
 
@@ -164,7 +178,9 @@ describe('Team and TeamMate concrete-name allocation', () => {
         generateSuffix: () => 'aaaaaaaa',
         maxAttempts: 4,
       }),
-    ).toThrow(/could not allocate a unique dispatcher-teammate name after 4 attempts/);
+    ).toThrow(
+      /could not allocate a unique dispatcher-teammate name after 4 attempts/,
+    );
   });
 
   it('reserves dispatcher as an ordinary agent or team name', () => {

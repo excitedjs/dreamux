@@ -11,7 +11,10 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 
-import { SupervisedChild, type SupervisedChildExit } from '../src/supervised-child.js';
+import {
+  SupervisedChild,
+  type SupervisedChildExit,
+} from '../src/supervised-child.js';
 import { isProcessGroupAlive, killProcessGroup } from '../src/os.js';
 
 describe('SupervisedChild', () => {
@@ -36,7 +39,10 @@ describe('SupervisedChild', () => {
     }
   });
 
-  function makeChild(script: string, options?: ConstructorParameters<typeof SupervisedChild>[1]) {
+  function makeChild(
+    script: string,
+    options?: ConstructorParameters<typeof SupervisedChild>[1],
+  ) {
     const child = new SupervisedChild(
       { kind: 'spawn', command: process.execPath, args: ['-e', script] },
       options,
@@ -55,14 +61,18 @@ describe('SupervisedChild', () => {
   it('calling start() twice on the same instance throws', async () => {
     const child = makeChild('setInterval(() => {}, 1000)');
     await child.start();
-    await expect(child.start()).rejects.toThrow('SupervisedChild.start: already started');
+    await expect(child.start()).rejects.toThrow(
+      'SupervisedChild.start: already started',
+    );
   });
 
   it('calling start() after stop() throws', async () => {
     const child = makeChild('setInterval(() => {}, 1000)');
     await child.start();
     await child.stop();
-    await expect(child.start()).rejects.toThrow('SupervisedChild.start: already stopped');
+    await expect(child.start()).rejects.toThrow(
+      'SupervisedChild.start: already stopped',
+    );
   });
 
   it('stop() before start() resolves without throwing', async () => {
@@ -147,7 +157,9 @@ describe('SupervisedChild', () => {
   }, 10_000);
 
   it('stop() converges quickly for a child that honors SIGTERM', async () => {
-    const child = makeChild("process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)");
+    const child = makeChild(
+      "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)",
+    );
     await child.start();
     const start = Date.now();
     await child.stop();

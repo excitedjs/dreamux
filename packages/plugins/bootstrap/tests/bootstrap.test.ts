@@ -2,7 +2,14 @@
  * The bootstrap plugin against stand-in Dispatcher and Team objects that carry
  * real tapable hooks, the way core hands them to a plugin.
  */
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,7 +50,10 @@ function fakeDispatcher(dispatcherCwd: string): Dispatcher {
     cwd: dispatcherCwd,
     hooks: Object.freeze({
       beforeLaunch: new AsyncSeriesHook<[LaunchDraft]>(['draft']),
-      team: new SyncHook<[Team, { readonly origin: 'create' | 'rebuild' }]>(['team', 'ctx']),
+      team: new SyncHook<[Team, { readonly origin: 'create' | 'rebuild' }]>([
+        'team',
+        'ctx',
+      ]),
     }),
   };
 }
@@ -55,7 +65,9 @@ function fakeTeam(): Team {
     workspace: join(cwd, 'alpha'),
     hooks: Object.freeze({
       beforeTeamLeaderLaunch: new AsyncSeriesHook<[LaunchDraft]>(['draft']),
-      created: new AsyncSeriesHook<[{ readonly requestId: string | null }]>(['ctx']),
+      created: new AsyncSeriesHook<[{ readonly requestId: string | null }]>([
+        'ctx',
+      ]),
     }),
   };
 }
@@ -68,28 +80,40 @@ function announce(dispatcher: Dispatcher): void {
     logger: silentLog,
     hooks: Object.freeze({
       dispatcher: dispatcherHook,
-      plugin: new HookMap(() => new SyncHook<[unknown]>(['api'])) as unknown as ServerHost['hooks']['plugin'],
+      plugin: new HookMap(
+        () => new SyncHook<[unknown]>(['api']),
+      ) as unknown as ServerHost['hooks']['plugin'],
     }),
   };
   createBootstrapPlugin().server?.(host);
   dispatcherHook.call(dispatcher);
 }
 
-async function launch(hook: AsyncSeriesHook<[LaunchDraft]>): Promise<LaunchDraft> {
+async function launch(
+  hook: AsyncSeriesHook<[LaunchDraft]>,
+): Promise<LaunchDraft> {
   const draft: LaunchDraft = { instructions: [], skillSources: [] };
   await hook.promise(draft);
   return draft;
 }
 
-async function writeProfile(files: { identity?: string; user?: string }): Promise<void> {
+async function writeProfile(files: {
+  identity?: string;
+  user?: string;
+}): Promise<void> {
   const dir = join(cwd, '.workspace');
   await mkdir(dir, { recursive: true });
-  if (files.identity !== undefined) await writeFile(join(dir, 'identity.md'), files.identity);
-  if (files.user !== undefined) await writeFile(join(dir, 'user.md'), files.user);
+  if (files.identity !== undefined)
+    await writeFile(join(dir, 'identity.md'), files.identity);
+  if (files.user !== undefined)
+    await writeFile(join(dir, 'user.md'), files.user);
 }
 
 async function exists(path: string): Promise<boolean> {
-  return stat(path).then(() => true, () => false);
+  return stat(path).then(
+    () => true,
+    () => false,
+  );
 }
 
 describe('bootstrap plugin', () => {
@@ -101,7 +125,9 @@ describe('bootstrap plugin', () => {
     const draft = await launch(dispatcher.hooks.beforeLaunch);
 
     expect(draft.instructions).toEqual([BOOTSTRAP_GUIDE]);
-    expect(await readFile(join(cwd, '.workspace', 'bootstrap.md'), 'utf8')).toBe(BOOTSTRAP_GUIDE);
+    expect(
+      await readFile(join(cwd, '.workspace', 'bootstrap.md'), 'utf8'),
+    ).toBe(BOOTSTRAP_GUIDE);
   });
 
   it('writes the guide and gives it to the Dispatcher while the other profile file is missing', async () => {
@@ -112,7 +138,9 @@ describe('bootstrap plugin', () => {
     const draft = await launch(dispatcher.hooks.beforeLaunch);
 
     expect(draft.instructions).toEqual([BOOTSTRAP_GUIDE]);
-    expect(await readFile(join(cwd, '.workspace', 'bootstrap.md'), 'utf8')).toBe(BOOTSTRAP_GUIDE);
+    expect(
+      await readFile(join(cwd, '.workspace', 'bootstrap.md'), 'utf8'),
+    ).toBe(BOOTSTRAP_GUIDE);
   });
 
   it('creates .workspace when nothing created it yet', async () => {
@@ -123,11 +151,16 @@ describe('bootstrap plugin', () => {
 
     expect(await exists(join(cwd, '.workspace', 'bootstrap.md'))).toBe(true);
     expect(draft.instructions).toEqual([BOOTSTRAP_GUIDE]);
-    expect(await readFile(join(cwd, '.workspace', 'bootstrap.md'), 'utf8')).toBe(BOOTSTRAP_GUIDE);
+    expect(
+      await readFile(join(cwd, '.workspace', 'bootstrap.md'), 'utf8'),
+    ).toBe(BOOTSTRAP_GUIDE);
   });
 
   it('removes the guide and injects both files once both exist', async () => {
-    await writeProfile({ identity: 'I am the assistant.', user: 'The user ships things.' });
+    await writeProfile({
+      identity: 'I am the assistant.',
+      user: 'The user ships things.',
+    });
     await writeFile(join(cwd, '.workspace', 'bootstrap.md'), BOOTSTRAP_GUIDE);
     const dispatcher = fakeDispatcher(cwd);
     announce(dispatcher);
@@ -145,17 +178,22 @@ describe('bootstrap plugin', () => {
     // The operator hand-writes both profile files before the Dispatcher's
     // first-ever launch: bootstrap.md was never created, so the rm(force)
     // no-op path (not the "remove an existing guide" path) is what runs.
-    await writeProfile({ identity: 'I am the assistant.', user: 'The user ships things.' });
+    await writeProfile({
+      identity: 'I am the assistant.',
+      user: 'The user ships things.',
+    });
     const dispatcher = fakeDispatcher(cwd);
     announce(dispatcher);
 
     const draft = await launch(dispatcher.hooks.beforeLaunch);
 
     expect(await exists(join(cwd, '.workspace', 'bootstrap.md'))).toBe(false);
-    expect(draft.instructions).toEqual([renderProfile(join(cwd, '.workspace'), {
-      identity: 'I am the assistant.',
-      user: 'The user ships things.',
-    })]);
+    expect(draft.instructions).toEqual([
+      renderProfile(join(cwd, '.workspace'), {
+        identity: 'I am the assistant.',
+        user: 'The user ships things.',
+      }),
+    ]);
   });
 
   it('rejects the Dispatcher beforeLaunch hook when a profile file read fails for a reason other than ENOENT', async () => {
@@ -166,7 +204,9 @@ describe('bootstrap plugin', () => {
     announce(dispatcher);
     const draft: LaunchDraft = { instructions: [], skillSources: [] };
 
-    await expect(dispatcher.hooks.beforeLaunch.promise(draft)).rejects.toThrow();
+    await expect(
+      dispatcher.hooks.beforeLaunch.promise(draft),
+    ).rejects.toThrow();
 
     // The throw happens inside readProfile, before either write branch runs.
     expect(draft.instructions).toEqual([]);
@@ -181,7 +221,9 @@ describe('bootstrap plugin', () => {
     dispatcher.hooks.team.call(team, { origin: 'create' });
     const draft: LaunchDraft = { instructions: [], skillSources: [] };
 
-    await expect(team.hooks.beforeTeamLeaderLaunch.promise(draft)).rejects.toThrow();
+    await expect(
+      team.hooks.beforeTeamLeaderLaunch.promise(draft),
+    ).rejects.toThrow();
 
     expect(draft.instructions).toEqual([]);
   });
@@ -193,7 +235,9 @@ describe('bootstrap plugin', () => {
     dispatcher.hooks.team.call(team, { origin: 'create' });
 
     await writeProfile({ identity: 'I am the assistant.' });
-    expect((await launch(team.hooks.beforeTeamLeaderLaunch)).instructions).toEqual([]);
+    expect(
+      (await launch(team.hooks.beforeTeamLeaderLaunch)).instructions,
+    ).toEqual([]);
     // An incomplete profile touches no filesystem: the TeamLeader branch has
     // no `else`, unlike the Dispatcher branch which writes the guide.
     expect(await exists(join(cwd, '.workspace', 'bootstrap.md'))).toBe(false);
@@ -213,13 +257,18 @@ describe('bootstrap plugin', () => {
     expect(first.instructions).toEqual([BOOTSTRAP_GUIDE]);
     expect(await exists(join(cwd, '.workspace', 'bootstrap.md'))).toBe(true);
 
-    await writeProfile({ identity: 'I am the assistant.', user: 'The user ships things.' });
-    const second = await launch(dispatcher.hooks.beforeLaunch);
-
-    expect(second.instructions).toEqual([renderProfile(join(cwd, '.workspace'), {
+    await writeProfile({
       identity: 'I am the assistant.',
       user: 'The user ships things.',
-    })]);
+    });
+    const second = await launch(dispatcher.hooks.beforeLaunch);
+
+    expect(second.instructions).toEqual([
+      renderProfile(join(cwd, '.workspace'), {
+        identity: 'I am the assistant.',
+        user: 'The user ships things.',
+      }),
+    ]);
     expect(await exists(join(cwd, '.workspace', 'bootstrap.md'))).toBe(false);
   });
 
@@ -243,18 +292,20 @@ describe('renderProfile', () => {
       user: '\nother\n ',
     });
 
-    expect(rendered).toBe([
-      '# Profile',
-      '',
-      `These files come from ${dir}. \`identity.md\` describes who you are; \`user.md\` describes the user you work for.`,
-      '',
-      '## identity.md',
-      '',
-      'padded',
-      '',
-      '## user.md',
-      '',
-      'other',
-    ].join('\n'));
+    expect(rendered).toBe(
+      [
+        '# Profile',
+        '',
+        `These files come from ${dir}. \`identity.md\` describes who you are; \`user.md\` describes the user you work for.`,
+        '',
+        '## identity.md',
+        '',
+        'padded',
+        '',
+        '## user.md',
+        '',
+        'other',
+      ].join('\n'),
+    );
   });
 });

@@ -40,7 +40,10 @@ import {
 import { sendBindingNotification } from './feishu-notification.js';
 import { sessionBotRoutes } from './feishu-session-routes.js';
 import { AsyncMutex } from './lib/mutex.js';
-import { alwaysActiveSessionFence, type FeishuSessionFence } from './feishu-inbound-work.js';
+import {
+  alwaysActiveSessionFence,
+  type FeishuSessionFence,
+} from './feishu-inbound-work.js';
 import { createAskUserRegistry } from './feishu-ask-user.js';
 import { isTrustedDispatcherUser } from './feishu-gate-io.js';
 import { FeishuDocumentComments } from './feishu-document-comments.js';
@@ -145,13 +148,14 @@ export class FeishuChannelSession {
   private invoker: JsonInvoker | undefined;
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
-    this.bot = opts.botFactory !== undefined
-      ? opts.botFactory()
-      : createFeishuBot({
-          appId: opts.appId,
-          appSecret: opts.appSecret,
-          logger: opts.log,
-        } satisfies CreateBotOptions);
+    this.bot =
+      opts.botFactory !== undefined
+        ? opts.botFactory()
+        : createFeishuBot({
+            appId: opts.appId,
+            appSecret: opts.appSecret,
+            logger: opts.log,
+          } satisfies CreateBotOptions);
     this.targetRouter = new FeishuTargetRouter({
       chatModes: this.bot,
       log: opts.log,
@@ -184,7 +188,8 @@ export class FeishuChannelSession {
       channelId: opts.channelId,
       log: opts.log,
       routing: this.routing,
-      announceRoutesRemoved: (input) => this.bindings.announceRoutesRemoved(input),
+      announceRoutesRemoved: (input) =>
+        this.bindings.announceRoutesRemoved(input),
     });
     this.provisioning = new FeishuProvisioning({
       dispatcherId: opts.dispatcherId,
@@ -284,14 +289,16 @@ export class FeishuChannelSession {
       throw new Error('Feishu channel session was started before initialize');
     }
     try {
-      await this.bot.start(sessionBotRoutes({
-        fence: lifecycle.fence,
-        track: (work) => this.track(lifecycle, work),
-        stateDir: this.opts.stateDir,
-        handle: () => this.handleForFence(lifecycle.fence),
-        onCardAction: (event) => this.onCardAction(event),
-        docComments: this.docComments,
-      }));
+      await this.bot.start(
+        sessionBotRoutes({
+          fence: lifecycle.fence,
+          track: (work) => this.track(lifecycle, work),
+          stateDir: this.opts.stateDir,
+          handle: () => this.handleForFence(lifecycle.fence),
+          onCardAction: (event) => this.onCardAction(event),
+          docComments: this.docComments,
+        }),
+      );
       // Tracked so a close landing mid-start waits, then closes what it opened.
       if (lifecycle.fence.isCurrent()) {
         await this.track(lifecycle, this.extensions.start());
@@ -370,13 +377,14 @@ export class FeishuChannelSession {
     }
     // Only a chat submission has a visible message to hang a card under; a
     // document comment opens none, and registers no correlation to suppress.
-    const inbound = submission.kind === 'chat'
-      ? this.cot.beginInboundSubmission(
-          teamName,
-          submission.anchor,
-          submission.sourceId,
-        )
-      : null;
+    const inbound =
+      submission.kind === 'chat'
+        ? this.cot.beginInboundSubmission(
+            teamName,
+            submission.anchor,
+            submission.sourceId,
+          )
+        : null;
     try {
       const command = teamName !== null ? 'team.submit' : 'dispatcher.submit';
       const raw = await this.invoke(command, {
@@ -480,11 +488,15 @@ export class FeishuChannelSession {
       logger: this.opts.log,
       channelId: this.opts.channelId,
       sendText: async (chatId, text, sendOpts) =>
-        this.sendReply({ chatId, text, messageId: sendOpts?.messageId }, caller),
+        this.sendReply(
+          { chatId, text, messageId: sendOpts?.messageId },
+          caller,
+        ),
       react: async (chatId, messageId, emoji) =>
         this.addReaction({ messageId, emoji, chatId }),
       listKnownChatBots: async (chatId) => this.readChatBots(chatId),
-      askUserQuestion: async (input) => sessionAskUserQuestion(this.handle, input),
+      askUserQuestion: async (input) =>
+        sessionAskUserQuestion(this.handle, input),
       bindChannel: (input) => this.bindings.bindChannel(input),
       unbindChannel: (input, requireOwner) =>
         this.bindings.unbindChannel(input, requireOwner),

@@ -39,7 +39,8 @@ export function createFeishuInboundWork(
 ): FeishuInboundWorkContext {
   const now = options.now ?? Date.now;
   const controller = new AbortController();
-  const deadlineAt = now() + (options.timeoutMs ?? FEISHU_ENRICHMENT_TIMEOUT_MS);
+  const deadlineAt =
+    now() + (options.timeoutMs ?? FEISHU_ENRICHMENT_TIMEOUT_MS);
   let stopReason: 'deadline' | 'session_closed' | undefined;
   const stop = (reason: 'deadline' | 'session_closed'): void => {
     if (stopReason !== undefined) return;
@@ -102,10 +103,7 @@ export async function runFeishuInboundWork<T>(
   } catch (error) {
     if (!isFeishuOperationError(error)) throw error;
     if (!work.isSessionActive()) throw new FeishuOperationError('aborted');
-    if (
-      effectiveDeadlineAt < work.deadlineAt &&
-      work.remainingTimeMs() > 0
-    ) {
+    if (effectiveDeadlineAt < work.deadlineAt && work.remainingTimeMs() > 0) {
       throw new FeishuOperationError('timeout');
     }
     throw new FeishuOperationError('deadline');

@@ -224,7 +224,9 @@ class ObservableTransport implements Transport {
   private fail(error: unknown): void {
     if (this.closed) return;
     this.closed = true;
-    this.rejectClosed(error instanceof Error ? error : new Error(String(error)));
+    this.rejectClosed(
+      error instanceof Error ? error : new Error(String(error)),
+    );
   }
 }
 
@@ -248,7 +250,9 @@ function buildMcpServer(
         description: tool.description,
         inputSchema: fromJsonSchema(tool.inputSchema as JsonSchemaType),
         ...(tool.outputSchema !== undefined
-          ? { outputSchema: fromJsonSchema(tool.outputSchema as JsonSchemaType) }
+          ? {
+              outputSchema: fromJsonSchema(tool.outputSchema as JsonSchemaType),
+            }
           : {}),
         ...(tool.annotations !== undefined
           ? { annotations: tool.annotations }
@@ -309,7 +313,9 @@ export function validateMcpJsonSchema(
   try {
     fromJsonSchema(schema as JsonSchemaType);
   } catch (err) {
-    throw new Error(`${label} is not a valid JSON Schema: ${describeError(err)}`);
+    throw new Error(
+      `${label} is not a valid JSON Schema: ${describeError(err)}`,
+    );
   }
 }
 
@@ -360,7 +366,9 @@ export async function runMcpServer(opts: RunMcpServerOptions): Promise<void> {
     // stdin EOF; the runner owns input-end shutdown so a closed input pipe
     // deterministically ends the server (process exit / awaited completion).
     const shutdown = (): void => {
-      handle.close().catch((error) => log(`mcp shutdown error: ${describeError(error)}`));
+      handle
+        .close()
+        .catch((error) => log(`mcp shutdown error: ${describeError(error)}`));
     };
     inputForEof.once('end', shutdown);
     inputForEof.once('close', shutdown);

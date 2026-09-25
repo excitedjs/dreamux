@@ -123,12 +123,14 @@ function worktreeIdentityEquals(
   a: AgentEntityWorktreeIdentity,
   b: AgentEntityWorktreeIdentity,
 ): boolean {
-  return a.mode === b.mode &&
+  return (
+    a.mode === b.mode &&
     a.slug === b.slug &&
     a.path === b.path &&
     a.branch === b.branch &&
     a.base_ref === b.base_ref &&
     a.cleanup === b.cleanup &&
     a.cleanup_state === b.cleanup_state &&
-    a.cleanup_error === b.cleanup_error;
+    a.cleanup_error === b.cleanup_error
+  );
 }

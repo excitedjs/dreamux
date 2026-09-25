@@ -257,7 +257,8 @@ export class DispatcherInputSourceLifecycle {
     this.assertAvailable();
     await this.prepareChannels();
     this.assertAvailable();
-    const sessions = this.preparedChannels ?? new Map<string, ChannelInstance>();
+    const sessions =
+      this.preparedChannels ?? new Map<string, ChannelInstance>();
     try {
       await this.opts.teams.recoverWorktreeCleanup();
       this.assertAvailable();
@@ -282,7 +283,8 @@ export class DispatcherInputSourceLifecycle {
       this.opts.admittedTasks.closeAdmission();
       const rollbackFailures: unknown[] = [];
       await collectShutdownFailure(rollbackFailures, () =>
-        this.opts.workflows.rollbackStart());
+        this.opts.workflows.rollbackStart(),
+      );
       await collectShutdownFailure(rollbackFailures, () =>
         rollbackFailedInputSourceStart({
           dispatcherId: this.opts.dispatcherId,
@@ -295,7 +297,8 @@ export class DispatcherInputSourceLifecycle {
           admittedTasks: this.opts.admittedTasks,
           agent: this.agent_,
           log: this.opts.log,
-        }));
+        }),
+      );
       this.preparedChannels = null;
       this.channelPorts.length = 0;
       if (rollbackFailures.length === 0 && !this.opts.isUnavailable()) {
@@ -356,11 +359,12 @@ export class DispatcherInputSourceLifecycle {
 
   private shouldStartRuntimeForResumeNotice(): boolean {
     const sessionId = this.agent_?.current().session_id ?? null;
-    return sessionId !== null &&
-      this.opts.restartIntent()?.hasTarget(
-        this.opts.dispatcherId,
-        Date.now(),
-      ) === true;
+    return (
+      sessionId !== null &&
+      this.opts
+        .restartIntent()
+        ?.hasTarget(this.opts.dispatcherId, Date.now()) === true
+    );
   }
 
   private dispatcherConfig() {
@@ -387,7 +391,9 @@ export class DispatcherInputSourceLifecycle {
 
   private assertAvailable(): void {
     if (this.opts.isUnavailable()) {
-      throw new Error(`dispatcher '${this.opts.dispatcherId}' is shutting down`);
+      throw new Error(
+        `dispatcher '${this.opts.dispatcherId}' is shutting down`,
+      );
     }
   }
 }

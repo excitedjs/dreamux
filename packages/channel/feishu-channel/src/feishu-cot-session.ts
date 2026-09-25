@@ -1,8 +1,5 @@
 /** Fail-open wiring between a live Feishu session and its COT adapter. */
-import type {
-  ChannelCoreEvent,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { ChannelCoreEvent, DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { FeishuCotClient } from '@excitedjs/feishu-transport';
 
 import {
@@ -25,12 +22,14 @@ export class FeishuCotSessionSeam {
   private isCurrent: (() => boolean) | undefined;
   private readonly context: FeishuCotSessionContext;
 
-  constructor(private readonly opts: {
-    readonly dispatcherId: string;
-    readonly channelId: string | undefined;
-    readonly log: DreamuxLogger;
-    readonly cotClient: () => FeishuCotClient | undefined;
-  }) {
+  constructor(
+    private readonly opts: {
+      readonly dispatcherId: string;
+      readonly channelId: string | undefined;
+      readonly log: DreamuxLogger;
+      readonly cotClient: () => FeishuCotClient | undefined;
+    },
+  ) {
     this.context = {
       dispatcherId: opts.dispatcherId,
       log: opts.log,
@@ -95,7 +94,11 @@ export class FeishuCotSessionSeam {
     try {
       return adapter.beginInboundSubmission({ teamName, anchor, sourceId });
     } catch (err) {
-      logCotSeamFailure(this.context, 'inbound anchor failed; display only', err);
+      logCotSeamFailure(
+        this.context,
+        'inbound anchor failed; display only',
+        err,
+      );
       return null;
     }
   }
@@ -119,16 +122,14 @@ export class FeishuCotSessionSeam {
   }
 
   onRouteReleased(input: { teamName: string; target: FeishuTarget }): void {
-    this.withAdapter(
-      'route release failed; display only',
-      (adapter) => adapter.onRouteReleased(input),
+    this.withAdapter('route release failed; display only', (adapter) =>
+      adapter.onRouteReleased(input),
     );
   }
 
   onRouteClaimed(input: { teamName: string; target: FeishuTarget }): void {
-    this.withAdapter(
-      'route claim failed; display only',
-      (adapter) => adapter.onRouteClaimed(input),
+    this.withAdapter('route claim failed; display only', (adapter) =>
+      adapter.onRouteClaimed(input),
     );
   }
 

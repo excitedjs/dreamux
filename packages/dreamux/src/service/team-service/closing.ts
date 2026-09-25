@@ -251,11 +251,14 @@ export class TeamClosing {
     await collectShutdownFailure(failures, () => this.deps.workflows.stopAll());
     this.deps.scheduler.stop();
     await collectShutdownFailure(failures, () =>
-      this.deps.scheduler.deleteStoreFile());
+      this.deps.scheduler.deleteStoreFile(),
+    );
     await collectShutdownFailure(failures, () =>
-      this.deps.members.closeAllForDissolve(note));
+      this.deps.members.closeAllForDissolve(note),
+    );
     await collectShutdownFailure(failures, () =>
-      this.deps.closeLeaderForDissolve(note));
+      this.deps.closeLeaderForDissolve(note),
+    );
     throwShutdownFailures(
       failures,
       `Team ${JSON.stringify(this.deps.teamId)} resources did not close for dissolve`,
@@ -362,7 +365,8 @@ export class TeamClosing {
     await collectShutdownFailure(failures, () => this.deps.workflows.stopAll());
     this.deps.scheduler.stop();
     await collectShutdownFailure(failures, () =>
-      this.deps.members.stopAllForDissolve());
+      this.deps.members.stopAllForDissolve(),
+    );
   }
 
   private throwDissolveStopFailures(failures: unknown[]): void {

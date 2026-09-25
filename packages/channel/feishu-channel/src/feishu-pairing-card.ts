@@ -25,7 +25,9 @@ export interface FeishuCardActionResponse {
   };
 }
 
-export function buildPairingApprovalCard(input: PairingApprovalCardInput): unknown {
+export function buildPairingApprovalCard(
+  input: PairingApprovalCardInput,
+): unknown {
   const requesterAt = `<at id="${escapeAtId(input.requesterOpenId)}"></at>`;
   return buildFeishuCard({
     template: 'blue',
@@ -67,7 +69,9 @@ export function buildPairingApprovalCard(input: PairingApprovalCardInput): unkno
   });
 }
 
-export function buildPairingSuccessCard(input: PairingSuccessCardInput): unknown {
+export function buildPairingSuccessCard(
+  input: PairingSuccessCardInput,
+): unknown {
   const content = input.duplicate
     ? '目标已经在允许列表中，授权请求已关闭。'
     : 'Owner 校验通过，访问权限已写入允许列表。';

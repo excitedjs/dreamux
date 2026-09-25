@@ -97,7 +97,9 @@ export interface FeishuInboundEvent {
   raw: unknown;
 }
 
-export type InboundHandler = (event: FeishuInboundEvent) => void | Promise<void>;
+export type InboundHandler = (
+  event: FeishuInboundEvent,
+) => void | Promise<void>;
 
 export type BotMemberAddedHandler = (
   event: FeishuBotMemberAddedEvent,
@@ -188,7 +190,10 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   /** Optional lookup of a chat's current Feishu name. */
   resolveChatName?(chatId: string): Promise<string | undefined>;
   /** Read a document's metadata — the proof that this app can see it. */
-  fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMetaResult>;
+  fetchDocMeta(
+    fileToken: string,
+    fileType: string,
+  ): Promise<FeishuDocMetaResult>;
   /** Resolve a wiki node to the document it holds, or `null` if unseen. */
   resolveWikiNode(token: string): Promise<FeishuWikiNode | null>;
   /** Read the text of one comment, or `null` when the thread does not hold it. */
@@ -233,7 +238,8 @@ export function createFeishuBot(
   opts: CreateBotOptions,
   deps: CreateFeishuBotDeps = {},
 ): FeishuBot {
-  const transport = deps.createTransport?.(opts) ??
+  const transport =
+    deps.createTransport?.(opts) ??
     createFeishuTransport(
       {
         appId: opts.appId,
@@ -355,7 +361,9 @@ export function createFeishuBot(
           readMessage(
             request: FeishuMessageReadRequest,
           ): Promise<FeishuMessageReadResponse> {
-            return transport.readMessage?.(request) ?? Promise.resolve({ items: [] });
+            return (
+              transport.readMessage?.(request) ?? Promise.resolve({ items: [] })
+            );
           },
         }
       : {}),
@@ -363,8 +371,9 @@ export function createFeishuBot(
     ...(transport.resolveUserName !== undefined
       ? {
           resolveUserName(openId: string): Promise<string | undefined> {
-            return transport.resolveUserName?.(openId) ??
-              Promise.resolve(undefined);
+            return (
+              transport.resolveUserName?.(openId) ?? Promise.resolve(undefined)
+            );
           },
         }
       : {}),
@@ -465,10 +474,17 @@ function normalizeCardActionEvent(raw: unknown): FeishuCardActionEvent {
     asRecord(event['action']) ??
     asRecord(root['card_action']) ??
     asRecord(event['card_action']);
-  const context = asRecord(root['context']) ?? asRecord(event['context']) ?? root;
+  const context =
+    asRecord(root['context']) ?? asRecord(event['context']) ?? root;
   const actionValue = asRecord(action?.['value']) ?? {};
-  const inputValue = firstString(action?.['input_value'], action?.['inputValue']);
-  const operatorOpenId = firstString(operator?.['open_id'], operator?.['openId']);
+  const inputValue = firstString(
+    action?.['input_value'],
+    action?.['inputValue'],
+  );
+  const operatorOpenId = firstString(
+    operator?.['open_id'],
+    operator?.['openId'],
+  );
   const openChatId = firstString(
     context['open_chat_id'],
     context['openChatId'],
@@ -543,11 +559,17 @@ function normalizeCardActionAck(
   const unknownTopLevel = Object.keys(root).filter((key) => !allowed.has(key));
   const toast = parseCardActionToast(root['toast']);
   if (root['toast'] !== undefined && toast === null) {
-    return invalidCardActionAck(logger, { reason: 'invalid_toast', unknownTopLevel });
+    return invalidCardActionAck(logger, {
+      reason: 'invalid_toast',
+      unknownTopLevel,
+    });
   }
   const card = parseCardActionCard(root['card'], logger);
   if (root['card'] !== undefined && card === null) {
-    return invalidCardActionAck(logger, { reason: 'invalid_card', unknownTopLevel });
+    return invalidCardActionAck(logger, {
+      reason: 'invalid_card',
+      unknownTopLevel,
+    });
   }
   if (unknownTopLevel.length > 0) {
     logger?.warn(
@@ -558,7 +580,9 @@ function normalizeCardActionAck(
   return { toast, card };
 }
 
-function parseCardActionToast(value: unknown):
+function parseCardActionToast(
+  value: unknown,
+):
   | { type: 'info' | 'success' | 'error' | 'warning'; content: string }
   | undefined
   | null {
@@ -568,7 +592,10 @@ function parseCardActionToast(value: unknown):
   const type = toast['type'];
   const content = toast['content'];
   if (
-    (type !== 'info' && type !== 'success' && type !== 'error' && type !== 'warning') ||
+    (type !== 'info' &&
+      type !== 'success' &&
+      type !== 'error' &&
+      type !== 'warning') ||
     typeof content !== 'string'
   ) {
     return null;
@@ -597,7 +624,9 @@ function parseCardActionCard(
   return {
     type: 'raw',
     data: Object.fromEntries(
-      Object.entries(data).filter(([key]) => FEISHU_CARD_TOP_LEVEL_KEYS.has(key)),
+      Object.entries(data).filter(([key]) =>
+        FEISHU_CARD_TOP_LEVEL_KEYS.has(key),
+      ),
     ),
   };
 }

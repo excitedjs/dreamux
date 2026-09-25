@@ -61,8 +61,10 @@ export function createFeishuSessionMcp(
       try {
         const outcome = await settleJsonInvoke(tool.run);
         if (!outcome.ok) {
-          log.info({ ...scope, reason: outcome.message },
-            'feishu MCP tool refused a call');
+          log.info(
+            { ...scope, reason: outcome.message },
+            'feishu MCP tool refused a call',
+          );
           return outcome;
         }
         const text = tool.successText?.(outcome.value);

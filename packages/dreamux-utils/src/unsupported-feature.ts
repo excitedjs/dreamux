@@ -26,7 +26,9 @@ export function isUnsupportedFeatureError(
 ): error is UnsupportedAgentRuntimeFeatureError {
   if (typeof error !== 'object' || error === null) return false;
   const candidate = error as { name?: unknown; feature?: unknown };
-  return candidate.name === 'UnsupportedAgentRuntimeFeatureError' &&
+  return (
+    candidate.name === 'UnsupportedAgentRuntimeFeatureError' &&
     typeof candidate.feature === 'string' &&
-    (feature === undefined || candidate.feature === feature);
+    (feature === undefined || candidate.feature === feature)
+  );
 }

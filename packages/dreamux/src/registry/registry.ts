@@ -13,7 +13,10 @@ import {
   isBuiltinRef,
   parseProviderRef,
 } from './provider-ref.js';
-import type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types';
+import type {
+  ProviderDescriptor,
+  ProviderKind,
+} from '@excitedjs/dreamux-types';
 
 /**
  * Provider kind and descriptor structural shapes are published by
@@ -22,7 +25,10 @@ import type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types'
  * in this package.
  */
 // eslint-disable-next-line no-restricted-syntax -- neutral-contract type re-export documented above, so in-repo imports from ../registry/index.js keep resolving these names (issue #209)
-export type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types';
+export type {
+  ProviderDescriptor,
+  ProviderKind,
+} from '@excitedjs/dreamux-types';
 
 /** Thrown when registering a provider id that is already registered. */
 export class DuplicateProviderError extends Error {
@@ -43,7 +49,9 @@ export class DuplicateProviderRefError extends Error {
 /** Thrown when registering a runnable implementation for the same provider twice. */
 export class DuplicateProviderImplementationError extends Error {
   constructor(readonly id: string) {
-    super(`provider ${JSON.stringify(id)} already has a runnable implementation`);
+    super(
+      `provider ${JSON.stringify(id)} already has a runnable implementation`,
+    );
     this.name = 'DuplicateProviderImplementationError';
   }
 }

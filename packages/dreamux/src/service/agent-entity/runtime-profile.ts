@@ -1,20 +1,14 @@
 import { createHash } from 'node:crypto';
 
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
-import {
-  DISPATCHER_AGENT_NAME,
-  type AgentEntityIdentity,
-} from './types.js';
+import { DISPATCHER_AGENT_NAME, type AgentEntityIdentity } from './types.js';
 
 export function dispatcherRuntimeId(dispatcherId: string): string {
   return validateDispatcherId(dispatcherId);
 }
 
 export function childAgentRuntimeId(identity: AgentEntityIdentity): string {
-  return childRuntimeId(
-    identity.dispatcher_id,
-    runtimeIdentityName(identity),
-  );
+  return childRuntimeId(identity.dispatcher_id, runtimeIdentityName(identity));
 }
 
 /**
@@ -39,7 +33,10 @@ export function assertTeamScopedAgent(
   teamId: string,
 ): (identity: AgentEntityIdentity, dispatcherId: string) => void {
   return (identity, dispatcherId) => {
-    if (identity.dispatcher_id === dispatcherId && identity.team_id === teamId) {
+    if (
+      identity.dispatcher_id === dispatcherId &&
+      identity.team_id === teamId
+    ) {
       return;
     }
     throw new Error(`agent ${JSON.stringify(identity.name)} does not exist`);

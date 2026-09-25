@@ -29,11 +29,7 @@ import {
   subscribeDocumentDef,
   unsubscribeDocumentDef,
 } from './document-tools.js';
-import {
-  listChatBotsDef,
-  reactDef,
-  replyDef,
-} from './messaging-tools.js';
+import { listChatBotsDef, reactDef, replyDef } from './messaging-tools.js';
 import {
   bindChannelDef,
   leaderBindChannelDef,

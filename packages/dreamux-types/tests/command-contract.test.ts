@@ -20,11 +20,10 @@ import type {
 } from '../src/command.js';
 import type { JsonSchema, JsonValue } from '../src/json.js';
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B
-  ? 1
-  : 0
-  ? true
-  : false;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
+    ? true
+    : false;
 
 function assertType<T extends true>(_proof?: T): void {
   // Compile-time-only: see agent-runtime-handle-contract.test.ts for the pattern's rationale.
@@ -38,7 +37,9 @@ describe('CoreCommandSource is exactly admin_socket | channel — no mcp adapter
 
 describe('CoreCommandContext carries factual invocation context, never a caller identity', () => {
   it('the context has exactly source/dispatcher_id/channel_id', () => {
-    assertType<Equal<keyof CoreCommandContext, 'source' | 'dispatcher_id' | 'channel_id'>>();
+    assertType<
+      Equal<keyof CoreCommandContext, 'source' | 'dispatcher_id' | 'channel_id'>
+    >();
   });
 
   it('dispatcher_id and channel_id are optional (an admin_socket call may carry neither)', () => {
@@ -81,7 +82,10 @@ describe('CoreCommandDefinition owns its own schema, parse, and execute', () => 
         }
         return { text: (payload as Record<string, JsonValue>).text as string };
       },
-      async execute(_context: CoreCommandContext, input: EchoInput): Promise<EchoOutput> {
+      async execute(
+        _context: CoreCommandContext,
+        input: EchoInput,
+      ): Promise<EchoOutput> {
         return { echoed: input.text };
       },
     };
@@ -109,10 +113,16 @@ describe('CoreCommandRegistry is the single invoke() port both adapters bind to'
       },
     };
 
-    await registry.invoke({ source: 'admin_socket' }, 'team.submit', { text: 'hi' });
-    await registry.invoke({ source: 'channel', dispatcher_id: 'd1' }, 'team.submit', {
+    await registry.invoke({ source: 'admin_socket' }, 'team.submit', {
       text: 'hi',
     });
+    await registry.invoke(
+      { source: 'channel', dispatcher_id: 'd1' },
+      'team.submit',
+      {
+        text: 'hi',
+      },
+    );
 
     expect(calls).toEqual([
       { source: 'admin_socket', name: 'team.submit' },
@@ -140,11 +150,16 @@ describe('ChannelCommandError and its narrow retryable-code vocabulary', () => {
   });
 
   it('ChannelCommandRetryableErrorCode is exactly TEAM_NOT_FOUND | TEAM_CLOSED', () => {
-    assertType<Equal<ChannelCommandRetryableErrorCode, 'TEAM_NOT_FOUND' | 'TEAM_CLOSED'>>();
+    assertType<
+      Equal<ChannelCommandRetryableErrorCode, 'TEAM_NOT_FOUND' | 'TEAM_CLOSED'>
+    >();
   });
 
   it('code stays an open string on the error shape itself (not narrowed to the retryable codes)', () => {
-    const error: ChannelCommandError = { code: 'SOME_DOMAIN_SPECIFIC_CODE', message: 'nope' };
+    const error: ChannelCommandError = {
+      code: 'SOME_DOMAIN_SPECIFIC_CODE',
+      message: 'nope',
+    };
     expect(error.code).toBe('SOME_DOMAIN_SPECIFIC_CODE');
   });
 });

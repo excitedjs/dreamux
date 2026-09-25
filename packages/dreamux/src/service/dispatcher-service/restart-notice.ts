@@ -15,7 +15,8 @@ export async function injectRestartNoticeIfNeeded(input: {
   // Only an actually-restored session gets the notice: a fresh start has no
   // prior context the notice would explain, and `null` means no runtime started.
   if (input.agent.startContinuity() !== 'resumed') return;
-  const notice = input.restartIntent?.claim(input.dispatcherId, input.now) ?? null;
+  const notice =
+    input.restartIntent?.claim(input.dispatcherId, input.now) ?? null;
   if (notice === null) return;
   try {
     const result = await input.agent.submitInput({

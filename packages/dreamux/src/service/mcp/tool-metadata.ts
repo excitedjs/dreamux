@@ -124,7 +124,9 @@ export function closedObjectSchema(
 export const OPEN_OBJECT: Record<string, unknown> = { type: 'object' };
 
 /** An array schema over `items`. */
-export function arrayOf(items: Record<string, unknown>): Record<string, unknown> {
+export function arrayOf(
+  items: Record<string, unknown>,
+): Record<string, unknown> {
   return { type: 'array', items };
 }
 
@@ -158,7 +160,7 @@ export function repoInputSchema(): Record<string, unknown> {
         maxLength: 4096,
         description:
           'reuse-cwd: the directory to run in. managed: the source ' +
-          'repository; defaults to this agent\'s workspace.',
+          "repository; defaults to this agent's workspace.",
       },
       base_ref: {
         type: 'string',

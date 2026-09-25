@@ -1,9 +1,4 @@
-import {
-  createContext,
-  Script,
-  SourceTextModule,
-  type Context,
-} from 'node:vm';
+import { createContext, Script, SourceTextModule, type Context } from 'node:vm';
 
 import type {
   WorkflowAgentOptions,
@@ -281,7 +276,9 @@ function send(message: WorkflowRunnerChildMessage): void {
   process.send(message);
 }
 
-async function sendAndFlush(message: WorkflowRunnerChildMessage): Promise<void> {
+async function sendAndFlush(
+  message: WorkflowRunnerChildMessage,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     if (process.send === undefined || !process.connected) {
       reject(new Error('workflow runner IPC channel is unavailable'));
@@ -294,13 +291,12 @@ async function sendAndFlush(message: WorkflowRunnerChildMessage): Promise<void> 
   });
 }
 
-function parseParentMessage(value: unknown): WorkflowRunnerParentMessage | null {
+function parseParentMessage(
+  value: unknown,
+): WorkflowRunnerParentMessage | null {
   if (!isRecord(value) || typeof value.type !== 'string') return null;
 
-  if (
-    value.type === 'run_start' &&
-    typeof value.script === 'string'
-  ) {
+  if (value.type === 'run_start' && typeof value.script === 'string') {
     return {
       type: 'run_start',
       script: value.script,
@@ -324,6 +320,7 @@ function parseParentMessage(value: unknown): WorkflowRunnerParentMessage | null 
 }
 
 function errorMessage(error: unknown): string {
-  if (isRecord(error) && typeof error.message === 'string') return error.message;
+  if (isRecord(error) && typeof error.message === 'string')
+    return error.message;
   return String(error);
 }

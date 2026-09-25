@@ -25,16 +25,14 @@ export class TeamClosedError extends StatedFailure {
       'TEAM_CLOSED',
       message,
       'A closed Team never takes work again; create a new Team for the ' +
-        'follow-up, and read the closed one through this surface\'s history.',
+        "follow-up, and read the closed one through this surface's history.",
     );
   }
 }
 
 /** Both facts that mean a Team cannot take work now. */
 export function isTeamUnavailable(error: unknown): boolean {
-  return (
-    error instanceof TeamNotFoundError || error instanceof TeamClosedError
-  );
+  return error instanceof TeamNotFoundError || error instanceof TeamClosedError;
 }
 
 /**
