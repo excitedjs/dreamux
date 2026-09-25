@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 4c: added two Commands, config.agents.get and config.agents.replace, reachable through admin.sock and any Channel's in-process invoke port like every other Command. config.agents.get returns the current agents[] in file shape with every secret-named value emptied; config.agents.replace validates and writes a whole new agents[] array, matched to the existing one by id (submitting an empty secret-named value keeps the stored value). A replace takes effect for the next runtime launch only — a runtime already running keeps what it launched with. The first replace re-serializes config.json with two-space indentation and the submitted agent order; other values, and dispatchers[], are written unchanged. Neither Command is dispatcher-scoped, and dispatchers[] still has no Command. No persisted-format change.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

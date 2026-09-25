@@ -478,6 +478,23 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   the rest of the session — an edit made to the file on disk while the
   dispatcher keeps running is not read until the next restart. (Domain:
   [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **The Config Service holds authority over `config.json` while the daemon
+  runs; a hand edit waits for restart.** Once `dreamux serve` loads
+  `config.json`, that in-memory value is authoritative for the rest of the
+  process — an edit made to the file on disk while the daemon keeps running
+  is not read until the next restart, matching the routing
+  document/`access.json`/`chat-bots.json` rule above. (Domain:
+  [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **Runtime `agents[]` configuration is readable and replaceable through
+  Commands.** `config.agents.get` returns the current `agents[]` in file
+  shape with every secret-named value emptied; `config.agents.replace`
+  validates and writes a whole new `agents[]` array, matched to the
+  existing one by `id` — submitting `''` for a secret-named key keeps the
+  stored value, so a caller that read-then-replaced without ever seeing a
+  real secret cannot erase it. A replace takes effect for the next runtime
+  launch; a runtime already running keeps what it launched with.
+  `dispatchers[]` has no Command; it is still edited by hand with the
+  daemon stopped. (Domain: [add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).)
 
 ## Plugins
 

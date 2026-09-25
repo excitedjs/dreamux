@@ -39,7 +39,10 @@ the rush path only.
 
 Inside `/packages/dreamux/src/`: `admin/` (socket transport), `channel/` and
 `agent-runtime/` (generic provider catalogs/loaders), `command/` (the one
-Command registry), `config/`, `plugin/` (plugin loading, host hooks, tap
+Command registry), `config/` (`config.ts`'s loader/validator, `service.ts`'s
+`ConfigService` — `config.json`'s single in-process authority — and
+`commands.ts`'s `config.agents.get`/`config.agents.replace` Commands),
+`plugin/` (plugin loading, host hooks, tap
 runner), `mcp/` (stdio protocol owner), `platform/` (paths, logging, sockets),
 `service/` (dispatcher/Team/TeamMate/Workflow domains and their MCP
 delegates), `state/`, and `server.ts`. Public CLI:

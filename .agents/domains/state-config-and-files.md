@@ -44,6 +44,8 @@ Source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/platform/runtime-sockets.ts`
 - `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/config/service.ts`
+- `/packages/dreamux/src/config/commands.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
@@ -102,9 +104,23 @@ or when a providerized entry or a plugin cannot be loaded (including a
 duplicate plugin or provider name, and a `config` block for a plugin that takes
 none). The operator fix path is `dreamux onboard` or a manual rebuild.
 
+While `dreamux serve` runs, the Config Service (`config/service.ts`) holds
+`config.json` in memory as this process's single authority over it; a hand
+edit made to the file after start is not read until restart, the same
+in-memory-authority rule the routing document and `access.json`/
+`chat-bots.json` already follow (see Durable State Layout below).
+`agents[]` is additionally readable and replaceable live, without a restart,
+through the `config.agents.get`/`config.agents.replace` Commands (secrets
+returned as `''`, a whole-section replace matched by `id`, a submitted `''`
+for a secret-named key keeping the stored value); a replace takes effect for
+the next runtime launch, not the one already running. `dispatchers[]` has no
+Command and stays hand-edit-with-the-daemon-stopped only.
+
 Source:
 
 - `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/config/service.ts`
+- `/packages/dreamux/src/config/commands.ts`
 - `/packages/dreamux/src/plugin/loader.ts`
 - `/packages/dreamux/src/config/config-helpers.ts`
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
@@ -399,10 +415,11 @@ run's `record.json` — is one `TransactionalStore<T>`
 
 The primitive owns no paths and no schemas: path builders stay in
 `platform/paths.ts`, and each concrete owner keeps its own validation and
-domain methods. `config.json` is not on this primitive yet — the Config
-Service (code-organization-refactor stage 4c) is its planned owner — but its
-*validation* already tolerates an unknown field the same way (see Operator
-Config above).
+domain methods. `config.json` is on this primitive too, owned by
+`config/service.ts`'s `ConfigService` — a missing file, wrong mode, bad JSON,
+or a rejected shape still exits the `dreamux serve` process exactly as it did
+before this primitive backed the file; its *validation* already tolerated an
+unknown field the same way (see Operator Config above).
 
 Per-owner corrupt-file policy is deliberately not unified; several behaviors
 survive on top of the one primitive, because unifying them would change
@@ -425,6 +442,11 @@ product behavior no one asked for:
   but one malformed entry field degrades to that field's default instead of
   failing the whole read (see Channel-Owned State above); this policy
   predates this stage and is unaffected by it.
+- **`config.json`:** fails loud exactly as `dreamux serve` did before this
+  file moved onto the primitive — missing file, wrong mode, bad JSON, or a
+  rejected shape all stop the process; moving the file onto
+  `TransactionalStore<T>` changed how the value is held in memory, not what
+  makes it reject (see Operator Config above).
 
 Append-only JSONL stores that remain in the current contract (Workflow
 journals) stay concrete-store responsibilities on top of the same exclusive-

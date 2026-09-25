@@ -2,7 +2,7 @@ import type { DreamuxLogger, JsonSchema } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import {
   agentRuntimeCapability,
   defaultAgentRuntime,
@@ -81,7 +81,7 @@ export interface TeammateCollectionOptions {
   dispatcherId: string;
   /** The Team this Collection belongs to, or `null` for the dispatcher's own. */
   teamScope: string | null;
-  config: DreamuxConfig;
+  config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   /**
@@ -321,7 +321,7 @@ export class TeammateCollection implements TeammateOps {
     const identity = await this.mustIdentity(validateTeamMateName(name));
     const entity = this.liveEntity(identity.name);
     const activity = await readAgentActivity({
-      config: this.opts.config,
+      config: this.opts.config.current(),
       providers: this.opts.agentRuntimeProviders,
       identity,
       query: typeof query === 'number' ? { limit: query } : query,
@@ -349,7 +349,7 @@ export class TeammateCollection implements TeammateOps {
         'last',
         'get_capabilities',
       ],
-      agent_runtimes: Object.entries(this.opts.config.agents).map(
+      agent_runtimes: Object.entries(this.opts.config.current().agents).map(
         ([agentRuntimeId, agent]) =>
           agentRuntimeCapability(
             this.opts.agentRuntimeProviders,
@@ -361,7 +361,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   async dispatcherWorkspace(): Promise<string> {
-    return dispatcherWorkspace(this.opts.config, this.dispatcherId);
+    return dispatcherWorkspace(this.opts.config.current(), this.dispatcherId);
   }
 
   /** Narrow containment query; callers invoke entity capabilities themselves. */
@@ -441,7 +441,7 @@ export class TeammateCollection implements TeammateOps {
     }
     const agentRuntime =
       input.agentRuntime ??
-      defaultAgentRuntime(this.opts.config, this.dispatcherId);
+      defaultAgentRuntime(this.opts.config.current(), this.dispatcherId);
     // The name prefix follows the collection this Collection was bound to, not
     // anything read back out of a record.
     const name = await this.opts.names.allocate({
@@ -491,7 +491,7 @@ export class TeammateCollection implements TeammateOps {
   ): Promise<{ identity: AgentEntityIdentity; store: AgentIdentityStore }> {
     const { name, teamId, agentRuntime, identityPrompt } = allocation;
     const workspace = await resolveSpawnWorkspace({
-      config: this.opts.config,
+      config: this.opts.config.current(),
       worktrees: this.worktrees,
       dispatcherId: this.dispatcherId,
       name,

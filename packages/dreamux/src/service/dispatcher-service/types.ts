@@ -6,7 +6,7 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
@@ -14,7 +14,7 @@ import type { McpLeaseRegistry } from '../mcp/leases.js';
 
 export interface DispatcherServiceOptions {
   id: string;
-  config: DreamuxConfig;
+  config: ConfigReader;
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;

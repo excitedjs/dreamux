@@ -14,16 +14,14 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type {
-  DispatcherChannelConfig,
-  DreamuxConfig,
-} from '../../config/config.js';
+import type { DispatcherChannelConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import { errorInfo } from '../../platform/error-info.js';
 import { dispatcherCacheDir, dispatcherDir } from '../../platform/paths.js';
 
 export interface ChannelServiceOptions {
   dispatcherId: string;
-  config: DreamuxConfig;
+  config: ConfigReader;
   channelProviders: ChannelProviderCatalog;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
 }
@@ -55,7 +53,22 @@ export class ChannelService {
    */
   private built: Map<string, ChannelInstance> | null = null;
 
-  constructor(private readonly opts: ChannelServiceOptions) {}
+  /**
+   * Resolved once at construction, not per-call. Unlike the launch/resume
+   * capability sites (`TeammateService`), there is no live fact to observe
+   * here: `dispatchers[].channels[]` is never touched by
+   * `config.agents.replace`, so a single resolve is a type-uniformity
+   * convenience over `opts.config`, not a liveness requirement.
+   */
+  private readonly channelConfigs_: readonly DispatcherChannelConfig[];
+
+  constructor(private readonly opts: ChannelServiceOptions) {
+    this.channelConfigs_ =
+      opts.config
+        .current()
+        .dispatchers.find((dispatcher) => dispatcher.id === opts.dispatcherId)
+        ?.channels ?? [];
+  }
 
   /** The live instance map, or an empty map when no sessions are connected. */
   live(): Map<string, ChannelInstance> {
@@ -71,10 +84,9 @@ export class ChannelService {
    */
   async build(): Promise<Map<string, ChannelInstance>> {
     const providerLog = this.opts.channelLoggerFactory(this.opts.dispatcherId);
-    const channelConfigs = this.channelConfigs();
     const channels = new Map<string, ChannelInstance>();
     try {
-      for (const channelConfig of channelConfigs) {
+      for (const channelConfig of this.channelConfigs_) {
         const { implementation: provider } = this.opts.channelProviders.resolve(
           channelConfig.provider,
         );
@@ -145,7 +157,7 @@ export class ChannelService {
   }
 
   configuredChannels(): readonly DispatcherChannelConfig[] {
-    return this.channelConfigs();
+    return this.channelConfigs_;
   }
 
   /**
@@ -161,12 +173,5 @@ export class ChannelService {
    */
   sessionMcp(channelId: string): ChannelSessionMcpCapability | null {
     return this.built?.get(channelId)?.mcp ?? null;
-  }
-
-  private channelConfigs(): DispatcherChannelConfig[] {
-    const dispatcherConfig = this.opts.config.dispatchers.find(
-      (dispatcher) => dispatcher.id === this.opts.dispatcherId,
-    );
-    return dispatcherConfig?.channels ?? [];
   }
 }

@@ -6,7 +6,7 @@ import {
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import { createTeammateService } from '../teammate-service/factory.js';
@@ -29,7 +29,13 @@ import { composeLaunchDraft } from '../../plugin/hooks.js';
 
 export interface DispatcherAgentDeps {
   id: string;
-  config: DreamuxConfig;
+  /**
+   * Forwarded verbatim into {@link createTeammateService}'s own `config`
+   * field: this factory itself never reads a fact off it, only builds the
+   * contained `TeammateService` that will call `.current()` at each launch
+   * (`config/service.ts`'s `ConfigReader` doc).
+   */
+  config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   log: DreamuxLogger;
   mcp: TeammateAgentMcp;

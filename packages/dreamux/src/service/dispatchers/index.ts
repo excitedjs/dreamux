@@ -1,6 +1,6 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type {
@@ -22,7 +22,7 @@ import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 
 export interface DispatchersOptions {
-  config: DreamuxConfig;
+  config: ConfigReader;
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
@@ -48,7 +48,7 @@ export interface DispatchersOptions {
  */
 export class Dispatchers {
   private readonly services = new Map<string, DispatcherService>();
-  private readonly config: DreamuxConfig;
+  private readonly config: ConfigReader;
   private readonly dispatcherStore: DispatcherStore;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;

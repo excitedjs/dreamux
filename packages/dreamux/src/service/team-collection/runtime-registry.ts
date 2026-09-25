@@ -147,7 +147,7 @@ export class TeamRuntimeRegistry {
     teamId: string,
   ): Promise<TeamMateSharedWorkspace> {
     const workspaceRoot = await dispatcherWorkspace(
-      this.opts.collection.config,
+      this.opts.collection.config.current(),
       this.opts.dispatcherId,
     );
     return input.worktree === undefined && input.repoCwd === undefined
@@ -155,7 +155,7 @@ export class TeamRuntimeRegistry {
           dispatcherWorkspace: workspaceRoot,
           slug: teamId,
           workspaceEnabled: defaultWorkspaceEnabled(
-            this.opts.collection.config,
+            this.opts.collection.config.current(),
             this.opts.dispatcherId,
           ),
         })

@@ -18,6 +18,7 @@ import {
   dispatcherAgent,
   type DreamuxConfig,
 } from './config/config.js';
+import type { ConfigService } from './config/service.js';
 import { DispatcherStore } from './state/dispatcher-store.js';
 import { resolveHomePathPrefixes } from './platform/home-paths.js';
 import { adminSocketPath } from './platform/paths.js';
@@ -44,22 +45,26 @@ import {
 
 export interface ServerOptions {
   /**
-   * Global dreamux config (typically loaded from ~/.dreamux/config.json by
-   * the CLI entry point). When omitted, the built-in defaults are used —
-   * convenient for tests, but in production the CLI is expected to load
-   * the file and pass it in so user edits take effect.
+   * `config.json`'s single in-process authority (typically opened by the CLI
+   * entry point). Typed as the concrete `ConfigService`, not the narrower
+   * `ConfigReader`: `commandHost()` hands this field whole to
+   * `CoreCommandHost.config`, which the `config.agents.*` Commands need
+   * `readAgents`/`replaceAgents` from, not just `current()`. When omitted, a
+   * trivial in-memory default is used — convenient for tests, but in
+   * production the CLI always opens the real file-backed service and passes
+   * it in so user edits, and `config.agents.replace` writes, take effect.
    */
-  config?: DreamuxConfig;
+  config?: ConfigService;
   /** Override admin socket path (tests). */
   adminSocketPath?: string;
   /**
    * Provider registry whose implementations back the runtime + channel catalogs.
-   * Production hands in the registry returned by loadConfig() (every referenced
-   * builtin/npm provider already loaded); tests either inject the catalogs below
-   * or pre-load this registry. Provider-specific construction seams (codex
-   * process/client factories, etc.) belong to the provider package and are
-   * injected by pre-loading the registry, never by Server — core names no
-   * provider's internals.
+   * Production hands in the same registry that `ConfigService.open()`
+   * (`config/service.js`) already loaded every referenced builtin/npm provider
+   * into; tests either inject the catalogs below or pre-load this registry.
+   * Provider-specific construction seams (codex process/client factories, etc.)
+   * belong to the provider package and are injected by pre-loading the
+   * registry, never by Server — core names no provider's internals.
    */
   providerRegistry?: ProviderRegistry;
   /** Override runtime provider catalog (tests / future provider composition). */
@@ -112,6 +117,21 @@ export interface Repos {
   dispatchers: DispatcherStore;
 }
 
+/**
+ * `ServerOptions.config`'s default when a test or embedded server omits it.
+ * A plain object rather than a real file-backed `ConfigService` — no test
+ * needs a config.json on disk just to construct a `Server` — cast through
+ * `unknown` because `ConfigService`'s private fields make its declared type
+ * nominal, the same pattern already used for other class-typed Deps fakes in
+ * this package's tests. Never reached by a running `dreamux serve`: the CLI
+ * entry point always opens the real `ConfigService` and passes it in.
+ */
+const DEFAULT_CONFIG_SERVICE = {
+  current: () => BUILT_IN_DEFAULTS,
+  readAgents: () => [],
+  replaceAgents: async (agents: readonly Record<string, unknown>[]) => agents,
+} as unknown as ConfigService;
+
 export class Server {
   readonly repos: Repos;
   private dispatchers_: Dispatchers | null = null;
@@ -162,13 +182,13 @@ export class Server {
     this.opts = opts;
     this.providerRegistry =
       opts.providerRegistry ?? createBuiltinProviderRegistry();
-    const config = opts.config ?? BUILT_IN_DEFAULTS;
+    const config = opts.config ?? DEFAULT_CONFIG_SERVICE;
     // The catalogs below are pure registry lookups, so when no runtime catalog is
     // injected every referenced provider implementation must already be loaded
-    // (production: the loadConfig registry; tests: an injected catalog or a
-    // pre-loaded registry). Fail loud at construction, not at dispatcher start.
+    // (production: the ConfigService.open registry; tests: an injected catalog
+    // or a pre-loaded registry). Fail loud at construction, not at dispatcher start.
     if (opts.agentRuntimeProviderCatalog === undefined) {
-      assertRuntimeImplementationsLoaded(config, this.providerRegistry);
+      assertRuntimeImplementationsLoaded(config.current(), this.providerRegistry);
     }
     this.log = opts.logger ?? createLogger({ name: 'server' });
     // Built after the logger it records unclassified tool failures through: an
@@ -184,7 +204,7 @@ export class Server {
       opts.channelProviderCatalog ??
       new ChannelProviderCatalog({ registry: this.providerRegistry });
     this.repos = {
-      dispatchers: new DispatcherStore(config),
+      dispatchers: new DispatcherStore(config.current()),
     };
     // The Command port is composed before the dispatchers because they hold it:
     // a Channel session invokes Commands through the same admitted port the
@@ -206,6 +226,7 @@ export class Server {
       dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
       dispatcher: (id) => this.getDispatcher(id),
       mcpLeases: this.mcpLeases,
+      config: this.opts.config ?? DEFAULT_CONFIG_SERVICE,
     };
   }
 
@@ -217,7 +238,7 @@ export class Server {
     // projection itself stays synchronous.
     const homePathPrefixes = await resolveHomePathPrefixes();
     this.dispatchers_ = new Dispatchers({
-      config: this.opts.config ?? BUILT_IN_DEFAULTS,
+      config: this.opts.config ?? DEFAULT_CONFIG_SERVICE,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
@@ -304,7 +325,11 @@ export class Server {
    * time. A throw here aborts `start()` before any socket or dispatcher.
    */
   private async assertDispatcherWorkspaces(): Promise<void> {
-    const config = this.opts.config ?? BUILT_IN_DEFAULTS;
+    // ensureDispatcherWorkspace is a call-boundary DreamuxConfig consumer, not
+    // a capability holder (config/service.ts's ConfigReader doc); this whole
+    // preflight loop runs once at boot, before anything could observe a later
+    // config.agents.replace, so one resolved value for the loop is correct.
+    const config = (this.opts.config ?? DEFAULT_CONFIG_SERVICE).current();
     const failures: string[] = [];
     for (const row of this.repos.dispatchers.listEnabled()) {
       try {
@@ -359,9 +384,11 @@ export class Server {
 
 /**
  * Every dispatcher's runtime provider must already have a loaded implementation
- * in `registry` (builtin and npm alike load through loadConfig's single dynamic
- * path). A descriptor without an implementation — or a ref that does not resolve
- * at all — means the registry was not the one loadConfig returned. Fail loud.
+ * in `registry` (builtin and npm alike load through resolveConfig's single
+ * dynamic path, `config/config.js`, which both `loadConfig` and
+ * `ConfigService.open` run). A descriptor without an implementation — or a ref
+ * that does not resolve at all — means the registry was not one that path
+ * loaded. Fail loud.
  */
 function assertRuntimeImplementationsLoaded(
   config: DreamuxConfig,
@@ -380,7 +407,8 @@ function assertRuntimeImplementationsLoaded(
     throw new Error(
       `dispatcher '${dispatcher.id}' uses AgentRuntime provider ` +
         `${JSON.stringify(ref)} whose implementation is not loaded; Server was ` +
-        'not constructed with the providerRegistry returned by loadConfig() ' +
+        'not constructed with a providerRegistry that loadConfig() or ' +
+        'ConfigService.open() already loaded providers into ' +
         '(or an injected agentRuntimeProviderCatalog).',
     );
   }

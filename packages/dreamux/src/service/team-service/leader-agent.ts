@@ -10,7 +10,7 @@ import {
   DISABLE_FEATURE_CRON,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
 import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from '../team-collection/create-request.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
@@ -38,7 +38,7 @@ export interface TeamLeaderAgentDeps {
   skillSources: readonly AgentRuntimeSkillSource[];
   disabledFeatures: readonly string[];
   systemPrompt?: AgentRuntimeSystemPrompt;
-  config: DreamuxConfig;
+  config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
   onPersisted: (identity: AgentEntityIdentity) => void;

@@ -13,7 +13,7 @@ import {
   createChannelCorePort,
   type ChannelCorePortLease,
 } from '../../channel/core-port.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
@@ -39,7 +39,7 @@ import { injectRestartNoticeIfNeeded } from './restart-notice.js';
 
 interface DispatcherInputSourceLifecycleOptions {
   dispatcherId: string;
-  config: DreamuxConfig;
+  config: ConfigReader;
   dispatchers: DispatcherStore;
   channelProviders: ChannelProviderCatalog;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
@@ -180,7 +180,7 @@ export class DispatcherInputSourceLifecycle {
     const dispatcherConfig = this.dispatcherConfig();
     assertRunnableChannelShape(dispatcherConfig, this.opts.channelProviders);
     const workspaceCwd = await ensureDispatcherWorkspace(
-      this.opts.config,
+      this.opts.config.current(),
       this.opts.dispatcherId,
     );
     const identity = await ensureDispatcherRootIdentity({
@@ -372,9 +372,11 @@ export class DispatcherInputSourceLifecycle {
   }
 
   private dispatcherConfig() {
-    const dispatcherConfig = this.opts.config.dispatchers.find(
-      (dispatcher) => dispatcher.id === this.opts.dispatcherId,
-    );
+    const dispatcherConfig = this.opts.config
+      .current()
+      .dispatchers.find(
+        (dispatcher) => dispatcher.id === this.opts.dispatcherId,
+      );
     if (dispatcherConfig === undefined) {
       throw new Error(
         `dispatcher '${this.opts.dispatcherId}' has no config entry`,

@@ -7,6 +7,7 @@
  * second registry.
  */
 import { serverCommands } from '../server-commands.js';
+import { configCommands } from '../config/commands.js';
 import { channelCommands } from '../service/channel-service/commands.js';
 import { dispatcherCommands } from '../service/dispatchers/commands.js';
 import { mcpCommands } from '../service/mcp/commands.js';
@@ -20,6 +21,7 @@ import { CoreCommands } from './registry.js';
 export function createCoreCommandRegistry(host: CoreCommandHost): CoreCommands {
   return new CoreCommands([
     ...serverCommands(host),
+    ...configCommands(host),
     ...dispatcherCommands(host),
     ...channelCommands(host),
     ...teamCommands(host),

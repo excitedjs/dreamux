@@ -19,7 +19,7 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import type { TeammateAgentMcp } from '../teammate-service/types.js';
@@ -38,7 +38,7 @@ import { clampTeamHistoryLimit, decodeTeamCursor } from './read-helpers.js';
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
   dispatcherId: string;
-  config: DreamuxConfig;
+  config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   /**

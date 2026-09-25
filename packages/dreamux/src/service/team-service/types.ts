@@ -8,7 +8,7 @@ import type {
 import { STRING, enumOf, objectSchema } from '../../command/schema.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
@@ -62,7 +62,7 @@ export interface TeamServiceCreateOutput<Service> {
  */
 export interface TeamServiceDeps {
   dispatcherId: string;
-  config: DreamuxConfig;
+  config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   /**

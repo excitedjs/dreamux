@@ -126,7 +126,12 @@ export class DispatcherService implements Dispatcher {
 
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
-    this.cwd = configuredDispatcherCwd(opts.config, opts.id);
+    // `dispatchers[]` is never touched by `config.agents.replace`, so one
+    // construction-time resolve serves both fixed-at-start reads below; the
+    // capability itself (`opts.config`) still forwards live to every child
+    // that holds it across more than this constructor call.
+    const config = opts.config.current();
+    this.cwd = configuredDispatcherCwd(config, opts.id);
     this.hooks = Object.freeze({
       beforeLaunch: launchDraftTaps(
         new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch'),
@@ -152,7 +157,7 @@ export class DispatcherService implements Dispatcher {
     });
     const workflowLog = opts.workflowLoggerFactory?.(opts.id) ?? opts.log;
     const configuredChannelCount =
-      opts.config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
+      config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
         ?.channels.length ?? 0;
     this.coreEvents = new DispatcherCoreEventBus({
       dispatcherId: opts.id,

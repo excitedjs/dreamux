@@ -215,7 +215,7 @@ export class TeammateRuntimeOwner {
       ) {
         identity = await this.state.transact((current) =>
           reprepareDeletedManagedWorktree({
-            config: this.deps.config,
+            config: this.deps.config.current(),
             peers: this.deps.peers,
             worktrees: this.mustWorktrees(),
             identity: current,
@@ -328,8 +328,12 @@ export class TeammateRuntimeOwner {
 
   private resolveLaunch(lease: AgentRuntimeGenerationLease): RuntimeLaunchSpec {
     const identity = this.state.current();
+    // Read fresh at the exact launch/resume moment, never cached across two
+    // launches: this entity outlives many runtime restarts, and a
+    // `config.agents.replace` that lands between two of them must be visible
+    // to the next one, not just the one live when this owner was built.
     const agent: ResolvedAgentConfig = resolveAgent(
-      this.deps.config,
+      this.deps.config.current(),
       this.dispatcherId,
       identity.agent_runtime,
     );

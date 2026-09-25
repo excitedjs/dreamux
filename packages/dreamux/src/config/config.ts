@@ -1,8 +1,8 @@
 import { pathExists } from '../platform/fs-errors.js';
 
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { mkdir, open, readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
 import {
   loadAgentRuntimeProviders,
@@ -19,6 +19,7 @@ import {
 import {
   describeType,
   isPlainObject,
+  publishFileExclusive,
   readProviderConfigObject,
   requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
@@ -152,11 +153,11 @@ export async function loadOrInitConfig(
   const file = globalConfigFile(overrides);
   const providerRegistry = providerRegistryFor(overrides);
   await assertNoLegacyTomlOnly(overrides);
-  await mkdir(dirname(file), { recursive: true });
 
-  const createdOnThisBoot = await atomicWriteIfAbsent(
+  const createdOnThisBoot = await publishFileExclusive(
     file,
     DEFAULT_CONFIG_JSON,
+    { mode: 0o600 },
   );
   const { config, plugins } = await readConfigFile(
     file,
@@ -254,7 +255,7 @@ async function readConfigFile(
   }
   // Plugins contribute providers config may address, so they load before
   // provider refs are loaded and validated. A non-object top level is still
-  // reported by mergeWithDefaults.
+  // reported by resolveConfig's mergeWithDefaults.
   const entries = isPlainObject(parsed)
     ? readPluginEntries(parsed, file)
     : undefined;
@@ -265,22 +266,46 @@ async function readConfigFile(
     logger: createLogger({ name: 'plugins' }),
     importModule: overrides.pluginModuleImporter,
   });
-  await loadAgentRuntimeProviders({
-    registry: providerRegistry,
-    refs: agentProviderRefs(parsed),
-    importModule: overrides.externalAgentRuntimeModuleImporter,
-  });
-  await loadChannelProviders({
-    registry: providerRegistry,
-    refs: channelProviderRefs(parsed),
-    importModule: overrides.externalChannelModuleImporter,
-  });
-  const config = await mergeWithDefaults(parsed, file, providerRegistry);
+  const config = await resolveConfig(
+    parsed,
+    file,
+    providerRegistry,
+    overrides,
+  );
   readPluginConfigs(plugins, file);
   return {
     config: entries === undefined ? config : { ...config, plugins: entries },
     plugins,
   };
+}
+
+/**
+ * Loads the agent-runtime/channel providers `raw`'s `agents[]`/
+ * `dispatchers[].channels[]` entries reference, then validates and shapes
+ * `raw` into a `DreamuxConfig`. Deliberately excludes `plugins[]` loading
+ * (`loadPlugins`/`readPluginConfigs`): that is a one-time, process-open step
+ * — a plugin's `contribute()` registers providers and collides with itself
+ * if run twice — so callers that may resolve a config more than once per
+ * process (`ConfigService.replaceAgents`, `config/service.ts`) must not
+ * route `plugins[]` through here.
+ */
+export async function resolveConfig(
+  raw: unknown,
+  file: string,
+  providerRegistry: ProviderRegistry,
+  overrides: ConfigPathOverrides,
+): Promise<DreamuxConfig> {
+  await loadAgentRuntimeProviders({
+    registry: providerRegistry,
+    refs: agentProviderRefs(raw),
+    importModule: overrides.externalAgentRuntimeModuleImporter,
+  });
+  await loadChannelProviders({
+    registry: providerRegistry,
+    refs: channelProviderRefs(raw),
+    importModule: overrides.externalChannelModuleImporter,
+  });
+  return mergeWithDefaults(raw, file, providerRegistry);
 }
 
 export async function assertNoLegacyTomlOnly(
@@ -296,25 +321,6 @@ export async function assertNoLegacyTomlOnly(
       `Recreate the config as JSON (run \`dreamux onboard\`, or write ${jsonFile} with a ` +
       `dispatchers array), then move ${tomlFile} aside.`,
   );
-}
-
-async function atomicWriteIfAbsent(
-  file: string,
-  content: string,
-): Promise<boolean> {
-  let handle;
-  try {
-    handle = await open(file, 'wx', 0o600);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw err;
-  }
-  try {
-    await handle.writeFile(content);
-  } finally {
-    await handle.close();
-  }
-  return true;
 }
 
 export async function assertConfigFileMode(file: string): Promise<void> {

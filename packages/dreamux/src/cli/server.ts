@@ -13,9 +13,9 @@
  *   - built-in defaults compiled into the binary
  *
  * Plugins (the optional top-level plugins[] plus the always-loaded built-in
- * plugins) load and contribute providers inside loadConfig; their `server`
- * entries run once the file logger exists, before the Server is constructed,
- * so every host hook is tapped before the first Dispatcher exists.
+ * plugins) load and contribute providers inside ConfigService.open; their
+ * `server` entries run once the file logger exists, before the Server is
+ * constructed, so every host hook is tapped before the first Dispatcher exists.
  *
  * Per-dispatcher channel secrets live in the dreamux JSON config.
  */
@@ -23,7 +23,7 @@
 import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
-import { loadConfig } from '../config/config.js';
+import { ConfigService } from '../config/service.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
 import { startPlugins } from '../plugin/host.js';
 import { createLogger } from '../platform/logger.js';
@@ -48,20 +48,22 @@ async function main(): Promise<void> {
   }
 
   // Seed a registry with the builtin provider DESCRIPTORS and hand it to
-  // loadConfig, which loads every referenced provider implementation — builtin
-  // AND npm, both kinds — through the single dynamic loader before parsing
-  // agents[]/channels[] (each entry's config is parsed through its provider's
-  // readConfig, so the implementation must be present first). `builtin:*` is
-  // just an alias the loader resolves to a package name; there is no separate
-  // static builtin-registration path. The populated registry then backs the
-  // Server's runtime + channel catalogs (Server builds them from it).
+  // ConfigService.open, which loads every referenced provider implementation —
+  // builtin AND npm, both kinds — through the single dynamic loader before
+  // parsing agents[]/channels[] (each entry's config is parsed through its
+  // provider's readConfig, so the implementation must be present first).
+  // `builtin:*` is just an alias the loader resolves to a package name; there
+  // is no separate static builtin-registration path. The populated registry
+  // then backs the Server's runtime + channel catalogs (Server builds them
+  // from it).
   const providerRegistry = createBuiltinProviderRegistry();
 
-  // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
+  // Open ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile, plugins } = await loadConfig({
-    providerRegistry,
-  });
+  // The ConfigService is this process's single authority over config.json for
+  // the rest of its life — every long-lived object that needs the current
+  // config holds it, rather than a DreamuxConfig value read once here.
+  const configService = await ConfigService.open({ providerRegistry });
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
@@ -72,11 +74,11 @@ async function main(): Promise<void> {
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a
   // foreground `serve` stays visible.
   const logger = createLogger({ name: 'server', filePath: serverLogPath() });
-  logger.info({ config_file: configFile }, 'loaded global config');
-  const { hooks } = startPlugins(plugins, logger);
+  logger.info({ config_file: configService.file }, 'loaded global config');
+  const { hooks } = startPlugins(configService.plugins, logger);
 
   const server = new Server({
-    config,
+    config: configService,
     providerRegistry,
     hooks,
     logger,

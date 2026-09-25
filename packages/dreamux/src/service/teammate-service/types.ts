@@ -7,7 +7,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type {
   AgentEntityCollectionStore,
   AgentIdentityStore,
@@ -22,7 +22,7 @@ import type { TurnAdmission } from './turn-recording.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
 
 export interface TeammateServiceDeps {
-  config: DreamuxConfig;
+  config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   /**
    * This entity's identity storage, already bound to its resolved directory by

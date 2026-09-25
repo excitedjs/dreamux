@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 4c item 1: extracted resolveConfig (the provider-loading + mergeWithDefaults tail of config.ts's readConfigFile, deliberately excluding plugins[] loading) as an exported function for the upcoming Config Service to reuse on config.agents.replace, and folded loadOrInitConfig's local atomicWriteIfAbsent onto dreamux-utils's existing publishFileExclusive. readConfigFile/loadConfig/loadOrInitConfig keep their exact external behavior and return shapes.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

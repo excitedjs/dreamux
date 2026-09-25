@@ -16,6 +16,7 @@ import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type { CoreCommandContext } from '@excitedjs/dreamux-types';
 import { DispatcherNotFoundError } from '../service/dispatchers/errors.js';
 import type { McpLeaseRegistry } from '../service/mcp/leases.js';
+import type { ConfigService } from '../config/service.js';
 import { ValidationError, throwCallerMistake } from './errors.js';
 
 export interface CoreCommandHost {
@@ -39,6 +40,13 @@ export interface CoreCommandHost {
    * whose registry to look in.
    */
   readonly mcpLeases: McpLeaseRegistry;
+  /**
+   * `config.json`'s single in-process authority.
+   *
+   * Process-wide like {@link mcpLeases}, not dispatcher-scoped: `config.agents.*`
+   * addresses `agents[]` directly, with no dispatcher to resolve first.
+   */
+  readonly config: ConfigService;
 }
 
 /**

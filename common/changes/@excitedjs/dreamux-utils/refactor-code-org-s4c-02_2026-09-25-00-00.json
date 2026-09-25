@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 4c item 2: added an optional replacement parameter to redactSecretKeyValues, defaulting to '<redacted>' so every existing caller is unaffected. Lets the upcoming Config Service project secret-named agents[] values as '' instead of writing a second recursive walker.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "053700@gmail.com"
+}

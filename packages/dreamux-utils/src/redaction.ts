@@ -135,20 +135,27 @@ export function isSecretKeyName(key: string): boolean {
  *
  * The caller owns a parsed, mutable structure it is about to display, and this
  * is the one thing it must not show. Values are destroyed rather than masked
- * by shape, because the key already settled the question.
+ * by shape, because the key already settled the question. `replacement`
+ * defaults to the display placeholder every existing caller wants; a caller
+ * that instead needs an empty-string projection (a config surface that hands
+ * the value back out for editing, where `'<redacted>'` would look like a real
+ * value) passes `''`.
  */
-export function redactSecretKeyValues(value: unknown): void {
+export function redactSecretKeyValues(
+  value: unknown,
+  replacement: unknown = '<redacted>',
+): void {
   if (Array.isArray(value)) {
-    for (const item of value) redactSecretKeyValues(item);
+    for (const item of value) redactSecretKeyValues(item, replacement);
     return;
   }
   if (!isPlainObject(value)) return;
   for (const [key, child] of Object.entries(value)) {
     if (isSecretKeyName(key)) {
-      value[key] = '<redacted>';
+      value[key] = replacement;
       continue;
     }
-    redactSecretKeyValues(child);
+    redactSecretKeyValues(child, replacement);
   }
 }
 
