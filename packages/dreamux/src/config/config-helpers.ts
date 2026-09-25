@@ -8,6 +8,7 @@ import {
   redactSecretKeyValues,
 } from '@excitedjs/dreamux-utils';
 
+import { RuleViolation } from '../platform/errors.js';
 import {
   InvalidProviderRefError,
   ReservedExternalProviderError,
@@ -35,25 +36,25 @@ export function resolveConfigProvider(
   try {
     const descriptor = providerRegistry.resolve(rawProvider);
     if (descriptor.kind !== expectedKind) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is a ${descriptor.kind} provider, expected ${expectedKind}`,
       );
     }
     return { ref: formatProviderRef(descriptor.ref), descriptor };
   } catch (err) {
     if (err instanceof InvalidProviderRefError) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}provider is invalid: ${err.message}`,
       );
     }
     if (err instanceof ReservedExternalProviderError) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' was not loaded as an external ${expectedKind} provider.\n` +
           err.message,
       );
     }
     if (err instanceof UnknownBuiltinProviderError) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}provider references unknown builtin provider '${err.id}'`,
       );
     }
@@ -125,7 +126,7 @@ export function readOptionalBoolean(
   const v = obj[key];
   if (v === undefined) return fallback;
   if (typeof v === 'boolean') return v;
-  throw new Error(
+  throw new RuleViolation(
     `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
   );
 }

@@ -6,9 +6,10 @@
  * needs the current config holds this instead of a `DreamuxConfig` value it
  * captured once — see {@link ConfigReader}. A `TransactionalStore` backs it,
  * so every read sees the same committed value and every write goes through
- * the store's own serialized read-decide-replace: no second reservation or
- * validation path beside the one `resolveConfig` (`./config.js`) already
- * gives the file-read path `doctor`/`onboard`/`loadConfig` use.
+ * the store's own serialized read-decide-replace: no second reservation,
+ * file-open, or validation path beside the one `readConfigFile`/
+ * `resolveConfig` (`./config.js`) already gives the file-read path
+ * `doctor`/`onboard`/`loadConfig` use.
  *
  * The store's value pairs the parsed file (`raw`) with its resolved shape
  * (`config`). `raw` is what gets written back out — a hand-written
@@ -22,8 +23,6 @@
  * on every read.
  */
 
-import { readFile } from 'node:fs/promises';
-
 import {
   isPlainObject,
   isSecretKeyName,
@@ -31,19 +30,13 @@ import {
   TransactionalStore,
 } from '@excitedjs/dreamux-utils';
 
-import { pathExists } from '../platform/fs-errors.js';
-import { createLogger } from '../platform/logger.js';
-import {
-  loadPlugins,
-  readPluginConfigs,
-  readPluginEntries,
-  type LoadedPlugin,
-} from '../plugin/loader.js';
+import { throwCallerMistake } from '../command/errors.js';
+import type { LoadedPlugin } from '../plugin/loader.js';
 import type { ProviderRegistry } from '../registry/index.js';
 import {
-  assertConfigFileMode,
   assertNoLegacyTomlOnly,
   globalConfigFile,
+  readConfigFile,
   resolveConfig,
   type ConfigPathOverrides,
   type DreamuxConfig,
@@ -149,9 +142,13 @@ export class ConfigService implements ConfigReader {
    * {@link mergeAgentEntries}), splice the result into the committed `raw`,
    * then run it through `resolveConfig` — the identical loader/validator a
    * fresh `dreamux serve` uses, so a write this rejects is a write the next
-   * start would also reject. A thrown `dreamux config error in …` rejects
-   * this call with file and memory unchanged, by `TransactionalStore.update`'s
-   * own contract (nothing is written or swapped before `change` returns).
+   * start would also reject. `resolveConfig`'s own validators raise a
+   * `RuleViolation` for a malformed candidate (`config.ts`/`config-helpers.ts`);
+   * {@link throwCallerMistake} re-types exactly that into the caller's
+   * mistake, so `config.agents.replace` reports `BAD_REQUEST` instead of
+   * `INTERNAL` for a bad payload. Either way this call rejects with file and
+   * memory unchanged, by `TransactionalStore.update`'s own contract (nothing
+   * is written or swapped before `change` returns).
    */
   async replaceAgents(
     candidateAgents: readonly Record<string, unknown>[],
@@ -163,12 +160,17 @@ export class ConfigService implements ConfigReader {
         Array.isArray(committedAgents) ? committedAgents : [],
       );
       const candidateRaw = { ...committed.raw, agents: mergedAgents };
-      const config = await resolveConfig(
-        candidateRaw,
-        this.file,
-        this.providerRegistry,
-        this.overrides,
-      );
+      let config: DreamuxConfig;
+      try {
+        config = await resolveConfig(
+          candidateRaw,
+          this.file,
+          this.providerRegistry,
+          this.overrides,
+        );
+      } catch (err) {
+        throwCallerMistake(err);
+      }
       // resolveConfig (mergeWithDefaults) never sets `config.plugins` — that
       // field is loadFile's own addition, carrying the raw plugins[] entries
       // only so stringifyConfig can round-trip them (./config.js). A replace
@@ -188,65 +190,28 @@ export class ConfigService implements ConfigReader {
 
   /**
    * The store's `load()` callback — the whole open sequence, including
-   * one-time plugin loading. `TransactionalStore.load()` guarantees this
-   * runs at most once per store, which is what makes assigning
-   * `this.loadedPlugins` here safe: a plugin's `contribute()` registers
-   * providers and collides with itself if run twice, so this must never
-   * re-run for the life of this `ConfigService`.
+   * one-time plugin loading. Delegates the "open the file" sequence to
+   * `readConfigFile` (`./config.js`), the same function the CLI read path
+   * (`doctor`/`onboard`/`loadConfig`) uses, so today's checks, order, and
+   * messages (legacy TOML, missing file, file mode, parse) stay one
+   * implementation. `TransactionalStore.load()` guarantees this runs at most
+   * once per store, which is what makes assigning `this.loadedPlugins` here
+   * safe: a plugin's `contribute()` registers providers and collides with
+   * itself if run twice, so this must never re-run for the life of this
+   * `ConfigService`.
    */
   private async loadFile(): Promise<ConfigServiceState> {
     await assertNoLegacyTomlOnly(this.overrides);
-    if (!(await pathExists(this.file))) {
-      throw new Error(
-        `dreamux config is missing at ${this.file}.\n` +
-          'Run `dreamux onboard` to create it before starting the server.',
-      );
-    }
-    await assertConfigFileMode(this.file);
-    const text = await readFile(this.file, 'utf8');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `dreamux config parse error in ${this.file}: ${msg}\n` +
-          `Fix the JSON syntax in ${this.file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
-      );
-    }
-    // Plugins contribute providers config may address, so they load before
-    // provider refs are loaded and validated. A non-object top level is
-    // still reported by resolveConfig's mergeWithDefaults, below.
-    const entries = isPlainObject(parsed)
-      ? readPluginEntries(parsed, this.file)
-      : undefined;
-    const plugins = await loadPlugins({
-      registry: this.providerRegistry,
-      entries: entries ?? [],
-      // The daemon's file logger does not exist yet at open() time; contribute
-      // only registers, so a stderr-only logger here matches config.ts's own
-      // readConfigFile.
-      logger: createLogger({ name: 'plugins' }),
-      importModule: this.overrides.pluginModuleImporter,
-    });
-    // Runs once per this store (see this method's own doc comment); a future
-    // change to TransactionalStore's "load() runs at most once" guarantee
-    // would make this reassign on every read instead of the one open.
-    this.loadedPlugins = plugins;
-    const config = await resolveConfig(
-      parsed,
+    const { raw, config, plugins } = await readConfigFile(
       this.file,
       this.providerRegistry,
       this.overrides,
     );
-    readPluginConfigs(plugins, this.file);
-    return {
-      // resolveConfig's mergeWithDefaults already rejects a non-object top
-      // level before returning, so parsed is a plain object whenever this
-      // line runs.
-      raw: parsed as Record<string, unknown>,
-      config: entries === undefined ? config : { ...config, plugins: entries },
-    };
+    // Runs once per this store (see this method's own doc comment); a future
+    // change to TransactionalStore's "load() runs at most once" guarantee
+    // would make this reassign on every read instead of the one open.
+    this.loadedPlugins = plugins;
+    return { raw, config };
   }
 }
 

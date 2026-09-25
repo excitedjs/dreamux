@@ -25,6 +25,7 @@ import {
 } from '@excitedjs/dreamux-utils';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { createLogger } from '../platform/logger.js';
+import { RuleViolation } from '../platform/errors.js';
 import {
   loadPlugins,
   readPluginConfigs,
@@ -230,11 +231,23 @@ export function redactConfigForDisplay(raw: string, file: string): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-async function readConfigFile(
+/**
+ * Open, parse, and resolve `config.json`: existence and mode checks, JSON
+ * parse, one-time plugin load, then {@link resolveConfig}. Shared by the CLI
+ * read path below (`doctor`/`onboard`/`loadConfig`) and `ConfigService`'s own
+ * open sequence (`config/service.ts`'s `loadFile`), so "open the file" is
+ * written once; `ConfigService` additionally holds `raw` (the parsed object,
+ * returned here so it does not re-parse) for its `TransactionalStore`.
+ */
+export async function readConfigFile(
   file: string,
   providerRegistry: ProviderRegistry,
   overrides: ConfigPathOverrides,
-): Promise<{ config: DreamuxConfig; plugins: LoadedPlugin[] }> {
+): Promise<{
+  raw: Record<string, unknown>;
+  config: DreamuxConfig;
+  plugins: LoadedPlugin[];
+}> {
   if (!(await pathExists(file))) {
     throw new Error(
       `dreamux config is missing at ${file}.\n` +
@@ -242,10 +255,10 @@ async function readConfigFile(
     );
   }
   await assertConfigFileMode(file);
-  const raw = await readFile(file, 'utf8');
+  const text = await readFile(file, 'utf8');
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(text);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
@@ -274,6 +287,10 @@ async function readConfigFile(
   );
   readPluginConfigs(plugins, file);
   return {
+    // resolveConfig's mergeWithDefaults already rejects a non-object top
+    // level before returning, so parsed is a plain object whenever this
+    // line runs.
+    raw: parsed as Record<string, unknown>,
     config: entries === undefined ? config : { ...config, plugins: entries },
     plugins,
   };
@@ -342,7 +359,7 @@ async function mergeWithDefaults(
   providerRegistry: ProviderRegistry,
 ): Promise<DreamuxConfig> {
   if (!isPlainObject(raw)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: top-level must be an object`,
     );
   }
@@ -368,7 +385,7 @@ function readWorkspaceConfig(
 ): DreamuxWorkspaceConfig {
   if (rawWorkspace === undefined) return { enabled: false };
   if (!isPlainObject(rawWorkspace)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix.slice(0, -1)} must be an object (got ${describeType(rawWorkspace)})`,
     );
   }
@@ -389,7 +406,7 @@ export function defaultWorkspaceEnabled(
 
 function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
   if (!('codex' in raw)) return;
-  throw new Error(
+  throw new RuleViolation(
     `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
       'supported. Declare a named agent under agents[] with the selected runtime ' +
       'provider and a provider-owned config block, then reference it from each ' +
@@ -404,7 +421,7 @@ async function readAgents(
 ): Promise<Record<string, ResolvedAgentConfig>> {
   if (rawAgents === undefined) return {};
   if (!Array.isArray(rawAgents)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: agents must be an array (got ${describeType(rawAgents)}).\n` +
         'Declare named runtimes as agents[] entries, each with an id, a provider ' +
         '(for example "builtin:<id>" or "npm:<package>"), and a provider-owned config block.',
@@ -415,13 +432,13 @@ async function readAgents(
     const raw = rawAgents[index];
     const prefix = `agents[${index}].`;
     if (!isPlainObject(raw)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: agents[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
     const id = requireNonEmptyString(raw, 'id', file, prefix);
     if (Object.prototype.hasOwnProperty.call(out, id)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: agents[${index}].id duplicates agent '${id}'`,
       );
     }
@@ -444,7 +461,7 @@ async function readAgents(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
     if (runtimeProvider === null) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
           'Its provider package did not yield a runnable agentRuntime ' +
           'implementation. Pass a providerRegistry seeded with the builtin ' +
@@ -479,7 +496,7 @@ function rejectLegacyDispatcherProviderKeys(
   for (const key of ['feishu', 'codex']) {
     if (!(key in raw)) continue;
     const name = `${prefix}${key}`;
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
         'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
         'dispatchers[].channels[] for the channel and a named agents[] entry referenced via ' +
@@ -496,7 +513,7 @@ async function readDispatchers(
 ): Promise<DispatcherConfig[]> {
   if (rawDispatchers === undefined) return [];
   if (!Array.isArray(rawDispatchers)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: dispatchers must be an array (got ${describeType(rawDispatchers)})`,
     );
   }
@@ -506,12 +523,12 @@ async function readDispatchers(
     const raw = rawDispatchers[index];
     const prefix = `dispatchers[${index}].`;
     if (!isPlainObject(raw)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: dispatchers[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
     if ('runtime' in raw) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}runtime is no longer supported.\n` +
           'Runtime config moved to a named agents[] entry. Declare the runtime ' +
           'under top-level agents[] (id, provider, config) and reference it here ' +
@@ -524,7 +541,7 @@ async function readDispatchers(
       `${prefix}id`,
     );
     if (ids.has(id)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: dispatchers[${index}].id duplicates dispatcher '${id}'`,
       );
     }
@@ -540,7 +557,7 @@ async function readDispatchers(
 
     const cwd = raw['cwd'];
     if (typeof cwd !== 'string' || cwd.trim() === '') {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}cwd is required for dispatcher ` +
           `'${id}': set it to the Dispatcher's workspace directory`,
       );
@@ -569,7 +586,7 @@ function resolveAgentRuntime(
   agents: Record<string, ResolvedAgentConfig>,
 ): string {
   if (!('agentRuntime' in raw)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}agentRuntime is required.\n` +
         'Declare a named runtime under top-level agents[] (id, provider, config) ' +
         `and set ${prefix}agentRuntime to that agent's id, then rebuild ${file}.`,
@@ -587,7 +604,7 @@ function resolveAgentRuntime(
       known.length > 0
         ? `Known agents: ${known.map((id) => `'${id}'`).join(', ')}.`
         : 'No agents[] are declared.';
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}agentRuntime='${agentRuntimeId}' ` +
         `does not match any agents[].id. ${knownHint}\n` +
         `Add an agents[] entry with id '${agentRuntimeId}' (or fix the reference), then rebuild ${file}.`,
@@ -605,13 +622,13 @@ async function readDispatcherChannels(
 ): Promise<DispatcherChannelConfig[]> {
   const prefix = `${dispatcherPrefix}channels`;
   if (!Array.isArray(rawChannels)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix} must be an array (got ${describeType(rawChannels)}).\n` +
         'Use providerized config v2: dispatchers[].channels[] with a channel provider ref and provider-owned config.',
     );
   }
   if (rawChannels.length === 0) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix} must contain at least one channel.`,
     );
   }
@@ -622,7 +639,7 @@ async function readDispatcherChannels(
     const raw = rawChannels[index];
     const channelPrefix = `${prefix}[${index}].`;
     if (!isPlainObject(raw)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
       );
     }
@@ -630,7 +647,7 @@ async function readDispatcherChannels(
       // Named rather than silently tolerated like any other unknown key: this
       // key used to configure a real Core capability, and an operator who
       // wrote it needs to be told where that capability went.
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}collaborationSpace ` +
           'was removed. Core no longer owns Collaboration Space policy — the ' +
           'channel that offers the flow owns it now. Configure it there and ' +
@@ -639,7 +656,7 @@ async function readDispatcherChannels(
     }
     const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
     if (channelIds.has(id)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}id='${id}' duplicates another channel in this dispatcher; channel ids must be unique per dispatcher.`,
       );
     }
@@ -652,7 +669,7 @@ async function readDispatcherChannels(
       providerRegistry,
     );
     if (providerRefs.has(provider.ref)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' duplicates another channel in this dispatcher; each provider may appear at most once per dispatcher.`,
       );
     }
@@ -667,7 +684,7 @@ async function readDispatcherChannels(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
     if (channelProvider === null) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but has no channel implementation.\n` +
           'Its provider package did not yield a usable channel implementation. ' +
           'Pass a providerRegistry seeded with the builtin descriptors (the ' +
