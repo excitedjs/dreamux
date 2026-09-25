@@ -19,7 +19,6 @@ export interface CronCreateRequest {
   title?: string;
   recurring?: boolean;
   tz?: string;
-  action?: Record<string, unknown>;
 }
 
 export interface CronUpdateRequest {
@@ -29,7 +28,6 @@ export interface CronUpdateRequest {
   title?: string | null;
   recurring?: boolean;
   tz?: string;
-  action?: Record<string, unknown>;
   enabled?: boolean;
 }
 
@@ -64,9 +62,8 @@ export interface SchedulerCommands {
 /**
  * Read one cron creation request, as every surface asks it.
  *
- * `action` is deliberately absent: it is an operator-only field the Command
- * surface adds on top of this, and no Agent-facing catalog advertises it. What
- * a job actually does is derived from `prompt` by the scheduler.
+ * There is no `action` field: what a job does is derived from `prompt` alone
+ * by the scheduler, on every surface.
  */
 export function cronCreateRequest(params: CommandPayload): CronCreateRequest {
   return {
@@ -78,7 +75,7 @@ export function cronCreateRequest(params: CommandPayload): CronCreateRequest {
   };
 }
 
-/** Read one cron update request. `action` is Command-only, as on create. */
+/** Read one cron update request. */
 export function cronUpdateRequest(params: CommandPayload): CronUpdateRequest {
   return {
     id: cronJobIdParam(params),

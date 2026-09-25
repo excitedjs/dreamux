@@ -356,7 +356,7 @@ export class SchedulerService {
   } {
     const tz = input.tz ?? localTimeZone();
     const action = asRequestValidation(() => {
-      const normalized = normalizeAction(input.prompt, input.action);
+      const normalized = normalizeAction(input.prompt);
       assertTitle(input.title);
       validateCron(input.cron, tz, input.recurring ?? true);
       validateAction(normalized);
@@ -380,11 +380,9 @@ export class SchedulerService {
     const recurring = input.recurring ?? current.recurring;
     const action = asRequestValidation(() => {
       const normalized =
-        input.action !== undefined
-          ? normalizeAction(input.prompt ?? current.action.prompt, input.action)
-          : input.prompt !== undefined
-            ? { ...current.action, prompt: input.prompt }
-            : current.action;
+        input.prompt !== undefined
+          ? { ...current.action, prompt: input.prompt }
+          : current.action;
       assertTitle(input.title);
       validateCron(cron, tz, recurring);
       validateAction(normalized);
@@ -434,28 +432,11 @@ function asRequestValidation<T>(validate: () => T): T {
   }
 }
 
-function normalizeAction(
-  prompt: string,
-  raw: Record<string, unknown> | undefined,
-): CronJobAction {
+function normalizeAction(prompt: string): CronJobAction {
   if (prompt === '') {
     throw new RuleViolation('cron prompt must be a non-empty string');
   }
-  if (raw === undefined) return { kind: 'prompt-agent', prompt };
-  const kind = raw['kind'];
-  if (kind !== undefined && kind !== 'prompt-agent') {
-    throw new RuleViolation("cron action.kind must be 'prompt-agent'");
-  }
-  const actionPrompt =
-    typeof raw['prompt'] === 'string' && raw['prompt'] !== ''
-      ? raw['prompt']
-      : prompt;
-  const intent = raw['intent'];
-  return {
-    kind: 'prompt-agent',
-    prompt: actionPrompt,
-    ...(typeof intent === 'string' && intent !== '' ? { intent } : {}),
-  };
+  return { kind: 'prompt-agent', prompt };
 }
 
 function validateAction(action: CronJobAction): void {

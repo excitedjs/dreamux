@@ -8,6 +8,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 
@@ -17,6 +18,13 @@ export interface DispatcherServiceOptions {
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
+  /**
+   * The dispatcher-root Agent's own identity store, shared with `Dispatchers`'
+   * read-only fallback reader (`summarize()`/`status()` when no live runtime
+   * status exists) so the two never hold independently cached committed
+   * values over the same `identity.json`.
+   */
+  identities: AgentIdentityStore;
   /** The process-wide Agent-facing MCP lease registry this dispatcher mints into. */
   mcpLeases: McpLeaseRegistry;
   /**

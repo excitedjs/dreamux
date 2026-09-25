@@ -6,6 +6,7 @@ import {
 } from '../agent-entity/identity-store.js';
 import { teamMateCollectionDir } from '../../platform/paths.js';
 import { toStatus } from '../agent-entity/read-helpers.js';
+import type { TeamService } from '../team-service/index.js';
 import { teamSummary } from '../team-service/team-summary.js';
 import type {
   AgentEntityIdentity,
@@ -34,6 +35,11 @@ export class TeamCollectionReadModel {
       dispatcherId: string;
       store: TeamStore;
       log: DreamuxLogger;
+      /** A non-materializing cache peek at a Team this process already holds
+       * live, for `leaderState` to answer from in-memory identity state
+       * instead of a fresh file read when one is available. `null` for a
+       * Team this process is not currently holding. */
+      live: (teamId: string) => TeamService | null;
     },
   ) {}
 
@@ -126,10 +132,17 @@ export class TeamCollectionReadModel {
    * The leader's durable status, read from this Team's root and accepted only
    * when the record names the leader the Team record names. No probing: the
    * leader has exactly one location and this is it.
+   *
+   * A Team this process already holds live answers from that live entity's
+   * own in-memory identity — the more current copy, and one that needs no
+   * file read — rather than from a second, independently-cached read over
+   * the same `identity.json` a live owner already committed through.
    */
   private async leaderState(
     team: TeamRecord,
   ): Promise<AgentEntityIdentityStatus | null> {
+    const live = this.opts.live(team.team_id);
+    if (live !== null) return live.leaderIdentityStatus();
     return (await this.leaderIdentity(team))?.status ?? null;
   }
 

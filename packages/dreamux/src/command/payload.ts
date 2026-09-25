@@ -143,15 +143,3 @@ export function optionalBooleanField(
   }
   return { [key]: value };
 }
-
-export function optionalRecordField(
-  params: CommandPayload,
-  key: string,
-): Record<string, Record<string, unknown>> {
-  if (!(key in params)) return {};
-  const value = params[key];
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new ValidationError(`param '${key}' must be an object`);
-  }
-  return { [key]: value as Record<string, unknown> };
-}

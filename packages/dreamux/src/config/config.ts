@@ -20,7 +20,6 @@ import {
   describeType,
   isPlainObject,
   readProviderConfigObject,
-  rejectUnknownKeys,
   requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
@@ -342,12 +341,6 @@ async function mergeWithDefaults(
     );
   }
   rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(
-    raw,
-    new Set(['plugins', 'agents', 'dispatchers']),
-    file,
-    '',
-  );
 
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   const dispatchers = await readDispatchers(
@@ -373,7 +366,6 @@ function readWorkspaceConfig(
       `dreamux config error in ${file}: ${prefix.slice(0, -1)} must be an object (got ${describeType(rawWorkspace)})`,
     );
   }
-  rejectUnknownKeys(rawWorkspace, new Set(['enabled']), file, prefix);
   return {
     enabled: readOptionalBoolean(rawWorkspace, 'enabled', false, file, prefix),
   };
@@ -421,7 +413,6 @@ async function readAgents(
         `dreamux config error in ${file}: agents[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
-    rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, prefix);
     const id = requireNonEmptyString(raw, 'id', file, prefix);
     if (Object.prototype.hasOwnProperty.call(out, id)) {
       throw new Error(
@@ -471,6 +462,26 @@ async function readAgents(
   return out;
 }
 
+function rejectLegacyDispatcherProviderKeys(
+  raw: Record<string, unknown>,
+  prefix: string,
+  file: string,
+): void {
+  // Named rather than left to generic unknown-key tolerance: these two keys
+  // are the pre-v2 config shape's provider blocks, and an operator who still
+  // has one needs the rebuild instructions below, not silent tolerance.
+  for (const key of ['feishu', 'codex']) {
+    if (!(key in raw)) continue;
+    const name = `${prefix}${key}`;
+    throw new Error(
+      `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
+        'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
+        'dispatchers[].channels[] for the channel and a named agents[] entry referenced via ' +
+        'dispatchers[].agentRuntime for the runtime, then restart.',
+    );
+  }
+}
+
 async function readDispatchers(
   rawDispatchers: unknown,
   file: string,
@@ -501,19 +512,7 @@ async function readDispatchers(
           `with ${prefix}agentRuntime = "<agent id>", then rebuild ${file}.`,
       );
     }
-    rejectUnknownKeys(
-      raw,
-      new Set([
-        'id',
-        'cwd',
-        'enabled',
-        'workspace',
-        'channels',
-        'agentRuntime',
-      ]),
-      file,
-      prefix,
-    );
+    rejectLegacyDispatcherProviderKeys(raw, prefix, file);
     const id = validateDispatcherId(
       requireNonEmptyString(raw, 'id', file, prefix),
       `${prefix}id`,
@@ -622,9 +621,9 @@ async function readDispatcherChannels(
       );
     }
     if (raw['collaborationSpace'] !== undefined) {
-      // Named rather than left to the generic unknown-key rejection: this key
-      // used to configure a real Core capability, and an operator who wrote it
-      // needs to be told where that capability went, not that it is a typo.
+      // Named rather than silently tolerated like any other unknown key: this
+      // key used to configure a real Core capability, and an operator who
+      // wrote it needs to be told where that capability went.
       throw new Error(
         `dreamux config error in ${file}: ${channelPrefix}collaborationSpace ` +
           'was removed. Core no longer owns Collaboration Space policy — the ' +
@@ -632,12 +631,6 @@ async function readDispatcherChannels(
           'delete this key.',
       );
     }
-    rejectUnknownKeys(
-      raw,
-      new Set(['id', 'provider', 'config']),
-      file,
-      channelPrefix,
-    );
     const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
     if (channelIds.has(id)) {
       throw new Error(

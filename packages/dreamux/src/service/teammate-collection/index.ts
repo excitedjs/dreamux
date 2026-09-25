@@ -9,6 +9,7 @@ import {
 } from '../agent-entity/agent-config.js';
 import type {
   AgentEntityCollectionStore,
+  AgentIdentityStore,
   AgentNameRegistry,
 } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
@@ -114,12 +115,25 @@ export interface CreateLockedTeammateOptions {
 }
 
 /**
+ * A closed record that has not been reopened, paired with the exact
+ * `AgentIdentityStore` instance that read it. Reopening (`reopenFrom`) hands
+ * both straight to `buildEntity`, so the `AgentRuntimeStateStore` it builds
+ * wraps a store whose `TransactionalStore` is already loaded — a fresh
+ * `this.store.entity(name)` mint here would hand `AgentRuntimeStateStore` an
+ * unloaded store, and `.current()` would throw before any write ever primed it.
+ */
+interface ClosedTeamMateRecord {
+  readonly identity: AgentEntityIdentity;
+  readonly store: AgentIdentityStore;
+}
+
+/**
  * The live TeamMate, or the durable record that already settled it. A closed
  * record is answered as itself rather than constructed: `close` is already done
  * when it reads one, and `send` — the one verb that reopens — is the only
  * caller that turns it back into an entity.
  */
-type ResolvedTeamMate = TeammateService | AgentEntityIdentity;
+type ResolvedTeamMate = TeammateService | ClosedTeamMateRecord;
 
 interface FreshIdentityAllocation {
   readonly name: string;
@@ -213,10 +227,10 @@ export class TeammateCollection implements TeammateOps {
    */
   private reopenFrom(resolved: ResolvedTeamMate): TeammateService {
     if (resolved instanceof TeammateService) return resolved;
-    const reopening = this.reopening.get(resolved.name);
+    const reopening = this.reopening.get(resolved.identity.name);
     if (reopening !== undefined) return reopening;
-    const entity = this.buildEntity(resolved);
-    this.reopening.set(resolved.name, entity);
+    const entity = this.buildEntity(resolved.identity, resolved.store);
+    this.reopening.set(resolved.identity.name, entity);
     return entity;
   }
 
@@ -258,7 +272,7 @@ export class TeammateCollection implements TeammateOps {
     const resolved = await this.resolveEntity(name);
     return resolved instanceof TeammateService
       ? resolved.close({ note })
-      : { teammate: toStatus(resolved, null) };
+      : { teammate: toStatus(resolved.identity, null) };
   }
 
   /** Occupied member directories include closed and unreadable identities. */
@@ -449,8 +463,8 @@ export class TeammateCollection implements TeammateOps {
       );
     }
     return this.trackMaterialization(name, async () => {
-      const identity = await this.createIdentity(input, allocation);
-      const entity = this.buildEntity(identity, options);
+      const { identity, store } = await this.createIdentity(input, allocation);
+      const entity = this.buildEntity(identity, store, options);
       const subscription = this.subscribeEntity(entity);
       try {
         beforePublish?.(entity);
@@ -465,10 +479,16 @@ export class TeammateCollection implements TeammateOps {
     });
   }
 
+  /**
+   * Create the fresh entity's identity and return the exact
+   * `AgentIdentityStore` instance that created it, so `buildEntity` wraps a
+   * store whose `TransactionalStore` is already loaded — see
+   * {@link ClosedTeamMateRecord}.
+   */
   private async createIdentity(
     input: SpawnTeamMateRequest,
     allocation: FreshIdentityAllocation,
-  ): Promise<AgentEntityIdentity> {
+  ): Promise<{ identity: AgentEntityIdentity; store: AgentIdentityStore }> {
     const { name, teamId, agentRuntime, identityPrompt } = allocation;
     const workspace = await resolveSpawnWorkspace({
       config: this.opts.config,
@@ -484,24 +504,32 @@ export class TeammateCollection implements TeammateOps {
         worktree: workspace.worktree,
       });
     }
-    return this.store.entity(name).create({
-      name,
-      teamId: teamId ?? null,
-      agentRuntime,
-      sourceCwd: workspace.sourceCwd,
-      sourceRepo: workspace.sourceRepo,
-      cwd: workspace.runtimeCwd,
-      runtimeCwd: workspace.runtimeCwd,
-      worktree: workspace.worktree,
-      intent: input.intent,
-      identityPrompt,
-      skillSources: input.skillSources,
-      status: 'stopped',
-    });
+    const store = this.store.entity(name);
+    const identity = await store.create(
+      {
+        name,
+        teamId: teamId ?? null,
+        agentRuntime,
+        sourceCwd: workspace.sourceCwd,
+        sourceRepo: workspace.sourceRepo,
+        cwd: workspace.runtimeCwd,
+        runtimeCwd: workspace.runtimeCwd,
+        worktree: workspace.worktree,
+        intent: input.intent,
+        identityPrompt,
+        skillSources: input.skillSources,
+        status: 'stopped',
+      },
+      this.store.onPersisted,
+    );
+    return { identity, store };
   }
 
-  private publishEntity(identity: AgentEntityIdentity): TeammateService {
-    return this.publish(this.buildEntity(identity));
+  private publishEntity(
+    identity: AgentEntityIdentity,
+    store: AgentIdentityStore,
+  ): TeammateService {
+    return this.publish(this.buildEntity(identity, store));
   }
 
   /** Hold one live entity, once. */
@@ -513,8 +541,14 @@ export class TeammateCollection implements TeammateOps {
     return entity;
   }
 
+  /**
+   * `store` must be the exact `AgentIdentityStore` instance that already
+   * read or created `identity` — never a fresh `this.store.entity(name)`
+   * mint here. See {@link ClosedTeamMateRecord}.
+   */
   private buildEntity(
     identity: AgentEntityIdentity,
+    store: AgentIdentityStore,
     options: CreateLockedTeammateOptions = {},
   ): TeammateService {
     const systemPrompt = teammateSystemPromptOptions(
@@ -541,7 +575,8 @@ export class TeammateCollection implements TeammateOps {
       },
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
-      identities: this.store.entity(identity.name),
+      identities: store,
+      onPersisted: this.store.onPersisted,
       peers: this.store,
       admissions: this.opts.admissions,
       worktrees: this.worktrees,
@@ -599,12 +634,14 @@ export class TeammateCollection implements TeammateOps {
     // moved past what the record says.
     const reopening = this.reopening.get(name);
     if (reopening !== undefined) return reopening;
-    const identity = await this.mustIdentity(name);
+    const { identity, store } = await this.readIdentity(name);
+    // A materialization elsewhere may have published this entity while the
+    // read above was in flight.
     const existing = this.liveEntity(name);
     if (existing !== null) return existing;
     return identity.status === 'closed'
-      ? identity
-      : this.publishEntity(identity);
+      ? { identity, store }
+      : this.publishEntity(identity, store);
   }
 
   // Generic so the flight's starter keeps the narrower result it produced
@@ -625,13 +662,38 @@ export class TeammateCollection implements TeammateOps {
     return tracked;
   }
 
+  /**
+   * A live entity's own committed value is authoritative over a fresh file
+   * read (mirroring `resolveEntity`'s live-first pattern above): a runtime
+   * that just wrote a status transition would otherwise race a reader that
+   * skipped straight to the file.
+   */
   private async mustIdentity(name: string): Promise<AgentEntityIdentity> {
-    const identity = await this.store.entity(name).read();
+    const live = this.liveEntity(name);
+    if (live !== null) {
+      const identity = live.current();
+      this.assertInCollection(identity);
+      return identity;
+    }
+    return (await this.readIdentity(name)).identity;
+  }
+
+  /**
+   * Read one member's identity, paired with the exact `AgentIdentityStore`
+   * instance that read it — see {@link ClosedTeamMateRecord}. A one-shot
+   * caller (`mustIdentity`) discards the store; `materializeEntity` keeps it
+   * so a later reopen can hand `buildEntity` a store that is already loaded.
+   */
+  private async readIdentity(
+    name: string,
+  ): Promise<{ identity: AgentEntityIdentity; store: AgentIdentityStore }> {
+    const store = this.store.entity(name);
+    const identity = await store.read();
     if (identity === null) {
       throw teamMateNotFound(name);
     }
     this.assertInCollection(identity);
-    return identity;
+    return { identity, store };
   }
 
   private async rosterList(): Promise<AgentEntityIdentity[]> {

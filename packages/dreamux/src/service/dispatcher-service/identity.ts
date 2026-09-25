@@ -12,6 +12,7 @@ export interface DispatcherIdentityEnsureInput {
   cwd: string;
   runtimeCwd: string;
   worktree: AgentEntityWorktreeIdentity;
+  onPersisted: (identity: AgentEntityIdentity) => void;
 }
 
 export interface DispatcherRootIdentityInput {
@@ -20,6 +21,7 @@ export interface DispatcherRootIdentityInput {
   dispatcherId: string;
   agentRuntime: string;
   cwd: string;
+  onPersisted: (identity: AgentEntityIdentity) => void;
 }
 
 export function dispatcherRootWorktreeIdentity(
@@ -47,6 +49,7 @@ export function ensureDispatcherRootIdentity(
     cwd: input.cwd,
     runtimeCwd: input.cwd,
     worktree: dispatcherRootWorktreeIdentity(input.cwd),
+    onPersisted: input.onPersisted,
   });
 }
 
@@ -84,7 +87,7 @@ export async function ensureDispatcherIdentity(
       closed_at: null,
       close_note: null,
     };
-    return identities.upsert(identity);
+    return identities.upsert(identity, input.onPersisted);
   }
 
   const compatible =
@@ -116,7 +119,7 @@ export async function ensureDispatcherIdentity(
         }),
     updated_at: now,
   };
-  return identities.upsert(updated);
+  return identities.upsert(updated, input.onPersisted);
 }
 
 function worktreeIdentityEquals(

@@ -35,6 +35,7 @@ export interface DispatcherAgentDeps {
   mcp: TeammateAgentMcp;
   identity: AgentEntityIdentity;
   identities: AgentIdentityStore;
+  onPersisted: (identity: AgentEntityIdentity) => void;
   admissions: AdmissionLedger;
   conversationProjection: ConversationProjection;
   /** This Dispatcher's `beforeLaunch` hook, run once per Agent construction. */
@@ -79,6 +80,7 @@ export async function createDispatcherAgent(
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
+    onPersisted: deps.onPersisted,
     admissions: deps.admissions,
     conversationProjection: deps.conversationProjection,
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it

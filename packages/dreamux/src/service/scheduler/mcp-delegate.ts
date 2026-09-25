@@ -236,7 +236,6 @@ function cronJobSchema(): Record<string, unknown> {
   return closedObjectSchema(
     {
       id: { type: 'string' },
-      dispatcher_id: { type: 'string' },
       title: { type: 'string' },
       cron: { type: 'string' },
       tz: { type: 'string' },
@@ -250,7 +249,6 @@ function cronJobSchema(): Record<string, unknown> {
     },
     [
       'id',
-      'dispatcher_id',
       'cron',
       'tz',
       'recurring',

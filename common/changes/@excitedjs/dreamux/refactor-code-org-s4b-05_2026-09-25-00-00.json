@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 4b item 5: config.json now tolerates unknown top-level, dispatchers[], channels[], agents[], and dispatchers[].workspace keys instead of rejecting them; wrong types and missing required fields are still rejected, and the dispatchers[].feishu/.codex legacy-shape message (now a dedicated pre-check) is unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -65,6 +65,10 @@ export class TeamCollection {
       dispatcherId: this.dispatcherId,
       store: this.store,
       log: opts.log,
+      // `this.runtimes` is assigned below; this closure only reads it once
+      // a caller actually asks a list/history row, by which point
+      // construction has finished.
+      live: (teamId) => this.runtimes.live(teamId),
     });
     this.runtimes = new TeamRuntimeRegistry({
       dispatcherId: this.dispatcherId,

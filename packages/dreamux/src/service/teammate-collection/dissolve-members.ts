@@ -44,7 +44,7 @@ export async function closeMembersForDissolve(input: {
   for (const identity of input.roster) {
     if (identity.status === 'closed' || held.has(identity.name)) continue;
     await collectShutdownFailure(failures, async () => {
-      await input.store.entity(identity.name).update(identity, {
+      await input.store.update(identity.name, {
         status: 'closed',
         closedAt,
         closeNote: input.note,

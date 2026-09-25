@@ -212,7 +212,10 @@ the same change that touches it.
 - **The Team record is the only existence fact.** A readable, valid Team record
   means the Team exists and its name is taken; no record (or an invalid one)
   means no Team and a free name. Nothing else — ledgers, claims, identities —
-  competes with it.
+  competes with it. While the daemon runs, a record deleted or damaged by hand
+  no longer frees the name: the Team's record store holds the last record it
+  loaded in memory for the life of the daemon, so a hand edit to the file on
+  disk is not read until restart.
 - **Dissolve means terminate now and reclaim.** The user pressing dissolve
   wants processes dead and tokens no longer burning: all member runtimes stop
   immediately, the receipt says `accepted`/`closed` after the durable logical
@@ -235,7 +238,9 @@ the same change that touches it.
   (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
 - **A failed dissolve leaves a Team that still exists.** Whatever committed
   before the failure stays committed (closed members stay closed, deleted cron
-  stores stay deleted); the next ordinary use rebuilds from disk, and the next
+  stores stay deleted); the next ordinary use rebuilds the Team from the
+  record its store already has loaded — which equals the file on disk, because
+  the file is always written before that loaded value changes — and the next
   dissolve retries the same close operations. No rollback product exists.
 - **Creation tools use entity-based worktree names.** The Dispatcher-facing
   `teammate.spawn` and `team.create` MCP tools accept repo mode, path, base ref,

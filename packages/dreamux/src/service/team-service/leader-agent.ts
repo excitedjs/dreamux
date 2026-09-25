@@ -41,6 +41,7 @@ export interface TeamLeaderAgentDeps {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
+  onPersisted: (identity: AgentEntityIdentity) => void;
   admissions: AdmissionLedger;
   conversationProjection: ConversationProjection;
   worktrees: WorktreeManager;
@@ -72,6 +73,7 @@ export function createTeamLeaderAgent(
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
+    onPersisted: deps.onPersisted,
     admissions: deps.admissions,
     conversationProjection: deps.conversationProjection,
     worktrees: deps.worktrees,
@@ -130,6 +132,7 @@ export function teamLeaderAgentBase(input: {
   teamId: string;
   workspace: AgentEntityWorktreeIdentity;
   identities: AgentIdentityStore;
+  onPersisted: (identity: AgentEntityIdentity) => void;
   beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }): Omit<TeamLeaderForTeamDeps, 'identity'> {
   const { deps } = input;
@@ -142,6 +145,7 @@ export function teamLeaderAgentBase(input: {
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: input.identities,
+    onPersisted: input.onPersisted,
     admissions: deps.admissions,
     conversationProjection: deps.conversationProjection,
     worktrees: deps.worktrees,
@@ -165,23 +169,26 @@ export async function createTeamLeaderAgentForTeam(
   },
 ): Promise<TeammateService> {
   const { creation, ...rest } = deps;
-  const identity = await deps.identities.create({
-    name: creation.leaderName,
-    teamId: deps.teamId,
-    agentRuntime: creation.agentRuntime,
-    sourceCwd: creation.sourceCwd,
-    sourceRepo: creation.sourceRepo,
-    cwd: creation.runtimeCwd,
-    runtimeCwd: creation.runtimeCwd,
-    // A leader runs in its Team's directory; the Team's record owns the
-    // checkout underneath it and every cleanup fact about it.
-    worktree: reuseCwdWorktree(creation.runtimeCwd),
-    intent: creation.intent,
-    identityPrompt: creation.identityPrompt,
-    skillSources: creation.skillSources,
-    status: 'starting',
-    replaceExisting: true,
-  });
+  const identity = await deps.identities.create(
+    {
+      name: creation.leaderName,
+      teamId: deps.teamId,
+      agentRuntime: creation.agentRuntime,
+      sourceCwd: creation.sourceCwd,
+      sourceRepo: creation.sourceRepo,
+      cwd: creation.runtimeCwd,
+      runtimeCwd: creation.runtimeCwd,
+      // A leader runs in its Team's directory; the Team's record owns the
+      // checkout underneath it and every cleanup fact about it.
+      worktree: reuseCwdWorktree(creation.runtimeCwd),
+      intent: creation.intent,
+      identityPrompt: creation.identityPrompt,
+      skillSources: creation.skillSources,
+      status: 'starting',
+      replaceExisting: true,
+    },
+    deps.onPersisted,
+  );
   return await restoreTeamLeaderAgentForTeam({ ...rest, identity });
 }
 

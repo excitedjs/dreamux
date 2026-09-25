@@ -17,6 +17,7 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
@@ -43,6 +44,7 @@ interface DispatcherInputSourceLifecycleOptions {
   channelProviders: ChannelProviderCatalog;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
+  onPersisted: (identity: AgentEntityIdentity) => void;
   admissions: AdmissionLedger;
   conversationProjection: ConversationProjection;
   log: DreamuxLogger;
@@ -186,6 +188,7 @@ export class DispatcherInputSourceLifecycle {
       dispatcherId: this.opts.dispatcherId,
       agentRuntime: dispatcherConfig.agentRuntime,
       cwd: workspaceCwd,
+      onPersisted: this.opts.onPersisted,
     });
     // Channels are built first because the Agent's MCP surface is assembled from
     // what they composed: a channel tool is advertised only if the instance that
@@ -198,6 +201,7 @@ export class DispatcherInputSourceLifecycle {
         config: this.opts.config,
         agentRuntimeProviders: this.opts.agentRuntimeProviders,
         identities: this.opts.identities,
+        onPersisted: this.opts.onPersisted,
         admissions: this.opts.admissions,
         conversationProjection: this.opts.conversationProjection,
         log: this.opts.log,

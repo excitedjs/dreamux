@@ -16,9 +16,12 @@ Every directly conversational agent owns its own scheduler:
   `~/.dreamux/state/<dispatcher-id>/team/<team-id>/cron-jobs.json`;
 - ordinary TeamMates and Team members do not get cron MCP or schedulers.
 
-The store path scopes jobs. The job schema still carries `dispatcher_id`, which
-is validated against the owning dispatcher; Team isolation comes from the path,
-not from adding `team_id` to every job.
+The store path scopes jobs: Team isolation comes from the path, not from a
+`team_id` on every job. A freshly written job carries no `dispatcher_id`
+field at all; an old file's leftover one loads as an ordinary unknown field
+under the persisted-shape policy (tolerate unknown fields, reject only wrong
+types and missing fields) and is never cross-checked against the owning
+dispatcher.
 
 Source:
 
@@ -29,13 +32,22 @@ Source:
 
 ## Store Contract
 
-`CronJobStore` is a versioned JSON document store over `JsonDocumentStore`.
-It writes atomically, serializes mutations through an internal queue, and fails
-loud on legacy/incompatible schema.
+`CronJobStore` holds one `TransactionalStore<CronJobFile>`
+(`@excitedjs/dreamux-utils`) over `cron-jobs.json`. Every read serves the
+loaded value; every mutation goes through the store's own `update`/`remove`,
+so a read-modify-write is atomic without a second queue. Its loader inlines
+the version-mismatch and missing-file-default check every persisted-document
+owner applies, then parses and validates the file; a version mismatch or a
+malformed document fails loud as `LegacyStateError`, and a missing file is the
+empty default (`{version: 1, jobs: []}`).
 
 The v1 row stores `cron`, `tz`, `recurring`, `enabled`, `next_run_at`,
 `last_fired_at`, an optional `title`, and one `action`. The action union has one
-member: `{ kind: 'prompt-agent', prompt, intent? }`.
+member: `{ kind: 'prompt-agent', prompt }`. A freshly created row writes neither
+`dispatcher_id` (see Ownership above for what an old file's leftover one still
+does on read) nor `action.intent`, a write-only diagnostic no code ever read
+back; an old file's leftover `intent` key loads the same way, as an ordinary
+unknown field under the persisted-shape policy.
 The reserved `spawn-teammate` shape and the `deliver: { channel_id, target_key }`
 target were declared and parsed with nothing behind them, and are removed. The
 raw-file parser now refuses either as `LegacyStateError` rather than admitting a
@@ -47,7 +59,7 @@ the job or the store file and recreate the schedule.
 Source:
 
 - `/packages/dreamux/src/service/scheduler/store.ts`
-- `/packages/dreamux/src/platform/json-document-store.ts`
+- `/packages/dreamux-utils/src/transactional-store.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
 
 ## Fire Semantics
@@ -99,6 +111,10 @@ Dissolving a Team stops its scheduler with the rest of its resources and deletes
 that Team's cron store file **after** the closed record is durable, so a failed
 close leaves the still-open Team its jobs, and a successful one cannot let
 scheduled work reattach to a later same-name Team with a fresh leader identity.
+Deleting the store file loads it first, so a cron store that fails its own
+version/shape check at that exact moment fails the delete too — one of the
+dissolve's ordinary collected cleanup-step failures, handled the same way as
+any other resource that would not close.
 
 Source:
 

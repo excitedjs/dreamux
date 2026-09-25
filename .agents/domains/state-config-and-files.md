@@ -74,22 +74,33 @@ It declares:
   policy here. A leftover `collaborationSpace` block is a loud config error: the
   Channel that offers the product flow owns that policy, in its own state.
 
-Legacy top-level `workspace.enabled` is not accepted. Set
-`dispatchers[].workspace.enabled` on each dispatcher instead; omitted dispatcher
-workspace policy defaults to disabled, including an empty `workspace` object.
-Explicit true/false values are preserved; onboarding seeds new policy as false
-and preserves existing policy. A dispatcher `runtime` block is likewise
-rejected with the rebuild instruction to declare a named `agents[]` entry.
+A legacy top-level `workspace` key is not read: `dispatchers[].workspace.enabled`
+is the only place workspace policy is read from, per-dispatcher. Omitted
+dispatcher workspace policy defaults to disabled, including an empty
+`workspace` object. Explicit true/false values are preserved; onboarding seeds
+new policy as false and preserves existing policy. A dispatcher `runtime`
+block is rejected with the rebuild instruction to declare a named `agents[]`
+entry instead.
+
+Every key `config.json` reads is still checked for the right type, and every
+required key is still checked for presence, at every level. An unrecognized
+key elsewhere in the envelope — the top level, `dispatchers[]`,
+`dispatchers[].workspace`, `dispatchers[].channels[]`, or `agents[]` — is
+tolerated and ignored rather than rejected: a leftover top-level `workspace`
+key is exactly this case, not a named rejection. Named legacy shapes still
+fail loud with rebuild guidance because the reader can name the fact they
+would otherwise silently discard: a top-level `codex` block, a dispatcher
+`runtime` block, a dispatcher's leftover `feishu`/`codex` provider block (the
+pre-v2 config shape), and a channel's `collaborationSpace` block.
 
 `dreamux serve` fails loudly and creates no silent defaults when the config file
 is missing, when its mode is not `0600`, when the JSON does not parse, when the
-shape is rejected (unknown keys, a top-level `codex` block, a dispatcher
-`runtime` block, a duplicate dispatcher id, a dispatcher entry without a
-non-empty `cwd` (enabled or not; the error names the dispatcher id), a channel
-`collaborationSpace` block), or when a providerized entry or a plugin cannot be
-loaded (including a duplicate plugin or provider name, and a `config` block for
-a plugin that takes none). The operator fix path is `dreamux onboard` or a
-manual rebuild.
+shape is rejected (a wrong type or a missing required field at any level, one
+of the named legacy shapes above, a duplicate dispatcher id, a dispatcher entry
+without a non-empty `cwd` (enabled or not; the error names the dispatcher id)),
+or when a providerized entry or a plugin cannot be loaded (including a
+duplicate plugin or provider name, and a `config` block for a plugin that takes
+none). The operator fix path is `dreamux onboard` or a manual rebuild.
 
 Source:
 
@@ -155,14 +166,22 @@ conversation projection.
 to Core, which stores it verbatim, checks it for presence, and hands it back to
 the same provider without parsing, indexing, or branching on it. Absent or
 `null` reads as `null` (no prior session); a present value that is not a
-non-empty string fails loud. That type check is the only gate on the session,
-because an id the provider can no longer find already degrades correctly to
-"start a fresh session".
+non-empty string is rejected the same way any other required-field violation is
+(below) — the reader does not repair it into something plausible. That type
+check is the only gate on the session, because an id the provider can no
+longer find already degrades correctly to "start a fresh session".
 
-Reading rejects exactly five removed fields — `checkpoint`, `checkpoint_kind`,
-`session_ref`, `display_name`, `close_status` — plus a pre-#148 record that
-still references its runtime through `provider_ref`. A leftover `role` or
-`transcript_locator` is inert residue that no path reads, validates, or deletes.
+Only one shape problem propagates as an exception out of a read: a pre-#148
+record that still references its runtime through `provider_ref`
+(`LegacyStateError`). Every other shape problem — a required field missing or
+the wrong type (including a malformed `session_id`), or JSON that does not
+parse at all — is rejected the same way a missing file is: the whole record
+reads as `null` with a logged warning, so one unreadable entity's directory
+never sinks a whole collection scan. Every leftover key that is not itself a
+shape problem — including `checkpoint`, `checkpoint_kind`, `session_ref`,
+`display_name`, and `close_status`, the curated removed-field list R47 deleted
+from this reader — is tolerated and ignored, the same as a leftover `role` or
+`transcript_locator`: inert residue that no path reads, validates, or deletes.
 Role is deliberately not persisted at all: each of the four owners that can
 materialize an Agent already knows which role it is, and a durable copy could
 disagree with the directory the record actually lives in.
@@ -202,10 +221,18 @@ inputs, the workspace, `status`, `closed_at` / `close_note`, the accepted
 `team.create` request identity and payload hash, the one shared worktree
 identity, and `worktree_cleanup_force`. Do not edit or manufacture it by hand.
 
-The record is also the Team's own name claim. Publishing it is an exclusive
-create, and that create is the whole acceptance protocol: before it the
-candidate name is free and a caller that loses the race simply picks another;
-after it the record owns the name permanently, including after the Team closes.
+The record is also the Team's own name claim. Publishing it is a serialized
+load-decide-write inside the one `TransactionalStore` the collection holds for
+that Team id for its whole life, and that create is the whole acceptance
+protocol: before it the candidate name is free and a caller that loses the
+race against that same in-memory queue simply picks another; after it the
+record owns the name permanently, including after the Team closes. An
+unreadable residue file this daemon has not loaded yet counts as no Team, so
+it is not protected — the next create overwrites it and wins the name. Once
+this daemon has loaded a valid record for that Team id, that load-decide-write
+protocol is what makes the name permanent: a hand edit or deletion on disk
+after that point changes nothing, because the store's committed in-memory
+value, not a fresh disk read, is what the next `create()` decides against.
 There is no separate claim file.
 
 It carries no dissolve operation — no operation id, no phase, no requester
@@ -348,29 +375,74 @@ Source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/service/agent-entity/types.ts`
 
-### JSON Document Stores
+### Transactional Stores
 
-Versioned single-document JSON stores should use `JsonDocumentStore<TDoc>`. The
-base owns read/write mechanics:
+Every persisted Dreamux store — the Feishu routing document, `access.json`,
+and `chat-bots.json`, plus each dispatcher/TeamMate/TeamLeader/Team member's
+`identity.json`, a Team's `record.json`, `cron-jobs.json`, and a Workflow
+run's `record.json` — is one `TransactionalStore<T>`
+(`@excitedjs/dreamux-utils`) bound to one file. The primitive owns:
 
-- a missing file returns the concrete store's `empty()` document;
-- a version mismatch fails loud as `LegacyStateError`, naming the file and the
-  delete-to-rebuild fix;
-- a malformed document fails loud the same way by default, and only an
-  explicitly `warn-rebuild` store warns and returns `empty()` instead;
-- writes are atomic, owner-only mode `0600`, pretty JSON with a trailing
-  newline.
+- one committed in-memory value, read once and then served from memory on
+  every later call until this store's own write path replaces it;
+- one owner-supplied `load()` for the first read, which is also the only
+  version/legacy-shape check that file gets — there is no shared generic
+  version gate; each owner keeps its own error text;
+- `update`/`create`/`remove` sharing one FIFO queue per store, so two callers
+  changing the same file never race each other's read-modify-write;
+- atomic writes: a sibling temp file is written in full, then renamed (or,
+  for `create()`'s no-clobber default, linked) over the target — the file
+  changes before the in-memory value does, so a reader never sees a value
+  that is not also on disk, and a failed write leaves neither changed. Owner-
+  only mode `0600`, pretty JSON with a trailing newline by default, no
+  `fsync`.
 
-The base owns no paths and no schemas: path builders stay in `platform/paths.ts`
-and each concrete store owns its validation and domain methods. Append-only
-JSONL stores that remain in the current contract (Workflow journals) stay
-concrete-store responsibilities, and agent transcript formats and discovery
-belong to the runtime provider package.
+The primitive owns no paths and no schemas: path builders stay in
+`platform/paths.ts`, and each concrete owner keeps its own validation and
+domain methods. `config.json` is not on this primitive yet — the Config
+Service (code-organization-refactor stage 4c) is its planned owner — but its
+*validation* already tolerates an unknown field the same way (see Operator
+Config above).
+
+Per-owner corrupt-file policy is deliberately not unified; several behaviors
+survive on top of the one primitive, because unifying them would change
+product behavior no one asked for:
+
+- **Cron and Workflow run:** a malformed or wrong-version file fails loud as
+  `LegacyStateError`; a missing file is a successful default (`null` for
+  Workflow run, `{version: 1, jobs: []}` for cron).
+- **Identity:** the one shape problem that fails loud is a pre-#148 record
+  still keyed by `provider_ref` (`LegacyStateError`). A missing file, a
+  wrong-version file, or any other malformed content instead logs a warning
+  and reads as `null` — one unreadable entity's directory never sinks a whole
+  collection scan (see Agent Identity Records above).
+- **Team record:** malformed, wrong-version, and missing all read as the same
+  successful `null` ("no Team"). A malformed record does not throw, because
+  that would turn a hand-edited or half-written record into a crash instead
+  of "no Team", and would defeat `TeamStore.create()`'s own replace-invalid-
+  residue path (see Team Records above).
+- **`chat-bots.json`:** the whole-file version/shape check still fails loud,
+  but one malformed entry field degrades to that field's default instead of
+  failing the whole read (see Channel-Owned State above); this policy
+  predates this stage and is unaffected by it.
+
+Append-only JSONL stores that remain in the current contract (Workflow
+journals) stay concrete-store responsibilities on top of the same exclusive-
+create helper (`publishFileExclusive`) rather than `TransactionalStore`
+itself, and agent transcript formats and discovery belong to the runtime
+provider package.
 
 Source:
 
-- `/packages/dreamux/src/platform/json-document-store.ts`
-- `/packages/dreamux/src/platform/atomic-write.ts`
+- `/packages/dreamux-utils/src/transactional-store.ts`
+- `/packages/dreamux-utils/src/fs.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/scheduler/store.ts`
+- `/packages/dreamux/src/service/workflow-service/store.ts`
+- `/packages/channel/feishu-channel/src/routing/store.ts`
+- `/packages/channel/feishu-channel/src/chat-bots-store.ts`
+- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
 
 ### Run Files And Runtime Sockets
 
@@ -560,9 +632,11 @@ and `session_ref` while tolerating other leftover keys) for exactly that
 reason: none of its rejected fields were reachable through a real upgrade path
 any more, so the check had stopped earning its cost. What still fails loud —
 because accepting it would run the wrong thing, not just carry an inert key —
-is a persisted document whose `version` its `JsonDocumentStore`/`CronJobStore`
-does not recognize, and an agent identity still keyed by the pre-#148
-`provider_ref` format; both raise `LegacyStateError`.
+is a persisted document whose `version` its owning `TransactionalStore`'s
+`load()` does not recognize (cron and Workflow run; identity and Team record
+are deliberate exceptions with their own policy, see Transactional Stores
+above), and an agent identity still keyed by the pre-#148 `provider_ref`
+format; both raise `LegacyStateError`.
 
 Any change to the shape, validation, default, ownership, or meaning of a config
 or persisted state file also updates
@@ -571,7 +645,7 @@ or persisted state file also updates
 Source:
 
 - `/packages/dreamux/src/platform/errors.ts`
-- `/packages/dreamux/src/platform/json-document-store.ts`
+- `/packages/dreamux-utils/src/transactional-store.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 
 ## Invariants

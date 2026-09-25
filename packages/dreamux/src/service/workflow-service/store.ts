@@ -1,8 +1,10 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 
-import { writeFileExclusiveAtomic } from '../../platform/atomic-write.js';
+import { TransactionalStore } from '@excitedjs/dreamux-utils';
+
+import { errorMessage } from '../../platform/error-info.js';
+import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
-import { JsonDocumentStore } from '../../platform/json-document-store.js';
 import {
   validateWorkflowRunId,
   workflowRunRecordPath,
@@ -18,6 +20,8 @@ import type {
   WorkflowRunStatus,
 } from './types.js';
 
+const RECORD_VERSION = 1;
+
 const RUN_STATUSES = new Set<WorkflowRunStatus>([
   'running',
   'completed',
@@ -32,36 +36,62 @@ const CALLER_KINDS = new Set<WorkflowCallerKind>(['dispatcher', 'team_leader']);
 
 /** Scope-local record store. Journal events are owned separately by WorkflowJournal. */
 export class WorkflowRunStore {
-  private readonly documents = new JsonDocumentStore<WorkflowRunRecord | null>({
-    version: 1,
-    empty: () => null,
-    parse: (raw, ctx) => parseRecord(raw, this.scope, ctx.path),
-  });
+  /** One `TransactionalStore` per run id, built lazily and held for the life
+   * of this scope's collection — a run's record is read once and served from
+   * memory afterward, until this run's own write path replaces it. */
+  private readonly stores = new Map<string, TransactionalStore<WorkflowRunRecord | null>>();
 
   constructor(private readonly scope: WorkflowScopePathInput) {}
 
+  /**
+   * This run's own `TransactionalStore`, for an owner (`WorkflowRun`) that
+   * holds a synchronous reference across its lifetime — reading the last
+   * committed value (`.current`) or draining pending writes (`.drain()`) —
+   * instead of a fresh async round trip through {@link get}/{@link write}
+   * each time.
+   */
+  handle(runId: string): TransactionalStore<WorkflowRunRecord | null> {
+    return this.storeFor(runId);
+  }
+
+  private storeFor(runId: string): TransactionalStore<WorkflowRunRecord | null> {
+    const id = validateWorkflowRunId(runId);
+    let store = this.stores.get(id);
+    if (store === undefined) {
+      store = new TransactionalStore<WorkflowRunRecord | null>({
+        path: this.path(id),
+        load: () => this.load(id),
+      });
+      this.stores.set(id, store);
+    }
+    return store;
+  }
+
+  /**
+   * Publish a brand-new run record, no-clobber. `create` stores the value it
+   * is handed as this run's committed reference, so a clone goes in — never
+   * the caller's own live, still-mutating draft — the same way {@link write}
+   * always clones its argument before committing it.
+   */
   async create(record: WorkflowRunRecord): Promise<void> {
     assertRecordScope(record, this.scope);
-    const path = this.path(record.run_id);
-    const published = await writeFileExclusiveAtomic(
-      path,
-      `${JSON.stringify(record, null, 2)}\n`,
-      { mode: 0o600 },
-    );
-    if (!published) {
-      throw new Error(
-        `workflow run ${JSON.stringify(record.run_id)} already exists`,
-      );
-    }
+    await this.storeFor(record.run_id).create(structuredClone(record));
   }
 
   async get(runId: string): Promise<WorkflowRunRecord | null> {
-    return this.documents.read(this.path(runId));
+    return this.storeFor(runId).load();
   }
 
+  /**
+   * Publish `record` as this run's next committed value. `WorkflowRun` is
+   * this record's sole mutator — there is no second writer whose committed
+   * value a merge would need to reconcile against — so this always publishes
+   * the caller's already-built next value rather than computing one from
+   * whatever is currently committed.
+   */
   async write(record: WorkflowRunRecord): Promise<void> {
     assertRecordScope(record, this.scope);
-    await this.documents.write(this.path(record.run_id), record);
+    await this.storeFor(record.run_id).update(() => structuredClone(record));
   }
 
   async list(): Promise<WorkflowRunRecord[]> {
@@ -90,6 +120,40 @@ export class WorkflowRunStore {
       ...this.scope,
       runId: validateWorkflowRunId(runId),
     });
+  }
+
+  /**
+   * This run's whole validation contract, inlined from the now-deleted
+   * generic `JsonDocumentStore`: a missing file is a successful `null`, a
+   * version mismatch or malformed document is a `LegacyStateError` (Dreamux
+   * 0.x does not migrate old state), and a parsed record must belong to this
+   * scope.
+   */
+  private async load(runId: string): Promise<WorkflowRunRecord | null> {
+    const path = this.path(runId);
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+    try {
+      const value = JSON.parse(raw) as unknown;
+      if (!isRecord(value) || value['version'] !== RECORD_VERSION) {
+        throw new LegacyStateError(
+          `JSON document ${path} is not version ${RECORD_VERSION}. ` +
+            'Dreamux 0.x does not migrate old state; delete the file to rebuild it.',
+        );
+      }
+      return parseRecord(value, this.scope, path);
+    } catch (err) {
+      if (err instanceof LegacyStateError) throw err;
+      throw new LegacyStateError(
+        `JSON document ${path} is malformed or incompatible. Dreamux 0.x does ` +
+          `not migrate old state; delete the file to rebuild it. Cause: ${errorMessage(err)}`,
+      );
+    }
   }
 }
 

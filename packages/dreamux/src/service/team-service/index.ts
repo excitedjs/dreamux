@@ -5,6 +5,7 @@ import type {
   TeamStateTeammateSummary,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
+import type { TransactionalStore } from '@excitedjs/dreamux-utils';
 import { AsyncSeriesHook } from 'tapable';
 
 import type { CompletionInitiator } from '../completion-router/index.js';
@@ -24,6 +25,7 @@ import { SCHEDULED_SOURCE } from '../submission-sources.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
+  type AgentEntityIdentityStatus,
   type AgentEntityRuntimeStatus,
 } from '../agent-entity/types.js';
 import type { TeammateService } from '../teammate-service/index.js';
@@ -86,7 +88,11 @@ import type {
  * row.
  */
 export class TeamService implements Team {
-  private record: TeamRecord | null = null;
+  /** This Team's own `TransactionalStore` handle, held for the life of this
+   * entity instead of re-fetched per call. `deps.store` owns one such store
+   * per Team id (for the life of the collection), so this is the same
+   * committed value every write through `deps.store` publishes. */
+  private readonly recordHandle: TransactionalStore<TeamRecord | null>;
   private leader_: TeammateService | null = null;
   private leaderBuild: Promise<TeammateService> | null = null;
   private readonly roster: TeamRosterProjection;
@@ -130,6 +136,11 @@ export class TeamService implements Team {
     this.id = teamId;
     this.name = init.name;
     this.workspace = init.workspace;
+    // Bound synchronously here so the roster below can hold a reference to
+    // it; loaded by whichever caller of the static factories reads or
+    // publishes this Team's record first (both `createNew` and `rebuild` do
+    // so before any code path that could read it through `mustRecord()`).
+    this.recordHandle = deps.store.handle(teamId);
     this.hooks = Object.freeze({
       beforeTeamLeaderLaunch: launchDraftTaps(
         new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeTeamLeaderLaunch'),
@@ -155,7 +166,7 @@ export class TeamService implements Team {
       teamId,
       store: deps.store,
       coreEvents: deps.coreEvents,
-      record: () => this.record,
+      record: () => this.mustRecord(),
     });
     // The leader lives at the Team root itself; its TeamMates live one level
     // below, in this Team's own `teammate/` collection. Both roots are composed
@@ -165,7 +176,6 @@ export class TeamService implements Team {
       dispatcherId: deps.dispatcherId,
       expectedName: null,
       log: deps.log,
-      onPersisted: (identity) => this.roster.publish(identity, 'team_leader'),
     });
     this.teammateCollection = buildTeamMembers({
       deps,
@@ -276,8 +286,11 @@ export class TeamService implements Team {
       create_payload_hash: input.createRequest?.payloadHash ?? null,
     });
     if (published === null) return null;
+    // `deps.store.create` above just published through the same per-Team
+    // `TransactionalStore` `service.recordHandle` holds (both resolve from
+    // `deps.store`'s own id-keyed map), so `service.mustRecord()` already
+    // reflects `published` from this point on with no separate assignment.
     let team = published;
-    service.record = team;
     let leader: TeammateService | null = null;
     try {
       // The TeamMate layer owns identity creation: the Team hands over its own
@@ -359,7 +372,11 @@ export class TeamService implements Team {
       name: record.name,
       workspace: record.runtime_cwd,
     });
-    service.record = record;
+    // `record` was already read through `deps.store.get`/`.list` (every
+    // caller of `rebuild` reads a record before calling it), which loaded
+    // this same Team's `TransactionalStore` — the one `service.recordHandle`
+    // just bound to above — so `service.mustRecord()` already answers `record`
+    // with no separate assignment.
     deps.announceTeam(service, { origin: 'rebuild' });
     const identity = await service.leaderIdentity.read();
     const restorable = identity !== null && alignedWithLeader(identity, record);
@@ -657,6 +674,7 @@ export class TeamService implements Team {
       teamId: this.id,
       workspace: this.mustRecord().worktree,
       identities: this.leaderIdentity,
+      onPersisted: (identity) => this.roster.publish(identity, 'team_leader'),
       beforeLaunch: this.hooks.beforeTeamLeaderLaunch,
     });
   }
@@ -678,8 +696,10 @@ export class TeamService implements Team {
     patch: Parameters<TeamStore['update']>[1],
   ): Promise<TeamRecord> {
     const previous = this.mustRecord();
-    const updated = await this.deps.store.update(previous, patch);
-    this.record = updated;
+    const updated = await this.deps.store.update(this.id, patch);
+    // No separate field to assign: `updated` is already what
+    // `this.recordHandle.current` holds, published through it by the
+    // `TeamStore.update` call above.
     // The write that closes the record is what ends this Team, so the fact is
     // stated exactly where it becomes true — once, on the transition.
     if (previous.status !== 'closed' && updated.status === 'closed') {
@@ -689,9 +709,19 @@ export class TeamService implements Team {
   }
 
   private mustRecord(): TeamRecord {
-    if (this.record === null)
+    const current = this.recordHandle.current;
+    if (current === null)
       throw new Error(`Team ${JSON.stringify(this.id)} is not booted`);
-    return this.record;
+    return current;
+  }
+
+  /** This Team's leader identity status, read from whatever this Team's own
+   * `AgentIdentityStore` already holds in memory — never a file read. Used by
+   * the read model to answer `leader_state` for a Team this process already
+   * has live, without going through a fresh one-shot reader over the same
+   * `identity.json` a live entity already committed through. */
+  leaderIdentityStatus(): AgentEntityIdentityStatus | null {
+    return this.leaderIdentity.current()?.status ?? null;
   }
 
   /** This Team's leader, materialized from the identity at its root when this Team is holding none, and built once however many ordinary uses ask at the same time — two would be two Agents over one identity. */

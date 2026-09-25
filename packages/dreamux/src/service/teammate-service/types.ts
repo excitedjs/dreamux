@@ -30,6 +30,14 @@ export interface TeammateServiceDeps {
    */
   identities: AgentIdentityStore;
   /**
+   * Fired after a create, an upsert, or an update that changed status.
+   * `AgentIdentityStoreBinding` has no construction-time answer for this —
+   * the store `identities` wraps may be shared by more than one long-lived
+   * owner (the dispatcher root, a Team's leader) — so the owner that
+   * materialized this entity passes its own publish hook explicitly instead.
+   */
+  onPersisted: (identity: AgentEntityIdentity) => void;
+  /**
    * The collection this entity belongs to, used only to refuse a managed
    * worktree path a sibling already owns. Omitted for an owner-root Agent (the
    * dispatcher Agent, a TeamLeader), which has no sibling collection.

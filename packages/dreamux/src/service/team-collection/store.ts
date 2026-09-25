@@ -3,24 +3,23 @@
  *
  * `team/<team>/record.json` is the single authority for a Team: a valid,
  * readable record is the only proof that Team exists and the only thing that
- * occupies its concrete name. {@link TeamStore.create} publishes it
- * exclusively, and that publication — not any earlier reservation — is the
- * atomic acceptance point under the single-server/single-writer model.
+ * occupies its concrete name. One {@link TransactionalStore} per Team id holds
+ * that file — the committed value in memory, the serialized queue every read
+ * or write goes through — so a lookup after the first one serves the held
+ * value and a write is the store's own atomic read-decide-replace, not a
+ * second reservation mechanism.
  *
  * The store is bound to the `team/` collection root its owner resolved, and
  * appends only the concrete Team name to it.
  */
-import { join } from 'node:path';
 import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type { TeamStateTeammateSummary } from '@excitedjs/dreamux-types';
+import { TransactionalStore } from '@excitedjs/dreamux-utils';
 
 import type { AgentEntityWorktreeIdentity } from '../agent-entity/types.js';
 
-import {
-  writeFileAtomic,
-  writeFileExclusiveAtomic,
-} from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { collectionEntityDir } from '../../platform/paths.js';
 import { parseAgentRuntimeSkillSources } from '../../agent-runtime/skill-sources.js';
@@ -33,10 +32,12 @@ import type { TeamStatus } from '@excitedjs/dreamux-types';
 import type { TeamRecord } from './types.js';
 import { validateTeamId } from './types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import { KeyedAsyncQueue } from '../serial-queue.js';
 
 export class TeamStore {
-  private readonly writes = new KeyedAsyncQueue();
+  /** One `TransactionalStore` per Team id, built lazily and held for the life
+   * of this collection — a Team's record is read once and then served from
+   * memory until this Team's own write path replaces it. */
+  private readonly stores = new Map<string, TransactionalStore<TeamRecord | null>>();
 
   constructor(
     private readonly opts: {
@@ -55,8 +56,9 @@ export class TeamStore {
        * published — an empty array is the answer "this Team has no Agents".
        *
        * It is awaited after the durable write rather than called from inside
-       * one, and it must never materialize a Team: this runs inside the
-       * per-Team write queue that materialization itself writes through.
+       * one, and it must never materialize a Team: this runs inside this
+       * Team's own `TransactionalStore` queue that materialization itself
+       * writes through.
        */
       roster?: (
         team: TeamRecord,
@@ -74,16 +76,40 @@ export class TeamStore {
   }
 
   /**
-   * The Team at this concrete name, or `null` when there is none.
-   *
-   * Missing, malformed, and unreadable are the same answer on purpose: only a
-   * valid record proves a Team exists, so anything else is nonexistent for
-   * lookup, routing, and name allocation and can never receive a turn or
-   * reserve a name. The name check itself still throws — an invalid team id is
-   * a caller defect, not a missing Team.
+   * This Team's own `TransactionalStore`, for an owner (`TeamService`) that
+   * holds a synchronous reference to it across many calls instead of making a
+   * fresh async round trip through {@link get}/{@link update} each time.
+   * Distinct from those two: this hands back the store itself, unloaded on
+   * first mint, rather than awaiting a value.
    */
-  async get(teamId: string): Promise<TeamRecord | null> {
-    validateTeamId(teamId);
+  handle(teamId: string): TransactionalStore<TeamRecord | null> {
+    return this.storeFor(teamId);
+  }
+
+  private storeFor(teamId: string): TransactionalStore<TeamRecord | null> {
+    const id = validateTeamId(teamId);
+    let store = this.stores.get(id);
+    if (store === undefined) {
+      store = new TransactionalStore<TeamRecord | null>({
+        path: this.recordPath(id),
+        load: () => this.loadTeam(id),
+      });
+      this.stores.set(id, store);
+    }
+    return store;
+  }
+
+  /**
+   * This Team's record, read from disk on first ask and served from memory
+   * afterward. Missing, malformed, and unreadable are the same successful
+   * `null`: only a valid record proves a Team exists, so anything else is
+   * nonexistent for lookup, routing, and name allocation and can never
+   * receive a turn or reserve a name. A read error other than "file missing"
+   * still resolves to `null` rather than propagating — matching {@link create}'s
+   * own "replace invalid residue" path, which depends on a malformed record
+   * reading back as no Team rather than as a failure.
+   */
+  private async loadTeam(teamId: string): Promise<TeamRecord | null> {
     let raw: string;
     try {
       raw = await readFile(this.recordPath(teamId), 'utf8');
@@ -95,6 +121,16 @@ export class TeamStore {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The Team at this concrete name, or `null` when there is none.
+   *
+   * The name check itself still throws — an invalid team id is a caller
+   * defect, not a missing Team.
+   */
+  async get(teamId: string): Promise<TeamRecord | null> {
+    return this.storeFor(teamId).load();
   }
 
   async list(): Promise<TeamRecord[]> {
@@ -119,19 +155,17 @@ export class TeamStore {
   /**
    * Publish one Team record, or report that the candidate name is taken.
    *
-   * The exclusive create is the whole acceptance protocol: before it the
-   * request is unaccepted, no Team exists, and the candidate name is free, so a
-   * caller that loses the race — or crashes earlier — may simply choose another
-   * name.
-   *
-   * Three outcomes, and only three. Publication succeeded: the record now owns
-   * the name. A VALID record is already there: the name belongs to a live Team,
-   * so this returns `null` and the caller allocates another candidate — losing
-   * a publish race after an earlier probe is the same ordinary answer as losing
-   * the probe. Anything else there — malformed, unreadable, half-written — is
-   * not a Team and holds no claim on the name, so the new record atomically
-   * replaces it under the single-writer model. A real filesystem failure is
-   * none of those and surfaces.
+   * Three outcomes, and only three. This Team's store loads whatever is
+   * there — nothing, if this is the first ask — and `change` below decides
+   * from the loaded value, inside this Team's own serialized queue, so the
+   * read-decide-write is atomic without a second reservation mechanism.
+   * Nothing valid occupies the slot: publication succeeded, and the record
+   * now owns the name. A VALID record is already there: the name belongs to
+   * a live Team, so this returns `null` and the caller allocates another
+   * candidate. Anything else there — malformed, unreadable, half-written —
+   * is not a Team and holds no claim on the name, so the new record
+   * atomically replaces it. A real filesystem failure is none of those and
+   * surfaces.
    */
   async create(
     input: Omit<
@@ -148,21 +182,27 @@ export class TeamStore {
       created_at: now,
       updated_at: now,
     };
-    const path = this.recordPath(team.team_id);
-    const published = await writeFileExclusiveAtomic(
-      path,
-      `${JSON.stringify(team, null, 2)}\n`,
+    const result = await this.storeFor(team.team_id).update(
+      (current) => (current !== null ? current : team),
+      (next, previous) => this.publishIfTransitioned(next, previous),
     );
-    if (!published) {
-      if ((await this.get(team.team_id)) !== null) return null;
-      await writeFileAtomic(path, `${JSON.stringify(team, null, 2)}\n`);
-    }
-    await this.publishRecordState(team);
-    return team;
+    // `update`'s own no-op path returns the exact loaded reference when
+    // `change` did not take the `: team` branch, so this is `true` if and
+    // only if the slot was empty and this publication took it — no separate
+    // "was this a create" flag needed.
+    return result === team ? team : null;
   }
 
+  /**
+   * Merge `input` onto this Team's committed record and publish the result.
+   *
+   * The merge runs inside this Team's own `change`, against the store's true
+   * committed value, never a caller-held snapshot: writing an older snapshot
+   * back would resurrect a Team from stale memory and silently reclaim a name
+   * that is free again.
+   */
   async update(
-    team: TeamRecord,
+    teamId: string,
     input: {
       status?: TeamStatus;
       closedAt?: number | null;
@@ -172,19 +212,13 @@ export class TeamStore {
       cleanupForce?: boolean;
     },
   ): Promise<TeamRecord> {
-    const key = `${team.dispatcher_id}\0${team.team_id}`;
-    return this.writes.run(key, async () => {
-      // Merge against the authoritative current row rather than the caller's
-      // snapshot. If nothing valid is there any more, the Team no longer
-      // exists: writing the caller's older snapshot back would resurrect a Team
-      // from a stale in-memory copy and silently reclaim a name that is free.
-      const current = await this.get(team.team_id);
+    const updated = await this.storeFor(teamId).update((current) => {
       if (current === null) {
         throw new TeamNotFoundError(
-          `Team ${JSON.stringify(team.team_id)} no longer has a readable record`,
+          `Team ${JSON.stringify(teamId)} no longer has a readable record`,
         );
       }
-      const updated: TeamRecord = {
+      return {
         ...current,
         ...(input.status !== undefined ? { status: input.status } : {}),
         ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
@@ -198,12 +232,30 @@ export class TeamStore {
           : {}),
         updated_at: Date.now(),
       };
-      await this.write(updated);
-      if (updated.status !== current.status) {
-        await this.publishRecordState(updated);
-      }
-      return updated;
-    });
+    }, (next, previous) => this.publishIfTransitioned(next, previous));
+    // `change` above always throws on a null current and otherwise returns a
+    // merged, non-null record, so this is never null.
+    if (updated === null) {
+      throw new Error(`Team ${JSON.stringify(teamId)} update lost its result`);
+    }
+    return updated;
+  }
+
+  /**
+   * Publish the record half of the aggregate exactly when this write made it
+   * true: unconditionally for a fresh creation (`previous === null`), or when
+   * `update`'s merge changed `status`. Shared by {@link create}'s and
+   * {@link update}'s `afterCommit`, which is the one place this store used to
+   * decide it twice.
+   */
+  private async publishIfTransitioned(
+    next: TeamRecord | null,
+    previous: TeamRecord | null,
+  ): Promise<void> {
+    if (next === null) return;
+    if (previous === null || next.status !== previous.status) {
+      await this.publishRecordState(next);
+    }
   }
 
   /**
@@ -255,13 +307,6 @@ export class TeamStore {
       teammates,
     });
   }
-
-  private async write(team: TeamRecord): Promise<void> {
-    await writeFileAtomic(
-      this.recordPath(team.team_id),
-      `${JSON.stringify(team, null, 2)}\n`,
-    );
-  }
 }
 
 /**
@@ -275,11 +320,14 @@ export class TeamStore {
  * start it in, the worktree it belongs to, and the identity inputs it was
  * created with.
  *
- * Nothing else is inspected. Timestamps, intent, and close notes describe a
- * Team rather than establish one, and a Team is not made nonexistent by an odd
- * label. A required fact that is missing or malformed means there is no Team:
- * {@link TeamStore.get} answers `null`, so nothing routes to it, it receives no
- * turn, and it reserves no name.
+ * Every field is read by its own name rather than passed through from the
+ * parsed JSON: an unrecognized key in the source tolerates (does not throw),
+ * but is never carried forward into the constructed record or written back on
+ * the next update. Timestamps, intent, and close notes describe a Team rather
+ * than establish one, so they are read as-is with no added type check beyond
+ * what already existed — a required fact that is missing or malformed still
+ * means there is no Team: {@link TeamStore.get} answers `null`, so nothing
+ * routes to it, it receives no turn, and it reserves no name.
  */
 function readTeam(
   dispatcherId: string,
@@ -302,7 +350,21 @@ function readTeam(
     throw new Error(`invalid Team record ${JSON.stringify(teamId)}`);
   }
   return {
-    ...(value as unknown as TeamRecord),
+    version: 1,
+    dispatcher_id: dispatcherId,
+    team_id: teamId,
+    name: value['name'] as string,
+    repo_cwd: value['repo_cwd'] as string,
+    source_repo: value['source_repo'] as string | null,
+    leader_name: value['leader_name'] as string,
+    leader_agent_runtime: value['leader_agent_runtime'] as string,
+    runtime_cwd: value['runtime_cwd'] as string,
+    status: value['status'] as TeamStatus,
+    intent: (value['intent'] as string | undefined) ?? null,
+    created_at: value['created_at'] as number,
+    updated_at: value['updated_at'] as number,
+    closed_at: (value['closed_at'] as number | undefined) ?? null,
+    close_note: (value['close_note'] as string | undefined) ?? null,
     ...readCreateRequest(value),
     ...readLeaderCreationInputs(value, teamId),
     worktree: readWorktree(value['worktree'], teamId),
@@ -337,7 +399,16 @@ function readWorktree(
   ) {
     throw new Error(`invalid Team record ${JSON.stringify(teamId)} worktree`);
   }
-  return record as unknown as AgentEntityWorktreeIdentity;
+  return {
+    mode: record['mode'],
+    slug: record['slug'] as string | null,
+    path: record['path'],
+    branch: record['branch'] as string | null,
+    base_ref: record['base_ref'] as string | null,
+    cleanup: record['cleanup'],
+    cleanup_state: record['cleanup_state'] as AgentEntityWorktreeIdentity['cleanup_state'],
+    cleanup_error: record['cleanup_error'] as string | null,
+  };
 }
 
 function isFilledString(value: unknown): value is string {

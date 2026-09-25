@@ -27,11 +27,17 @@ Each `DispatcherService` is one dispatcher-local aggregate and owns:
 - the per-dispatcher `TeamCollection`;
 - one stateless `CompletionDeliveryPolicy`;
 - one `WorktreeManager`;
-- one shared `AgentIdentityStore`, built at construction in
-  `service/agent-entity/` and injected into the dispatcher agent, the
-  dispatcher-scope teammate collection, and each Team's `TeamCollection` /
-  `TeamService` / member `TeammateCollection`. Collections never self-build the
-  store;
+- the dispatcher-root Agent's own `AgentIdentityStore`, over its own
+  `identity.json`. `Dispatchers` (`service/dispatchers/index.ts`) builds and
+  caches one per dispatcher root and hands it in as `opts.identities`, rather
+  than `DispatcherService` building a second instance over the same file:
+  `Dispatchers`' own `summarize()`/`status()` fallback reads and this
+  dispatcher agent's own identity writes therefore share one committed value.
+  Every other identity — dispatcher TeamMates, TeamLeaders, and Team members —
+  is a separately built `AgentIdentityStore` or `AgentEntityCollectionStore`
+  bound to its own entity directory, not this shared dispatcher-root instance
+  (see Store Construction Patterns in
+  [service-topology](service-topology.md#store-construction-patterns));
 - the dispatcher scheduler.
 
 Source:
@@ -215,11 +221,13 @@ Source:
 
 `team.create.name_prefix` is a label request, not a durable address. Core
 allocates a concrete `team_name` with a 4–8 character random suffix, and the
-Team's own `record.json` is the claim: publishing it is an exclusive create, and
-that create is the whole acceptance protocol. Before it the candidate name is
-free and a caller that loses the race chooses another; after it the record owns
-the name for good, so closed and not-yet-materialized concrete names are never
-reused. There is no separate claim file.
+Team's own `record.json` is the claim: publishing it is a serialized
+load-decide-write inside the one `TransactionalStore` the collection holds for
+that Team id, and that create is the whole acceptance protocol. Before it the
+candidate name is free and a caller that loses the race against that same
+in-memory queue chooses another; after it the record owns the name for good,
+so closed and not-yet-materialized concrete names are never reused. There is
+no separate claim file.
 
 Generated TeamLeader, ordinary TeamMate, and Team-member names use the same 4–8
 character suffix contract. Names stay dispatcher-global:

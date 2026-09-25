@@ -67,19 +67,41 @@ export interface AgentRuntimeGenerationLease {
  * own publishes as the start fence.
  */
 export class AgentRuntimeStateStore {
-  private mutationTail: Promise<void> = Promise.resolve();
-
   private currentLease = 0;
 
   private lastRuntimeStatus: AgentRuntimeStatus | null = null;
 
+  /**
+   * Immutable once set at construction. Used only for error-message text
+   * (`AgentRuntimeStateLeaseRevoked`/`AgentRuntimeSessionIdInvalid`) — the
+   * live identity itself is read from `this.store`, never kept here as a
+   * second copy.
+   */
+  private readonly entityName: string;
+
   constructor(
     private readonly store: AgentIdentityStore,
-    private identity: AgentEntityIdentity,
-  ) {}
+    identity: AgentEntityIdentity,
+    /**
+     * Fired after a create, an upsert, or an update that changed status.
+     * `AgentIdentityStoreBinding` no longer carries this — it has no
+     * construction-time answer for a store several long-lived owners share
+     * (the dispatcher root, a Team's leader) — so every write this store
+     * makes passes it explicitly instead.
+     */
+    private readonly onPersisted: (identity: AgentEntityIdentity) => void,
+  ) {
+    this.entityName = identity.name;
+  }
 
   current(): AgentEntityIdentity {
-    return this.identity;
+    const identity = this.store.current();
+    if (identity === null) {
+      throw new Error(
+        `agent entity ${JSON.stringify(this.entityName)} has no identity`,
+      );
+    }
+    return identity;
   }
 
   /**
@@ -101,16 +123,15 @@ export class AgentRuntimeStateStore {
   }
 
   update(input: AgentIdentityUpdateInput): Promise<AgentEntityIdentity> {
-    return this.mutate(() => input);
+    return this.store.update(input, this.onPersisted);
   }
 
   transact(
-    task: (current: AgentEntityIdentity) => Promise<AgentEntityIdentity>,
+    task: (
+      current: AgentEntityIdentity,
+    ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>,
   ): Promise<AgentEntityIdentity> {
-    return this.enqueue(async () => {
-      this.identity = await task(this.identity);
-      return this.identity;
-    });
+    return this.store.update(task, this.onPersisted);
   }
 
   /**
@@ -140,52 +161,32 @@ export class AgentRuntimeStateStore {
     this.lastRuntimeStatus = null;
   }
 
-  private async publish(
+  private publish(
     lease: number,
     update: AgentRuntimeStateUpdate,
   ): Promise<void> {
     if (lease !== this.currentLease) {
-      throw new AgentRuntimeStateLeaseRevoked(this.identity.name);
+      throw new AgentRuntimeStateLeaseRevoked(this.entityName);
     }
     // Reject before anything is queued: a session id Core cannot resume from is
     // a persistence failure the provider must see synchronously.
     if (update.kind === 'session' && update.sessionId.length === 0) {
-      throw new AgentRuntimeSessionIdInvalid(this.identity.name);
+      throw new AgentRuntimeSessionIdInvalid(this.entityName);
     }
-    await this.enqueue(async () => {
-      // Re-check inside the serialized tail: a lease can be revoked while this
-      // write was queued behind an earlier one.
-      if (lease !== this.currentLease) {
-        throw new AgentRuntimeStateLeaseRevoked(this.identity.name);
-      }
-      this.identity = await this.store.update(
-        this.identity,
-        identityPatch(update),
-      );
-      if (update.kind === 'status') this.lastRuntimeStatus = update.status;
-      return this.identity;
-    });
-  }
-
-  private mutate(
-    patch: (current: AgentEntityIdentity) => AgentIdentityUpdateInput,
-  ): Promise<AgentEntityIdentity> {
-    return this.enqueue(async () => {
-      this.identity = await this.store.update(
-        this.identity,
-        patch(this.identity),
-      );
-      return this.identity;
-    });
-  }
-
-  private enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const result = this.mutationTail.then(task, task);
-    this.mutationTail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
+    return this.store
+      .update(() => {
+        // Re-check inside `change`: a lease can be revoked while this write
+        // was queued behind an earlier one on the store's own serialized
+        // tail. `identityPatch(update)` reads no `current`, so the check is
+        // the only reason this callback runs at all.
+        if (lease !== this.currentLease) {
+          throw new AgentRuntimeStateLeaseRevoked(this.entityName);
+        }
+        return identityPatch(update);
+      }, this.onPersisted)
+      .then(() => {
+        if (update.kind === 'status') this.lastRuntimeStatus = update.status;
+      });
   }
 }
 

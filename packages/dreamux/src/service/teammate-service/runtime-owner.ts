@@ -216,7 +216,6 @@ export class TeammateRuntimeOwner {
         identity = await this.state.transact((current) =>
           reprepareDeletedManagedWorktree({
             config: this.deps.config,
-            identities: this.deps.identities,
             peers: this.deps.peers,
             worktrees: this.mustWorktrees(),
             identity: current,

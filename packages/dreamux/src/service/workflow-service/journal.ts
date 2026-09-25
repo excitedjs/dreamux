@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 
+import { publishFileExclusive } from '@excitedjs/dreamux-utils';
+
 import { appendJsonLine } from '../../platform/jsonl.js';
-import { writeFileExclusiveAtomic } from '../../platform/atomic-write.js';
 
 export interface WorkflowTerminalJournalEvent {
   kind: 'end';
@@ -55,7 +56,7 @@ export class WorkflowJournal {
   create(event: Extract<WorkflowJournalEvent, { kind: 'run' }>): Promise<void> {
     return this.enqueue(async () => {
       try {
-        const created = await writeFileExclusiveAtomic(
+        const created = await publishFileExclusive(
           this.path,
           `${JSON.stringify(event)}\n`,
           { mode: 0o600 },

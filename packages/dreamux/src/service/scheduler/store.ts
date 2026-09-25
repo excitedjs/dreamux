@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 
+import { TransactionalStore } from '@excitedjs/dreamux-utils';
+
+import { errorMessage } from '../../platform/error-info.js';
 import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
-import { JsonDocumentStore } from '../../platform/json-document-store.js';
 import { validateCronSchedule } from './cron-validation.js';
 
 const STORE_VERSION = 1;
@@ -11,7 +13,6 @@ const STORE_VERSION = 1;
 export interface CronPromptAgentAction {
   kind: 'prompt-agent';
   prompt: string;
-  intent?: string;
 }
 
 /**
@@ -26,7 +27,6 @@ export type CronJobAction = CronPromptAgentAction;
 
 export interface CronJob {
   id: string;
-  dispatcher_id: string;
   title?: string | undefined;
   cron: string;
   tz: string;
@@ -70,66 +70,59 @@ export interface CronJobStoreOptions {
 }
 
 export class CronJobStore {
-  private readonly base = new JsonDocumentStore<CronJobFile>({
-    version: STORE_VERSION,
-    empty: () => ({ version: STORE_VERSION, jobs: [] }),
-    parse: parseCronJobFile,
-  });
-  private writes: Promise<void> = Promise.resolve();
+  private readonly store: TransactionalStore<CronJobFile>;
 
-  constructor(private readonly opts: CronJobStoreOptions) {}
+  constructor(private readonly opts: CronJobStoreOptions) {
+    this.store = new TransactionalStore<CronJobFile>({
+      path: opts.cronJobsPath,
+      load: () => this.load(),
+    });
+  }
 
   async assertCurrent(): Promise<void> {
-    const file = await this.base.read(this.opts.cronJobsPath);
-    assertCronJobSemantics(
-      this.opts.dispatcherId,
-      file.jobs,
-      this.opts.cronJobsPath,
-    );
+    await this.store.load();
   }
 
   async list(): Promise<CronJob[]> {
-    return (await this.read()).jobs.map(cloneJob);
+    return (await this.store.load()).jobs.map(cloneJob);
   }
 
   async get(id: string): Promise<CronJob | null> {
     return cloneOptional(
-      (await this.read()).jobs.find((job) => job.id === id) ?? null,
+      (await this.store.load()).jobs.find((job) => job.id === id) ?? null,
     );
   }
 
   async create(input: CronJobCreateInput): Promise<CronJob> {
-    return this.runExclusive(async () => {
-      const file = await this.read();
-      const now = Date.now();
-      const job: CronJob = {
-        id: `job-${randomUUID().slice(0, 8)}`,
-        dispatcher_id: this.opts.dispatcherId,
-        title: input.title,
-        cron: input.cron,
-        tz: input.tz,
-        recurring: input.recurring,
-        action: input.action,
-        enabled: true,
-        created_at: now,
-        updated_at: now,
-        next_run_at: input.nextRunAt,
-        last_fired_at: null,
-      };
-      file.jobs.push(job);
-      await this.write(file);
-      return cloneJob(job);
-    });
+    const now = Date.now();
+    const job: CronJob = {
+      id: `job-${randomUUID().slice(0, 8)}`,
+      title: input.title,
+      cron: input.cron,
+      tz: input.tz,
+      recurring: input.recurring,
+      action: input.action,
+      enabled: true,
+      created_at: now,
+      updated_at: now,
+      next_run_at: input.nextRunAt,
+      last_fired_at: null,
+    };
+    await this.store.update((current) => ({
+      version: current.version,
+      jobs: [...current.jobs, job],
+    }));
+    return cloneJob(job);
   }
 
   async update(input: CronJobUpdateInput): Promise<CronJob> {
-    return this.runExclusive(async () => {
-      const file = await this.read();
-      const index = file.jobs.findIndex((job) => job.id === input.id);
-      if (index === -1)
+    const file = await this.store.update((current) => {
+      const index = current.jobs.findIndex((job) => job.id === input.id);
+      if (index === -1) {
         throw new Error(`cron job '${input.id}' does not exist`);
-      const current = file.jobs[index]!;
-      const next: CronJob = { ...current, updated_at: Date.now() };
+      }
+      const existing = current.jobs[index]!;
+      const next: CronJob = { ...existing, updated_at: Date.now() };
       if (input.title !== undefined) {
         if (input.title === null) delete next.title;
         else next.title = input.title;
@@ -140,21 +133,35 @@ export class CronJobStore {
       if (input.action !== undefined) next.action = input.action;
       if (input.enabled !== undefined) next.enabled = input.enabled;
       if (input.nextRunAt !== undefined) next.next_run_at = input.nextRunAt;
-      file.jobs[index] = next;
-      await this.write(file);
-      return cloneJob(next);
+      const jobs = [...current.jobs];
+      jobs[index] = next;
+      return { version: current.version, jobs };
     });
+    const updated = file.jobs.find((job) => job.id === input.id);
+    // `change` above always either throws (id not found) or splices a
+    // rebuilt job for this exact id into the returned file, so this is
+    // never undefined.
+    if (updated === undefined) {
+      throw new Error(`cron job '${input.id}' update lost its result`);
+    }
+    return cloneJob(updated);
   }
 
   async delete(id: string): Promise<boolean> {
-    return this.runExclusive(async () => {
-      const file = await this.read();
-      const next = file.jobs.filter((job) => job.id !== id);
-      if (next.length === file.jobs.length) return false;
-      file.jobs = next;
-      await this.write(file);
-      return true;
+    // Whether this call is the one that removed the job can only be decided
+    // from `current` inside `change` — the store's own serialized read at the
+    // moment this update runs. A file already missing the id (never present,
+    // or removed by a `delete` that already ran ahead of this one in the
+    // queue) is indistinguishable from "this call removed it" once looked at
+    // from the resolved file alone.
+    let deleted = false;
+    await this.store.update((current) => {
+      const jobs = current.jobs.filter((job) => job.id !== id);
+      if (jobs.length === current.jobs.length) return current;
+      deleted = true;
+      return { version: current.version, jobs };
     });
+    return deleted;
   }
 
   async setFired(input: {
@@ -163,49 +170,83 @@ export class CronJobStore {
     nextRunAt: number | null;
     enabled: boolean;
   }): Promise<CronJob | null> {
-    return this.runExclusive(async () => {
-      const file = await this.read();
-      const job = file.jobs.find((entry) => entry.id === input.id);
-      if (job === undefined) return null;
-      job.last_fired_at = input.firedAt;
-      job.next_run_at = input.nextRunAt;
-      job.enabled = input.enabled;
-      job.updated_at = input.firedAt;
-      await this.write(file);
-      return cloneJob(job);
+    const file = await this.store.update((current) => {
+      const index = current.jobs.findIndex((job) => job.id === input.id);
+      if (index === -1) return current;
+      const existing = current.jobs[index]!;
+      const next: CronJob = {
+        ...existing,
+        last_fired_at: input.firedAt,
+        next_run_at: input.nextRunAt,
+        enabled: input.enabled,
+        updated_at: input.firedAt,
+      };
+      const jobs = [...current.jobs];
+      jobs[index] = next;
+      return { version: current.version, jobs };
     });
+    const job = file.jobs.find((entry) => entry.id === input.id);
+    return job === undefined ? null : cloneJob(job);
   }
 
+  /**
+   * Remove the store file and commit the empty default as this store's
+   * in-memory value, so a `setFired` queued behind this delete on the same
+   * store (the store's own tail already serializes the two) finds no job
+   * and writes nothing.
+   *
+   * `TransactionalStore.remove()` loads the file first, so this now throws
+   * if `cron-jobs.json` fails the version check or job parsing at the moment
+   * a Team dissolve tries to clean it up — a direct `unlink()` would have
+   * succeeded regardless of file content. A corrupt cron file is already
+   * this store's designed failure mode everywhere else it is read (`load()`,
+   * `assertCurrent()`), so failing here too is consistent rather than a new
+   * failure class.
+   */
   async deleteStoreFile(): Promise<void> {
-    // Serialize the unlink through the same exclusive queue as every write, so a
-    // scheduled fire that is mid-flight when a team is dissolved cannot recreate
-    // the file: a `setFired` ordered BEFORE the delete writes first and is then
-    // unlinked; one ordered AFTER reads the now-missing file, finds no job, and
-    // returns null without writing. Either way the store stays deleted.
-    await this.runExclusive(async () => {
-      try {
-        await unlink(this.opts.cronJobsPath);
-      } catch (err) {
-        if (!isNotFound(err)) throw err;
+    await this.store.remove({ version: STORE_VERSION, jobs: [] });
+  }
+
+  /**
+   * This store's whole validation contract: a missing file is the empty
+   * default, a version mismatch or malformed document is `LegacyStateError`,
+   * and every parsed job is schedule-valid — composed here because this is
+   * the complete `assertCurrent`, not a separate pass a caller runs after.
+   */
+  private async load(): Promise<CronJobFile> {
+    const path = this.opts.cronJobsPath;
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      if (isNotFound(err)) return { version: STORE_VERSION, jobs: [] };
+      throw err;
+    }
+    let file: CronJobFile;
+    try {
+      const value = JSON.parse(raw) as unknown;
+      if (!isRecord(value) || value['version'] !== STORE_VERSION) {
+        throw new LegacyStateError(
+          `JSON document ${path} is not version ${STORE_VERSION}. ` +
+            'Dreamux 0.x does not migrate old state; delete the file to rebuild it.',
+        );
       }
-    });
-  }
-
-  private async read(): Promise<CronJobFile> {
-    return this.base.read(this.opts.cronJobsPath);
-  }
-
-  private async write(file: CronJobFile): Promise<void> {
-    await this.base.write(this.opts.cronJobsPath, file);
-  }
-
-  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.writes.then(fn, fn);
-    this.writes = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+      file = parseCronJobFile(value, { path });
+    } catch (err) {
+      if (err instanceof LegacyStateError) throw err;
+      throw new LegacyStateError(
+        `JSON document ${path} is malformed or incompatible. Dreamux 0.x does ` +
+          `not migrate old state; delete the file to rebuild it. Cause: ${errorMessage(err)}`,
+      );
+    }
+    // Outside the parse try/catch on purpose, matching today's `assertCurrent`
+    // composition: a schedule-validity break is already a `LegacyStateError`
+    // with its own wording, and anything else the validator rethrows (e.g. a
+    // platform failure that is not the deliberately-caught unknown-timezone
+    // case) is a real failure, not "this document is malformed JSON" — it must
+    // propagate as itself, not get relabeled by the parse catch above.
+    for (const job of file.jobs) assertValidCron(job, path);
+    return file;
   }
 }
 
@@ -241,7 +282,10 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
     );
   }
   const id = requiredString(raw, 'id', ctx);
-  const dispatcherId = requiredString(raw, 'dispatcher_id', ctx);
+  // `dispatcher_id` is no longer part of `CronJob`; a leftover value on an
+  // old file is an ordinary unknown field under the persisted-shape policy
+  // (tolerate unknown fields, reject only wrong types and missing fields) —
+  // it is ignored, never checked against this store's own dispatcher id.
   const action = parseAction(raw['action'], ctx);
   const title = optionalString(raw, 'title', ctx);
   if (raw['deliver'] !== undefined) {
@@ -254,7 +298,6 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
   }
   return {
     id,
-    dispatcher_id: dispatcherId,
     title,
     cron: requiredString(raw, 'cron', ctx),
     tz: requiredString(raw, 'tz', ctx),
@@ -285,7 +328,6 @@ function parseAction(raw: unknown, ctx: { path: string }): CronJobAction {
     return {
       kind,
       prompt: requiredString(raw, 'prompt', ctx),
-      ...optionalStringRecord(raw, 'intent', ctx),
     };
   }
   if (kind === 'spawn-teammate') {
@@ -298,22 +340,6 @@ function parseAction(raw: unknown, ctx: { path: string }): CronJobAction {
   throw new LegacyStateError(
     `cron job store ${ctx.path} has unknown action kind '${kind}'`,
   );
-}
-
-function assertCronJobSemantics(
-  dispatcherId: string,
-  jobs: CronJob[],
-  path: string,
-): void {
-  for (const job of jobs) {
-    if (job.dispatcher_id !== dispatcherId) {
-      throw new LegacyStateError(
-        `cron job store ${path} contains job '${job.id}' for dispatcher ` +
-          `'${job.dispatcher_id}', expected '${dispatcherId}'`,
-      );
-    }
-    assertValidCron(job, path);
-  }
 }
 
 function assertValidCron(job: CronJob, path: string): void {
@@ -366,15 +392,6 @@ function optionalString(
     );
   }
   return value;
-}
-
-function optionalStringRecord(
-  raw: Record<string, unknown>,
-  key: string,
-  ctx: { path: string },
-): Record<string, string> {
-  const value = optionalString(raw, key, ctx);
-  return value === undefined ? {} : { [key]: value };
 }
 
 function requiredBoolean(
@@ -431,7 +448,6 @@ function optionalNumberOrNull(
 export function cronJobResult(job: CronJob): CronJob {
   return {
     id: job.id,
-    dispatcher_id: job.dispatcher_id,
     ...(job.title !== undefined ? { title: job.title } : {}),
     cron: job.cron,
     tz: job.tz,

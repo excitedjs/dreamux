@@ -80,10 +80,13 @@ Team's members are the same pair again, scoped to the Team.
   handles. `read-model.ts` projects a Team that is not materialized;
   `worktree-cleanup.ts` finishes a closed Team's reclamation from its record
   alone; `create-request.ts` decides replays against the record that answered.
-- **`team-service/`** — `TeamService`, the single per-Team entity holding its
-  own `TeamRecord`: status, delivery, shared workspace, members, and the
-  dissolve it submits and then runs behind the receipt. `closing.ts` owns the
-  stop-and-close sequence and the host sweep; `collaborators.ts`,
+- **`team-service/`** — `TeamService`, the single per-Team entity. It holds a
+  handle onto its Team's `TransactionalStore<TeamRecord | null>` — the
+  committed record itself lives in `TeamStore`, one store per Team id, for the
+  collection's life, so `TeamService` keeps no separate copy — plus the
+  contained TeamLeader, the Team-scoped member collection, Workflows, the Team
+  scheduler, and the dissolve it submits and then runs behind the receipt.
+  `closing.ts` owns the stop-and-close sequence and the host sweep; `collaborators.ts`,
   `completion-targets.ts`, `leader-agent.ts`, `roster-projection.ts`, and
   `team-summary.ts` are its parts; its retirement broadcast uses the shared
   `ClosedFactPublisher`.
@@ -203,13 +206,16 @@ Team's members are the same pair again, scoped to the Team.
   no-clobber. The reserved-name guard blocks names that would recreate a
   removed layout leaf.
 - **Old state is never migrated, and a pre-#233 leftover is no longer actively
-  detected either (R47).** 0.x still has no schema migration. A
-  `JsonDocumentStore`/`CronJobStore` still raises `LegacyStateError`
-  (`platform/errors.ts`) on a persisted document whose `version` it does not
-  recognize, and the identity reader still raises it on an identity file still
-  keyed by the pre-#148 `provider_ref` format — both because accepting either
-  would run the wrong thing, and every caller propagates the error rather than
-  degrading to `null`/empty. What no longer happens: `dreamux serve` no longer
+  detected either (R47).** 0.x still has no schema migration. `AgentIdentityStore`,
+  `CronJobStore`, and `WorkflowRunStore` each hold their persisted document on
+  a `TransactionalStore` (`@excitedjs/dreamux-utils`). `CronJobStore` and
+  `WorkflowRunStore` each still raise `LegacyStateError` (`platform/errors.ts`)
+  from their own inlined version check on a document whose `version` they do
+  not recognize, and the identity reader still raises it on an identity file
+  still keyed by the pre-#148 `provider_ref` format — both because accepting
+  either would run the wrong thing, and every caller propagates the error
+  rather than degrading to
+  `null`/empty. What no longer happens: `dreamux serve` no longer
   runs a startup pre-flight that aggregates every dispatcher's cron store and
   removed-layout findings and aborts the whole process before the admin socket
   opens. Each store is now read only where its owning Service already reads

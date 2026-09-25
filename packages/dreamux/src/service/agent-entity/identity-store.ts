@@ -4,12 +4,9 @@ import type {
   AgentRuntimeSkillSource,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
+import { TransactionalStore } from '@excitedjs/dreamux-utils';
 
 import { parseAgentRuntimeSkillSources } from '../../agent-runtime/skill-sources.js';
-import {
-  writeFileAtomic,
-  writeFileExclusiveAtomic,
-} from '../../platform/atomic-write.js';
 import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
@@ -93,12 +90,6 @@ export interface AgentIdentityStoreBinding {
    */
   expectedName: string | null;
   log: DreamuxLogger;
-  /**
-   * Owner-supplied hook fired after a create, an upsert, or an update that
-   * changed status. Publication needs the runtime role, which only the owner
-   * knows, so this store publishes nothing itself.
-   */
-  onPersisted?: ((identity: AgentEntityIdentity) => void) | undefined;
 }
 
 /**
@@ -113,14 +104,31 @@ export interface AgentIdentityStoreBinding {
  */
 export class AgentIdentityStore {
   private readonly path: string;
+  private readonly store: TransactionalStore<AgentEntityIdentity | null>;
 
   constructor(private readonly binding: AgentIdentityStoreBinding) {
     this.path = agentIdentityPath(binding.dir);
+    this.store = new TransactionalStore<AgentEntityIdentity | null>({
+      path: this.path,
+      load: () => this.loadIdentity(),
+    });
   }
 
   /** The bound entity directory, for owners that place sibling state beside it. */
   get dir(): string {
     return this.binding.dir;
+  }
+
+  /**
+   * The last committed identity, or `null` for an entity with no record yet.
+   * Safe once a `load()`/`create()` has already gone through this store at
+   * least once — true for every live-owner caller (a runtime-state store
+   * wrapping this same instance, or `TeamService.leaderIdentityStatus()`
+   * reading its own leader's), since each reaches this store only after its
+   * own construction path already read or created the entity.
+   */
+  current(): AgentEntityIdentity | null {
+    return this.store.current;
   }
 
   /**
@@ -131,7 +139,11 @@ export class AgentIdentityStore {
    * reporting "no identity" for a directory this process could not read would
    * be a guess.
    */
-  async read(): Promise<AgentEntityIdentity | null> {
+  read(): Promise<AgentEntityIdentity | null> {
+    return this.store.load();
+  }
+
+  private async loadIdentity(): Promise<AgentEntityIdentity | null> {
     let raw: string;
     try {
       raw = await readFile(this.path, 'utf8');
@@ -160,7 +172,10 @@ export class AgentIdentityStore {
     }
   }
 
-  async create(input: AgentIdentityCreateInput): Promise<AgentEntityIdentity> {
+  async create(
+    input: AgentIdentityCreateInput,
+    onPersisted?: (identity: AgentEntityIdentity) => void,
+  ): Promise<AgentEntityIdentity> {
     validateAgentEntityName(input.name);
     const now = Date.now();
     const identity: AgentEntityIdentity = {
@@ -185,55 +200,54 @@ export class AgentIdentityStore {
       closed_at: null,
       close_note: null,
     };
-    if (input.replaceExisting === true) {
-      await this.write(identity);
-    } else {
-      const created = await writeFileExclusiveAtomic(
-        this.path,
-        `${JSON.stringify(identity, null, 2)}\n`,
-      );
-      if (!created) {
-        throw new Error(
-          `Agent identity ${JSON.stringify(identity.name)} already exists`,
-        );
-      }
-    }
-    this.binding.onPersisted?.(identity);
+    // A freshly published identity always announces — there is no "previous"
+    // to compare a create against, unlike `update`'s status-change filter.
+    await this.store.create(identity, {
+      replace: input.replaceExisting === true,
+      afterCommit: afterIdentityCommit(onPersisted),
+    });
     return identity;
   }
 
-  async update(
-    identity: AgentEntityIdentity,
-    input: AgentIdentityUpdateInput,
+  /**
+   * Merge `patch` onto the store's true committed value and publish the
+   * result. `patch` may be a function so a caller that needs to read the
+   * current value to decide what to write (a lease re-check, a recovered
+   * worktree) can do so from inside the store's own serialized `change` —
+   * never against a snapshot it held before calling. Two overlapping callers
+   * merging against the same stale base would silently lose whichever write
+   * settled first; running the merge inside `change` is what prevents that.
+   *
+   * `onPersisted` fires only when the merge changed `status`, matching the
+   * pre-`TransactionalStore` contract — `create`/`upsert` announce
+   * unconditionally, `update` does not.
+   */
+  update(
+    patch:
+      | AgentIdentityUpdateInput
+      | ((
+          current: AgentEntityIdentity,
+        ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
+    onPersisted?: (identity: AgentEntityIdentity) => void,
   ): Promise<AgentEntityIdentity> {
-    const updated: AgentEntityIdentity = {
-      ...identity,
-      ...(input.agentRuntime !== undefined
-        ? { agent_runtime: input.agentRuntime }
-        : {}),
-      ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
-      ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
-      ...(input.sourceRepo !== undefined
-        ? { source_repo: input.sourceRepo }
-        : {}),
-      ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
-      ...(input.runtimeCwd !== undefined
-        ? { runtime_cwd: input.runtimeCwd }
-        : {}),
-      ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
-      ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      ...(input.identityPrompt !== undefined
-        ? { identity_prompt: input.identityPrompt }
-        : {}),
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...(input.lastError !== undefined ? { last_error: input.lastError } : {}),
-      ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
-      ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
-      updated_at: Date.now(),
-    };
-    await this.write(updated);
-    if (updated.status !== identity.status) this.binding.onPersisted?.(updated);
-    return updated;
+    return this.store
+      .update(async (current) => {
+        if (current === null) {
+          throw new Error(
+            `agent identity at ${this.path} has no identity to update`,
+          );
+        }
+        const input = typeof patch === 'function' ? await patch(current) : patch;
+        return mergeIdentity(current, input);
+      }, afterIdentityStatusChange(onPersisted))
+      .then((next) => {
+        // `change` above always throws on a null current and otherwise
+        // returns a merged, non-null identity, so this is never null.
+        if (next === null) {
+          throw new Error(`agent identity at ${this.path} update lost its result`);
+        }
+        return next;
+      });
   }
 
   /**
@@ -243,15 +257,86 @@ export class AgentIdentityStore {
    * a usable record of its own entity, so an atomic replace is the intended
    * outcome rather than a collision to report.
    */
-  async upsert(identity: AgentEntityIdentity): Promise<AgentEntityIdentity> {
-    await this.write(identity);
-    this.binding.onPersisted?.(identity);
+  async upsert(
+    identity: AgentEntityIdentity,
+    onPersisted?: (identity: AgentEntityIdentity) => void,
+  ): Promise<AgentEntityIdentity> {
+    await this.store.create(identity, {
+      replace: true,
+      afterCommit: afterIdentityCommit(onPersisted),
+    });
     return identity;
   }
+}
 
-  private async write(identity: AgentEntityIdentity): Promise<void> {
-    await writeFileAtomic(this.path, `${JSON.stringify(identity, null, 2)}\n`);
-  }
+/**
+ * Adapt a `(identity) => …` publish hook to `TransactionalStore.create`'s
+ * `afterCommit` shape. `next` is exactly the value `create`/`upsert` just
+ * published, never `null` — the guard exists only because the store's own
+ * value type (`AgentEntityIdentity | null`) is shared with a store that may
+ * hold no record yet.
+ */
+function afterIdentityCommit(
+  onPersisted: ((identity: AgentEntityIdentity) => void) | undefined,
+): (next: AgentEntityIdentity | null) => void {
+  return (next) => {
+    if (next !== null) onPersisted?.(next);
+  };
+}
+
+/**
+ * Adapt a `(identity) => …` publish hook to `TransactionalStore.update`'s
+ * `afterCommit` shape, applying `AgentIdentityStore.update`'s own
+ * status-change filter. `next`/`previous` are never `null` here — `update`'s
+ * `change` callback above throws before returning if the committed value
+ * was `null`, so this only guards the store's shared `T | null` value type.
+ */
+function afterIdentityStatusChange(
+  onPersisted: ((identity: AgentEntityIdentity) => void) | undefined,
+): (
+  next: AgentEntityIdentity | null,
+  previous: AgentEntityIdentity | null,
+) => void {
+  return (next, previous) => {
+    if (next === null || previous === null) return;
+    if (next.status !== previous.status) onPersisted?.(next);
+  };
+}
+
+/**
+ * The pre-`TransactionalStore` conditional-spread merge, unchanged, now
+ * shared by {@link AgentIdentityStore.update}'s inline `patch` form and its
+ * function form.
+ */
+function mergeIdentity(
+  identity: AgentEntityIdentity,
+  input: AgentIdentityUpdateInput,
+): AgentEntityIdentity {
+  return {
+    ...identity,
+    ...(input.agentRuntime !== undefined
+      ? { agent_runtime: input.agentRuntime }
+      : {}),
+    ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
+    ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
+    ...(input.sourceRepo !== undefined
+      ? { source_repo: input.sourceRepo }
+      : {}),
+    ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    ...(input.runtimeCwd !== undefined
+      ? { runtime_cwd: input.runtimeCwd }
+      : {}),
+    ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
+    ...(input.intent !== undefined ? { intent: input.intent } : {}),
+    ...(input.identityPrompt !== undefined
+      ? { identity_prompt: input.identityPrompt }
+      : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.lastError !== undefined ? { last_error: input.lastError } : {}),
+    ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
+    ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
+    updated_at: Date.now(),
+  };
 }
 
 /**
@@ -264,6 +349,16 @@ export class AgentIdentityStore {
  * TeamMate from ever being confused for one another.
  */
 export class AgentEntityCollectionStore {
+  /**
+   * The collection's own default publish hook, always callable — a plain
+   * copy of `opts.onPersisted`, safe to call even when the collection was
+   * built without one. Held so an owner that hands a bare member store to a
+   * long-lived `AgentRuntimeStateStore` (one that never calls through the
+   * passthrough methods below) can still thread the collection's publish
+   * hook into it explicitly.
+   */
+  readonly onPersisted: (identity: AgentEntityIdentity) => void;
+
   constructor(
     private readonly opts: {
       root: string;
@@ -271,22 +366,52 @@ export class AgentEntityCollectionStore {
       log: DreamuxLogger;
       onPersisted?: (identity: AgentEntityIdentity) => void;
     },
-  ) {}
+  ) {
+    this.onPersisted = (identity) => this.opts.onPersisted?.(identity);
+  }
 
   /** The bound collection root, for owners composing sibling paths. */
   get root(): string {
     return this.opts.root;
   }
 
-  /** The bound store for one member of this collection. */
+  /**
+   * The bound store for one member of this collection: read-only use
+   * (`read()`/`load()`), a one-shot write through `update` below, or —
+   * for a caller that creates or reads a member and then builds a
+   * long-lived `AgentRuntimeStateStore` over it — the instance to keep and
+   * thread `this.onPersisted` through directly, so the same store that did
+   * the I/O is the one the runtime-state store wraps.
+   */
   entity(name: string): AgentIdentityStore {
     return new AgentIdentityStore({
       dir: collectionEntityDir(this.opts.root, name),
       dispatcherId: this.opts.dispatcherId,
       expectedName: name,
       log: this.opts.log,
-      onPersisted: this.opts.onPersisted,
     });
+  }
+
+  /**
+   * Update one member, publishing through this collection's own hook.
+   *
+   * The only collection-level passthrough kept: its one caller
+   * (`closeMembersForDissolve`) is a genuine one-shot write with no
+   * `AgentRuntimeStateStore` built over the result, unlike `create` — every
+   * fresh entity's creator keeps the `AgentIdentityStore` instance itself
+   * (`TeammateCollection.createIdentity`) so the runtime-state store it
+   * builds next wraps an already-loaded store instead of a fresh, unloaded
+   * one from a second `entity(name)` mint.
+   */
+  update(
+    name: string,
+    patch:
+      | AgentIdentityUpdateInput
+      | ((
+          current: AgentEntityIdentity,
+        ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
+  ): Promise<AgentEntityIdentity> {
+    return this.entity(name).update(patch, this.onPersisted);
   }
 
   /**

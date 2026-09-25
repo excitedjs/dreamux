@@ -5,7 +5,7 @@ import {
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type {
   AgentEntityCollectionStore,
-  AgentIdentityStore,
+  AgentIdentityUpdateInput,
 } from '../agent-entity/identity-store.js';
 import type {
   SpawnTeamMateRequest,
@@ -68,20 +68,28 @@ export async function resolveSpawnWorkspace(input: {
   });
 }
 
+/**
+ * Compute the patch that recovers a managed worktree whose checkout was
+ * deleted, or the empty patch when there is nothing to recover.
+ *
+ * Returns a patch rather than writing it: the caller holds the one write
+ * authority over this entity's identity (`AgentRuntimeStateStore.transact`),
+ * and a second writer reaching back into the identity store from inside this
+ * function would be the nested `update()` call `TransactionalStore`'s own
+ * `change` contract forbids.
+ */
 export async function reprepareDeletedManagedWorktree(input: {
   config: DreamuxConfig;
-  /** The entity's own bound identity store. */
-  identities: AgentIdentityStore;
   /** The collection this entity belongs to; absent for an owner-root Agent. */
   peers?: AgentEntityCollectionStore | undefined;
   worktrees: WorktreeManager;
   identity: AgentEntityIdentity;
-}): Promise<AgentEntityIdentity> {
+}): Promise<AgentIdentityUpdateInput> {
   if (
     input.identity.worktree.mode !== 'managed' ||
     input.identity.worktree.cleanup_state !== 'deleted'
   ) {
-    return input.identity;
+    return {};
   }
   const workspace = await input.worktrees.prepare({
     dispatcherId: input.identity.dispatcher_id,
@@ -110,13 +118,13 @@ export async function reprepareDeletedManagedWorktree(input: {
     name: input.identity.name,
     worktree: workspace.worktree,
   });
-  return input.identities.update(input.identity, {
+  return {
     sourceCwd: workspace.sourceCwd,
     sourceRepo: workspace.sourceRepo,
     cwd: workspace.runtimeCwd,
     runtimeCwd: workspace.runtimeCwd,
     worktree: workspace.worktree,
-  });
+  };
 }
 
 /**

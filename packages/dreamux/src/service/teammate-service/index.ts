@@ -113,7 +113,11 @@ export class TeammateService {
       teamId: identity.team_id,
       name: identity.name,
     };
-    this.state = new AgentRuntimeStateStore(deps.identities, identity);
+    this.state = new AgentRuntimeStateStore(
+      deps.identities,
+      identity,
+      deps.onPersisted,
+    );
     this.role = options.role;
     this.closed = new ClosedFactPublisher<TeammateClosedFact>(deps.log);
     this.turns = new EntityTurnCoordinator({

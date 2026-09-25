@@ -30,9 +30,14 @@ export class TeamRosterProjection {
       teamId: string;
       store: TeamStore;
       coreEvents: DispatcherCoreEventPublisher;
-      /** The Team record this projection is published against, or `null`
-       * before the Team is booted. */
-      record: () => TeamRecord | null;
+      /**
+       * The Team record this projection is published against. `publish`
+       * below is only ever reached from an identity's `onPersisted` hook,
+       * which fires no earlier than the Team's own record has already been
+       * published or loaded (`TeamService` wires this accessor only after
+       * that point) — so this never runs before there is a record to read.
+       */
+      record: () => TeamRecord;
     },
   ) {}
 
@@ -60,14 +65,11 @@ export class TeamRosterProjection {
     // republished from the roster this call just updated rather than being
     // recomputed from any second source — and timed by the identity
     // transition that changed it, not by the Team record it still sits on.
-    const record = this.deps.record();
-    if (record !== null) {
-      this.deps.store.publishRosterState(
-        record,
-        identity.updated_at,
-        this.summary(),
-      );
-    }
+    this.deps.store.publishRosterState(
+      this.deps.record(),
+      identity.updated_at,
+      this.summary(),
+    );
   }
 
   /** This Team's contained Agents, as a fresh summary per publication. */

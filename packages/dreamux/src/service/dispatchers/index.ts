@@ -64,11 +64,14 @@ export class Dispatchers {
   private readonly dispatcherHook: SyncHook<[Dispatcher]>;
   private readonly log: DreamuxLogger;
   /**
-   * Read-only readers for each dispatcher's own root Agent identity, shared by
-   * {@link summarize} and {@link status} (issue #233 / PR #282 review). Each is
-   * bound to one dispatcher root here, at this composition boundary, and cached
-   * so the read-model probes don't rebuild one per row. A plain reader — never a
-   * DispatcherService trigger: it does not prepare or start any aggregate.
+   * Each dispatcher's own root Agent identity store, bound to one dispatcher
+   * root here, at this composition boundary, and cached so it is built at
+   * most once per dispatcher. {@link summarize} and {@link status} (issue
+   * #233 / PR #282 review) read through it as a plain fallback when no live
+   * runtime status exists; {@link dispatcherOptions} hands the same instance
+   * to the `DispatcherService` this collection constructs, so the two never
+   * hold independently cached committed values over one `identity.json` —
+   * calling `rootIdentity` itself still starts nothing.
    */
   private readonly rootIdentities = new Map<string, AgentIdentityStore>();
   private restartIntent: RestartIntentConsumer | null = null;
@@ -189,6 +192,10 @@ export class Dispatchers {
       dispatchers: this.dispatcherStore,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
+      // Shared with this collection's own read-only fallback reader
+      // (`summarize()`/`status()`), so the two never hold independently
+      // cached committed values over the same dispatcher-root `identity.json`.
+      identities: this.rootIdentity(id),
       mcpLeases: this.mcpLeases,
       commands: this.commands,
       homePathPrefixes: this.homePathPrefixes,

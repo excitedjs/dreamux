@@ -39,7 +39,6 @@ import { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateOps } from '../teammate-collection/types.js';
 import {
   AgentEntityCollectionStore,
-  AgentIdentityStore,
   AgentNameRegistry,
 } from '../agent-entity/identity-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
@@ -168,13 +167,13 @@ export class DispatcherService implements Dispatcher {
     const dispatcherRoot = dispatcherDir(opts.id);
     const teamMateRoot = teamMateCollectionDir(dispatcherRoot);
     const teamRoot = teamCollectionDir(dispatcherRoot);
-    const identities = new AgentIdentityStore({
-      dir: dispatcherRoot,
-      dispatcherId: opts.id,
-      expectedName: null,
-      log: opts.log,
-      onPersisted: (identity) => this.publishAgentState(identity, 'dispatcher'),
-    });
+    // Shared with `Dispatchers`' own read-only fallback reader rather than
+    // built again here: two independently cached `AgentIdentityStore`s over
+    // this one file would each hold their own committed value once this
+    // dispatcher's agent starts writing through its own copy.
+    const identities = opts.identities;
+    const onDispatcherAgentPersisted = (identity: AgentEntityIdentity) =>
+      this.publishAgentState(identity, 'dispatcher');
     const teamMateStore = new AgentEntityCollectionStore({
       root: teamMateRoot,
       dispatcherId: opts.id,
@@ -292,6 +291,7 @@ export class DispatcherService implements Dispatcher {
       channelProviders: opts.channelProviders,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       identities,
+      onPersisted: onDispatcherAgentPersisted,
       admissions,
       conversationProjection,
       log: opts.log,

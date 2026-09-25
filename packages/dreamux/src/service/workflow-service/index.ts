@@ -251,8 +251,16 @@ export class WorkflowService implements WorkflowOps {
   }
 
   private async recoverRunningRecords(): Promise<void> {
-    for (const record of await this.store.list()) {
-      if (record.status !== 'running') continue;
+    for (const stored of await this.store.list()) {
+      if (stored.status !== 'running') continue;
+      // `stored` is the run's committed reference, held by its own
+      // `TransactionalStore` and reused by every later `get`/`list` call for
+      // this run id. Mutating it in place here would make a retry after a
+      // failed `store.write` below see this attempt's already-'stopped'
+      // in-memory draft instead of re-reading the still-'running' file, and
+      // silently skip recovering it. Recover a clone; only a successful
+      // `store.write` may replace the committed value.
+      const record = structuredClone(stored);
       const journal = new WorkflowJournal(
         workflowRunJournalPath({ ...this.scope, runId: record.run_id }),
       );

@@ -5,11 +5,11 @@
  * TeamLeader — so every Command first resolves that owner's
  * {@link SchedulerCommands} surface and then delegates unchanged. Job validation
  * stays inside the scheduler service; these definitions own the declared payload
- * schema, this surface's operator-only `action` field, and the owner selection.
- * The request codecs live with the scheduler's types, the job projection with
- * the store that produces the records, and the failures with the rules that
- * raise them — each stating its own reason and next step. The cron MCP delegate
- * reads the same helpers; neither adapter reads the other.
+ * schema and the owner selection. The request codecs live with the scheduler's
+ * types, the job projection with the store that produces the records, and the
+ * failures with the rules that raise them — each stating its own reason and
+ * next step. The cron MCP delegate reads the same helpers; neither adapter
+ * reads the other.
  */
 import type {
   CoreCommandContext,
@@ -19,11 +19,7 @@ import type {
 
 import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
-import {
-  commandPayload,
-  optionalRecordField,
-  type CommandPayload,
-} from '../../command/payload.js';
+import { commandPayload, type CommandPayload } from '../../command/payload.js';
 import {
   BOOLEAN,
   NON_EMPTY_STRING,
@@ -121,7 +117,6 @@ export function schedulerCommands(
         title: STRING,
         recurring: BOOLEAN,
         tz: STRING,
-        action: OBJECT,
       },
       ['cron', 'prompt'],
     ),
@@ -130,12 +125,7 @@ export function schedulerCommands(
       const params = commandPayload(payload);
       return {
         ...cronOwnerInput(params),
-        request: {
-          ...cronCreateRequest(params),
-          // Operator-only, and this surface's alone: no Agent-facing catalog
-          // advertises a raw action, so the shared codec does not read one.
-          ...optionalRecordField(params, 'action'),
-        },
+        request: cronCreateRequest(params),
       };
     },
     async execute(context, input) {
@@ -161,7 +151,6 @@ export function schedulerCommands(
         title: NULLABLE_STRING,
         recurring: BOOLEAN,
         tz: STRING,
-        action: OBJECT,
         enabled: BOOLEAN,
       },
       ['id'],
@@ -171,10 +160,7 @@ export function schedulerCommands(
       const params = commandPayload(payload);
       return {
         ...cronOwnerInput(params),
-        request: {
-          ...cronUpdateRequest(params),
-          ...optionalRecordField(params, 'action'),
-        },
+        request: cronUpdateRequest(params),
       };
     },
     async execute(context, input) {

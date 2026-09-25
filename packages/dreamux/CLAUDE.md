@@ -43,7 +43,7 @@ Two settled shape rules govern where code lives:
 | `command/` | the canonical Command registry, schema/validation/errors, and generic payload readers only | one definition per Command, adapted by both `admin.sock` and the in-process Channel `invoke`; what a domain payload field means stays in the module that owns the fact |
 | `admin/` | admin Unix-socket server + NDJSON protocol + client | cross-process transport for those Commands; it owns none of them |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
-| `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
+| `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
 | `state/` | server-owned dispatcher state: `dispatcher-store`, `dispatcher-id` | config-backed dispatcher projections and local state identifiers |
 | `cli/` `onboard/` `daemon/` | operator-facing surfaces | CLI command tree, onboarding, native user-level service manager |
 

@@ -50,7 +50,7 @@ export class TeamWorktreeCleanup {
       );
     }
     // The authorization goes with the pending work it authorized.
-    await this.opts.store.update(record, {
+    await this.opts.store.update(teamId, {
       worktree: { ...cleaned, cleanup_error: null },
       cleanupForce: false,
     });

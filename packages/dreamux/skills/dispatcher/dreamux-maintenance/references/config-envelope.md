@@ -19,8 +19,15 @@ plugins.
 - optional plugin-owned `config`, validated by that plugin. A `config` block
   for a plugin that takes no config (no `config.read`) is ignored; this is the
   one place `plugins[]` tolerates an unrecognized key. `rejectUnknownKeys`
-  still applies to `plugins[]` entry keys (`ref`/`config`) and elsewhere in
-  `config.ts`.
+  still applies to `plugins[]` entry keys (`ref`/`config`); every other key at
+  the host envelope's own levels — the top level, `dispatchers[]`,
+  `channels[]`, `agents[]`, and `dispatchers[].workspace` — tolerates an
+  unrecognized key too. Wrong types and missing required fields are still
+  rejected at every level. This tolerance is about the envelope's own keys
+  only: a provider-owned `config` block (`agents[].config`,
+  `channels[].config`) still follows that provider's own schema, which may
+  reject unknown keys — use the provider's reference as the authority there,
+  not this one.
 
 The built-in Feishu plugin is always loaded and must not be listed. A
 malformed entry fails `dreamux serve` and shows as a failed `config` line in
@@ -47,9 +54,10 @@ provider a plugin contributes is addressed in `agents[].provider` or
 - required non-empty `channels[]`;
 - required non-empty `agentRuntime` matching an `agents[].id`.
 
-Each `channels[]` entry contains a unique-per-Dispatcher non-empty `id`, a
-non-empty Channel provider ref, and optional provider-owned `config`, and
-nothing else. One provider ref may appear only once in one Dispatcher.
+Each `channels[]` entry recognizes a unique-per-Dispatcher non-empty `id`, a
+non-empty Channel provider ref, and optional provider-owned `config`; any
+other key is tolerated but unread. One provider ref may appear only once in
+one Dispatcher.
 Automatic collaboration-space provisioning is Channel-owned policy, not host
 config: the Channel that offers the flow owns it, so it is set through that
 Channel's own surface rather than in this envelope.

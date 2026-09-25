@@ -79,7 +79,6 @@ export class WorkflowRun {
   private readonly runnerMessageTasks = new InFlightWork();
   private readonly agentTasks = new InFlightWork();
   private readonly unlockedHandles = new Set<LockedTeammate>();
-  private mutationTail: Promise<void> = Promise.resolve();
   private runnerMessageTail: Promise<void> = Promise.resolve();
   private runnerTerminalMessageSeen = false;
   private terminalCandidate: WorkflowRunRecord | null = null;
@@ -150,8 +149,22 @@ export class WorkflowRun {
     return this.terminal.settled;
   }
 
+  /**
+   * The run's last *committed* value — what `workflow_status`/`workflow_list`
+   * read — never the in-progress draft `this.record` becomes between a
+   * mutation and the {@link persist} call that publishes it. Reachable only
+   * after `initialize()` has published this run's first committed record
+   * (the owner does not register this `WorkflowRun` until then), so the
+   * handle is always loaded here.
+   */
   snapshot(): WorkflowRunRecord {
-    return structuredClone(this.record);
+    const current = this.deps.store.handle(this.record.run_id).current;
+    if (current === null) {
+      throw new Error(
+        `workflow run ${JSON.stringify(this.record.run_id)} has no committed record`,
+      );
+    }
+    return structuredClone(current);
   }
 
   async initialize(): Promise<void> {
@@ -226,10 +239,10 @@ export class WorkflowRun {
           this.terminal.requested !== null
         )
           return;
-        await this.mutate(async () => {
-          if (message.kind === 'phase') this.record.phase = message.message;
-          else this.record.last_log = message.message;
-          this.record.updated_at = this.now();
+        if (message.kind === 'phase') this.record.phase = message.message;
+        else this.record.last_log = message.message;
+        this.record.updated_at = this.now();
+        await this.persist(async () => {
           await this.deps.journal.append({
             kind: message.kind,
             message: message.message,
@@ -307,7 +320,7 @@ export class WorkflowRun {
     this.calls.set(message.index, call);
     this.record.agents.push(record);
     this.record.updated_at = createdAt;
-    await this.mutate(() => this.deps.store.write(this.record));
+    await this.persist(() => this.deps.store.write(this.record));
 
     this.deps.log.info(
       {
@@ -337,7 +350,7 @@ export class WorkflowRun {
       call.record.status = 'running';
       call.record.phase = call.options.phase ?? this.record.phase;
       this.record.updated_at = this.now();
-      await this.mutate(() => this.deps.store.write(this.record));
+      await this.persist(() => this.deps.store.write(this.record));
       if (this.terminal.requested !== null) {
         await this.completeAgent(call, 'stopped', null, null);
         return;
@@ -368,7 +381,7 @@ export class WorkflowRun {
       call.record.name = handle.name;
       const submittedAt = this.now();
       this.record.updated_at = submittedAt;
-      await this.mutate(async () => {
+      await this.persist(async () => {
         await this.deps.journal.append({
           kind: 'submit',
           index: call.record.index,
@@ -532,7 +545,7 @@ export class WorkflowRun {
     call.record.error = candidate.error;
     call.record.settled_at = candidate.settled_at;
     this.record.updated_at = candidate.settled_at;
-    await this.mutate(async () => {
+    await this.persist(async () => {
       if (!call.resultJournalCommitted) {
         await this.deps.journal.ensureAgentResult(candidate);
         call.resultJournalCommitted = true;
@@ -601,13 +614,13 @@ export class WorkflowRun {
 
     await this.runnerMessageTasks.drain();
     await this.agentTasks.drain();
-    await this.mutationTail;
+    await this.deps.store.handle(this.record.run_id).drain();
     for (const call of this.calls.values()) {
       if (!call.completed) {
         await this.completeAgent(call, 'stopped', null, requestedError);
       }
     }
-    await this.mutationTail;
+    await this.deps.store.handle(this.record.run_id).drain();
     throwSettledFailures(
       runnerStopResults,
       `workflow ${JSON.stringify(this.record.run_id)} runner failed to stop`,
@@ -682,15 +695,22 @@ export class WorkflowRun {
     }
   }
 
-  private mutate<T>(task: () => Promise<T>): Promise<T> {
-    const next = this.mutationTail.then(task, task);
-    this.mutationTail = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next.catch((error: unknown) => {
+  /**
+   * Run a durable write (journal append and/or `store.write`) and reclassify
+   * any failure as a {@link WorkflowPersistenceError}. Ordering between two
+   * durable writes from this same `WorkflowRun` instance comes from awaiting
+   * them in sequence, not from a queue here: each per-run `TransactionalStore`
+   * already serializes concurrent writers on its own file.
+   * `executeAgent`'s catch depends on this classification to tell "this run's
+   * own storage failed" (a terminal failure) apart from "this Agent's runtime
+   * work failed" (an ordinary agent failure another write can still record).
+   */
+  private async persist<T>(work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
       throw new WorkflowPersistenceError(errorMessage(error));
-    });
+    }
   }
 
   private now(): number {

@@ -119,12 +119,13 @@ runtime app-server readiness, and same-version restart cautions.
   fully server-owned. Do not edit, copy over, synthesize, or delete a job by
   hand as an operational repair; use `cron_create`, `cron_update`, and
   `cron_delete` in the owning scope.
-- A job's only action is `{ kind: "prompt-agent", prompt, intent? }`: it injects
-  its prompt into the Dispatcher or TeamLeader that owns the schedule. Cron
-  spawns no agent and addresses no Channel, and a job carries no delivery
-  target. A store file containing a `spawn-teammate` action or a `deliver`
-  field is not current state: it fails loud when read, and `dreamux doctor`
-  names the file. Delete that job or the store file and recreate the schedule.
+- A job's only action is `{ kind: "prompt-agent", prompt }`: it injects its
+  prompt into the Dispatcher or TeamLeader that owns the schedule. Cron spawns
+  no agent and addresses no Channel, and a job carries no delivery target and
+  no `dispatcher_id` (the store path already scopes it). A store file
+  containing a `spawn-teammate` action or a `deliver` field is not current
+  state: it fails loud when read, and `dreamux doctor` names the file. Delete
+  that job or the store file and recreate the schedule.
 - A due job is submitted through ordinary admission, so it may fold into a turn
   that is already running. Firing proves submission, not a visible reply.
 
