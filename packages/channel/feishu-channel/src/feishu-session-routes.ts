@@ -14,7 +14,6 @@ import type { SessionHandle } from './feishu-session-ops.js';
 export function sessionBotRoutes(input: {
   fence: FeishuSessionFence;
   track<T>(work: Promise<T>): Promise<T>;
-  stateDir: string;
   handle(): SessionHandle;
   onCardAction(event: FeishuCardActionEvent): Promise<unknown>;
   docComments: FeishuDocumentComments;
@@ -23,7 +22,13 @@ export function sessionBotRoutes(input: {
   return {
     onBotMemberAdded: async (added) => {
       if (!fence.isCurrent()) return;
-      await track(recordBotAdded(input.stateDir, added.chatId, added.eventId));
+      await track(
+        recordBotAdded(
+          input.handle().chatBotsStore,
+          added.chatId,
+          added.eventId,
+        ),
+      );
     },
     onMessage: async (event) => {
       if (!fence.isCurrent()) return;

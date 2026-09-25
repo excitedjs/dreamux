@@ -7,54 +7,6 @@ export type RemovedFakeFeishuBotMustStayUnexported =
   import('../src/index.js').FakeFeishuBot;
 
 /**
- * Every runtime binding `src/index.ts` currently exports, sorted. This is the
- * package's intentional public surface (COVERAGE CELL F): a name added here
- * without also being added to `src/index.ts`'s own export list is a failing
- * assertion, which is what makes an *accidental* new export — including a
- * resurrected Core binding/Collaboration Space surface — visible in review
- * rather than silently shipping.
- */
-const EXPECTED_EXPORTS = [
-  'BUILTIN_FEISHU_PROVIDER_REF',
-  'CHANNEL_REMINDER',
-  'DREAMUX_ACTION_KEY',
-  'DREAMUX_PAIRING_CARD_ACTION',
-  'DREAMUX_PAIRING_TOKEN_KEY',
-  'FEISHU_ROUTING_DOCUMENT_VERSION',
-  'FEISHU_TOOLS',
-  'FeishuChannelSession',
-  'FeishuRouting',
-  'FeishuRoutingStore',
-  'TRUST_DOMAIN_WARNING',
-  'buildPairingApprovalCard',
-  'buildPairingSuccessCard',
-  'channelOutboundToFeishuTarget',
-  'chatTarget',
-  'createFeishuBot',
-  'createFeishuChannelProvider',
-  'createFeishuPlugin',
-  'createFeishuSessionMcp',
-  'default',
-  'defaultDispatcherAccessState',
-  'describeTarget',
-  'dreamuxFeishuGate',
-  'feishuToolRegistrations',
-  'feishuToolsFor',
-  'findFeishuTool',
-  'formatFeishuCreateTime',
-  'formatFeishuMessageForRuntime',
-  'listChatBots',
-  'loadChatBots',
-  'loadDispatcherAccess',
-  'rawCardActionResponse',
-  'routingDocumentFilename',
-  'saveDispatcherAccess',
-  'targetKey',
-  'toWireChatBot',
-  'topicTarget',
-].sort();
-
-/**
  * Every name a prior Core-owned binding/Collaboration Space/target-resolution
  * architecture used, per the frozen "DELETED SURFACES" list this refactor
  * retired. None of them names a real export today, and none may be
@@ -86,11 +38,6 @@ describe('@excitedjs/feishu-channel public API', () => {
     expect(Object.hasOwn(feishuChannel, 'IN_PROGRESS_REACTION_EMOJI')).toBe(
       false,
     );
-  });
-
-  it('exports exactly the intentional public surface — no more, no less', () => {
-    const actual = Object.keys(feishuChannel).sort();
-    expect(actual).toEqual(EXPECTED_EXPORTS);
   });
 
   it('never re-exports a name from the deleted Core binding/routing/Collaboration Space architecture', () => {

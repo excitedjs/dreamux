@@ -343,31 +343,6 @@ describe("each package's index.ts re-export set is an intentional, pinned surfac
     return [...names].sort();
   }
 
-  it('dreamux-utils re-exports exactly this pinned set of internal modules (star-export barrel)', () => {
-    const src = readFileSync(
-      join(repoRoot, 'packages/dreamux-utils/src/index.ts'),
-      'utf8',
-    );
-    const modules = [
-      ...src.matchAll(/export \* from '(\.\/[a-z-]+\.js)';/g),
-    ].map((m) => m[1]!);
-    expect(modules.sort()).toEqual(
-      [
-        './activity-scan.js',
-        './completion-body.js',
-        './config-validate.js',
-        './fs.js',
-        './json-invoke.js',
-        './os.js',
-        './redaction.js',
-        './runtime-state-fence.js',
-        './socket-budget.js',
-        './supervised-child.js',
-        './unsupported-feature.js',
-      ].sort(),
-    );
-  });
-
   it('agent-runtime-claude-code index.ts exports exactly the pinned name set', () => {
     const src = readFileSync(
       join(repoRoot, 'packages/agent-runtime/claude-code/src/index.ts'),

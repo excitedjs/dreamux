@@ -3,7 +3,8 @@
  *
  * Pure gate (`dreamuxFeishuGate`) decides `deliver | drop | pair` against a
  * snapshot of `DispatcherAccessStateV3` and returns the next state plus logs.
- * The session owns IO, mutex, and send-before-save for pairing prompts.
+ * The session owns IO, the access store's serialized queue, and
+ * send-before-save for pairing prompts.
  *
  * v3 replaces the v2 "everything is allowlist" model with per-sender
  * pairing slots. An operator (human admin out-of-band) approves a 6-hex token
@@ -19,21 +20,12 @@ import { randomBytes } from 'node:crypto';
 // ─────────────────────────────────────────────────────────────────────────
 
 export const ACCESS_STATE_VERSION = 3 as const;
-// Ten active dm-kind onboarding slots keeps one dispatcher useful in a busy
-// chat while bounding spam from many unknown senders.
-export const MAX_PENDING_PER_KIND = 10;
+// Ten active onboarding slots keeps one dispatcher useful in a busy chat while
+// bounding spam from many unknown senders.
+export const MAX_PENDING = 10;
 export const PAIRING_TTL_MS = 60 * 60 * 1000;
 export const PAIRING_TOKEN_BYTES = 3;
 export const PAIRING_TOKEN_REGEX = /^[0-9a-fA-F]{6}$/;
-
-const MAX_WARNINGS = 200;
-/**
- * Flag emitted into `state.warnings` when a single dispatcher observes traffic
- * from more than one chat — the channel multiplexes chats over one runtime
- * context, which is supported but worth surfacing to an operator once.
- */
-export const TRUST_DOMAIN_WARNING =
-  'dispatcher shares one runtime context across multiple Feishu chats';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types
@@ -44,27 +36,14 @@ export type GroupPolicy = 'block' | 'allowlist' | 'follow-user';
 export type PendingPairingKind = 'dm' | 'group';
 
 export interface PendingPairingEntry {
-  kind: PendingPairingKind;
   sender_id: string;
   chat_id: string;
+  // Write-only: only `expires_at` drives TTL. Kept as a human-legible
+  // timestamp for an operator reading access.json by hand during the
+  // quiesced-edit procedure `feishu-access-v3.md` documents.
   created_at: number;
   expires_at: number;
-  replies: number;
   prompt_message_id?: string | undefined;
-}
-
-export interface WarnEntry {
-  at: number;
-  msg: string;
-  ctx?: Record<string, unknown>;
-}
-
-export interface LastGate {
-  at: number;
-  sender_id?: string;
-  chat_id?: string;
-  action?: string;
-  reason?: string;
 }
 
 export interface DispatcherAccessStateV3 {
@@ -77,9 +56,6 @@ export interface DispatcherAccessStateV3 {
   };
   allow_users: string[];
   pending: Record<string, PendingPairingEntry>;
-  observed_chats: string[];
-  warnings: WarnEntry[];
-  last_gate: LastGate;
 }
 
 export type DispatcherAccessState = DispatcherAccessStateV3;
@@ -160,9 +136,6 @@ export function defaultDispatcherAccessState(): DispatcherAccessStateV3 {
     },
     allow_users: [],
     pending: {},
-    observed_chats: [],
-    warnings: [],
-    last_gate: { at: 0 },
   };
 }
 
@@ -212,76 +185,29 @@ interface FoundPending {
   entry: PendingPairingEntry;
 }
 
+// Every live pending entry is dm-kind (the C3 semantic rewrite removed group
+// pairing below), so an existing slot is found by sender alone.
 function findExistingPendingByKey(
   pending: PendingMap,
-  kind: PendingPairingKind,
   sender_id: string,
-  chat_id: string,
   now: number,
 ): FoundPending | null {
   for (const [token, entry] of Object.entries(pending)) {
     if (entry.expires_at <= now) continue;
-    if (entry.kind !== kind) continue;
-    if (kind === 'dm' && entry.sender_id === sender_id) {
-      return { token, entry };
-    }
-    if (kind === 'group' && entry.chat_id === chat_id) {
+    if (entry.sender_id === sender_id) {
       return { token, entry };
     }
   }
   return null;
 }
 
-interface KindCount {
-  dm: number;
-  group: number;
-}
-
-function countByKind(pending: PendingMap, now: number): KindCount {
-  const c: KindCount = { dm: 0, group: 0 };
+function countActivePending(pending: PendingMap, now: number): number {
+  let count = 0;
   for (const entry of Object.values(pending)) {
     if (entry.expires_at <= now) continue;
-    c[entry.kind] += 1;
+    count += 1;
   }
-  return c;
-}
-
-function pushWarn(
-  warnings: WarnEntry[],
-  at: number,
-  msg: string,
-  ctx?: Record<string, unknown>,
-): WarnEntry[] {
-  const next = [...warnings, { at, msg, ...(ctx ? { ctx } : {}) }];
-  // cap at MAX_WARNINGS FIFO
-  if (next.length > MAX_WARNINGS) {
-    return next.slice(next.length - MAX_WARNINGS);
-  }
-  return next;
-}
-
-function pushObserved(observed: string[], chat_id: string): string[] {
-  if (observed.includes(chat_id)) return observed;
-  return [...observed, chat_id];
-}
-
-function withLastGate(
-  state: DispatcherAccessStateV3,
-  input: GateInbound,
-  now: number,
-  action: string,
-  reason?: string,
-): DispatcherAccessStateV3 {
-  return {
-    ...state,
-    last_gate: {
-      at: now,
-      sender_id: input.sender_id,
-      chat_id: input.chat_id,
-      action,
-      ...(reason !== undefined ? { reason } : {}),
-    },
-  };
+  return count;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -304,9 +230,7 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
   const { state, input, now, logs } = opts;
   const existing = findExistingPendingByKey(
     state.pending,
-    'dm',
     input.sender_id,
-    input.chat_id,
     now,
   );
 
@@ -316,14 +240,9 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
       ...entry,
       expires_at: now + PAIRING_TTL_MS,
     };
-    let nextState: DispatcherAccessStateV3 = {
+    const nextState: DispatcherAccessStateV3 = {
       ...state,
       pending: { ...state.pending, [token]: newEntry },
-    };
-    nextState = withLastGate(nextState, input, now, 'pair');
-    nextState = {
-      ...nextState,
-      observed_chats: pushObserved(nextState.observed_chats, input.chat_id),
     };
     logs.push({
       level: 'info',
@@ -331,6 +250,7 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
       ctx: {
         token,
         sender_id: input.sender_id,
+        chat_id: input.chat_id,
         prompt_message_id: entry.prompt_message_id,
       },
     });
@@ -350,63 +270,39 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
     };
   }
 
-  const counts = countByKind(state.pending, now);
-  if (counts.dm >= MAX_PENDING_PER_KIND) {
-    const msg = 'dm pairing: slot cap reached';
-    const warnings = pushWarn(state.warnings, now, msg, {
-      count: counts.dm,
-      sender_id: input.sender_id,
-    });
+  const count = countActivePending(state.pending, now);
+  if (count >= MAX_PENDING) {
     logs.push({
       level: 'warn',
-      msg,
-      ctx: { count: counts.dm, sender_id: input.sender_id },
+      msg: 'dm pairing: slot cap reached',
+      ctx: { count, sender_id: input.sender_id, chat_id: input.chat_id },
     });
-    let nextState: DispatcherAccessStateV3 = { ...state, warnings };
-    nextState = withLastGate(
-      nextState,
-      input,
-      now,
-      'drop',
-      'dm_pairing_slot_cap',
-    );
-    nextState = {
-      ...nextState,
-      observed_chats: pushObserved(nextState.observed_chats, input.chat_id),
-    };
     return {
       action: {
         action: 'drop',
         reason: 'dm_pairing_slot_cap',
-        context: { pending: counts.dm, max: MAX_PENDING_PER_KIND },
+        context: { pending: count, max: MAX_PENDING },
       },
-      nextState,
+      nextState: state,
       logs,
     };
   }
 
   const token = generateUniquePairingToken(state.pending);
   const entry: PendingPairingEntry = {
-    kind: 'dm',
     sender_id: input.sender_id,
     chat_id: input.chat_id,
     created_at: now,
     expires_at: now + PAIRING_TTL_MS,
-    replies: 1,
   };
-  let nextState: DispatcherAccessStateV3 = {
+  const nextState: DispatcherAccessStateV3 = {
     ...state,
     pending: { ...state.pending, [token]: entry },
-  };
-  nextState = withLastGate(nextState, input, now, 'pair');
-  nextState = {
-    ...nextState,
-    observed_chats: pushObserved(nextState.observed_chats, input.chat_id),
   };
   logs.push({
     level: 'info',
     msg: 'dm pairing: new slot',
-    ctx: { token, sender_id: input.sender_id },
+    ctx: { token, sender_id: input.sender_id, chat_id: input.chat_id },
   });
   return {
     action: {
@@ -439,28 +335,7 @@ export function dreamuxFeishuGate(
     action: GateAction,
     mutate: (s: DispatcherAccessStateV3) => DispatcherAccessStateV3 = (s) => s,
   ): GateResult => {
-    let s = mutate(working);
-    s = { ...s, observed_chats: pushObserved(s.observed_chats, input.chat_id) };
-    // Attach trust-domain warning if we observe multiple chats.
-    if (
-      s.observed_chats.length > 1 &&
-      !s.warnings.some((w) => w.msg === TRUST_DOMAIN_WARNING)
-    ) {
-      s = {
-        ...s,
-        warnings: pushWarn(s.warnings, now, TRUST_DOMAIN_WARNING),
-      };
-      logs.push({ level: 'warn', msg: TRUST_DOMAIN_WARNING });
-    }
-    const actionStr =
-      action.action === 'drop'
-        ? `drop:${action.reason}`
-        : action.action === 'pair'
-          ? `pair:${action.kind}`
-          : 'deliver';
-    const reason = action.action === 'drop' ? action.reason : undefined;
-    s = withLastGate(s, input, now, actionStr, reason);
-    return { action, nextState: s, logs };
+    return { action, nextState: mutate(working), logs };
   };
 
   // ── DM ────────────────────────────────────────────────────────────────
@@ -591,12 +466,3 @@ export function dreamuxFeishuGate(
   // Unsupported
   return finish({ action: 'drop', reason: 'unsupported_chat_type' });
 }
-
-// IO + UI helpers moved to feishu-gate-io.ts. Re-exported to preserve the
-// public surface so callers (feishu-channel.ts, tests) need no change.
-// eslint-disable-next-line no-restricted-syntax -- re-export shim preserving the pre-split import path, see comment above
-export {
-  loadDispatcherAccess,
-  readDispatcherAccess,
-  saveDispatcherAccess,
-} from './feishu-gate-io.js';

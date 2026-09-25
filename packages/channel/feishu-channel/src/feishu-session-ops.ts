@@ -4,12 +4,14 @@
  * lint rule.
  *
  * All helpers take a `SessionHandle` — a plain bundle of the resources a
- * helper needs (the session options, in-memory state, bot, access mutex, bot
- * display name). The class keeps these fields `private` and builds a handle
- * at every call site with a thin getter; free functions never see the class.
+ * helper needs (the session options, in-memory state, bot, held access store,
+ * bot display name). The class keeps these fields `private` and builds a
+ * handle at every call site with a thin getter; free functions never see the
+ * class.
  */
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { TransactionalStore } from '@excitedjs/dreamux-utils';
 import {
   FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
   type FeishuSendOptions,
@@ -30,11 +32,13 @@ import {
   type FeishuCardActionResponse,
 } from './feishu-pairing-card.js';
 import { introduceAckText } from './introduce.js';
-import { PAIRING_TOKEN_REGEX } from './feishu-gate.js';
+import {
+  PAIRING_TOKEN_REGEX,
+  type DispatcherAccessState,
+} from './feishu-gate.js';
 import { approvePairingByToken } from './feishu-gate-io.js';
-import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
-import type { PeerBot } from './chat-bots-store.js';
+import type { ChatBotsState, PeerBot } from './chat-bots-store.js';
 import type {
   FeishuInboundRoute,
   FeishuTargetRouter,
@@ -81,7 +85,10 @@ export interface FeishuExtensionActionHandler {
 export interface SessionHandle {
   opts: FeishuChannelSessionOptions;
   bot: FeishuBot;
-  accessMutex: AsyncMutex;
+  /** The session's one held access store — access.json's ledger state. */
+  accessStore: TransactionalStore<DispatcherAccessState>;
+  /** The session's one held chat-bots store — peer-bot awareness/trust state. */
+  chatBotsStore: TransactionalStore<ChatBotsState>;
   botDisplayName: string;
   targetRouter: FeishuTargetRouter;
   sessionFence: FeishuSessionFence;
@@ -101,7 +108,8 @@ export interface SessionHandle {
 export function sessionHandle(input: {
   opts: FeishuChannelSessionOptions;
   bot: FeishuBot;
-  accessMutex: AsyncMutex;
+  accessStore: TransactionalStore<DispatcherAccessState>;
+  chatBotsStore: TransactionalStore<ChatBotsState>;
   botDisplayName: string;
   targetRouter: FeishuTargetRouter;
   delivery: FeishuInboundDelivery;
@@ -112,7 +120,8 @@ export function sessionHandle(input: {
   return {
     opts: input.opts,
     bot: input.bot,
-    accessMutex: input.accessMutex,
+    accessStore: input.accessStore,
+    chatBotsStore: input.chatBotsStore,
     botDisplayName: input.botDisplayName,
     targetRouter: input.targetRouter,
     delivery: input.delivery,
@@ -647,8 +656,7 @@ export async function handleCardAction(
 
   const result = await approvePairingByToken(
     {
-      stateDir: h.opts.stateDir,
-      accessMutex: h.accessMutex,
+      accessStore: h.accessStore,
       dispatcherId: h.opts.dispatcherId,
       log: h.opts.log,
     },

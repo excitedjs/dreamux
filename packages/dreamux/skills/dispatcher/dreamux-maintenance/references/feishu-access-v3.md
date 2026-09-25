@@ -7,6 +7,12 @@ The path is fixed at `~/.dreamux/state/<dispatcher-id>/access.json`.
 `DREAMUX_CONFIG_DIR` affects `config.json` only. Never derive this state path
 from `dreamux config path` or a relocated config directory.
 
+The Channel session holds this file in memory once its first gate decision
+loads it, for the rest of the session — a hand edit made while the channel is
+running is not read until the next restart, the same as the routing document
+and `chat-bots.json`. This is exactly why the quiesced edit procedure below
+requires a confirmed process exit before patching the file.
+
 The complete secure default is:
 
 ```json
@@ -19,12 +25,7 @@ The complete secure default is:
     "require_mention": true
   },
   "allow_users": [],
-  "pending": {},
-  "observed_chats": [],
-  "warnings": [],
-  "last_gate": {
-    "at": 0
-  }
+  "pending": {}
 }
 ```
 
@@ -35,8 +36,7 @@ Current field ownership has four classes:
   `group.require_mention`.
 - Shared authority: `allow_users`; live pairing/App Owner approval may append
   it, while an independent quiesced operator may also maintain it.
-- Channel runtime ledger: `pending`, `observed_chats`, `warnings`, and
-  `last_gate`; do not edit these directly.
+- Channel runtime ledger: `pending`; do not edit it directly.
 
 Current meanings and types:
 
@@ -44,12 +44,11 @@ Current meanings and types:
 - `dm_policy` is `all | allowlist | pairing | disabled`.
 - `group.policy` is `block | allowlist | follow-user`;
   `group.allow_chats` is a string array; `group.require_mention` is boolean.
-- `allow_users` and `observed_chats` are string arrays.
-- `pending` is keyed by pairing token. Each entry has `kind` (`dm | group`),
-  string `sender_id` and `chat_id`, numeric `created_at` and `expires_at`,
-  numeric `replies`, and optional string `prompt_message_id`.
-- `warnings` is an array of `{ at, msg, ctx? }`; `last_gate` is an object with
-  numeric `at` and optional string `sender_id`, `chat_id`, `action`, `reason`.
+- `allow_users` is a string array.
+- `pending` is keyed by pairing token. Each entry has string `sender_id` and
+  `chat_id`, numeric `created_at` (write-only — no code reads it back, kept
+  for a human reading the file by hand) and `expires_at`, and optional string
+  `prompt_message_id`.
 
 For exactly classified human group messages, `group.require_mention` runs
 first, and `group.policy: block` drops all human messages. A chat in
@@ -76,10 +75,12 @@ daemon stop -> confirmed process exit -> post-stop re-read -> exact atomic patch
 
 Keep the Channel owner fully quiesced for the entire read-modify-write window.
 After the post-stop re-read, change only requested operator-policy or
-`allow_users` fields. Preserve `version` and every Channel runtime-ledger field
-exactly. Use an owner-only sibling temporary file, atomic replacement, and final
-mode `0600`. Validate JSON plus the complete V3 shape locally without printing
-values. Do not claim that `dreamux doctor` validates access state.
+`allow_users` fields. Preserve `version` and the `pending` ledger exactly. Use
+an owner-only sibling temporary file, atomic replacement, and final mode
+`0600`. Validate locally that the patched JSON still parses and every field is
+present with the right type — an unrecognized field is tolerated and left as
+found, but a missing or wrong-type field is rejected, same as the daemon's own
+loader. Do not claim that `dreamux doctor` validates access state.
 
 If the file is absent after confirmed process exit, treat that explicit `ENOENT` as
 valid current state. Use the complete secure V3 default above as the in-memory

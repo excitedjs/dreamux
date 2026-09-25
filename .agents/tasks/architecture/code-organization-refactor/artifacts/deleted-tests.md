@@ -2496,3 +2496,449 @@ shifted by wrapping in a few files, e.g. `registry/registry.ts:24→27`, but no
 `no-restricted-syntax`/unused-directive re-fired). None of the six
 `packages/dreamux/src` files closest to the 700-code-line `max-lines` cap
 (nor `platform/paths.ts`) trip the rule after reformatting.
+
+## Stage 4a
+
+Work item 7 (the stage's first gate-and-fix pass, per R53) ran
+`rush build`/`lint`/`test`/`typecheck:tests` against items 1–6's already-landed
+diff: the `TransactionalStore<T>` primitive, the routing/access/chat-bots
+stores moving onto it, and the R22/R45 access-ledger shape shrink. One
+implementation fallout fix was made first (not a test edit), in
+`feishu-session-inbound.ts`'s `onMessage`: `GateAction`'s `let action!` binding
+is read inside two `h.accessStore.update((current) => {...})` closures (at the
+pre-fix lines ~247/253/257 and ~298/304/317/339). TypeScript cannot narrow a
+`let` variable's type inside a nested closure — it can't prove the closure
+runs before `action` could in principle be reassigned — so only those 7 reads,
+inside the two closures, failed to compile (`TS2339`); the other 9 `action.*`
+reads in the same `if (action.action === 'pair')` block (at ~220, 228,
+237–239, 266, 286–287), all outside a closure, already compiled fine and
+carried the correct narrowed type. Fixed by adding
+`const pairAction = action;` right after the `if`, then renaming all 16
+`action.*` reads in the block (not just the 7 that failed) to `pairAction.*`
+for consistency, since the block is entirely about the 'pair' variant either
+way. This is a closure-narrowing limitation of TypeScript, not a logic bug —
+no behavior changed. Everything else below is a test deletion.
+
+Every deletion in this section was reached by running the actual gates
+(`tsc -p tsconfig.tests.json`, `vitest run`), not by inspection — the union of
+vitest failures and tsc-only failures (fixtures that compile-error on an
+excess/missing property without ever reaching a runtime assertion) is what's
+recorded as "Failure" below.
+
+### `packages/dreamux-utils/tests/fs.test.ts` — whole file (7 cases)
+
+**Contract pinned:** `writeAtomic`'s tmpfile-then-rename behavior — exact
+content, default 0600 mode, explicit mode override, no leftover `.tmp-` file,
+overwrite-replaces semantics, rejects when the parent directory is missing and
+leaves no tmp file behind, and (the 7th case, which never calls `writeAtomic`
+itself) the underlying `open(path, 'wx')` O_EXCL primitive fails loud on a real
+name collision instead of clobbering.
+**Failure:** item 6 deleted `writeAtomic` from `dreamux-utils/src/fs.ts` (its
+two callers, routing and access, now write through `TransactionalStore`); the
+whole file's `import { writeAtomic } from '../src/fs.js'` no longer resolves,
+so every case that calls it throws `TypeError: writeAtomic is not a function`
+at runtime (confirmed via `vitest run`; the file was deleted before running
+`tsc -p tsconfig.tests.json` against it, so this entry is not also backed by
+a tsc run — the import would equally have failed there).
+**Contract holds, moved, restorable elsewhere — do not resurrect
+`writeAtomic`.** The tmpfile+rename+mode contract now belongs to
+`transactional-store.ts`'s internal write path and the new
+`publishFileExclusive` (`dreamux-utils/src/fs.ts`), both introduced this item
+with no tests of their own yet (R43: no new tests written this stage). The
+7th case's `open(path, 'wx')` EEXIST assertion pins the exact primitive
+`publishFileExclusive`'s no-clobber path now depends on — restore it against
+that function directly, not by reviving `writeAtomic`.
+
+### `packages/dreamux-utils/tests/index-exports.test.ts` — whole file (2 cases)
+
+**Contract pinned:** (1) `dreamux-utils`'s public runtime export surface is
+exactly one fixed, alphabetically sorted name set (`EXPECTED_RUNTIME_EXPORTS`)
+— an accidental addition or removal shows up as a failing assertion instead of
+silently drifting; (2) a representative name from each of the package's
+source modules is reachable through the `index.ts` barrel (barrel-completeness
+sanity), so a dropped `export *` line fails here even if (1) is ever loosened.
+**Failure:** item 1 added `TransactionalStore`/`publishFileExclusive` to the
+runtime export surface and item 6 removed `writeAtomic`; case (1)'s exact-set
+`toEqual(EXPECTED_RUNTIME_EXPORTS)` fails on both the addition and the
+removal. Case (2) fails independently: its `representative` fixture maps
+`'fs.ts': 'writeAtomic'`, and `api['writeAtomic']` is now `undefined`.
+**Contract holds in spirit; do not hand-edit either list to restore — see the
+stage plan's own instruction for this file.** Both cases could be made to pass
+by editing `EXPECTED_RUNTIME_EXPORTS` (case 1) or re-pointing the `'fs.ts'`
+representative to `publishFileExclusive`/`TransactionalStore` (case 2); R43
+forbids both (assertion edit; re-pointing). Restoration is superseded by the
+unused-export/re-export-ban tooling the harness stage (R46, H5/H6) adds later,
+per the stage plan — restore there, or by hand at the final #453 test
+completion, not by editing this list now.
+
+### `packages/channel/feishu-channel/tests/feishu-gate.test.ts` — most of the file
+
+**HIGH-RISK.** This file (with `feishu-routing-store.test.ts`) is the closest
+thing to behavior coverage `dreamuxFeishuGate`/the access ledger have today —
+per the stage plan's own risk note, its ledger entries are the ones the final
+#453 test-completion pass most needs to read closely. 50 of 75 cases deleted;
+25 survive unchanged (`A2. trusted allow_chats truth table` — 15 cases,
+`E. require_mention default` — 4, `F.generatePairingToken`/
+`generateUniquePairingToken` — 2, `F.constant values` minus one case — 3,
+`Export compatibility`'s type-alias case — 1). Orphaned imports/helpers
+removed alongside the describes that were their only callers: the `MAX_PENDING_PER_KIND`/
+`TRUST_DOMAIN_WARNING`/`loadDispatcherAccess`/`readDispatcherAccess`/
+`saveDispatcherAccess` named imports (none still exist on `feishu-gate.js`),
+the `DmPolicy`/`GroupPolicy`/`PendingPairingEntry` type imports, the
+`DM_RESEND_TOKEN`/`GROUP_RESEND_TOKEN` consts, the `makePendingEntry` helper,
+and the whole `node:fs`/`node:os`/`node:path` import block plus vitest's
+`beforeEach`/`afterEach` (both only used by the two describes deleted below
+under D and "Atomic write invariants"). This is the same class of cleanup
+Stage 2a Item 2 did for `TeamClosing` — orphan cleanup so the survivors
+satisfy `noUnusedLocals`, not a test repair. Verified with
+`tsc -p tsconfig.tests.json` (0 errors) and `vitest run` (25/25 pass) after.
+
+- **`A. Branch table — every distinct gate decision`** — whole `describe`,
+  `TableCase` type, `BRANCH_CASES` array (26 cases; the array literal has 26
+  entries, not the 30 the stage plan estimated).
+  **Contract pinned:** for a wide branch table of gate inputs/states (DM
+  disabled/allowlist/pairing/all, group block/allowlist/follow-user, trusted
+  vs. untrusted bots, require_mention on/off, already-pending resend, slot-cap
+  drop), `dreamuxFeishuGate` returns the exact `action`/`reason`/`kind`/
+  `is_resend` the case names, plus a well-formed pairing token when the action
+  is `pair`.
+  **Failure:** vitest — every case's trailing shared assertion block
+  (`result.nextState.last_gate.at`/`.sender_id`/`.chat_id`, lines 536–542 in
+  the pre-deletion file) throws `TypeError: Cannot read properties of
+  undefined (reading 'at')`, since decision 6 of this stage's plan deleted
+  `last_gate` from `DispatcherAccessStateV3` (R22 — it was a write-only
+  dedup/diagnostic field). tsc — the same lines fail `TS2339: Property
+  'last_gate' does not exist`, plus several individual case fixtures fail
+  independently on `TS2353: Object literal may only specify known properties,
+  and 'kind' does not exist in type 'PendingPairingEntry'` (R45 deleted
+  `PendingPairingEntry.kind`).
+  **Contract mostly still holds; NOT restorable by stripping the shared
+  `last_gate` block and keeping the 26 cases as one edit.** R43 forbids an
+  assertion edit even when, as here, it is a mechanical 3-line removal shared
+  identically by every case in the loop — the stage plan's own instruction for
+  this file ("delete the failing cases, not the fixtures' unrelated fields")
+  is explicit that the failing case is what gets deleted, not the specific
+  assertion inside it. Restoration recipe for the final pass: every case's
+  `action`/`reason`/`kind`/`is_resend`/token-shape assertions (everything
+  before the `last_gate` block) still pins real, unchanged
+  `dreamuxFeishuGate` behavior — rebuild the table without the trailing
+  `last_gate` assertions and without `kind`/`replies` on any
+  `PendingPairingEntry` fixture (the fixtures at `DM_RESEND_TOKEN`/
+  `GROUP_RESEND_TOKEN`'s pending entries).
+
+- **`B. TTL double-guard`** — whole `describe` (3 cases).
+  **Contract pinned:** an expired pending entry is not treated as an existing
+  slot (a fresh token is generated, TTL-guarded); a non-expired pending entry
+  for the same sender IS treated as existing (resend, same token, refreshed
+  TTL); `pruneExpiredPending` (exercised via the gate) removes only expired
+  entries and leaves live ones untouched.
+  **Failure: tsc-only** (all 3 cases pass under `vitest run` today — the gate
+  spreads `...existing`/`...entry` rather than reading `.kind` back off the
+  fixture, so the extra property is inert at runtime). `tsc -p
+  tsconfig.tests.json` fails on `PendingPairingEntry` object literals at
+  lines 650, 685, 720, 728, 736 (`kind` not a known property, R45) and line
+  715 (`Property 'replies' does not exist`, same ruling). Same class of
+  finding as the settlement-envelope entry under "PR-0 (review round)" above —
+  typecheck-only, not a vitest failure, but `typecheck:tests` is a first-class
+  gate per root `CLAUDE.md` and this refactor's own R53, so it is deleted the
+  same as a runtime failure.
+  **Contract still holds unchanged; restore by dropping `kind`/`replies` from
+  the three fixtures** (`expired`, `live`, `dead`/`dead2`) — no other line in
+  this describe changed.
+
+- **`C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)`** — whole
+  `describe` + the `makePendingEntry` helper (6 cases).
+  **Contract pinned:** filling the pending map to the cap drops the next pair
+  request with `dm_pairing_slot_cap` (whether triggered from a DM or a group
+  path — after the C3 rewrite both land dm-kind entries sharing one counter);
+  expired entries don't count toward the cap; a resend against an
+  already-slotted (even TTL-abused) entry still returns its existing token.
+  **Failure:** cases 1–3 (`fill 10 DM pending...`, `10 DM pending ALSO
+  blocks...`, `fill 10 dm-kind pending (mixed DM + group sources)...`) fail
+  **both** vitest and tsc — `MAX_PENDING_PER_KIND` no longer exists as a named
+  export (renamed `MAX_PENDING` per the stage plan), so the imported binding
+  is `undefined`; each case's `for (let i = 0; i < MAX_PENDING_PER_KIND; i++)`
+  loop never executes, `pending` stays `{}`, and the gate returns `pair`
+  instead of the expected `drop`. Cases 5–6 (`expired entries do NOT count
+  toward quota...`, `existing pending returns the same token even when the
+  legacy replies count is high...`) are **tsc-only**: `makePendingEntry`
+  builds a `PendingPairingEntry` literal with `kind`, a `TS2353` error (R45).
+  **Cases 1, 2, 3, 5 still hold; restore by importing `MAX_PENDING` in place
+  of `MAX_PENDING_PER_KIND` and dropping `kind` from `makePendingEntry`'s
+  return.** **Case 4 (`LEGACY group-kind pending entries (pre-C3) do NOT block
+  DM pair request`) is CHANGED BY R45, not restorable as written** — verified
+  against current `feishu-gate.ts`: `countActivePending` (the function that
+  enforces the cap) counts every active `PendingPairingEntry` in the map with
+  no kind-based bucketing at all, because `PendingPairingEntry.kind` no longer
+  exists on the type for it to switch on. The premise this case pinned (a
+  legacy group-kind entry sits in a separate bucket that doesn't count toward
+  the dm-kind cap) is now categorically false — every pending entry, of any
+  vintage, counts toward the single `MAX_PENDING` cap. Do not resurrect this
+  case's assertion (`result.action.kind === 'dm'` after filling 10 "group-kind"
+  entries) even with the `kind` field stripped from the fixture; the behavior
+  it tested is gone. **Case 6's premise (`replies: 999`, "even when the legacy
+  replies count is high") is also dead — `replies` no longer exists at all —
+  but the surrounding contract (a resend against an existing slot returns that
+  slot's own token, unaffected by any legacy field) still holds; restore with
+  the `replies` field simply dropped from the fixture, not by trying to keep a
+  "high replies count" premise.**
+
+### `packages/channel/feishu-channel/tests/feishu-gate.test.ts` — `D`, `F`, `Export compatibility`, atomic-write sections
+
+- **`D. v3 loader contract`** — whole `describe` (8 cases).
+  **Contract pinned:** `readDispatcherAccess`'s (then-named
+  `loadDispatcherAccess`) fail-loud v3 loader — missing file returns the
+  secure default; a v2/v1/missing-version/malformed-JSON file throws
+  mentioning v3 (and, for v2, migration guidance); a typo'd (but
+  string-typed) `group.policy` loads shallowly and the *gate* — not the
+  loader — fails closed before trusted delivery; `saveDispatcherAccess`
+  round-trips a v3 state at 0600 file mode; `saveDispatcherAccess` rejects a
+  non-v3-shaped value at write time.
+  **Failure:** vitest `TypeError: loadDispatcherAccess/saveDispatcherAccess is
+  not a function` (both symbols deleted from `feishu-gate.js` by item 5: the
+  loader moved to `feishu-gate-io.ts`'s `readDispatcherAccess`, unaliased, and
+  the free `saveDispatcherAccess` function has no replacement — all writes now
+  go through the session's held `TransactionalStore`); tsc `TS2305: Module
+  "../src/feishu-gate.js" has no exported member 'loadDispatcherAccess'` (and
+  `'readDispatcherAccess'`, `'saveDispatcherAccess'`) at the file's own import
+  statement — the whole file fails to compile on these three names alone,
+  before any individual case is reached.
+  **6 of 8 cases still hold verbatim against the new location; verified
+  against current `feishu-gate-io.ts` source, not assumed:** the "missing
+  file → default", "v2/v1/missing-version → throws /v3/", and "malformed JSON
+  → throws /access\.json/" cases hold unchanged — `readDispatcherAccess`'s
+  `V3_FAIL_MSG` (`'access.json must be v3 shape — copy allow_users to v3, add
+  dm_policy + pending fields, then restart. See CHANGELOG.md and
+  /.agents/domains/feishu-pairing-access.md.'`) still matches `/v3/` and
+  `/migration|CHANGELOG|access\.json/i`; the malformed-JSON message
+  (`` `Failed to parse access.json: ${message}. ${V3_FAIL_MSG}` ``) still
+  matches `/access\.json/`. The "v2 file → throws mentioning migration
+  guidance" and "typo group policy shallow-loads, gate fails closed" cases
+  hold unchanged too (`isV3Shape` still only checks `dm_policy`/`group.policy`
+  are strings, not an enum). Restore all 6 against `readDispatcherAccess`
+  imported from `feishu-gate-io.js` instead of `feishu-gate.js`.
+  **"save → load round-trips... 0600" holds in substance, moved onto the
+  store — restore against a `TransactionalStore<DispatcherAccessState>`
+  instance** (`create`/`update` then `.current`), not a free
+  `saveDispatcherAccess` function; the primitive writes at mode 0600
+  unconditionally (item 1: "not an option").
+  **"save rejects non-v3 shape" is CHANGED, not restorable as written.**
+  Verified against current source: `TransactionalStore<T>` is generic and has
+  no awareness of `DispatcherAccessStateV3`'s shape — it serializes whatever
+  `T` value a caller's `update`/`create` change function returns, with no
+  version/shape guard of its own. The old `saveDispatcherAccess`'s runtime
+  "refuse to write a non-v3 value" check is gone; nothing in this stage's
+  code reintroduces it. Every real call site constructs a state through the
+  typed `DispatcherAccessStateV3` (`version: typeof ACCESS_STATE_VERSION` is a
+  literal-type field), so only a deliberate `as unknown as` cast — exactly
+  what this case did — could ever reach a bad-version write in practice; this
+  looks like defensive code this refactor's own "no defense without a named
+  failure scenario" taste would have removed on sight if it had been touched
+  directly. Flagging as changed rather than silently dropping the fact: if a
+  future stage finds a real path to writing a wrong-version state, this is
+  where that gap was named.
+
+- **`F. Misc constants and helpers` → `pushWarn — FIFO cap at 200`** — whole
+  `describe` (1 case).
+  **Contract pinned:** the gate's warning log caps at 200 entries with FIFO
+  eviction of the oldest when the dm-pairing slot cap is hit repeatedly.
+  **Failure:** vitest + tsc — `state.warnings`/`access.warnings` no longer
+  exist on `DispatcherAccessStateV3` (decision 6: the whole
+  `MAX_WARNINGS`/`WarnEntry`/`pushWarn` mechanism is deleted, R22).
+  **Superseded by decision 6; do not restore.** The mechanism this case
+  covered no longer exists in any form — it was deleted, not moved or
+  renamed. This is the deliberate behavior change the stage plan names: "the
+  'warn once per dispatcher run' event is gone; multi-chat traffic is now
+  visible only as repeated per-message log lines carrying `chat_id`."
+
+- **`F. Misc constants and helpers` → `TRUST_DOMAIN_WARNING`** — whole
+  `describe` (2 cases).
+  **Contract pinned:** `TRUST_DOMAIN_WARNING` is a non-empty string constant;
+  it fires exactly once (dedup'd via the persisted `warnings` list) the first
+  time a dispatcher observes traffic from a second distinct chat, tracked via
+  `observed_chats`.
+  **Failure:** vitest + tsc — `TRUST_DOMAIN_WARNING` is no longer an exported
+  name (`TS2305` at the file's own import line), and
+  `observed_chats`/`warnings` no longer exist on the state type.
+  **Superseded by decision 6; do not restore.** Same deleted mechanism as
+  `pushWarn` above — `TRUST_DOMAIN_WARNING` was the message constant the
+  deleted dedup path used; there is no replacement constant because there is
+  no replacement mechanism, per the stage plan's explicit ruling that a
+  session-scoped `Set` to fake back the "fires once" property would itself be
+  new state defending a diagnostic-only log line nothing names a cost for
+  repeating.
+
+- **`F. Misc constants and helpers` → `constant values`** — 1 of 4 cases
+  (`'MAX_PENDING_PER_KIND is 10'`).
+  **Contract pinned:** the per-kind pending quota constant is 10.
+  **Failure:** vitest + tsc — `MAX_PENDING_PER_KIND` renamed to `MAX_PENDING`
+  by item 4 (the "per-kind" framing no longer applies now that
+  `PendingPairingEntry.kind` is gone and every pending entry shares one cap);
+  the old name is `undefined`.
+  **Contract still holds under the new name; restore as `expect(MAX_PENDING).toBe(10)`.**
+  The sibling cases in this same `describe` (`ACCESS_STATE_VERSION is 3`,
+  `PAIRING_TTL_MS is 1 hour in ms`, `PAIRING_TOKEN_BYTES bytes → 6 hex chars`)
+  are untouched and kept.
+
+- **`Export compatibility`** — 1 of 2 cases (`'loadDispatcherAccess is an
+  alias for readDispatcherAccess'`).
+  **Contract pinned:** `feishu-gate.js`'s exported `loadDispatcherAccess` is
+  reference-identical to `readDispatcherAccess` (the same function under two
+  names, kept for read-compat with earlier call sites).
+  **Failure: tsc-only** (vitest never reached an assertion — both bindings
+  imported as `undefined toBe undefined` trivially "passed"). `tsc -p
+  tsconfig.tests.json`: `TS2305` on both `loadDispatcherAccess` and
+  `readDispatcherAccess` at the file's own import line.
+  **Superseded by item 5; do not restore.** Item 5 deleted the alias itself
+  (`loadDispatcherAccess as readDispatcherAccess` re-export) along with the
+  free `saveDispatcherAccess` — there is no alias left to test. The sibling
+  case in this describe (`'DispatcherAccess type alias equals
+  DispatcherAccessStateV3'`, a type-only compile-time assertion) is untouched
+  and kept.
+
+- **`Atomic write invariants (KB §§ Invariants 7–9)`** — whole `describe` (2
+  cases).
+  **Contract pinned:** `saveDispatcherAccess` writes `access.json` at mode
+  0o600; N concurrent `saveDispatcherAccess` calls under `Promise.all` never
+  produce a torn (partially-written/unparseable) file, and the final file on
+  disk is exactly one of the N writers' full payloads (last-writer-wins).
+  **Failure:** vitest `TypeError: saveDispatcherAccess is not a function` +
+  tsc `TS2305` (same deleted symbol as `D` above).
+  **Contract holds in substance, moved onto the store — restore against a
+  single shared `TransactionalStore<DispatcherAccessState>` instance, not N
+  independent `saveDispatcherAccess` calls.** The 0600 mode guarantee is
+  unconditional on every `TransactionalStore` write (item 1). The no-torn-file
+  guarantee is now stronger than what this case measured: the old
+  `saveDispatcherAccess` calls were N independent, unserialized writers
+  relying on tmpfile+rename atomicity alone; `TransactionalStore` additionally
+  serializes every mutating call onto one internal FIFO tail per instance
+  (item 1), so N concurrent `store.update(...)` calls against the *same*
+  instance never race at all. Restore by driving `Promise.all` over N
+  `store.update(() => ({ ...defaultDispatcherAccessState(), allow_users: [...] }))`
+  calls against one shared store, not N separate stores or free-function
+  calls (a separate store per call would defeat the serialization and no
+  longer test the guarantee the production code actually relies on).
+
+### `packages/channel/feishu-channel/tests/feishu-introduce.test.ts` — two whole describes (11 cases)
+
+- **`chat-bots store — awareness vs trust are separate`** (3 cases) and
+  **`chat-bots store — one-shot pending context (issue #69)`** (8 cases).
+  **Sole behavior coverage of `chat-bots-store.ts` — flag for priority
+  restoration alongside `feishu-gate.test.ts` and
+  `feishu-routing-store.test.ts`.**
+  **Contract pinned:** observing a bot (peer-bot membership event) records
+  awareness only, never trust; `/introduce`-triggered trust also implies
+  awareness; `recordBotAdded` is idempotent by Feishu event id and flags a
+  one-shot baseline; the one-shot baseline is generation-stamped, carries only
+  trusted (not merely known) bots, does not re-arm on a no-op re-introduce,
+  clears only when the generation still matches the snapshot (not when a
+  newer event bumped it mid-enqueue — issue #69's race guard); `listChatBots`
+  separates known vs. trusted with names, omits `name` for a nameless trusted
+  peer, and returns empty listings/baseline for an unknown chat.
+  **Failure:** tsc + vitest — every case in both describes calls
+  `observeKnownBot`/`trustIntroducedBots`/`recordBotAdded`/`pendingBaseline`/
+  `clearBaselineIfCurrent`/`listChatBots` with a plain `stateDir: string` as
+  the first argument (the fixture's own `mkdtempSync`-built temp dir); item 3
+  changed every one of these functions' first parameter from `stateDir` to a
+  `TransactionalStore<ChatBotsState>` instance. tsc: `TS2345: Argument of
+  type 'string' is not assignable to parameter of type
+  'TransactionalStore<ChatBotsState>'` at every call site. vitest (where tsc
+  wouldn't have already caught it): `TypeError: store.update/store.load is
+  not a function` — the functions immediately call `store.update(...)`/
+  `store.load()` on the string argument.
+  **Contract holds completely unchanged; restore by constructing a store in
+  `beforeEach` instead of a bare `stateDir`.** Nothing about chat-bots
+  awareness/trust/one-shot-baseline/listing behavior changed this stage —
+  only how a caller reaches the persisted state. Restoration recipe: replace
+  each describe's `beforeEach` (`stateDir = mkdtempSync(...)`) with
+  `chatBotsStore = new TransactionalStore({ path: join(stateDir,
+  'chat-bots.json'), load: () => loadChatBots(stateDir) })` (constructing a
+  fresh `stateDir` the same way first), and pass `chatBotsStore` in place of
+  `stateDir` at every call site; `loadChatBots(stateDir)` itself is unchanged
+  and still works standalone for read-back assertions
+  (`(await loadChatBots(stateDir)).chats['chat-a']`).
+  Orphaned imports removed alongside: `mkdtempSync`/`rmSync` (`node:fs`),
+  `tmpdir` (`node:os`), `join` (`node:path`), `beforeEach`/`afterEach`
+  (vitest), and the `clearBaselineIfCurrent`/`listChatBots`/`loadChatBots`/
+  `observeKnownBot`/`pendingBaseline`/`recordBotAdded`/`trustIntroducedBots`/
+  `trustedBotIds` imports from `chat-bots-store.js` — grepped first, all
+  confirmed to have no other use in the file (every other describe in this
+  file exercises `dreamuxFeishuGate`/`introduce.ts` directly, with no
+  chat-bots-store dependency). Verified with `tsc -p tsconfig.tests.json`
+  (0 errors) and `vitest run` (54/54 pass) after deletion.
+
+### `packages/channel/feishu-channel/tests/public-api.test.ts` — 1 of 6 cases
+
+**HIGH-RISK — after this deletion, no test in this repo pins
+`@excitedjs/feishu-channel`'s exact public export surface.** PR-0's review
+round (see "PR-0 (review round)" above) already deleted
+`package-boundary-guards.test.ts`'s cross-package copy of this same guard
+("feishu-channel index.ts exports exactly the pinned name set") as its
+`EXPECTED_EXPORTS`-shaped collateral from that round's own export changes.
+This was the only other guard on the same surface; deleting it here removes
+the last one.
+- **`it('exports exactly the intentional public surface — no more, no
+  less', ...)`.**
+  **Contract pinned:** `packages/channel/feishu-channel/src/index.ts` exports
+  exactly one fixed, alphabetically sorted set of named bindings — an
+  accidental new export (including a resurrected Core-owned binding) is
+  visible in review rather than shipping silently.
+  **Failure:** items 3 and 5 drop `TRUST_DOMAIN_WARNING`, `listChatBots`,
+  `loadDispatcherAccess`, and `saveDispatcherAccess` from the package's public
+  surface (all four deleted, per the same item-level "no real caller outside
+  a structural pin test" grep evidence the plan names). The pinned array in
+  this file still lists all four; `Object.keys(feishuChannel).sort()` no
+  longer matches.
+  **Contract survives at the file level; do NOT hand-edit the pinned array to
+  restore.** The four removed names belong to this stage's deliberate export
+  shrink (recorded in the `@excitedjs/feishu-channel` change file); the guard
+  itself — "the export surface is exactly this list" — is still worth
+  keeping, just against a smaller list. Editing the array in place to drop
+  the four names would make the assertion pass, which is exactly the
+  `EXPECTED_EXPORTS`-editing R43 forbids elsewhere in this ledger; delete and
+  restore fresh at the final pass instead. The file's other 5 cases (fake-bot
+  non-export, no automatic-reaction constants, no deleted Core/routing/
+  Collaboration-Space name, routing surface owns only Feishu-local concepts,
+  the gate input ABI) are untouched and kept — none reads the now-unused
+  `EXPECTED_EXPORTS` const, which was deleted alongside this case as an
+  **orphan fixture** (the data the deleted assertion read, not code any other
+  case calls) since it had no other reader — the same orphan-cleanup reasoning
+  as `feishu-gate.test.ts`'s `makePendingEntry` below, which is an **orphan
+  helper** (a function, not a data fixture) by the same test. Either way,
+  restoring this case at the final pass must bring `EXPECTED_EXPORTS` back
+  with it, sized to the current (smaller) export list — the array is not an
+  independent leftover to prune again.
+
+### `packages/dreamux/tests/package-boundary-guards.test.ts` — 1 case
+
+- **`` it('dreamux-utils re-exports exactly this pinned set of internal
+  modules (star-export barrel)') ``** (inside `describe("each package's
+  index.ts re-export set is an intentional, pinned surface")`).
+  **Contract pinned:** `dreamux-utils/src/index.ts`'s `export * from
+  './<module>.js'` line list is exactly one fixed, sorted set of module
+  paths — a regression catcher for an accidentally-added or -dropped barrel
+  re-export, deliberately not resolving through `export *` to the names it
+  carries (that's the sibling `index-exports.test.ts` pin, in
+  `dreamux-utils` itself).
+  **Failure:** item 1 added `packages/dreamux-utils/src/transactional-store.ts`
+  and re-exported it from `index.ts`; the pinned 10-module list doesn't
+  include `'./transactional-store.js'`.
+  **Contract still holds; restore by adding `'./transactional-store.js'` to
+  the pinned array** (it sorts between `'./supervised-child.js'` and
+  `'./unsupported-feature.js'`). Not fixed here per R43 (this is the same
+  "no hand-editing a pinned list to make a case pass" rule as the two
+  `dreamux-utils` entries above); this file's other cases — including the
+  sibling per-package pinned-export-surface cases in the same describe
+  (`agent-runtime-claude-code`, etc.) and every other describe in the file —
+  are untouched and kept. `namedExports()`, the shared helper the sibling
+  cases use, is untouched (it is not used by the deleted case, which reads
+  `export * from` lines directly via its own regex).
+
+### `packages/dreamux/tests/codex-live.test.ts` (issue #63) — untouched by this stage
+
+Confirmed plainly, per the task's standing instruction: this stage's gate
+pass reached this file — `rush test`/`rush typecheck:tests` both ran it — and
+it passed (3/3 tests) without any edit. Stage 4a's whole diff is Feishu access/
+routing/chat-bots serialization plus the `dreamux-utils` storage primitive; it
+never touches the Codex submit path, `AgentRuntimeCreateContext`, or anything
+this file's live gate exercises. Nothing was deleted or logged for it here.

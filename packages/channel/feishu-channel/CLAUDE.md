@@ -161,8 +161,9 @@ Requirements:
 - Non-Owner clicks must return a toast only:
   `只有 App Owner 才有权限点击批准授权`. They must not mutate `access.json` or
   update the card.
-- Owner clicks approve the hidden token under the access mutex. Approval adds
-  the pending requester to `allow_users` and removes the pending entry.
+- Owner clicks approve the hidden token through the session's held access
+  store's serialized update queue. Approval adds the pending requester to
+  `allow_users` and removes the pending entry.
 - A successful click must respond through the official card callback ACK shape:
   `{ toast, card: { type: "raw", data: <green success card> } }`. Do not use
   ordinary `im.v1.messages.patch` from the click handler, and do not return a
@@ -190,12 +191,12 @@ Design constraints:
   `feishu-gate.ts`, and IO/mutation orchestration in `feishu-session-ops.ts`.
   Turning an approved token into an `allow_users` entry is
   `approvePairingByToken` in `feishu-gate-io.ts`, beside the
-  `readDispatcherAccess`/`saveDispatcherAccess` it reads and writes through —
-  the one access-state mutation that answers a card click rather than a gate
-  decision. Transport code owns only thin Feishu SDK wrappers such as card
-  send and owner lookup. Bot display names come from the transport's runtime bot info
-  (`/open-apis/bot/v3/info` `app_name`); if missing, the channel falls back to
-  the neutral `Dreamux bot` label.
+  `readDispatcherAccess` loader the session's held access `TransactionalStore`
+  is built with — the one access-state mutation that answers a card click
+  rather than a gate decision. Transport code owns only thin Feishu SDK
+  wrappers such as card send and owner lookup. Bot display names come from the
+  transport's runtime bot info (`/open-apis/bot/v3/info` `app_name`); if
+  missing, the channel falls back to the neutral `Dreamux bot` label.
 - Any change to this flow must update `feishu-pairing-card.test.ts`, the
   transport tests for new SDK wrappers, and
   `.agents/domains/feishu-pairing-access.md` when the contract changes.

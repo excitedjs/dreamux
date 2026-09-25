@@ -57,6 +57,21 @@ where the slug and digest are both derived from the configured channel `id`.
   naming the file. Recreate the bindings through those tools rather than
   editing it.
 
+## Feishu Peer-Bot Trust State
+
+The built-in Feishu Channel tracks which peer bots it has passively observed
+or been introduced to trust, per chat, in one server-owned file per dispatcher
+at `~/.dreamux/state/<dispatcher-id>/chat-bots.json`.
+
+- It is fully server-owned. Do not hand-edit it.
+- Loaded at the session's first peer-bot operation (a passive bot message,
+  `/introduce`, or a bot-added membership event), not at channel start, and
+  held in memory for the life of the session from then on — a hand edit made
+  while the channel is running is not read until the next restart, the same as
+  the routing document. An unreadable or corrupt file degrades to an empty
+  store rather than failing the channel's start or any operation, since
+  peer-bot discovery is not security-critical the way `access.json` is.
+
 ## Feishu Extension State
 
 Another plugin may register a Feishu extension: extra `channel-feishu` tools,

@@ -467,6 +467,12 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   asset. On the 0.x line an incompatible shape is handled by fail-loud plus
   manual rebuild — no migrations, no lazy backfill, no old-shape fallback
   readers. (Domain: [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **A live Feishu session holds authority over its own files; a hand edit
+  waits for restart.** Once a Channel session loads its routing document,
+  `access.json`, or `chat-bots.json`, that in-memory value is authoritative for
+  the rest of the session — an edit made to the file on disk while the
+  dispatcher keeps running is not read until the next restart. (Domain:
+  [state-config-and-files](/.agents/domains/state-config-and-files.md).)
 
 ## Plugins
 

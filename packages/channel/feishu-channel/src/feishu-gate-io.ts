@@ -1,7 +1,9 @@
 /**
  * Feishu access gate v3 — state IO and everything that mutates persisted
  * access state directly. Owns:
- *   - v3 shape validation + fail-loud loader/saver
+ *   - v3 shape validation + fail-loud loader (`readDispatcherAccess`), which
+ *     is also the `load` option the session's held `TransactionalStore`
+ *     builds with — the store owns every write from here on
  *   - turning an approved pairing token into an `allow_users` entry: the one
  *     access-state mutation that answers a card click rather than a gate
  *     decision
@@ -10,17 +12,18 @@
  * `feishu-gate.ts`.
  */
 
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { writeAtomic } from '@excitedjs/dreamux-utils';
+import type { TransactionalStore } from '@excitedjs/dreamux-utils';
 import {
   ACCESS_STATE_VERSION,
   PAIRING_TOKEN_REGEX,
   defaultDispatcherAccessState,
+  type DispatcherAccessState,
   type DispatcherAccessStateV3,
+  type PendingPairingEntry,
 } from './feishu-gate.js';
-import type { AsyncMutex } from './lib/mutex.js';
 
 function errInfo(err: unknown): { message: string; stack?: string } {
   if (err instanceof Error) {
@@ -50,9 +53,40 @@ function isV3Shape(x: unknown): x is DispatcherAccessStateV3 {
 }
 
 /**
+ * A pending entry with every required field (`sender_id`, `chat_id`,
+ * `expires_at`, `created_at`) present and correctly typed, per R21: reject
+ * missing/wrong-type fields rather than invent a value. `prompt_message_id`
+ * is optional on the type, so it is carried through only when present and
+ * typed right, omitted otherwise.
+ */
+function readPendingEntry(x: unknown): PendingPairingEntry | null {
+  if (!x || typeof x !== 'object') return null;
+  const e = x as Record<string, unknown>;
+  if (typeof e.sender_id !== 'string') return null;
+  if (typeof e.chat_id !== 'string') return null;
+  if (typeof e.expires_at !== 'number') return null;
+  if (typeof e.created_at !== 'number') return null;
+  return {
+    sender_id: e.sender_id,
+    chat_id: e.chat_id,
+    expires_at: e.expires_at,
+    created_at: e.created_at,
+    ...(typeof e.prompt_message_id === 'string'
+      ? { prompt_message_id: e.prompt_message_id }
+      : {}),
+  };
+}
+
+/**
  * Load access.json from stateDir. Fails LOUDLY if file exists but shape is
- * not v3. Missing file returns the secure default (pairing DM default,
- * empty allowlists).
+ * not v3, or a `pending` entry is missing/mistyped on `sender_id`, `chat_id`,
+ * `expires_at`, or `created_at`. Missing file returns the secure default
+ * (pairing DM default, empty allowlists).
+ *
+ * Reconstructs the returned value field by field rather than casting `parsed`
+ * as-is, so an old file's now-dropped ledger fields (`last_gate`,
+ * `observed_chats`, `warnings`) or per-entry fields (`kind`, `replies`) are
+ * read and discarded, never round-tripped into memory or back to disk.
  */
 export async function readDispatcherAccess(
   stateDir: string,
@@ -75,32 +109,23 @@ export async function readDispatcherAccess(
     );
   }
   if (!isV3Shape(parsed)) throw new Error(V3_FAIL_MSG);
-  return parsed;
-}
-
-/**
- * Persist access state atomically (tmpfile → rename, mode 0600). Refuses to
- * write non-v3 state. Creates stateDir with mode 0700 if missing.
- */
-export async function saveDispatcherAccess(
-  stateDir: string,
-  state: DispatcherAccessStateV3,
-): Promise<void> {
-  if (!isV3Shape(state)) {
-    throw new Error('saveDispatcherAccess: refusing to write non-v3 state');
+  const pending: Record<string, PendingPairingEntry> = {};
+  for (const [token, rawEntry] of Object.entries(parsed.pending)) {
+    const entry = readPendingEntry(rawEntry);
+    if (entry === null) throw new Error(V3_FAIL_MSG);
+    pending[token] = entry;
   }
-  try {
-    await stat(stateDir);
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === 'ENOENT') {
-      await mkdir(stateDir, { mode: 0o700, recursive: true });
-    } else {
-      throw new Error(`stat state dir: ${e.message}`);
-    }
-  }
-  const payload = JSON.stringify(state, null, 2) + '\n';
-  await writeAtomic(stateDir, 'access.json', payload, 0o600);
+  return {
+    version: ACCESS_STATE_VERSION,
+    dm_policy: parsed.dm_policy,
+    group: {
+      policy: parsed.group.policy,
+      allow_chats: parsed.group.allow_chats,
+      require_mention: parsed.group.require_mention,
+    },
+    allow_users: parsed.allow_users,
+    pending,
+  };
 }
 
 export interface PairingApprovalResult {
@@ -126,13 +151,24 @@ export interface PairingApprovalResult {
  *   - Details include `duplicate` flag, `ttl_left_ms`, `sender_id`,
  *     `chat_id`, `kind` for audit logging.
  *
- * `accessMutex` is the caller's session-scoped serialization on access.json;
- * this function does not own it, only locks it for its own read-modify-write.
+ * The whole decide-and-write runs inside one `store.update()`, so it is
+ * serialized against every other access-state change the session makes.
+ * `not_found` and the duplicate-but-still-consumes-the-slot case are decided
+ * inside the `update` and returned unchanged (no write); the decide logic
+ * itself cannot throw. But `update()` also self-loads the store on its first
+ * call (never loaded at session start, per the store's own contract), and
+ * that load can throw on a malformed `access.json` — a case the old code left
+ * unhandled (the read sat inside the mutex's `lock`, outside any try/catch,
+ * so it would have propagated as an unhandled rejection out of a card click
+ * that arrived before any message had loaded the store). The `catch` below
+ * now answers that case too, as `status: 'error'`; the message still says
+ * "写入失败" (write failed) even though the failure may be a load, since no
+ * named scenario justifies a second error message for what is already a rare,
+ * fail-loud-at-the-daemon-level condition.
  */
 export async function approvePairingByToken(
   session: {
-    stateDir: string;
-    accessMutex: AsyncMutex;
+    accessStore: TransactionalStore<DispatcherAccessState>;
     dispatcherId: string;
     log: DreamuxLogger;
   },
@@ -145,90 +181,88 @@ export async function approvePairingByToken(
     };
   }
   const lowerToken = token.toLowerCase();
-  return session.accessMutex.lock(async () => {
-    const state = await readDispatcherAccess(session.stateDir);
-    const entry = state.pending[lowerToken];
-    const now = Date.now();
-    if (entry === undefined || entry.expires_at <= now) {
-      return {
-        status: 'not_found',
-        message: '授权请求不存在或已过期',
-        details: { token: lowerToken },
+  let matchedEntry: PendingPairingEntry | undefined;
+  let result!: PairingApprovalResult;
+  try {
+    await session.accessStore.update((state) => {
+      const entry = state.pending[lowerToken];
+      const now = Date.now();
+      if (entry === undefined || entry.expires_at <= now) {
+        result = {
+          status: 'not_found',
+          message: '授权请求不存在或已过期',
+          details: { token: lowerToken },
+        };
+        return state;
+      }
+      matchedEntry = entry;
+
+      // Clone so we can mutate
+      const next: DispatcherAccessStateV3 = {
+        ...state,
+        pending: { ...state.pending },
+        allow_users: [...state.allow_users],
       };
-    }
+      let duplicate = false;
 
-    if (entry.kind !== 'dm') {
-      return {
-        status: 'error',
-        message: '授权请求类型已不再支持',
-        details: { token: lowerToken, kind: entry.kind },
-      };
-    }
+      if (next.allow_users.includes(entry.sender_id)) {
+        duplicate = true;
+      } else {
+        next.allow_users = [...next.allow_users, entry.sender_id];
+      }
 
-    // Clone so we can mutate
-    const next: DispatcherAccessStateV3 = {
-      ...state,
-      pending: { ...state.pending },
-      allow_users: [...state.allow_users],
-    };
-    let duplicate = false;
+      // Always remove the pending entry (allowlist membership is the
+      // durable approval; a re-approved duplicate token still consumes
+      // its single-use slot).
+      delete next.pending[lowerToken];
 
-    if (next.allow_users.includes(entry.sender_id)) {
-      duplicate = true;
-    } else {
-      next.allow_users = [...next.allow_users, entry.sender_id];
-    }
-
-    // Always remove the pending entry (allowlist membership is the
-    // durable approval; a re-approved duplicate token still consumes
-    // its single-use slot).
-    delete next.pending[lowerToken];
-
-    try {
-      await saveDispatcherAccess(session.stateDir, next);
-    } catch (err) {
-      session.log.error(
-        {
-          dispatcher_id: session.dispatcherId,
-          pairing_token_len: lowerToken.length,
+      const ttlLeftMs = Math.max(0, entry.expires_at - now);
+      const who = `用户 ${entry.sender_id}`;
+      result = {
+        status: 'ok',
+        message: duplicate
+          ? `${who} 已在允许列表，授权请求已关闭`
+          : `已批准 ${who} 访问`,
+        details: {
+          duplicate,
+          kind: 'dm',
+          ttl_left_ms: ttlLeftMs,
           sender_id: entry.sender_id,
           chat_id: entry.chat_id,
-          err: errInfo(err),
         },
-        '[card-action] failed to persist pairing approval',
-      );
-      return {
-        status: 'error',
-        message: '授权写入失败，请重试',
-        details: { token: lowerToken },
       };
-    }
-
-    const ttlLeftMs = Math.max(0, entry.expires_at - now);
-    const who = `用户 ${entry.sender_id}`;
-    return {
-      status: 'ok',
-      message: duplicate
-        ? `${who} 已在允许列表，授权请求已关闭`
-        : `已批准 ${who} 访问`,
-      details: {
-        duplicate,
-        kind: 'dm',
-        ttl_left_ms: ttlLeftMs,
-        sender_id: entry.sender_id,
-        chat_id: entry.chat_id,
+      return next;
+    });
+  } catch (err) {
+    session.log.error(
+      {
+        dispatcher_id: session.dispatcherId,
+        pairing_token_len: lowerToken.length,
+        ...(matchedEntry !== undefined
+          ? {
+              sender_id: matchedEntry.sender_id,
+              chat_id: matchedEntry.chat_id,
+            }
+          : {}),
+        err: errInfo(err),
       },
+      '[card-action] failed to persist pairing approval',
+    );
+    return {
+      status: 'error',
+      message: '授权写入失败，请重试',
+      details: { token: lowerToken },
     };
-  });
+  }
+  return result;
 }
 
 /**
  * Whether this sender is one of the Dispatcher's trusted humans.
  *
- * Read-only, and deliberately not under the access mutex: the mutex serializes
- * the gate's *writes*, and asking who is trusted mutates nothing. The state is
- * written by rename, so a read racing a write sees one whole version or the
- * other.
+ * Reads the session's own held access store — the same store every gate
+ * decision and pairing write goes through — rather than a fresh disk read, so
+ * this always sees the value the running session actually committed last.
  *
  * It answers here rather than at its caller because a caller outside the gate
  * has no other reason to hold an access state — not because the field has a
@@ -236,13 +270,9 @@ export async function approvePairingByToken(
  * loaded, and routing those through a second read would only add one.
  */
 export async function isTrustedDispatcherUser(
-  stateDir: string,
+  store: TransactionalStore<DispatcherAccessState>,
   openId: string,
 ): Promise<boolean> {
-  return (await readDispatcherAccess(stateDir)).allow_users.includes(openId);
+  await store.load();
+  return store.current.allow_users.includes(openId);
 }
-
-// Alias retained so the session's `loadDispatcherAccess` import still
-// compiles through a rename. Prefer the explicit `readDispatcherAccess` in
-// new code.
-export { readDispatcherAccess as loadDispatcherAccess };

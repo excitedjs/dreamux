@@ -104,7 +104,6 @@ export {
 } from './feishu-pairing-card.js';
 
 export {
-  listChatBots,
   loadChatBots,
   type PeerBot,
   type ChatBotsListing,
@@ -120,10 +119,7 @@ export {
 
 export {
   dreamuxFeishuGate,
-  loadDispatcherAccess,
-  saveDispatcherAccess,
   defaultDispatcherAccessState,
-  TRUST_DOMAIN_WARNING,
   type DispatcherAccessState,
 } from './feishu-gate.js';
 

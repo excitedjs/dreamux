@@ -14,6 +14,8 @@
  * `start` opens the platform and lets messages in. `close` fences, drains this
  * Channel's own commit queue, and releases the bot.
  */
+import { join } from 'node:path';
+
 import type {
   ChannelCorePort,
   ChannelEventSubscription,
@@ -23,14 +25,23 @@ import type {
   JsonValue,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
-import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
+import {
+  PublicInvokeFailure,
+  TransactionalStore,
+} from '@excitedjs/dreamux-utils';
 import type {
   CreateBotOptions,
   FeishuBot,
   FeishuCardActionEvent,
 } from './bot.js';
 import { createFeishuBot } from './bot.js';
-import { listChatBots, type PeerBot } from './chat-bots-store.js';
+import {
+  CHAT_BOTS_FILENAME,
+  listChatBots,
+  loadChatBots,
+  type ChatBotsState,
+  type PeerBot,
+} from './chat-bots-store.js';
 import {
   buildInstanceApi,
   FeishuExtensionRegistry,
@@ -39,13 +50,16 @@ import {
 } from './feishu-extensions.js';
 import { sendBindingNotification } from './feishu-notification.js';
 import { sessionBotRoutes } from './feishu-session-routes.js';
-import { AsyncMutex } from './lib/mutex.js';
 import {
   alwaysActiveSessionFence,
   type FeishuSessionFence,
 } from './feishu-inbound-work.js';
 import { createAskUserRegistry } from './feishu-ask-user.js';
-import { isTrustedDispatcherUser } from './feishu-gate-io.js';
+import type { DispatcherAccessState } from './feishu-gate.js';
+import {
+  isTrustedDispatcherUser,
+  readDispatcherAccess,
+} from './feishu-gate-io.js';
 import { FeishuDocumentComments } from './feishu-document-comments.js';
 import { FeishuCotSessionSeam } from './feishu-cot-session.js';
 import { FeishuProvisioning } from './feishu-provisioning.js';
@@ -136,7 +150,8 @@ export class FeishuChannelSession {
   private readonly provisioning: FeishuProvisioning;
   private readonly docComments: FeishuDocumentComments;
   private readonly extensions: FeishuSessionExtensions;
-  private readonly _accessMutex = new AsyncMutex();
+  private readonly _chatBotsStore: TransactionalStore<ChatBotsState>;
+  private readonly _accessStore: TransactionalStore<DispatcherAccessState>;
   private readonly inactiveFence = alwaysActiveSessionFence();
   private readonly askUser = createAskUserRegistry({
     onExpire: (expiry) => {
@@ -164,6 +179,20 @@ export class FeishuChannelSession {
       dispatcherId: opts.dispatcherId,
       channelId: opts.channelId,
       stateDir: opts.stateDir,
+    });
+    // Loaded at the first peer-bot operation, not here — a corrupt or
+    // unreadable file is not security-critical, so nothing about session
+    // start depends on this store's first read.
+    this._chatBotsStore = new TransactionalStore({
+      path: join(opts.stateDir, CHAT_BOTS_FILENAME),
+      load: () => loadChatBots(opts.stateDir),
+    });
+    // Never loaded at start either — the first gate decision loads it, and an
+    // unreadable file fails that one operation rather than the session start.
+    this._accessStore = new TransactionalStore({
+      path: join(opts.stateDir, 'access.json'),
+      load: () => readDispatcherAccess(opts.stateDir),
+      dirMode: 0o700,
     });
     this.routing = new FeishuRouting({
       dispatcherId: opts.dispatcherId,
@@ -211,7 +240,8 @@ export class FeishuChannelSession {
       fetchDocCommentText: (request) => this.bot.fetchDocCommentText(request),
       resolveUserName: (openId) =>
         this.bot.resolveUserName?.(openId) ?? Promise.resolve(undefined),
-      isTrustedUser: (openId) => isTrustedDispatcherUser(opts.stateDir, openId),
+      isTrustedUser: (openId) =>
+        isTrustedDispatcherUser(this._accessStore, openId),
     });
     this.extensions = new FeishuSessionExtensions(opts.extensions, opts.log);
   }
@@ -293,7 +323,6 @@ export class FeishuChannelSession {
         sessionBotRoutes({
           fence: lifecycle.fence,
           track: (work) => this.track(lifecycle, work),
-          stateDir: this.opts.stateDir,
           handle: () => this.handleForFence(lifecycle.fence),
           onCardAction: (event) => this.onCardAction(event),
           docComments: this.docComments,
@@ -558,7 +587,7 @@ export class FeishuChannelSession {
   private async readChatBots(
     chatId: string,
   ): Promise<FeishuListChatBotsResult> {
-    const listing = await listChatBots(this.opts.stateDir, chatId);
+    const listing = await listChatBots(this._chatBotsStore, chatId);
     return {
       chat_id: chatId,
       known: listing.known.map(toWireChatBot),
@@ -662,7 +691,8 @@ export class FeishuChannelSession {
     return sessionHandle({
       opts: this.opts,
       bot: this.bot,
-      accessMutex: this._accessMutex,
+      accessStore: this._accessStore,
+      chatBotsStore: this._chatBotsStore,
       botDisplayName: this.bot.botDisplayName ?? 'Dreamux bot',
       targetRouter: this.targetRouter,
       sessionFence: fence,

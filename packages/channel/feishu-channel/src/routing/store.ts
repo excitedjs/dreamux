@@ -19,7 +19,10 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-import { ensureOwnerOnlyDir, writeAtomic } from '@excitedjs/dreamux-utils';
+import {
+  TransactionalStore,
+  ensureOwnerOnlyDir,
+} from '@excitedjs/dreamux-utils';
 
 import {
   FEISHU_ROUTING_DOCUMENT_VERSION,
@@ -57,10 +60,14 @@ export interface FeishuRoutingStoreOptions {
 }
 
 export class FeishuRoutingStore {
-  private document: FeishuRoutingDocument | null = null;
-  private tail: Promise<void> = Promise.resolve();
+  private readonly held: TransactionalStore<FeishuRoutingDocument>;
 
-  constructor(private readonly opts: FeishuRoutingStoreOptions) {}
+  constructor(private readonly opts: FeishuRoutingStoreOptions) {
+    this.held = new TransactionalStore({
+      path: this.path,
+      load: () => this.readDocument(),
+    });
+  }
 
   private get path(): string {
     return join(
@@ -70,18 +77,21 @@ export class FeishuRoutingStore {
   }
 
   /** Read once, at initialize. A malformed or foreign document fails loud. */
-  async load(): Promise<FeishuRoutingDocument> {
+  load(): Promise<FeishuRoutingDocument> {
+    return this.held.load();
+  }
+
+  private async readDocument(): Promise<FeishuRoutingDocument> {
     let raw: string;
     try {
       raw = await readFile(this.path, 'utf8');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.document = emptyRoutingDocument({
+        return emptyRoutingDocument({
           dispatcherId: this.opts.dispatcherId,
           channelId: this.opts.channelId,
           now: Date.now(),
         });
-        return this.document;
       }
       throw new Error(`failed to read ${this.path}: ${(err as Error).message}`);
     }
@@ -93,16 +103,12 @@ export class FeishuRoutingStore {
         `failed to parse ${this.path}: ${(err as Error).message}`,
       );
     }
-    this.document = validated(parsed, this.opts, this.path);
-    return this.document;
+    return validated(parsed, this.opts, this.path);
   }
 
   /** The last committed document. Callers read it and never mutate it. */
   get current(): FeishuRoutingDocument {
-    if (this.document === null) {
-      throw new Error('feishu routing store was used before it was loaded');
-    }
-    return this.document;
+    return this.held.current;
   }
 
   /**
@@ -120,29 +126,25 @@ export class FeishuRoutingStore {
    * and keep the snapshot it captured.
    */
   update(mutator: (document: FeishuRoutingDocument) => boolean): Promise<void> {
-    const commit = this.tail.then(async () => {
-      const next = structuredClone(this.current);
-      if (!mutator(next)) return;
-      next.updated_at = Date.now();
-      await ensureOwnerOnlyDir(this.opts.stateDir);
-      await writeAtomic(
-        this.opts.stateDir,
-        routingDocumentFilename(this.opts.channelId),
-        JSON.stringify(next, null, 2) + '\n',
-        0o600,
-      );
-      this.document = next;
-    });
-    this.tail = commit.then(
-      () => undefined,
-      () => undefined,
-    );
-    return commit;
+    return this.held
+      .update(async (committed) => {
+        const next = structuredClone(committed);
+        if (!mutator(next)) return committed; // unchanged reference: no write
+        // The store's own directory creation is a bare recursive `mkdir`: it
+        // neither rejects a symlink at the leaf nor a foreign-uid or
+        // group/other-readable directory, and it sets mode only when it
+        // creates. So the routing document runs its owner-only check itself,
+        // before every commit, as it always has.
+        await ensureOwnerOnlyDir(this.opts.stateDir);
+        next.updated_at = Date.now();
+        return next;
+      })
+      .then(() => undefined);
   }
 
   /** Session close awaits this so no queued commit is abandoned. */
   async drain(): Promise<void> {
-    await this.tail.catch(() => undefined);
+    await this.held.drain();
   }
 }
 

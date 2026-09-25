@@ -234,7 +234,20 @@ Source:
 ### Channel-Owned State
 
 Three files under the dispatcher state root belong to the Feishu Channel, not to
-Core. Core supplies the per-dispatcher state root and nothing else.
+Core. Core supplies the per-dispatcher state root and nothing else. Each is
+loaded into memory once — routing at session start, `access.json` and
+`chat-bots.json` at first use — and held for the life of the session; a hand
+edit made while the channel is running is not read until the next restart.
+Every persisted Dreamux file, this trio included, follows the shape policy the
+code-organization refactor's R21/R22 rulings set: an unknown field is
+tolerated and ignored, and a fact no code reads back is not persisted at all —
+it goes to a log line instead
+(`.agents/tasks/architecture/code-organization-refactor/rulings.md`). Loader
+strictness on a missing or wrong-typed field still varies by file and is
+unchanged by that policy: the routing document and `access.json` fail loud
+(below); `chat-bots.json` degrades the one bad field to its default instead
+(`chat-bots-store.ts`'s `normalizeEntry`), because peer-bot discovery is not
+security-critical the way access control is.
 
 `feishu-routing.<channel-slug>.<digest>.json` is one Channel session's routing
 authority, owned end to end by `@excitedjs/feishu-channel`: the filename (a slug
@@ -253,11 +266,14 @@ Channel's own `bind_channel` / `bind_collaboration_space` tools.
 under the state root, independent of `DREAMUX_CONFIG_DIR`. `version` is
 Channel/schema-owned; `dm_policy` and `group.*` are operator policy;
 `allow_users` is shared between live pairing/Owner approval and a quiesced
-operator; `pending`, `observed_chats`, `warnings`, and `last_gate` are Channel
-runtime ledger. The Channel writes it owner-only and creates a missing state
-directory at `0700`. The exact manual-maintenance procedure — quiesce, post-stop
-re-read, owner-only atomic patch, restart — is owned by
-`/packages/dreamux/skills/dispatcher/dreamux-maintenance/`, not by this page.
+operator; `pending` is Channel runtime ledger, not operator-editable. The
+former `observed_chats`/`warnings`/`last_gate` top-level fields and each
+pending entry's `kind`/`replies` are gone (R22/R45: they were write-only or
+warning-dedup-only, and are not persisted). The Channel writes it owner-only
+and creates a missing state directory at `0700`. The exact manual-maintenance
+procedure — quiesce, post-stop re-read, owner-only atomic patch, restart — is
+owned by `/packages/dreamux/skills/dispatcher/dreamux-maintenance/`, not by
+this page.
 
 `chat-bots.json` is the Feishu known/trusted peer bot store, `version: 1`,
 owner-only and atomically written by the same provider.

@@ -6,10 +6,7 @@
  * "any member of an allowlisted group" is NOT enough.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 
 import {
   defaultDispatcherAccessState,
@@ -24,16 +21,6 @@ import {
   introduceDenyReason,
   introducedPeers,
 } from '../src/introduce.js';
-import {
-  clearBaselineIfCurrent,
-  listChatBots,
-  loadChatBots,
-  observeKnownBot,
-  pendingBaseline,
-  recordBotAdded,
-  trustIntroducedBots,
-  trustedBotIds,
-} from '../src/chat-bots-store.js';
 import type { Mention } from '@excitedjs/feishu-transport';
 
 type StateOverride = Partial<
@@ -666,161 +653,5 @@ describe('gate trust — only introduced bots may speak in a group', () => {
         baseInbound({ trusted_bot: true, bot_mentioned: false }),
       ).action,
     ).toMatchObject({ action: 'drop', reason: 'group_bot_not_mentioned' });
-  });
-});
-
-describe('chat-bots store — awareness vs trust are separate', () => {
-  let stateDir: string;
-
-  beforeEach(() => {
-    stateDir = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-'));
-  });
-
-  afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true });
-  });
-
-  it('observing a bot records awareness but never trust', async () => {
-    await observeKnownBot(stateDir, 'chat-a', {
-      openId: 'peer-a',
-      name: 'Peer A',
-    });
-    const entry = (await loadChatBots(stateDir)).chats['chat-a'];
-    expect(entry?.known).toEqual(['peer-a']);
-    expect(entry?.trusted ?? []).toEqual([]);
-    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-a')).toBe(false);
-  });
-
-  it('introducing a bot records trust (and awareness)', async () => {
-    const added = await trustIntroducedBots(stateDir, 'chat-a', [
-      { openId: 'peer-a', name: 'Peer A' },
-    ]);
-    expect(added).toEqual(['peer-a']);
-    const entry = (await loadChatBots(stateDir)).chats['chat-a'];
-    expect(entry?.trusted).toEqual(['peer-a']);
-    expect(entry?.known).toEqual(['peer-a']);
-    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-a')).toBe(true);
-  });
-
-  it('recordBotAdded is idempotent by event id and flags a baseline', async () => {
-    expect(await recordBotAdded(stateDir, 'chat-a', 'evt-1')).toBe(true);
-    expect(await recordBotAdded(stateDir, 'chat-a', 'evt-1')).toBe(false);
-    expect((await loadChatBots(stateDir)).chats['chat-a']?.needsBaseline).toBe(
-      true,
-    );
-  });
-});
-
-describe('chat-bots store — one-shot pending context (issue #69)', () => {
-  let stateDir: string;
-
-  beforeEach(() => {
-    stateDir = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-pending-'));
-  });
-
-  afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true });
-  });
-
-  it('arms a generation-stamped pending baseline carrying the trusted bots', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [
-      { openId: 'peer-a', name: 'Peer A' },
-    ]);
-    const pending = await pendingBaseline(stateDir, 'chat-a');
-    expect(pending.needsBaseline).toBe(true);
-    expect(pending.generation).toBe(1);
-    expect(pending.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
-  });
-
-  it('only trusted (not passively known) bots ride the pending baseline', async () => {
-    await observeKnownBot(stateDir, 'chat-a', {
-      openId: 'known-only',
-      name: 'Known',
-    });
-    await trustIntroducedBots(stateDir, 'chat-a', [
-      { openId: 'peer-a', name: 'Peer A' },
-    ]);
-    expect((await pendingBaseline(stateDir, 'chat-a')).trusted).toEqual([
-      { openId: 'peer-a', name: 'Peer A' },
-    ]);
-  });
-
-  it('re-introducing an already-trusted bot does not re-arm the one-shot', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
-    await clearBaselineIfCurrent(
-      stateDir,
-      'chat-a',
-      (await pendingBaseline(stateDir, 'chat-a')).generation,
-    );
-    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(
-      false,
-    );
-    const added = await trustIntroducedBots(stateDir, 'chat-a', [
-      { openId: 'peer-a' },
-    ]);
-    expect(added).toEqual([]);
-    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(
-      false,
-    );
-  });
-
-  it('clears the flag when the generation still matches the snapshot', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
-    const snapshot = await pendingBaseline(stateDir, 'chat-a');
-    await clearBaselineIfCurrent(stateDir, 'chat-a', snapshot.generation);
-    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(
-      false,
-    );
-  });
-
-  it('does NOT clear when a newer event bumped the generation mid-enqueue', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
-    const stale = await pendingBaseline(stateDir, 'chat-a'); // generation 1
-    // A second /introduce arrives before the stale clear runs.
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-b' }]); // generation 2
-    await clearBaselineIfCurrent(stateDir, 'chat-a', stale.generation);
-    const after = await pendingBaseline(stateDir, 'chat-a');
-    expect(after.needsBaseline).toBe(true);
-    expect(after.trusted).toEqual([{ openId: 'peer-a' }, { openId: 'peer-b' }]);
-  });
-
-  it('listChatBots returns known and trusted separately, with names', async () => {
-    await observeKnownBot(stateDir, 'chat-a', {
-      openId: 'known-a',
-      name: 'Known A',
-    });
-    await trustIntroducedBots(stateDir, 'chat-a', [
-      { openId: 'peer-a', name: 'Peer A' },
-    ]);
-    const listing = await listChatBots(stateDir, 'chat-a');
-    expect(listing.known).toEqual([
-      { openId: 'known-a', name: 'Known A' },
-      { openId: 'peer-a', name: 'Peer A' },
-    ]);
-    expect(listing.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
-  });
-
-  // #102: a peer introduced without a name still trusts its open_id; the
-  // listing omits `name` entirely rather than echoing the raw open_id as a name.
-  it('trusts an open_id with no name and omits name in the listing', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-noname' }]);
-    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-noname')).toBe(
-      true,
-    );
-    const listing = await listChatBots(stateDir, 'chat-a');
-    expect(listing.trusted).toEqual([{ openId: 'peer-noname' }]);
-    expect(listing.trusted[0]).not.toHaveProperty('name');
-  });
-
-  it('returns empty listings/baseline for an unknown chat', async () => {
-    expect(await listChatBots(stateDir, 'nope')).toEqual({
-      known: [],
-      trusted: [],
-    });
-    expect(await pendingBaseline(stateDir, 'nope')).toEqual({
-      needsBaseline: false,
-      generation: 0,
-      trusted: [],
-    });
   });
 });

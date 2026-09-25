@@ -43,9 +43,9 @@ import {
   PAIRING_TTL_MS,
   PAIRING_TOKEN_REGEX,
   dreamuxFeishuGate,
-  loadDispatcherAccess,
-  saveDispatcherAccess,
+  type GateAction,
   type GateInbound,
+  type GateResult,
   type PendingPairingEntry,
 } from './feishu-gate.js';
 import { buildPairingApprovalCard } from './feishu-pairing-card.js';
@@ -112,16 +112,15 @@ export async function onMessage(
     return;
   }
 
-  const access = await h.accessMutex.lock(async () =>
-    loadDispatcherAccess(h.opts.stateDir),
-  );
+  await h.accessStore.load();
+  const access = h.accessStore.current;
 
   if (
     classification.chatType === 'group' &&
     classification.senderKind === 'bot' &&
     access.group.allow_chats.includes(event.chatId)
   ) {
-    await observeKnownBot(h.opts.stateDir, event.chatId, {
+    await observeKnownBot(h.chatBotsStore, event.chatId, {
       openId: event.senderId,
       ...(event.senderName !== '' ? { name: event.senderName } : {}),
     });
@@ -135,7 +134,7 @@ export async function onMessage(
     if (denyReason === null) {
       const peers: PeerBot[] = introducedPeers(event.mentions, h.bot.botOpenId);
       if (peers.length > 0) {
-        await trustIntroducedBots(h.opts.stateDir, event.chatId, peers);
+        await trustIntroducedBots(h.chatBotsStore, event.chatId, peers);
         await sendIntroduceAck(h, event, peers);
       }
       log(h).info(
@@ -161,7 +160,7 @@ export async function onMessage(
 
   const trustedBots =
     classification.chatType === 'group'
-      ? await trustedBotIds(h.opts.stateDir, event.chatId)
+      ? await trustedBotIds(h.chatBotsStore, event.chatId)
       : undefined;
 
   const senderIsBot = classification.senderKind === 'bot';
@@ -178,18 +177,18 @@ export async function onMessage(
     bot_mentioned: botMentioned,
   };
 
-  // LOCK-1: compute gate; save for deliver/drop; for pair we do send-before-save.
-  const lock1 = await h.accessMutex.lock(async () => {
-    const fresh = await loadDispatcherAccess(h.opts.stateDir);
-    const result = dreamuxFeishuGate(fresh, inbound);
-    if (result.action.action !== 'pair') {
-      await saveDispatcherAccess(h.opts.stateDir, result.nextState);
-    }
-    return result;
+  // LOCK-1: compute gate; commit for deliver/drop; for pair we do
+  // send-before-save, so the store keeps the pre-pair value unchanged here.
+  let action!: GateAction;
+  let logs!: GateResult['logs'];
+  await h.accessStore.update((current) => {
+    const result = dreamuxFeishuGate(current, inbound);
+    action = result.action;
+    logs = result.logs;
+    return result.action.action === 'pair' ? current : result.nextState;
   });
 
-  const action = lock1.action;
-  for (const l of lock1.logs) {
+  for (const l of logs) {
     if (l.level === 'error') {
       log(h).error(l.ctx ?? {}, `[feishu-gate] ${l.msg}`);
     } else if (l.level === 'warn') {
@@ -218,7 +217,12 @@ export async function onMessage(
   }
 
   if (action.action === 'pair') {
-    if (action.is_resend && action.prompt_message_id !== undefined) {
+    // A `let`-bound discriminant loses its narrowed type inside a nested
+    // closure (the `accessStore.update` callbacks below), since TS cannot
+    // prove those closures run before `action` could be reassigned. Capture
+    // the narrowed 'pair' variant in a `const` so the closures see it typed.
+    const pairAction = action;
+    if (pairAction.is_resend && pairAction.prompt_message_id !== undefined) {
       try {
         await sendReply(h, {
           chatId: inbound.chat_id,
@@ -226,7 +230,7 @@ export async function onMessage(
             `<at user_id="${inbound.sender_id}"></at>\n` +
             '已有授权卡，请点击已发出的授权卡完成授权。\n' +
             'An approval card already exists. Please use the existing card to authorize access.',
-          messageId: action.prompt_message_id,
+          messageId: pairAction.prompt_message_id,
         });
       } catch (err) {
         log(h).error(
@@ -235,37 +239,36 @@ export async function onMessage(
               err instanceof Error
                 ? { message: err.message, stack: err.stack }
                 : { message: String(err) },
-            ...pairingTokenLogFields(action.token),
-            prompt_message_id: action.prompt_message_id,
-            kind: action.kind,
+            ...pairingTokenLogFields(pairAction.token),
+            prompt_message_id: pairAction.prompt_message_id,
+            kind: pairAction.kind,
             chat_id: inbound.chat_id,
           },
           '[feishu-pair] failed to reference existing pairing prompt',
         );
         return;
       }
-      await h.accessMutex.lock(async () => {
-        const latest = await loadDispatcherAccess(h.opts.stateDir);
-        const existing = latest.pending[action.token];
-        if (existing === undefined) return;
-        await saveDispatcherAccess(h.opts.stateDir, {
-          ...latest,
+      await h.accessStore.update((current) => {
+        const existing = current.pending[pairAction.token];
+        if (existing === undefined) return current;
+        return {
+          ...current,
           pending: {
-            ...latest.pending,
-            [action.token]: {
+            ...current.pending,
+            [pairAction.token]: {
               ...existing,
               expires_at: Date.now() + PAIRING_TTL_MS,
               prompt_message_id:
-                existing.prompt_message_id ?? action.prompt_message_id,
+                existing.prompt_message_id ?? pairAction.prompt_message_id,
             },
           },
-        });
+        };
       });
       return;
     }
 
     const card = buildPairingApprovalCard({
-      token: action.token,
+      token: pairAction.token,
       botDisplayName: h.botDisplayName,
       requesterOpenId: inbound.sender_id,
     });
@@ -285,8 +288,8 @@ export async function onMessage(
       log(h).error(
         {
           err: { message, stack },
-          ...pairingTokenLogFields(action.token),
-          kind: action.kind,
+          ...pairingTokenLogFields(pairAction.token),
+          kind: pairAction.kind,
           chat_id: inbound.chat_id,
         },
         '[feishu-pair] failed to send pairing prompt, NOT saving pending entry',
@@ -294,60 +297,52 @@ export async function onMessage(
       return;
     }
     // LOCK-2: merge against latest state (concurrent approval / resend window)
-    await h.accessMutex.lock(async () => {
-      const latest = await loadDispatcherAccess(h.opts.stateDir);
+    await h.accessStore.update((current) => {
       // Approved mid-window? Skip entirely.
       if (
-        action.kind === 'dm' &&
-        latest.allow_users.includes(inbound.sender_id)
+        pairAction.kind === 'dm' &&
+        current.allow_users.includes(inbound.sender_id)
       ) {
-        return;
+        return current;
       }
       if (
-        action.kind === 'group' &&
-        latest.group.allow_chats.includes(inbound.chat_id)
+        pairAction.kind === 'group' &&
+        current.group.allow_chats.includes(inbound.chat_id)
       ) {
-        return;
+        return current;
       }
-      // Another same-key pending entry exists? For a resend from an older
-      // entry without a prompt message id, attach the newly-sent card id and
-      // refresh the TTL. Otherwise do not clobber a concurrent sender's
-      // already-recorded token.
-      const existingKey = Object.entries(latest.pending).find(([, e]) => {
-        if (action.kind === 'dm') {
-          return e.kind === 'dm' && e.sender_id === inbound.sender_id;
-        }
-        return e.kind === 'group' && e.chat_id === inbound.chat_id;
-      });
+      // Another pending entry for the same sender exists? For a resend from
+      // an older entry without a prompt message id, attach the newly-sent
+      // card id and refresh the TTL. Otherwise do not clobber a concurrent
+      // sender's already-recorded token.
+      const existingKey = Object.entries(current.pending).find(
+        ([, e]) => e.sender_id === inbound.sender_id,
+      );
       if (existingKey !== undefined) {
-        if (!action.is_resend) return;
+        if (!pairAction.is_resend) return current;
         const [token, existing] = existingKey;
         const bumped: PendingPairingEntry = {
           ...existing,
           expires_at: Date.now() + PAIRING_TTL_MS,
           prompt_message_id: existing.prompt_message_id ?? sentCardMessageId,
         };
-        await saveDispatcherAccess(h.opts.stateDir, {
-          ...latest,
-          pending: { ...latest.pending, [token]: bumped },
-        });
-        return;
+        return {
+          ...current,
+          pending: { ...current.pending, [token]: bumped },
+        };
       }
       // Merge with fresh TTL (send succeeded right now).
       const entry: PendingPairingEntry = {
-        kind: action.kind,
         sender_id: inbound.sender_id,
         chat_id: inbound.chat_id,
         created_at: Date.now(),
         expires_at: Date.now() + PAIRING_TTL_MS,
-        replies: 1,
         prompt_message_id: sentCardMessageId,
       };
-      const merged = {
-        ...latest,
-        pending: { ...latest.pending, [action.token]: entry },
+      return {
+        ...current,
+        pending: { ...current.pending, [pairAction.token]: entry },
       };
-      await saveDispatcherAccess(h.opts.stateDir, merged);
     });
     return;
   }
@@ -465,7 +460,7 @@ async function buildSubmission(
   work.assertSessionActive();
   const pending =
     event.chatType === 'group'
-      ? await pendingBaseline(h.opts.stateDir, event.chatId)
+      ? await pendingBaseline(h.chatBotsStore, event.chatId)
       : null;
   const injectBots =
     pending !== null && pending.needsBaseline && pending.trusted.length > 0;
@@ -480,7 +475,7 @@ async function buildSubmission(
     injectBots && pending !== null && formatted.groupBotsRendered
       ? async (): Promise<void> =>
           clearBaselineIfCurrent(
-            h.opts.stateDir,
+            h.chatBotsStore,
             event.chatId,
             pending.generation,
           )
@@ -547,7 +542,7 @@ async function enrichSenderName(
   if (event.senderName !== '') return event;
 
   if (isBotSenderType(event.senderType)) {
-    const listing = await listChatBots(h.opts.stateDir, event.chatId);
+    const listing = await listChatBots(h.chatBotsStore, event.chatId);
     work.assertSessionActive();
     const known = [...listing.trusted, ...listing.known].find(
       (bot) => bot.openId === event.senderId && bot.name !== undefined,
