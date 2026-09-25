@@ -54,9 +54,13 @@ function execaEnvironment(options: CommandOptions): {
   env?: NodeJS.ProcessEnv;
   extendEnv: boolean;
 } {
+  // Spreads the two fields conditionally rather than widening this return
+  // type to `| undefined`: the result feeds execa's own `Options.cwd?: string
+  // | URL` (no explicit `undefined`), so an omitted key is required here,
+  // not just tolerated.
   return {
-    cwd: options.cwd,
-    env: options.env,
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    ...(options.env !== undefined ? { env: options.env } : {}),
     extendEnv: options.env === undefined,
   };
 }

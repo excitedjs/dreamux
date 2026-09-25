@@ -27,9 +27,9 @@ export interface DispatcherServiceOptions {
   commands: CoreCommandRegistry;
   /** Host home prefixes resolved by Server before this aggregate is built. */
   homePathPrefixes: readonly string[];
-  adminSocketPath?: string;
+  adminSocketPath?: string | undefined;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
-  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  workflowLoggerFactory?: ((dispatcherId: string) => DreamuxLogger) | undefined;
   log: DreamuxLogger;
 }
 

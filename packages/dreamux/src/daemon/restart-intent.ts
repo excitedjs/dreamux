@@ -47,12 +47,12 @@ export interface RestartIntentFile {
 
 export interface WriteRestartIntentOptions {
   targets: string[];
-  announce?: string;
+  announce?: string | undefined;
   ttlMs?: number;
   /** Wall clock at write time (callers pass Date.now()). */
   now: number;
   /** Override the marker path (tests). */
-  path?: string;
+  path?: string | undefined;
 }
 
 /**
@@ -102,11 +102,11 @@ export async function clearRestartIntent(
 
 export interface NotifyResumedRestartOptions {
   targets: string[];
-  announce?: string;
+  announce?: string | undefined;
   now: number;
   /** Triggers the actual service-manager restart. */
   runControl: () => Promise<void>;
-  path?: string;
+  path?: string | undefined;
 }
 
 /**
@@ -121,9 +121,9 @@ export async function notifyResumedRestart(
 ): Promise<void> {
   const path = await writeRestartIntent({
     targets: options.targets,
-    ...(options.announce !== undefined ? { announce: options.announce } : {}),
+    announce: options.announce,
     now: options.now,
-    ...(options.path !== undefined ? { path: options.path } : {}),
+    path: options.path,
   });
   try {
     await options.runControl();

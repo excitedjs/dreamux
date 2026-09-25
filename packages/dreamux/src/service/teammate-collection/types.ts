@@ -15,20 +15,20 @@ import type {
 
 export interface TeamMateWorktreeRequest {
   mode: 'reuse-cwd' | 'managed';
-  slug?: string;
-  base_ref?: string;
-  branch?: string;
-  cleanup?: 'keep' | 'delete-on-close';
+  slug?: string | undefined;
+  base_ref?: string | undefined;
+  branch?: string | undefined;
+  cleanup?: 'keep' | 'delete-on-close' | undefined;
 }
 
 export interface SpawnTeamMateInput {
   name: string;
   prompt: string;
-  agentRuntime?: string;
+  agentRuntime?: string | undefined;
   cwd?: string;
   worktree?: TeamMateWorktreeRequest;
   intent: string;
-  identity?: string;
+  identity?: string | undefined;
   /** Additional admin-supplied runtime skill roots; bundled role policy is separate. */
   skillSources?: readonly AgentRuntimeSkillSource[];
 }

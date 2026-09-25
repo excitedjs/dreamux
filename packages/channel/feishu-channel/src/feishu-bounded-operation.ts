@@ -21,7 +21,7 @@ export interface FeishuOperationScope {
 interface FeishuBoundedOperationOptions<T> extends FeishuOperationScope {
   operation(): Promise<T>;
   beforeStart?(): void;
-  onLateValue?(value: T): void | Promise<void>;
+  onLateValue?: ((value: T) => void | Promise<void>) | undefined;
   now?: () => number;
 }
 

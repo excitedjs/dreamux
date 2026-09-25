@@ -136,7 +136,9 @@ interface UndeclaredCommentFields {
  * on the whole document carries no quote and no anchor, and every other
  * comment is about content, named as well as the response names it.
  */
-function commentAnchor(item: { is_whole?: boolean; quote?: string }): FeishuCommentAnchor {
+function commentAnchor(
+  item: { is_whole?: boolean | undefined; quote?: string | undefined },
+): FeishuCommentAnchor {
   if (item.is_whole === true) return { kind: 'whole_document' }
   const undeclared = item as unknown as UndeclaredCommentFields
   return {

@@ -55,7 +55,7 @@ export interface HandshakeOptions {
    * blocking both server boot and any retry path. Default: 10_000 ms,
    * which matches the spawn-readiness budget in CodexProcess.
    */
-  timeoutMs?: number;
+  timeoutMs?: number | undefined;
 }
 
 /**

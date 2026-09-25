@@ -28,19 +28,21 @@ export interface FeishuMessageReader {
   ): Promise<FeishuMessageReadResponse>
 }
 
+// Mirrors `im.v1.message.get`'s own response item type, which declares each
+// field as possibly explicit `undefined`, not merely absent.
 export interface RawMessageReadItem {
-  message_id?: string
-  msg_type?: string
-  deleted?: boolean
-  chat_id?: string
-  thread_id?: string
-  body?: { content?: string }
+  message_id?: string | undefined
+  msg_type?: string | undefined
+  deleted?: boolean | undefined
+  chat_id?: string | undefined
+  thread_id?: string | undefined
+  body?: { content?: string | undefined } | undefined
   mentions?: Array<{
-    key?: string
-    id?: string
-    id_type?: string
-    name?: string
-  }>
+    key?: string | undefined
+    id?: string | undefined
+    id_type?: string | undefined
+    name?: string | undefined
+  }> | undefined
 }
 
 export function normalizeMessageReadItem(

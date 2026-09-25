@@ -38,14 +38,14 @@ export interface ClaudeCodeResidentArgsInput {
    * applies it as an APPEND via one native `--append-system-prompt` argument.
    * Omitted/empty for launches that supply none.
    */
-  systemPromptAppend?: readonly string[];
+  systemPromptAppend?: readonly string[] | undefined;
   /** Runtime-owned add-dir roots that contain `.claude/skills/<name>` entries. */
   skillAddDirs?: readonly string[];
   /**
    * Neutral feature names the host asked this runtime to disable. This package
    * maps only the names Claude Code understands and ignores the rest.
    */
-  disableFeatures?: readonly string[];
+  disableFeatures?: readonly string[] | undefined;
   /**
    * Optional JSON Schema constraining every turn's final assistant message for
    * the resident session's lifetime. Maps to the native `--json-schema` CLI
@@ -53,7 +53,7 @@ export interface ClaudeCodeResidentArgsInput {
    * mid-session, so a per-turn schema request on a running session fails
    * loudly instead. Omitted/undefined means "no schema constraint".
    */
-  outputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown> | undefined;
 }
 
 /**

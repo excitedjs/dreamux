@@ -228,9 +228,7 @@ export class CodexRuntime implements AgentRuntime {
     });
     this.client.setServerRequestHandler(approvalHandler);
     const initResponse = await performInitializeHandshake(this.client, {
-      ...(this.deps.handshakeTimeoutMs !== undefined
-        ? { timeoutMs: this.deps.handshakeTimeoutMs }
-        : {}),
+      timeoutMs: this.deps.handshakeTimeoutMs,
     });
     this.assertGeneration(generation);
     this.log(

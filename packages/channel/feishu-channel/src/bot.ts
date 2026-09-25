@@ -199,7 +199,7 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
    * Optional Feishu COT surface. A fake or externally supplied bot that omits
    * it simply presents no chain-of-thought card; nothing else changes.
    */
-  readonly cot?: FeishuCotClient;
+  readonly cot?: FeishuCotClient | undefined;
   resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
   close(): Promise<void>;
 }
@@ -377,7 +377,7 @@ export function createFeishuBot(
         }
       : {}),
 
-    ...(transport.cot !== undefined ? { cot: transport.cot } : {}),
+    cot: transport.cot,
 
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return transport.resolveAppOwner();
@@ -555,10 +555,7 @@ function normalizeCardActionAck(
       'feishu card action response ignored unknown top-level keys',
     );
   }
-  return {
-    ...(toast !== undefined ? { toast } : {}),
-    ...(card !== undefined ? { card } : {}),
-  };
+  return { toast, card };
 }
 
 function parseCardActionToast(value: unknown):

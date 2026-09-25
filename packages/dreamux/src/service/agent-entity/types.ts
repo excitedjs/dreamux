@@ -234,7 +234,7 @@ export type AgentEntityActivityRecord =
 export interface AgentEntityLastQuery {
   limit?: number;
   cursor?: string;
-  includeTools?: boolean;
+  includeTools?: boolean | undefined;
 }
 
 export interface AgentEntityLastResult {

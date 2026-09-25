@@ -26,12 +26,16 @@ interface PendingRequest {
 
 export interface ClaudeCodeStreamRpcOptions {
   sessionId: string | null;
-  outputSchemaEnabled?: boolean;
+  outputSchemaEnabled?: boolean | undefined;
   turnTimeoutMs: number;
-  log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  log?:
+    | ((level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void)
+    | undefined;
   reapOnTimeout: (error: Error) => void;
-  onRemoteControlUrl?: (url: string) => void;
-  onProtocolEvent?: import('./types.js').ClaudeCodeSessionSpec['onProtocolEvent'];
+  onRemoteControlUrl?: ((url: string) => void) | undefined;
+  onProtocolEvent?:
+    | import('./types.js').ClaudeCodeSessionSpec['onProtocolEvent']
+    | undefined;
 }
 
 /**

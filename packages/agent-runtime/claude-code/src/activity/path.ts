@@ -179,9 +179,9 @@ async function discoveryCandidates(input: {
   roots: ClaudeHistoryRoots;
   sessionId: string;
   cwd: string;
-  env?: DreamuxEnvironment;
+  env?: DreamuxEnvironment | undefined;
   budget: ClaudeScanBudget;
-  worktreePaths?: readonly string[];
+  worktreePaths?: readonly string[] | undefined;
 }): Promise<string[]> {
   const result: string[] = [];
   const seen = new Set<string>();

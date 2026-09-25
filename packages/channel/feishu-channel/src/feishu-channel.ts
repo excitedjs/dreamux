@@ -480,22 +480,9 @@ export class FeishuChannelSession {
       logger: this.opts.log,
       channelId: this.opts.channelId,
       sendText: async (chatId, text, sendOpts) =>
-        this.sendReply(
-          {
-            chatId,
-            text,
-            ...(sendOpts?.messageId !== undefined
-              ? { messageId: sendOpts.messageId }
-              : {}),
-          },
-          caller,
-        ),
+        this.sendReply({ chatId, text, messageId: sendOpts?.messageId }, caller),
       react: async (chatId, messageId, emoji) =>
-        this.addReaction({
-          messageId,
-          emoji,
-          ...(chatId !== undefined ? { chatId } : {}),
-        }),
+        this.addReaction({ messageId, emoji, chatId }),
       listKnownChatBots: async (chatId) => this.readChatBots(chatId),
       askUserQuestion: async (input) => sessionAskUserQuestion(this.handle, input),
       bindChannel: (input) => this.bindings.bindChannel(input),
@@ -526,7 +513,7 @@ export class FeishuChannelSession {
     input: {
       chatId: string;
       text: string;
-      messageId?: string;
+      messageId?: string | undefined;
     },
     caller: ChannelMcpCaller,
   ): Promise<{ message_ids: string[] }> {
@@ -551,7 +538,7 @@ export class FeishuChannelSession {
   private async addReaction(input: {
     messageId: string;
     emoji: string;
-    chatId?: string;
+    chatId?: string | undefined;
   }): Promise<{ reaction_id: string }> {
     return { reaction_id: await sessionAddReaction(this.handle, input) };
   }

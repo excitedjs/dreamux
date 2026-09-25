@@ -42,7 +42,7 @@ export interface AgentIdentityCreateInput {
   worktree: AgentEntityWorktreeIdentity;
   intent?: string | null;
   identityPrompt?: string | null;
-  skillSources?: readonly AgentRuntimeSkillSource[];
+  skillSources?: readonly AgentRuntimeSkillSource[] | undefined;
   status?: AgentEntityIdentityStatus;
   /**
    * Replace whatever occupies the bound location instead of refusing it.
@@ -67,7 +67,7 @@ export interface AgentIdentityUpdateInput {
   intent?: string | null;
   identityPrompt?: string | null;
   status?: AgentEntityIdentityStatus;
-  lastError?: string | null;
+  lastError?: string | null | undefined;
   closedAt?: number | null;
   closeNote?: string | null;
 }
@@ -98,7 +98,7 @@ export interface AgentIdentityStoreBinding {
    * changed status. Publication needs the runtime role, which only the owner
    * knows, so this store publishes nothing itself.
    */
-  onPersisted?: (identity: AgentEntityIdentity) => void;
+  onPersisted?: ((identity: AgentEntityIdentity) => void) | undefined;
 }
 
 /**
@@ -279,9 +279,7 @@ export class AgentEntityCollectionStore {
       dispatcherId: this.opts.dispatcherId,
       expectedName: name,
       log: this.opts.log,
-      ...(this.opts.onPersisted !== undefined
-        ? { onPersisted: this.opts.onPersisted }
-        : {}),
+      onPersisted: this.opts.onPersisted,
     });
   }
 
@@ -353,17 +351,15 @@ export class AgentNameRegistry {
     kind: Exclude<ConcreteNameKind, 'team'>;
     base: string;
     teamSlug?: string;
-    generateSuffix?: SuffixGenerator;
+    generateSuffix?: SuffixGenerator | undefined;
   }): Promise<string> {
     const occupied = await this.occupied();
     return allocateConcreteName({
       kind: input.kind,
       base: input.base,
-      ...(input.teamSlug !== undefined ? { teamSlug: input.teamSlug } : {}),
+      teamSlug: input.teamSlug,
       exists: (value) => occupied.has(value),
-      ...(input.generateSuffix !== undefined
-        ? { generateSuffix: input.generateSuffix }
-        : {}),
+      generateSuffix: input.generateSuffix,
     });
   }
 }

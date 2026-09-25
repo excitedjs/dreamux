@@ -97,7 +97,7 @@ export async function runFeishuInboundWork<T>(
       deadlineAt: effectiveDeadlineAt,
       signal: work.signal,
       beforeStart: work.assertEnrichmentActive,
-      ...(onLateValue !== undefined ? { onLateValue } : {}),
+      onLateValue,
     });
   } catch (error) {
     if (!isFeishuOperationError(error)) throw error;

@@ -115,7 +115,7 @@ export interface SelectServiceNodeOptions {
   platform: NodeJS.Platform;
   currentNodeBin: string;
   runner: CommandRunner;
-  probe?: ServiceNodeProbe;
+  probe?: ServiceNodeProbe | undefined;
 }
 
 /**

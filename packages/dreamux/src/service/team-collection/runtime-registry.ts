@@ -93,16 +93,12 @@ export class TeamRuntimeRegistry {
       created = await TeamService.createNew(this.depsBase(teamId), {
         teamId,
         name: input.name,
-        ...(input.createRequest !== undefined
-          ? { createRequest: input.createRequest }
-          : {}),
-        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+        createRequest: input.createRequest,
+        prompt: input.prompt,
         leaderAgentRuntime: input.leaderAgentRuntime,
         intent: input.intent,
-        ...(input.identity !== undefined ? { identity: input.identity } : {}),
-        ...(input.skillSources !== undefined
-          ? { skillSources: input.skillSources }
-          : {}),
+        identity: input.identity,
+        skillSources: input.skillSources,
         workspace,
       });
     } catch (error) {
@@ -160,7 +156,7 @@ export class TeamRuntimeRegistry {
           teammateName: `team-${teamId}`,
           cwd: input.repoCwd ?? workspaceRoot,
           dispatcherWorkspace: workspaceRoot,
-          ...(input.worktree !== undefined ? { request: input.worktree } : {}),
+          request: input.worktree,
         });
   }
 
@@ -454,9 +450,7 @@ export class TeamRuntimeRegistry {
       coreEvents: collection.coreEvents,
       log: collection.log,
       workflowLog: collection.workflowLog,
-      ...(collection.agentNameSuffixGenerator !== undefined
-        ? { agentNameSuffixGenerator: collection.agentNameSuffixGenerator }
-        : {}),
+      agentNameSuffixGenerator: collection.agentNameSuffixGenerator,
     };
   }
 }

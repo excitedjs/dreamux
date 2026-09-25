@@ -211,7 +211,7 @@ export async function onMessage(
           : {}),
         message_id: event.messageId,
         reason: action.reason,
-        ...(action.context !== undefined ? { context: action.context } : {}),
+        context: action.context,
       },
       'feishu inbound dropped',
     );
@@ -321,9 +321,7 @@ export async function onMessage(
         const bumped: PendingPairingEntry = {
           ...existing,
           expires_at: Date.now() + PAIRING_TTL_MS,
-          ...(existing.prompt_message_id !== undefined || sentCardMessageId !== undefined
-            ? { prompt_message_id: existing.prompt_message_id ?? sentCardMessageId }
-            : {}),
+          prompt_message_id: existing.prompt_message_id ?? sentCardMessageId,
         };
         await saveDispatcherAccess(h.opts.stateDir, {
           ...latest,
@@ -339,9 +337,7 @@ export async function onMessage(
         created_at: Date.now(),
         expires_at: Date.now() + PAIRING_TTL_MS,
         replies: 1,
-        ...(sentCardMessageId !== undefined
-          ? { prompt_message_id: sentCardMessageId }
-          : {}),
+        prompt_message_id: sentCardMessageId,
       };
       const merged = {
         ...latest,

@@ -36,12 +36,12 @@ export interface TeamServiceCreateInput {
   teamId: string;
   name: string;
   /** Written into the published Team record; absent for internal creation. */
-  createRequest?: TeamCreateRequestIdentity;
-  prompt?: string;
+  createRequest?: TeamCreateRequestIdentity | undefined;
+  prompt?: string | undefined;
   leaderAgentRuntime: string;
   intent: string;
-  identity?: string;
-  skillSources?: readonly AgentRuntimeSkillSource[];
+  identity?: string | undefined;
+  skillSources?: readonly AgentRuntimeSkillSource[] | undefined;
   workspace: TeamMateSharedWorkspace;
 }
 
@@ -95,7 +95,7 @@ export interface TeamServiceDeps {
   /** Fires the owning Dispatcher's `team` hook for a just-constructed Team; never throws. */
   announceTeam: (team: Team, ctx: { origin: 'create' | 'rebuild' }) => void;
   store: TeamStore;
-  agentNameSuffixGenerator?: SuffixGenerator;
+  agentNameSuffixGenerator?: SuffixGenerator | undefined;
   coreEvents: DispatcherCoreEventPublisher;
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;

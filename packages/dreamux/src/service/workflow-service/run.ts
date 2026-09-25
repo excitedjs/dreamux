@@ -54,7 +54,7 @@ export interface WorkflowRunDeps {
   createRunner: WorkflowRunnerFactory;
   deliverTerminal: (completion: WorkflowCompletionFact) => Promise<void>;
   log: DreamuxLogger;
-  now?: () => number;
+  now?: (() => number) | undefined;
 }
 
 interface AgentCall {
@@ -344,12 +344,8 @@ export class WorkflowRun {
           intent:
             call.options.intent ??
             `Workflow ${this.record.run_id} agent ${call.record.index + 1}`,
-          ...(call.options.agentType !== undefined
-            ? { agentRuntime: call.options.agentType }
-            : {}),
-          ...(call.options.identity !== undefined
-            ? { identity: call.options.identity }
-            : {}),
+          agentRuntime: call.options.agentType,
+          identity: call.options.identity,
         },
         {
           systemPromptAppend: [WORKFLOW_AGENT_SYSTEM_PROMPT],
@@ -382,10 +378,10 @@ export class WorkflowRun {
         prompt,
         // A Workflow step is work one Agent handed to another, exactly like an
         // MCP spawn; who scheduled it is already the turn's own identity.
+        // The step's output schema is already bound at creation time (above,
+        // via CreateLockedTeammateOptions) and cannot vary per submission —
+        // WorkflowTeammateSubmitInput carries no outputSchema field.
         source: AGENT_TASK_SOURCE,
-        ...(call.options.schema !== undefined
-          ? { outputSchema: call.options.schema }
-          : {}),
       });
       this.deps.log.info(
         {

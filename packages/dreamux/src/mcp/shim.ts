@@ -57,7 +57,7 @@ import {
 export interface DreamuxMcpShimOptions {
   /** The opaque lease token this server presents on every request. */
   lease: string;
-  adminSocketPath?: string;
+  adminSocketPath?: string | undefined;
   input?: Readable;
   output?: Writable;
   transport?: RunMcpServerOptions['transport'];
@@ -90,10 +90,10 @@ export async function runDreamuxMcp(opts: DreamuxMcpShimOptions): Promise<void> 
         handler: (args) => callTool(core, opts.lease, tool.name, args),
       }),
     ),
-    ...(opts.input !== undefined ? { input: opts.input } : {}),
-    ...(opts.output !== undefined ? { output: opts.output } : {}),
-    ...(opts.transport !== undefined ? { transport: opts.transport } : {}),
-    ...(opts.log !== undefined ? { log: opts.log } : {}),
+    input: opts.input,
+    output: opts.output,
+    transport: opts.transport,
+    log: opts.log,
   });
 }
 

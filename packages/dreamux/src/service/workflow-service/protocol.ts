@@ -20,7 +20,7 @@ export interface WorkflowAgentResultMessage {
   type: 'agent_result';
   index: number;
   result?: unknown;
-  error?: string;
+  error?: string | undefined;
 }
 
 export interface WorkflowAbortMessage {

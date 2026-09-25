@@ -166,7 +166,7 @@ async function handleDaemonRestart(argv: DaemonRestartArgv): Promise<void> {
   );
   await notifyResumedRestart({
     targets,
-    ...(argv.announce !== undefined ? { announce: argv.announce } : {}),
+    announce: argv.announce,
     now: Date.now(),
     runControl: () => runDaemonControl('restart'),
   });

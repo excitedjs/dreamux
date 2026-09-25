@@ -150,7 +150,7 @@ export async function sendReply(
   input: {
     chatId: string;
     text: string;
-    messageId?: string;
+    messageId?: string | undefined;
     onMessageCreated?: FeishuSendOptions['onMessageCreated'];
   },
 ): Promise<{ messageIds: string[] }> {
@@ -240,7 +240,7 @@ export async function sendCard(
 
 export async function addReaction(
   h: SessionHandle,
-  input: { messageId: string; emoji: string; chatId?: string },
+  input: { messageId: string; emoji: string; chatId?: string | undefined },
 ): Promise<string> {
   let reactionId: string;
   try {
@@ -289,7 +289,7 @@ export async function readMessageRoute(
   }
   return h.targetRouter.project({
     chatId: message.chatId,
-    ...(message.threadId !== undefined ? { threadId: message.threadId } : {}),
+    threadId: message.threadId,
   });
 }
 
@@ -304,7 +304,7 @@ function cardSubmission(input: {
   cardMessageId: string;
   text: string;
   sourceId: string;
-  attrs?: Readonly<Record<string, string>>;
+  attrs?: Readonly<Record<string, string>> | undefined;
 }): FeishuChatSubmission {
   const { target, cardMessageId } = input;
   return {
@@ -345,7 +345,7 @@ async function deliverToCardOwner(
     cardMessageId: string;
     text: string;
     sourceId: string;
-    attrs?: Readonly<Record<string, string>>;
+    attrs?: Readonly<Record<string, string>> | undefined;
   },
 ): Promise<{ target: FeishuTarget; outcome: FeishuSubmitOutcome }> {
   const route = await readMessageRoute(h, input.cardMessageId);
@@ -446,7 +446,7 @@ async function deliverExtensionForward(
       cardMessageId,
       text: forward.text,
       sourceId: forward.sourceId,
-      ...(forward.attrs !== undefined ? { attrs: forward.attrs } : {}),
+      attrs: forward.attrs,
     });
     const report = describeSubmitOutcome(outcome);
     const scope = { dispatcher_id: h.opts.dispatcherId, chat_id: target.chatId, feishu_extension: extensionName };

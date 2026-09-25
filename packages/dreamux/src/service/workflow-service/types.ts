@@ -54,7 +54,7 @@ export interface WorkflowRunInput {
   script?: string;
   scriptPath?: string;
   args?: unknown;
-  max_concurrency?: number;
+  max_concurrency?: number | undefined;
 }
 
 export interface WorkflowRunAccepted {
@@ -102,9 +102,10 @@ export function workflowRunInput(params: CommandPayload): WorkflowRunInput {
     ...(script !== null ? { script } : {}),
     ...(scriptPath !== null ? { scriptPath } : {}),
     ...(Object.hasOwn(params, 'args') ? { args: params['args'] } : {}),
-    ...(rawMaxConcurrency !== undefined && rawMaxConcurrency !== null
-      ? { max_concurrency: maxConcurrency }
-      : {}),
+    max_concurrency:
+      rawMaxConcurrency !== undefined && rawMaxConcurrency !== null
+        ? maxConcurrency
+        : undefined,
   };
 }
 

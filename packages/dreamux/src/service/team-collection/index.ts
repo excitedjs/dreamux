@@ -95,9 +95,7 @@ export class TeamCollection {
       base: namePrefix,
       accept: async (candidate) =>
         (await this.store.get(candidate)) === null,
-      ...(this.opts.nameSuffixGenerator !== undefined
-        ? { generateSuffix: this.opts.nameSuffixGenerator }
-        : {}),
+      generateSuffix: this.opts.nameSuffixGenerator,
     });
   }
 
@@ -157,9 +155,7 @@ export class TeamCollection {
           });
           return outcome.created !== null;
         },
-        ...(this.opts.nameSuffixGenerator !== undefined
-          ? { generateSuffix: this.opts.nameSuffixGenerator }
-          : {}),
+        generateSuffix: this.opts.nameSuffixGenerator,
       });
       const created = outcome.created;
       if (created === null) {

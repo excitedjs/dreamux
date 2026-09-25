@@ -30,6 +30,20 @@
 > - §8: the sequencing is amended in the requirement, which also folds in the
 >   issue #448 storage solution (see the rulings).
 > - The landing-place part of §9 item 26, with the reply-tool guard, is R41.
+> - §3.1(1): R3's "no-op conditional spreads" is the `!== undefined` pattern
+>   only. The repo's much larger `!== null` conditional-spread population
+>   (79 sites by `rg -c '!== null \?' packages --type ts`, measured after
+>   stage 2b's items 1-11 landed; concentrated in
+>   `agent-entity/history-query.ts` (9), `team-collection/types.ts` (8),
+>   `team-collection/mcp-delegate.ts` (8), and their Team-side and Agent-side
+>   siblings such as `teammate-collection/mcp-delegate.ts` and
+>   `team-collection/commands.ts`) is not a style no-op: it is the
+>   load-bearing way these readers turn a caller's explicit "don't filter on
+>   this field" into an omitted key. It stays out of R3's scope for that
+>   reason, not because it was missed; revisit it only as a schema question
+>   at the later adapters-and-schemas stage (requirement.md sequencing item
+>   7, R14/R18/R20) if that stage decides to change how query-parameter/
+>   MCP-arg absence is represented.
 
 Branch `feat/plugin-system-mvp`, read-only. Input: 14 slice surveys, 281 raised findings, 278 kept after adversarial verification (3 refuted), 58 verifier-added items. I re-opened the files behind the load-bearing claims (the near-cap files, the lifecycle split in `dispatcher-service`, the `runtime-owner` callbacks, the `beginShutdown` chain, the `deduplicate` usage, the dead `getRuntimeConfig`, the source-text tests, the `no-sync-io-gate` fixture, and the operator's ruling on the cap). Every one of those checked out. Where a verifier corrected a proposal, the corrected version is what this report adopts; where two slices' proposals conflicted, §6 states the resolution.
 

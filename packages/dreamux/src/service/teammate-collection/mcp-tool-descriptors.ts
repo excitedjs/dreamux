@@ -550,7 +550,7 @@ function tool(
     title: string;
     output: Record<string, unknown>;
     annotations: McpToolAnnotations;
-    inputConstraints?: Record<string, unknown>;
+    inputConstraints?: Record<string, unknown> | undefined;
   },
 ): McpToolDescriptor {
   return toolMetadata({
@@ -559,9 +559,7 @@ function tool(
     description,
     properties,
     required,
-    ...(meta.inputConstraints !== undefined
-      ? { inputConstraints: meta.inputConstraints }
-      : {}),
+    inputConstraints: meta.inputConstraints,
     outputSchema: meta.output,
     annotations: meta.annotations,
   });

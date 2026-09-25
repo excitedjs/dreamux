@@ -44,7 +44,7 @@ export async function ensureDirectory(
   path: string,
   ledger: OnboardFileLedger,
   reason: string,
-  options: { dryRun?: boolean } = {},
+  options: { dryRun?: boolean | undefined } = {},
 ): Promise<void> {
   if (await pathExists(path)) {
     if (!(await stat(path)).isDirectory()) {

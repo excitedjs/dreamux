@@ -51,7 +51,7 @@ export interface DreamuxConfig {
      * Kept only so `stringifyConfig` round-trips them; the loaded plugins
      * travel in {@link LoadConfigResult.plugins}.
      */
-    plugins?: PluginConfigEntry[];
+    plugins?: PluginConfigEntry[] | undefined;
     agents: Record<string, ResolvedAgentConfig>;
     dispatchers: DispatcherConfig[];
 }
@@ -63,7 +63,7 @@ export interface DreamuxWorkspaceConfig {
 export interface ResolvedAgentConfig {
   provider: string;
     config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
+    rawConfig?: DispatcherProviderConfig | undefined;
 }
 
 export interface DispatcherConfig {
@@ -79,7 +79,7 @@ export interface DispatcherChannelConfig {
   id: string;
   provider: string;
     config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
+    rawConfig?: DispatcherProviderConfig | undefined;
     identity?: string;
 }
 
@@ -178,13 +178,9 @@ export async function loadConfig(
 
 export function stringifyConfig(config: DreamuxConfig): string {
   const fileShape = {
-    ...(config.plugins !== undefined
-      ? {
-          plugins: config.plugins.map((entry) =>
-            'config' in entry ? { ref: entry.ref, config: entry.config } : entry.ref,
-          ),
-        }
-      : {}),
+    plugins: config.plugins?.map((entry) =>
+      'config' in entry ? { ref: entry.ref, config: entry.config } : entry.ref,
+    ),
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
       provider: agent.provider,
@@ -257,9 +253,7 @@ async function readConfigFile(
     entries: entries ?? [],
     // The serve file logger does not exist yet; contribute only registers.
     logger: createLogger({ name: 'plugins' }),
-    ...(overrides.pluginModuleImporter !== undefined
-      ? { importModule: overrides.pluginModuleImporter }
-      : {}),
+    importModule: overrides.pluginModuleImporter,
   });
   await loadAgentRuntimeProviders({
     registry: providerRegistry,

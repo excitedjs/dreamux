@@ -24,12 +24,12 @@ export interface UninstallEntry {
 }
 
 export interface RunUninstallOptions {
-  configDir?: string;
+  configDir?: string | undefined;
   runner?: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;
   uid?: number;
-  dryRun?: boolean;
+  dryRun?: boolean | undefined;
 }
 
 export interface UninstallRunResult {

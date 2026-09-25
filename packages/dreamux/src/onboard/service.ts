@@ -74,7 +74,7 @@ export interface ServiceInstallOptions {
   runner: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;
-  uid?: number;
+  uid?: number | undefined;
 }
 
 export interface ServiceInstallResult {
@@ -438,9 +438,9 @@ export async function enableSystemdLinger(
 
 export interface ServiceRemoveOptions {
   runner: CommandRunner;
-  platform?: NodeJS.Platform;
-  homeDir?: string;
-  uid?: number;
+  platform?: NodeJS.Platform | undefined;
+  homeDir?: string | undefined;
+  uid?: number | undefined;
   dryRun?: boolean;
 }
 

@@ -137,7 +137,7 @@ export async function loadPlugins(options: {
   registry: ProviderRegistry;
   entries: readonly PluginConfigEntry[];
   logger: DreamuxLogger;
-  importModule?: PluginModuleImporter;
+  importModule?: PluginModuleImporter | undefined;
 }): Promise<LoadedPlugin[]> {
   const importModule = options.importModule ?? defaultImportModule;
   const providerSources = new Map<string, string>(

@@ -343,7 +343,7 @@ export class SchedulerService {
   }
 
   private normalizeCreate(input: CronCreateRequest): {
-    title?: string;
+    title?: string | undefined;
     cron: string;
     tz: string;
     recurring: boolean;
@@ -358,7 +358,7 @@ export class SchedulerService {
       return normalized;
     });
     return {
-      ...(input.title !== undefined ? { title: input.title } : {}),
+      title: input.title,
       cron: input.cron,
       tz,
       recurring: input.recurring ?? true,
@@ -369,7 +369,7 @@ export class SchedulerService {
   private normalizeUpdate(
     current: CronJob,
     input: CronUpdateRequest,
-  ): CronJobUpdateInput & { cron: string; tz: string; enabled?: boolean } {
+  ): CronJobUpdateInput & { cron: string; tz: string } {
     const cron = input.cron ?? current.cron;
     const tz = input.tz ?? current.tz;
     const recurring = input.recurring ?? current.recurring;
@@ -387,12 +387,12 @@ export class SchedulerService {
     });
     return {
       id: input.id,
-      ...(input.title !== undefined ? { title: input.title } : {}),
+      title: input.title,
       cron,
       tz,
       recurring,
       action,
-      ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+      enabled: input.enabled,
     };
   }
 

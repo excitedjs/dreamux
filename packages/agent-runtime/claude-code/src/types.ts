@@ -158,7 +158,7 @@ export interface ClaudeCodeSessionSpec {
    */
   remoteControl: boolean;
   /** Surface the local-only Remote Control URL when Claude returns one. */
-  onRemoteControlUrl?: (url: string) => void;
+  onRemoteControlUrl?: ((url: string) => void) | undefined;
   /** Diagnostic logger for protocol-level events (parse errors, control answers). */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   onProtocolEvent?: (event: ClaudeProtocolEvent) => void;

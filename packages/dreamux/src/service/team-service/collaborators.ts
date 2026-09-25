@@ -49,9 +49,7 @@ export function buildTeamMembers(input: {
     conversationProjection: deps.conversationProjection,
     completionDelivery: deps.completionDelivery,
     initiatorFor: async () => input.leaderCompletionTarget(),
-    ...(deps.agentNameSuffixGenerator !== undefined
-      ? { suffixGenerator: deps.agentNameSuffixGenerator }
-      : {}),
+    suffixGenerator: deps.agentNameSuffixGenerator,
     log: deps.log,
   });
 }

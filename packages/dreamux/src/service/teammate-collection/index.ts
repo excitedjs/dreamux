@@ -104,13 +104,13 @@ export interface TeammateCollectionOptions {
    * ownership already settled.
    */
   initiatorFor?: () => Promise<CompletionInitiator | null>;
-  suffixGenerator?: SuffixGenerator;
+  suffixGenerator?: SuffixGenerator | undefined;
   log: DreamuxLogger;
 }
 
 export interface CreateLockedTeammateOptions {
   systemPromptAppend?: readonly string[];
-  outputSchema?: JsonSchema;
+  outputSchema?: JsonSchema | undefined;
 }
 
 /**
@@ -225,7 +225,7 @@ export class TeammateCollection implements TeammateOps {
       const result = await entity.send({
         source: AGENT_TASK_SOURCE,
         text: input.prompt,
-        ...(input.intent !== undefined ? { intent: input.intent } : {}),
+        intent: input.intent,
         resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
       });
       // Cached only now: a reopen that failed leaves nothing behind, so a
@@ -427,9 +427,7 @@ export class TeammateCollection implements TeammateOps {
     const name = await this.opts.names.allocate({
       kind: teamId === undefined ? 'dispatcher-teammate' : 'team-teammate',
       base: input.name,
-      ...(this.opts.suffixGenerator !== undefined
-        ? { generateSuffix: this.opts.suffixGenerator }
-        : {}),
+      generateSuffix: this.opts.suffixGenerator,
     });
 
     const allocation: FreshIdentityAllocation = {
@@ -489,9 +487,7 @@ export class TeammateCollection implements TeammateOps {
       worktree: workspace.worktree,
       intent: input.intent,
       identityPrompt,
-      ...(input.skillSources !== undefined
-        ? { skillSources: input.skillSources }
-        : {}),
+      skillSources: input.skillSources,
       status: 'stopped',
     });
   }
@@ -532,9 +528,7 @@ export class TeammateCollection implements TeammateOps {
             ? assertDispatcherScopedTeammate
             : assertTeamScopedAgent(this.teamScope),
         skillSources: identity.skill_sources,
-        ...(options.outputSchema !== undefined
-          ? { outputSchema: options.outputSchema }
-          : {}),
+        outputSchema: options.outputSchema,
         ...(systemPrompt ?? {}),
       },
       config: this.opts.config,

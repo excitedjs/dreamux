@@ -79,7 +79,7 @@ export function toolMetadata(input: {
   properties: Record<string, unknown>;
   required: string[];
   /** Additional object-schema constraints such as `anyOf`. */
-  inputConstraints?: Record<string, unknown>;
+  inputConstraints?: Record<string, unknown> | undefined;
   outputSchema: Record<string, unknown>;
   annotations: McpToolAnnotations;
 }): McpToolDescriptor {

@@ -180,7 +180,7 @@ export function agentEntityLastQuery(
   return {
     ...(limit !== null ? { limit } : {}),
     ...(cursor !== null ? { cursor } : {}),
-    ...(includeTools !== undefined ? { includeTools } : {}),
+    includeTools,
   };
 }
 

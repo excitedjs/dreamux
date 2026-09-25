@@ -98,7 +98,7 @@ export class FeishuCotIoHandle {
       signal: this.signal,
       deadlineAt: Date.now() + FEISHU_COT_OPERATION_TIMEOUT_MS,
       operation,
-      ...(onLateValue !== undefined ? { onLateValue } : {}),
+      onLateValue,
     });
   }
 

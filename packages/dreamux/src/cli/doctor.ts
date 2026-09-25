@@ -59,9 +59,9 @@ import {
 export interface DoctorOptions {
   env?: NodeJS.ProcessEnv;
   runner?: CommandRunner;
-  platform?: NodeJS.Platform;
-  homeDir?: string;
-  uid?: number;
+  platform?: NodeJS.Platform | undefined;
+  homeDir?: string | undefined;
+  uid?: number | undefined;
   nodeProbe?: ServiceNodeProbe;
     userName?: string;
 }

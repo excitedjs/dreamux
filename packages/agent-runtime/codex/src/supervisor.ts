@@ -32,7 +32,7 @@ export interface CodexProcessOptions {
   /** Where to log stderr. */
   stderrLogPath: string;
   /** Codex binary path. Defaults to `'codex'` on PATH; env `CODEX_HOST_CODEX_BIN` overrides. */
-  binPath?: string;
+  binPath?: string | undefined;
   /** Extra args after `app-server --listen unix://<socket>`. */
   extraArgs?: string[];
   /** Environment for the daemon. */

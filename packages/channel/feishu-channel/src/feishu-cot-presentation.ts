@@ -73,7 +73,7 @@ export interface CotCodeSegment {
  */
 interface ToolPresentation {
   readonly toolCallName: string;
-  readonly icon?: CotToolIcon;
+  readonly icon?: CotToolIcon | undefined;
   readonly title?: string;
   readonly arguments: CotCodeSegment | null;
   readonly items: CotItemList | null;
@@ -130,7 +130,7 @@ export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
     : ACTION_ICONS[event.action];
   return {
     toolCallName: actionName,
-    ...(icon === undefined ? {} : { icon }),
+    icon,
     ...(title === null ? {} : { title }),
     arguments: argumentCode(event),
     items: itemList(event),

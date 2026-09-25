@@ -137,7 +137,7 @@ export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventI
       content: {
         toolCallId,
         toolCallName: presentation.toolCallName,
-        ...(presentation.icon === undefined ? {} : { icon: presentation.icon }),
+        icon: presentation.icon,
         ...(presentation.title === undefined
           ? {}
           : { title: truncateEscaped(presentation.title, TITLE_MAX_BYTES) }),

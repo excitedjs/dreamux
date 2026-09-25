@@ -21,8 +21,8 @@ import type { CodexProcess, CodexProcessOptions } from './supervisor.js';
  */
 export interface CodexRuntimeDeps {
   cwd: string;
-  systemPromptReplace?: string;
-  systemPromptAppend?: readonly string[];
+  systemPromptReplace?: string | undefined;
+  systemPromptAppend?: readonly string[] | undefined;
   state: AgentRuntimeStateSink;
   paths: AgentRuntimePathContext;
   /**
@@ -33,17 +33,16 @@ export interface CodexRuntimeDeps {
   allocateSocketPath: (id: string) => string;
   skillSources?: readonly AgentRuntimeSkillSource[];
   codexBinPath?: string;
-  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
-  codexClientFactory?: (socketPath: string) => CodexWsClient;
-  codexHomeDoctor?: (info: {
-    runtimeId: string;
-    cwd: string;
-  }) => void | Promise<void>;
+  codexProcessFactory?: ((opts: CodexProcessOptions) => CodexProcess) | undefined;
+  codexClientFactory?: ((socketPath: string) => CodexWsClient) | undefined;
+  codexHomeDoctor?:
+    | ((info: { runtimeId: string; cwd: string }) => void | Promise<void>)
+    | undefined;
   resolveExtraArgs?: () => string[];
   handshakeTimeoutMs?: number;
   extraEnv?: Record<string, string>;
-  restartBackoffBaseMs?: number;
-  restartBackoffMaxMs?: number;
+  restartBackoffBaseMs?: number | undefined;
+  restartBackoffMaxMs?: number | undefined;
   logger?: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
 }

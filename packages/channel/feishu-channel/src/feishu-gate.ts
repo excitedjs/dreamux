@@ -50,7 +50,7 @@ export interface PendingPairingEntry {
   created_at: number;
   expires_at: number;
   replies: number;
-  prompt_message_id?: string;
+  prompt_message_id?: string | undefined;
 }
 
 export interface WarnEntry {
@@ -331,9 +331,7 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
       ctx: {
         token,
         sender_id: input.sender_id,
-        ...(entry.prompt_message_id !== undefined
-          ? { prompt_message_id: entry.prompt_message_id }
-          : {}),
+        prompt_message_id: entry.prompt_message_id,
       },
     });
     return {

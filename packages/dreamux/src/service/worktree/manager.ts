@@ -88,7 +88,7 @@ export class WorktreeManager {
      * reuse-cwd spawn never forces the dispatcher cwd contract).
      */
     dispatcherWorkspace?: string;
-    request?: TeamMateWorktreeRequest;
+    request?: TeamMateWorktreeRequest | undefined;
   }): Promise<TeamMateSharedWorkspace> {
     const sourceCwd = resolve(input.cwd);
     const mode = input.request?.mode ?? 'reuse-cwd';

@@ -12,8 +12,8 @@ export function codexProcessEnv(
 }
 
 export function codexThreadInstructions(options: {
-  systemPromptReplace?: string;
-  systemPromptAppend?: readonly string[];
+  systemPromptReplace?: string | undefined;
+  systemPromptAppend?: readonly string[] | undefined;
 }): { baseInstructions?: string; developerInstructions?: string } {
   if (options.systemPromptReplace !== undefined) {
     return { baseInstructions: options.systemPromptReplace };

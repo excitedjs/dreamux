@@ -36,9 +36,7 @@ export function createMcpCommand(): CommandModule<{}, McpArgv> {
       }
       await runDreamuxMcp({
         lease,
-        ...(argv.adminSocket !== undefined
-          ? { adminSocketPath: argv.adminSocket }
-          : {}),
+        adminSocketPath: argv.adminSocket,
       });
     },
   };

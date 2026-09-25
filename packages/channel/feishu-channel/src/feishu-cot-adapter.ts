@@ -642,7 +642,7 @@ export class FeishuCotAdapter {
     return cotLogScope({
       dispatcherId: this.opts.dispatcherId,
       channelId: this.opts.channelId,
-      ...(state !== undefined ? { recipient: state.identity } : {}),
+      recipient: state?.identity,
     });
   }
 

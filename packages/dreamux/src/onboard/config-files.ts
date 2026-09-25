@@ -42,11 +42,10 @@ export function dreamuxConfigFromAnswers(
   // it; re-running onboard must not silently delete it.
   const agents: DreamuxConfig['agents'] = {};
   for (const [id, agent] of Object.entries(base.agents)) {
-    const rawConfig = cloneOptionalProviderConfig(agent.rawConfig);
     agents[id] = {
       provider: agent.provider,
       config: cloneProviderConfig(agent.config),
-      ...(rawConfig === undefined ? {} : { rawConfig }),
+      rawConfig: cloneOptionalProviderConfig(agent.rawConfig),
     };
   }
   // The answers-driven dispatcher's agent is the only entry this onboard run
@@ -58,7 +57,7 @@ export function dreamuxConfigFromAnswers(
     rawConfig: cloneProviderConfig(answers.agentRuntime.config),
   };
   const next: DreamuxConfig = {
-    ...(base.plugins !== undefined ? { plugins: base.plugins } : {}),
+    plugins: base.plugins,
     agents,
     dispatchers,
   };
@@ -94,9 +93,7 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
       id: channel.id,
       provider: channel.provider,
       config: cloneProviderConfig(channel.config),
-      ...(channel.rawConfig === undefined
-        ? {}
-        : { rawConfig: cloneProviderConfig(channel.rawConfig) }),
+      rawConfig: cloneOptionalProviderConfig(channel.rawConfig),
     })),
     agentRuntime: dispatcher.agentRuntime,
   };

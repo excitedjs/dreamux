@@ -19,15 +19,15 @@ export interface ClaudeCodeRuntimeDeps {
   mcpServers: readonly AgentRuntimeMcpServer[];
   sessionFactory: ClaudeCodeSessionFactory;
   resolveBinPath: (bin: string) => string;
-  systemPromptAppend?: readonly string[];
+  systemPromptAppend?: readonly string[] | undefined;
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
   /**
    * The session-bound output schema, applied at spawn via `--json-schema`. It is
    * fixed for the life of this runtime; no submission can change it.
    */
-  outputSchema?: Record<string, unknown>;
-  generateSessionId?: () => string;
+  outputSchema?: Record<string, unknown> | undefined;
+  generateSessionId?: (() => string) | undefined;
   logger: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
 }

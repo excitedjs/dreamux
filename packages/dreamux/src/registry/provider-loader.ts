@@ -91,7 +91,7 @@ export interface ProviderPackageLoaderSpec<TProvider, TFactoryContext> {
 export interface LoadProviderPackagesOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ProviderModuleImporter;
+  importModule?: ProviderModuleImporter | undefined;
 }
 
 /**

@@ -27,7 +27,7 @@ export type CronJobAction = CronPromptAgentAction;
 export interface CronJob {
   id: string;
   dispatcher_id: string;
-  title?: string;
+  title?: string | undefined;
   cron: string;
   tz: string;
   recurring: boolean;
@@ -45,7 +45,7 @@ interface CronJobFile {
 }
 
 export interface CronJobCreateInput {
-  title?: string;
+  title?: string | undefined;
   cron: string;
   tz: string;
   recurring: boolean;
@@ -55,12 +55,12 @@ export interface CronJobCreateInput {
 
 export interface CronJobUpdateInput {
   id: string;
-  title?: string | null;
+  title?: string | null | undefined;
   cron?: string;
   tz?: string;
   recurring?: boolean;
   action?: CronJobAction;
-  enabled?: boolean;
+  enabled?: boolean | undefined;
   nextRunAt?: number | null;
 }
 
@@ -105,7 +105,7 @@ export class CronJobStore {
       const job: CronJob = {
         id: `job-${randomUUID().slice(0, 8)}`,
         dispatcher_id: this.opts.dispatcherId,
-        ...(input.title !== undefined ? { title: input.title } : {}),
+        title: input.title,
         cron: input.cron,
         tz: input.tz,
         recurring: input.recurring,
@@ -250,7 +250,7 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
   return {
     id,
     dispatcher_id: dispatcherId,
-    ...(title !== undefined ? { title } : {}),
+    title,
     cron: requiredString(raw, 'cron', ctx),
     tz: requiredString(raw, 'tz', ctx),
     recurring: requiredBoolean(raw, 'recurring', ctx),

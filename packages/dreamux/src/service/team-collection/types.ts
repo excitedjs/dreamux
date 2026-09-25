@@ -163,10 +163,10 @@ interface TeamCreateOptions {
   worktree?: TeamMateWorktreeRequest;
   /** Required recovery subject for the Team (issue #182 PR-3). */
   intent: string;
-  identity?: string;
+  identity?: string | undefined;
   /** Additional admin-supplied TeamLeader skill roots. */
   skillSources?: readonly AgentRuntimeSkillSource[];
-  prompt?: string;
+  prompt?: string | undefined;
 }
 
 /** Dispatcher-facing request: `namePrefix` is never the durable Team address. */
@@ -196,7 +196,7 @@ export interface TeamDissolveInput {
    * there and nothing else: never a reused cwd, a source repository, a
    * repository root, the managed branch, or committed history.
    */
-  force?: boolean;
+  force?: boolean | undefined;
 }
 
 /**

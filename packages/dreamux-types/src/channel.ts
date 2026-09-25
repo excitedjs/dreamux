@@ -257,7 +257,7 @@ export type ChannelMcpToolOutcome =
  */
 export interface ChannelInstance {
   readonly session: ChannelSession;
-  readonly mcp?: ChannelSessionMcpCapability;
+  readonly mcp?: ChannelSessionMcpCapability | undefined;
 }
 
 export interface ChannelConfigContext {

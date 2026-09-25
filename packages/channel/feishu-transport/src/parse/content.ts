@@ -28,7 +28,7 @@ export interface InboundMessage {
   message_type?: string
   /** JSON-encoded content string, as delivered by Feishu. */
   content?: string
-  mentions?: Mention[]
+  mentions?: Mention[] | undefined
 }
 
 /**

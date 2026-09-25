@@ -104,10 +104,10 @@ export function repoWorktree(
     cwd,
     worktree: {
       mode: 'managed',
-      ...(repo.slug !== undefined ? { slug: repo.slug } : {}),
-      ...(repo.base_ref !== undefined ? { base_ref: repo.base_ref } : {}),
-      ...(repo.branch !== undefined ? { branch: repo.branch } : {}),
-      ...(repo.cleanup !== undefined ? { cleanup: repo.cleanup } : {}),
+      slug: repo.slug,
+      base_ref: repo.base_ref,
+      branch: repo.branch,
+      cleanup: repo.cleanup,
     },
   };
 }

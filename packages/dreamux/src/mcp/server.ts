@@ -110,8 +110,8 @@ export interface McpToolMetadata {
    * every built-in Channel provider tool supplies one.
    */
   outputSchema?: Record<string, unknown>;
-  annotations?: ToolAnnotations;
-  icons?: Icon[];
+  annotations?: ToolAnnotations | undefined;
+  icons?: Icon[] | undefined;
 }
 
 /** A fully bound tool: advertisement metadata plus its handler. */
@@ -133,13 +133,13 @@ export interface RunMcpServerOptions {
    * tests). When provided, the transport owns its own lifecycle and the runner
    * does not attach input-end shutdown.
    */
-  transport?: Transport;
+  transport?: Transport | undefined;
   /** Input stream for the default stdio transport. Defaults to `process.stdin`. */
-  input?: Readable;
+  input?: Readable | undefined;
   /** Output stream for the default stdio transport. Defaults to `process.stdout`. */
-  output?: Writable;
+  output?: Writable | undefined;
   /** Out-of-band logger. Diagnostics never reach the MCP wire. */
-  log?: (message: string) => void;
+  log?: ((message: string) => void) | undefined;
 }
 
 /**
@@ -179,8 +179,8 @@ class ObservableTransport implements Transport {
     return this.inner.sessionId;
   }
 
-  get hasPerRequestStream(): boolean | undefined {
-    return this.inner.hasPerRequestStream;
+  get hasPerRequestStream(): boolean {
+    return this.inner.hasPerRequestStream === true;
   }
 
   async start(): Promise<void> {

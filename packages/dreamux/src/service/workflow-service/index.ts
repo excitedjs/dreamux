@@ -162,7 +162,7 @@ export class WorkflowService implements WorkflowOps {
       deliverTerminal: (fact) =>
         this.opts.completionDelivery.deliver(initiator, fact),
       log: this.opts.log,
-      ...(this.opts.now !== undefined ? { now: this.opts.now } : {}),
+      now: this.opts.now,
     });
     await run.initialize();
     this.runs.set(runId, run);

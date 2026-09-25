@@ -33,7 +33,7 @@ export interface DispatchersOptions {
   homePathPrefixes: readonly string[];
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
-  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  workflowLoggerFactory?: ((dispatcherId: string) => DreamuxLogger) | undefined;
   /** The host `dispatcher` hook, fired once per constructed DispatcherService. */
   dispatcherHook: SyncHook<[Dispatcher]>;
   log: DreamuxLogger;
@@ -188,13 +188,9 @@ export class Dispatchers {
       mcpLeases: this.mcpLeases,
       commands: this.commands,
       homePathPrefixes: this.homePathPrefixes,
-      ...(this.adminSocketPath !== undefined
-        ? { adminSocketPath: this.adminSocketPath }
-        : {}),
+      adminSocketPath: this.adminSocketPath,
       channelLoggerFactory: this.channelLoggerFactory,
-      ...(this.workflowLoggerFactory !== undefined
-        ? { workflowLoggerFactory: this.workflowLoggerFactory }
-        : {}),
+      workflowLoggerFactory: this.workflowLoggerFactory,
       log: this.log,
     };
   }

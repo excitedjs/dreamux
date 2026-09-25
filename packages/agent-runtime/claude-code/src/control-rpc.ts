@@ -23,8 +23,10 @@ export class ClaudeCodeControlRpc {
   constructor(
     private readonly stdin: Writable,
     private readonly options: {
-      log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
-      onRemoteControlUrl?: (url: string) => void;
+      log?:
+        | ((level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void)
+        | undefined;
+      onRemoteControlUrl?: ((url: string) => void) | undefined;
     },
   ) {}
 

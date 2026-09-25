@@ -199,6 +199,6 @@ function identityPatch(
   }
   return {
     status: runtimeStatusToIdentityStatus(update.status),
-    ...(update.lastError !== undefined ? { lastError: update.lastError } : {}),
+    lastError: update.lastError,
   };
 }

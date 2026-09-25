@@ -54,9 +54,9 @@ export interface TeammateSubmitInput {
   /** Stable per-source id for Core's duplicate ledger. Never rendered. */
   readonly sourceId?: string;
   /** Recovery subject for a newly admitted turn. Never rendered. */
-  readonly intent?: string;
+  readonly intent?: string | undefined;
   /** Optional Core completion callback. Never rendered. */
-  readonly deliverCompletion?: TurnCompletionDelivery;
+  readonly deliverCompletion?: TurnCompletionDelivery | undefined;
 }
 
 /**

@@ -77,10 +77,10 @@ export interface FeishuSendOptions {
      * Observer failures are non-authoritative and never affect message sends.
      * Text `send` consumes this field; `sendCard` accepts only `signal`.
      */
-    readonly onMessageCreated?: (receipt: {
+    readonly onMessageCreated?: ((receipt: {
       readonly messageId: string
       readonly ordinal: number
-    }) => void
+    }) => void) | undefined
 }
 
 function notifyMessageCreated(
@@ -100,7 +100,7 @@ export type FeishuChatMode = 'p2p' | 'group' | 'topic'
 function feishuChatClient(client: lark.Client): {
   chat?: {
     get?: (input: unknown) => Promise<{ data?: { chat_mode?: string; name?: string } }>
-  }
+  } | undefined
 } {
   const root = client as unknown as {
     im?: {
@@ -255,7 +255,7 @@ export interface FeishuCredentials {
 
 export interface FeishuTransportOptions {
     client?: lark.Client
-    logger?: TransportLogger
+    logger?: TransportLogger | undefined
 }
 
 /**

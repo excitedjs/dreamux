@@ -72,7 +72,7 @@ export class ExternalAgentRuntimeProviderContractError extends Error {
 export interface LoadAgentRuntimeProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ExternalAgentRuntimeModuleImporter;
+  importModule?: ExternalAgentRuntimeModuleImporter | undefined;
 }
 
 const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<

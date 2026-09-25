@@ -49,7 +49,7 @@ export interface NormalizeAgentRuntimeSkillSourcesOptions {
    * the result as `requiredRoots` instead, so a required root does not need to
    * stay readable for every one of those calls, only for the first.
    */
-  requiredSources?: readonly AgentRuntimeSkillSource[];
+  requiredSources?: readonly AgentRuntimeSkillSource[] | undefined;
   /** Already-canonicalized required roots; takes precedence over `requiredSources`. */
   requiredRoots?: readonly CanonicalSkillRoot[];
 }
@@ -224,9 +224,7 @@ export async function normalizeSkillSources(
   try {
     return await normalizeAgentRuntimeSkillSources(parsed, {
       label: "param 'skill_sources'",
-      ...(options.requiredSources !== undefined
-        ? { requiredSources: options.requiredSources }
-        : {}),
+      requiredSources: options.requiredSources,
     });
   } catch (err) {
     throwCallerMistake(err);

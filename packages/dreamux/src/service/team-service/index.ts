@@ -246,9 +246,7 @@ export class TeamService implements Team {
       kind: 'team-leader',
       base: input.teamId,
       teamSlug: input.teamId,
-      ...(deps.agentNameSuffixGenerator !== undefined
-        ? { generateSuffix: deps.agentNameSuffixGenerator }
-        : {}),
+      generateSuffix: deps.agentNameSuffixGenerator,
     });
     const published = await deps.store.create({
       dispatcher_id: deps.dispatcherId,
@@ -292,9 +290,7 @@ export class TeamService implements Team {
         runtimeCwd: input.workspace.runtimeCwd,
         intent: input.intent,
         identityPrompt,
-        ...(input.skillSources !== undefined
-          ? { skillSources: input.skillSources }
-          : {}),
+        skillSources: input.skillSources,
       });
       service.leader_ = leader;
       if (input.prompt !== undefined) {
@@ -538,16 +534,15 @@ export class TeamService implements Team {
       const { initiator, ...submission } = input;
       const admission = await (await this.leaderService()).submitInput({
         ...submission,
-        ...(initiator !== undefined
-          ? {
-              deliverCompletion: (completion, fact) =>
+        deliverCompletion:
+          initiator !== undefined
+            ? (completion, fact) =>
                 this.deps.completionDelivery.deliverRuntime(
                   initiator,
                   completion,
                   fact,
-                ),
-            }
-          : {}),
+                )
+            : undefined,
       });
       if (
         admission.status === 'submitted' &&

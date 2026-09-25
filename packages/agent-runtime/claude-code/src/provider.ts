@@ -106,19 +106,13 @@ export function createClaudeCodeAgentRuntimeProvider(
         mcpServers: context.mcpServers,
         sessionFactory,
         resolveBinPath,
-        ...(context.skillSources !== undefined
-          ? { skillSources: context.skillSources }
-          : {}),
+        skillSources: context.skillSources,
         // Neutral seam name in, provider-native name out: `disableFeatures` is
         // this package's own internal wording and stops at the adapter.
         disableFeatures: context.disabledFeatures,
         outputSchema: context.outputSchema,
-        ...(options.generateSessionId !== undefined
-          ? { generateSessionId: options.generateSessionId }
-          : {}),
-        ...(systemPromptAppend !== undefined
-          ? { systemPromptAppend }
-          : {}),
+        generateSessionId: options.generateSessionId,
+        systemPromptAppend,
         logger: context.logger,
       };
       return new ClaudeCodeRuntime(context.identity, deps);

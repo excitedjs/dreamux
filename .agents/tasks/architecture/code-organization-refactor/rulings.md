@@ -250,6 +250,8 @@ before the remaining stages run as one orchestration ("后面所有的PR，你�
 
 - R52 hook names: asked "这些名字全都带before。可以把这个before去掉吗？Webpack那边都起了什么样的名字？" After the reply that webpack keeps `before`/`after` for paired hooks around one action, names a single transform hook after the action or data (`createModule`, `processAssets`) and a hand-off hook after the object (`compilation`, `module`), the proposed names were accepted: "可以". → `dispatcher.hooks.launch` (was `beforeLaunch`), `team.hooks.leaderLaunch` (was `beforeTeamLeaderLaunch`), `dispatcher.hooks.teammateLaunch` (new), `dispatcher.hooks.createTeam` (new, the `team.create` parameters), with `host.hooks.dispatcher` and `dispatcher.hooks.team` unchanged.
 
+- R53 gates during the run (2026-09-25 14:24), after two stages each took hours mostly running full gates per work item: "我觉得可以，毕竟是完全重写，你每个阶段都要求类型全过，lint全过，test全过这不现实。应该一次性把代码全部写完，回头再修类型和lint问题，最后再补充单测。" → From stage 2b's review onward, stages are written without running build, lint, typecheck:tests or tests. One final pass after the last stage makes types and lint green and deletes failing tests per R43. Unit tests are still added last on #453. Each stage commit still passes the pre-commit hook, which lints the staged `.ts` files.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's

@@ -70,7 +70,7 @@ export async function reprepareDeletedManagedWorktree(input: {
   /** The entity's own bound identity store. */
   identities: AgentIdentityStore;
   /** The collection this entity belongs to; absent for an owner-root Agent. */
-  peers?: AgentEntityCollectionStore;
+  peers?: AgentEntityCollectionStore | undefined;
   worktrees: WorktreeManager;
   identity: AgentEntityIdentity;
 }): Promise<AgentEntityIdentity> {
@@ -103,7 +103,7 @@ export async function reprepareDeletedManagedWorktree(input: {
     },
   });
   await assertManagedWorktreeAvailable({
-    ...(input.peers !== undefined ? { peers: input.peers } : {}),
+    peers: input.peers,
     name: input.identity.name,
     worktree: workspace.worktree,
   });
@@ -125,7 +125,7 @@ export async function reprepareDeletedManagedWorktree(input: {
  * nothing to collide with.
  */
 export async function assertManagedWorktreeAvailable(input: {
-  peers?: AgentEntityCollectionStore;
+  peers?: AgentEntityCollectionStore | undefined;
   name: string;
   worktree: AgentEntityIdentity['worktree'];
 }): Promise<void> {

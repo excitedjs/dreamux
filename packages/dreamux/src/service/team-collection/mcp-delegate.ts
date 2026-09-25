@@ -145,7 +145,7 @@ async function create(
         ...(identityPrompt !== null ? { identity: identityPrompt } : {}),
         ...(prompt !== null ? { prompt } : {}),
       },
-      ...(args['repo'] !== undefined ? { repo: args['repo'] } : {}),
+      repo: args['repo'],
     }),
     options: {
       namePrefix,

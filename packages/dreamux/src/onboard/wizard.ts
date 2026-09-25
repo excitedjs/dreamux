@@ -453,7 +453,9 @@ async function promptText(
 ): Promise<string> {
   const value = await text({
     message: label,
-    initialValue,
+    // @clack/prompts' TextOptions.initialValue is foreign and has no
+    // explicit `| undefined` — key presence must stay observable here.
+    ...(initialValue !== undefined ? { initialValue } : {}),
     validate: (input) =>
       required && (input === undefined || input.trim() === '')
         ? 'required'

@@ -76,7 +76,7 @@ function kindPrefix(kind: ConcreteNameKind): string {
 export function buildConcreteName(input: {
   kind: ConcreteNameKind;
   base: string;
-  teamSlug?: string;
+  teamSlug?: string | undefined;
   suffix: string;
 }): string {
   const prefix = kindPrefix(input.kind);
@@ -94,9 +94,9 @@ export function buildConcreteName(input: {
 export function allocateConcreteName(input: {
   kind: ConcreteNameKind;
   base: string;
-  teamSlug?: string;
+  teamSlug?: string | undefined;
   exists: (name: string) => boolean;
-  generateSuffix?: SuffixGenerator;
+  generateSuffix?: SuffixGenerator | undefined;
   maxAttempts?: number;
 }): string {
   for (const candidate of concreteNameCandidates(input)) {
@@ -122,7 +122,7 @@ export async function allocateConcreteNameAsync(input: {
   base: string;
   teamSlug?: string;
   accept: (name: string) => Promise<boolean>;
-  generateSuffix?: SuffixGenerator;
+  generateSuffix?: SuffixGenerator | undefined;
   maxAttempts?: number;
 }): Promise<string> {
   for (const candidate of concreteNameCandidates(input)) {
@@ -138,8 +138,8 @@ export async function allocateConcreteNameAsync(input: {
 function* concreteNameCandidates(input: {
   kind: ConcreteNameKind;
   base: string;
-  teamSlug?: string;
-  generateSuffix?: SuffixGenerator;
+  teamSlug?: string | undefined;
+  generateSuffix?: SuffixGenerator | undefined;
   maxAttempts?: number;
 }): Generator<string> {
   const generate = input.generateSuffix ?? generateNameSuffix;
@@ -148,7 +148,7 @@ function* concreteNameCandidates(input: {
     yield buildConcreteName({
       kind: input.kind,
       base: input.base,
-      ...(input.teamSlug !== undefined ? { teamSlug: input.teamSlug } : {}),
+      teamSlug: input.teamSlug,
       suffix: generate(),
     });
   }

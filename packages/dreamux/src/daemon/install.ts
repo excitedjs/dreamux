@@ -123,7 +123,7 @@ export async function runDaemonInstall(
         platform,
         currentNodeBin: process.execPath,
         runner,
-        ...(options.nodeProbe !== undefined ? { probe: options.nodeProbe } : {}),
+        probe: options.nodeProbe,
       });
   // Persist the effective env/homeDir and captured fallback dirs (not the
   // optional raw option values) so managedServicePath renders the same PATH

@@ -69,9 +69,7 @@ export function createTeamLeaderAgent(
       mcp: deps.mcp,
       skillSources: deps.skillSources,
       disabledFeatures: deps.disabledFeatures,
-      ...(deps.systemPrompt !== undefined
-        ? { systemPrompt: deps.systemPrompt }
-        : {}),
+      systemPrompt: deps.systemPrompt,
     },
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
@@ -125,7 +123,7 @@ export interface TeamLeaderCreationInput {
   runtimeCwd: string;
   intent: string | null;
   identityPrompt: string | null;
-  skillSources?: readonly AgentRuntimeSkillSource[];
+  skillSources?: readonly AgentRuntimeSkillSource[] | undefined;
 }
 
 /**
@@ -185,9 +183,7 @@ export async function createTeamLeaderAgentForTeam(
     worktree: reuseCwdWorktree(creation.runtimeCwd),
     intent: creation.intent,
     identityPrompt: creation.identityPrompt,
-    ...(creation.skillSources !== undefined
-      ? { skillSources: creation.skillSources }
-      : {}),
+    skillSources: creation.skillSources,
     status: 'starting',
     replaceExisting: true,
   });

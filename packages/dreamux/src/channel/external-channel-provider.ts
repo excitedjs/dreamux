@@ -70,7 +70,7 @@ export class ExternalChannelProviderContractError extends Error {
 export interface LoadChannelProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ExternalChannelModuleImporter;
+  importModule?: ExternalChannelModuleImporter | undefined;
 }
 
 const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<

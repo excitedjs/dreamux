@@ -185,12 +185,8 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
           leaderAgentRuntime: command.leader.agent_runtime,
           ...(repoCwd !== null ? { repoCwd } : {}),
           ...(repo !== null ? { worktree: repo.worktree } : {}),
-          ...(command.leader.prompt !== undefined
-            ? { prompt: command.leader.prompt }
-            : {}),
-          ...(command.leader.identity !== undefined
-            ? { identity: command.leader.identity }
-            : {}),
+          prompt: command.leader.prompt,
+          identity: command.leader.identity,
           ...(skillSources !== null ? { skillSources } : {}),
         },
       });
@@ -227,6 +223,9 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
         // `intent` is Team-Command-only: it updates the leader's durable
         // recovery subject, and `dispatcher.submit` has no such field, so the
         // shared projection in channel-submission.ts deliberately omits it.
+        // Presence is observable (core-command-adapters.test.ts asserts an
+        // omitted intent is an omitted key, not an explicit undefined), so
+        // this stays a conditional spread rather than a plain assignment.
         ...(input.command.intent !== undefined
           ? { intent: input.command.intent }
           : {}),
@@ -364,7 +363,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       return dispatcher.dissolveTeam({
         teamId: input.teamName,
         note: input.note,
-        ...(input.force !== undefined ? { force: input.force } : {}),
+        force: input.force,
       });
     },
   };

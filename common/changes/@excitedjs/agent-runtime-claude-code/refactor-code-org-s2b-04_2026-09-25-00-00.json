@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2b, item 4: enable exactOptionalPropertyTypes. Published fields now type their optional members as also accepting an explicit undefined value, not only omission: ClaudeCodeSessionSpec.onRemoteControlUrl, ClaudeCodeRuntimeDeps.outputSchema/systemPromptAppend/generateSessionId, ClaudeCodeResidentArgsInput.systemPromptAppend/disableFeatures/outputSchema, and ClaudeCodeStreamRpcOptions.outputSchemaEnabled/log/onRemoteControlUrl/onProtocolEvent (all exported from index.ts). Non-breaking widening; no runtime change.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "053700@gmail.com"
+}

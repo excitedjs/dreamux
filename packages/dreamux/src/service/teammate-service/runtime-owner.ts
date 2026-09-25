@@ -217,7 +217,7 @@ export class TeammateRuntimeOwner {
           reprepareDeletedManagedWorktree({
             config: this.deps.config,
             identities: this.deps.identities,
-            ...(this.deps.peers !== undefined ? { peers: this.deps.peers } : {}),
+            peers: this.deps.peers,
             worktrees: this.mustWorktrees(),
             identity: current,
           }));

@@ -77,7 +77,7 @@ export class CompletionDeliveryPolicy {
        */
       accepting: () => boolean;
       /** Deterministic test seam for the internal delivery-operation bound. */
-      attemptTimeoutMs?: number;
+      attemptTimeoutMs?: number | undefined;
     },
   ) {
     this.attemptTimeoutMs =

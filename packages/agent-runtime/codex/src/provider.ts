@@ -146,31 +146,17 @@ export function createCodexAgentRuntimeProvider(
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,
-        ...(context.skillSources !== undefined
-          ? { skillSources: context.skillSources }
-          : {}),
-        ...(systemPromptReplace !== undefined
-          ? { systemPromptReplace }
-          : {}),
-        ...(systemPromptAppend !== undefined
-          ? { systemPromptAppend }
-          : {}),
+        // context.skillSources is a required field on AgentRuntimeCreateContext
+        // (never undefined) — assign it directly.
+        skillSources: context.skillSources,
+        systemPromptReplace,
+        systemPromptAppend,
         logger: context.logger,
-        ...(options.codexHomeDoctor !== undefined
-          ? { codexHomeDoctor: options.codexHomeDoctor }
-          : {}),
-        ...(options.codexProcessFactory !== undefined
-          ? { codexProcessFactory: options.codexProcessFactory }
-          : {}),
-        ...(options.codexClientFactory !== undefined
-          ? { codexClientFactory: options.codexClientFactory }
-          : {}),
-        ...(options.restartBackoffBaseMs !== undefined
-          ? { restartBackoffBaseMs: options.restartBackoffBaseMs }
-          : {}),
-        ...(options.restartBackoffMaxMs !== undefined
-          ? { restartBackoffMaxMs: options.restartBackoffMaxMs }
-          : {}),
+        codexHomeDoctor: options.codexHomeDoctor,
+        codexProcessFactory: options.codexProcessFactory,
+        codexClientFactory: options.codexClientFactory,
+        restartBackoffBaseMs: options.restartBackoffBaseMs,
+        restartBackoffMaxMs: options.restartBackoffMaxMs,
       };
       return new CodexRuntime(context.identity, deps);
     },

@@ -57,7 +57,7 @@ export type DispatcherCodexHomeDoctor = (
 ) => void | Promise<void>;
 
 interface DoctorContextOptions {
-  codexCliArgs?: string[];
+  codexCliArgs?: string[] | undefined;
   dispatcherCwd?: string;
   /** Representative socket sample (from the path context's `runtimeSocketDirs()`). */
   socketPath?: string;

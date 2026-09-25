@@ -61,7 +61,7 @@ export type AskUserAnswer =
 /** Everything a repaint reads. The card is a pure function of this. */
 export interface AskUserRequestView {
   readonly requestId: string;
-  readonly text?: string;
+  readonly text?: string | undefined;
   readonly questions: readonly AskUserQuestionSpec[];
   readonly answers: ReadonlyMap<number, AskUserAnswer>;
 }

@@ -31,7 +31,7 @@ export interface FeishuAppOwnerIdentity {
 
 export interface FeishuBotInfo {
   openId?: string
-  appName?: string
+  appName?: string | undefined
 }
 
 const BOT_INFO_ATTEMPTS = 3
@@ -51,7 +51,7 @@ export async function resolveBotInfo(
       if (openId) {
         return {
           openId,
-          ...(appName !== undefined && appName !== '' ? { appName } : {}),
+          appName: appName !== undefined && appName !== '' ? appName : undefined,
         }
       }
       diag.diagnostic(

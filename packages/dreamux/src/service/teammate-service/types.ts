@@ -119,7 +119,7 @@ export interface TeammateServiceOptions {
   mcp?: TeammateAgentMcp;
   skillSources?: readonly AgentRuntimeSkillSource[];
   disabledFeatures?: readonly string[];
-  systemPrompt?: AgentRuntimeSystemPrompt;
+  systemPrompt?: AgentRuntimeSystemPrompt | undefined;
   /**
    * Optional JSON Schema constraining every turn's final assistant message.
    * Bound once to the runtime session through the create context: a provider
@@ -127,7 +127,7 @@ export interface TeammateServiceOptions {
    * it, and no later submission can change it. In-memory only — never persisted
    * to identity.
    */
-  outputSchema?: JsonSchema;
+  outputSchema?: JsonSchema | undefined;
   runtimeId: string;
   /**
    * The runtime role of this entity, derived by its owner: `dispatcher` for the

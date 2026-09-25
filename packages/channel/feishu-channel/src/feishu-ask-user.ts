@@ -98,9 +98,9 @@ export interface AskUserSettlement {
    * the answer is delivered is read from this card, not from where the round
    * was opened. Absent only if the send never reported one.
    */
-  readonly cardMessageId?: string;
+  readonly cardMessageId?: string | undefined;
   /** Who clicked. Absent when the round closed on its timer. */
-  readonly operatorOpenId?: string;
+  readonly operatorOpenId?: string | undefined;
 }
 
 /**
@@ -142,7 +142,7 @@ export interface AskUserRegistry {
 
 interface OpenRound {
   readonly requestId: string;
-  readonly text?: string;
+  readonly text?: string | undefined;
   readonly questions: readonly AskUserQuestionSpec[];
   readonly answers: Map<number, AskUserAnswer>;
   messageId?: string;
@@ -232,7 +232,7 @@ export function createAskUserRegistry(
   function closeRound(
     round: OpenRound,
     outcome: AskUserSettlement['outcome'],
-    by?: { cardMessageId?: string; operatorOpenId?: string },
+    by?: { cardMessageId?: string | undefined; operatorOpenId?: string | undefined },
   ): AskUserSettlement {
     rounds.delete(round.requestId);
     if (round.timer !== undefined) timers.clear(round.timer);
@@ -250,10 +250,8 @@ export function createAskUserRegistry(
       outcome,
       text,
       sourceId: `ask_user_question:${round.requestId}`,
-      ...(cardMessageId !== undefined ? { cardMessageId } : {}),
-      ...(by?.operatorOpenId !== undefined
-        ? { operatorOpenId: by.operatorOpenId }
-        : {}),
+      cardMessageId,
+      operatorOpenId: by?.operatorOpenId,
     };
   }
 
@@ -265,12 +263,8 @@ export function createAskUserRegistry(
   ): AskUserApplyResult {
     const view = { ...round };
     const settlement = closeRound(round, outcome, {
-      ...(event.openMessageId !== undefined
-        ? { cardMessageId: event.openMessageId }
-        : {}),
-      ...(event.operatorOpenId !== undefined
-        ? { operatorOpenId: event.operatorOpenId }
-        : {}),
+      cardMessageId: event.openMessageId,
+      operatorOpenId: event.operatorOpenId,
     });
     return {
       kind: 'settled',
@@ -296,7 +290,7 @@ export function createAskUserRegistry(
       const requestId = newRequestId();
       const round: OpenRound = {
         requestId,
-        ...(text !== undefined ? { text } : {}),
+        text,
         questions,
         answers: new Map(),
       };

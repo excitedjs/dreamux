@@ -69,11 +69,7 @@ export class FeishuTargetRouter {
   ): Promise<FeishuInboundRoute> {
     assertRoutingActive(signal);
     const route = await this.project(
-      {
-        chatId: event.chatId,
-        chatType: event.chatType,
-        ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
-      },
+      { chatId: event.chatId, chatType: event.chatType, threadId: event.threadId },
       signal,
     );
     assertRoutingActive(signal);
@@ -92,7 +88,7 @@ export class FeishuTargetRouter {
    * name, and the two kinds differ only in whether a binding could exist.
    */
   async project(
-    place: { chatId: string; threadId?: string; chatType?: string },
+    place: { chatId: string; threadId?: string | undefined; chatType?: string },
     signal?: AbortSignal,
   ): Promise<FeishuInboundRoute> {
     const chatType = place.chatType ?? 'group';
@@ -229,7 +225,7 @@ export class FeishuTargetRouter {
     err?: { name?: string; message: string },
   ): void {
     this.opts.log.warn(
-      { chat_id: chatId, reason, ...(err !== undefined ? { err } : {}) },
+      { chat_id: chatId, reason, err },
       'could not verify Feishu topic-group mode; ' +
         'treating inbound as an ordinary group',
     );
