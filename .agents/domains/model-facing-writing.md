@@ -16,7 +16,7 @@ Current source owners:
 - `/packages/dreamux/src/service/agent/mcp-tool-descriptors.ts`
 - `/packages/dreamux/src/service/agent/system-prompt.ts` (what a TeamMate is told about itself)
 - `/packages/dreamux/src/service/team/mcp.ts`
-- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
+- `/packages/dreamux/src/service/scheduler/mcp.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/channel/feishu-channel/src/tools/`
 

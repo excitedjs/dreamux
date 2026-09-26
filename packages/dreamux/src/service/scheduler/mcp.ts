@@ -9,9 +9,9 @@
  * because the target was a Command parameter. Here the target is not a
  * parameter at all, so there is nothing to strip and nothing to override.
  *
- * The request codecs are the scheduler's own and live in its `types.ts`, and the
- * job projection lives beside the record it copies in `store.ts`; what stays
- * here is this surface's advertised catalog and its tool names.
+ * The request readers and the result projection live in `requests.ts`, shared
+ * unchanged with `commands.ts`; what stays here is this surface's advertised
+ * catalog and its tool names.
  *
  * Failures are thrown, not classified: a cron failure states its own reason and
  * next step, and the admission boundary every delegate is reached through
@@ -37,13 +37,14 @@ import type {
   McpDelegateResult,
   McpServerDelegate,
 } from '../mcp/types.js';
-import { cronJobResult, cronListResult } from './store.js';
 import {
   cronCreateRequest,
   cronJobIdParam,
+  cronJobResult,
+  cronListResult,
   cronUpdateRequest,
-  type SchedulerCommands,
-} from './types.js';
+} from './requests.js';
+import type { SchedulerCommands } from './types.js';
 
 export const CRON_MCP_SERVER_NAME = 'cron';
 

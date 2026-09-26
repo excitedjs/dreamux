@@ -475,7 +475,7 @@ Source:
 - `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
 - `/packages/dreamux/src/service/agent/mcp.ts`
 - `/packages/dreamux/src/service/team/mcp.ts`
-- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
+- `/packages/dreamux/src/service/scheduler/mcp.ts`
 
 ## Invariants
 

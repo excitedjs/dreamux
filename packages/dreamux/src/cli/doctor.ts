@@ -159,7 +159,6 @@ export async function runDreamuxDoctor(
     }
     const cronLegacy = await detectLegacyCronJobStore(
       dispatcherCronJobsPath(dispatcher.id),
-      dispatcher.id,
     );
     checks.push({
       name: `dispatcher ${dispatcher.id} cron jobs`,
@@ -174,7 +173,6 @@ export async function runDreamuxDoctor(
       if (team.status === 'closed') continue;
       const teamCronLegacy = await detectLegacyCronJobStore(
         dispatcherTeamCronJobsPath(dispatcher.id, team.team_id),
-        dispatcher.id,
       );
       checks.push({
         name: `dispatcher ${dispatcher.id} team ${team.team_id} cron jobs`,

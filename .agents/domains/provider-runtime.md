@@ -1043,7 +1043,7 @@ Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/agent/activity.ts`
-- `/packages/dreamux/src/service/scheduler/service.ts`
+- `/packages/dreamux/src/service/scheduler/index.ts`
 - `/packages/dreamux/src/service/agent/service.ts`
 - `/packages/dreamux/src/service/team/closing.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`

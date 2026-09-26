@@ -7,15 +7,13 @@ import { RuleViolation } from '../../platform/errors.js';
 import { throwCallerMistake } from '../../command/errors.js';
 import { CronJobNotFoundError } from './errors.js';
 
-import {
-  type CronJobStore,
-  type CronJob,
-  type CronJobAction,
-  type CronJobUpdateInput,
-} from './store.js';
+import { type CronJobStore } from './store.js';
 import { validateCronSchedule } from './cron-validation.js';
 import type {
   CronCreateRequest,
+  CronJob,
+  CronJobAction,
+  CronJobUpdateInput,
   CronUpdateRequest,
   SchedulerCommands,
   SchedulerServiceOptions,
@@ -28,8 +26,7 @@ interface TimerSlot {
   timer: NodeJS.Timeout;
 }
 
-export class SchedulerService {
-  readonly commands: SchedulerCommands;
+export class SchedulerService implements SchedulerCommands {
   private readonly ownerId: string;
   private readonly store: CronJobStore;
   private readonly log: DreamuxLogger;
@@ -44,12 +41,6 @@ export class SchedulerService {
     this.store = opts.store;
     this.log = opts.log;
     this.now = opts.now ?? (() => Date.now());
-    this.commands = {
-      list: () => this.list(),
-      create: (input) => this.create(input),
-      update: (input) => this.update(input),
-      delete: (id) => this.delete(id),
-    };
   }
 
   async start(): Promise<void> {
@@ -157,11 +148,7 @@ export class SchedulerService {
         { owner_id: this.ownerId, job_id: job.id },
         'cron one-shot missed while scheduler was stopped',
       );
-      await this.store.update({
-        id: job.id,
-        enabled: false,
-        nextRunAt: null,
-      });
+      await this.store.update({ id: job.id, ...this.advanceJob(job, now) });
       return null;
     }
     const nextRunAt =
@@ -210,18 +197,80 @@ export class SchedulerService {
     this.timers.delete(jobId);
   }
 
+  /**
+   * Read once, submit, record.
+   *
+   * A cron job is a scheduled instruction, not a polite request for a quiet
+   * moment: when it is due it goes through the same submission path a person
+   * would use, and the runtime folds or steers it into whatever is running.
+   * Nothing here asks whether the agent is busy, holds a fire for later, or
+   * keeps a second queue beside the one the runtime already owns.
+   *
+   * What it does check is its own side of the boundary, immediately before
+   * submitting: the lifecycle generation that a `stop()` invalidates, and the
+   * durable job as it stands right now — a single read placed immediately
+   * before the submission call, so anything read earlier would be stale by
+   * the time it mattered. Both checks below are the scheduler's own facts —
+   * neither reaches into the submission path to cancel anything.
+   */
   private async dispatch(jobId: string, generation: number): Promise<void> {
+    let job: CronJob | null = null;
     try {
-      const job = await this.store.get(jobId);
+      job = await this.store.get(jobId);
       if (generation !== this.lifecycleGeneration) return;
       if (job === null || !job.enabled) return;
-      await this.submitDue(job, generation);
+      const result = await this.opts.submitScheduled({
+        jobId: job.id,
+        prompt: job.action.prompt,
+        sourceId: this.nextFireSourceId(job.id),
+      });
+      const now = this.now();
+      if (result.status !== 'submitted' && result.status !== 'ambiguous') {
+        this.log.warn(
+          {
+            owner_id: this.ownerId,
+            job_id: job.id,
+            reason: `scheduled submission returned ${result.status}`,
+          },
+          'cron job fire missed',
+        );
+        try {
+          await this.rearm(job, 'missed', now, generation);
+        } catch (err) {
+          this.log.error(
+            { owner_id: this.ownerId, job_id: job.id, err: errorInfo(err) },
+            'cron job missed rearm failed',
+          );
+        }
+        return;
+      }
+      if (result.status === 'ambiguous') {
+        this.log.warn(
+          { owner_id: this.ownerId, job_id: job.id },
+          'cron submission was admission-ambiguous; recording the fire without retry',
+        );
+      }
+      await this.rearm(job, 'fired', now, generation);
+      this.log.info(
+        { owner_id: this.ownerId, job_id: job.id, fired_at: now },
+        'cron job fired',
+      );
     } catch (err) {
       this.log.error(
         { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
         'cron job dispatch failed',
       );
-      await this.rearmAfterDispatchError(jobId);
+      // No job in hand means the read itself threw — there is nothing to
+      // rearm from, so there is no second read to retry it with either.
+      if (job === null) return;
+      try {
+        await this.rearm(job, 'missed', this.now(), generation);
+      } catch (rearmErr) {
+        this.log.error(
+          { owner_id: this.ownerId, job_id: jobId, err: errorInfo(rearmErr) },
+          'cron job re-arm after dispatch error failed',
+        );
+      }
     }
   }
 
@@ -241,109 +290,61 @@ export class SchedulerService {
     return this.opts.admit(task);
   }
 
-  private async rearmAfterDispatchError(jobId: string): Promise<void> {
-    // A transient store/runtime error must not silently kill a recurring
-    // schedule until the next daemon restart: best-effort re-arm the next
-    // occurrence from the persisted job. Swallow secondary errors — the timer
-    // is rebuilt from persisted state on the next start().
-    try {
-      if (!this.running) return;
-      const job = await this.store.get(jobId);
-      if (job === null || !job.enabled || !job.recurring) return;
-      await this.rearmAfterMiss(job);
-    } catch (err) {
-      this.log.error(
-        { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
-        'cron job re-arm after dispatch error failed',
-      );
-    }
+  /**
+   * The `{ enabled, nextRunAt }` a job settles into after this instant passes,
+   * whether it just fired or was just missed — recurring and one-shot each
+   * resolve to one shape either way, so the outcome plays no part in the
+   * formula. A one-shot's `enabled: false` is a real value a caller must
+   * write; a recurring job's `enabled` is deliberately absent rather than
+   * `true`, so a partial-update write (`rearm`'s 'missed' branch) never
+   * re-enables a job a concurrent `cron.update` disabled in the same window —
+   * `setFired`'s required `enabled` field is supplied by `rearm` itself.
+   */
+  private advanceJob(
+    job: CronJob,
+    now: number,
+  ): { enabled?: boolean; nextRunAt: number | null } {
+    return job.recurring
+      ? { nextRunAt: nextRunAfter(job.cron, job.tz, now) }
+      : { enabled: false, nextRunAt: null };
   }
 
   /**
-   * Submit a due fire, now.
+   * The one durable write a fire produces, plus the re-arm it earns.
    *
-   * A cron job is a scheduled instruction, not a polite request for a quiet
-   * moment: when it is due it goes through the same submission path a person
-   * would use, and the runtime folds or steers it into whatever is running.
-   * Nothing here asks whether the agent is busy, holds a fire for later, or
-   * keeps a second queue beside the one the runtime already owns.
-   *
-   * What it does check is its own side of the boundary, immediately before
-   * submitting: the lifecycle generation that a `stop()` invalidates, and the
-   * durable job as it stands right now. Both are the scheduler's own facts —
-   * neither reaches into the submission path to cancel anything.
+   * `generation` is the value `dispatch` captured before submitting: a
+   * 'fired' outcome is recorded unconditionally (a submission the runtime
+   * already accepted must never end up looking, on disk, like one that never
+   * happened), but it is armed again only if this scheduler is still the one
+   * that submitted it. A 'missed' outcome carries no such durable-fact
+   * obligation — a job whose miss-rearm is skipped here for a stale
+   * generation is picked back up by the next `start()`'s `reconcile()`, which
+   * re-derives the same schedule from the persisted job — so a stale
+   * generation skips the write entirely.
    */
-  private async submitDue(job: CronJob, generation: number): Promise<void> {
-    const current = await this.store.get(job.id);
-    if (generation !== this.lifecycleGeneration) return;
-    if (current === null || !current.enabled) return;
-    const result = await this.opts.submitScheduled({
-      jobId: current.id,
-      prompt: current.action.prompt,
-      sourceId: this.nextFireSourceId(current.id),
-    });
-    if (result.status !== 'submitted' && result.status !== 'ambiguous') {
-      await this.armMissed(
-        current,
-        `scheduled submission returned ${result.status}`,
-      );
+  private async rearm(
+    job: CronJob,
+    outcome: 'fired' | 'missed',
+    now: number,
+    generation: number,
+  ): Promise<void> {
+    if (outcome === 'fired') {
+      const updated = await this.store.setFired({
+        id: job.id,
+        firedAt: now,
+        nextRunAt: this.advanceJob(job, now).nextRunAt,
+        enabled: job.recurring,
+      });
+      if (updated !== null && generation === this.lifecycleGeneration) {
+        this.arm(updated);
+      }
       return;
     }
-    if (result.status === 'ambiguous') {
-      this.log.warn(
-        { owner_id: this.ownerId, job_id: current.id },
-        'cron submission was admission-ambiguous; recording the fire without retry',
-      );
-    }
-    const firedAt = this.now();
-    const nextRunAt = current.recurring
-      ? nextRunAfter(current.cron, current.tz, firedAt)
-      : null;
-    const enabled = current.recurring;
-    const updated = await this.store.setFired({
-      id: current.id,
-      firedAt,
-      nextRunAt,
-      enabled,
+    if (generation !== this.lifecycleGeneration) return;
+    const updated = await this.store.update({
+      id: job.id,
+      ...this.advanceJob(job, now),
     });
-    this.log.info(
-      { owner_id: this.ownerId, job_id: current.id, fired_at: firedAt },
-      'cron job fired',
-    );
-    // The fire is recorded either way; only re-arming belongs to a scheduler
-    // that is still the current one.
-    if (
-      updated !== null &&
-      this.running &&
-      generation === this.lifecycleGeneration
-    ) {
-      this.arm(updated);
-    }
-  }
-
-  private async armMissed(job: CronJob, reason: string): Promise<void> {
-    this.log.warn(
-      { owner_id: this.ownerId, job_id: job.id, reason },
-      'cron job fire missed',
-    );
-    try {
-      await this.rearmAfterMiss(job);
-    } catch (err) {
-      this.log.error(
-        { owner_id: this.ownerId, job_id: job.id, err: errorInfo(err) },
-        'cron job missed rearm failed',
-      );
-    }
-  }
-
-  private async rearmAfterMiss(job: CronJob): Promise<void> {
-    const update: CronJobUpdateInput = job.recurring
-      ? {
-          id: job.id,
-          nextRunAt: nextRunAfter(job.cron, job.tz, this.now()),
-        }
-      : { id: job.id, enabled: false, nextRunAt: null };
-    const updated = await this.store.update(update);
     this.arm(updated);
   }
 

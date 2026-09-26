@@ -1,17 +1,57 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import {
-  mustNonEmptyString,
-  mustString,
-  optionalBooleanField,
-  optionalNullableStringField,
-  optionalStringField,
-  type CommandPayload,
-} from '../../command/payload.js';
-
 import type { TurnAdmission } from '../agent/admission.js';
 
-import type { CronJob, CronJobStore } from './store.js';
+import type { CronJobStore } from './store.js';
+
+export interface CronPromptAgentAction {
+  kind: 'prompt-agent';
+  prompt: string;
+}
+
+/**
+ * What a cron job does when it fires, and the only thing it has ever done.
+ *
+ * A job injects its prompt into the Dispatcher or TeamLeader that owns the
+ * schedule. It does not spawn an agent and it does not address a Channel: those
+ * were declared shapes with no execution behind them, so the union is the one
+ * action Dreamux actually performs.
+ */
+export type CronJobAction = CronPromptAgentAction;
+
+export interface CronJob {
+  id: string;
+  title?: string | undefined;
+  cron: string;
+  tz: string;
+  recurring: boolean;
+  action: CronJobAction;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+  next_run_at: number | null;
+  last_fired_at: number | null;
+}
+
+export interface CronJobCreateInput {
+  title?: string | undefined;
+  cron: string;
+  tz: string;
+  recurring: boolean;
+  action: CronJobAction;
+  nextRunAt: number | null;
+}
+
+export interface CronJobUpdateInput {
+  id: string;
+  title?: string | null | undefined;
+  cron?: string;
+  tz?: string;
+  recurring?: boolean;
+  action?: CronJobAction;
+  enabled?: boolean | undefined;
+  nextRunAt?: number | null;
+}
 
 export interface CronCreateRequest {
   cron: string;
@@ -57,38 +97,4 @@ export interface SchedulerCommands {
   create(input: CronCreateRequest): Promise<CronJob>;
   update(input: CronUpdateRequest): Promise<CronJob>;
   delete(id: string): Promise<{ id: string; deleted: boolean }>;
-}
-
-/**
- * Read one cron creation request, as every surface asks it.
- *
- * There is no `action` field: what a job does is derived from `prompt` alone
- * by the scheduler, on every surface.
- */
-export function cronCreateRequest(params: CommandPayload): CronCreateRequest {
-  return {
-    cron: mustString(params, 'cron'),
-    prompt: mustNonEmptyString(params, 'prompt'),
-    ...optionalStringField(params, 'title'),
-    ...optionalBooleanField(params, 'recurring'),
-    ...optionalStringField(params, 'tz'),
-  };
-}
-
-/** Read one cron update request. */
-export function cronUpdateRequest(params: CommandPayload): CronUpdateRequest {
-  return {
-    id: cronJobIdParam(params),
-    ...optionalStringField(params, 'cron'),
-    ...optionalStringField(params, 'prompt'),
-    ...optionalNullableStringField(params, 'title'),
-    ...optionalBooleanField(params, 'recurring'),
-    ...optionalStringField(params, 'tz'),
-    ...optionalBooleanField(params, 'enabled'),
-  };
-}
-
-/** Read the job id every per-job operation addresses. */
-export function cronJobIdParam(params: CommandPayload): string {
-  return mustString(params, 'id');
 }

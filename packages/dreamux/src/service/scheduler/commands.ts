@@ -5,11 +5,10 @@
  * TeamLeader — so every Command first resolves that owner's
  * {@link SchedulerCommands} surface and then delegates unchanged. Job validation
  * stays inside the scheduler service; these definitions own the declared payload
- * schema and the owner selection. The request codecs live with the scheduler's
- * types, the job projection with the store that produces the records, and the
- * failures with the rules that raise them — each stating its own reason and
- * next step. The cron MCP delegate reads the same helpers; neither adapter
- * reads the other.
+ * schema and the owner selection. The request readers and the result
+ * projection live in `requests.ts`, the failures with the rules that raise
+ * them — each stating its own reason and next step. The cron MCP delegate
+ * reads the same `requests.ts` helpers; neither adapter reads the other.
  */
 import type {
   CoreCommandContext,
@@ -29,14 +28,18 @@ import {
   objectSchema,
 } from '../../command/schema.js';
 import { optionalTeamNameParam } from '../team/requests.js';
-import { cronJobResult, cronListResult, type CronJob } from './store.js';
 import {
   cronCreateRequest,
   cronJobIdParam,
+  cronJobResult,
+  cronListResult,
   cronUpdateRequest,
-  type CronCreateRequest,
-  type CronUpdateRequest,
-  type SchedulerCommands,
+} from './requests.js';
+import type {
+  CronCreateRequest,
+  CronJob,
+  CronUpdateRequest,
+  SchedulerCommands,
 } from './types.js';
 
 /** The scheduler owner a cron Command addresses. */

@@ -4,7 +4,7 @@ import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
-import type { SchedulerService } from '../scheduler/service.js';
+import type { SchedulerService } from '../scheduler/index.js';
 import type { TeammateCollection } from '../agent/index.js';
 import type { AgentService } from '../agent/service.js';
 import type { AgentEntityWorktreeIdentity } from '../agent/identity.js';

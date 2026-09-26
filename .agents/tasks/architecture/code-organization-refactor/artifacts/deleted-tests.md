@@ -3059,3 +3059,75 @@ its shutdown drain does not reach the Codex submit path or any of
   used only by this case's `vi.spyOn(WorkflowRun.prototype, 'initialize')`
   fence) are removed in the same edit as plain import-list bookkeeping, not a
   second test-case change.
+
+## Stage 6d
+
+### Item 3 — `advanceJob` + `rearm`, one store read per fire
+
+Corrects the `## Stage 2a — Item 12` entry's `scheduler-cron.test.ts` verdict
+(`"Still holds — restore verbatim (all 20 cases)"`); that entry is not
+edited, this is an appended correction as the ledger accumulates. Primary
+evidence: the file's content in the revision immediately before Stage 2a —
+Item 12 deleted it (`git log --diff-filter=D --
+packages/dreamux/tests/scheduler-cron.test.ts` locates that revision), read in
+full before this item's implementation, per
+`.workspace/refactor/s6d-scheduler-plan.md`'s Item 3. That reading found the
+Stage 2a entry's "20 cases" is a miscount against the recovered file: it holds
+15 `it()` cases across 8 `describe` blocks (4 + 1 + 1 + 1 + 1 + 2 + 2 + 3), not
+20. The "still holds" verdict itself is correct for all 15; only the count in
+that earlier entry's text is wrong, and it is left as written per this
+ledger's append-only convention — this note is the correction.
+
+- **Cases still holding, mechanics changed:**
+  `describe('timer generation: durable revalidation immediately before
+  submission')`'s `'never submits a job that was disabled during the window
+  between the two store reads'`, and `describe('timer generation: a stopped
+  timer cannot fire')`'s `'drops a fire whose generation was captured before
+  stop() bumped it'`. Both contracts **still hold**. The fire path
+  (`SchedulerService.dispatch()`, `service/scheduler/index.ts`) now performs
+  exactly one `store.get()` per fire instead of two — the early, gate-only
+  read that used to run inside the old `dispatch()` is deleted; the surviving
+  read sits where the old `submitDue()`'s late read sat, immediately before
+  `submitScheduled()`. A restoration holds the *sole* `get()` open (there is
+  no second `queueGetGate()` call left to make) and otherwise asserts the
+  same outcome: disabling the job (first case) or bumping
+  `lifecycleGeneration` via `stop()` (second case) while that one read is
+  paused still suppresses the submission once it resolves.
+- **Cases still holding, unchanged:**
+  `describe('immediate fire and fold...')`'s `'submits with exactly {jobId,
+  prompt, sourceId} and nothing else'` and `'fires a second due job while the
+  first is still awaiting submission — no serialization'`. `jobId` was
+  **not** dropped from `submitScheduled`'s input, contradicting the audit
+  §6.3 literal text ("`jobId` dropped"). Reason recorded in
+  `.workspace/refactor/s6d-scheduler-plan.md`, Item 3: these two cases key
+  their assertions off `input.jobId` and `call['jobId']` directly, this
+  ledger's own Stage 2a — Item 12 entry already logged the whole file as
+  "still holds — restore verbatim," and CLAUDE.md's "fix the change, not the
+  assertion" rule makes that a load-bearing test contract the audit's
+  unruled simplification proposal does not override.
+- **Other 11 cases — still hold, unchanged by this item:** schema fail-loud
+  ×3 (the store's own rejection of the removed spawn-teammate action kind and
+  of the removed top-level `deliver` field, plus the command-payload-level
+  rejection of a top-level `deliver` sibling on `scheduler.cron.create`), the
+  "accepts... as a control" case, `SchedulerService.create` payload
+  validation, no-missed-fire-replay, pre-admission-failure,
+  ambiguous-admission, and store-deletion-ordering ×3. One note for whoever
+  restores them: the pre-admission-failure case only exercises a
+  **recurring** job, so
+  it is unaffected by this item's one named, deliberate error-path timing
+  change — a **one-shot** job whose dispatch throws is now disabled
+  immediately by the consolidated `rearm()` (routed through the same
+  `rearm(job, 'missed', ...)` call a submit-status miss uses), instead of
+  being left `enabled: true` with a stale past `next_run_at` until the next
+  `start()`'s `reconcile()` (today's `rearmAfterDispatchError`'s `if
+  (!job.recurring) return;` special case, deleted). The job does not fire
+  again either way; this only changes when it is marked disabled. No case in
+  the deleted file pins the old one-shot-dispatch-error timing, so a future
+  test-completion pass writing fresh coverage for it should assert the new
+  (immediate-disable) timing, not the old one.
+- **Construction-call update needed on restoration:** every case's `new
+  CronJobStore({ cronJobsPath, dispatcherId: 'dispatcher-1' })` must become
+  `new CronJobStore(cronJobsPath)` — this stage's Item 1 deleted
+  `CronJobStoreOptions` outright (zero reads of `dispatcherId` anywhere in
+  `store.ts`) and the constructor now takes the path directly, not an options
+  object.

@@ -1,79 +1,35 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { errorMessage, TransactionalStore } from '@excitedjs/dreamux-utils';
+import {
+  errorMessage,
+  isPlainObject,
+  TransactionalStore,
+} from '@excitedjs/dreamux-utils';
 
 import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { validateCronSchedule } from './cron-validation.js';
+import type {
+  CronJob,
+  CronJobAction,
+  CronJobCreateInput,
+  CronJobUpdateInput,
+} from './types.js';
 
 const STORE_VERSION = 1;
-
-export interface CronPromptAgentAction {
-  kind: 'prompt-agent';
-  prompt: string;
-}
-
-/**
- * What a cron job does when it fires, and the only thing it has ever done.
- *
- * A job injects its prompt into the Dispatcher or TeamLeader that owns the
- * schedule. It does not spawn an agent and it does not address a Channel: those
- * were declared shapes with no execution behind them, so the union is the one
- * action Dreamux actually performs.
- */
-export type CronJobAction = CronPromptAgentAction;
-
-export interface CronJob {
-  id: string;
-  title?: string | undefined;
-  cron: string;
-  tz: string;
-  recurring: boolean;
-  action: CronJobAction;
-  enabled: boolean;
-  created_at: number;
-  updated_at: number;
-  next_run_at: number | null;
-  last_fired_at: number | null;
-}
 
 interface CronJobFile {
   version: typeof STORE_VERSION;
   jobs: CronJob[];
 }
 
-export interface CronJobCreateInput {
-  title?: string | undefined;
-  cron: string;
-  tz: string;
-  recurring: boolean;
-  action: CronJobAction;
-  nextRunAt: number | null;
-}
-
-export interface CronJobUpdateInput {
-  id: string;
-  title?: string | null | undefined;
-  cron?: string;
-  tz?: string;
-  recurring?: boolean;
-  action?: CronJobAction;
-  enabled?: boolean | undefined;
-  nextRunAt?: number | null;
-}
-
-export interface CronJobStoreOptions {
-  cronJobsPath: string;
-  dispatcherId: string;
-}
-
 export class CronJobStore {
   private readonly store: TransactionalStore<CronJobFile>;
 
-  constructor(private readonly opts: CronJobStoreOptions) {
+  constructor(private readonly cronJobsPath: string) {
     this.store = new TransactionalStore<CronJobFile>({
-      path: opts.cronJobsPath,
+      path: cronJobsPath,
       load: () => this.load(),
     });
   }
@@ -213,7 +169,7 @@ export class CronJobStore {
    * the complete `assertCurrent`, not a separate pass a caller runs after.
    */
   private async load(): Promise<CronJobFile> {
-    const path = this.opts.cronJobsPath;
+    const path = this.cronJobsPath;
     let raw: string;
     try {
       raw = await readFile(path, 'utf8');
@@ -224,7 +180,7 @@ export class CronJobStore {
     let file: CronJobFile;
     try {
       const value = JSON.parse(raw) as unknown;
-      if (!isRecord(value) || value['version'] !== STORE_VERSION) {
+      if (!isPlainObject(value) || value['version'] !== STORE_VERSION) {
         throw new LegacyStateError(
           `JSON document ${path} is not version ${STORE_VERSION}. ` +
             'Dreamux 0.x does not migrate old state; delete the file to rebuild it.',
@@ -251,10 +207,9 @@ export class CronJobStore {
 
 export async function detectLegacyCronJobStore(
   cronJobsPath: string,
-  dispatcherId: string,
 ): Promise<string | null> {
   try {
-    await new CronJobStore({ cronJobsPath, dispatcherId }).assertCurrent();
+    await new CronJobStore(cronJobsPath).assertCurrent();
     return null;
   } catch (err) {
     if (err instanceof LegacyStateError) return err.message;
@@ -263,7 +218,7 @@ export async function detectLegacyCronJobStore(
 }
 
 function parseCronJobFile(raw: unknown, ctx: { path: string }): CronJobFile {
-  if (!isRecord(raw) || !Array.isArray(raw['jobs'])) {
+  if (!isPlainObject(raw) || !Array.isArray(raw['jobs'])) {
     throw new LegacyStateError(
       `cron job store ${ctx.path} must contain a jobs array`,
     );
@@ -275,7 +230,7 @@ function parseCronJobFile(raw: unknown, ctx: { path: string }): CronJobFile {
 }
 
 function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
-  if (!isRecord(raw)) {
+  if (!isPlainObject(raw)) {
     throw new LegacyStateError(
       `cron job store ${ctx.path} contains a non-object job`,
     );
@@ -317,7 +272,7 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
  * become a domain object that some later branch has to keep apologising for.
  */
 function parseAction(raw: unknown, ctx: { path: string }): CronJobAction {
-  if (!isRecord(raw)) {
+  if (!isPlainObject(raw)) {
     throw new LegacyStateError(
       `cron job store ${ctx.path} has a non-object action`,
     );
@@ -358,10 +313,6 @@ function cloneOptional(job: CronJob | null): CronJob | null {
 
 function cloneJob(job: CronJob): CronJob {
   return JSON.parse(JSON.stringify(job)) as CronJob;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function requiredString(
@@ -434,35 +385,4 @@ function optionalNumberOrNull(
     );
   }
   return value;
-}
-
-/**
- * The canonical public value of one cron job.
- *
- * Field by field rather than handed out whole, and it lives beside the record
- * it copies: both caller-facing surfaces declare a closed result schema, so a
- * field added to the stored job must be a deliberate addition here instead of
- * silently widening one wire and failing the other.
- */
-export function cronJobResult(job: CronJob): CronJob {
-  return {
-    id: job.id,
-    ...(job.title !== undefined ? { title: job.title } : {}),
-    cron: job.cron,
-    tz: job.tz,
-    recurring: job.recurring,
-    action: job.action,
-    enabled: job.enabled,
-    created_at: job.created_at,
-    updated_at: job.updated_at,
-    next_run_at: job.next_run_at,
-    last_fired_at: job.last_fired_at,
-  };
-}
-
-/** The canonical public value of one cron job list. */
-export function cronListResult(result: { jobs: CronJob[] }): {
-  jobs: CronJob[];
-} {
-  return { jobs: result.jobs.map(cronJobResult) };
 }

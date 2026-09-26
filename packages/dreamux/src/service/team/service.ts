@@ -9,7 +9,7 @@ import { errorInfo, type TransactionalStore } from '@excitedjs/dreamux-utils';
 import { AsyncSeriesHook } from 'tapable';
 
 import type { CompletionInitiator } from '../completion-router/index.js';
-import { SchedulerService } from '../scheduler/service.js';
+import { SchedulerService } from '../scheduler/index.js';
 import { CronJobStore } from '../scheduler/store.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import type { TeamStore } from './store.js';
@@ -91,7 +91,6 @@ export class TeamService implements Team {
    * surface stays the narrow `teammates` admin ops — never expose internal verbs. */
   private readonly teammateCollection: TeammateCollection;
   private readonly scheduler_: SchedulerService;
-  private readonly schedulerCommands: SchedulerCommands;
   private readonly workflowService: WorkflowService;
   /** This Team's stop-and-close half. */
   private readonly closing: TeamClosing;
@@ -188,23 +187,20 @@ export class TeamService implements Team {
       completionInitiator: () => this.leaderTargets.current(),
       log: deps.workflowLog,
     });
-    // This Team's cron scheduler, wired to the two fences it answers to: the
-    // dispatcher gate wraps the scheduler itself (its own `admit` option
-    // below, which a timer fire already passes through before it ever reaches
-    // `submitScheduled`), and the `commands` wrapping further down adds the
-    // Team's own fence around each short public mutation. `submitScheduled`
-    // itself adds no fence of its own: it reaches `submitToLeader`, which is
-    // an ordinary leader submission and already opens with this Team's
-    // `this.admit(...)` — a second wrap here would reenter that same fence for
-    // one cron fire with no failure scenario the inner one does not already
-    // cover.
+    // This Team's cron scheduler. The `admit` closure below composes two
+    // fences in order for every SchedulerService-admitted operation —
+    // `create`/`update`/`delete` and a due fire alike: this Team's own
+    // closing fence (`this.admit`, checked first, so a mutation racing an
+    // in-flight dissolve is refused before it ever reaches the store), then
+    // the dispatcher's own admission (`deps.admitOperation`). A fire crosses
+    // `this.admit` a second time inside `submitToLeader`, which fences every
+    // leader submission for every caller and is not special-cased for cron;
+    // `TeamService.admit()` is a stateless check rather than a lock, so the
+    // second crossing costs one redundant read, not a second gate.
     this.scheduler_ = new SchedulerService({
       ownerId: `${deps.dispatcherId}/team/${teamId}`,
-      store: new CronJobStore({
-        cronJobsPath: teamCronJobsPath(deps.teamRoot),
-        dispatcherId: deps.dispatcherId,
-      }),
-      admit: (task) => deps.admitOperation(task),
+      store: new CronJobStore(teamCronJobsPath(deps.teamRoot)),
+      admit: (task) => this.admit(() => deps.admitOperation(task)),
       submitScheduled: (input) =>
         this.submitToLeader({
           source: SCHEDULED_SOURCE,
@@ -213,12 +209,6 @@ export class TeamService implements Team {
         }),
       log: deps.log,
     });
-    this.schedulerCommands = {
-      list: () => this.scheduler_.commands.list(),
-      create: (input) => this.admit(() => this.scheduler_.commands.create(input)),
-      update: (input) => this.admit(() => this.scheduler_.commands.update(input)),
-      delete: (id) => this.admit(() => this.scheduler_.commands.delete(id)),
-    };
     this.closing = new TeamClosing({
       teamId,
       dispatcherId: deps.dispatcherId,
@@ -455,7 +445,7 @@ export class TeamService implements Team {
   }
 
   get scheduler(): SchedulerCommands {
-    return this.schedulerCommands;
+    return this.scheduler_;
   }
 
   get workflows(): WorkflowOps {

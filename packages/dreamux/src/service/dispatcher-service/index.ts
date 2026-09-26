@@ -50,7 +50,7 @@ import type { AgentService } from '../agent/service.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { TeamCollection } from '../team/index.js';
-import { SchedulerService } from '../scheduler/service.js';
+import { SchedulerService } from '../scheduler/index.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService } from '../channel-service/index.js';
@@ -211,10 +211,7 @@ export class DispatcherService implements Dispatcher {
 
     this.scheduler_ = new SchedulerService({
       ownerId: opts.id,
-      store: new CronJobStore({
-        cronJobsPath: dispatcherCronJobsPath(opts.id),
-        dispatcherId: opts.id,
-      }),
+      store: new CronJobStore(dispatcherCronJobsPath(opts.id)),
       admit: (task) => this.admitOperation(task),
       submitScheduled: async (input) =>
         this.mustAgent().submitInput({
@@ -325,7 +322,7 @@ export class DispatcherService implements Dispatcher {
   }
 
   get scheduler(): SchedulerCommands {
-    return this.scheduler_.commands;
+    return this.scheduler_;
   }
 
   async start(): Promise<void> {

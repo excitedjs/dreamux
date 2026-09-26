@@ -60,7 +60,7 @@ Source:
 
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/dreamux-utils/src/transactional-store.ts`
-- `/packages/dreamux/src/service/scheduler/service.ts`
+- `/packages/dreamux/src/service/scheduler/index.ts`
 
 ## Fire Semantics
 
@@ -72,31 +72,53 @@ activity hook, no defer-until-idle race, and no scheduler-owned defer window.
 
 `sourceId` is `scheduled:<job-id>:<fire-seq>` — stable for one fire, different
 across recurring fires of the same job, so runtime-side dedupe cannot collapse a
-later occurrence. The scheduler then records `last_fired_at`, recomputes
-`next_run_at`, and disables a one-shot job. It never observes whether the
-resulting turn succeeded.
+later occurrence. On an accepted submission the scheduler records
+`last_fired_at`, recomputes `next_run_at`, and disables a one-shot job. It
+never observes whether the resulting turn succeeded.
+
+A fire whose submission is not accepted, or whose dispatch itself throws, is
+rearmed as a miss through the same `next_run_at` recompute but without writing
+`last_fired_at`: a recurring job advances to its next occurrence, and a
+one-shot is disabled immediately — including a one-shot whose dispatch threw,
+which used to stay enabled with a stale `next_run_at` until the next
+`start()`'s reconcile.
 
 Source:
 
-- `/packages/dreamux/src/service/scheduler/service.ts`
+- `/packages/dreamux/src/service/scheduler/index.ts`
 - `/packages/dreamux/src/service/scheduler/types.ts`
 
 ## Owner Admission
 
-`SchedulerService` is generalized over an owner and takes that owner's
-admission gate plus its scheduled-submit callback. `AgentService` carries no
-scheduler, so "only the dispatcher and each TeamLeader have cron" is structural
-rather than a per-instance capability policy. The dispatcher scheduler
-submits into the dispatcher agent; a Team's scheduler submits into its
-TeamLeader, whose lazy-start path is the normal state after a restart or between
-conversations. The scheduler holds no runtime and applies no per-owner
-missing-runtime policy of its own.
+`SchedulerService implements SchedulerCommands` directly — there is no
+`.commands` adapter object standing between the class and its `list`/`create`/
+`update`/`delete` methods. It is generalized over an owner and takes that
+owner's admission gate plus its scheduled-submit callback. `AgentService`
+carries no scheduler, so "only the dispatcher and each TeamLeader have cron"
+is structural rather than a per-instance capability policy. The dispatcher
+scheduler submits into the dispatcher agent; a Team's scheduler submits into
+its TeamLeader, whose lazy-start path is the normal state after a restart or
+between conversations. The scheduler holds no runtime and applies no
+per-owner missing-runtime policy of its own.
+
+A Team's single `admit` closure composes two fences in order, for every
+operation `SchedulerService` runs through it — `create`/`update`/`delete` and
+a due fire alike: `TeamService.admit` first, then
+`DispatcherService.admitOperation`. There is no second, `SchedulerCommands`-
+shaped wrapper object around the Team's scheduler; the closure is passed
+directly at construction. A mutation racing an in-flight Team dissolve is
+therefore refused by the Team's own closing fence before it ever reaches the
+store, so it cannot recreate a cron store file the close pass already deleted
+on a Team whose closed commit then fails and leaves it open. A fire crosses
+`TeamService.admit` a second time inside `submitToLeader`, which fences every
+leader submission and is not special-cased for cron; `admit` is a stateless
+check, so the second crossing costs one redundant read, not a second gate.
 
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/team/service.ts`
-- `/packages/dreamux/src/service/scheduler/service.ts`
+- `/packages/dreamux/src/service/scheduler/index.ts`
 
 ## Startup And Teardown
 
@@ -129,18 +151,23 @@ Source:
 
 `scheduler.cron.list` / `create` / `update` / `delete` are ordinary Core
 Commands declared by the scheduler's own `commands.ts`. The scheduler's MCP
-delegate publishes `cron_create`, `cron_list`, `cron_update`, and `cron_delete`
-with descriptor-bound dispatcher or Team scope, and the role→delegate decision
-gives it to the dispatcher agent and every TeamLeader but not to ordinary
-TeamMates or Team members. Neither surface accepts `deliver`, and neither
-reports it. Runtime launches can disable a runtime's native cron feature with
-the neutral `cron` feature name so Dreamux-owned cron remains the source of
-truth.
+delegate (`mcp.ts`) publishes `cron_create`, `cron_list`, `cron_update`, and
+`cron_delete` with descriptor-bound dispatcher or Team scope, and the
+role→delegate decision gives it to the dispatcher agent and every TeamLeader
+but not to ordinary TeamMates or Team members. Both adapters read the payload
+through the same `requests.ts` (`cronCreateRequest`, `cronUpdateRequest`,
+`cronJobIdParam`) and project the same result shape back through it
+(`cronJobResult`, `cronListResult`) — the scheduler's `types.ts` holds only the
+domain and option types, not the codecs. Neither surface accepts `deliver`,
+and neither reports it. Runtime launches can disable a runtime's native cron
+feature with the neutral `cron` feature name so Dreamux-owned cron remains the
+source of truth.
 
 Source:
 
 - `/packages/dreamux/src/service/scheduler/commands.ts`
-- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
+- `/packages/dreamux/src/service/scheduler/mcp.ts`
+- `/packages/dreamux/src/service/scheduler/requests.ts`
 - `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
 - `/packages/dreamux/src/agent-runtime/host-context.ts`
 

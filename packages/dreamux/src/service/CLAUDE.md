@@ -91,7 +91,13 @@ the Team.
   `service.ts`) is `TeamService`, the single per-Team entity: its constructor
   builds the contained TeamLeader (`leader.ts`'s factory), its Team-scoped
   `TeammateCollection`, its Workflows, and its Team scheduler directly — there
-  is no separate collaborators file — and it holds `roster.ts`'s
+  is no separate collaborators file. A `cron.create`/`.update`/`.delete`
+  crosses this Team's own closing fence before the dispatcher's admission,
+  composed directly into the single `admit` closure `SchedulerService` is
+  built with (`this.admit` first, then `deps.admitOperation`) — there is no
+  second, `SchedulerCommands`-shaped object wrapping the public surface, so a
+  mutation racing an in-flight dissolve is still refused before it reaches the
+  store. It also holds `roster.ts`'s
   `TeamRosterProjection`, which publishes both `teammate.state` and
   `team.state` itself on every relevant transition (a Team's aggregate event
   has no other source to ask). `closing.ts`'s `TeamClosing` owns the
@@ -145,8 +151,33 @@ the Team.
 - **`worktree/`** — `WorktreeManager` (default work dir, reuse-cwd, and managed
   modes), workspace resolution, and the repository-request reader that says
   what a caller may ask for a working directory.
-- **`scheduler/`, `workflow-service/`, `dispatcher-core-events/`, `mcp/`** —
-  cron, Workflow runs (`workflow-service/`: `index.ts`'s `WorkflowService`
+- **`scheduler/`** — one directory, the per-domain template plus two
+  scheduler-specific files. `index.ts` is `SchedulerService`, implementing
+  `SchedulerCommands` directly (no `.commands` adapter object): it owns the
+  timers, `fireSeq` (the per-fire counter feeding `sourceId`) and
+  `lifecycleGeneration` (the stop/start epoch a stale timer callback checks
+  before acting), the pure `advanceJob` recompute and the one impure `rearm`
+  it feeds, and the lifecycle verbs (`start`/`stop`/`deleteStoreFile`).
+  `requests.ts` holds the request readers (`cronCreateRequest`,
+  `cronUpdateRequest`, `cronJobIdParam`) and the result projections
+  (`cronJobResult`, `cronListResult`) shared by `commands.ts` and `mcp.ts`.
+  `commands.ts` declares the `scheduler.cron.*` Commands; `mcp.ts` is the cron
+  MCP delegate; `errors.ts` holds `CronJobNotFoundError`. `types.ts` holds the
+  domain types (`CronJob`/`CronJobAction`/`CronPromptAgentAction`/
+  `CronJobCreateInput`/`CronJobUpdateInput`), the request/result interfaces,
+  `SchedulerServiceOptions`, and `SchedulerCommands` — no codecs. The two
+  scheduler-specific files: `store.ts` (`CronJobStore` plus
+  `detectLegacyCronJobStore` — persistence only, no domain types) and
+  `cron-validation.ts` (the shared cron-expression/timezone rule set both
+  `create` and `update` validate against). A Team-scoped cron mutation is
+  fenced by composing the Team's own admission ahead of the dispatcher's in
+  the `admit` closure the owner passes at construction, not by a separate
+  Team-scoped wrapper — see the `team/` bullet above. This directory's
+  persisted `cron-jobs.json` shape, field meanings, and owner are unchanged, so no
+  `packages/dreamux/skills/dispatcher/dreamux-maintenance/` update accompanies
+  it.
+- **`workflow-service/`, `dispatcher-core-events/`, `mcp/`** —
+  Workflow runs (`workflow-service/`: `index.ts`'s `WorkflowService`
   collection over each live run's `run.ts` (which owns the run's terminal
   task and the Workflow agent system prompt directly), its `journal.ts`
   (durability: `create`/`ensureAgentResult`/`ensureTerminal`/`recover`),
