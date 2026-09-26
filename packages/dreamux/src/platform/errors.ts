@@ -159,12 +159,20 @@ export class LegacyStateError extends Error {
   }
 }
 
-/** The process refused the request because shutdown already closed admission. */
+/**
+ * The request was refused because some admission gate already closed.
+ *
+ * The default message is the process-wide fence `command/port.ts` closes at
+ * shutdown. A dispatcher, a workflow scope, or a Channel port closes its own
+ * admission independently of that fence, and passes its own wording instead —
+ * every closed-scope refusal still carries the one `SERVER_SHUTTING_DOWN` code
+ * a caller can branch on.
+ */
 export class ServerShuttingDownError extends StatedFailure {
-  constructor() {
+  constructor(message = 'dreamux server is shutting down') {
     super(
       'SERVER_SHUTTING_DOWN',
-      'dreamux server is shutting down',
+      message,
       'Nothing was started by this call. Wait for the operator to bring the ' +
         'server back, then call again.',
     );

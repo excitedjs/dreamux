@@ -171,6 +171,25 @@ export class TeamService implements Team {
       completionDelivery: deps.completionDelivery,
       initiatorFor: async () => this.leaderTargets.current(),
       suffixGenerator: deps.agentNameSuffixGenerator,
+      // Same two-fence composition as the cron scheduler built below
+      // (`this.admit` outside, `deps.admitOperation` inside). A dispatcher
+      // stop closes only the dispatcher's own admission and never this
+      // Team's — a Team outlives a dispatcher stop and resumes on the next
+      // daemon start — so a member op fenced on this Team's own admit alone
+      // would still pass while `stopForHost()` kills that member's runtime
+      // underneath it. Gating here also closes a real hole: a read verb
+      // reaching this collection through `leader-handle.ts`'s `read()` never
+      // crosses either fence at that layer (`read()` is `task(await
+      // this.get(id))`, by design, so a Team's own status reads survive a
+      // dissolve check there) — composing both fences inside the collection
+      // itself is what makes list/status/history/last refuse uniformly with
+      // spawn/send/close regardless of which path reached them.
+      admitOperation: (task) => this.admit(() => deps.admitOperation(task)),
+      // Composed the same way as `admitOperation` just above: a member's
+      // construction path must self-close against either fence, since a
+      // dispatcher stop releases this Team's runtimes without dissolving the
+      // Team itself.
+      isClosing: () => this.isClosing() || deps.isClosing(),
       log: deps.log,
     });
     // This Team's Workflow scope: team-scoped runs, reporting to its leader.
@@ -479,13 +498,18 @@ export class TeamService implements Team {
    * stop-and-reclaim rather than a drain, so this refuses rather than queues.
    */
   async admit<T>(task: () => Promise<T>): Promise<T> {
-    if (this.dissolveTask !== null) {
+    if (this.isClosing()) {
       throw new TeamClosedError(`Team ${JSON.stringify(this.id)} is closing`);
     }
     if (this.mustRecord().status === 'closed') {
       throw new TeamClosedError(`Team ${JSON.stringify(this.id)} is closed`);
     }
     return task();
+  }
+
+  /** Whether this Team is dissolving or already closed — `admit()`'s own fact. */
+  isClosing(): boolean {
+    return this.dissolveTask !== null;
   }
 
   /**
@@ -701,8 +725,20 @@ export class TeamService implements Team {
     return this.teammateCollection.count();
   }
 
+  /**
+   * This Team's own unfenced roster read (members-only; the leader is not a
+   * member), used only while this Team is reconstructing its own
+   * `TeamRosterProjection` during `rebuild()` below. This must not cross
+   * `teammateCollection`'s admission fence the way the caller-facing
+   * `TeammateOps.list()` verb does: seeding the roster is this Team building
+   * its own aggregate, not a caller reaching in from outside, and it must
+   * still succeed while the dispatcher's own admission is closed (a `read()`
+   * caller reaching this Team through `leader-handle.ts` before it has ever
+   * been materialized must still get an answer, per `TeamCollection.read()`'s
+   * "reads survive closing").
+   */
   private async members(): Promise<AgentEntityRuntimeStatus[]> {
-    return this.teammateCollection.list(); // members-only; the leader is not a member
+    return this.teammateCollection.memberStatuses();
   }
 
   /**

@@ -9,6 +9,7 @@ import {
   type CompletionInitiator,
 } from '../completion-router/index.js';
 import { deduplicate } from '../../platform/deduplicate.js';
+import { ServerShuttingDownError } from '../../platform/errors.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import type { CreateLockedTeammateOptions } from '../agent/index.js';
@@ -115,7 +116,9 @@ export class WorkflowService implements WorkflowOps {
     input: WorkflowRunInput,
   ): Promise<WorkflowRunAccepted> {
     await this.initialize();
-    if (!this.accepting) throw new Error('workflow admission is closed');
+    if (!this.accepting) {
+      throw new ServerShuttingDownError('workflow admission is closed');
+    }
     // Every caller-driven validation for a run request, in one place: the
     // reader (`requests.ts`) only shapes the input, so the bound and the
     // script/scriptPath rule are each checked here exactly once, and any

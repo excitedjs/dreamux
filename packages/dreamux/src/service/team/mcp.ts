@@ -7,9 +7,9 @@
  * a payload — which is why the leader-scoped tools take no `team_name` at all
  * and cannot be pointed at another Team.
  *
- * Every tool reaches {@link DispatcherService} directly. `team.create` /
+ * Every tool reaches {@link TeamsPort} directly. `team.create` /
  * `team.submit` / … remain the shared `admin.sock` and Channel-to-Core surface
- * and are untouched by this file; both surfaces call the same methods, and what
+ * and are untouched by this file; both surfaces call the same port, and what
  * they share — reading a `team_name`, reading a history query, and the one
  * submission receipt that is more than a copy — belongs to the Team and lives in
  * its own `types.ts`. What stays here is this surface's: the caller binding, the
@@ -53,7 +53,7 @@ import type {
 } from '../mcp/types.js';
 import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import type { DispatcherService } from '../dispatcher-service/index.js';
+import type { TeamsPort } from './teams-port.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import { teamHistoryQuery, teamNameParam, teamSubmitResult } from './requests.js';
 
@@ -71,7 +71,7 @@ export const TEAM_MCP_SERVER_NAME = 'team';
 const IDENTITY = { name: 'dreamux-team', version: MCP_IDENTITY_VERSION };
 
 export function createTeamMcpDelegate(input: {
-  dispatcher: DispatcherService;
+  teams: TeamsPort;
   caller: TeamMcpCaller;
 }): McpServerDelegate {
   const tools = teamToolDescriptors(input.caller.kind);
@@ -81,30 +81,30 @@ export function createTeamMcpDelegate(input: {
       return { identity: IDENTITY, tools };
     },
     call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(() => serve(input.dispatcher, input.caller, call));
+      return runDelegateTool(() => serve(input.teams, input.caller, call));
     },
   };
 }
 
 async function serve(
-  dispatcher: DispatcherService,
+  teams: TeamsPort,
   caller: TeamMcpCaller,
   call: McpDelegateCall,
 ): Promise<McpToolSuccess> {
   const args = call.arguments as CommandPayload;
   switch (call.name) {
     case 'create':
-      return create(dispatcher, args);
+      return create(teams, args);
     case 'send':
-      return send(dispatcher, args);
+      return send(teams, args);
     case 'list':
-      return list(dispatcher);
+      return list(teams);
     case 'status':
-      return status(dispatcher, args);
+      return status(teams, args);
     case 'history':
-      return history(dispatcher, args);
+      return history(teams, args);
     case 'dissolve':
-      return dissolve(dispatcher, caller, args);
+      return dissolve(teams, caller, args);
     default:
       // Unreachable: Core admits a call only against this delegate's own frozen
       // catalog, so a name that is not one of the above never arrives here.
@@ -113,7 +113,7 @@ async function serve(
 }
 
 async function create(
-  dispatcher: DispatcherService,
+  teams: TeamsPort,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const namePrefix = mustNonBlankString(args, 'name_prefix');
@@ -122,11 +122,12 @@ async function create(
   const identityPrompt = optionalNonBlankString(args, 'identity');
   const prompt = optionalString(args, 'prompt');
   const repo = repoWorktree(repoRequest(args, 'repo'));
-  // A named repository request without an explicit path resolves to the
-  // dispatcher's own workspace, exactly as the Command path does.
-  const repoCwd =
-    repo === null ? null : (repo.cwd ?? (await dispatcher.workspace()));
-  const result = await dispatcher.createTeam({
+  // A named repository request with no explicit path passes no `repoCwd` at
+  // all: `TeamCollection.prepareWorkspace()` already falls back to the
+  // dispatcher's own default workspace when it sees none, so resolving it
+  // here first would only compute the same default twice.
+  const repoCwd = repo?.cwd ?? null;
+  const result = await teams.createFromRequest({
     // A tool call is one live request with no durable retry of its own, so the
     // request identity is minted per call: it gets the Team's duplicate
     // protection for concurrent repeats without inventing a model-facing input.
@@ -169,14 +170,13 @@ async function create(
 }
 
 async function send(
-  dispatcher: DispatcherService,
+  teams: TeamsPort,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const teamName = teamNameParam(args, 'team_name');
   const prompt = mustNonEmptyString(args, 'prompt');
   const intent = optionalNonBlankString(args, 'intent');
-  const admission = await dispatcher.submitToTeamLeader({
-    teamId: teamName,
+  const admission = await teams.submitToLeader(teamName, {
     text: prompt,
     ...(intent !== null ? { intent } : {}),
     // This is one Agent handing work to another, so it reaches the TeamLeader
@@ -197,51 +197,43 @@ async function send(
   };
 }
 
-async function list(dispatcher: DispatcherService): Promise<McpToolSuccess> {
-  return { structured: { teams: await dispatcher.listTeams() } };
+async function list(teams: TeamsPort): Promise<McpToolSuccess> {
+  return { structured: { teams: await teams.list() } };
 }
 
 async function status(
-  dispatcher: DispatcherService,
+  teams: TeamsPort,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   return {
-    structured: await dispatcher.getTeamStatus(
-      teamNameParam(args, 'team_name'),
-    ),
+    structured: await teams.summary(teamNameParam(args, 'team_name')),
   };
 }
 
 async function history(
-  dispatcher: DispatcherService,
+  teams: TeamsPort,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   return {
-    structured: await dispatcher.getTeamHistory(teamHistoryQuery(args)),
+    structured: await teams.history(teamHistoryQuery(args)),
   };
 }
 
 async function dissolve(
-  dispatcher: DispatcherService,
+  teams: TeamsPort,
   caller: TeamMcpCaller,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const note = mustNonBlankString(args, 'note');
   const force = args['force'] === true;
-  const dissolved =
+  const dissolved = await teams.dissolve(
+    // The Team is the caller's own, from the descriptor that launched this
+    // server, when a TeamLeader calls — never a name the model supplied.
     caller.kind === 'team_leader'
-      ? await dispatcher.dissolveTeamForLeader({
-          // The Team is the caller's own, from the descriptor that launched
-          // this server — never a name the model supplied.
-          teamId: caller.teamId,
-          note,
-          force,
-        })
-      : await dispatcher.dissolveTeam({
-          teamId: teamNameParam(args, 'team_name'),
-          note,
-          force,
-        });
+      ? caller.teamId
+      : teamNameParam(args, 'team_name'),
+    { note, force, requester: caller.kind },
+  );
   return { structured: dissolved };
 }
 

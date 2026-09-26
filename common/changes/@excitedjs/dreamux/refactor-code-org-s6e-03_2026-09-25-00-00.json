@@ -1,0 +1,16 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6e item 3: ChannelService is now the single owner of the channel lifecycle. It absorbs the runnable-channel shape guard, the best-effort build-failure close helper, the Channel MCP delegate assembly, and the ChannelMetadata type (each from its own former file); the per-session initialize/start loops and the Core-port-lease tracking move here from DispatcherInputSourceLifecycle; the built/live instance maps and the port-lease array unify into one map keyed by channel id; and each channel's provider is now resolved from the catalog at most once instead of once per role. Internal ownership and file-location change only — same Commands, same MCP tool names, same channel.list output shape.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    },
+    {
+      "comment": "ChannelService.closeAll() now collects and reports every channel session's close failure instead of logging and swallowing it. A Dispatcher's own close already wraps this call in its aggregate shutdown-failure collector, so a channel provider's close() throwing during a dispatcher stop or the daemon's graceful shutdown now surfaces as a shutdown failure where it was previously silent.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

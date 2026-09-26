@@ -6,14 +6,22 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { DispatcherConfig } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentIdentityStore } from '../agent/store.js';
-import type { AgentEntityIdentityStatus } from '../agent/identity.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
+import type { RestartIntentConsumer } from './restart-intent.js';
 
 export interface DispatcherServiceOptions {
   id: string;
+  /**
+   * This dispatcher's own config entry, resolved once by
+   * `Dispatchers.dispatcherOptions()` instead of re-derived independently
+   * here, by `ChannelService`, and by `DispatcherLifecycle` from
+   * the same live `config.current().dispatchers.find(...)` lookup.
+   */
+  dispatcher: DispatcherConfig;
   config: ConfigReader;
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
@@ -27,6 +35,15 @@ export interface DispatcherServiceOptions {
   identities: AgentIdentityStore;
   /** The process-wide Agent-facing MCP lease registry this dispatcher mints into. */
   mcpLeases: McpLeaseRegistry;
+  /**
+   * The one restart marker this whole process loaded at boot (issue #78),
+   * resolved once by `server.ts` before any `Dispatchers`/`DispatcherService`
+   * exists and forwarded unchanged from here on — there is no setter, because
+   * a marker loaded after a dispatcher already started could never reach an
+   * agent that activates lazily, and R11 removes the only surface
+   * (`dispatcher start`) that could have restarted one to pick it up.
+   */
+  restartIntent: RestartIntentConsumer;
   /**
    * The process-wide admitted Command port. This dispatcher's Channel sessions
    * invoke Commands through it, so they share the admin socket's catalog,
@@ -44,18 +61,13 @@ export interface DispatcherServiceOptions {
 export interface DispatcherSummary {
   dispatcher_id: string;
   channel_identity: string;
-  status: AgentEntityIdentityStatus;
+  status: AgentRuntimeStatus;
   session_id: string | null;
   enabled: boolean;
 }
 
+/** One dispatcher's runtime-status projection, live or cold, always speaking `AgentRuntimeStatus`. */
 export interface DispatcherRuntimeStatus {
-  status: string | null;
-  sessionId: string | null;
-  lastError: string | null;
-}
-
-export interface LiveDispatcherRuntimeStatus {
   status: AgentRuntimeStatus;
   sessionId: string | null;
   lastError: string | null;

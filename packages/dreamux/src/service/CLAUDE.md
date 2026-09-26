@@ -48,36 +48,79 @@ the Team.
   admission and publishes every materialized dispatcher fence before draining
   accepted requests, then shuts down dispatchers and the socket. A request
   racing the fence gets `ServerShuttingDownError`.
-- **`dispatcher-service/index.ts`** — one dispatcher-local aggregate. It *has
-  an* agent: a contained `AgentService`, built by `agent.ts` through the
-  per-dispatcher `AgentServiceFactory` from the dispatcher root
-  `identity.json`, structurally outside the `teammate/` collection so read
-  chokepoints never enumerate it. The aggregate keeps
-  restart-notice injection (`restart-notice.ts`, consuming the restart marker
-  owned by `restart-intent.ts`), role→MCP delegate assembly
-  (`mcp-delegates.ts`), the admission/drain gate for external mutating work
-  (`inbound-task-drain.ts`, `teammate-ops.ts`), the TeamLeader handle
-  (`team-leader-handle.ts`), Team runtime stop containment
-  (`team-runtime-stop.ts`), Workflow wiring (`dispatcher-workflows.ts`), and
-  the input-source lifecycle (`input-source-lifecycle.ts`,
-  `input-source-start-rollback.ts`) that owns prepare/start single-flight,
-  prepared Channel sessions, ordered publication, and failed-start rollback.
-  Ordinary start leaves the dispatcher runtime dormant; unbound channel
-  inbound, dispatcher cron, or an explicit resume notice lazy-starts it.
-- **`channel-service/`** — build, hold, hand out, and close the dispatcher's
-  Channel instances, plus the Channel MCP delegates. There is no binding table
-  and no route owner here: a Channel decides where a message goes and says so
-  by naming a Team, so Core neither stores that decision nor reconstructs it,
-  and nothing here resolves a target or authorizes an egress. An instance is
-  published as live only after provider start succeeds.
+- **`dispatcher-service/index.ts`** — one dispatcher-local aggregate. It has no
+  per-verb Team/Channel pass-through methods: `readonly teams` (`TeamsPort`),
+  `readonly teammates` (`TeammateOps`), `readonly channels` (`ChannelService`),
+  and `readonly scheduler` (`SchedulerCommands`) are exposed directly, and every
+  caller (Commands, MCP delegates) reaches the owning port itself instead of a
+  forwarding method per verb. `workspace()` is the one surviving pass-through:
+  both the TeamMate and Team Command/MCP surfaces resolve a request's default
+  `cwd` from it, and it is a dispatcher-level fact neither domain owns. It *has
+  an* agent: `agent.ts`'s `DispatcherAgent` is its one agent owner, covering
+  dispatcher-root identity ensure, construction as a contained `AgentService`
+  through the per-dispatcher `AgentServiceFactory`, the one `mustAgent()`
+  accessor, lazy activation with resume-notice injection (consuming the
+  restart marker owned by `restart-intent.ts`), and the one runtime-status
+  projection (`status()`, speaking `AgentRuntimeStatus` directly) that
+  `dispatcher.status`/`dispatcher.list` both read through — structurally
+  outside the `teammate/` collection so read chokepoints never enumerate it.
+  The aggregate keeps role→MCP delegate assembly (`mcp-delegates.ts`) and
+  `restart-intent.ts` (issue #78's restart marker, a plain constructor value
+  `server.ts` loads once before any `Dispatchers`/`DispatcherService` exists —
+  there is no setter). Its dispatcher-scoped Workflow scope is a plain
+  `WorkflowService` (`workflow-service/index.ts`) constructed directly in the
+  aggregate's own constructor, the same way `SchedulerService` is: there is no
+  separate Workflow-owning wrapper class, and `get workflows()` is the one
+  place that wraps `run`/`stop` with this dispatcher's admission gate.
+  `lifecycle.ts`'s `DispatcherLifecycle` is this dispatcher's one
+  admission gate and its one terminal close, alongside start
+  single-flight (`ChannelService` itself is the one owner of every built
+  Channel instance): `admit()` is the single check
+  every externally-admitted operation crosses (folding the former standalone
+  `DispatcherTaskDrain`), `isClosing()` is the same fact `TeammateCollection`
+  and `TeamCollection` read at construction, and `close()` (R10/R11) is the
+  one terminal close a failed `start()` reuses instead of
+  a separate rollback path — there is no restart after it runs. Its prepare
+  and start sequencing is one `try` block covering every step from the
+  dispatcher-row lookup on, so a shape failure this early (an unrunnable
+  channel provider, a missing dispatcher row) closes the same way a failure
+  deeper in startup does, instead of leaving the dispatcher stuck admitting
+  work it never finished starting. `lifecycle.ts` fans Workflow start/recover/
+  close-admission out to the Team scope
+  (`teams.startWorkflows()`/`recoverWorkflows()`/`closeWorkflowAdmissions()`)
+  explicitly, right beside the equivalent scheduler fan-out
+  (`teams.startSchedulers()`/`stopSchedulers()`) — neither is hidden inside a
+  wrapper. Closing waits
+  for every already-admitted operation to settle, then sweeps every runtime
+  once: `TeammateCollection`'s and `TeamCollection`'s own entity-construction
+  paths self-close against `isClosing()` the instant they register a new
+  entity, which is what makes that one post-drain sweep sufficient without a
+  second pass. Ordinary start leaves the dispatcher runtime dormant; unbound
+  channel inbound, dispatcher cron, or an explicit resume notice lazy-starts
+  it.
+- **`channel-service/`** — `index.ts`'s `ChannelService` is the single owner of
+  the dispatcher's whole channel lifecycle: the runnable-channel shape guard,
+  build, the per-session initialize/start sequencing, the Core-port-lease
+  tracking that fences a session's Command admission, close (collecting and
+  reporting every session's close failure instead of swallowing it), the
+  public inventory read, and the Channel MCP delegate assembly — one
+  `Map<channel_id, {instance, portLease, live}>` behind all of it, with each
+  channel's provider resolved from the catalog at most once. `mcp-delegate.ts`
+  (the per-channel MCP builder `ChannelService` calls) and `core-port.ts` (the
+  in-process `invoke` + event port a Channel session is given) are its only
+  siblings. There is no binding table and no route owner here: a Channel
+  decides where a message goes and says so by naming a Team, so Core neither
+  stores that decision nor reconstructs it, and nothing here resolves a target
+  or authorizes an egress. An instance is published as live only after
+  provider start succeeds.
   `commands.ts` owns `channel.list`, which reads public Channel metadata through
-  `DispatcherService.listChannels()`: configured id, provider ref, opaque
+  `ChannelService.list()`: configured id, provider ref, opaque
   identity (empty when absent), and live status, in configuration order. The
   command also works for stopped dispatchers without starting sessions; it never
   returns provider configuration. Callers use the admin socket or the Channel's
   in-process `invoke` port only; there is no public CLI wrapper, since that
   surface is reserved for host lifecycle operations. The shared output DTO is
-  `ChannelMetadata` in `channel-service/types.ts`.
+  `ChannelMetadata` in `channel-service/index.ts`.
 - **`team/`** — one directory, files ordered by R7's declared direction: store
   → service → collection. Two `warn`-severity `.dependency-cruiser.cjs` rules
   hold that direction — a store-tier file never imports a service- or
@@ -104,15 +147,26 @@ the Team.
   stop-and-close dissolve sequence, the abandoned-creation cleanup, and the
   host sweep, all taking the TeamLeader as a plain argument rather than
   through a leader-holder callback; its retirement broadcast uses the shared
-  `ClosedFactPublisher`. The collection tier (`read-model.ts`, `index.ts`,
-  `commands.ts`, `mcp.ts`) is `TeamCollection`: one materialization cache
-  (construction dedup, live-instance eviction, and the closed-Team worktree
-  reclamation sweep merged into the same class) plus `read-model.ts`'s
-  not-materialized Team projection and the Team Commands and MCP delegate.
-  `DispatcherService.team()` returns a `TeamLeaderHandle` to admin/MCP
-  team-leader callers, never the concrete `TeamService`. This directory merge
-  is a code-location, ownership, and internal-API change only: `record.json`'s
-  shape, field meanings, and owner are unchanged, so no
+  `ClosedFactPublisher`. `leader-handle.ts` (`TeamLeaderHandle`,
+  `TeamLeaderTeammateOps`, the `teamLeaderHandle()` factory) and
+  `teams-port.ts` (the `TeamsPort` interface) sit at this same tier — each
+  depends on `service.ts`'s `TeamService` type and on modules outside
+  `team/`, never on the collection tier below — though neither is part of the
+  `TeamService` class itself. The
+  collection tier (`read-model.ts`, `index.ts`, `commands.ts`, `mcp.ts`) is
+  `TeamCollection`: one materialization cache (construction dedup,
+  live-instance eviction, and the closed-Team worktree reclamation sweep
+  merged into the same class) plus `read-model.ts`'s not-materialized Team
+  projection and the Team Commands and MCP delegate. `TeamCollection`
+  implements `TeamsPort` directly (no `.port`/`.commands` adapter object,
+  the same shape `SchedulerService` uses for `SchedulerCommands`): every
+  per-Team operation an admin/MCP caller reaches — including `leaderScope()`,
+  which builds the `TeamLeaderHandle` admin/MCP team-leader callers reach
+  through `DispatcherService.teams` (no forwarding method on `DispatcherService`
+  itself) — gates itself on the injected `admitOperation` internally, never the
+  concrete `TeamService`. This
+  directory merge is a code-location, ownership, and internal-API change
+  only: `record.json`'s shape, field meanings, and owner are unchanged, so no
   `packages/dreamux/skills/dispatcher/dreamux-maintenance/` update accompanies
   it.
 - **`agent/` + `completion-router/`** — `agent/` is one directory, files
@@ -208,6 +262,25 @@ the Team.
   behind it, and a second caller joins that promise instead of starting a
   second operation. Do not add a boolean beside a task, or a phase enum beside
   either.
+- **A child under construction checks its parent's close, not the other way
+  around.** An admitted `spawn`/`send`/`create` crosses its owner's admission
+  fence before `close()` can raise it, but only finishes materializing its
+  entity afterward — invisible to any sweep the close already ran, and about
+  to submit input to a runtime the close is trying to stop. Rather than
+  sweeping twice to catch that race, `TeammateCollection`'s and
+  `TeamCollection`'s own construction paths read the owner's `isClosing()`
+  synchronously the moment they register the new entity into the live map,
+  and self-close it (`stopForHost()`) right there. For `TeammateCollection`
+  this preempts the entity's first submission outright — it throws before
+  `spawn` gets to submit anything. For `TeamCollection` it cannot: a Team's
+  leader may already have taken its first submission by the time `track()`
+  runs (`TeamService.createNew` submits it internally, before the collection
+  ever sees the object), so this only stops the runtime as soon as the
+  collection notices, rather than leaving it running until a later sweep
+  reaches it. Either way, nothing can still be starting a runtime by the time
+  the post-drain sweep runs, which is what makes one sweep, run only after
+  every already-admitted operation has settled, provably sufficient — do not
+  reintroduce a second post-drain sweep as a substitute for this check.
 - **A closed entity is a record, not a dormant Service.** Terminal facts
   (`team.closed`, `teammate.closed`) evict the exact instance that ended. Read
   models, startup, and physical cleanup answer from records and never

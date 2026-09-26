@@ -139,13 +139,13 @@ export function teamSubmitResult(admission: TurnAdmission): TeamSubmitResult {
     case 'failed':
       return {
         status: 'failed',
-        error: { code: 'TEAM_SUBMIT_FAILED', message: admission.error.message },
+        error: { code: 'SUBMIT_FAILED', message: admission.error.message },
       };
     case 'ambiguous':
       return {
         status: 'ambiguous',
         error: {
-          code: 'TEAM_SUBMIT_AMBIGUOUS',
+          code: 'SUBMIT_AMBIGUOUS',
           message: admission.error.message,
         },
       };

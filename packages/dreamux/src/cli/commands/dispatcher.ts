@@ -8,7 +8,7 @@ import {
   type DreamuxCommand,
 } from './types.js';
 
-type DispatcherVerb = 'status' | 'start';
+type DispatcherVerb = 'status';
 
 interface DispatcherArgv {
   id: string;
@@ -23,7 +23,6 @@ export function createDispatcherCommand(deps: CliDeps): CommandModule {
         .command([
           createDispatcherListCommand(deps),
           createDispatcherVerbCommand(deps, 'status'),
-          createDispatcherVerbCommand(deps, 'start'),
         ] as DreamuxCommand[])
         .demandCommand(1, 'Choose a dispatcher command')
         .strict(),

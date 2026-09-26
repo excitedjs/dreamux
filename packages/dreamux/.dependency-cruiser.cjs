@@ -220,7 +220,7 @@ const namedEdgeRules = [
       path: '^src/service/team/(types|requests|create-request|store|errors)\\.ts$',
     },
     to: {
-      path: '^src/service/team/(roster|leader|completion-targets|closing|team-summary|service|read-model|index|commands|mcp)\\.ts$',
+      path: '^src/service/team/(roster|leader|leader-handle|completion-targets|closing|team-summary|service|teams-port|read-model|index|commands|mcp)\\.ts$',
     },
   },
   {
@@ -228,12 +228,12 @@ const namedEdgeRules = [
     // reference to the old team-service/ directory this merge deleted.
     name: 'service-team-core-not-to-collection',
     comment:
-      'service/team/ service-tier files (roster, leader, ' +
-      'completion-targets, closing, team-summary, service) must not import ' +
-      'the collection-tier files in the same directory.',
+      'service/team/ service-tier files (roster, leader, leader-handle, ' +
+      'completion-targets, closing, team-summary, service, teams-port) ' +
+      'must not import the collection-tier files in the same directory.',
     severity: 'warn',
     from: {
-      path: '^src/service/team/(roster|leader|completion-targets|closing|team-summary|service)\\.ts$',
+      path: '^src/service/team/(roster|leader|leader-handle|completion-targets|closing|team-summary|service|teams-port)\\.ts$',
     },
     to: {
       path: '^src/service/team/(read-model|index|commands|mcp)\\.ts$',
@@ -250,19 +250,6 @@ const namedEdgeRules = [
     to: {
       path: ['^src/service/team/'],
     },
-  },
-  {
-    name: 'channel-service-mcp-delegates-single-importer',
-    comment:
-      'channelMcpDelegates() (service/channel-service/mcp-delegates.ts) is ' +
-      'consumed only by the Dispatcher-agent/TeamLeader role assembly ' +
-      '(service/dispatcher-service/mcp-delegates.ts), never the ordinary ' +
-      "TeamMate one, so Channel MCP cannot leak into an ordinary TeamMate's " +
-      'tool set (see tests/channel-service.test.ts, ' +
-      'tests/mcp-delegate-catalog.test.ts).',
-    severity: 'warn',
-    from: { pathNot: '^src/service/dispatcher-service/mcp-delegates\\.ts$' },
-    to: { path: '^src/service/channel-service/mcp-delegates\\.ts$' },
   },
   {
     name: 'types-file-not-to-command',

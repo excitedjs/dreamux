@@ -6,91 +6,160 @@
  * Channel decides where a message goes and says so by naming a Team; Core
  * neither stores that decision nor reconstructs it, which is why nothing here
  * resolves a target or authorizes an egress.
+ *
+ * This is also the single owner of a channel session's whole lifecycle, not
+ * just its live/built maps: the runnable-shape guard, the per-session
+ * initialize/start sequencing, the Core port lease that fences a session's
+ * Command admission, and the Channel MCP delegate assembly all live here too,
+ * because each one reads the same configured-channel/provider facts this
+ * class already holds. A dispatcher-scoped caller (`DispatcherService`,
+ * `DispatcherLifecycle`) drives this class through its lifecycle
+ * verbs; it holds no channel state of its own.
  */
 import type {
   ChannelInstance,
+  ChannelMcpCaller,
   ChannelSessionMcpCapability,
+  CoreCommandRegistry,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DispatcherChannelConfig } from '../../config/config.js';
-import type { ConfigReader } from '../../config/service.js';
+import type {
+  ChannelProviderCatalog,
+  RegisteredChannelProvider,
+} from '../../channel/catalog.js';
+import type {
+  DispatcherChannelConfig,
+  DispatcherConfig,
+} from '../../config/config.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import { dispatcherCacheDir, dispatcherDir } from '../../platform/paths.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../../platform/shutdown-errors.js';
+import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
+import type { McpServerDelegate } from '../mcp/types.js';
+import {
+  createChannelCorePort,
+  type ChannelCorePortLease,
+} from './core-port.js';
+import { createChannelMcpDelegate } from './mcp-delegate.js';
+
+/** Public Channel inventory fields, independent of provider configuration. */
+export interface ChannelMetadata {
+  channel_id: string;
+  provider: string;
+  identity: string;
+  live: boolean;
+}
 
 export interface ChannelServiceOptions {
   dispatcherId: string;
-  config: ConfigReader;
+  /**
+   * This dispatcher's own config entry, resolved once by the caller that
+   * already looked it up (`Dispatchers.dispatcherOptions()`) rather than
+   * re-derived here from a live `ConfigReader`. `dispatchers[]` is never
+   * touched by `config.agents.replace`, so there is no live fact this class
+   * would otherwise need to observe.
+   */
+  dispatcher: DispatcherConfig;
   channelProviders: ChannelProviderCatalog;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  /** This dispatcher's live Core-fact bus: every initialized session's event source, and the one place a stop revokes them all. */
+  coreEvents: DispatcherCoreEventBus;
+  /**
+   * The Server-owned admitted Command port every Channel session invokes
+   * through. It is the same port the admin socket uses; a Channel never
+   * reaches the raw registry.
+   */
+  commands: CoreCommandRegistry;
+  log: DreamuxLogger;
 }
 
 /**
- * The live channel instances are the whole of this service's state: the
- * `Map<channel_id, ChannelInstance>` and the session-MCP lookup that keys off
- * it. `DispatcherService` publishes an instance here only after its provider
- * start succeeds.
+ * One configured channel's whole runtime state: the instance {@link build}
+ * produced, the Core port lease {@link initialize} minted for it (`null`
+ * until then), and whether {@link start} has opened its external input yet.
  *
- * The map holds the whole {@link ChannelInstance}, not just its session,
- * because MCP is composed beside the session rather than on it: a Channel with
- * tools carries a {@link ChannelSessionMcpCapability} that the Channel MCP
- * delegate has to be able to reach. Core stays a blind conduit either way — it
- * never names a provider's tool.
+ * A single entry answers both "built" and "live" questions instead of two
+ * parallel maps: `sessionMcp`/`mcpDelegates` read every entry regardless of
+ * `live`, because a channel's MCP composition exists from creation, while
+ * `list()`'s `live` field and the entry a stop closes both need the flag.
  */
-export class ChannelService {
-  private sessions: Map<string, ChannelInstance> | null = null;
-  /**
-   * Every instance {@link build} produced, whether or not its session has been
-   * started and adopted yet.
-   *
-   * Kept beside the live map because the two answer different questions. Live
-   * means "this session is connected and may be routed to". Built means "this
-   * channel's instance exists, so whatever it composed exists too" — which is
-   * the fact a session-target MCP tool needs, and it is true from creation.
-   * Reading MCP availability off the live map instead would make a catalog
-   * frozen during startup depend on how far startup happened to have got.
-   */
-  private built: Map<string, ChannelInstance> | null = null;
+interface ChannelEntry {
+  readonly instance: ChannelInstance;
+  portLease: ChannelCorePortLease | null;
+  live: boolean;
+}
 
+export class ChannelService {
+  private readonly entries = new Map<string, ChannelEntry>();
   /**
-   * Resolved once at construction, not per-call. Unlike the launch/resume
-   * capability sites (`AgentService`), there is no live fact to observe
-   * here: `dispatchers[].channels[]` is never touched by
-   * `config.agents.replace`, so a single resolve is a type-uniformity
-   * convenience over `opts.config`, not a liveness requirement.
+   * Resolved from the catalog at most once per channel id, whichever caller
+   * asks first — {@link assertRunnable}, {@link build}, or an MCP delegate
+   * assembly for a Team leader launched before this dispatcher's own channels
+   * ever prepare. Providers never change after config load, so there is no
+   * invalidation to do.
    */
+  private readonly providers = new Map<string, RegisteredChannelProvider>();
   private readonly channelConfigs_: readonly DispatcherChannelConfig[];
 
   constructor(private readonly opts: ChannelServiceOptions) {
-    this.channelConfigs_ =
-      opts.config
-        .current()
-        .dispatchers.find((dispatcher) => dispatcher.id === opts.dispatcherId)
-        ?.channels ?? [];
+    this.channelConfigs_ = opts.dispatcher.channels;
   }
 
-  /** The live instance map, or an empty map when no sessions are connected. */
-  live(): Map<string, ChannelInstance> {
-    return this.sessions ?? new Map();
+  private provider(
+    channelConfig: DispatcherChannelConfig,
+  ): RegisteredChannelProvider {
+    let resolved = this.providers.get(channelConfig.id);
+    if (resolved === undefined) {
+      resolved = this.opts.channelProviders.resolve(channelConfig.provider);
+      this.providers.set(channelConfig.id, resolved);
+    }
+    return resolved;
   }
 
   /**
-   * Build the un-started channel sessions for the dispatcher from its configured
-   * channels. Each provider's already-validated `readConfig` yields the provider
-   * config view, then `createSession` builds the session through the create
-   * context. Sessions are NOT connected here — the caller starts them. On partial
-   * failure the already-built sessions are closed.
+   * Fail loud on any configured channel whose provider does not resolve to a
+   * loaded implementation (issue #209 multi-channel config).
+   *
+   * Config accepts the general multi-channel shape — a channel may name any
+   * registered provider — so a channel is RUNNABLE when its provider resolves
+   * here; core names no concrete provider, so any builtin or npm channel
+   * provider that loaded is runnable. This is the single intended runtime
+   * boundary where an "accepted by config, not yet runnable" shape fails
+   * loud: state construction (the dispatcher store) stays fail-soft so the
+   * failure surfaces here at launch, not earlier during seeding.
+   */
+  assertRunnable(): void {
+    for (const channelConfig of this.channelConfigs_) {
+      try {
+        this.provider(channelConfig);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `dispatcher '${this.opts.dispatcherId}' channel ${JSON.stringify(channelConfig.provider)} is not runnable: ${reason}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Build the un-started channel sessions for the dispatcher from its
+   * configured channels. Each provider's already-validated `readConfig`
+   * yields the provider config view, then `createSession` builds the session
+   * through the create context. Sessions are NOT connected here — the caller
+   * initializes and starts them. On partial failure the already-built
+   * sessions are closed and nothing is published.
    */
   async build(): Promise<Map<string, ChannelInstance>> {
     const providerLog = this.opts.channelLoggerFactory(this.opts.dispatcherId);
-    const channels = new Map<string, ChannelInstance>();
+    const built = new Map<string, ChannelInstance>();
     try {
       for (const channelConfig of this.channelConfigs_) {
-        const { implementation: provider } = this.opts.channelProviders.resolve(
-          channelConfig.provider,
-        );
-        channels.set(
+        const { implementation: provider } = this.provider(channelConfig);
+        built.set(
           channelConfig.id,
           await provider.createSession({
             dispatcher_id: this.opts.dispatcherId,
@@ -104,74 +173,185 @@ export class ChannelService {
         );
       }
     } catch (err) {
-      for (const instance of channels.values()) {
-        try {
-          await instance.session.close();
-        } catch {
-          /* best effort: never started */
-        }
-      }
+      await closeBestEffort(built);
       throw err;
     }
-    // Published only once every instance exists: the failure path above already
-    // closed what it had built, and a map of closed instances must never become
-    // the answer to an availability question.
-    this.built = channels;
-    return channels;
-  }
-
-  /** Adopt successfully-started instances as the live map. */
-  adopt(channels: Map<string, ChannelInstance>): void {
-    this.sessions = channels;
-  }
-
-  /** Drop both maps (start failed, prepared sessions discarded, or stop). */
-  clear(): void {
-    this.sessions = null;
-    this.built = null;
-  }
-
-  async closeAll(log: DreamuxLogger): Promise<void> {
-    const sessions = this.sessions;
-    if (sessions === null) return;
-    // Detach before awaiting provider shutdown. A concurrent stop now observes
-    // no live map, and a later restart/adopt cannot be clobbered when this older
-    // close finishes. The built map goes with it: these instances are about to
-    // be closed, so nothing may still treat them as able to serve a tool.
-    this.sessions = null;
-    this.built = null;
-    for (const [channelId, instance] of sessions) {
-      try {
-        await instance.session.close();
-      } catch (err) {
-        log.error(
-          {
-            dispatcher_id: this.opts.dispatcherId,
-            channel_id: channelId,
-            err: errorInfo(err),
-          },
-          'error closing bot',
-        );
-      }
+    // Published only once every instance exists: the failure path above
+    // already closed what it had built, and a map of closed instances must
+    // never become the answer to an availability question.
+    for (const [channelId, instance] of built) {
+      this.entries.set(channelId, { instance, portLease: null, live: false });
     }
-  }
-
-  configuredChannels(): readonly DispatcherChannelConfig[] {
-    return this.channelConfigs_;
+    return built;
   }
 
   /**
-   * The MCP capability this channel's created instance composed, or `null` when
-   * there is no instance or it composed no session tools.
+   * Hand every built session its Core port.
    *
-   * Read off the built map, not the live one, because this answers a
-   * composition question rather than a connectivity one: what a Channel built
-   * is what it can serve, for as long as that instance lives. Returning `null`
-   * rather than throwing keeps the decision with the Channel MCP delegate,
-   * which is the only caller and the only layer that knows whether the tool it
-   * is serving needed a session at all.
+   * This is the step that makes subscribe-before-admission provable: a
+   * session attaches its event consumer here, while its own external input is
+   * still closed, so nothing Core recovers or settles later can precede the
+   * subscription that observes it. The contract forbids opening external I/O
+   * from `initialize`, which is why this and {@link start} are separate
+   * calls at all. Sequential and in configuration order, so a mid-loop
+   * failure leaves every earlier session's lease already fenceable.
    */
-  sessionMcp(channelId: string): ChannelSessionMcpCapability | null {
-    return this.built?.get(channelId)?.mcp ?? null;
+  async initialize(assertAvailable: () => void): Promise<void> {
+    for (const [channelId, entry] of this.entries) {
+      const events = this.opts.coreEvents.createSource(channelId);
+      const lease = createChannelCorePort({
+        registry: this.opts.commands,
+        dispatcherId: this.opts.dispatcherId,
+        channelId,
+        events: events.source,
+        log: this.opts.log,
+      });
+      entry.portLease = lease;
+      await entry.instance.session.initialize(lease.port);
+      assertAvailable();
+    }
+  }
+
+  /**
+   * Open external input, one already-initialized session at a time.
+   *
+   * `start` takes nothing further: the session was given its Core port at
+   * `initialize`, and what it does with external traffic — routing, binding,
+   * presentation — is the Channel's own. A session is published as live only
+   * after its own start returns.
+   */
+  async start(assertAvailable: () => void): Promise<void> {
+    for (const entry of this.entries.values()) {
+      await entry.instance.session.start();
+      assertAvailable();
+      entry.live = true;
+    }
+  }
+
+  /**
+   * Fence every session's Command admission, synchronously and idempotently.
+   *
+   * Published before any awaited teardown so an initialized session cannot
+   * enter Core while shutdown is converging what it already accepted. Event
+   * subscriptions deliberately outlive this: a stopping runtime still
+   * settles, and those facts are worth delivering.
+   */
+  closeAdmission(): void {
+    for (const entry of this.entries.values()) {
+      entry.portLease?.closeAdmission();
+    }
+  }
+
+  /**
+   * Close every entry — live or only built — and report every failure
+   * instead of swallowing it.
+   *
+   * Detach before awaiting provider shutdown: a concurrent stop now observes
+   * an empty map, and a later restart/build cannot be clobbered when this
+   * older close finishes. Admission is fenced synchronously in the same
+   * breath, ahead of any await, whether or not the caller already fenced it.
+   * Subscriptions stay attached through everything above — a runtime settling
+   * during close still produces facts a Channel should see — and are revoked
+   * once, here, immediately before the sessions holding them are closed: any
+   * earlier would drop a fact a stopping runtime was about to settle, and any
+   * later would let a closed session's stale subscription observe something.
+   */
+  async closeAll(): Promise<void> {
+    const snapshot = [...this.entries];
+    this.entries.clear();
+    for (const [, entry] of snapshot) entry.portLease?.closeAdmission();
+    this.opts.coreEvents.revokeSources();
+    const failures: unknown[] = [];
+    for (const [channelId, entry] of snapshot) {
+      await collectShutdownFailure(failures, async () => {
+        try {
+          await entry.instance.session.close();
+        } catch (err) {
+          this.opts.log.error(
+            {
+              dispatcher_id: this.opts.dispatcherId,
+              channel_id: channelId,
+              err: errorInfo(err),
+            },
+            'error closing bot',
+          );
+          throw err;
+        }
+      });
+    }
+    throwShutdownFailures(
+      failures,
+      `channels for dispatcher ${JSON.stringify(this.opts.dispatcherId)} failed to close`,
+    );
+  }
+
+  /** Public Channel metadata in configuration order, without starting sessions. */
+  list(): ChannelMetadata[] {
+    return this.channelConfigs_.map(
+      (channelConfig): ChannelMetadata => ({
+        channel_id: channelConfig.id,
+        provider: channelConfig.provider,
+        identity: channelConfig.identity ?? '',
+        live: this.entries.get(channelConfig.id)?.live ?? false,
+      }),
+    );
+  }
+
+  /**
+   * This dispatcher's Channel MCP delegates, for one caller.
+   *
+   * A channel whose provider composes no MCP capability at all yields no
+   * delegate: there is nothing for one to own. Whether a delegate that does
+   * exist ends up advertising anything is decided later and generically, when
+   * Core freezes its catalog.
+   */
+  mcpDelegates(
+    caller: ChannelMcpCaller,
+    dispatch: <T>(task: () => Promise<T>) => Promise<T>,
+  ): McpServerDelegate[] {
+    const delegates: McpServerDelegate[] = [];
+    for (const channelConfig of this.channelConfigs_) {
+      const { id: providerId, implementation: provider } =
+        this.provider(channelConfig);
+      if (provider.mcp === undefined) continue;
+      delegates.push(
+        createChannelMcpDelegate({
+          dispatcherId: this.opts.dispatcherId,
+          providerId,
+          channelId: channelConfig.id,
+          provider,
+          config: channelConfig.config,
+          caller,
+          sessionMcp: this.sessionMcp(channelConfig.id),
+          dispatch,
+        }),
+      );
+    }
+    return delegates;
+  }
+
+  /**
+   * The MCP capability this channel's created instance composed, or `null`
+   * when there is no instance or it composed no session tools.
+   *
+   * Read regardless of `live`, because this answers a composition question
+   * rather than a connectivity one: what a Channel built is what it can
+   * serve, for as long as that instance lives.
+   */
+  private sessionMcp(channelId: string): ChannelSessionMcpCapability | null {
+    return this.entries.get(channelId)?.instance.mcp ?? null;
+  }
+}
+
+/** Close whatever sessions a failed {@link ChannelService.build} produced. */
+async function closeBestEffort(
+  channels: Map<string, ChannelInstance>,
+): Promise<void> {
+  for (const instance of channels.values()) {
+    try {
+      await instance.session.close();
+    } catch {
+      /* best effort: never started */
+    }
   }
 }

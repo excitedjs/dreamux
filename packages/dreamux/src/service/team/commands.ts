@@ -8,7 +8,7 @@
  *
  * These are the shared `admin.sock` and Channel-to-Core surface, and only that.
  * An Agent reaches the same Team through the Team MCP delegate beside this file,
- * which calls the same {@link DispatcherService} methods with its own arguments
+ * which calls the same {@link TeamsPort} methods with its own arguments
  * and its own provenance — so there is no caller-kind selector here, and no tool
  * flattened into a Command. What the two surfaces genuinely share — reading a
  * `team_name`, reading a history query, and the one submission receipt that is
@@ -28,7 +28,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
-import type { DispatcherService } from '../dispatcher-service/index.js';
+import type { TeamsPort } from './teams-port.js';
 import {
   normalizeSkillSources,
   optionalParsedSkillSources,
@@ -111,7 +111,7 @@ interface TeamDissolveInput {
 }
 
 export function teamCommands(
-  resolveDispatcher: (context: CoreCommandContext) => DispatcherService,
+  teams: (context: CoreCommandContext) => TeamsPort,
 ): readonly AnyCoreCommand[] {
   const create: CoreCommandDefinition<
     'team.create',
@@ -170,7 +170,6 @@ export function teamCommands(
       };
     },
     async execute(context, input) {
-      const dispatcher = resolveDispatcher(context);
       const skillSources = await normalizeSkillSources(
         input.parsedSkillSources,
         {
@@ -179,14 +178,14 @@ export function teamCommands(
       );
       const { command } = input;
       const repo = repoWorktree(command.repo ?? null);
-      // A named repository request without an explicit path resolves to the
-      // dispatcher's own workspace, exactly as the existing creation path does.
-      const repoCwd =
-        repo === null ? null : (repo.cwd ?? (await dispatcher.workspace()));
+      // A named repository request with no explicit path passes no `repoCwd`
+      // at all: `TeamCollection.prepareWorkspace()` already falls back to the
+      // dispatcher's own default workspace when it sees none.
+      const repoCwd = repo?.cwd ?? null;
       // No catch: an idempotency conflict, a closed Team, and a missing Team
       // already state themselves, and anything else must reach the boundary
       // that logs it with its stack, name, and cause intact.
-      return dispatcher.createTeam({
+      return teams(context).createFromRequest({
         requestId: command.request_id,
         payloadHash: input.payloadHash,
         options: {
@@ -234,27 +233,29 @@ export function teamCommands(
       return { command };
     },
     async execute(context, input) {
-      const dispatcher = resolveDispatcher(context);
-      const admission = await dispatcher.submitToTeamLeader({
-        ...channelSubmitInput(input.command),
-        teamId: input.command.team_name,
-        // `intent` is Team-Command-only: it updates the leader's durable
-        // recovery subject, and `dispatcher.submit` has no such field, so the
-        // shared projection in channel-submission.ts deliberately omits it.
-        // Presence is observable (core-command-adapters.test.ts asserts an
-        // omitted intent is an omitted key, not an explicit undefined), so
-        // this stays a conditional spread rather than a plain assignment.
-        ...(input.command.intent !== undefined
-          ? { intent: input.command.intent }
-          : {}),
-        // No external submission advances the Dispatcher Agent. Who waits for a
-        // leader's completion is a property of the operation, not of the
-        // adapter that carried it: an Agent handing work to a Team says so
-        // explicitly on the Team MCP delegate, while an external caller —
-        // Channel or `admin.sock` — is answered by the TeamLeader on its own
-        // Channel.
-        deliverCompletionToDispatcher: false,
-      });
+      const admission = await teams(context).submitToLeader(
+        input.command.team_name,
+        {
+          ...channelSubmitInput(input.command),
+          // `intent` is Team-Command-only: it updates the leader's durable
+          // recovery subject, and `dispatcher.submit` has no such field, so
+          // the shared projection in channel-submission.ts deliberately
+          // omits it. Presence is observable (core-command-adapters.test.ts
+          // asserts an omitted intent is an omitted key, not an explicit
+          // undefined), so this stays a conditional spread rather than a
+          // plain assignment.
+          ...(input.command.intent !== undefined
+            ? { intent: input.command.intent }
+            : {}),
+          // No external submission advances the Dispatcher Agent. Who waits
+          // for a leader's completion is a property of the operation, not of
+          // the adapter that carried it: an Agent handing work to a Team
+          // says so explicitly on the Team MCP delegate, while an external
+          // caller — Channel or `admin.sock` — is answered by the TeamLeader
+          // on its own Channel.
+          deliverCompletionToDispatcher: false,
+        },
+      );
       return teamSubmitResult(admission);
     },
   };
@@ -276,7 +277,7 @@ export function teamCommands(
       };
     },
     async execute(context, input) {
-      return resolveDispatcher(context).interruptTeamLeader(input.teamName);
+      return teams(context).interruptLeader(input.teamName);
     },
   };
 
@@ -293,8 +294,7 @@ export function teamCommands(
       commandPayload(payload);
     },
     async execute(context) {
-      const dispatcher = resolveDispatcher(context);
-      return { teams: await dispatcher.listTeams() };
+      return { teams: await teams(context).list() };
     },
   };
 
@@ -311,8 +311,7 @@ export function teamCommands(
       return { teamName: teamNameParam(commandPayload(payload), 'team_name') };
     },
     async execute(context, input) {
-      const dispatcher = resolveDispatcher(context);
-      return dispatcher.getTeamStatus(input.teamName);
+      return teams(context).summary(input.teamName);
     },
   };
 
@@ -341,8 +340,7 @@ export function teamCommands(
       return { query: teamHistoryQuery(commandPayload(payload)) };
     },
     async execute(context, input) {
-      const dispatcher = resolveDispatcher(context);
-      return dispatcher.getTeamHistory(input.query);
+      return teams(context).history(input.query);
     },
   };
 
@@ -378,11 +376,10 @@ export function teamCommands(
       };
     },
     async execute(context, input) {
-      const dispatcher = resolveDispatcher(context);
-      return dispatcher.dissolveTeam({
-        teamId: input.teamName,
+      return teams(context).dissolve(input.teamName, {
         note: input.note,
-        force: input.force,
+        force: input.force === true,
+        requester: 'dispatcher',
       });
     },
   };

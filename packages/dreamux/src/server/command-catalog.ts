@@ -13,6 +13,12 @@
  * that is allowed to know every domain type, so it is also the one place that
  * resolves `mustDispatcher`'s not-found handling — built once below and handed
  * to every domain that needs it, rather than each domain re-deriving it.
+ * `teamCommands`/`channelCommands` narrow straight to `dispatcher(context).teams`/
+ * `.channels` (the same pattern `workflowCommands` already uses for
+ * `.workflows`); a domain factory that needs no narrower port than
+ * `DispatcherService` itself (`teammateCommands`, `schedulerCommands`) is
+ * still handed the whole `dispatcher` function, since `DispatcherService`
+ * structurally satisfies each of their own narrower parameter types.
  */
 import type { CoreCommandContext } from '@excitedjs/dreamux-types';
 
@@ -51,8 +57,8 @@ export function createCoreCommandRegistry(host: CoreCommandHost): CoreCommands {
       dispatcherRow: (id) => mustDispatcherRow(host, id),
       dispatcher,
     }),
-    ...channelCommands(dispatcher),
-    ...teamCommands(dispatcher),
+    ...channelCommands((context) => dispatcher(context).channels),
+    ...teamCommands((context) => dispatcher(context).teams),
     ...teammateCommands(dispatcher),
     ...workflowCommands((context) => dispatcher(context).workflows),
     ...schedulerCommands(dispatcher),

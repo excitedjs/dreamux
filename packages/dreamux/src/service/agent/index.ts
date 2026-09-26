@@ -48,6 +48,7 @@ import type { SuffixGenerator } from '../name-allocator.js';
 import { closeMembersForDissolve } from './dissolve-members.js';
 import { teamMateNotFound } from './errors.js';
 import { teammateSystemPromptOptions } from './system-prompt.js';
+import { ServerShuttingDownError } from '../../platform/errors.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -90,6 +91,33 @@ export interface TeammateCollectionOptions {
   agentServiceFactory: AgentServiceFactory;
   completionDelivery?: CompletionDeliveryPolicy;
   conversationProjection: ConversationProjection;
+  /**
+   * The admission fence every `TeammateOps` verb this collection hands out
+   * crosses before it runs, so a spawn/send/close/read alike refuses once the
+   * owner is closing instead of only the three mutations gating themselves.
+   * The dispatcher-root owner passes its own dispatcher fence directly; a
+   * Team passes its own fence composed around the dispatcher's
+   * (`(task) => this.admit(() => dispatcherAdmitOperation(task))`, the same
+   * composition its cron scheduler already uses), because a dispatcher stop
+   * closes only the dispatcher's own admission — a Team outlives it and stays
+   * open to resume on the next daemon start — so a member op fenced on the
+   * Team's own admit alone would still pass while the dispatcher is tearing
+   * that Team's runtimes down underneath it.
+   */
+  admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
+  /**
+   * Whether the owner this collection was built for is already closing: the
+   * dispatcher's own dispatcher-wide close for the dispatcher-root case, or
+   * that fact composed with the owning Team's own dissolve for a Team-scoped
+   * collection (mirroring `admitOperation`'s own composition). Every
+   * construction path that can start a runtime — `spawn`/`createFreshEntity`,
+   * `send`'s reopen — reads this synchronously right after it registers a new
+   * entity and closes it immediately instead of proceeding to its first
+   * submission, so an already-admitted call that finishes constructing after
+   * `close()` published its fence never starts a runtime the owner's own
+   * post-drain sweep would only have caught later.
+   */
+  isClosing: () => boolean;
   /**
    * Where a completion produced by an Agent in this collection is delivered.
    *
@@ -165,7 +193,13 @@ export class TeammateCollection implements TeammateOps {
     this.store = opts.store;
   }
 
-  async spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
+  spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
+    return this.opts.admitOperation(() => this.spawnAdmitted(input));
+  }
+
+  private async spawnAdmitted(
+    input: SpawnTeamMateRequest,
+  ): Promise<AgentEntitySpawnResult> {
     const entity = await this.createFreshEntity(input);
     try {
       const delivery = await this.resolveCompletionDelivery();
@@ -209,6 +243,12 @@ export class TeammateCollection implements TeammateOps {
    * terminal one.
    */
   send(input: SendTeamMateInput): Promise<AgentEntitySendResult> {
+    return this.opts.admitOperation(() => this.sendAdmitted(input));
+  }
+
+  private sendAdmitted(
+    input: SendTeamMateInput,
+  ): Promise<AgentEntitySendResult> {
     const resolved = this.resolveEntity(input.name);
     return resolved instanceof Promise
       ? resolved.then((it) => this.sendResolved(this.reopenFrom(it), input))
@@ -226,6 +266,7 @@ export class TeammateCollection implements TeammateOps {
     if (reopening !== undefined) return reopening;
     const entity = this.buildEntity(resolved.identity, resolved.store);
     this.reopening.set(resolved.identity.name, entity);
+    this.selfCloseIfClosing(entity);
     return entity;
   }
 
@@ -258,7 +299,13 @@ export class TeammateCollection implements TeammateOps {
    * A TeamMate that is already closed is answered from its record: closing what
    * is already history constructs nothing.
    */
-  async close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
+  close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
+    return this.opts.admitOperation(() => this.closeAdmitted(input));
+  }
+
+  private async closeAdmitted(
+    input: CloseTeamMateInput,
+  ): Promise<AgentEntityCloseResult> {
     const name = validateTeamMateName(input.name);
     const note = requireLifecycleText(input.note, 'TeamMate close note');
     // One record read decides, so a close that lost the race to a concurrent
@@ -275,19 +322,45 @@ export class TeammateCollection implements TeammateOps {
     return (await this.store.names()).length;
   }
 
-  async list(): Promise<AgentEntityRuntimeStatus[]> {
+  list(): Promise<AgentEntityRuntimeStatus[]> {
+    return this.opts.admitOperation(() => this.memberStatuses());
+  }
+
+  /**
+   * This collection's own unfenced read of its current members' status.
+   *
+   * For the owner's internal use — a Team reads its own roster this way while
+   * reconstructing itself (`TeamService.members()`, seeding `roster.ts` during
+   * `rebuild()`) — never for a caller reaching the `TeammateOps.list()` verb
+   * above, which gates on `admitOperation` the same as every other verb. An
+   * owner reading its own children is the same tier as `count()`, not a
+   * caller crossing the collection's admission boundary a second time.
+   */
+  async memberStatuses(): Promise<AgentEntityRuntimeStatus[]> {
     return (await this.rosterList()).map((identity) => {
       const entity = this.liveEntity(identity.name);
       return entity?.status() ?? toStatus(identity, null);
     });
   }
 
-  async status(name: string): Promise<AgentEntityRuntimeStatus> {
+  status(name: string): Promise<AgentEntityRuntimeStatus> {
+    return this.opts.admitOperation(() => this.statusAdmitted(name));
+  }
+
+  private async statusAdmitted(
+    name: string,
+  ): Promise<AgentEntityRuntimeStatus> {
     const identity = await this.mustIdentity(validateTeamMateName(name));
     return this.liveEntity(identity.name)?.status() ?? toStatus(identity, null);
   }
 
-  async history(
+  history(
+    input: AgentEntityHistoryQuery,
+  ): Promise<AgentEntityHistoryResult> {
+    return this.opts.admitOperation(() => this.historyAdmitted(input));
+  }
+
+  private async historyAdmitted(
     input: AgentEntityHistoryQuery,
   ): Promise<AgentEntityHistoryResult> {
     const rows: AgentEntityRecordRow[] = [];
@@ -309,9 +382,16 @@ export class TeammateCollection implements TeammateOps {
     };
   }
 
-  async last(
+  last(
     name: string,
     query: number | AgentEntityLastQuery = {},
+  ): Promise<AgentEntityLastResult> {
+    return this.opts.admitOperation(() => this.lastAdmitted(name, query));
+  }
+
+  private async lastAdmitted(
+    name: string,
+    query: number | AgentEntityLastQuery,
   ): Promise<AgentEntityLastResult> {
     const identity = await this.mustIdentity(validateTeamMateName(name));
     const entity = this.liveEntity(identity.name);
@@ -332,7 +412,13 @@ export class TeammateCollection implements TeammateOps {
     };
   }
 
-  getCapabilities(): AgentEntityCapabilities {
+  getCapabilities(): Promise<AgentEntityCapabilities> {
+    return this.opts.admitOperation(() =>
+      Promise.resolve(this.getCapabilitiesAdmitted()),
+    );
+  }
+
+  private getCapabilitiesAdmitted(): AgentEntityCapabilities {
     return {
       verbs: [
         'spawn',
@@ -499,8 +585,33 @@ export class TeammateCollection implements TeammateOps {
       }
       this.entities.set(identity.name, entity);
       this.subscriptions.set(identity.name, subscription);
+      this.selfCloseIfClosing(entity);
       return entity;
     });
+  }
+
+  /**
+   * Stop a just-registered entity's runtime immediately, and refuse to
+   * proceed, when the owner is already closing.
+   *
+   * `spawn`/`send` cross `admitOperation` before `close()` publishes its
+   * fence, but finish materializing their entity afterward, moments before
+   * they would otherwise submit its first input — exactly the "get them
+   * stopped as fast as possible" case a Dispatcher close is for. The owner's
+   * own sweep only runs once every admitted call like this one has settled
+   * (so it does not have to catch a runtime this same call could have avoided
+   * starting), which means the sweep has not run yet at this point; without
+   * this check the entity would start a runtime the sweep tears down a moment
+   * later. `stopForHost()` releases runtime authority without durably closing
+   * the entity, so a caller that went on to submit anyway would simply revive
+   * it — throwing here is what actually prevents that continuation.
+   */
+  private selfCloseIfClosing(entity: AgentService): void {
+    if (!this.opts.isClosing()) return;
+    entity.stopForHost().catch(() => undefined);
+    throw new ServerShuttingDownError(
+      `dispatcher '${this.dispatcherId}' is shutting down`,
+    );
   }
 
   /**

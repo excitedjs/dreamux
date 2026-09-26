@@ -51,20 +51,25 @@ of a private method body, is a structure assertion and gets deleted, never
 propped up with a tsconfig tweak or a re-export. Two examples from this
 refactor's own audit:
 
-- **A "direction" case, superseded by a dependency-cruiser rule.**
-  `/packages/dreamux/tests/mcp-delegate-catalog.test.ts` proves
-  `channelMcpDelegates()` is imported only from
-  `service/dispatcher-service/mcp-delegates.ts` with a hand-rolled recursive
-  `findImportersOf()` helper that walks `src/` and greps every file's
-  imports. That is exactly an import-direction fact, and dependency-cruiser
-  has native visibility into the same import graph without hand-rolling a
-  source walker: the `channel-service-mcp-delegates-single-importer` rule in
-  `/packages/dreamux/.dependency-cruiser.cjs` states the identical fact as a
-  `from`/`to` pair and runs on every `rush lint`. That gate is warn-only while
-  this refactor is in progress (see `/packages/dreamux/CLAUDE.md`'s
-  "Layering" bullet for the current severity), so the hand-rolled test is
-  still present today — it becomes redundant, and is dropped, once the final
-  test completion on PR #453 confirms the cruiser rule covers it.
+- **A "direction" case, retired along with the fact it pinned.**
+  `/packages/dreamux/tests/mcp-delegate-catalog.test.ts` used to prove the
+  free function `channelMcpDelegates()` was imported only from
+  `service/dispatcher-service/mcp-delegates.ts`, with a hand-rolled recursive
+  `findImportersOf()` helper that walked `src/` and grepped every file's
+  imports — an import-direction fact dependency-cruiser could state instead,
+  without hand-rolling a source walker, as the
+  `channel-service-mcp-delegates-single-importer` `from`/`to` rule in
+  `/packages/dreamux/.dependency-cruiser.cjs`. Code-organization refactor
+  Stage 6e folded `channelMcpDelegates()` into a `ChannelService` method, so
+  there is no longer a free function with importers to enumerate — the fact
+  itself is gone, not merely covered by a better gate, so the cruiser rule is
+  deleted in the same stage. Per this refactor's own R43/R53 rule (no stage
+  before the final one repairs or deletes a test case), the hand-rolled test
+  file is left in place mid-refactor and retired in the refactor's final test
+  pass instead — the cruiser rule and the test are still both deleted, just
+  not in the same stage. A future analogous case (a source-text importer scan
+  for a fact dependency-cruiser can express natively) gets the same treatment:
+  add the cruiser rule, delete the hand-rolled test.
 - **A "behavior" case that still needs a real test.**
   `/packages/dreamux/tests/team-dissolve-contract.test.ts` proves "dissolve
   never drains a running turn" by reading `closing.ts`, `team/service.ts`,

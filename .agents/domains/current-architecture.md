@@ -170,7 +170,10 @@ execution is never replayed. The exact numeric limits are user-facing and owned
 by [Dynamic Workflow usage](../product/dynamic-workflow-usage.md#53-exact-limits).
 
 Key source: `/packages/dreamux/src/service/workflow-service/`,
-`/packages/dreamux/src/service/dispatcher-service/dispatcher-workflows.ts`.
+`/packages/dreamux/src/service/dispatcher-service/index.ts` (constructs the
+dispatcher-scoped `WorkflowService` directly) and
+`/packages/dreamux/src/service/dispatcher-service/lifecycle.ts` (fans its
+start/recover/close-admission out to the Team scope).
 
 ## State, Cache, Run Files, And Logs
 

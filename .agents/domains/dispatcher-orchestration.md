@@ -78,9 +78,9 @@ The dispatcher *has* an agent; it is not itself an Agent Runtime. Each
 `team/leader.ts`, using the identity store, worktree manager, and
 completion-delivery policy its owning `TeamCollection` injects. The per-Team
 `TeammateCollection` is members-only: the TeamLeader lives at the Team root and
-is never cached in the collection's entity map. `DispatcherService.team()`
-returns a `TeamLeaderHandle` to admin and MCP team-leader callers, never the
-concrete `TeamService`.
+is never cached in the collection's entity map. `TeamsPort.leaderScope()`
+(`DispatcherService.teams.leaderScope()`) returns a `TeamLeaderHandle` to admin
+and MCP team-leader callers, never the concrete `TeamService`.
 
 One service class belongs in one file or directory; a class with helpers gets a
 directory whose `index.ts` is the class and whose siblings are its helpers.
@@ -120,7 +120,7 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
-- `/packages/dreamux/src/service/dispatcher-service/input-source-lifecycle.ts`
+- `/packages/dreamux/src/service/dispatcher-service/lifecycle.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 
 ### Roles And Visibility
@@ -349,6 +349,14 @@ process stopping. Only agents this process actually materialized are reached: a
 durable member nobody materialized is already idle, and starting one to stop it
 would make a host sweep touch entities it never ran.
 
+A host stop sweeps the runtimes it can already see exactly once, after every
+already-admitted operation has settled (`DispatcherLifecycle.close()`); nothing
+newly appears in either collection's live map after that, because a spawn or a
+Team create/rebuild that was admitted before the stop fence published checks
+that fence itself the instant it registers into the collection and closes
+itself immediately instead of proceeding, rather than relying on a second
+sweep to catch it.
+
 Source:
 
 - `/packages/dreamux/src/service/CLAUDE.md`
@@ -392,12 +400,13 @@ owner is going away, and no teardown walks the producer population:
   the fence reads it when it settles, and host release still drains admissions
   when the native stop fails;
 - `CompletionDeliveryPolicy` reads the dispatcher admission gate
-  (`DispatcherTaskDrain.accepting`) once per requested delivery, before folding
-  or queueing. Stop, shutdown, and failed-start rollback close that gate
-  synchronously, so nothing settling behind it — including a Team member's or
-  leader's natural completion during a long Workflow teardown — reaches a
-  stopping owner; a successful rollback reopens it. No in-process stop→start
-  path exists today; one would have to reopen the gate;
+  (`DispatcherLifecycle.isClosing()`) once per requested delivery, before
+  folding or queueing. `close()` — the one terminal close a failed `start()`
+  reuses instead of a separate rollback — raises that gate synchronously, so
+  nothing settling behind it, including a Team member's or leader's natural
+  completion during a long Workflow teardown, reaches a closing owner. There
+  is no in-process stop→start path: once `close()` has run, this dispatcher
+  never accepts work again (R11);
 - a Team-scope recipient runs its delivery inside `TeamService.admit()`, so a
   dissolving Team refuses it with `TeamClosedError`;
 - a Workflow run stops owing its terminal report the moment a stop reserves
@@ -410,7 +419,7 @@ owner is going away, and no teardown walks the producer population:
 Source:
 
 - `/packages/dreamux/src/service/completion-router/index.ts`
-- `/packages/dreamux/src/service/dispatcher-service/inbound-task-drain.ts`
+- `/packages/dreamux/src/service/dispatcher-service/lifecycle.ts`
 - `/packages/dreamux/src/service/agent/admission.ts`
 - `/packages/dreamux/src/service/agent/turn.ts`
 - `/packages/dreamux/src/service/workflow-service/run.ts`
@@ -472,7 +481,7 @@ Source:
 - `/packages/dreamux/src/mcp/shim.ts`
 - `/packages/dreamux/src/service/mcp/`
 - `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/agent/mcp.ts`
 - `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/scheduler/mcp.ts`

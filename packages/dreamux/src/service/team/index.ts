@@ -1,4 +1,7 @@
-import type { TeamSummary } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeInterruptOutcome,
+  TeamSummary,
+} from '@excitedjs/dreamux-types';
 
 import type { WorktreeManager } from '../worktree/manager.js';
 import { requireLifecycleText } from '../agent/identity.js';
@@ -7,11 +10,16 @@ import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { ClosedSubscription } from '../../platform/closed-fact.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
+import type { TurnAdmission } from '../agent/admission.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
 import { TeamStore } from './store.js';
 import {
   validateTeamId,
   type TeamCreateAtNameInput,
   type TeamCreateInput,
+  type TeamDissolveCommand,
+  type TeamDissolveReceipt,
   type TeamHistoryQuery,
   type TeamHistoryResult,
   type TeamListRow,
@@ -29,6 +37,8 @@ import {
   teamErrorInfo,
 } from './errors.js';
 import { TeamCollectionReadModel } from './read-model.js';
+import { teamLeaderHandle, type TeamLeaderHandle } from './leader-handle.js';
+import type { TeamsPort } from './teams-port.js';
 
 /**
  * The dispatcher's team collection (issue #233): one per dispatcher, owned by
@@ -41,8 +51,13 @@ import { TeamCollectionReadModel } from './read-model.js';
  * from the persisted {@link TeamRecord} and cached. Each `TeamService` OWNS its
  * per-team `TeammateCollection` (`teamScope: team_id`) built from the shared
  * deps forwarded here.
+ *
+ * Implements {@link TeamsPort} directly: every dispatcher-facing per-Team
+ * operation gates itself on the injected `admitOperation` internally, so a
+ * caller reaches a Team through exactly one surface instead of an
+ * open/admit/read triple it must fence itself.
  */
-export class TeamCollection {
+export class TeamCollection implements TeamsPort {
   private readonly dispatcherId: string;
   private readonly store: TeamStore;
   private readonly worktrees: WorktreeManager;
@@ -110,6 +125,11 @@ export class TeamCollection {
    * the same id with the same payload always resolves back to that Team,
    * including once it is closed; the same id with a different payload is an
    * idempotency conflict.
+   *
+   * Gated by `admitOperation` like every other `TeamsPort` method: a create
+   * admitted right as the dispatcher starts closing still crosses the fence
+   * before doing any work, rather than building a workspace and a leader only
+   * to self-close in `track()` the moment it registers.
    */
   async createFromRequest(input: {
     requestId: string;
@@ -117,54 +137,57 @@ export class TeamCollection {
     options: TeamCreateInput;
     deliverCompletionToDispatcher: boolean;
   }): Promise<TeamSummary> {
-    return this.createRequestLifecycle.run(input.requestId, async () => {
-      const { namePrefix, ...options } = input.options;
-      const accepted = await this.acceptedRequest(input.requestId);
-      if (accepted !== null) {
-        if (accepted.create_payload_hash !== input.payloadHash) {
-          throw new IdempotencyConflictError(
-            `request_id ${JSON.stringify(input.requestId)} was already accepted with a ` +
-              'different team.create payload; use a new request_id for a new Team',
+    return this.opts.admitOperation(() =>
+      this.createRequestLifecycle.run(input.requestId, async () => {
+        const { namePrefix, ...options } = input.options;
+        const accepted = await this.acceptedRequest(input.requestId);
+        if (accepted !== null) {
+          if (accepted.create_payload_hash !== input.payloadHash) {
+            throw new IdempotencyConflictError(
+              `request_id ${JSON.stringify(input.requestId)} was already accepted with a ` +
+                'different team.create payload; use a new request_id for a new Team',
+            );
+          }
+          // Read the accepted Team without materializing it or resubmitting work.
+          return this.summaryFromRecord(accepted);
+        }
+        const outcome: { created: TeamService | null } = { created: null };
+        const teamName = await allocateConcreteNameAsync({
+          kind: 'team',
+          base: namePrefix,
+          accept: async (candidate) => {
+            // A valid record at this candidate belongs to another Team — this
+            // request has not been accepted anywhere — so move on. The probe is
+            // only an optimization: publication answers the same question
+            // authoritatively, and losing that race is the same ordinary
+            // "unavailable candidate", not a persistence failure.
+            if ((await this.store.get(candidate)) !== null) {
+              return false;
+            }
+            outcome.created = await this.createAtCandidate({
+              ...options,
+              name: candidate,
+              createRequest: {
+                requestId: input.requestId,
+                payloadHash: input.payloadHash,
+              },
+              deliverCompletionToDispatcher:
+                input.deliverCompletionToDispatcher,
+            });
+            return outcome.created !== null;
+          },
+          generateSuffix: this.opts.nameSuffixGenerator,
+        });
+        const created = outcome.created;
+        if (created === null) {
+          throw new Error(
+            `team.create request ${JSON.stringify(input.requestId)} accepted the name ` +
+              `${JSON.stringify(teamName)} without publishing a Team record`,
           );
         }
-        // Read the accepted Team without materializing it or resubmitting work.
-        return this.summaryFromRecord(accepted);
-      }
-      const outcome: { created: TeamService | null } = { created: null };
-      const teamName = await allocateConcreteNameAsync({
-        kind: 'team',
-        base: namePrefix,
-        accept: async (candidate) => {
-          // A valid record at this candidate belongs to another Team — this
-          // request has not been accepted anywhere — so move on. The probe is
-          // only an optimization: publication answers the same question
-          // authoritatively, and losing that race is the same ordinary
-          // "unavailable candidate", not a persistence failure.
-          if ((await this.store.get(candidate)) !== null) {
-            return false;
-          }
-          outcome.created = await this.createAtCandidate({
-            ...options,
-            name: candidate,
-            createRequest: {
-              requestId: input.requestId,
-              payloadHash: input.payloadHash,
-            },
-            deliverCompletionToDispatcher: input.deliverCompletionToDispatcher,
-          });
-          return outcome.created !== null;
-        },
-        generateSuffix: this.opts.nameSuffixGenerator,
-      });
-      const created = outcome.created;
-      if (created === null) {
-        throw new Error(
-          `team.create request ${JSON.stringify(input.requestId)} accepted the name ` +
-            `${JSON.stringify(teamName)} without publishing a Team record`,
-        );
-      }
-      return created.status();
-    });
+        return created.status();
+      }),
+    );
   }
 
   /**
@@ -194,13 +217,20 @@ export class TeamCollection {
     return this.create(input, validateTeamId(input.name));
   }
 
-  /** Compact rows from records alone; a list never consults a live runtime. */
+  /**
+   * Compact rows from records alone; a list never consults a live runtime.
+   *
+   * Gated like every other per-Team operational read (R12): an inventory read
+   * this narrow still names a Team, so it is fenced the same as `history` and
+   * `summary` rather than left observable through a dispatcher stop.
+   */
   async list(): Promise<TeamListRow[]> {
-    return this.reads.list();
+    return this.opts.admitOperation(() => this.reads.list());
   }
 
+  /** Gated per R12: a read is still per-Team operational access. */
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
-    return this.reads.history(input);
+    return this.opts.admitOperation(() => this.reads.history(input));
   }
 
   /**
@@ -266,10 +296,16 @@ export class TeamCollection {
    * read from its records: whether it is closed or simply not materialized
    * here, a read must not build an entity — and a Team with no runtime in this
    * process has no runtime state for a projection to be missing.
+   *
+   * Gated per R12, same as every other per-Team operational read; the wrap
+   * used to sit on the caller (`DispatcherService.getTeamStatus()`) and now
+   * sits here instead, on the method itself.
    */
   async summary(teamId: string): Promise<TeamSummary> {
-    const record = await this.mustTeam(validateTeamId(teamId));
-    return this.summaryFromRecord(record);
+    return this.opts.admitOperation(async () => {
+      const record = await this.mustTeam(validateTeamId(teamId));
+      return this.summaryFromRecord(record);
+    });
   }
 
   /**
@@ -393,6 +429,87 @@ export class TeamCollection {
       );
     }
     return team;
+  }
+
+  /**
+   * Submit one turn to a Team's TeamLeader.
+   *
+   * `deliverCompletionToDispatcher` is resolved to an `initiator` here, inside
+   * the fence, rather than accepted as one directly: a caller outside `team/`
+   * knows only whether a Core-side initiator is waiting for the leader's
+   * completion, never the dispatcher Agent itself. A Channel-originated turn
+   * passes `false`, because the leader answers on its own Channel.
+   */
+  submitToLeader(
+    teamId: string,
+    input: TeammateSubmitInput & { deliverCompletionToDispatcher: boolean },
+  ): Promise<TurnAdmission> {
+    return this.opts.admitOperation(async () => {
+      const { deliverCompletionToDispatcher, ...submission } = input;
+      const initiator = deliverCompletionToDispatcher
+        ? await this.opts.leaderCompletionInitiator()
+        : null;
+      return (await this.open(teamId)).submitToLeader({
+        ...submission,
+        ...(initiator !== null ? { initiator } : {}),
+      });
+    });
+  }
+
+  /** Interrupt one Team's leader. */
+  interruptLeader(teamId: string): Promise<AgentRuntimeInterruptOutcome> {
+    return this.opts.admitOperation(async () =>
+      (await this.open(teamId)).interruptLeader(),
+    );
+  }
+
+  /**
+   * Submit one Team's dissolve.
+   *
+   * Never waits for the outcome: once the Team owns the operation the caller
+   * has its receipt, and a second submission joins the first instead of
+   * dismantling the Team twice.
+   */
+  dissolve(
+    teamId: string,
+    input: TeamDissolveCommand,
+  ): Promise<TeamDissolveReceipt> {
+    return this.opts.admitOperation(async () =>
+      (await this.open(teamId)).dissolve(input),
+    );
+  }
+
+  /** This Team's TeamLeader-scoped member/workflow surface. */
+  leaderScope(teamId: string): Promise<TeamLeaderHandle> {
+    return this.opts.admitOperation(async () =>
+      teamLeaderHandle({
+        teamId: (await this.open(teamId)).id,
+        withMutationService: (id, task) =>
+          this.opts.admitOperation(() => this.admit(id, task)),
+        withReadService: (id, task) => this.read(id, task),
+      }),
+    );
+  }
+
+  scheduler(teamId: string): Promise<SchedulerCommands> {
+    return this.opts.admitOperation(
+      async () => (await this.open(teamId)).scheduler,
+    );
+  }
+
+  /**
+   * Run one task on behalf of a named TeamLeader.
+   *
+   * This is the entry a TeamLeader's own MCP delegates dispatch through, and it
+   * layers the two fences that matter for that caller: the dispatcher admission
+   * gate, and the named Team's own work fence. The runtime-generation lease
+   * behind the MCP token already fences a *replaced runtime*, but only the
+   * Team's fence refuses a leader's work once that Team is dissolving — so a
+   * delegate that reaches a Team object enters it, and one that merely reaches
+   * the dispatcher does not.
+   */
+  runForLeader<T>(teamId: string, task: () => Promise<T>): Promise<T> {
+    return this.opts.admitOperation(() => this.admit(teamId, () => task()));
   }
 
   async startSchedulers(): Promise<void> {
@@ -670,6 +787,19 @@ export class TeamCollection {
       // rebuilt at the same id afterwards is a different object and stays.
       subscription: service.onClosed(() => this.evict(service.id, service)),
     });
+    // `create`/`rebuild` can finish registering a Team after the dispatcher's
+    // own `close()` already published its fence (they cross `admitOperation`
+    // or run as part of startup before that fact can change, but finish
+    // constructing afterward). Unlike `TeammateCollection`'s equivalent
+    // check, this Team's leader may already have taken its first submission
+    // by the time this runs (`TeamService.createNew` submits it internally,
+    // before this collection ever sees the object), so this cannot prevent
+    // that — it only stops the runtime as soon as this collection notices,
+    // rather than leaving it running until the dispatcher's own post-drain
+    // sweep reaches it.
+    if (this.opts.isClosing()) {
+      service.stopForHost().catch(() => undefined);
+    }
   }
 
   private evict(teamId: string, expectedService: TeamService): void {

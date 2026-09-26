@@ -6,7 +6,7 @@ import type {
   SpawnTeamMateRequest,
   TeammateOps,
 } from '../agent/types.js';
-import type { TeamService } from '../team/service.js';
+import type { TeamService } from './service.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 
 export interface TeamLeaderTeammateOps {
@@ -42,16 +42,6 @@ export function teamLeaderHandle(input: {
     input.withMutationService(input.teamId, task);
   const read = async <T>(task: (service: TeamService) => Promise<T>) =>
     input.withReadService(input.teamId, task);
-  const finishOutsideLease = async <T>(
-    task: (service: TeamService) => Promise<T>,
-  ): Promise<T> => {
-    // Some workflow operations can wait for agents that re-enter this Team
-    // lease. Carry their completion promise out as data before awaiting it.
-    const pending = await mutate(async (service) => ({
-      completion: task(service),
-    }));
-    return pending.completion;
-  };
   return {
     teammates: {
       send: (sendInput) =>
@@ -67,13 +57,19 @@ export function teamLeaderHandle(input: {
       getCapabilities: () =>
         read(async (service) => service.teammates.getCapabilities()),
     },
+    // `run`/`stop` route through the same `mutate` closure as every other
+    // mutating op. `TeamService.admit()` (`withMutationService`'s ultimate
+    // target) is a stateless refusal check, not a lock held across the whole
+    // call — so there is no lease for a long-running Workflow call to hold
+    // while it awaits an agent that re-enters this Team, and nothing to carry
+    // out as data before awaiting.
     workflows: {
       run: (workflowInput) =>
-        finishOutsideLease((service) => service.workflows.run(workflowInput)),
+        mutate((service) => service.workflows.run(workflowInput)),
       status: (statusInput) =>
         read((service) => service.workflows.status(statusInput)),
       stop: (stopInput) =>
-        finishOutsideLease((service) => service.workflows.stop(stopInput)),
+        mutate((service) => service.workflows.stop(stopInput)),
       list: () => read((service) => service.workflows.list()),
     },
     spawnTeamMate: (spawnInput) =>

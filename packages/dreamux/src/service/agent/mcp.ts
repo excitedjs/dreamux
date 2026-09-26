@@ -31,7 +31,7 @@ import { repoRequest, repoWorktree } from '../worktree/repo-request.js';
 import { mapAgentActivityCommandError } from './activity.js';
 import type { AgentEntitySpawnResult } from './identity.js';
 import type { DispatcherService } from '../dispatcher-service/index.js';
-import type { TeamLeaderHandle } from '../dispatcher-service/team-leader-handle.js';
+import type { TeamLeaderHandle } from '../team/leader-handle.js';
 import {
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
   WORKFLOW_RUN_SUCCESS_REMINDER,

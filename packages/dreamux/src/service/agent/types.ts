@@ -98,5 +98,5 @@ export interface TeammateOps {
     name: string,
     query?: number | AgentEntityLastQuery,
   ): Promise<AgentEntityLastResult>;
-  getCapabilities(): AgentEntityCapabilities;
+  getCapabilities(): Promise<AgentEntityCapabilities>;
 }

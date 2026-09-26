@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A dispatcher's shutdown now runs one close pass instead of two: it drains every already-admitted operation first, then stops Workflows, each Team, each materialized TeamMate runtime, and the dispatcher's own Agent runtime exactly once, and closes Channels last. Previously the same four stop calls ran twice - once before Channels closed and admission drained, once again (\"late\") afterward - to catch an admitted spawn/createTeam call that finished constructing its entity between the first sweep and the drain completing. That race is now closed at its source instead: TeammateCollection's and TeamCollection's own entity-construction paths check the dispatcher's closing fact the instant they register a new entity and self-close its runtime immediately, so nothing can still be starting a runtime by the time the one sweep after the drain runs. For a spawned TeamMate this preempts its first submission outright. For a Team's leader it cannot: TeamService.createNew already submits the leader's first prompt internally before the collection ever sees the object, so this only stops that runtime as soon as the collection notices instead of leaving it running until a later sweep reached it - the same practical effect (stopped as fast as possible instead of spending runtime tokens on work a close is already tearing down), reached slightly later for a Team than for a bare TeamMate.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

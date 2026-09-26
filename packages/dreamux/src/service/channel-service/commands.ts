@@ -22,7 +22,7 @@ import {
   arrayOf,
   objectSchema,
 } from '../../command/schema.js';
-import type { ChannelMetadata } from './types.js';
+import type { ChannelMetadata } from './index.js';
 
 interface ChannelListResult {
   channels: ChannelMetadata[];
@@ -30,11 +30,11 @@ interface ChannelListResult {
 
 /** The one capability `channelCommands` needs from its addressed dispatcher. */
 interface ChannelCommandsDispatcher {
-  listChannels(): ChannelMetadata[];
+  list(): ChannelMetadata[];
 }
 
 export function channelCommands(
-  dispatcher: (context: CoreCommandContext) => ChannelCommandsDispatcher,
+  channels: (context: CoreCommandContext) => ChannelCommandsDispatcher,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<'channel.list', void, ChannelListResult> = {
     name: 'channel.list',
@@ -60,7 +60,7 @@ export function channelCommands(
       commandPayload(payload);
     },
     async execute(context) {
-      return { channels: dispatcher(context).listChannels() };
+      return { channels: channels(context).list() };
     },
   };
 

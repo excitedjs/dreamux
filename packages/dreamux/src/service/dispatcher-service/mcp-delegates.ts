@@ -12,9 +12,7 @@
  */
 import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
 
-import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { ChannelService } from '../channel-service/index.js';
-import { channelMcpDelegates } from '../channel-service/mcp-delegates.js';
 import type { McpServerDelegate } from '../mcp/types.js';
 import { createCronMcpDelegate } from '../scheduler/mcp.js';
 import { createTeamMcpDelegate } from '../team/mcp.js';
@@ -22,10 +20,8 @@ import { createTeamMateMcpDelegate } from '../agent/mcp.js';
 import type { DispatcherService } from './index.js';
 
 interface RoleDelegateInput {
-  dispatcherId: string;
   dispatcher: DispatcherService;
   channels: ChannelService;
-  channelProviders: ChannelProviderCatalog;
 }
 
 /** The Dispatcher Agent's servers: its channels, Teams, TeamMates, and cron. */
@@ -34,15 +30,18 @@ export function dispatcherAgentMcpDelegates(
 ): McpServerDelegate[] {
   const caller: ChannelMcpCaller = { kind: 'dispatcher' };
   return [
-    ...channelDelegates(input, caller, (task) =>
+    ...input.channels.mcpDelegates(caller, (task) =>
       input.dispatcher.admitOperation(task),
     ),
     createTeamMcpDelegate({
-      dispatcher: input.dispatcher,
+      teams: input.dispatcher.teams,
       caller: { kind: 'dispatcher' },
     }),
     createTeamMateMcpDelegate({
       kind: 'dispatcher',
+      // The TeamMate MCP delegate reaches `teammates` and the dispatcher's
+      // own default `workspace()` — a full `DispatcherService`, unlike the
+      // Team delegate above, which needs only `TeamsPort`.
       dispatcher: input.dispatcher,
     }),
     createCronMcpDelegate({
@@ -69,37 +68,22 @@ export function teamLeaderMcpDelegates(
     leader_name: leaderName,
   };
   return [
-    ...channelDelegates(input, caller, (task) =>
+    ...input.channels.mcpDelegates(caller, (task) =>
       // A leader's channel call also enters its Team's work fence: the
       // runtime-generation lease fences a replaced runtime, but only the Team
       // fence serializes against an in-flight dissolve.
-      input.dispatcher.runForTeamLeader(teamId, task),
+      input.dispatcher.teams.runForLeader(teamId, task),
     ),
     createTeamMcpDelegate({
-      dispatcher: input.dispatcher,
+      teams: input.dispatcher.teams,
       caller: { kind: 'team_leader', teamId, leaderName },
     }),
     createTeamMateMcpDelegate({
       kind: 'team_leader',
-      team: () => input.dispatcher.team(teamId),
+      team: () => input.dispatcher.teams.leaderScope(teamId),
     }),
     createCronMcpDelegate({
-      scheduler: () => input.dispatcher.teamScheduler(teamId),
+      scheduler: () => input.dispatcher.teams.scheduler(teamId),
     }),
   ];
-}
-
-function channelDelegates(
-  input: RoleDelegateInput,
-  caller: ChannelMcpCaller,
-  dispatch: <T>(task: () => Promise<T>) => Promise<T>,
-): McpServerDelegate[] {
-  return channelMcpDelegates({
-    dispatcherId: input.dispatcherId,
-    channels: input.channels.configuredChannels(),
-    channelProviders: input.channelProviders,
-    caller,
-    sessionMcp: (channelId) => input.channels.sessionMcp(channelId),
-    dispatch,
-  });
 }

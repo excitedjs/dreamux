@@ -242,12 +242,21 @@ export class Server {
     // Resolve it once here so no projected event pays for it, and so the
     // projection itself stays synchronous.
     const homePathPrefixes = await resolveHomePathPrefixes();
+    // Loaded before `Dispatchers` exists: nothing between here and its
+    // construction needs the collection first, and every `DispatcherService`
+    // it builds afterward receives this same consumer as a plain constructor
+    // value (there is no setter to reach a dispatcher materialized earlier).
+    const restartIntent = await RestartIntentConsumer.load({
+      now: Date.now(),
+      warn: (message) => this.log.warn(message),
+    });
     this.dispatchers_ = new Dispatchers({
       config: this.opts.config ?? DEFAULT_CONFIG_SERVICE,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,
+      restartIntent,
       commands: this.commands,
       homePathPrefixes,
       adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
@@ -257,13 +266,6 @@ export class Server {
       workflowLoggerFactory: this.opts.workflowLoggerFactory,
       log: this.log,
     });
-
-    this.dispatchers.setRestartIntent(
-      await RestartIntentConsumer.load({
-        now: Date.now(),
-        warn: (message) => this.log.warn(message),
-      }),
-    );
 
     // Dispatcher workspace cwd contract (issue #182 PR-4): every enabled
     // dispatcher must declare an explicit, usable `cwd` — there is no fallback
@@ -374,7 +376,6 @@ export class Server {
     this.commands.closeAdmission();
     const dispatchers = this.dispatchers_;
     if (dispatchers !== null) {
-      dispatchers.beginShutdown();
       await collectShutdownFailure(failures, () => dispatchers.shutdown());
     }
     await collectShutdownFailure(failures, () => this.commands.drain());

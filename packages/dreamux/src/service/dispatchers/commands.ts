@@ -129,7 +129,7 @@ export function dispatcherCommands(
       return {
         dispatcher_id: row.dispatcher_id,
         channel_identity: row.channel_identity,
-        status: runtime.status ?? 'stopped',
+        status: runtime.status,
         session_id: runtime.sessionId,
         last_error: runtime.lastError,
       };

@@ -57,6 +57,15 @@ export interface TeamCollectionOptions {
   leaderCompletionInitiator: () => Promise<CompletionInitiator | null>;
   admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
   /**
+   * Whether the dispatcher this collection belongs to is already closing.
+   * `TeamCollection` reads it the instant a Team registers into its live map
+   * (`create`/`rebuild`) and stops that Team's runtime right away instead of
+   * leaving it running until the dispatcher's own post-drain sweep reaches
+   * it — the same fact `TeammateCollection` composes into its own
+   * `isClosing` for a Team-scoped member.
+   */
+  isClosing: () => boolean;
+  /**
    * Build one TeamLeader's Agent-facing MCP surface.
    *
    * The Team layer supplies the identity and nothing else. Every object those

@@ -41,6 +41,7 @@ import type {
   CronUpdateRequest,
   SchedulerCommands,
 } from './types.js';
+import type { TeamsPort } from '../team/teams-port.js';
 
 /** The scheduler owner a cron Command addresses. */
 interface CronOwnerInput {
@@ -62,7 +63,7 @@ function cronOwnerInput(params: CommandPayload): CronOwnerInput {
 /** The one capability `schedulerCommands` needs from its addressed dispatcher. */
 interface SchedulerCommandsDispatcher {
   readonly scheduler: SchedulerCommands;
-  teamScheduler(teamId: string): Promise<SchedulerCommands>;
+  readonly teams: Pick<TeamsPort, 'scheduler'>;
 }
 
 async function schedulerFor(
@@ -77,7 +78,7 @@ async function schedulerFor(
   if (teamId === null) return dispatcher.scheduler;
   // Resolving a Team-scoped owner can fail with a fact the Team already states:
   // gone and over stay two different answers, each keeping its own code.
-  return dispatcher.teamScheduler(teamId);
+  return dispatcher.teams.scheduler(teamId);
 }
 
 interface CronCreateInput extends CronOwnerInput {

@@ -61,7 +61,7 @@ inventory adds no routing or provider-tool authority to Core.
 Source:
 
 - `/packages/dreamux/src/service/channel-service/commands.ts`
-- `/packages/dreamux/src/service/channel-service/types.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
 
 ### Channel sessions
 
@@ -321,7 +321,7 @@ Source:
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux/src/mcp/server.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/mcp/`
 
 ### Targets and chat-mode discovery

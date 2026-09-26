@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The `dreamux dispatcher start` CLI verb is removed (R11: no in-process restart after a dispatcher has closed). It never reached a working code path (no `'start'` case existed on the server-side dispatcher-control method resolver), but its removal is a CLI surface change an operator's script could still reference. `dreamux dispatcher status`/`list` are unaffected.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

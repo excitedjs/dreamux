@@ -11,8 +11,8 @@ export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /**
  * The fixed name of the dispatcher's own agent entity (issue #233 Phase 5).
  * Single source of truth: this module declares it, and
- * dispatcher-service/identity.ts's ensureDispatcherIdentity is the only
- * other importer.
+ * dispatcher-service/agent.ts's identity-ensure step (`DispatcherAgent.build()`)
+ * is the only other importer.
  */
 export const DISPATCHER_AGENT_NAME = 'dispatcher';
 

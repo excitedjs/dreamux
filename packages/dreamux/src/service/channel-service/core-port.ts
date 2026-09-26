@@ -63,7 +63,13 @@ export function createChannelCorePort(
   let accepting = true;
   const invoke: JsonInvoker = {
     invoke(command: string, payload: JsonValue): Promise<JsonValue> {
-      if (!accepting) return Promise.reject(new ServerShuttingDownError());
+      if (!accepting) {
+        return Promise.reject(
+          new ServerShuttingDownError(
+            `dispatcher '${options.dispatcherId}' is shutting down`,
+          ),
+        );
+      }
       return options.registry
         .invoke(
           {
