@@ -16,6 +16,7 @@ import type {
 import { HookMap, SyncHook } from 'tapable';
 
 import { errorMessage } from '@excitedjs/dreamux-utils';
+import { pluginStateDir } from '../platform/paths.js';
 import {
   isolatedTaps,
   loadPhaseTaps,
@@ -81,6 +82,7 @@ export function startPlugins(
           config: loaded.config,
           logger: logger.child({ plugin: loaded.name }),
           hooks,
+          stateDir: pluginStateDir(loaded.name),
         }),
       );
     } catch (err) {

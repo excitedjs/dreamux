@@ -109,7 +109,12 @@ export type ChannelLogger = DreamuxLogger;
 export type { WireChatBot, FeishuListChatBotsResult };
 
 export interface FeishuChannelSessionOptions {
-  /** The owning dispatcher id — used only for log fields, never for paths. */
+  /**
+   * The owning dispatcher id — used for log fields, and, for an extension's
+   * state root only, as a path segment under the Feishu plugin's own state
+   * directory (that directory is plugin-scoped, not dispatcher-scoped, so
+   * Feishu supplies the dispatcher scoping under it itself).
+   */
   dispatcherId: string;
   /** This session's dispatcher-local channel id; its routing document's key. */
   channelId: string;
@@ -131,6 +136,15 @@ export interface FeishuChannelSessionOptions {
   botFactory?: () => FeishuBot;
   /** The Feishu extensions this session runs; none when omitted. */
   extensions?: FeishuExtensionRegistry;
+  /**
+   * The Feishu plugin's own state directory, read only when an extension
+   * actually initializes (`FeishuSessionExtensions.initialize`). A supplier
+   * because `plugin.ts` builds this session's provider before its own
+   * `server()` call sets the value; by the time any session is constructed
+   * `server()` has already run, but the supplier shape carries through
+   * unchanged rather than resolving early for no reason.
+   */
+  pluginStateDir: () => string | undefined;
 }
 
 interface FeishuSessionLifecycle {
@@ -298,7 +312,7 @@ export class FeishuChannelSession {
       await this.extensions.initialize({
         dispatcherId: this.opts.dispatcherId,
         channelId: this.opts.channelId,
-        stateDir: this.opts.stateDir,
+        pluginStateDir: this.opts.pluginStateDir(),
         signal: controller.signal,
         api: buildInstanceApi({
           handle: this.handleForFence(lifecycle.fence),

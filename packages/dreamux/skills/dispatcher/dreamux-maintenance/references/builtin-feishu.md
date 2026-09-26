@@ -77,11 +77,15 @@ at `~/.dreamux/state/<dispatcher-id>/chat-bots.json`.
 Another plugin may register a Feishu extension: extra `channel-feishu` tools,
 card actions, and a lifecycle that runs with each Feishu channel. Each
 extension owns
-`~/.dreamux/state/<dispatcher-id>/feishu-extensions/<extension>/<channel-slug>.<digest>/`,
+`~/.dreamux/state/plugins/feishu/<dispatcher-id>/feishu-extensions/<extension>/<channel-slug>.<digest>/`,
 one directory per configured Feishu channel, where the slug and digest are the
-same ones the channel's routing document filename carries. Feishu passes the
-path and does not create it; the contents belong to that extension. Do not
-edit, copy over, or delete it as an operational repair.
+same ones the channel's routing document filename carries. This root is the
+Feishu plugin's own state directory (`state/plugins/feishu/`, a plugin-scoped
+directory Core hands to every plugin), not the dispatcher's Feishu channel
+state — it is a different directory tree from `access.json`/`chat-bots.json`/
+the routing document, so an extension cannot land among Feishu's own files.
+Feishu passes the path and does not create it; the contents belong to that
+extension. Do not edit, copy over, or delete it as an operational repair.
 
 `dreamux doctor` lists each extension's tools and card actions on the
 diagnostic line of each configured Feishu channel, and only there: with no

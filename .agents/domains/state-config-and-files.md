@@ -151,11 +151,18 @@ state/<dispatcher-id>/
   workflow/<run-id>/
     record.json
     journal.jsonl
+state/plugins/<plugin-name>/  one plugin's own durable state (R50)
 ```
 
 `teammate/` and `team/` hold only entity directories, because listing a
 collection is a blind `readdir`: an owner's own Agent record, its Team record,
 and its channel state all sit beside the collection, never inside it.
+
+`state/plugins/<plugin-name>/` is plugin-owned: Core hands the directory path
+to the plugin at `server()` time (`ServerHost.stateDir`) and never creates it
+or reads inside it. `<plugin-name>` is sanitized the same way a TeamMate name
+is (`teamMateNameSegment`), since a plugin name is not path-validated at load
+time.
 
 Source:
 
@@ -321,12 +328,14 @@ this page.
 `chat-bots.json` is the Feishu known/trusted peer bot store, `version: 1`,
 owner-only and atomically written by the same provider.
 
-`feishu-extensions/<extension>/<channel segment>/` belongs to one Feishu
-extension (a plugin-registered add-on to the Feishu channel) for one configured
-Feishu channel; `<channel segment>` is the same slug-plus-digest the routing
-document filename carries. Feishu hands the extension the path and does not
-create it; its contents are the extension's own. See
-[channel](channel.md#feishu-extensions).
+`state/plugins/feishu/<dispatcher-id>/feishu-extensions/<extension>/<channel
+segment>/` belongs to one Feishu extension (a plugin-registered add-on to the
+Feishu channel) for one configured Feishu channel; `<channel segment>` is the
+same slug-plus-digest the routing document filename carries. This root is the
+Feishu plugin's own state directory (`state/plugins/<plugin-name>/`, above),
+not the dispatcher state root the trio above sits under. Feishu hands the
+extension the path and does not create it; its contents are the extension's
+own. See [channel](channel.md#feishu-extensions).
 
 Source:
 

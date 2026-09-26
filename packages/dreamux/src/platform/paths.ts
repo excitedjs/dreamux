@@ -18,6 +18,8 @@
  *         teammate/<name>/    dispatcher-owned teammate identity
  *         team/<team>/        one dir per team: leader identity,
  *                             record.json, teammate/<name>/ members
+ *       plugins/<name>/       one plugin's own durable state; plugin-owned,
+ *                             Core neither creates nor reads inside it
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
@@ -199,6 +201,19 @@ export function dispatcherDir(id: string): string {
 
 export function defaultDispatcherCwd(id: string): string {
   return join(dispatcherDir(id), 'cwd');
+}
+
+/**
+ * One plugin's own durable state directory, scoped by the plugin's own name —
+ * not by dispatcher, the way {@link dispatcherDir} is. Core hands this to the
+ * plugin at `server()` time and never creates or reads inside it; a plugin
+ * that needs per-dispatcher scoping underneath its own directory composes
+ * that itself. Reuses `teamMateNameSegment` rather than a near-duplicate
+ * sanitizer: a plugin name is not path-validated at load time, so a name
+ * containing `/` or `..` must not escape `state/plugins/`.
+ */
+export function pluginStateDir(name: string): string {
+  return join(stateRoot(), 'plugins', teamMateNameSegment(name));
 }
 
 /** The package-shipped bundled skill root (issue #209). */
@@ -410,7 +425,8 @@ export function dispatcherCronJobsPath(id: string): string {
 
 /**
  * Neutral teammate-name path segment sanitizer. Shared by the neutral
- * teammate-state builders here and by each builtin's teammate log-path builders.
+ * teammate-state builders here, by each builtin's teammate log-path builders,
+ * and by {@link pluginStateDir} for a plugin name.
  */
 export function teamMateNameSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]/g, '_');

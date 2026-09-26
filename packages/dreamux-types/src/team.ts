@@ -66,6 +66,17 @@ export interface TeamCreateCommand {
   readonly repo?: TeamCreateRepoRequest;
 }
 
+/**
+ * A `team.create` request's own params, without `request_id`.
+ *
+ * This is what `dispatcher.hooks.createTeam` hands a tap and expects back:
+ * `request_id` decides replay identity before the hook ever runs, so it is
+ * neither read nor returnable here. Every field is `readonly` (inherited from
+ * {@link TeamCreateCommand}); a tap that wants to change one returns a new
+ * spread object (`{ ...params, intent: '...' }`), never a mutation in place.
+ */
+export type TeamCreateParams = Omit<TeamCreateCommand, 'request_id'>;
+
 export type TeamStatus = 'starting' | 'running' | 'closed';
 
 /** The current Team facts shared by create and status; `team.list` is a compact row. */

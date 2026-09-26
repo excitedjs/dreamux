@@ -139,7 +139,15 @@ function offersTool(
 export interface FeishuExtensionInitializeInput {
   readonly dispatcherId: string;
   readonly channelId: string;
-  readonly stateDir: string;
+  /**
+   * The Feishu plugin's own state directory (`ServerHost.stateDir`) — not
+   * the channel instance's `state_root` that `access.json`/`chat-bots.json`/
+   * the routing document sit under. `undefined` only for a session built
+   * with no plugin host at all (`createFeishuChannelProvider` directly),
+   * whose registry can never hold an extension, so `initialize` below never
+   * reads it in that case.
+   */
+  readonly pluginStateDir: string | undefined;
   readonly signal: AbortSignal;
   readonly api: FeishuInstanceApi;
 }
@@ -166,8 +174,14 @@ export class FeishuSessionExtensions {
         ext.initialize({
           dispatcherId: input.dispatcherId,
           channelId: input.channelId,
+          // Non-null: the plugin host runs every plugin's `server()` (which
+          // sets this) before the first Dispatcher, and so the first channel
+          // session, exists; the one caller with no plugin host at all
+          // (`createFeishuChannelProvider`) has an empty registry, so this
+          // loop body never runs for it.
           stateRoot: join(
-            input.stateDir,
+            input.pluginStateDir!,
+            input.dispatcherId,
             'feishu-extensions',
             ext.name,
             channelPathSegment(input.channelId),

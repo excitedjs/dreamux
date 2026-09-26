@@ -122,8 +122,8 @@ export class TeamService implements Team {
     // so before any code path that could read it through `mustRecord()`).
     this.recordHandle = deps.store.handle(teamId);
     this.hooks = Object.freeze({
-      beforeTeamLeaderLaunch: launchDraftTaps(
-        new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeTeamLeaderLaunch'),
+      leaderLaunch: launchDraftTaps(
+        new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'leaderLaunch'),
         deps.log,
       ),
     });
@@ -190,6 +190,7 @@ export class TeamService implements Team {
       // dispatcher stop releases this Team's runtimes without dissolving the
       // Team itself.
       isClosing: () => this.isClosing() || deps.isClosing(),
+      teammateLaunch: deps.teammateLaunch,
       log: deps.log,
     });
     // This Team's Workflow scope: team-scoped runs, reporting to its leader.
@@ -761,7 +762,7 @@ export class TeamService implements Team {
       workspace: this.mustRecord().worktree,
       identities: this.leaderIdentity,
       onPersisted: (identity) => this.roster.publish(identity, 'team_leader'),
-      beforeLaunch: this.hooks.beforeTeamLeaderLaunch,
+      leaderLaunch: this.hooks.leaderLaunch,
     });
   }
 

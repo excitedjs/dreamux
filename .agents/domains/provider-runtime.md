@@ -264,11 +264,14 @@ resume fallback start. Both escape XML text content inside each wrapper so one
 fragment cannot create or modify sibling blocks.
 
 Plugins add text and skill roots through launch drafts: the Dispatcher's
-`beforeLaunch` and a Team's `beforeTeamLeaderLaunch` hooks. Draft
+`launch` hook, a Team's `leaderLaunch` hook, and the Dispatcher's
+`teammateLaunch` hook (fired once per ordinary TeamMate construction,
+Dispatcher-spawned or Team-scoped). Draft
 instructions follow the built-in prompt in both Dispatcher forms (`replace`
-joined, `append` as extra fragments) and precede the TeamLeader's identity
-fragment; draft skill roots follow the built-in ones, fenced against them. The
-composition is owned by [plugins](plugins.md#launch-draft-composition).
+joined, `append` as extra fragments) and precede the TeamLeader's or TeamMate's
+identity fragment; draft skill roots follow the built-in ones, fenced against
+them. The composition is owned by
+[plugins](plugins.md#launch-draft-composition).
 
 Dreamux-owned turns that are not channel messages use plain text input; the
 provider receives no `CompletionEnvelope`, no source discriminator, and no

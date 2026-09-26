@@ -3,8 +3,9 @@ import type {
   DreamuxLogger,
   LaunchDraft,
   Team,
+  TeamCreateParams,
 } from '@excitedjs/dreamux-types';
-import { AsyncSeriesHook, SyncHook } from 'tapable';
+import { AsyncSeriesHook, AsyncSeriesWaterfallHook, SyncHook } from 'tapable';
 
 import {
   adminSocketPath as defaultAdminSocketPath,
@@ -13,7 +14,11 @@ import {
   teamCollectionDir,
   teamMateCollectionDir,
 } from '../../platform/paths.js';
-import { isolatedTaps, launchDraftTaps } from '../../plugin/hooks.js';
+import {
+  isolatedTaps,
+  launchDraftTaps,
+  waterfallTaps,
+} from '../../plugin/hooks.js';
 import { configuredDispatcherCwd } from '../dispatcher-workspace.js';
 import { DispatcherLifecycle } from './lifecycle.js';
 import {
@@ -91,8 +96,22 @@ export class DispatcherService implements Dispatcher {
     const config = opts.config.current();
     this.cwd = configuredDispatcherCwd(config, opts.id);
     this.hooks = Object.freeze({
-      beforeLaunch: launchDraftTaps(
-        new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'beforeLaunch'),
+      launch: launchDraftTaps(
+        new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'launch'),
+        opts.log,
+      ),
+      teammateLaunch: launchDraftTaps(
+        new AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>(
+          ['draft', 'context'],
+          'teammateLaunch',
+        ),
+        opts.log,
+      ),
+      createTeam: waterfallTaps(
+        new AsyncSeriesWaterfallHook<[TeamCreateParams]>(
+          ['params'],
+          'createTeam',
+        ),
         opts.log,
       ),
       team: isolatedTaps(
@@ -196,6 +215,7 @@ export class DispatcherService implements Dispatcher {
       initiatorFor: () => Promise.resolve(this.mustAgent()),
       admitOperation: (task) => this.admitOperation(task),
       isClosing: () => this.inputSources.isClosing(),
+      teammateLaunch: this.hooks.teammateLaunch,
       log: opts.log,
     });
     this._teams = new TeamCollection({
@@ -208,6 +228,8 @@ export class DispatcherService implements Dispatcher {
       agentServiceFactory,
       conversationProjection,
       completionDelivery,
+      teammateLaunch: this.hooks.teammateLaunch,
+      applyCreateTeamHook: (params) => this.hooks.createTeam.promise(params),
       // A TeamLeader reports back to the dispatcher's own Agent; its Team's
       // TeamMates report to that leader, which the Team itself supplies.
       leaderCompletionInitiator: () => Promise.resolve(this.mustAgent()),
@@ -278,7 +300,7 @@ export class DispatcherService implements Dispatcher {
       onPersisted: onDispatcherAgentPersisted,
       agentServiceFactory,
       conversationProjection,
-      beforeLaunch: this.hooks.beforeLaunch,
+      launch: this.hooks.launch,
       restartIntent: opts.restartIntent,
     });
 

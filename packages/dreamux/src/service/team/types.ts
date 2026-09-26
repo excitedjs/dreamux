@@ -6,9 +6,12 @@ import {
 import type {
   AgentRuntimeSkillSource,
   DreamuxLogger,
+  LaunchDraft,
   Team,
+  TeamCreateParams,
   TeamStatus,
 } from '@excitedjs/dreamux-types';
+import type { AsyncSeriesHook } from 'tapable';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConfigReader } from '../../config/service.js';
@@ -56,6 +59,22 @@ export interface TeamCollectionOptions {
    */
   leaderCompletionInitiator: () => Promise<CompletionInitiator | null>;
   admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
+  /**
+   * The owning Dispatcher's `teammateLaunch` hook, forwarded unchanged into
+   * this Team's own Team-scoped `TeammateCollection` (`TeamService`'s own
+   * construction). One hook object on the Dispatcher, not one per Team — a
+   * Team only ever passes its own id as the hook's per-call context.
+   */
+  teammateLaunch: AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>;
+  /**
+   * The owning Dispatcher's `createTeam` hook. Fired once per `createFromRequest`
+   * call that is not a replay of an already-accepted request, on the caller's
+   * own wire-shaped params, before Core's repo/skill-source translation runs —
+   * so a tap that changes `leader.skill_sources` or `repo` gets the same
+   * mandatory-root injection and repo→worktree mapping an admin-supplied value
+   * gets. Never called for `rebuild` or a replay.
+   */
+  applyCreateTeamHook: (params: TeamCreateParams) => Promise<TeamCreateParams>;
   /**
    * Whether the dispatcher this collection belongs to is already closing.
    * `TeamCollection` reads it the instant a Team registers into its live map
@@ -167,11 +186,6 @@ interface TeamCreateOptions {
   /** Additional admin-supplied TeamLeader skill roots. */
   skillSources?: readonly AgentRuntimeSkillSource[];
   prompt?: string | undefined;
-}
-
-/** Dispatcher-facing request: `namePrefix` is never the durable Team address. */
-export interface TeamCreateInput extends TeamCreateOptions {
-  namePrefix: string;
 }
 
 /**
@@ -338,12 +352,14 @@ export interface TeamServiceCreateInput {
  *
  * Everything but the three fields below is forwarded unchanged from the
  * `TeamCollectionOptions` the owning `TeamCollection` was itself constructed
- * with (`depsBase()` spreads it directly); `root` and `nameSuffixGenerator`
- * are collection-only concerns a Team never needs.
+ * with (`depsBase()` spreads it directly); `root`, `nameSuffixGenerator`, and
+ * `applyCreateTeamHook` are collection-only concerns a Team never needs — the
+ * `createTeam` hook is applied once, by `createFromRequest` itself, before any
+ * `TeamService` for that Team exists to be handed these deps.
  */
 export type TeamServiceDeps = Omit<
   TeamCollectionOptions,
-  'root' | 'nameSuffixGenerator'
+  'root' | 'nameSuffixGenerator' | 'applyCreateTeamHook'
 > & {
   /**
    * This Team's own root directory, bound by `TeamCollection` when it

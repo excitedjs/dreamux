@@ -15,6 +15,7 @@ public interface.
 | Top-level hooks, `server`, api publication | `/packages/dreamux/src/plugin/host.ts` |
 | Tap isolation and owner attribution (the `register` interceptors core installs on every hook it creates) | `/packages/dreamux/src/plugin/hooks.ts` |
 | Built-in plugin ids and the always-loaded list | `/packages/dreamux/src/registry/builtins.ts` |
+| Per-plugin state directory path (`pluginStateDir`) | `/packages/dreamux/src/platform/paths.ts` |
 | Doctor rows | `/packages/dreamux/src/cli/doctor-plugins.ts` |
 | Built-in bootstrap plugin | `/packages/plugins/bootstrap/src/index.ts` |
 
@@ -31,19 +32,46 @@ tapable 2.3's declarations, so the `~2.3.3` range is a floor.
 ```text
 host.hooks.dispatcher            after a DispatcherService is constructed
 └─ dispatcher.hooks
-   ├─ beforeLaunch               each Dispatcher Agent construction
+   ├─ launch                     each Dispatcher Agent construction
+   ├─ teammateLaunch             each ordinary TeamMate's Agent construction
+   ├─ createTeam                 each non-replay `team.create` request, before the Team is built
    └─ team                       after a TeamService is constructed (create and rebuild)
       └─ team.hooks
-         └─ beforeTeamLeaderLaunch   each TeamLeader Agent construction
+         └─ leaderLaunch         each TeamLeader Agent construction
 host.hooks.plugin.for(name)      once, with plugin <name>'s api, at the end of loading
 ```
 
 | Hook | Fires in | Fires | Does not fire |
 |---|---|---|---|
 | `host.hooks.dispatcher` | `Dispatchers.get` (`/packages/dreamux/src/service/dispatchers/index.ts`), after the service is cached | once per Dispatcher object, including a disabled Dispatcher a Command materializes | again for the cached object |
-| `dispatcher.hooks.beforeLaunch` | `DispatcherAgent.build()` (`/packages/dreamux/src/service/dispatcher-service/agent.ts`) | each Dispatcher input-source start | a runtime process restart inside the same Agent |
+| `dispatcher.hooks.launch` | `DispatcherAgent.build()` (`/packages/dreamux/src/service/dispatcher-service/agent.ts`) | each Dispatcher input-source start | a runtime process restart inside the same Agent |
+| `dispatcher.hooks.teammateLaunch` | `TeammateCollection.buildEntity` (`/packages/dreamux/src/service/agent/index.ts`), the one construction path behind spawn, `createLocked`, and a closed TeamMate's reopen | each construction of any ordinary TeamMate's Agent — Dispatcher-spawned, a Team member, or a Workflow agent, since a Workflow agent's `createLocked` is the same collection path as an ordinary spawn; `context.teamId` is that TeamMate's owning Team id, `null` for a dispatcher-owned one | the Dispatcher's own Agent or a Team's leader (see `launch` / `leaderLaunch`); a runtime process restart inside the same AgentService |
+| `dispatcher.hooks.createTeam` | `TeamCollection.createFromRequest` (`/packages/dreamux/src/service/team/index.ts`) | once per `team.create` request that is not a replay of an already-accepted one, after the replay check and before the Team's repo/skill-source translation and construction; an `AsyncSeriesWaterfallHook`, so each tap returns the value the next tap (and finally the translation) sees | `rebuild`; a replayed `request_id` (decided against `payloadHash` alone, before this hook runs) |
 | `dispatcher.hooks.team` | `TeamService` `createNew` and `rebuild` (`/packages/dreamux/src/service/team/service.ts`), through the `announceTeam` dep | create (before the Team record is written) and rebuild; `ctx.origin` says which | a replayed `request_id` (never reaches `createNew`) |
-| `team.hooks.beforeTeamLeaderLaunch` | `restoreTeamLeaderAgentForTeam` (`/packages/dreamux/src/service/team/leader.ts`) | create, rebuild, lazy TeamLeader materialization, and creation-failure cleanup when it adopts a durable leader to close it | a runtime process restart inside the same AgentService |
+| `team.hooks.leaderLaunch` | `restoreTeamLeaderAgentForTeam` (`/packages/dreamux/src/service/team/leader.ts`) | create, rebuild, lazy TeamLeader materialization, and creation-failure cleanup when it adopts a durable leader to close it | a runtime process restart inside the same AgentService |
+
+`dispatcher.hooks.createTeam` hands a tap the caller's own wire-shaped
+`TeamCreateParams` (`TeamCreateCommand` without `request_id`, since replay
+identity is already decided) and expects the same or a changed value back;
+`undefined` means unchanged. A tap that changes `leader.skill_sources` or
+`repo` gets exactly the fence and translation an admin-supplied value already
+gets — `TeamCollection.createFromRequest` re-validates the hook's own
+`leader.skill_sources` structurally (a tap need not even be written in
+TypeScript) before running it through the same mandatory-root injection
+(`TEAM_LEADER_REQUIRED_SKILL_SOURCES`) and repo→worktree mapping
+`commands.ts`/`mcp.ts` used to each do for themselves before calling
+`createFromRequest`; both callers now build only the wire-shaped
+`TeamCreateCommand` and forward it unchanged.
+
+`dispatcher.hooks.teammateLaunch` is one hook object on the Dispatcher, not one
+per Team: a Team-scoped construction reaches it through the same
+`AsyncSeriesHook` its `TeamCollectionOptions`/`TeamServiceDeps` forward
+unchanged from the Dispatcher, naming its own id as the call's context instead
+of holding a separate hook instance. Required skill roots for its fence are
+exactly `identity.skill_sources` (whatever the TeamMate's identity already
+carries) — an ordinary TeamMate has no bundled skill root the way the
+Dispatcher (`dispatcher` + `shared`) and a TeamLeader (`team-leader` + `shared`
++ identity roots) do.
 
 Semantics that follow from the sites:
 
@@ -55,17 +83,16 @@ Semantics that follow from the sites:
   name. The contract therefore says a `team` tap only taps the Team's own
   hooks: the discarded object never reaches TeamLeader construction, so its
   taps never fire and no revocation signal is needed.
-- `beforeTeamLeaderLaunch` has a fourth trigger besides create, rebuild and
+- `leaderLaunch` has a fourth trigger besides create, rebuild and
   lazy materialization: when Team creation fails after the TeamLeader
   identity was persisted, `closing.abandonCreation` adopts that durable leader
   through `restoreTeamLeaderAgentForTeam` so it can be stopped cleanly. The
   launch hook therefore runs once on a Team that is being closed; a tap that
   counts launches in its own state sees that one.
-- No TeamMate launch hook and no Team close hook exist. There is also no
-  post-creation hook (R48 deleted `team.hooks.created`, its background
-  scheduling, and the shutdown drain that awaited it): a fact after an action
-  is an event, and the event stream is where that belongs if a need for it
-  ever appears, not a hook plugins tap.
+- No Team close hook exists. There is also no post-creation hook (R48 deleted
+  `team.hooks.created`, its background scheduling, and the shutdown drain that
+  awaited it): a fact after an action is an event, and the event stream is
+  where that belongs if a need for it ever appears, not a hook plugins tap.
 
 `Dispatcher.cwd` is a `string`: config parsing requires a non-empty
 `dispatchers[].cwd` on every entry, enabled or not, so a disabled Dispatcher a
@@ -132,6 +159,14 @@ write files.
 file logger does not exist yet); `ServerHost.logger` is serve's logger bound
 with `plugin: <name>`.
 
+`ServerHost.stateDir` (R50) is the plugin's own durable state directory,
+`pluginStateDir(name)` (`state/plugins/<name>/`, sanitized the same way a
+TeamMate name is), handed to every plugin's `server` call alongside `config`
+and `logger`. Core neither creates the directory nor reads inside it — a
+plugin that needs one creates it lazily on its own first write, the same way
+every other Dreamux store does. `contribute`/`config.read` do not get it:
+nothing at that phase does IO.
+
 ## Failure Semantics
 
 - Load phase (import, factory, `contribute`, `config.read`, `server`, and the
@@ -176,6 +211,11 @@ with `plugin: <name>`.
     the fenced state: a plugin's own interceptor on a launch hook sees that
     same opaque object and cannot reach the fence or the accumulated draft, so
     it cannot push a skill root that skips the per-tap fence.
+  - `createTeam` (`AsyncSeriesWaterfallHook`): a throwing or rejecting tap is
+    logged with its owner and the chain keeps the value it already had — the
+    failing tap's own change is dropped, never the whole `team.create` call.
+    `undefined` from a tap means unchanged, tapable's own waterfall
+    convention.
 
 ## Launch Draft Composition
 
@@ -191,18 +231,26 @@ so a plugin can only append, by structure rather than by validation.
   identity prompt]`; the per-Team identity prompt stays last as the most
   specific statement of who the leader is. Plugin skill sources follow the
   required and identity roots.
+- TeamMate: `append = [membership sentence (Team-scoped only), operation
+  append, ...instructions, identity prompt]` (`teammateSystemPromptOptions`,
+  `/packages/dreamux/src/service/agent/system-prompt.ts`) — same relative
+  order as the TeamLeader: built-ins first, plugin instructions next, the
+  per-entity identity prompt last. Plugin skill sources follow
+  `identity.skill_sources`, the only required root an ordinary TeamMate has.
 
 ## Built-in Bootstrap Plugin
 
 `@excitedjs/dreamux-plugin-bootstrap` (`builtin:bootstrap`). Per Dispatcher,
 it reads `<cwd>/.workspace/identity.md` and `user.md`:
 
-- `beforeLaunch`: both present → remove `.workspace/bootstrap.md` if present,
+- `launch`: both present → remove `.workspace/bootstrap.md` if present,
   add the rendered profile. Otherwise create `.workspace/` if needed, write the
   guide to `.workspace/bootstrap.md`, add the guide. Only the Dispatcher sees
   the guide.
-- `beforeTeamLeaderLaunch` (tapped from `dispatcher.hooks.team`): both present
+- `leaderLaunch` (tapped from `dispatcher.hooks.team`): both present
   → add the rendered profile; otherwise nothing.
+- `teammateLaunch`: not tapped. An ordinary TeamMate gets neither the guide
+  nor the rendered profile.
 
 A missing file is the normal branch; any other IO error propagates and core
 skips that tap. `.workspace/` gets its self-ignoring `.gitignore` only when core

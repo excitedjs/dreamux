@@ -1,4 +1,9 @@
-import type { DreamuxLogger, JsonSchema } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  JsonSchema,
+  LaunchDraft,
+} from '@excitedjs/dreamux-types';
+import type { AsyncSeriesHook } from 'tapable';
 
 import type {
   AgentRuntimeProviderCatalog,
@@ -48,6 +53,7 @@ import type { SuffixGenerator } from '../name-allocator.js';
 import { closeMembersForDissolve } from './dissolve-members.js';
 import { teamMateNotFound } from './errors.js';
 import { teammateSystemPromptOptions } from './system-prompt.js';
+import { composeLaunchDraft } from '../../plugin/hooks.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import {
   collectShutdownFailure,
@@ -111,11 +117,13 @@ export interface TeammateCollectionOptions {
    * that fact composed with the owning Team's own dissolve for a Team-scoped
    * collection (mirroring `admitOperation`'s own composition). Every
    * construction path that can start a runtime — `spawn`/`createFreshEntity`,
-   * `send`'s reopen — reads this synchronously right after it registers a new
-   * entity and closes it immediately instead of proceeding to its first
-   * submission, so an already-admitted call that finishes constructing after
-   * `close()` published its fence never starts a runtime the owner's own
-   * post-drain sweep would only have caught later.
+   * `send`'s reopen — reads this once its entity exists (`spawn` synchronously
+   * right after registering it; `send`'s reopen after the async build, inside
+   * `buildReopened`, since composing a launch draft puts an `await` before the
+   * entity exists) and closes it immediately instead of proceeding to its
+   * first submission, so an already-admitted call that finishes constructing
+   * after `close()` published its fence never starts a runtime the owner's
+   * own post-drain sweep would only have caught later.
    */
   isClosing: () => boolean;
   /**
@@ -129,6 +137,13 @@ export interface TeammateCollectionOptions {
    */
   initiatorFor?: () => Promise<CompletionInitiator | null>;
   suffixGenerator?: SuffixGenerator | undefined;
+  /**
+   * The owning Dispatcher's `teammateLaunch` hook, run once per Agent
+   * construction for every TeamMate this collection builds — spawn, reopen,
+   * and `createLocked` alike. Required, matching `admitOperation`/`isClosing`:
+   * every owner already supplies one, dispatcher-root or Team-scoped.
+   */
+  teammateLaunch: AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>;
   log: DreamuxLogger;
 }
 
@@ -178,13 +193,20 @@ export class TeammateCollection implements TeammateOps {
     Promise<ResolvedTeamMate>
   >();
   /**
-   * TeamMates built for a `send` that has not reopened them yet.
+   * TeamMates being built for a `send` that has not reopened them yet, keyed
+   * by name to the in-flight build promise rather than to the entity itself
+   * (`buildEntity` is `async` now that it composes a launch draft, so
+   * building one can no longer register itself into the map synchronously).
+   * An entry is held for its owning `send` call's whole span — the build and
+   * the send together, exactly as long as the map held the entity itself
+   * before — and is removed by that same call, by promise identity, once it
+   * settles either way; see {@link reopenFrom} and {@link sendReopened}.
    *
    * They are nobody's until that send succeeds, so they cannot live in
    * {@link entities} — but a second send must still find the one already
    * reopening rather than start a second runtime for the same Agent.
    */
-  private readonly reopening = new Map<string, AgentService>();
+  private readonly reopening = new Map<string, Promise<AgentService>>();
 
   constructor(private readonly opts: TeammateCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -246,26 +268,64 @@ export class TeammateCollection implements TeammateOps {
     return this.opts.admitOperation(() => this.sendAdmitted(input));
   }
 
-  private sendAdmitted(
+  private async sendAdmitted(
     input: SendTeamMateInput,
   ): Promise<AgentEntitySendResult> {
-    const resolved = this.resolveEntity(input.name);
-    return resolved instanceof Promise
-      ? resolved.then((it) => this.sendResolved(this.reopenFrom(it), input))
-      : this.sendResolved(this.reopenFrom(resolved), input);
+    const resolved = await this.resolveEntity(input.name);
+    return resolved instanceof AgentService
+      ? this.sendResolved(resolved, input)
+      : this.sendReopened(resolved, input);
   }
 
   /**
-   * The entity this send acts on, built from a closed record when that is what
-   * the collection had. Registered before anything is awaited, so a second send
-   * finds the Agent already reopening rather than starting a second runtime.
+   * Send to a TeamMate reopened from a closed record.
+   *
+   * `reopenFrom` registers this reopen's build promise into {@link reopening}
+   * before anything here is awaited, so a second send arriving before this
+   * one finishes joins it (through `resolveEntity` → `materializeEntity`)
+   * instead of starting a second runtime. The entry is held for this call's
+   * whole span — the build and the send together, matching how long the map
+   * held the entity itself before this was a promise map — and is removed
+   * here, by promise identity, once this call settles either way. A
+   * concurrent joiner resolves to the same already-built entity and takes
+   * the plain `sendResolved` branch above, never touching this map itself.
    */
-  private reopenFrom(resolved: ResolvedTeamMate): AgentService {
-    if (resolved instanceof AgentService) return resolved;
-    const reopening = this.reopening.get(resolved.identity.name);
-    if (reopening !== undefined) return reopening;
-    const entity = this.buildEntity(resolved.identity, resolved.store);
-    this.reopening.set(resolved.identity.name, entity);
+  private async sendReopened(
+    resolved: ClosedTeamMateRecord,
+    input: SendTeamMateInput,
+  ): Promise<AgentEntitySendResult> {
+    const name = resolved.identity.name;
+    const build = this.reopenFrom(resolved);
+    try {
+      return await this.sendResolved(await build, input);
+    } finally {
+      if (this.reopening.get(name) === build) this.reopening.delete(name);
+    }
+  }
+
+  /**
+   * Build (or join an in-flight build of) the entity behind a closed record.
+   * Registered before anything is awaited, so a second send finds the Agent
+   * already reopening rather than starting a second runtime.
+   * `selfCloseIfClosing`'s check-and-throw runs inside the build itself
+   * (`buildReopened`), after the entity exists, so its throw rejects the
+   * registered promise instead of throwing synchronously out of this
+   * function.
+   */
+  private reopenFrom(resolved: ClosedTeamMateRecord): Promise<AgentService> {
+    const name = resolved.identity.name;
+    const existing = this.reopening.get(name);
+    if (existing !== undefined) return existing;
+    const build = this.buildReopened(resolved.identity, resolved.store);
+    this.reopening.set(name, build);
+    return build;
+  }
+
+  private async buildReopened(
+    identity: AgentEntityIdentity,
+    store: AgentIdentityStore,
+  ): Promise<AgentService> {
+    const entity = await this.buildEntity(identity, store);
     this.selfCloseIfClosing(entity);
     return entity;
   }
@@ -274,23 +334,17 @@ export class TeammateCollection implements TeammateOps {
     entity: AgentService,
     input: SendTeamMateInput,
   ): Promise<AgentEntitySendResult> {
-    try {
-      const result = await entity.send({
-        source: AGENT_TASK_SOURCE,
-        text: input.prompt,
-        intent: input.intent,
-        resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
-      });
-      // Cached only now: a reopen that failed leaves nothing behind, so a
-      // closed TeamMate never occupies the live collection as the closed thing
-      // it was.
-      this.publish(entity);
-      return result;
-    } finally {
-      if (this.reopening.get(entity.name) === entity) {
-        this.reopening.delete(entity.name);
-      }
-    }
+    const result = await entity.send({
+      source: AGENT_TASK_SOURCE,
+      text: input.prompt,
+      intent: input.intent,
+      resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
+    });
+    // Cached only now: a reopen that failed leaves nothing behind, so a
+    // closed TeamMate never occupies the live collection as the closed thing
+    // it was.
+    this.publish(entity);
+    return result;
   }
 
   /**
@@ -518,8 +572,13 @@ export class TeammateCollection implements TeammateOps {
       held.set(entity.name, entity);
     }
     // A reopen owns a live Agent before the send that publishes it returns.
-    for (const entity of this.reopening.values()) {
-      if (!entity.isRetired()) held.set(entity.name, entity);
+    // `allSettled`, not `all`: a reopen that lost the `selfCloseIfClosing`
+    // race rejects, and must not abort this sweep — it never produced a live
+    // entity to stop, so it is simply skipped.
+    const reopened = await Promise.allSettled([...this.reopening.values()]);
+    for (const outcome of reopened) {
+      if (outcome.status !== 'fulfilled') continue;
+      if (!outcome.value.isRetired()) held.set(outcome.value.name, outcome.value);
     }
     return [...held.values()];
   }
@@ -574,7 +633,7 @@ export class TeammateCollection implements TeammateOps {
     }
     return this.trackMaterialization(name, async () => {
       const { identity, store } = await this.createIdentity(input, allocation);
-      const entity = this.buildEntity(identity, store, options);
+      const entity = await this.buildEntity(identity, store, options);
       const subscription = this.subscribeEntity(entity);
       try {
         beforePublish?.(entity);
@@ -660,11 +719,11 @@ export class TeammateCollection implements TeammateOps {
     return { identity, store };
   }
 
-  private publishEntity(
+  private async publishEntity(
     identity: AgentEntityIdentity,
     store: AgentIdentityStore,
-  ): AgentService {
-    return this.publish(this.buildEntity(identity, store));
+  ): Promise<AgentService> {
+    return this.publish(await this.buildEntity(identity, store));
   }
 
   /** Hold one live entity, once. */
@@ -680,15 +739,27 @@ export class TeammateCollection implements TeammateOps {
    * `store` must be the exact `AgentIdentityStore` instance that already
    * read or created `identity` — never a fresh `this.store.entity(name)`
    * mint here. See {@link ClosedTeamMateRecord}.
+   *
+   * Runs the owning Dispatcher's `teammateLaunch` hook first, carrying this
+   * collection's own Team scope: plugin skill roots follow `identity`'s own
+   * roots, fenced against them, and plugin instructions follow the built-in
+   * membership sentence, landing just before `identity_prompt` (see
+   * {@link teammateSystemPromptOptions}).
    */
-  private buildEntity(
+  private async buildEntity(
     identity: AgentEntityIdentity,
     store: AgentIdentityStore,
     options: CreateLockedTeammateOptions = {},
-  ): AgentService {
+  ): Promise<AgentService> {
+    const draft = await composeLaunchDraft(
+      this.opts.teammateLaunch,
+      identity.skill_sources,
+      { teamId: this.teamScope },
+    );
     const systemPrompt = teammateSystemPromptOptions(
       identity,
       options.systemPromptAppend,
+      draft.instructions,
     );
     return this.opts.agentServiceFactory.create({
       identity,
@@ -698,7 +769,7 @@ export class TeammateCollection implements TeammateOps {
         // not; the value comes from being this owner, never from the record.
         role: 'teammate',
         loggerFields: { teammate: identity.name },
-        skillSources: identity.skill_sources,
+        skillSources: [...identity.skill_sources, ...draft.skillSources],
         outputSchema: options.outputSchema,
         ...(systemPrompt ?? {}),
       },

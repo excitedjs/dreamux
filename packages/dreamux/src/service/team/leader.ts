@@ -111,8 +111,8 @@ export interface TeamLeaderForTeamDeps extends Omit<
    * assemble a tool surface.
    */
   leaderMcp(input: { teamId: string; leaderName: string }): TeammateAgentMcp;
-  /** This Team's `beforeTeamLeaderLaunch` hook, run at each leader construction. */
-  beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
+  /** This Team's `leaderLaunch` hook, run at each leader construction. */
+  leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }
 
 /**
@@ -144,7 +144,7 @@ export function teamLeaderAgentBase(input: {
   workspace: AgentEntityWorktreeIdentity;
   identities: AgentIdentityStore;
   onPersisted: (identity: AgentEntityIdentity) => void;
-  beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
+  leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }): Omit<TeamLeaderForTeamDeps, 'identity'> {
   const { deps } = input;
   return {
@@ -152,7 +152,7 @@ export function teamLeaderAgentBase(input: {
     teamId: input.teamId,
     workspace: input.workspace,
     leaderMcp: deps.leaderMcp,
-    beforeLaunch: input.beforeLaunch,
+    leaderLaunch: input.leaderLaunch,
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: input.identities,
@@ -207,20 +207,20 @@ export async function createTeamLeaderAgentForTeam(
  * Build this Team's leader from an identity the Team already proved is its own.
  * The record is used exactly as read — never restamped or regenerated.
  *
- * Runs the Team's `beforeTeamLeaderLaunch` hook first: plugin skill roots
+ * Runs the Team's `leaderLaunch` hook first: plugin skill roots
  * follow the built-in and identity roots, fenced against them, and plugin
  * instructions follow the built-in prompt.
  */
 export async function restoreTeamLeaderAgentForTeam(
   deps: TeamLeaderForTeamDeps,
 ): Promise<AgentService> {
-  const { teamId, workspace, leaderMcp, beforeLaunch, ...agentDeps } = deps;
+  const { teamId, workspace, leaderMcp, leaderLaunch, ...agentDeps } = deps;
   const leaderName = deps.identity.name;
   const baseSkills = [
     ...TEAM_LEADER_REQUIRED_SKILL_SOURCES,
     ...deps.identity.skill_sources,
   ];
-  const draft = await composeLaunchDraft(beforeLaunch, baseSkills);
+  const draft = await composeLaunchDraft(leaderLaunch, baseSkills);
   return createTeamLeaderAgent({
     ...agentDeps,
     mcp: leaderMcp({ teamId, leaderName }),

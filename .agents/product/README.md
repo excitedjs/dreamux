@@ -507,6 +507,17 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   stops `dreamux serve` with an error naming the plugin; a plugin callback that
   fails while an agent launches is logged and skipped, and the launch goes on
   without that plugin's additions. (Domain: [plugins](/.agents/domains/plugins.md).)
+- **A plugin can append to every TeamMate's launch, the same way it already
+  can for the Dispatcher and a TeamLeader.** Every ordinary TeamMate —
+  dispatcher-spawned, a Team's own member, or a Workflow agent — gets a
+  plugin's prompt instructions and skill sources appended before it launches,
+  told which Team (if any) owns that TeamMate. (Domain:
+  [plugins](/.agents/domains/plugins.md).)
+- **A plugin can adjust a Team's creation parameters.** Before a Team is
+  built from a `team.create` request that is not a replay of an already
+  accepted one, a plugin may change the requested name prefix, intent, leader
+  identity/prompt/skill sources, or repository; an already-accepted request
+  never re-runs this. (Domain: [plugins](/.agents/domains/plugins.md).)
 - **The bootstrap plugin keeps a shared profile.** With `builtin:bootstrap`
   enabled, a Dispatcher whose cwd lacks `.workspace/identity.md` or
   `.workspace/user.md` is told at start to offer the user to create them

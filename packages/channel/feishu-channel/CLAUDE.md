@@ -136,9 +136,13 @@ the instance api).
   Extension tool calls are refused once the session stopped taking calls and
   are tracked, so teardown waits for them.
 - Each extension's state root is
-  `<state dir>/feishu-extensions/<extension>/<channel segment>`, where the
-  channel segment is the same slug and digest the routing document filename
-  carries (`channelPathSegment`).
+  `<this plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension>/<channel segment>`,
+  where the channel segment is the same slug and digest the routing document
+  filename carries (`channelPathSegment`). The plugin's own state dir comes
+  from `ServerHost.stateDir`, captured in `plugin.ts`'s `server()` — not the
+  channel instance's `state_root` that `access.json`/`chat-bots.json`/the
+  routing document sit under, so an extension cannot reach those files even
+  by construction, structurally rather than by naming convention alone.
 
 ## Owner-Only Pairing Approval Card
 

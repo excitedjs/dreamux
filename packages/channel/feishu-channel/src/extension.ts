@@ -109,9 +109,11 @@ export interface FeishuExtensionContext {
   readonly dispatcherId: string;
   readonly channelId: string;
   /**
-   * `<dispatcher state dir>/feishu-extensions/<extension name>/<channel segment>`:
-   * one directory per extension per Feishu channel, so two Feishu channels on
-   * one Dispatcher never share state. Not created for you.
+   * `<Feishu plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension
+   * name>/<channel segment>`: one directory per extension per Feishu channel
+   * per Dispatcher, so two Feishu channels never share state and this can
+   * never land under the Feishu channel's own `access.json`/`chat-bots.json`/
+   * routing directory. Not created for you.
    */
   readonly stateRoot: string;
   /** Aborted when this channel instance begins closing. */

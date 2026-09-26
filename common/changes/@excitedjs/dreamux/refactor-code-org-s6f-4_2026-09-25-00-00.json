@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6f, item 4 (R50): added platform/paths.ts's pluginStateDir(name), a host-owned per-plugin durable state directory under state/plugins/<name>/, and wired it into every plugin's server(host) call as ServerHost.stateDir. Purely additive; no existing path moves or changes shape.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -6,8 +6,9 @@
  * `identity.md` and `user.md`. While either is missing, the Dispatcher Agent
  * gets a guide (also written to `.workspace/bootstrap.md`) to create them with
  * the user; once both exist, the Dispatcher and every TeamLeader get them
- * rendered into their launch prompt and the guide file is removed. TeamMates
- * get nothing: no TeamMate launch hook exists.
+ * rendered into their launch prompt and the guide file is removed. This
+ * plugin does not tap `teammateLaunch`: an ordinary TeamMate gets neither the
+ * guide nor the rendered profile.
  */
 
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -51,7 +52,7 @@ export default function createBootstrapPlugin(): DreamuxPlugin {
       host.hooks.dispatcher.tap('bootstrap', (dispatcher) => {
         const dir = join(dispatcher.cwd, '.workspace');
 
-        dispatcher.hooks.beforeLaunch.tapPromise('bootstrap', async (draft) => {
+        dispatcher.hooks.launch.tapPromise('bootstrap', async (draft) => {
           const profile = await readProfile(dir);
           if (complete(profile)) {
             await rm(join(dir, 'bootstrap.md'), { force: true });
@@ -68,7 +69,7 @@ export default function createBootstrapPlugin(): DreamuxPlugin {
         });
 
         dispatcher.hooks.team.tap('bootstrap', (team) => {
-          team.hooks.beforeTeamLeaderLaunch.tapPromise(
+          team.hooks.leaderLaunch.tapPromise(
             'bootstrap',
             async (draft) => {
               const profile = await readProfile(dir);

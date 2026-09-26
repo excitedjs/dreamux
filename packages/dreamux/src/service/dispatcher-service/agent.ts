@@ -61,8 +61,8 @@ export interface DispatcherAgentOptions {
   onPersisted: (identity: AgentEntityIdentity) => void;
   agentServiceFactory: AgentServiceFactory;
   conversationProjection: ConversationProjection;
-  /** This Dispatcher's `beforeLaunch` hook, run once per Agent construction. */
-  beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
+  /** This Dispatcher's `launch` hook, run once per Agent construction. */
+  launch: AsyncSeriesHook<[LaunchDraft]>;
   /** The one restart marker this process loaded at boot; a constructor value, never reassigned. */
   restartIntent: RestartIntentConsumer;
 }
@@ -121,7 +121,7 @@ export class DispatcherAgent {
         source: 'dreamux-core',
       },
     ];
-    const draft = await composeLaunchDraft(this.opts.beforeLaunch, builtinSkills);
+    const draft = await composeLaunchDraft(this.opts.launch, builtinSkills);
     this.service = await this.opts.agentServiceFactory.create({
       identity,
       config: this.opts.config,

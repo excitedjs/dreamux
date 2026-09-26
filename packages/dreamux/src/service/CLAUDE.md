@@ -268,9 +268,13 @@ the Team.
   entity afterward — invisible to any sweep the close already ran, and about
   to submit input to a runtime the close is trying to stop. Rather than
   sweeping twice to catch that race, `TeammateCollection`'s and
-  `TeamCollection`'s own construction paths read the owner's `isClosing()`
-  synchronously the moment they register the new entity into the live map,
-  and self-close it (`stopForHost()`) right there. For `TeammateCollection`
+  `TeamCollection`'s own construction paths read the owner's `isClosing()` as
+  soon as the entity exists — synchronously, the moment they register it into
+  the live map, for `spawn`/`createFreshEntity` and every `TeamCollection`
+  path; after the async build for `send`'s reopen, since composing a launch
+  draft (`teammateLaunch`) puts an `await` before the entity exists — and
+  self-close it (`stopForHost()`) right there, before it is handed back for
+  its first submission. For `TeammateCollection`
   this preempts the entity's first submission outright — it throws before
   `spawn` gets to submit anything. For `TeamCollection` it cannot: a Team's
   leader may already have taken its first submission by the time `track()`

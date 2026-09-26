@@ -25,6 +25,9 @@ runtime app-server readiness, and same-version restart cautions.
 - Current durable state is under `~/.dreamux/state/`, volatile runtime files are
   under `~/.dreamux/run/`, and logs are under `~/.dreamux/logs/`. Use the path
   authorities reported by Dreamux instead of guessing alternate roots.
+- `~/.dreamux/state/plugins/<plugin-name>/` is each loaded plugin's own state
+  subtree. It is that plugin's concern, not something this skill's generic
+  inspection/repair procedures cover.
 
 ## Missing Replies And Stuck Turns
 

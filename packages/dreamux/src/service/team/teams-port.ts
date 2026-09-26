@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeInterruptOutcome,
+  TeamCreateCommand,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
@@ -8,7 +9,6 @@ import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import type { TeamLeaderHandle } from './leader-handle.js';
 import type {
-  TeamCreateInput,
   TeamDissolveCommand,
   TeamDissolveReceipt,
   TeamHistoryQuery,
@@ -52,7 +52,13 @@ export interface TeamsPort {
   createFromRequest(input: {
     requestId: string;
     payloadHash: string;
-    options: TeamCreateInput;
+    /**
+     * The caller's own wire-shaped request, unmodified: `TeamCollection` runs
+     * it through the owning Dispatcher's `createTeam` hook and does its own
+     * repo/skill-source translation, so a caller supplies no more than what it
+     * validated from its own input.
+     */
+    command: TeamCreateCommand;
     deliverCompletionToDispatcher: boolean;
   }): Promise<TeamSummary>;
 }

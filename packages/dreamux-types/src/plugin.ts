@@ -1,4 +1,9 @@
-import type { AsyncSeriesHook, SyncHook, TypedHookMap } from 'tapable';
+import type {
+  AsyncSeriesHook,
+  AsyncSeriesWaterfallHook,
+  SyncHook,
+  TypedHookMap,
+} from 'tapable';
 
 import type {
   AgentRuntimeProvider,
@@ -6,6 +11,7 @@ import type {
 } from './agent-runtime.js';
 import type { ChannelProvider } from './channel.js';
 import type { DreamuxLogger } from './logger.js';
+import type { TeamCreateParams } from './team.js';
 
 /**
  * A Dreamux plugin: the object a plugin package's zero-argument factory
@@ -68,6 +74,13 @@ export interface ServerHost {
   /** Bound with `plugin: <name>`. */
   readonly logger: DreamuxLogger;
   /**
+   * This plugin's own durable state directory, scoped by the plugin's name
+   * and no other identity. Core neither creates it nor reads inside it — the
+   * plugin owns its own `mkdir`/read/write, the same way every other Dreamux
+   * store creates its directory lazily on first write.
+   */
+  readonly stateDir: string;
+  /**
    * Core runs these hooks, and every hook below them, with tapable's own
    * `call` / `promise`, so interceptors added with `hook.intercept` run. Core
    * installs a `register` interceptor first, which wraps each tap: a failing
@@ -110,14 +123,31 @@ export interface Dispatcher {
   /** The configured Dispatcher cwd, absolute. */
   readonly cwd: string;
   /**
-   * A failing tap does not stop the others. Each `beforeLaunch` tap receives
-   * its own empty draft, merged into the launch only when the tap succeeds. A
-   * `team` tap that throws is only stopped: taps it already added to the
-   * Team's hooks stay.
+   * A failing tap does not stop the others. Each `launch` or `teammateLaunch`
+   * tap receives its own empty draft, merged into the launch only when the
+   * tap succeeds. A `team` tap that throws is only stopped: taps it already
+   * added to the Team's hooks stay.
    */
   readonly hooks: Readonly<{
     /** Runs each time this Dispatcher's Agent is constructed (each Dispatcher start). */
-    beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
+    launch: AsyncSeriesHook<[LaunchDraft]>;
+    /**
+     * Runs each time any ordinary TeamMate's Agent is constructed —
+     * Dispatcher-spawned, a Team member, or a Workflow agent — never for the
+     * Dispatcher's own Agent or a Team's leader (see `launch` / `leaderLaunch`).
+     * `teamId` is `null` for a dispatcher-owned TeamMate, the owning Team's id
+     * otherwise.
+     */
+    teammateLaunch: AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>;
+    /**
+     * Runs once per `team.create` request that is not a replay of an already
+     * accepted one, before the Team is constructed. Each tap receives the
+     * previous tap's returned value (the caller's own params for the first
+     * tap) and returns the value the next tap sees; the final value is what
+     * the Team is built from. `request_id` is not part of this value — replay
+     * identity is decided before this hook ever runs.
+     */
+    createTeam: AsyncSeriesWaterfallHook<[TeamCreateParams]>;
     /**
      * Runs right after a Team object is constructed: on creation (before the
      * Team record is written, so the object may be discarded when the name is
@@ -134,7 +164,7 @@ export interface Team {
   /** The Team's runtime cwd. */
   readonly workspace: string;
   /**
-   * A failing tap does not stop the others. Each `beforeTeamLeaderLaunch` tap
+   * A failing tap does not stop the others. Each `leaderLaunch` tap
    * receives its own empty draft, merged into the launch only when the tap
    * succeeds.
    */
@@ -143,7 +173,7 @@ export interface Team {
      * Runs each time this Team's TeamLeader Agent is constructed, including
      * when a failed creation adopts the already-persisted leader to close it.
      */
-    beforeTeamLeaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
+    leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
   }>;
 }
 

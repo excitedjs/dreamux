@@ -12,12 +12,16 @@ import type { AgentEntityIdentity } from './identity.js';
  * because its output is consumed by the workflow script and the operation's
  * own append states that contract — a second, competing statement about where
  * the output goes would only distract it from returning the requested value.
- * The operation's append follows, and the operator's identity has the last
- * word. A dispatcher-scoped TeamMate has no TeamLeader, so it is told none of it.
+ * The operation's append follows, then plugin instructions (the
+ * `teammateLaunch` hook's draft) — same relative order as
+ * `team/leader.ts`'s `teamLeaderSystemPrompt` — and the operator's identity
+ * has the last word, as the most specific statement of who this TeamMate is.
+ * A dispatcher-scoped TeamMate has no TeamLeader, so it is told none of it.
  */
 export function teammateSystemPromptOptions(
   identity: AgentEntityIdentity,
   operationAppend: readonly string[] | undefined,
+  pluginInstructions: readonly string[],
 ): { systemPrompt: AgentRuntimeSystemPrompt } | undefined {
   const membership =
     identity.team_id === null
@@ -31,6 +35,7 @@ export function teammateSystemPromptOptions(
   const append = [
     ...membership,
     ...(operationAppend ?? []),
+    ...pluginInstructions,
     ...(identity.identity_prompt !== null ? [identity.identity_prompt] : []),
   ];
   return append.length === 0 ? undefined : { systemPrompt: { append } };

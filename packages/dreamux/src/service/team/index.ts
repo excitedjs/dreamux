@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeInterruptOutcome,
+  TeamCreateCommand,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
@@ -13,11 +14,15 @@ import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
 import type { TurnAdmission } from '../agent/admission.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
+import {
+  normalizeSkillSources,
+  parseAgentRuntimeSkillSources,
+} from '../../agent-runtime/skill-sources.js';
+import { repoWorktree } from '../worktree/repo-request.js';
 import { TeamStore } from './store.js';
 import {
   validateTeamId,
   type TeamCreateAtNameInput,
-  type TeamCreateInput,
   type TeamDissolveCommand,
   type TeamDissolveReceipt,
   type TeamHistoryQuery,
@@ -29,6 +34,7 @@ import {
 } from './types.js';
 import { allocateConcreteNameAsync } from '../name-allocator.js';
 import { TeamService } from './service.js';
+import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
 import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import {
   IdempotencyConflictError,
@@ -130,16 +136,25 @@ export class TeamCollection implements TeamsPort {
    * admitted right as the dispatcher starts closing still crosses the fence
    * before doing any work, rather than building a workspace and a leader only
    * to self-close in `track()` the moment it registers.
+   *
+   * The caller's `command` is the wire-shaped request, untranslated: only a
+   * request that is not a replay of an already-accepted one runs through the
+   * owning Dispatcher's `createTeam` hook (replay identity is decided above,
+   * against `payloadHash` alone, so a plugin never sees a replayed request),
+   * and only after that hook does this method do the repo/skill-source
+   * translation `commands.ts` and `mcp.ts` used to each do for themselves —
+   * so a plugin's own `leader.skill_sources`/`repo` value gets the identical
+   * mandatory-root injection and repo→worktree mapping an admin-supplied one
+   * gets, rather than skipping it by running before the hook.
    */
   async createFromRequest(input: {
     requestId: string;
     payloadHash: string;
-    options: TeamCreateInput;
+    command: TeamCreateCommand;
     deliverCompletionToDispatcher: boolean;
   }): Promise<TeamSummary> {
     return this.opts.admitOperation(() =>
       this.createRequestLifecycle.run(input.requestId, async () => {
-        const { namePrefix, ...options } = input.options;
         const accepted = await this.acceptedRequest(input.requestId);
         if (accepted !== null) {
           if (accepted.create_payload_hash !== input.payloadHash) {
@@ -151,10 +166,52 @@ export class TeamCollection implements TeamsPort {
           // Read the accepted Team without materializing it or resubmitting work.
           return this.summaryFromRecord(accepted);
         }
+        // `request_id` is excluded from what a tap sees: replay identity is
+        // decided above, against `payloadHash` alone, before this hook ever
+        // runs.
+        const { name_prefix, intent, leader, repo: requestedRepo } =
+          input.command;
+        const resolved = await this.opts.applyCreateTeamHook({
+          name_prefix,
+          intent,
+          leader,
+          ...(requestedRepo !== undefined ? { repo: requestedRepo } : {}),
+        });
+        // A `createTeam` tap can return any `leader.skill_sources` value the
+        // type system cannot check at runtime (a plugin need not even be
+        // written in TypeScript). The pre-hook value already passed this same
+        // structural check once (`optionalParsedSkillSources`, at parse time);
+        // after the hook, and only after it, repeat it so a malformed value
+        // fails as a clean RuleViolation naming the field instead of a raw
+        // filesystem error deep inside skill-root canonicalization.
+        const parsedSkillSources =
+          resolved.leader.skill_sources !== undefined
+            ? parseAgentRuntimeSkillSources(
+                resolved.leader.skill_sources,
+                "plugin \"createTeam\" hook output's leader.skill_sources",
+              )
+            : null;
+        const skillSources = await normalizeSkillSources(parsedSkillSources, {
+          requiredSources: TEAM_LEADER_REQUIRED_SKILL_SOURCES,
+        });
+        const repo = repoWorktree(resolved.repo ?? null);
+        // A named repository request with no explicit path passes no
+        // `repoCwd` at all: `prepareWorkspace()` already falls back to the
+        // dispatcher's own default workspace when it sees none.
+        const repoCwd = repo?.cwd ?? null;
+        const options = {
+          intent: resolved.intent,
+          leaderAgentRuntime: resolved.leader.agent_runtime,
+          ...(repoCwd !== null ? { repoCwd } : {}),
+          ...(repo !== null ? { worktree: repo.worktree } : {}),
+          prompt: resolved.leader.prompt,
+          identity: resolved.leader.identity,
+          ...(skillSources !== null ? { skillSources } : {}),
+        };
         const outcome: { created: TeamService | null } = { created: null };
         const teamName = await allocateConcreteNameAsync({
           kind: 'team',
-          base: namePrefix,
+          base: resolved.name_prefix,
           accept: async (candidate) => {
             // A valid record at this candidate belongs to another Team — this
             // request has not been accepted anywhere — so move on. The probe is

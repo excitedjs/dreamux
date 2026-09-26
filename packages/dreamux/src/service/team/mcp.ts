@@ -22,6 +22,8 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import type { TeamCreateCommand } from '@excitedjs/dreamux-types';
+
 import {
   mustNonBlankString,
   mustNonEmptyString,
@@ -29,7 +31,7 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import { repoRequest, repoWorktree } from '../worktree/repo-request.js';
+import { repoRequest } from '../worktree/repo-request.js';
 import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
@@ -121,39 +123,28 @@ async function create(
   const agentRuntime = mustNonEmptyString(args, 'leader_agent_runtime');
   const identityPrompt = optionalNonBlankString(args, 'identity');
   const prompt = optionalString(args, 'prompt');
-  const repo = repoWorktree(repoRequest(args, 'repo'));
-  // A named repository request with no explicit path passes no `repoCwd` at
-  // all: `TeamCollection.prepareWorkspace()` already falls back to the
-  // dispatcher's own default workspace when it sees none, so resolving it
-  // here first would only compute the same default twice.
-  const repoCwd = repo?.cwd ?? null;
-  const result = await teams.createFromRequest({
+  const repo = repoRequest(args, 'repo');
+  const command: TeamCreateCommand = {
     // A tool call is one live request with no durable retry of its own, so the
     // request identity is minted per call: it gets the Team's duplicate
     // protection for concurrent repeats without inventing a model-facing input.
-    requestId: randomUUID(),
+    request_id: randomUUID(),
+    name_prefix: namePrefix,
+    intent,
+    leader: {
+      agent_runtime: agentRuntime,
+      ...(identityPrompt !== null ? { identity: identityPrompt } : {}),
+      ...(prompt !== null ? { prompt } : {}),
+    },
+    ...(repo !== null ? { repo } : {}),
+  };
+  const result = await teams.createFromRequest({
+    requestId: command.request_id,
     // Hashed over the caller's own arguments, without Core's injected
     // TeamLeader requirements: those change with a Dreamux upgrade and would
     // otherwise turn a legitimate replay into a conflict.
-    payloadHash: teamCreatePayloadHash({
-      name_prefix: namePrefix,
-      intent,
-      leader: {
-        agent_runtime: agentRuntime,
-        ...(identityPrompt !== null ? { identity: identityPrompt } : {}),
-        ...(prompt !== null ? { prompt } : {}),
-      },
-      repo: args['repo'],
-    }),
-    options: {
-      namePrefix,
-      intent,
-      leaderAgentRuntime: agentRuntime,
-      ...(repoCwd !== null ? { repoCwd } : {}),
-      ...(repo !== null ? { worktree: repo.worktree } : {}),
-      ...(prompt !== null ? { prompt } : {}),
-      ...(identityPrompt !== null ? { identity: identityPrompt } : {}),
-    },
+    payloadHash: teamCreatePayloadHash(command),
+    command,
     // The Dispatcher Agent is waiting for this Team's answer, so Core delivers
     // the leader's first-turn completion back to it, same as `send` below.
     deliverCompletionToDispatcher: true,

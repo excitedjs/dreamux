@@ -18,7 +18,6 @@
  */
 import type {
   AgentRuntimeInterruptOutcome,
-  AgentRuntimeSkillSource,
   CoreCommandContext,
   CoreCommandDefinition,
   TeamCreateCommand,
@@ -29,10 +28,7 @@ import type {
 
 import type { AnyCoreCommand } from '../../command/registry.js';
 import type { TeamsPort } from './teams-port.js';
-import {
-  normalizeSkillSources,
-  optionalParsedSkillSources,
-} from '../../agent-runtime/skill-sources.js';
+import { optionalParsedSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
   commandPayload,
   mustNonBlankString,
@@ -42,11 +38,7 @@ import {
   optionalNonBlankString,
   optionalString,
 } from '../../command/payload.js';
-import {
-  REPO_REQUEST_SCHEMA,
-  repoRequest,
-  repoWorktree,
-} from '../worktree/repo-request.js';
+import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import {
   BOOLEAN,
   INTEGER,
@@ -68,7 +60,6 @@ import {
   MAX_REQUEST_ID_LENGTH,
   teamCreatePayloadHash,
 } from './create-request.js';
-import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
 import type {
   TeamDissolveReceipt,
   TeamHistoryQuery,
@@ -85,7 +76,6 @@ import {
 interface TeamCreateInput {
   command: TeamCreateCommand;
   payloadHash: string;
-  parsedSkillSources: readonly AgentRuntimeSkillSource[] | null;
 }
 
 interface TeamSubmitInput {
@@ -166,38 +156,20 @@ export function teamCommands(
         // injected TeamLeader requirements: those change with a Dreamux upgrade
         // and would otherwise turn a legitimate replay into a conflict.
         payloadHash: teamCreatePayloadHash(command),
-        parsedSkillSources,
       };
     },
     async execute(context, input) {
-      const skillSources = await normalizeSkillSources(
-        input.parsedSkillSources,
-        {
-          requiredSources: TEAM_LEADER_REQUIRED_SKILL_SOURCES,
-        },
-      );
-      const { command } = input;
-      const repo = repoWorktree(command.repo ?? null);
-      // A named repository request with no explicit path passes no `repoCwd`
-      // at all: `TeamCollection.prepareWorkspace()` already falls back to the
-      // dispatcher's own default workspace when it sees none.
-      const repoCwd = repo?.cwd ?? null;
-      // No catch: an idempotency conflict, a closed Team, and a missing Team
-      // already state themselves, and anything else must reach the boundary
-      // that logs it with its stack, name, and cause intact.
+      // The repo/skill-source translation this used to do here now runs
+      // inside `createFromRequest`, after the owning Dispatcher's `createTeam`
+      // hook: a plugin tap sees (and may change) the same wire-shaped command
+      // this parsed, not Core's already-resolved internal shape. No catch: an
+      // idempotency conflict, a closed Team, and a missing Team already state
+      // themselves, and anything else must reach the boundary that logs it
+      // with its stack, name, and cause intact.
       return teams(context).createFromRequest({
-        requestId: command.request_id,
+        requestId: input.command.request_id,
         payloadHash: input.payloadHash,
-        options: {
-          namePrefix: command.name_prefix,
-          intent: command.intent,
-          leaderAgentRuntime: command.leader.agent_runtime,
-          ...(repoCwd !== null ? { repoCwd } : {}),
-          ...(repo !== null ? { worktree: repo.worktree } : {}),
-          prompt: command.leader.prompt,
-          identity: command.leader.identity,
-          ...(skillSources !== null ? { skillSources } : {}),
-        },
+        command: input.command,
         // No external submission advances the Dispatcher Agent: `admin.sock`
         // and a Channel Command both leave the TeamLeader to answer on its own
         // Channel, exactly as `team.submit` already states for a follow-up turn.

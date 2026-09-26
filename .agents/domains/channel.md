@@ -1557,11 +1557,16 @@ an empty extension registry.
   which cannot name its owner. A `close` throw is logged the same way and
   teardown continues. After teardown begins every outbound api call rejects as
   aborted.
-- **State root.** `<dispatcher state dir>/feishu-extensions/<extension>/<channel
-  segment>`, not created for the extension. `<channel segment>` is the same
-  slug-plus-digest of the channel id that the routing document filename
-  carries, so two Feishu channels on one Dispatcher never share a directory and
-  an extension cannot overwrite Feishu's own files.
+- **State root.** `<Feishu plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension>/<channel
+  segment>`, not created for the extension. The plugin's own state dir is
+  `ServerHost.stateDir`, host-owned and scoped by plugin name alone, handed to
+  the Feishu plugin's `server()` and captured there for the extensions
+  mechanism to root under; it is a different directory tree from the channel
+  instance's `state_root` that `access.json`/`chat-bots.json`/the routing
+  document sit under, so an extension cannot overwrite Feishu's own files —
+  structurally, not merely by naming convention. `<channel segment>` is the
+  same slug-plus-digest of the channel id that the routing document filename
+  carries, so two Feishu channels on one Dispatcher never share a directory.
 - **Instance api.** Bound to one session lifecycle: `owner(target)` (the Team
   the routing plan says owns the conversation, a topic inheriting its group's
   binding, else `null`), `readMessageRoute`, `bindTeam` (the same validation,
