@@ -122,11 +122,6 @@ export class WorkflowRun {
   /** Memoized {@link finalize} task; cleared on failure so a retry re-runs
    * it. */
   private terminalTask: Promise<void> | null = null;
-  /** Guards the one 'workflow run terminal' log line against a retried
-   * finalize: a retry re-runs the whole teardown (journal/store writes are
-   * already idempotent on their own), but the log is not, so it needs its
-   * own once-only gate. */
-  private terminalLogged = false;
   private announceSettled!: () => void;
   /**
    * Resolves once this run is durably over: terminal record written, terminal
@@ -792,19 +787,15 @@ export class WorkflowRun {
       });
       this.deliverTerminal = null;
     }
-    if (!this.terminalLogged) {
-      this.terminalLogged = true;
-      this.deps.log.info(
-        {
-          run_id: this.record.run_id,
-          status: candidate.status,
-          agent_count: candidate.agents.length,
-          err:
-            candidate.error === null ? undefined : { message: candidate.error },
-        },
-        'workflow run terminal',
-      );
-    }
+    this.deps.log.info(
+      {
+        run_id: this.record.run_id,
+        status: candidate.status,
+        agent_count: candidate.agents.length,
+        err: candidate.error === null ? undefined : { message: candidate.error },
+      },
+      'workflow run terminal',
+    );
   }
 
   /**

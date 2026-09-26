@@ -16,8 +16,8 @@ import {
   workflowRunJournalPath,
   workflowRunRecordPath,
 } from '../src/platform/paths.js';
+import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/agent-policy.js';
 import { WorkflowService } from '../src/service/workflow-service/index.js';
-import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/run.js';
 import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js';
 import type { LockedTeammate } from '../src/service/teammate-service/types.js';
 import {
