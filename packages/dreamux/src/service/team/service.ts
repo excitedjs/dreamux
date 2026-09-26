@@ -178,7 +178,6 @@ export class TeamService implements Team {
     this.workflowService = new WorkflowService({
       dispatcherId: deps.dispatcherId,
       teamId,
-      callerKind: 'team_leader',
       // This Team owns its Workflow scope, so a Workflow's TeamMate is created
       // by this Team directly rather than by asking its owner for a way back in.
       teammates: {
@@ -689,7 +688,7 @@ export class TeamService implements Team {
   }
 
   closeWorkflowAdmission(): void {
-    this.workflowService.closeAdmission();
+    this.workflowService.requestStopAll();
   }
 
   startWorkflowAdmission(): Promise<void> {

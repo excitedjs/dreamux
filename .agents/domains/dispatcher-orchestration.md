@@ -401,9 +401,9 @@ owner is going away, and no teardown walks the producer population:
 - a Team-scope recipient runs its delivery inside `TeamService.admit()`, so a
   dissolving Team refuses it with `TeamClosedError`;
 - a Workflow run stops owing its terminal report the moment a stop reserves
-  the `stopped` intent (`WorkflowRun` clears its `deliverTerminal` in the
-  terminal's admission-close callback); a completed or failed intent that won
-  first keeps its report. A leader turn that completes naturally inside a
+  the `stopped` intent (`WorkflowRun` clears its `deliverTerminal` when it
+  reserves a stop); a completed or failed intent that won first keeps its
+  report. A leader turn that completes naturally inside a
   dissolve's Workflow-stop window is still real news and reaches the
   dispatcher.
 

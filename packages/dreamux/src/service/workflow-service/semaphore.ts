@@ -1,5 +1,3 @@
-import type { WorkflowAgentOptions } from './protocol.js';
-
 export class WorkflowSemaphore {
   private active = 0;
   private closedError: Error | null = null;
@@ -44,42 +42,4 @@ export class WorkflowSemaphore {
       }
     };
   }
-}
-
-export class WorkflowPersistenceError extends Error {}
-
-export function normalizeAgentOptions(
-  options: WorkflowAgentOptions,
-): WorkflowAgentOptions {
-  const normalized: WorkflowAgentOptions = {};
-  for (const key of [
-    'label',
-    'phase',
-    'agentType',
-    'intent',
-    'identity',
-  ] as const) {
-    const value = options[key];
-    if (value === undefined) continue;
-    if (typeof value !== 'string') {
-      throw new Error(`workflow agent option ${key} must be a string`);
-    }
-    normalized[key] = value;
-  }
-  if (options.schema !== undefined) {
-    if (!isRecord(options.schema)) {
-      throw new Error('workflow agent option schema must be an object');
-    }
-    normalized.schema = options.schema;
-  }
-  return normalized;
-}
-
-export function nonEmpty(value: string | undefined): string | null {
-  if (value === undefined || value.trim() === '') return null;
-  return value;
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

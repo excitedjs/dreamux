@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { publishFileExclusive } from '@excitedjs/dreamux-utils';
 
 import { appendJsonLine } from '../../platform/jsonl.js';
+import type { WorkflowAgentRecord, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowTerminalJournalEvent {
   kind: 'end';
@@ -140,6 +141,90 @@ export class WorkflowJournal {
     });
   }
 
+  /**
+   * Reconcile a stored `'running'` record, in place, against this run's own
+   * journal.
+   *
+   * `record` is the caller's already-cloned draft (the store's committed
+   * reference is never mutated in place — that stays the caller's own
+   * invariant to hold) and `now` is the caller's one clock reading for this
+   * reconciliation; this journal owns no clock of its own. Backfills a
+   * `'stopped'` terminal when the journal never committed one, or completes
+   * the record from an already-committed terminal event otherwise. Resolves
+   * `true` when this run was backfilled to `'stopped'`, `false` when a
+   * committed terminal already existed.
+   */
+  async recover(record: WorkflowRunRecord, now: number): Promise<boolean> {
+    for (const result of await this.resultEvents()) {
+      const agent = record.agents.find((item) => item.index === result.index);
+      if (agent === undefined) {
+        throw new Error(
+          `workflow ${JSON.stringify(record.run_id)} journal has a result for unknown Agent ${result.index}`,
+        );
+      }
+      if (
+        agent.status !== 'queued' &&
+        agent.status !== 'running' &&
+        !agentMatchesJournalResult(agent, result)
+      ) {
+        throw new Error(
+          `workflow ${JSON.stringify(record.run_id)} record conflicts with journal result for Agent ${result.index}`,
+        );
+      }
+      agent.status = result.status;
+      agent.result = result.result;
+      agent.error = result.error;
+      agent.settled_at = result.settled_at;
+    }
+    const committedTerminal = await this.terminal();
+    if (committedTerminal === null) {
+      const endedAt = now;
+      record.status = 'stopped';
+      record.result = null;
+      record.error =
+        'Dreamux stopped before the workflow reached a terminal result';
+      record.ended_at = endedAt;
+      record.updated_at = endedAt;
+      for (const agent of record.agents) {
+        if (agent.status !== 'queued' && agent.status !== 'running') continue;
+        const result = await this.ensureAgentResult({
+          kind: 'result',
+          index: agent.index,
+          status: 'stopped',
+          result: null,
+          error: record.error,
+          settled_at: endedAt,
+        });
+        agent.status = result.status;
+        agent.result = result.result;
+        agent.error = result.error;
+        agent.settled_at = result.settled_at;
+      }
+      await this.ensureTerminal({
+        kind: 'end',
+        status: 'stopped',
+        result: null,
+        error: record.error,
+        ended_at: endedAt,
+      });
+      return true;
+    }
+    const activeAgent = record.agents.find(
+      (agent) => agent.status === 'queued' || agent.status === 'running',
+    );
+    if (activeAgent !== undefined) {
+      throw new Error(
+        `workflow ${JSON.stringify(record.run_id)} terminal journal conflicts with active Agent ${activeAgent.index}`,
+      );
+    }
+    record.status = committedTerminal.status;
+    record.result = committedTerminal.result;
+    record.error = committedTerminal.error;
+    record.ended_at = committedTerminal.ended_at;
+    record.updated_at = committedTerminal.ended_at;
+    return false;
+  }
+
   private async loadFacts(): Promise<WorkflowJournalFacts> {
     if (this.facts === null) {
       this.facts = parseJournalFacts(
@@ -215,6 +300,18 @@ function parseJournalFacts(
     facts.terminal = parsed;
   }
   return facts;
+}
+
+function agentMatchesJournalResult(
+  agent: WorkflowAgentRecord,
+  result: WorkflowAgentResultJournalEvent,
+): boolean {
+  return (
+    agent.status === result.status &&
+    agent.settled_at === result.settled_at &&
+    agent.error === result.error &&
+    JSON.stringify(agent.result) === JSON.stringify(result.result)
+  );
 }
 
 function normalizeAgentResultEvent(

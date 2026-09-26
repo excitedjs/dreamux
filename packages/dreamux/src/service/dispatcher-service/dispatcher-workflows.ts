@@ -34,7 +34,6 @@ export class DispatcherWorkflows {
     this.service = new WorkflowService({
       dispatcherId: input.dispatcherId,
       teamId: null,
-      callerKind: 'dispatcher',
       teammates: {
         createLocked: (spawnInput, options) =>
           input.admit(() => input.teammates.createLocked(spawnInput, options)),
@@ -62,7 +61,7 @@ export class DispatcherWorkflows {
   }
 
   closeAdmission(): void {
-    this.service.closeAdmission();
+    this.service.requestStopAll();
     this.input.teams.closeWorkflowAdmissions();
   }
 

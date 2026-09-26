@@ -146,9 +146,16 @@ the Team.
   modes), workspace resolution, and the repository-request reader that says
   what a caller may ask for a working directory.
 - **`scheduler/`, `workflow-service/`, `dispatcher-core-events/`, `mcp/`** —
-  cron, Workflow runs, the Core event publisher plus `conversation-projection.ts`
-  (the display-only stream of one Agent's conversation: input and activity
-  facts, keyed on the Agent and never on a submission), and the shared MCP
+  cron, Workflow runs (`workflow-service/`: `index.ts`'s `WorkflowService`
+  collection over each live run's `run.ts` (which owns the run's terminal
+  task and the Workflow agent system prompt directly), its `journal.ts`
+  (durability: `create`/`ensureAgentResult`/`ensureTerminal`/`recover`),
+  `store.ts`, the forked runner (`runner.ts`, `runner-process.ts`,
+  `script-compiler.ts`), the IPC codec (`protocol.ts`), `semaphore.ts`, and
+  `limits.ts`/`requests.ts`/`commands.ts`/`errors.ts`/`types.ts` support), the
+  Core event publisher plus `conversation-projection.ts` (the display-only
+  stream of one Agent's conversation: input and activity facts, keyed on the
+  Agent and never on a submission), and the shared MCP
   descriptor/lease/projection helpers each delegate builds on.
 - **Root helpers** — `dispatcher-workspace.ts` (the dispatcher-cwd policy
   shared by startup, the dispatcher service, `dreamux doctor`, and

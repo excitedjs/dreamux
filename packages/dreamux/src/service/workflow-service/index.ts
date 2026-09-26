@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
+import { RuleViolation, throwCallerMistake } from '../../command/errors.js';
 import {
   type CompletionDeliveryPolicy,
   type CompletionInitiator,
@@ -25,7 +26,11 @@ import {
 } from '../../platform/paths.js';
 import { WorkflowRunNotFoundError } from './errors.js';
 import { WorkflowJournal } from './journal.js';
-import { parseWorkflowMaxConcurrency } from './limits.js';
+import {
+  assertWorkflowMaxConcurrency,
+  DEFAULT_WORKFLOW_MAX_CONCURRENCY,
+  MAX_SCRIPT_BYTES,
+} from './limits.js';
 import { WorkflowRun } from './run.js';
 import {
   ForkedWorkflowRunner,
@@ -43,8 +48,6 @@ import type {
   WorkflowStopResult,
 } from './types.js';
 
-const MAX_SCRIPT_BYTES = 1024 * 1024;
-
 export interface WorkflowTeammateFactory {
   createLocked(
     input: SpawnTeamMateRequest,
@@ -53,7 +56,6 @@ export interface WorkflowTeammateFactory {
 }
 
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {
-  callerKind: WorkflowCallerKind;
   teammates: WorkflowTeammateFactory;
   completionDelivery: CompletionDeliveryPolicy;
   completionInitiator: () => CompletionInitiator;
@@ -77,6 +79,7 @@ export class WorkflowService implements WorkflowOps {
   private readonly store: WorkflowRunStore;
   private readonly runs = new Map<string, WorkflowRun>();
   private readonly runCreations = new InFlightWork();
+  private readonly callerKind: WorkflowCallerKind;
   private accepting = false;
 
   constructor(private readonly opts: WorkflowServiceOptions) {
@@ -84,12 +87,9 @@ export class WorkflowService implements WorkflowOps {
       dispatcherId: opts.dispatcherId,
       teamId: opts.teamId,
     };
-    if (
-      (opts.callerKind === 'dispatcher' && opts.teamId !== null) ||
-      (opts.callerKind === 'team_leader' && opts.teamId === null)
-    ) {
-      throw new Error('workflow caller kind does not match its scope');
-    }
+    // A dispatcher-scoped run has no team; a Team-scoped run always has one —
+    // the caller kind is the scope, not a fact a caller could get wrong.
+    this.callerKind = opts.teamId === null ? 'dispatcher' : 'team_leader';
     this.store = new WorkflowRunStore(this.scope);
   }
 
@@ -102,9 +102,9 @@ export class WorkflowService implements WorkflowOps {
     await this.initialize();
   }
 
-  closeAdmission(): void {
+  requestStopAll(): void {
     this.accepting = false;
-    for (const run of this.runs.values()) run.closeAdmission();
+    for (const run of this.runs.values()) run.requestStop();
   }
 
   run(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
@@ -116,13 +116,26 @@ export class WorkflowService implements WorkflowOps {
   ): Promise<WorkflowRunAccepted> {
     await this.initialize();
     if (!this.accepting) throw new Error('workflow admission is closed');
-    const maxConcurrency = parseWorkflowMaxConcurrency(input.max_concurrency);
-    if (Object.hasOwn(input, 'args')) {
-      canonicalJsonValue(input.args, JSON_VALUE_UNBOUNDED);
-    }
-    const script = await resolveWorkflowScript(input);
-    if (script.trim() === '') {
-      throw new Error('workflow script must be non-empty');
+    // Every caller-driven validation for a run request, in one place: the
+    // reader (`requests.ts`) only shapes the input, so the bound and the
+    // script/scriptPath rule are each checked here exactly once, and any
+    // `RuleViolation` this preamble raises is reclassified identically as
+    // the caller's mistake.
+    let maxConcurrency: number;
+    let script: string;
+    try {
+      maxConcurrency =
+        input.max_concurrency ?? DEFAULT_WORKFLOW_MAX_CONCURRENCY;
+      assertWorkflowMaxConcurrency(maxConcurrency);
+      if (Object.hasOwn(input, 'args')) {
+        canonicalJsonValue(input.args, JSON_VALUE_UNBOUNDED);
+      }
+      script = await resolveWorkflowScript(input);
+      if (script.trim() === '') {
+        throw new RuleViolation('workflow script must be non-empty');
+      }
+    } catch (error) {
+      throwCallerMistake(error);
     }
 
     const runId = validateWorkflowRunId(
@@ -135,7 +148,7 @@ export class WorkflowService implements WorkflowOps {
       run_id: runId,
       dispatcher_id: this.scope.dispatcherId,
       team_id: this.scope.teamId,
-      caller_kind: this.opts.callerKind,
+      caller_kind: this.callerKind,
       script_hash: createHash('sha256').update(script).digest('hex'),
       status: 'running',
       max_concurrency: maxConcurrency,
@@ -174,13 +187,13 @@ export class WorkflowService implements WorkflowOps {
     void run.settled.then(() => {
       this.evict(runId, run);
     });
-    if (!this.accepting) run.closeAdmission();
+    if (!this.accepting) run.requestStop();
     this.opts.log.info(
       {
         run_id: runId,
         dispatcher_id: this.scope.dispatcherId,
         team_id: this.scope.teamId,
-        caller_kind: this.opts.callerKind,
+        caller_kind: this.callerKind,
         max_concurrency: record.max_concurrency,
       },
       'workflow run created',
@@ -229,7 +242,7 @@ export class WorkflowService implements WorkflowOps {
   }
 
   async stopAll(): Promise<void> {
-    this.closeAdmission();
+    this.requestStopAll();
     await this.recover();
     await this.runCreations.drain();
     const results = await Promise.allSettled(
@@ -264,77 +277,11 @@ export class WorkflowService implements WorkflowOps {
       const journal = new WorkflowJournal(
         workflowRunJournalPath({ ...this.scope, runId: record.run_id }),
       );
-      for (const result of await journal.resultEvents()) {
-        const agent = record.agents.find((item) => item.index === result.index);
-        if (agent === undefined) {
-          throw new Error(
-            `workflow ${JSON.stringify(record.run_id)} journal has a result for unknown Agent ${result.index}`,
-          );
-        }
-        if (
-          agent.status !== 'queued' &&
-          agent.status !== 'running' &&
-          !agentMatchesJournalResult(agent, result)
-        ) {
-          throw new Error(
-            `workflow ${JSON.stringify(record.run_id)} record conflicts with journal result for Agent ${result.index}`,
-          );
-        }
-        agent.status = result.status;
-        agent.result = result.result;
-        agent.error = result.error;
-        agent.settled_at = result.settled_at;
-      }
-      const committedTerminal = await journal.terminal();
-      if (committedTerminal === null) {
-        const endedAt = this.now();
-        record.status = 'stopped';
-        record.result = null;
-        record.error =
-          'Dreamux stopped before the workflow reached a terminal result';
-        record.ended_at = endedAt;
-        record.updated_at = endedAt;
-        for (const agent of record.agents) {
-          if (agent.status !== 'queued' && agent.status !== 'running') continue;
-          const result = await journal.ensureAgentResult({
-            kind: 'result',
-            index: agent.index,
-            status: 'stopped',
-            result: null,
-            error: record.error,
-            settled_at: endedAt,
-          });
-          agent.status = result.status;
-          agent.result = result.result;
-          agent.error = result.error;
-          agent.settled_at = result.settled_at;
-        }
-        await journal.ensureTerminal({
-          kind: 'end',
-          status: 'stopped',
-          result: null,
-          error: record.error,
-          ended_at: endedAt,
-        });
-      } else {
-        const activeAgent = record.agents.find(
-          (agent) => agent.status === 'queued' || agent.status === 'running',
-        );
-        if (activeAgent !== undefined) {
-          throw new Error(
-            `workflow ${JSON.stringify(record.run_id)} terminal journal conflicts with active Agent ${activeAgent.index}`,
-          );
-        }
-        record.status = committedTerminal.status;
-        record.result = committedTerminal.result;
-        record.error = committedTerminal.error;
-        record.ended_at = committedTerminal.ended_at;
-        record.updated_at = committedTerminal.ended_at;
-      }
+      const backfilled = await journal.recover(record, this.now());
       await this.store.write(record);
       this.opts.log.warn(
         { run_id: record.run_id, status: record.status },
-        committedTerminal === null
+        backfilled
           ? 'recovered running workflow as stopped'
           : 'completed workflow record from terminal journal',
       );
@@ -357,34 +304,24 @@ export class WorkflowService implements WorkflowOps {
   }
 }
 
-function agentMatchesJournalResult(
-  agent: WorkflowRunRecord['agents'][number],
-  result: Awaited<ReturnType<WorkflowJournal['resultEvents']>>[number],
-): boolean {
-  return (
-    agent.status === result.status &&
-    agent.settled_at === result.settled_at &&
-    agent.error === result.error &&
-    JSON.stringify(agent.result) === JSON.stringify(result.result)
-  );
-}
-
 async function resolveWorkflowScript(input: WorkflowRunInput): Promise<string> {
   const hasScript =
     typeof input.script === 'string' && input.script.trim() !== '';
   const hasScriptPath =
     typeof input.scriptPath === 'string' && input.scriptPath.trim() !== '';
   if (!hasScript && !hasScriptPath) {
-    throw new Error('workflow script or scriptPath must be provided');
+    throw new RuleViolation('workflow script or scriptPath must be provided');
   }
   if (hasScript) return input.script as string;
   const path = input.scriptPath as string;
   const fileStat = await stat(path);
   if (!fileStat.isFile()) {
-    throw new Error(`workflow scriptPath is not a regular file: ${path}`);
+    throw new RuleViolation(
+      `workflow scriptPath is not a regular file: ${path}`,
+    );
   }
   if (fileStat.size > MAX_SCRIPT_BYTES) {
-    throw new Error(
+    throw new RuleViolation(
       `workflow scriptPath exceeds ${MAX_SCRIPT_BYTES} bytes: ${path}`,
     );
   }

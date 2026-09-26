@@ -5,11 +5,7 @@ import {
   type SupervisedChildExit,
 } from '@excitedjs/dreamux-utils';
 
-import type {
-  WorkflowRunnerChildMessage,
-  WorkflowRunnerParentMessage,
-} from './protocol.js';
-import { isRecord } from './run-support.js';
+import type { WorkflowRunnerParentMessage } from './protocol.js';
 
 export interface WorkflowRunnerHandle {
   start(): Promise<void>;
@@ -72,31 +68,5 @@ export class ForkedWorkflowRunner implements WorkflowRunnerHandle {
   async stop(): Promise<void> {
     await this.child.stop();
     this.process = null;
-  }
-}
-
-export function isWorkflowRunnerChildMessage(
-  message: unknown,
-): message is WorkflowRunnerChildMessage {
-  if (!isRecord(message) || typeof message.type !== 'string') return false;
-  switch (message.type) {
-    case 'agent_start':
-      return (
-        Number.isSafeInteger(message.index) &&
-        typeof message.prompt === 'string' &&
-        isRecord(message.options)
-      );
-    case 'emit':
-      return (
-        (message.kind === 'phase' || message.kind === 'log') &&
-        typeof message.message === 'string'
-      );
-    case 'run_result':
-      return (
-        message.status === 'completed' ||
-        (message.status === 'failed' && typeof message.error === 'string')
-      );
-    default:
-      return false;
   }
 }

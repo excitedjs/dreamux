@@ -8,7 +8,7 @@
  */
 import { readFile, rm } from 'node:fs/promises';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import {
@@ -16,9 +16,8 @@ import {
   workflowRunJournalPath,
   workflowRunRecordPath,
 } from '../src/platform/paths.js';
-import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/agent-policy.js';
 import { WorkflowService } from '../src/service/workflow-service/index.js';
-import { WorkflowRun } from '../src/service/workflow-service/run.js';
+import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/run.js';
 import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js';
 import type { LockedTeammate } from '../src/service/teammate-service/types.js';
 import {
@@ -393,28 +392,6 @@ describe('owner-side exact-instance eviction', () => {
       run_id: 'run-x',
       status: 'running',
     });
-  });
-
-  it('WorkflowRun itself never calls an eviction callback — eviction is the Collection/Service concern alone', async () => {
-    // Absence-is-the-contract: `WorkflowRunDeps` (run.ts) carries no evict/
-    // onSettled-shaped callback member, and nothing in the run's own
-    // orchestration files ever calls one — `run.ts`'s own doc comment states
-    // the boundary in prose ("the owner reads it to evict"), which this only
-    // checks for an actual call/field, not the word appearing in a comment.
-    // Only `WorkflowService` (index.ts) performs the exact-instance eviction.
-    const { readFile: read } = await import('node:fs/promises');
-    for (const file of [
-      'run.ts',
-      'run-terminal.ts',
-      'run-support.ts',
-      'runner-process.ts',
-    ]) {
-      const source = await read(
-        new URL(`../src/service/workflow-service/${file}`, import.meta.url),
-        'utf8',
-      );
-      expect(source).not.toMatch(/\bevict\w*\s*[(:]/i);
-    }
   });
 });
 
@@ -823,51 +800,5 @@ describe('WorkflowService.stopAll() owns shutdown convergence', () => {
       expect(runner.stopped).toBe(true);
     }
     expect(delivery.delivered).toEqual([]);
-  });
-
-  it('stops a run whose creation crosses the closeAdmission fence without owner delivery', async () => {
-    const runnerFactory = fakeWorkflowRunnerFactory();
-    const delivery = fakeCompletionDelivery();
-    const service = new WorkflowService({
-      ...SCOPE,
-      callerKind: 'dispatcher',
-      teammates: fakeTeammateFactory(() => {
-        throw new Error('no agents in this script');
-      }),
-      completionDelivery: delivery.policy,
-      completionInitiator: () => fakeCompletionInitiator(),
-      log: silentLog(),
-      createRunner: runnerFactory.factory,
-      generateRunId: fixedRunIds('run-a'),
-    });
-    await service.start();
-
-    const initializeEntered = gate();
-    const allowInitialize = gate();
-    const originalInitialize = WorkflowRun.prototype.initialize;
-    const initializeSpy = vi
-      .spyOn(WorkflowRun.prototype, 'initialize')
-      .mockImplementationOnce(async function (this: WorkflowRun) {
-        initializeEntered.release();
-        await allowInitialize.promise;
-        await originalInitialize.call(this);
-      });
-    try {
-      const creating = service.run({ script: 'noop' });
-      await initializeEntered.promise;
-
-      service.closeAdmission();
-      allowInitialize.release();
-
-      await expect(creating).resolves.toEqual({ run_id: 'run-a' });
-      await expect(service.status({ run_id: 'run-a' })).resolves.toMatchObject({
-        status: 'stopped',
-      });
-      expect(runnerFactory.runners[0]?.stopped).toBe(true);
-      expect(delivery.delivered).toEqual([]);
-    } finally {
-      allowInitialize.release();
-      initializeSpy.mockRestore();
-    }
   });
 });

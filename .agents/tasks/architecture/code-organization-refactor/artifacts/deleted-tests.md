@@ -3005,3 +3005,57 @@ dropping its `created` field does not touch them; left untouched.
 by this item — deleting a background-only, publish-and-forget plugin hook and
 its shutdown drain does not reach the Codex submit path or any of
 `turn.ts`/`admission.ts`/`runtime-generation.ts`.
+
+## Stage 6c
+
+### Item 1 — delete run-support.ts and agent-policy.ts
+
+- **File / case:** `packages/dreamux/tests/workflow-service.test.ts` —
+  `it('WorkflowRun itself never calls an eviction callback — eviction is the
+  Collection/Service concern alone')`.
+  **Contract pinned:** only `WorkflowService` (`index.ts`) performs the
+  exact-instance eviction of a settled run from its in-memory map;
+  `WorkflowRun` itself (and its supporting files) never calls an evict/
+  onSettled-shaped callback. The case checked this by `readFile`-ing
+  `run.ts`, `run-terminal.ts`, `run-support.ts`, and `runner-process.ts` by
+  literal path and asserting none of their source text matches an `evict`
+  call/field.
+  **Contract still holds and is restoration-worthy:** this item deletes
+  `run-support.ts` and moves its exports into `semaphore.ts`, `errors.ts`,
+  `protocol.ts`, and `run.ts`'s own private `nonEmpty`; none of the moved
+  code adds an eviction call anywhere, and `WorkflowService` remains the only
+  exact-instance evictor. Restore at the final test pass with the file list
+  updated to whatever set of files own `WorkflowRun`'s orchestration then
+  (or, preferably, replaced with the dependency-cruiser rule or behavior test
+  the audit's H9/R4 line calls for — this source-text-by-literal-path pattern
+  is exactly what that line retires).
+  **Failure:** the moment this item's own file list (point 5) deletes
+  `run-support.ts`, this case's `readFile(new URL('.../run-support.ts', ...))`
+  throws `ENOENT` and the case cannot run, independent of anything item 4
+  later does to `run-terminal.ts`. R43: a test case that no longer
+  passes is deleted in the change that breaks it, not carried forward broken
+  to a later item.
+
+### Item 4 — rename `closeAdmission` to `requestStop`/`requestStopAll`
+
+- **File / case:** `packages/dreamux/tests/workflow-service.test.ts` —
+  `it('stops a run whose creation crosses the closeAdmission fence without
+  owner delivery')`.
+  **Contract pinned:** a run whose creation (`WorkflowRun.initialize()`) is
+  still in flight when the owning `WorkflowService`'s admission fence closes
+  is stopped, and its terminal record reads `stopped`, without a completion
+  push to its owner (the party that closed admission would already know).
+  **Contract still holds and is restoration-worthy:** item 4 renames
+  `WorkflowService.closeAdmission()` to `requestStopAll()` (and
+  `WorkflowRun.closeAdmission()` to `requestStop()`) with no behavior change —
+  the fence-then-stop-without-delivery sequence this case exercises is
+  unchanged; restore at the final test pass with the call site updated to
+  `service.requestStopAll()`.
+  **Failure:** the case's `service.closeAdmission();` call now names a method
+  that does not exist on `WorkflowService` (renamed to `requestStopAll` by
+  this item); R43 forbids renaming the call inside an `it()` to keep the case
+  passing, so the whole case is deleted. Its two now-unused imports
+  (`vi` from `'vitest'`, `WorkflowRun` from `'../src/service/workflow-service/run.js'`,
+  used only by this case's `vi.spyOn(WorkflowRun.prototype, 'initialize')`
+  fence) are removed in the same edit as plain import-list bookkeeping, not a
+  second test-case change.

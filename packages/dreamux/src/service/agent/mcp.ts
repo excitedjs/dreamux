@@ -48,7 +48,7 @@ import {
   workflowRunIdParam,
   workflowRunInput,
   workflowRunResult,
-} from '../workflow-service/types.js';
+} from '../workflow-service/requests.js';
 import { teammateToolDescriptors } from './mcp-tool-descriptors.js';
 import {
   agentEntityLastQuery,

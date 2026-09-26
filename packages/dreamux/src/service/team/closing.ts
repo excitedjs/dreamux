@@ -367,7 +367,8 @@ export class TeamClosing {
    * durable record nobody materialized is already idle.
    */
   private async stopChildRuntimes(failures: unknown[]): Promise<void> {
-    this.deps.workflows.closeAdmission();
+    // WorkflowService.stopAll() fences its own admission as its first line
+    // (requestStopAll()), so a separate fence call here would only repeat it.
     await collectShutdownFailure(failures, () => this.deps.workflows.stopAll());
     this.deps.scheduler.stop();
     await collectShutdownFailure(failures, () =>

@@ -386,7 +386,7 @@ workflow_stop({ run_id: 'run-abc123' })
 Requests the stopped outcome and resolves only after the run is durably
 terminal: in-flight agent turns settle, the terminal fact is persisted and
 delivered, and the returned status is already final
-(`/packages/dreamux/src/service/workflow-service/run-terminal.ts`).
+(`/packages/dreamux/src/service/workflow-service/run.ts`).
 
 ---
 

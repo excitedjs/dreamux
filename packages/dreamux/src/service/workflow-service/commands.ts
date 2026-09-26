@@ -7,10 +7,10 @@
  * model sends can select a scope here. Run admission, concurrency, and record
  * semantics stay inside the workflow service.
  *
- * The run-request codec and the record projection live with the service's own
- * types, and a failure states its own reason and next step where it is raised.
- * The TeamMate MCP delegate that advertises the Workflow tools reads the same
- * helpers; neither adapter reads the other.
+ * The run-request codec and the record projection live in the service's own
+ * `requests.ts`, and a failure states its own reason and next step where it is
+ * raised. The TeamMate MCP delegate that advertises the Workflow tools reads
+ * the same helpers; neither adapter reads the other.
  */
 import type {
   CoreCommandContext,
@@ -32,11 +32,13 @@ import {
   workflowRunIdParam,
   workflowRunInput,
   workflowRunResult,
-  type WorkflowListResult,
-  type WorkflowRunAccepted,
-  type WorkflowRunInput,
-  type WorkflowRunRecord,
-  type WorkflowStopResult,
+} from './requests.js';
+import type {
+  WorkflowListResult,
+  WorkflowRunAccepted,
+  WorkflowRunInput,
+  WorkflowRunRecord,
+  WorkflowStopResult,
 } from './types.js';
 
 interface WorkflowRunCommandInput {

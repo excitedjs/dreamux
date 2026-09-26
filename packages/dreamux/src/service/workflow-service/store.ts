@@ -1,6 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises';
 
-import { errorMessage, TransactionalStore } from '@excitedjs/dreamux-utils';
+import {
+  errorMessage,
+  isPlainObject,
+  TransactionalStore,
+} from '@excitedjs/dreamux-utils';
 
 import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
@@ -10,7 +14,6 @@ import {
   workflowScopeDir,
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
-import { isRecord } from './run-support.js';
 import type {
   WorkflowAgentRecord,
   WorkflowAgentStatus,
@@ -144,7 +147,7 @@ export class WorkflowRunStore {
     }
     try {
       const value = JSON.parse(raw) as unknown;
-      if (!isRecord(value) || value['version'] !== RECORD_VERSION) {
+      if (!isPlainObject(value) || value['version'] !== RECORD_VERSION) {
         throw new LegacyStateError(
           `JSON document ${path} is not version ${RECORD_VERSION}. ` +
             'Dreamux 0.x does not migrate old state; delete the file to rebuild it.',
@@ -166,7 +169,7 @@ function parseRecord(
   scope: WorkflowScopePathInput,
   path: string,
 ): WorkflowRunRecord {
-  if (!isRecord(raw)) throw new Error(`invalid workflow record ${path}`);
+  if (!isPlainObject(raw)) throw new Error(`invalid workflow record ${path}`);
   if (raw['version'] !== 1) {
     throw new Error(`unsupported workflow record version in ${path}`);
   }
@@ -212,7 +215,7 @@ function parseAgent(
   path: string,
   position: number,
 ): WorkflowAgentRecord {
-  if (!isRecord(raw)) {
+  if (!isPlainObject(raw)) {
     throw new Error(`invalid agent ${position} in workflow record ${path}`);
   }
   const status = raw['status'];
