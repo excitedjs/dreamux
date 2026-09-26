@@ -55,8 +55,7 @@ import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { DispatcherService } from '../dispatcher-service/index.js';
 import { teamCreatePayloadHash } from './create-request.js';
-import { teamHistoryQuery, teamNameParam } from './types.js';
-import { teamSubmitResult } from '../team-service/types.js';
+import { teamHistoryQuery, teamNameParam, teamSubmitResult } from './requests.js';
 
 /** Who this delegate serves. Bound once, at runtime construction. */
 export type TeamMcpCaller =
@@ -154,6 +153,9 @@ async function create(
       ...(prompt !== null ? { prompt } : {}),
       ...(identityPrompt !== null ? { identity: identityPrompt } : {}),
     },
+    // The Dispatcher Agent is waiting for this Team's answer, so Core delivers
+    // the leader's first-turn completion back to it, same as `send` below.
+    deliverCompletionToDispatcher: true,
   });
   return {
     structured: result,

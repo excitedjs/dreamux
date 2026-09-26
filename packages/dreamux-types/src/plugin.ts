@@ -136,7 +136,7 @@ export interface Team {
   /**
    * A failing tap does not stop the others. Each `beforeTeamLeaderLaunch` tap
    * receives its own empty draft, merged into the launch only when the tap
-   * succeeds; a failing `created` tap is logged.
+   * succeeds.
    */
   readonly hooks: Readonly<{
     /**
@@ -144,13 +144,6 @@ export interface Team {
      * when a failed creation adopts the already-persisted leader to close it.
      */
     beforeTeamLeaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
-    /**
-     * Runs once after a newly created Team reached `running` and became
-     * reachable through Commands. Not on rebuild, failed creation, or a
-     * replayed request. It runs in the background: the create reply does not
-     * wait for it, and Dispatcher stop waits for runs still in flight.
-     */
-    created: AsyncSeriesHook<[{ readonly requestId: string | null }]>;
   }>;
 }
 

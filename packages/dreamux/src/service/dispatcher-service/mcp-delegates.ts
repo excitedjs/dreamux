@@ -17,7 +17,7 @@ import type { ChannelService } from '../channel-service/index.js';
 import { channelMcpDelegates } from '../channel-service/mcp-delegates.js';
 import type { McpServerDelegate } from '../mcp/types.js';
 import { createCronMcpDelegate } from '../scheduler/mcp-delegate.js';
-import { createTeamMcpDelegate } from '../team-collection/mcp-delegate.js';
+import { createTeamMcpDelegate } from '../team/mcp.js';
 import { createTeamMateMcpDelegate } from '../agent/mcp.js';
 import type { DispatcherService } from './index.js';
 

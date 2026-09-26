@@ -36,7 +36,7 @@ import {
 } from '../platform/paths.js';
 import { diagnoseDispatcherWorkspace } from '../service/dispatcher-workspace.js';
 import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
-import { TeamStore } from '../service/team-collection/store.js';
+import { TeamStore } from '../service/team/store.js';
 import {
   defaultServiceNodeProbe,
   detectServiceNodeVersionManager,

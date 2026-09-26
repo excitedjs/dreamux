@@ -5,7 +5,7 @@ import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
 } from '../completion-router/index.js';
-import type { TeamCollection } from '../team-collection/index.js';
+import type { TeamCollection } from '../team/index.js';
 import type { TeammateCollection } from '../agent/index.js';
 import {
   WorkflowService,

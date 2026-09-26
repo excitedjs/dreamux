@@ -67,7 +67,7 @@ refactor's own audit:
   test completion on PR #453 confirms the cruiser rule covers it.
 - **A "behavior" case that still needs a real test.**
   `/packages/dreamux/tests/team-dissolve-contract.test.ts` proves "dissolve
-  never drains a running turn" by reading `closing.ts`, `team-service/index.ts`,
+  never drains a running turn" by reading `closing.ts`, `team/service.ts`,
   and two other files as text and asserting none of them contain the
   identifiers `waitIdle` or `isIdle`. The real fact — dissolve stops and
   reclaims a Team immediately, it never waits for an in-flight turn to finish

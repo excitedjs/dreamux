@@ -88,16 +88,18 @@ const LAYERS = [
     // stores, the per-entity AgentService, and TeammateCollection in one
     // directory: one physical directory can only occupy one layer, so it
     // takes the highest (outermost) rank of the tiers it merges -
-    // team-collection/ and team-service/ depend on it (constructing against
-    // its outermost file, index.ts's TeammateCollection), never the
-    // reverse, so it must sit strictly before the reduced
-    // service-collections layer below.
+    // service/team/ depends on it (constructing against its outermost file,
+    // index.ts's TeammateCollection), never the reverse, so it must sit
+    // strictly before the reduced service-team layer below.
     name: 'service-agent',
     path: ['^src/service/agent/'],
   },
   {
-    name: 'service-collections',
-    path: ['^src/service/team-collection/', '^src/service/team-service/'],
+    // service/team/ is the sibling directory-merge to service/agent/ above,
+    // holding TeamStore, TeamService, and TeamCollection in one directory
+    // ordered by R7's declared direction: store -> service -> collection.
+    name: 'service-team',
+    path: ['^src/service/team/'],
   },
   {
     name: 'service-orchestration',
@@ -151,20 +153,6 @@ const layerOrderRules = LAYERS.slice(0, -1).map((layer, index) => {
 // text would have.
 const namedEdgeRules = [
   {
-    name: 'team-service-not-to-team-collection-owner',
-    comment:
-      'Eviction and live-instance cache materialization are owned by ' +
-      "TeamCollection: team-service/ must not import team-collection/'s " +
-      'cache owner (runtime-registry.ts) or facade (index.ts). ' +
-      "team-service/ legitimately imports team-collection/'s shared record " +
-      '/ error / store TYPES (same persisted domain), so this only bans the ' +
-      "two files that would let a Service reach its owner's live-instance " +
-      'table (see tests/collection-ownership.test.ts).',
-    severity: 'warn',
-    from: { path: '^src/service/team-service/' },
-    to: { path: '^src/service/team-collection/(runtime-registry|index)\\.ts$' },
-  },
-  {
     name: 'channel-not-to-team-or-teammate',
     comment:
       'Channel decides where a message goes by naming a Team; it must not ' +
@@ -173,11 +161,7 @@ const namedEdgeRules = [
     severity: 'warn',
     from: { path: ['^src/channel/', '^src/service/channel-service/'] },
     to: {
-      path: [
-        '^src/service/team-service/',
-        '^src/service/agent/',
-        '^src/service/team-collection/',
-      ],
+      path: ['^src/service/team/', '^src/service/agent/'],
     },
   },
   {
@@ -219,16 +203,52 @@ const namedEdgeRules = [
     },
   },
   {
+    // R7's "one declared direction" for the merged service/team/ directory:
+    // store <- service <- collection, mirroring service/agent/'s own two
+    // rules above. Store-tier files never reach into the service or
+    // collection tier; service-tier files never reach into the collection
+    // tier. Regex groups partition every file the directory holds, each
+    // anchored with `\.ts$` so a name never prefix-matches a longer sibling
+    // (e.g. `service` must not match a hypothetical `service-types`).
+    name: 'service-team-store-not-to-service-or-collection',
+    comment:
+      'service/team/ store-tier files (types, requests, create-request, ' +
+      'store, errors) must not import the service- or collection-tier ' +
+      'files in the same directory.',
+    severity: 'warn',
+    from: {
+      path: '^src/service/team/(types|requests|create-request|store|errors)\\.ts$',
+    },
+    to: {
+      path: '^src/service/team/(roster|leader|completion-targets|closing|team-summary|service|read-model|index|commands|mcp)\\.ts$',
+    },
+  },
+  {
+    // Named "core", not "service", so the rule id does not read as a
+    // reference to the old team-service/ directory this merge deleted.
+    name: 'service-team-core-not-to-collection',
+    comment:
+      'service/team/ service-tier files (roster, leader, ' +
+      'completion-targets, closing, team-summary, service) must not import ' +
+      'the collection-tier files in the same directory.',
+    severity: 'warn',
+    from: {
+      path: '^src/service/team/(roster|leader|completion-targets|closing|team-summary|service)\\.ts$',
+    },
+    to: {
+      path: '^src/service/team/(read-model|index|commands|mcp)\\.ts$',
+    },
+  },
+  {
     name: 'workflow-service-not-to-team',
     comment:
       'workflow-service/ only ever gets Team access through the narrow ' +
       'capability it is handed at construction, never by importing ' +
-      'team-collection/ or team-service/ directly (see ' +
-      'tests/workflow-service.test.ts).',
+      'service/team/ directly (see tests/workflow-service.test.ts).',
     severity: 'warn',
     from: { path: '^src/service/workflow-service/' },
     to: {
-      path: ['^src/service/team-collection/', '^src/service/team-service/'],
+      path: ['^src/service/team/'],
     },
   },
   {

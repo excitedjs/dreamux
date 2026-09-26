@@ -279,7 +279,7 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
 - `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/codex/src/runtime-support.ts`
@@ -346,9 +346,8 @@ Source:
 - `/packages/dreamux/src/agent-runtime/skill-sources.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 - `/packages/dreamux/src/service/agent/store.ts`
-- `/packages/dreamux/src/service/team-collection/create-request.ts`
-- `/packages/dreamux/src/service/team-collection/commands.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/team/commands.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
 - `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
@@ -386,7 +385,7 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/agent-runtime/host-context.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
 - `/packages/dreamux/src/service/agent/runtime-generation.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
@@ -1046,7 +1045,7 @@ Source:
 - `/packages/dreamux/src/service/agent/activity.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
 - `/packages/dreamux/src/service/agent/service.ts`
-- `/packages/dreamux/src/service/team-service/closing.ts`
+- `/packages/dreamux/src/service/team/closing.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 

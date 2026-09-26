@@ -429,7 +429,7 @@ Source:
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
 - `/packages/channel/feishu-channel/src/feishu-message.ts`
 - `/packages/channel/feishu-channel/src/feishu-session-ops.ts`
-- `/packages/dreamux/src/service/team-collection/commands.ts`
+- `/packages/dreamux/src/service/team/commands.ts`
 - `/packages/dreamux/src/service/channel-submission.ts`
 - `/packages/dreamux/src/service/submission-sources.ts`
 
@@ -1004,7 +1004,7 @@ Source:
 - `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/registry.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
 
 ### Collaboration Spaces and provisioning
 
@@ -1284,7 +1284,7 @@ Source:
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/`
 - `/packages/dreamux/src/service/agent/store.ts`
-- `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/team/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`
 - `/packages/dreamux/src/service/agent/service.ts`

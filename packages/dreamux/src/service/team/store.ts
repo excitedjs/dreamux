@@ -15,7 +15,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { TeamStateTeammateSummary } from '@excitedjs/dreamux-types';
 import { TransactionalStore } from '@excitedjs/dreamux-utils';
 
 import type { AgentEntityWorktreeIdentity } from '../agent/identity.js';
@@ -29,9 +28,7 @@ import {
   isTeamCreateRequestId,
 } from './create-request.js';
 import type { TeamStatus } from '@excitedjs/dreamux-types';
-import type { TeamRecord } from './types.js';
-import { validateTeamId } from './types.js';
-import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import { validateTeamId, type TeamRecord } from './types.js';
 
 export class TeamStore {
   /** One `TransactionalStore` per Team id, built lazily and held for the life
@@ -44,25 +41,6 @@ export class TeamStore {
       /** `<dispatcher>/team` — one child directory per Team. */
       root: string;
       dispatcherId: string;
-      coreEvents?: DispatcherCoreEventPublisher;
-      /**
-       * This Team's complete contained-Agent summary, asked for at publication
-       * time. The store owns no roster: a Team's Agents belong to their own
-       * owners, and this asks whichever of them is authoritative right now.
-       * The record goes with the question because it is the authority for
-       * which Agents this Team contains, starting with its leader's name.
-       *
-       * `null` means the roster could not be established, and no aggregate is
-       * published — an empty array is the answer "this Team has no Agents".
-       *
-       * It is awaited after the durable write rather than called from inside
-       * one, and it must never materialize a Team: this runs inside this
-       * Team's own `TransactionalStore` queue that materialization itself
-       * writes through.
-       */
-      roster?: (
-        team: TeamRecord,
-      ) => Promise<readonly TeamStateTeammateSummary[] | null>;
     },
   ) {}
 
@@ -184,7 +162,6 @@ export class TeamStore {
     };
     const result = await this.storeFor(team.team_id).update(
       (current) => (current !== null ? current : team),
-      (next, previous) => this.publishIfTransitioned(next, previous),
     );
     // `update`'s own no-op path returns the exact loaded reference when
     // `change` did not take the `: team` branch, so this is `true` if and
@@ -232,80 +209,13 @@ export class TeamStore {
           : {}),
         updated_at: Date.now(),
       };
-    }, (next, previous) => this.publishIfTransitioned(next, previous));
+    });
     // `change` above always throws on a null current and otherwise returns a
     // merged, non-null record, so this is never null.
     if (updated === null) {
       throw new Error(`Team ${JSON.stringify(teamId)} update lost its result`);
     }
     return updated;
-  }
-
-  /**
-   * Publish the record half of the aggregate exactly when this write made it
-   * true: unconditionally for a fresh creation (`previous === null`), or when
-   * `update`'s merge changed `status`. Shared by {@link create}'s and
-   * {@link update}'s `afterCommit`, which is the one place this store used to
-   * decide it twice.
-   */
-  private async publishIfTransitioned(
-    next: TeamRecord | null,
-    previous: TeamRecord | null,
-  ): Promise<void> {
-    if (next === null) return;
-    if (previous === null || next.status !== previous.status) {
-      await this.publishRecordState(next);
-    }
-  }
-
-  /**
-   * Publish the aggregate for a durable record transition.
-   *
-   * Every lifecycle change passes through this store, so this is where the
-   * record half of the aggregate is stated, timed by the durable write that
-   * produced it. The roster half is resolved from its authoritative owner
-   * first — after the write and inside the same serialized operation, so
-   * publications keep the order their transitions had.
-   */
-  private async publishRecordState(team: TeamRecord): Promise<void> {
-    const coreEvents = this.opts.coreEvents;
-    // Nobody is listening, so there is no fact to establish and no reason to
-    // read a roster for one. The same short-circuit the turn projection uses.
-    if (coreEvents === undefined || !coreEvents.hasSources()) return;
-    const teammates = (await this.opts.roster?.(team)) ?? null;
-    if (teammates === null) return;
-    this.publish(team, team.updated_at, teammates);
-  }
-
-  /**
-   * Republish the aggregate for a roster fact whose owner already holds it.
-   *
-   * Synchronous and IO-free by construction: the Team that owns the Agents
-   * states them. The timestamp is the identity transition that caused this
-   * republication, never the older record write the Team still sits on.
-   */
-  publishRosterState(
-    team: TeamRecord,
-    occurredAt: number,
-    teammates: readonly TeamStateTeammateSummary[],
-  ): void {
-    this.publish(team, occurredAt, teammates);
-  }
-
-  private publish(
-    team: TeamRecord,
-    occurredAt: number,
-    teammates: readonly TeamStateTeammateSummary[],
-  ): void {
-    this.opts.coreEvents?.publish(team.dispatcher_id, {
-      schemaVersion: 1,
-      kind: 'team.state',
-      occurredAt,
-      teamName: team.team_id,
-      leaderName: team.leader_name,
-      status: team.status,
-      teammates,
-    });
   }
 }
 

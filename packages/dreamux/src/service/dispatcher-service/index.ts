@@ -49,7 +49,7 @@ import { createConversationProjection } from '../dispatcher-core-events/conversa
 import type { AgentService } from '../agent/service.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import { WorktreeManager } from '../worktree/manager.js';
-import { TeamCollection } from '../team-collection/index.js';
+import { TeamCollection } from '../team/index.js';
 import { SchedulerService } from '../scheduler/service.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
@@ -62,8 +62,8 @@ import type {
   TeamDissolveReceipt,
   TeamDissolveRequesterKind,
   TeamHistoryQuery,
-} from '../team-collection/types.js';
-import type { TeamService } from '../team-service/index.js';
+} from '../team/types.js';
+import type { TeamService } from '../team/service.js';
 import type { TurnAdmission } from '../agent/admission.js';
 import type {
   DispatcherRuntimeStatus,
@@ -257,7 +257,7 @@ export class DispatcherService implements Dispatcher {
       completionDelivery,
       // A TeamLeader reports back to the dispatcher's own Agent; its Team's
       // TeamMates report to that leader, which the Team itself supplies.
-      dispatcherCompletionInitiator: () => Promise.resolve(this.mustAgent()),
+      leaderCompletionInitiator: () => Promise.resolve(this.mustAgent()),
       admitOperation: (task) => this.admitOperation(task),
       // Every tap and every plugin-added interceptor on `hooks.team` is
       // isolated at hook construction (`isolatedTaps`), so `call` never
@@ -395,12 +395,6 @@ export class DispatcherService implements Dispatcher {
       // settling during shutdown still produces facts a Channel should see.
       // They are revoked once, here, immediately before the sessions holding
       // them are closed.
-      // Before channels close: a `created` tap's work (binding a chat to the
-      // new Team, say) needs a live channel. Runtimes are stopped and
-      // admission is closed, so a tap cannot hang on a Turn or a Command.
-      await collectShutdownFailure(failures, () =>
-        this.teams.drainCreatedHooks(),
-      );
       this.coreEvents.revokeSources();
       await collectShutdownFailure(failures, () =>
         this.channels.closeAll(this.log),
@@ -413,11 +407,6 @@ export class DispatcherService implements Dispatcher {
         this.inputSources.waitForSettledStart(),
       );
       await collectShutdownFailure(failures, () => this.admittedTasks.drain());
-      // Again after the admitted drain, which ends every create that could
-      // still start a `created` hook run.
-      await collectShutdownFailure(failures, () =>
-        this.teams.drainCreatedHooks(),
-      );
       await collectShutdownFailure(failures, () =>
         this.workflowOwner.stopAll(),
       );
@@ -537,6 +526,7 @@ export class DispatcherService implements Dispatcher {
     requestId: string;
     payloadHash: string;
     options: TeamCreateInput;
+    deliverCompletionToDispatcher: boolean;
   }) {
     return this.admitOperation(() => this.teams.createFromRequest(input));
   }

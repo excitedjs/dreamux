@@ -12,9 +12,12 @@ import {
 } from '../../agent-runtime/index.js';
 import type { ConfigReader } from '../../config/service.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
-import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from '../team-collection/create-request.js';
+import {
+  bundledSharedSkillRoot,
+  bundledTeamLeaderSkillRoot,
+} from '../../platform/paths.js';
 import type { AgentIdentityStore } from '../agent/store.js';
-import type { TeamServiceDeps } from './types.js';
+import type { TeamServiceDeps, TeamRecord } from './types.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
@@ -24,8 +27,24 @@ import type {
 import { childAgentRuntimeId } from '../agent/runtime-id.js';
 import type { AgentService } from '../agent/service.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';
-import type { TeamRecord } from '../team-collection/types.js';
 import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
+
+/**
+ * The TeamLeader skill roots Core always injects. A caller's `skill_sources`
+ * extend these; they can never remove them.
+ */
+export const TEAM_LEADER_REQUIRED_SKILL_SOURCES = [
+  {
+    name: 'team-leader',
+    path: bundledTeamLeaderSkillRoot(),
+    source: 'dreamux-core',
+  },
+  {
+    name: 'shared',
+    path: bundledSharedSkillRoot(),
+    source: 'dreamux-core',
+  },
+] as const;
 
 export interface TeamLeaderAgentDeps {
   dispatcherId: string;

@@ -1,11 +1,9 @@
 import type {
-  CompletionDeliveryPolicy,
   CompletionInitiator,
   PreparedCompletionDelivery,
   PreparedCompletionFact,
 } from '../completion-router/index.js';
-import { isTeamUnavailable } from '../team-collection/errors.js';
-import type { TurnCompletionDelivery } from '../agent/turn.js';
+import { isTeamUnavailable } from './errors.js';
 
 export interface TeamCompletionTargetDeps {
   /** Run one delivery step inside the Team's work fence. */
@@ -72,19 +70,4 @@ function unsupportedCompletion(): PreparedCompletionDelivery {
       reason,
     }),
   });
-}
-
-/**
- * Where this Team's own leader reports: the dispatcher Agent that owns the
- * Team, resolved once and captured as the delivery closure a leader turn
- * carries. `null` means nobody Core-side is waiting for that turn.
- */
-export async function resolveTeamLeaderCompletionDelivery(deps: {
-  initiator: () => Promise<CompletionInitiator | null>;
-  completionDelivery: CompletionDeliveryPolicy;
-}): Promise<TurnCompletionDelivery | null> {
-  const initiator = await deps.initiator();
-  if (initiator === null) return null;
-  return (completion, fact) =>
-    deps.completionDelivery.deliverRuntime(initiator, completion, fact);
 }

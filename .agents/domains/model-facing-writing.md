@@ -10,12 +10,12 @@ Current source owners:
 
 - `/packages/dreamux/skills/`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/dreamux/src/service/mcp/tool-metadata.ts` (the shared `repo` input and its property descriptions)
 - `/packages/dreamux/src/service/agent/mcp.ts`
 - `/packages/dreamux/src/service/agent/mcp-tool-descriptors.ts`
 - `/packages/dreamux/src/service/agent/system-prompt.ts` (what a TeamMate is told about itself)
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/channel/feishu-channel/src/tools/`

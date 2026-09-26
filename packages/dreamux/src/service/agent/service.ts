@@ -152,6 +152,33 @@ export class AgentService {
     return this.phase === 'closed' && this.lockToken === null;
   }
 
+  /**
+   * Once true, a caller holding this instance across a `close()` call may
+   * drop it and rebuild fresh from disk next time, whether or not the close's
+   * own durable write landed.
+   *
+   * `isRetired()` alone under-reports this: a close whose runtime stop
+   * succeeds but whose identity write then fails (a transient disk error)
+   * leaves the phase at `'closing'` forever in this process, and a caller
+   * still keying off `isRetired()` would keep re-serving that same stuck
+   * instance instead of forgetting it. Requiring `hasNoRuntimeAuthority()`
+   * alongside `'closing'` — the same pairing {@link effectiveIdentityStatus}
+   * already uses to report that case as `'stopped'` — is what keeps this
+   * false for a *different* `'closing'` cause: a failed start whose own
+   * rollback stop could not prove the native runtime dead
+   * (`RuntimeTerminationUnproven`) leaves `this.runtime` set precisely so
+   * nothing forgets it while it might still be alive. Only a `close()` that
+   * got as far as fully releasing runtime authority may be forgotten here.
+   */
+  isSafeToForget(): boolean {
+    return (
+      this.lockToken === null &&
+      (this.phase === 'closed' ||
+        (this.phase === 'closing' &&
+          this.runtimeGeneration.hasNoRuntimeAuthority()))
+    );
+  }
+
   onClosed(
     listener: (fact: TeammateClosedFact) => void | Promise<void>,
   ): ClosedSubscription {

@@ -34,8 +34,7 @@ host.hooks.dispatcher            after a DispatcherService is constructed
    ├─ beforeLaunch               each Dispatcher Agent construction
    └─ team                       after a TeamService is constructed (create and rebuild)
       └─ team.hooks
-         ├─ beforeTeamLeaderLaunch   each TeamLeader Agent construction
-         └─ created                  once, after a new Team is running and reachable
+         └─ beforeTeamLeaderLaunch   each TeamLeader Agent construction
 host.hooks.plugin.for(name)      once, with plugin <name>'s api, at the end of loading
 ```
 
@@ -43,9 +42,8 @@ host.hooks.plugin.for(name)      once, with plugin <name>'s api, at the end of l
 |---|---|---|---|
 | `host.hooks.dispatcher` | `Dispatchers.get` (`/packages/dreamux/src/service/dispatchers/index.ts`), after the service is cached | once per Dispatcher object, including a disabled Dispatcher a Command materializes | again for the cached object |
 | `dispatcher.hooks.beforeLaunch` | `createDispatcherAgent` (`/packages/dreamux/src/service/dispatcher-service/agent.ts`) | each Dispatcher input-source start | a runtime process restart inside the same Agent |
-| `dispatcher.hooks.team` | `TeamService` `createNew` and `rebuild` (`/packages/dreamux/src/service/team-service/index.ts`), through the `announceTeam` dep | create (before the Team record is written) and rebuild; `ctx.origin` says which | a replayed `request_id` (never reaches `createNew`) |
-| `team.hooks.beforeTeamLeaderLaunch` | `restoreTeamLeaderAgentForTeam` (`/packages/dreamux/src/service/team-service/leader-agent.ts`) | create, rebuild, lazy TeamLeader materialization, and creation-failure cleanup when it adopts a durable leader to close it | a runtime process restart inside the same AgentService |
-| `team.hooks.created` | `TeamRuntimeRegistry.createTeam` (`/packages/dreamux/src/service/team-collection/runtime-registry.ts`), after `publish`, as a background task | once per newly created Team, with the create request id or `null` | rebuild, failed creation, a name-taken discard, a replayed request |
+| `dispatcher.hooks.team` | `TeamService` `createNew` and `rebuild` (`/packages/dreamux/src/service/team/service.ts`), through the `announceTeam` dep | create (before the Team record is written) and rebuild; `ctx.origin` says which | a replayed `request_id` (never reaches `createNew`) |
+| `team.hooks.beforeTeamLeaderLaunch` | `restoreTeamLeaderAgentForTeam` (`/packages/dreamux/src/service/team/leader.ts`) | create, rebuild, lazy TeamLeader materialization, and creation-failure cleanup when it adopts a durable leader to close it | a runtime process restart inside the same AgentService |
 
 Semantics that follow from the sites:
 
@@ -55,25 +53,19 @@ Semantics that follow from the sites:
 - `dispatcher.hooks.team` fires before the Team record is written. When the
   name is taken, the caller discards that object and retries with another
   name. The contract therefore says a `team` tap only taps the Team's own
-  hooks: the discarded object never reaches TeamLeader construction or
-  `created`, so its taps never fire and no revocation signal is needed.
-- `created` fires after `publish`, not at the `running` record write inside
-  `createNew`. Before `publish` the Team is still only in the registry's
-  in-flight construction map, so a `created` tap that reached this Team through
-  a Command (`team.submit`) would join the construction that is waiting on the
-  tap. After `publish` the registry's `get` answers from its cache first.
-- `created` does not hold up the create reply: the registry starts it without
-  awaiting and tracks it. Dispatcher stop waits for runs in flight before it
-  closes channels (a `created` tap may bind a chat to the Team), and again
-  after the admitted-work drain, which ends every create that could still
-  start one.
+  hooks: the discarded object never reaches TeamLeader construction, so its
+  taps never fire and no revocation signal is needed.
 - `beforeTeamLeaderLaunch` has a fourth trigger besides create, rebuild and
   lazy materialization: when Team creation fails after the TeamLeader
   identity was persisted, `closing.abandonCreation` adopts that durable leader
   through `restoreTeamLeaderAgentForTeam` so it can be stopped cleanly. The
   launch hook therefore runs once on a Team that is being closed; a tap that
   counts launches in its own state sees that one.
-- No TeamMate launch hook and no Team close hook exist.
+- No TeamMate launch hook and no Team close hook exist. There is also no
+  post-creation hook (R48 deleted `team.hooks.created`, its background
+  scheduling, and the shutdown drain that awaited it): a fact after an action
+  is an event, and the event stream is where that belongs if a need for it
+  ever appears, not a hook plugins tap.
 
 `Dispatcher.cwd` is a `string`: config parsing requires a non-empty
 `dispatchers[].cwd` on every entry, enabled or not, so a disabled Dispatcher a
@@ -160,8 +152,8 @@ with `plugin: <name>`.
   interceptor's owner. No call site (`Dispatchers.get`, the `announceTeam`
   dep, `composeLaunchDraft`, api publication) needs its own catch: every hook
   runs with plain `hook.call` / `hook.promise`. This keeps the "never throws"
-  contracts on `announceTeam` and `fireCreated`'s caller true regardless of
-  which mechanism — a tap or an interceptor — a plugin used.
+  contract on `announceTeam`'s caller true regardless of which mechanism — a
+  tap or an interceptor — a plugin used.
 - Runtime hooks:
   - `SyncHook` taps (`dispatcher`, `team`): a throw is logged with the owning
     plugin and skipped; lower-level taps it registered before throwing stay.
@@ -184,8 +176,6 @@ with `plugin: <name>`.
     the fenced state: a plugin's own interceptor on a launch hook sees that
     same opaque object and cannot reach the fence or the accumulated draft, so
     it cannot push a skill root that skips the per-tap fence.
-  - `created`: a rejection is logged with the owning plugin and skipped,
-    never propagated.
 
 ## Launch Draft Composition
 

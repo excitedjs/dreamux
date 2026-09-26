@@ -28,7 +28,7 @@ import {
   arrayOf,
   objectSchema,
 } from '../../command/schema.js';
-import { optionalTeamNameParam } from '../team-collection/types.js';
+import { optionalTeamNameParam } from '../team/requests.js';
 import { cronJobResult, cronListResult, type CronJob } from './store.js';
 import {
   cronCreateRequest,

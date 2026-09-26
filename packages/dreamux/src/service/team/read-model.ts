@@ -8,24 +8,25 @@ import {
   clampHistoryLimit,
   decodeCursor,
   encodeCursor,
+  matchesGrepText,
   previewText,
 } from '../../platform/history-page.js';
 import { teamMateCollectionDir } from '../../platform/paths.js';
 import { toStatus } from '../agent/records.js';
-import type { TeamService } from '../team-service/index.js';
-import { teamSummary } from '../team-service/team-summary.js';
+import type { TeamService } from './service.js';
+import { teamSummary } from './team-summary.js';
 import type {
   AgentEntityIdentity,
   AgentEntityIdentityStatus,
 } from '../agent/identity.js';
-import { matchesTeamHistoryQuery } from './read-helpers.js';
 import type { TeamStore } from './store.js';
-import type {
-  TeamHistoryQuery,
-  TeamHistoryResult,
-  TeamHistoryRow,
-  TeamListRow,
-  TeamRecord,
+import {
+  validateTeamId,
+  type TeamHistoryQuery,
+  type TeamHistoryResult,
+  type TeamHistoryRow,
+  type TeamListRow,
+  type TeamRecord,
 } from './types.js';
 
 /** Store-only Team list/summary/history projection; never materializes a runtime. */
@@ -175,4 +176,43 @@ export class TeamCollectionReadModel {
       }).names()
     ).length;
   }
+}
+
+function matchesTeamHistoryQuery(
+  row: TeamHistoryRow,
+  input: Omit<TeamHistoryQuery, 'dispatcherId'>,
+): boolean {
+  if (
+    input.name !== undefined &&
+    row.team_name !== validateTeamId(input.name)
+  ) {
+    return false;
+  }
+  if (input.status !== undefined && row.status !== input.status) return false;
+  if (input.repo !== undefined) {
+    const needle = input.repo.toLowerCase();
+    const hit =
+      row.source_repo !== null &&
+      row.source_repo.toLowerCase().includes(needle);
+    if (!hit) return false;
+  }
+  if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {
+    return false;
+  }
+  if (input.since !== undefined && row.updated_at < input.since) return false;
+  if (input.until !== undefined && row.updated_at > input.until) return false;
+  return true;
+}
+
+function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
+  return matchesGrepText(
+    [
+      row.team_name,
+      row.intent,
+      row.source_repo,
+      row.leader_name,
+      row.close_note,
+    ],
+    grep,
+  );
 }

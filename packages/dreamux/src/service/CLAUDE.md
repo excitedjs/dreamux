@@ -78,25 +78,37 @@ the Team.
   in-process `invoke` port only; there is no public CLI wrapper, since that
   surface is reserved for host lifecycle operations. The shared output DTO is
   `ChannelMetadata` in `channel-service/types.ts`.
-- **`team-collection/`** — `TeamCollection` owns the Team store, worktrees,
-  create/list/history, and the Team Commands and MCP delegate.
-  `runtime-registry.ts` owns materialization: one construction per team id,
-  shared by create and rebuild, plus the cache and the private scheduler
-  handles. `read-model.ts` projects a Team that is not materialized;
-  `worktree-cleanup.ts` finishes a closed Team's reclamation from its record
-  alone; `create-request.ts` decides replays against the record that answered.
-- **`team-service/`** — `TeamService`, the single per-Team entity. It holds a
-  handle onto its Team's `TransactionalStore<TeamRecord | null>` — the
-  committed record itself lives in `TeamStore`, one store per Team id, for the
-  collection's life, so `TeamService` keeps no separate copy — plus the
-  contained TeamLeader, the Team-scoped member collection, Workflows, the Team
-  scheduler, and the dissolve it submits and then runs behind the receipt.
-  `closing.ts` owns the stop-and-close sequence and the host sweep; `collaborators.ts`,
-  `completion-targets.ts`, `leader-agent.ts`, `roster-projection.ts`, and
-  `team-summary.ts` are its parts; its retirement broadcast uses the shared
-  `ClosedFactPublisher`.
+- **`team/`** — one directory, files ordered by R7's declared direction: store
+  → service → collection. Two `warn`-severity `.dependency-cruiser.cjs` rules
+  hold that direction — a store-tier file never imports a service- or
+  collection-tier file, and a service-tier file never imports a
+  collection-tier file. The store tier (`types.ts`, `requests.ts`,
+  `create-request.ts`, `store.ts`, `errors.ts`) is `TeamRecord`'s persisted
+  shape, `team.create` replay bounds, and the durable `TeamStore` itself — one
+  `TransactionalStore<TeamRecord | null>` per Team id, holding no
+  event-publish responsibility of its own. The service tier (`roster.ts`,
+  `leader.ts`, `completion-targets.ts`, `closing.ts`, `team-summary.ts`,
+  `service.ts`) is `TeamService`, the single per-Team entity: its constructor
+  builds the contained TeamLeader (`leader.ts`'s factory), its Team-scoped
+  `TeammateCollection`, its Workflows, and its Team scheduler directly — there
+  is no separate collaborators file — and it holds `roster.ts`'s
+  `TeamRosterProjection`, which publishes both `teammate.state` and
+  `team.state` itself on every relevant transition (a Team's aggregate event
+  has no other source to ask). `closing.ts`'s `TeamClosing` owns the
+  stop-and-close dissolve sequence, the abandoned-creation cleanup, and the
+  host sweep, all taking the TeamLeader as a plain argument rather than
+  through a leader-holder callback; its retirement broadcast uses the shared
+  `ClosedFactPublisher`. The collection tier (`read-model.ts`, `index.ts`,
+  `commands.ts`, `mcp.ts`) is `TeamCollection`: one materialization cache
+  (construction dedup, live-instance eviction, and the closed-Team worktree
+  reclamation sweep merged into the same class) plus `read-model.ts`'s
+  not-materialized Team projection and the Team Commands and MCP delegate.
   `DispatcherService.team()` returns a `TeamLeaderHandle` to admin/MCP
-  team-leader callers, never the concrete `TeamService`.
+  team-leader callers, never the concrete `TeamService`. This directory merge
+  is a code-location, ownership, and internal-API change only: `record.json`'s
+  shape, field meanings, and owner are unchanged, so no
+  `packages/dreamux/skills/dispatcher/dreamux-maintenance/` update accompanies
+  it.
 - **`agent/` + `completion-router/`** — `agent/` is one directory, files
   ordered by R7's declared direction rather than by the class-plus-helpers
   rule above: store → service → collection. Two `warn`-severity
@@ -106,7 +118,7 @@ the Team.
   `store.ts`, `runtime-state.ts`, `activity.ts`, `records.ts`, `requests.ts`,
   `runtime-id.ts`) is neutral identity/activity/runtime-state persistence and
   history-query reading; it is never under a Collection, and it is shared —
-  `team-service/` and `dispatcher-service/` read it directly for the Team
+  `team/service.ts` and `dispatcher-service/` read it directly for the Team
   leader and the dispatcher agent, both of which live outside
   `TeammateCollection`. The service tier (`runtime-generation.ts`, `turn.ts`,
   `admission.ts`, `submission.ts`, `completion-renderer.ts`, `factory.ts`,
@@ -169,11 +181,16 @@ the Team.
   second owner of the same Team.
 - **Dissolve is a submission, and the durable close is its commit boundary.**
   The receipt says accepted and nothing more. Live children are stopped and
-  closed before the record says closed; anything irreversible that a still-open
-  Team would need — the cron store file — happens only after that commit, and a
-  failed commit gives the admissions back. `worktree.cleanup_state` plus
-  `worktree_cleanup_force` is the only restart-recovery authority; there is no
-  persisted dissolve state machine.
+  closed before the record says closed. Closing the scheduler deletes its cron
+  store file as part of that same close pass, before the durable commit runs —
+  not after — because a dissolve that stopped the scheduler and then failed to
+  commit must not leave jobs a later `start()` would arm again; that the jobs
+  stay gone from a Team which stayed open is the price of canceling them for
+  real. Any failure before the commit lands — stopping, closing, or the commit
+  itself — gives the reversible admissions (Workflows, scheduler) back.
+  `worktree.cleanup_state`
+  plus `worktree_cleanup_force` is the only restart-recovery authority; there
+  is no persisted dissolve state machine.
 - **A Team lends its directory, never its checkout.** The Team record is the
   single owner of the managed checkout and of what happened to it. A member
   that runs in that directory records a plain reuse-cwd workspace, so it can

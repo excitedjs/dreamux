@@ -26,7 +26,7 @@ dispatcher.
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 
@@ -95,7 +95,7 @@ missing-runtime policy of its own.
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
 
 ## Startup And Teardown
@@ -108,19 +108,21 @@ are resident for non-closed Teams, but TeamLeader runtimes are not started just
 to arm cron, and closed Teams are not armed.
 
 Dissolving a Team stops its scheduler with the rest of its resources and deletes
-that Team's cron store file **after** the closed record is durable, so a failed
-close leaves the still-open Team its jobs, and a successful one cannot let
-scheduled work reattach to a later same-name Team with a fresh leader identity.
-Deleting the store file loads it first, so a cron store that fails its own
-version/shape check at that exact moment fails the delete too — one of the
-dissolve's ordinary collected cleanup-step failures, handled the same way as
-any other resource that would not close.
+that Team's cron store file as part of that same close pass, **before** the
+closed record is durable: a dissolve that stopped the scheduler must not leave
+jobs a later `start()` could rearm, so the jobs stay gone even when the commit
+that follows fails and leaves the Team open. A successful dissolve, for the
+identical reason, cannot let scheduled work reattach to a later same-name Team
+with a fresh leader identity. Deleting the store file loads it first, so a cron
+store that fails its own version/shape check at that exact moment fails the
+delete too — one of the dissolve's ordinary collected cleanup-step failures,
+handled the same way as any other resource that would not close.
 
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/input-source-lifecycle.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
-- `/packages/dreamux/src/service/team-service/closing.ts`
+- `/packages/dreamux/src/service/team/service.ts`
+- `/packages/dreamux/src/service/team/closing.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 
 ## MCP Surface

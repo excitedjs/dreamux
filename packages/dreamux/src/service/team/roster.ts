@@ -9,8 +9,7 @@ import type {
   AgentEntityRuntimeStatus,
 } from '../agent/identity.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import type { TeamStore } from '../team-collection/store.js';
-import type { TeamRecord } from '../team-collection/types.js';
+import type { TeamRecord } from './types.js';
 
 /**
  * One Team's contained Agents, as the aggregate event reports them.
@@ -28,14 +27,14 @@ export class TeamRosterProjection {
   constructor(
     private readonly deps: {
       teamId: string;
-      store: TeamStore;
       coreEvents: DispatcherCoreEventPublisher;
       /**
-       * The Team record this projection is published against. `publish`
-       * below is only ever reached from an identity's `onPersisted` hook,
-       * which fires no earlier than the Team's own record has already been
-       * published or loaded (`TeamService` wires this accessor only after
-       * that point) — so this never runs before there is a record to read.
+       * The Team record this projection is published against. Reached from
+       * an identity's `onPersisted` hook (`publish`) and directly from
+       * `TeamService`'s own record write (`publishTeamState`); both run no
+       * earlier than the Team's own record has already been published or
+       * loaded (`TeamService` wires this accessor only after that point), so
+       * neither ever runs before there is a record to read.
        */
       record: () => TeamRecord;
     },
@@ -65,11 +64,30 @@ export class TeamRosterProjection {
     // republished from the roster this call just updated rather than being
     // recomputed from any second source — and timed by the identity
     // transition that changed it, not by the Team record it still sits on.
-    this.deps.store.publishRosterState(
-      this.deps.record(),
-      identity.updated_at,
-      this.summary(),
-    );
+    this.publishTeamState(identity.updated_at);
+  }
+
+  /**
+   * Republish the Team aggregate alone, for a durable record transition with
+   * no identity change of its own (a status write `TeamService` made
+   * directly, e.g. creation or dissolve).
+   *
+   * The Team that owns this projection states its own aggregate: there is no
+   * second source to ask, since this roster is kept current by every
+   * identity's own persistence hook and this Team's status is always read
+   * fresh from its own record.
+   */
+  publishTeamState(occurredAt: number): void {
+    const team = this.deps.record();
+    this.deps.coreEvents.publish(team.dispatcher_id, {
+      schemaVersion: 1,
+      kind: 'team.state',
+      occurredAt,
+      teamName: team.team_id,
+      leaderName: team.leader_name,
+      status: team.status,
+      teammates: this.summary(),
+    });
   }
 
   /** This Team's contained Agents, as a fresh summary per publication. */

@@ -1,7 +1,7 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
-import type { TeamCollection } from '../team-collection/index.js';
+import type { TeamCollection } from '../team/index.js';
 
 /** Release the runtime authority this process took over its Teams. */
 export async function stopTeamRuntimes(input: {

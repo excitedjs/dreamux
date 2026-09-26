@@ -11,18 +11,11 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import { ValidationError, throwCallerMistake } from '../../command/errors.js';
-import {
-  mustString,
-  optionalInteger,
-  optionalNonBlankString,
-  optionalString,
-  type CommandPayload,
-} from '../../command/payload.js';
 import type { ConfigReader } from '../../config/service.js';
 import type { AgentNameRegistry } from '../agent/store.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';
+import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
@@ -30,13 +23,11 @@ import type {
   CompletionInitiator,
 } from '../completion-router/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
+import type { ClosedListener } from '../../platform/closed-fact.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { RuleViolation } from '../../platform/errors.js';
-import {
-  clampHistoryLimit,
-  decodeCursor,
-} from '../../platform/history-page.js';
+import type { TeamStore } from './store.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -60,8 +51,10 @@ export interface TeamCollectionOptions {
    * The dispatcher's own Agent, where a TeamLeader's completions are delivered.
    * A Team's own TeamMates report to their leader instead; each owner supplies
    * the recipient it knows rather than deriving one from the producing record.
+   * Named to match `TeamServiceDeps`'s own field for the same fact, so
+   * `TeamCollection.depsBase()` forwards it unchanged instead of remapping it.
    */
-  dispatcherCompletionInitiator: () => Promise<CompletionInitiator | null>;
+  leaderCompletionInitiator: () => Promise<CompletionInitiator | null>;
   admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
   /**
    * Build one TeamLeader's Agent-facing MCP surface.
@@ -182,6 +175,14 @@ export interface TeamCreateInput extends TeamCreateOptions {
 export interface TeamCreateAtNameInput extends TeamCreateOptions {
   name: string;
   createRequest?: TeamCreateRequestIdentity;
+  /**
+   * Whether the leader's first-turn completion (when `prompt` is given)
+   * reports back to the Dispatcher Agent. `team.submit`'s
+   * `deliverCompletionToDispatcher` states the same recipient decision for a
+   * follow-up turn; a create with a prompt needs the identical statement for
+   * its own first turn.
+   */
+  deliverCompletionToDispatcher: boolean;
 }
 
 export interface TeamDissolveInput {
@@ -288,20 +289,6 @@ export interface TeamHistoryResult {
   next_cursor: string | null;
 }
 
-/** Read an optional Team status filter, in this domain's own vocabulary. */
-export function optionalTeamStatus(
-  params: CommandPayload,
-  key: string,
-): TeamStatus | null {
-  const value = optionalString(params, key);
-  if (value === null) return null;
-  if (value === 'starting' || value === 'running' || value === 'closed')
-    return value;
-  throw new ValidationError(
-    `param '${key}' must be starting, running, or closed`,
-  );
-}
-
 export function validateTeamId(id: string): string {
   if (!TEAM_ID_PATTERN.test(id)) {
     throw new RuleViolation(
@@ -313,64 +300,85 @@ export function validateTeamId(id: string): string {
   return id;
 }
 
+export interface TeamServiceCreateInput {
+  teamId: string;
+  name: string;
+  /** Written into the published Team record; absent for internal creation. */
+  createRequest?: TeamCreateRequestIdentity | undefined;
+  prompt?: string | undefined;
+  /**
+   * Whether a given `prompt`'s first-turn completion reports back to the
+   * Dispatcher Agent; consulted only when `prompt` is present.
+   */
+  deliverCompletionToDispatcher: boolean;
+  leaderAgentRuntime: string;
+  intent: string;
+  identity?: string | undefined;
+  skillSources?: readonly AgentRuntimeSkillSource[] | undefined;
+  workspace: TeamMateSharedWorkspace;
+}
+
 /**
- * Read a required `team_name`, in the Team's own word for it.
+ * What one Team is built from.
  *
- * The Team's own name rule decides it, on every surface that takes a name, and
- * a name that breaks it is the caller's mistake rather than an unclassified
- * failure raised deep in a lookup. {@link validateTeamId} speaks in its own
- * words, so its sentence is kept and only its type is made the caller's.
+ * Collaborators and shared dispatcher facts only: nothing here reaches back
+ * into the collection that constructed the Team. A Team is handed what it
+ * needs, does its own work with it, and states what happened by publishing its
+ * own terminal fact — so its owner learns of its end without the Team ever
+ * calling upward into its owner's lifecycle.
+ *
+ * Everything but the three fields below is forwarded unchanged from the
+ * `TeamCollectionOptions` the owning `TeamCollection` was itself constructed
+ * with (`depsBase()` spreads it directly); `root` and `nameSuffixGenerator`
+ * are collection-only concerns a Team never needs.
  */
-export function teamNameParam(params: CommandPayload, key: string): string {
-  return assertTeamName(mustString(params, key));
+export type TeamServiceDeps = Omit<
+  TeamCollectionOptions,
+  'root' | 'nameSuffixGenerator'
+> & {
+  /**
+   * This Team's own root directory, bound by `TeamCollection` when it
+   * constructed this service. The TeamLeader's `identity.json`, the Team
+   * `record.json`, this Team's cron jobs, and its `teammate/` collection all sit
+   * directly under it — the Team never rebuilds the path from ids.
+   */
+  teamRoot: string;
+  store: TeamStore;
+  /**
+   * Finish the physical reclamation a closed Team's record still owes, through
+   * the same record-only path the collection's own startup sweep uses. A
+   * plain constructor-supplied value rather than a collection import: `store`
+   * ← `service` ← `collection` is the declared direction, so the service tier
+   * must not import the collection tier that holds this method.
+   */
+  settleWorktreeCleanup: (teamId: string) => Promise<void>;
+};
+
+/**
+ * One Team is over.
+ *
+ * Published once, after that Team's own record is durably `closed` — the only
+ * fact that makes it true. Its owner drops the exact instance that published
+ * it; nothing else is asked of a listener, and nothing a listener does can
+ * change what already happened.
+ */
+export interface TeamClosedFact {
+  readonly schema_version: 1;
+  readonly kind: 'team.closed';
+  readonly dispatcher_id: string;
+  readonly team_id: string;
+  readonly closed_at: number;
 }
 
-/** The same read where the field is optional; absent stays absent. */
-export function optionalTeamNameParam(
-  params: CommandPayload,
-  key: string,
-): string | null {
-  const value = optionalNonBlankString(params, key);
-  return value === null ? null : assertTeamName(value);
-}
+export type TeamClosedListener = ClosedListener<TeamClosedFact>;
 
-function assertTeamName(value: string): string {
-  try {
-    return validateTeamId(value);
-  } catch (error) {
-    throwCallerMistake(error);
-  }
-}
-
-/** The Team recovery search, as every surface asks it. */
-export function teamHistoryQuery(params: CommandPayload): TeamHistoryQuery {
-  // Validated here rather than deep in the record scan: a filter naming an
-  // impossible Team is the caller's mistake, not an unclassified failure.
-  const name = optionalTeamNameParam(params, 'team_name');
-  const status = optionalTeamStatus(params, 'status');
-  const repo = optionalString(params, 'repo');
-  const grep = optionalString(params, 'grep');
-  const since = optionalInteger(params, 'since');
-  const until = optionalInteger(params, 'until');
-  const limit = optionalInteger(params, 'limit');
-  const cursor = optionalString(params, 'cursor');
-  // The paging rules belong to the reader that applies them and are stated in
-  // its own words; asked here so a caller that sends an unusable page reads
-  // which rule it broke, instead of a failure the scan raises later.
-  try {
-    clampHistoryLimit(limit ?? undefined);
-    if (cursor !== null) decodeCursor(cursor);
-  } catch (error) {
-    throwCallerMistake(error);
-  }
-  return {
-    ...(name !== null ? { name } : {}),
-    ...(status !== null ? { status } : {}),
-    ...(repo !== null ? { repo } : {}),
-    ...(grep !== null ? { grep } : {}),
-    ...(since !== null ? { since } : {}),
-    ...(until !== null ? { until } : {}),
-    ...(limit !== null ? { limit } : {}),
-    ...(cursor !== null ? { cursor } : {}),
-  };
+/** The fact a Team publishes from the record that made it closed. */
+export function teamClosedFact(record: TeamRecord): TeamClosedFact {
+  return Object.freeze({
+    schema_version: 1,
+    kind: 'team.closed',
+    dispatcher_id: record.dispatcher_id,
+    team_id: record.team_id,
+    closed_at: record.closed_at ?? Date.now(),
+  });
 }

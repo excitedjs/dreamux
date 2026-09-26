@@ -271,8 +271,8 @@ downstream is notified.
 
 Source:
 
-- `/packages/dreamux/src/service/team-collection/store.ts`
-- `/packages/dreamux/src/service/team-collection/worktree-cleanup.ts`
+- `/packages/dreamux/src/service/team/store.ts`
+- `/packages/dreamux/src/service/team/index.ts`
 
 ### Channel-Owned State
 
@@ -459,7 +459,7 @@ Source:
 - `/packages/dreamux-utils/src/transactional-store.ts`
 - `/packages/dreamux-utils/src/fs.ts`
 - `/packages/dreamux/src/service/agent/store.ts`
-- `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/team/store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/dreamux/src/service/workflow-service/store.ts`
 - `/packages/channel/feishu-channel/src/routing/store.ts`

@@ -23,7 +23,7 @@ import type { ChannelService } from '../channel-service/index.js';
 import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { SchedulerService } from '../scheduler/service.js';
-import type { TeamCollection } from '../team-collection/index.js';
+import type { TeamCollection } from '../team/index.js';
 import type { TeammateCollection } from '../agent/index.js';
 import type { AgentService } from '../agent/service.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';

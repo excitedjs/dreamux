@@ -1057,6 +1057,16 @@ building the fixture through `dispatcherAgent(config, id)` instead of
   compile error.
   **Contract still holds; restore by dropping the `runtime,` line from both
   fixtures.** No behavior under test reads the field.
+  **Stage 6b Item 2 addendum:** the `'awaits an in-flight created hook run
+  before closing channels, on dispatcher shutdown'` case's own contract (the
+  `created` hook's shutdown drain) is superseded by R48 — `team.hooks.created`,
+  its scheduling, and the shutdown drain that awaited it are deleted
+  end-to-end, so this half of the above "contract still holds" note no longer
+  applies and must **not** be restored on the final test pass. The other two
+  cases named above (`host.hooks.dispatcher` firing once per Dispatcher, and
+  the hook-tree/tap-throws coverage for `beforeLaunch`/`team`/
+  `beforeTeamLeaderLaunch`) are untouched by R48 and still restoration-worthy
+  exactly as this entry already says.
 
 - **File:** `packages/dreamux/tests/channel-service.test.ts` —
   `describe('ChannelService')` (4 cases: `'build() hands each provider the
@@ -2942,3 +2952,56 @@ it passed (3/3 tests) without any edit. Stage 4a's whole diff is Feishu access/
 routing/chat-bots serialization plus the `dreamux-utils` storage primitive; it
 never touches the Codex submit path, `AgentRuntimeCreateContext`, or anything
 this file's live gate exercises. Nothing was deleted or logged for it here.
+
+## Stage 6b
+
+### Item 2 — R48: delete `team.hooks.created` end-to-end
+
+- **File / case:** `packages/plugins/bootstrap/tests/bootstrap.test.ts` —
+  `it('gives a TeamLeader the profile only when both files exist, and never
+  the guide')`.
+  **Contract pinned:** bundled two things — (a) a TeamLeader's
+  `beforeTeamLeaderLaunch` draft receives the identity+user profile content
+  only once both profile files exist, and never the assistant guide text (the
+  TeamLeader branch has no `else`, unlike the Dispatcher branch); (b)
+  `team.hooks.created.taps` is empty on a hand-built `fakeTeam()` fixture — an
+  incidental sanity assertion that the hook exists and starts untapped, not
+  itself exercising a real Team creation.
+  **Failure:** `fakeTeam()`'s literal built `created: new AsyncSeriesHook(...)`
+  against the `Team` type from `@excitedjs/dreamux-types`, now an
+  excess-property error once `Team['hooks']` drops `created` (this item);
+  `team.hooks.created.taps` in the case body is now a
+  property-does-not-exist error. R43 forbids trimming the one now-broken
+  assertion out of an `it()` to keep the rest compiling, so the whole case is
+  deleted rather than repaired.
+  **Half (b) is changed by R48 and must not be restored:** `Team['hooks']` no
+  longer has a `created` field at all, so there is nothing left for this
+  assertion to check.
+  **Half (a) still holds and is restoration-worthy at the final test pass:**
+  the profile-injection behavior itself (the case's other three assertions,
+  on `draft.instructions` and the absent `bootstrap.md` write) is unrelated to
+  `created` and unaffected by this item — restore the case with the
+  `created:` field and its one assertion dropped, keeping the
+  `writeProfile`/`launch(team.hooks.beforeTeamLeaderLaunch)` exercise as is.
+  **Fixture note (not itself a logged deletion):** `fakeTeam()`'s `created:`
+  field is removed as a plain fixture-builder fix (it pins no contract of its
+  own), matching every other fixture edit in this refactor.
+
+No other case in this stage's item touches `hooks.created`:
+`packages/dreamux/tests/dispatcher-plugin-hooks.test.ts`'s
+`'awaits an in-flight created hook run before closing channels, on
+dispatcher shutdown'` case was already deleted in an earlier stage (its
+Stage 2a — Item 6 log entry above carries this item's retroactive addendum);
+`packages/dreamux/tests/team-plugin-hooks.test.ts` has no `created` coverage
+left to delete (its own sibling case was already removed as Stage 2a — Item 2
+collateral, per that file's header comment); and
+`packages/dreamux/tests/plugin-hooks.test.ts`'s `describe('isolatedTaps
+(created)', ...)` cases exercise the generic `isolatedTaps`/`AsyncSeriesHook`
+wrapper mechanism itself, using the string `'created'` only as an example hook
+name — they never import or construct the real `Team` type, so `Team['hooks']`
+dropping its `created` field does not touch them; left untouched.
+
+**Issue #63 note:** `packages/dreamux/tests/codex-live.test.ts` is untouched
+by this item — deleting a background-only, publish-and-forget plugin hook and
+its shutdown drain does not reach the Codex submit path or any of
+`turn.ts`/`admission.ts`/`runtime-generation.ts`.

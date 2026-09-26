@@ -6,7 +6,7 @@ import type {
   SpawnTeamMateRequest,
   TeammateOps,
 } from '../agent/types.js';
-import type { TeamService } from '../team-service/index.js';
+import type { TeamService } from '../team/service.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 
 export interface TeamLeaderTeammateOps {

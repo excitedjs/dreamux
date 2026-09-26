@@ -75,7 +75,7 @@ single-flight, and the committed retirement fact.
 
 The dispatcher *has* an agent; it is not itself an Agent Runtime. Each
 `TeamService` directly builds and holds its TeamLeader `AgentService` through
-`team-service/leader-agent.ts`, using the identity store, worktree manager, and
+`team/leader.ts`, using the identity store, worktree manager, and
 completion-delivery policy its owning `TeamCollection` injects. The per-Team
 `TeammateCollection` is members-only: the TeamLeader lives at the Team root and
 is never cached in the collection's entity map. `DispatcherService.team()`
@@ -89,9 +89,9 @@ Source:
 
 - `/packages/dreamux/src/service/CLAUDE.md`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/team-collection/index.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/team/index.ts`
+- `/packages/dreamux/src/service/team/service.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
 - `/packages/dreamux/src/service/agent/service.ts`
 - `/packages/dreamux/src/service/agent/runtime-generation.ts`
 
@@ -146,7 +146,7 @@ Source:
 
 - `/packages/dreamux/src/service/agent/records.ts`
 - `/packages/dreamux/src/service/agent/requests.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
 - `/packages/dreamux/src/platform/paths.ts`
 
 ### TeamMate Model
@@ -274,9 +274,9 @@ derives its Team from the MCP descriptor and accepts no Team selector.
 
 Source:
 
-- `/packages/dreamux/src/service/team-collection/store.ts`
-- `/packages/dreamux/src/service/team-collection/create-request.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team/store.ts`
+- `/packages/dreamux/src/service/team/create-request.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/agent/store.ts`
 
 ### Dissolve
@@ -352,10 +352,9 @@ would make a host sweep touch entities it never ran.
 Source:
 
 - `/packages/dreamux/src/service/CLAUDE.md`
-- `/packages/dreamux/src/service/team-service/closing.ts`
-- `/packages/dreamux/src/service/team-collection/worktree-cleanup.ts`
-- `/packages/dreamux/src/service/team-collection/index.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team/closing.ts`
+- `/packages/dreamux/src/service/team/index.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/worktree/manager.ts`
 
 ### Completion Routing
@@ -475,7 +474,7 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
 - `/packages/dreamux/src/service/agent/mcp.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
 
 ## Invariants

@@ -210,9 +210,9 @@ function reportSkipped(
 }
 
 /**
- * Runtime hooks (`dispatcher`, `team`, `created`): a throwing or rejecting tap
- * is logged with its owner and the remaining taps still run. Async taps become
- * promise taps so a failure never reaches the hook's own callback.
+ * Runtime hooks (`dispatcher`, `team`): a throwing or rejecting tap is logged
+ * with its owner and the remaining taps still run. Async taps become promise
+ * taps so a failure never reaches the hook's own callback.
  */
 export function isolatedTaps<H extends InterceptableHook>(
   hook: H,

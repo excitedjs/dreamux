@@ -66,21 +66,21 @@ import {
 } from '../channel-submission.js';
 import {
   MAX_REQUEST_ID_LENGTH,
-  TEAM_LEADER_REQUIRED_SKILL_SOURCES,
   teamCreatePayloadHash,
 } from './create-request.js';
+import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
+import type {
+  TeamDissolveReceipt,
+  TeamHistoryQuery,
+  TeamHistoryResult,
+  TeamListRow,
+} from './types.js';
 import {
   teamHistoryQuery,
   teamNameParam,
-  type TeamDissolveReceipt,
-  type TeamHistoryQuery,
-  type TeamHistoryResult,
-  type TeamListRow,
-} from './types.js';
-import {
   teamSubmitResult,
   teamSubmitResultOutput,
-} from '../team-service/types.js';
+} from './requests.js';
 
 interface TeamCreateInput {
   command: TeamCreateCommand;
@@ -199,6 +199,10 @@ export function teamCommands(
           identity: command.leader.identity,
           ...(skillSources !== null ? { skillSources } : {}),
         },
+        // No external submission advances the Dispatcher Agent: `admin.sock`
+        // and a Channel Command both leave the TeamLeader to answer on its own
+        // Channel, exactly as `team.submit` already states for a follow-up turn.
+        deliverCompletionToDispatcher: false,
       });
     },
   };

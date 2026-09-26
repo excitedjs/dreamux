@@ -65,9 +65,6 @@ function fakeTeam(): Team {
     workspace: join(cwd, 'alpha'),
     hooks: Object.freeze({
       beforeTeamLeaderLaunch: new AsyncSeriesHook<[LaunchDraft]>(['draft']),
-      created: new AsyncSeriesHook<[{ readonly requestId: string | null }]>([
-        'ctx',
-      ]),
     }),
   };
 }
@@ -226,27 +223,6 @@ describe('bootstrap plugin', () => {
     ).rejects.toThrow();
 
     expect(draft.instructions).toEqual([]);
-  });
-
-  it('gives a TeamLeader the profile only when both files exist, and never the guide', async () => {
-    const dispatcher = fakeDispatcher(cwd);
-    announce(dispatcher);
-    const team = fakeTeam();
-    dispatcher.hooks.team.call(team, { origin: 'create' });
-
-    await writeProfile({ identity: 'I am the assistant.' });
-    expect(
-      (await launch(team.hooks.beforeTeamLeaderLaunch)).instructions,
-    ).toEqual([]);
-    // An incomplete profile touches no filesystem: the TeamLeader branch has
-    // no `else`, unlike the Dispatcher branch which writes the guide.
-    expect(await exists(join(cwd, '.workspace', 'bootstrap.md'))).toBe(false);
-
-    await writeProfile({ user: 'The user ships things.' });
-    const draft = await launch(team.hooks.beforeTeamLeaderLaunch);
-    expect(draft.instructions).toHaveLength(1);
-    expect(draft.instructions[0]).toContain('The user ships things.');
-    expect(team.hooks.created.taps).toEqual([]);
   });
 
   it('re-reads the profile files fresh on every beforeLaunch call, with no in-memory caching', async () => {
