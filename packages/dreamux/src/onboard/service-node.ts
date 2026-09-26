@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 
-import type { CommandRunner } from '../onboard/types.js';
+import type { CommandRunner } from '../platform/command-runner.js';
 
 /**
  * Minimum Node version the managed-service environment requires. The launchd

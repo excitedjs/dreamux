@@ -4,16 +4,14 @@ import type {
   AgentActivityReadContext,
   AgentActivityRecord,
 } from '@excitedjs/dreamux-types';
-import { readBytesAt } from '@excitedjs/dreamux-utils';
+import {
+  activityQueryFingerprint,
+  ActivityError,
+  readBytesAt,
+} from '@excitedjs/dreamux-utils';
 
 import type { DispatcherClaudeCodeConfig } from '../config.js';
-import {
-  claudeQueryFingerprint,
-  decodeClaudeCursor,
-  digest,
-  encodeClaudeCursor,
-} from './cursor.js';
-import { ClaudeActivityError } from './error.js';
+import { decodeClaudeCursor, digest, encodeClaudeCursor } from './cursor.js';
 import {
   openClaudeRollout,
   type ClaudeOpenedRollout,
@@ -85,14 +83,14 @@ export async function readClaudeRecentActivity(
   const opened = await openClaudeRollout(located.path, located.root);
   if (opened.dev !== located.dev || opened.ino !== located.ino) {
     await opened.handle.close();
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'unreadable',
       'Claude Code activity source changed after validation',
     );
   }
   try {
     await validateClaudeSessionEvidence(opened, sessionId);
-    const fingerprint = claudeQueryFingerprint(includeTools);
+    const fingerprint = activityQueryFingerprint(includeTools);
     const cursor =
       query.cursor === undefined
         ? null
@@ -117,7 +115,7 @@ export async function readClaudeRecentActivity(
       (projected.length > consumed.length || parsed.boundReached);
     const boundary = anchor ?? (hasOlder ? parsed.oldestProcessed : null);
     if (boundary !== null && cursor !== null && boundary.start >= cursor.pos) {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'scan_unsupported',
         'Claude Code activity pagination cannot make safe progress',
       );
@@ -150,7 +148,7 @@ export async function readClaudeRecentActivity(
 function resolveLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_RECORD_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORD_LIMIT) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'invalid',
       `Claude Code activity limit must be an integer in 1..${MAX_RECORD_LIMIT}`,
     );
@@ -193,7 +191,7 @@ function parseEntries(
     const raw = bytes.subarray(lineStart, rawEnd).toString('utf8');
     const value = parseRecord(raw);
     if (value === null && raw.trim() !== '') {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'invalid',
         'Claude Code activity contains an unreadable record',
       );
@@ -202,14 +200,14 @@ function parseEntries(
       const nativeSessionId = stringValue(value['sessionId']);
       if (nativeSessionId !== null) {
         if (sessionId !== null && nativeSessionId !== sessionId) {
-          throw new ClaudeActivityError(
+          throw new ActivityError(
             'session_mismatch',
             'Claude Code activity does not belong to the selected session',
           );
         }
       }
       if (isProjectableRecord(value) && nativeSessionId === null) {
-        throw new ClaudeActivityError(
+        throw new ActivityError(
           'invalid',
           'Claude Code activity record has no native session id',
         );
@@ -369,20 +367,20 @@ async function verifyCursorBoundaryDigest(
   const bytes = await readBytesAt(opened.handle, position, length);
   const newline = bytes.indexOf(0x0a, 0);
   if (bytes.length === 0) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
   }
   if (newline < 0) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Claude Code activity cursor boundary exceeds the bounded limit',
     );
   }
   const boundaryBytes = bytes.subarray(0, newline + 1);
   if (digest(boundaryBytes) !== expected) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
@@ -424,13 +422,13 @@ async function verifyRewriteEvidence(
       digest: cursor.rd,
     })
   ) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
   }
   if (cursor.rw > opened.size) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
@@ -445,7 +443,7 @@ async function verifyRewriteEvidence(
     true,
   );
   if (appended.position !== null) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
@@ -465,7 +463,7 @@ async function scanRewriteEvidence(
 ): Promise<RewriteEvidence> {
   const length = end - start;
   if (length > MAX_DECODED_BYTES) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Claude Code activity interval exceeds the bounded limit',
     );
@@ -475,7 +473,7 @@ async function scanRewriteEvidence(
   let evidenceDigest: string | null = null;
   let cursor = startsAtBoundary ? 0 : data.indexOf(0x0a) + 1;
   if (cursor === 0 && !startsAtBoundary && data.length > 0) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Claude Code activity cannot find a bounded record boundary',
     );
@@ -486,7 +484,7 @@ async function scanRewriteEvidence(
     const raw = data.subarray(cursor, newline).toString('utf8');
     const value = parseRecord(raw);
     if (value === null && raw.trim() !== '') {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'invalid',
         'Claude Code activity contains an unreadable record',
       );

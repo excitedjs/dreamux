@@ -36,12 +36,11 @@
 // whole-directory placements - both were set from a real dependency-cruiser
 // run against this file's own layer list, not by eyeballing the source tree:
 //
-//   - state/dispatcher-id.ts is a dependency-free id-format validator that
-//     platform/paths.ts calls directly, and it itself imports only
-//     platform/errors.ts for its error type - the real import graph makes it
-//     a platform-tier file. state/dispatcher-store.ts is a different file:
-//     it imports config/config.ts and is consumed starting at the
-//     service-primitives tier, so it sits there instead.
+//   - state/dispatcher-store.ts imports config/config.ts and is consumed
+//     starting at the service-primitives tier, so it sits there instead of
+//     with the directory it's declared in (state/, now this file's only
+//     member - dispatcher-id.ts moved to platform/ as a plain file, not a
+//     special case, since it had no state-tier dependency of its own).
 //   - src/mcp/{catalog,server,failure-text}.ts are the transport-level
 //     protocol/validation primitives service/mcp/leases.ts (a different,
 //     service-domain "mcp" directory) depends on - foundation-tier.
@@ -52,7 +51,7 @@
 const LAYERS = [
   {
     name: 'platform',
-    path: ['^src/platform/', '^src/state/dispatcher-id\\.ts$'],
+    path: ['^src/platform/'],
   },
   {
     name: 'command',
@@ -77,7 +76,7 @@ const LAYERS = [
       '^src/service/mcp/',
       '^src/service/completion-router/',
       '^src/service/dispatcher-core-events/',
-      '^src/service/(closed-fact|deduplicate|frozen-snapshot|in-flight-work|serial-queue|shutdown-errors|submission-sources|name-allocator|dispatcher-workspace|legacy-state|channel-submission)\\.ts$',
+      '^src/service/(submission-sources|name-allocator|dispatcher-workspace|channel-submission)\\.ts$',
       '^src/state/dispatcher-store\\.ts$',
     ],
   },
@@ -116,6 +115,7 @@ const LAYERS = [
       '^src/cli/',
       '^src/onboard/',
       '^src/daemon/',
+      '^src/server/',
       '^src/provider-diagnostics\\.ts$',
       '^src/server-commands\\.ts$',
       '^src/server\\.ts$',

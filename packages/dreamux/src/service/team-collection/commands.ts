@@ -19,6 +19,7 @@
 import type {
   AgentRuntimeInterruptOutcome,
   AgentRuntimeSkillSource,
+  CoreCommandContext,
   CoreCommandDefinition,
   TeamCreateCommand,
   TeamSummary,
@@ -27,7 +28,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
-import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
+import type { DispatcherService } from '../dispatcher-service/index.js';
 import {
   normalizeSkillSources,
   optionalParsedSkillSources,
@@ -109,7 +110,9 @@ interface TeamDissolveInput {
   force?: boolean;
 }
 
-export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
+export function teamCommands(
+  resolveDispatcher: (context: CoreCommandContext) => DispatcherService,
+): readonly AnyCoreCommand[] {
   const create: CoreCommandDefinition<
     'team.create',
     TeamCreateInput,
@@ -167,7 +170,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       };
     },
     async execute(context, input) {
-      const dispatcher = mustDispatcher(host, context);
+      const dispatcher = resolveDispatcher(context);
       const skillSources = await normalizeSkillSources(
         input.parsedSkillSources,
         {
@@ -227,7 +230,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       return { command };
     },
     async execute(context, input) {
-      const dispatcher = mustDispatcher(host, context);
+      const dispatcher = resolveDispatcher(context);
       const admission = await dispatcher.submitToTeamLeader({
         ...channelSubmitInput(input.command),
         teamId: input.command.team_name,
@@ -269,7 +272,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       };
     },
     async execute(context, input) {
-      return mustDispatcher(host, context).interruptTeamLeader(input.teamName);
+      return resolveDispatcher(context).interruptTeamLeader(input.teamName);
     },
   };
 
@@ -286,7 +289,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       commandPayload(payload);
     },
     async execute(context) {
-      const dispatcher = mustDispatcher(host, context);
+      const dispatcher = resolveDispatcher(context);
       return { teams: await dispatcher.listTeams() };
     },
   };
@@ -304,7 +307,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       return { teamName: teamNameParam(commandPayload(payload), 'team_name') };
     },
     async execute(context, input) {
-      const dispatcher = mustDispatcher(host, context);
+      const dispatcher = resolveDispatcher(context);
       return dispatcher.getTeamStatus(input.teamName);
     },
   };
@@ -334,7 +337,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       return { query: teamHistoryQuery(commandPayload(payload)) };
     },
     async execute(context, input) {
-      const dispatcher = mustDispatcher(host, context);
+      const dispatcher = resolveDispatcher(context);
       return dispatcher.getTeamHistory(input.query);
     },
   };
@@ -371,7 +374,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       };
     },
     async execute(context, input) {
-      const dispatcher = mustDispatcher(host, context);
+      const dispatcher = resolveDispatcher(context);
       return dispatcher.dissolveTeam({
         teamId: input.teamName,
         note: input.note,

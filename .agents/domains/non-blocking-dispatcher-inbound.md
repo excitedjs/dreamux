@@ -11,7 +11,7 @@
   `/packages/channel/feishu-channel/src/feishu-message.ts`,
   `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`,
   `/packages/dreamux/src/service/dispatcher-service/index.ts`,
-  `/packages/dreamux/src/channel/conversation-projection.ts`,
+  `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`,
   `/packages/dreamux/tests/codex-live.test.ts`,
   `/packages/agent-runtime/codex/tests/codex-runtime.test.ts`
 

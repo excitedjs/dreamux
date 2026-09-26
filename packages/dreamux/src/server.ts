@@ -24,24 +24,24 @@ import { resolveHomePathPrefixes } from './platform/home-paths.js';
 import { adminSocketPath } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
 import { createServerHooks, type ServerHooks } from './plugin/host.js';
-import { errorInfo } from './platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
   createAdminSocketServer,
   type AdminSocketServer,
 } from './admin/socket.js';
-import { createCoreCommandRegistry } from './command/catalog.js';
-import type { CoreCommandHost } from './command/host.js';
+import { createCoreCommandRegistry } from './server/command-catalog.js';
+import type { CoreCommandHost } from './server/command-host.js';
 import { McpLeaseRegistry } from './service/mcp/leases.js';
 import { CoreCommandPort } from './command/port.js';
-import { RestartIntentConsumer } from './daemon/restart-intent.js';
+import { RestartIntentConsumer } from './service/dispatcher-service/restart-intent.js';
 import { Dispatchers, type DispatcherService } from './service/index.js';
 import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from './service/shutdown-errors.js';
+} from './platform/shutdown-errors.js';
 
 export interface ServerOptions {
   /**
@@ -188,7 +188,10 @@ export class Server {
     // (production: the ConfigService.open registry; tests: an injected catalog
     // or a pre-loaded registry). Fail loud at construction, not at dispatcher start.
     if (opts.agentRuntimeProviderCatalog === undefined) {
-      assertRuntimeImplementationsLoaded(config.current(), this.providerRegistry);
+      assertRuntimeImplementationsLoaded(
+        config.current(),
+        this.providerRegistry,
+      );
     }
     this.log = opts.logger ?? createLogger({ name: 'server' });
     // Built after the logger it records unclassified tool failures through: an
@@ -216,8 +219,10 @@ export class Server {
   }
 
   /**
-   * The narrow process port Commands resolve their targets through. It is the
-   * only thing a domain-owned Command module sees of this class.
+   * The narrow process port `server/command-catalog.ts` resolves every
+   * domain's Command targets through. A domain-owned Command module never
+   * sees this class or this port directly — it takes only the narrower
+   * per-domain resolver the catalog derives from it.
    */
   private commandHost(): CoreCommandHost {
     return {
@@ -385,7 +390,7 @@ export class Server {
 /**
  * Every dispatcher's runtime provider must already have a loaded implementation
  * in `registry` (builtin and npm alike load through resolveConfig's single
- * dynamic path, `config/config.js`, which both `loadConfig` and
+ * dynamic path, `config/load.js`, which both `loadConfig` and
  * `ConfigService.open` run). A descriptor without an implementation — or a ref
  * that does not resolve at all — means the registry was not one that path
  * loaded. Fail loud.

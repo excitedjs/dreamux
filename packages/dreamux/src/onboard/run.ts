@@ -3,13 +3,15 @@ import { homedir } from 'node:os';
 
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
-  assertNoLegacyTomlOnly,
   globalConfigFile,
-  loadConfig,
   stringifyConfig,
   type DreamuxConfig,
-  type LoadConfigResult,
 } from '../config/config.js';
+import {
+  assertNoLegacyTomlOnly,
+  loadConfig,
+  type LoadConfigResult,
+} from '../config/load.js';
 import {
   dispatcherDir,
   logsRoot,
@@ -25,7 +27,10 @@ import {
   type ProviderDiagnosticCatalogs,
   type ProviderDiagnosticReport,
 } from '../provider-diagnostics.js';
-import { ExecaCommandRunner } from './commands.js';
+import {
+  ExecaCommandRunner,
+  type CommandRunner,
+} from '../platform/command-runner.js';
 import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
   ensureDirectory,
@@ -42,7 +47,6 @@ import {
   withUserLocalBinPath,
 } from './service.js';
 import type {
-  CommandRunner,
   OnboardAnswers,
   OnboardDoctorResult,
   OnboardFileLedger,

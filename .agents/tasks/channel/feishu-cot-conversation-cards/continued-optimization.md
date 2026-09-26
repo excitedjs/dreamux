@@ -140,7 +140,7 @@ mostly inert.
 - **Status:** Delivered 2026-09-02 — the capability stays, the process-global
   cache is gone, and all three defects are repaired.
 - **Files:** [`/packages/dreamux/src/platform/home-paths.ts`](/packages/dreamux/src/platform/home-paths.ts),
-  [`/packages/dreamux/src/channel/conversation-projection.ts`](/packages/dreamux/src/channel/conversation-projection.ts)
+  [`/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`](/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts)
 
 `home-paths.ts` holds a module-level mutable cache resolved once from
 `Server.start()`, plus a reset hook for tests. Callers that run before that

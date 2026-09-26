@@ -1,8 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 
-import { TransactionalStore } from '@excitedjs/dreamux-utils';
+import { errorMessage, TransactionalStore } from '@excitedjs/dreamux-utils';
 
-import { errorMessage } from '../../platform/error-info.js';
 import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
@@ -39,7 +38,10 @@ export class WorkflowRunStore {
   /** One `TransactionalStore` per run id, built lazily and held for the life
    * of this scope's collection — a run's record is read once and served from
    * memory afterward, until this run's own write path replaces it. */
-  private readonly stores = new Map<string, TransactionalStore<WorkflowRunRecord | null>>();
+  private readonly stores = new Map<
+    string,
+    TransactionalStore<WorkflowRunRecord | null>
+  >();
 
   constructor(private readonly scope: WorkflowScopePathInput) {}
 
@@ -54,7 +56,9 @@ export class WorkflowRunStore {
     return this.storeFor(runId);
   }
 
-  private storeFor(runId: string): TransactionalStore<WorkflowRunRecord | null> {
+  private storeFor(
+    runId: string,
+  ): TransactionalStore<WorkflowRunRecord | null> {
     const id = validateWorkflowRunId(runId);
     let store = this.stores.get(id);
     if (store === undefined) {

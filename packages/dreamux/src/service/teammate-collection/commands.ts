@@ -14,12 +14,12 @@
  * neither adapter reads the other.
  */
 import type {
+  CoreCommandContext,
   CoreCommandDefinition,
   JsonSchema,
 } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
-import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
 import {
   normalizeSkillSources,
   optionalParsedSkillSources,
@@ -63,7 +63,8 @@ import {
   agentEntityLastQuery,
   agentEntityNameParam,
 } from '../agent-entity/read-helpers.js';
-import type { TeamMateWorktreeRequest } from './types.js';
+import type { TeamMateWorktreeRequest } from '../worktree/types.js';
+import type { TeammateOps } from './types.js';
 
 /** The shared admission-outcome vocabulary of a prompt submission receipt. */
 const SUBMISSION_STATUS: JsonSchema = enumOf([
@@ -108,8 +109,16 @@ interface LastInput {
   query: AgentEntityLastQuery;
 }
 
+/** The capabilities `teammateCommands` needs from its addressed dispatcher. */
+interface TeammateCommandsDispatcher {
+  workspace(): Promise<string>;
+  readonly teammates: TeammateOps;
+}
+
 export function teammateCommands(
-  host: CoreCommandHost,
+  resolveDispatcher: (
+    context: CoreCommandContext,
+  ) => TeammateCommandsDispatcher,
 ): readonly AnyCoreCommand[] {
   const spawn: CoreCommandDefinition<
     'teammate.spawn',
@@ -151,7 +160,7 @@ export function teammateCommands(
       };
     },
     async execute(context, input) {
-      const dispatcher = mustDispatcher(host, context);
+      const dispatcher = resolveDispatcher(context);
       const skillSources = await normalizeSkillSources(input.skillSources);
       const repo = repoWorktree(input.repo);
       const cwd =
@@ -199,7 +208,7 @@ export function teammateCommands(
       };
     },
     async execute(context, input) {
-      return mustDispatcher(host, context).teammates.send({
+      return resolveDispatcher(context).teammates.send({
         name: input.name,
         prompt: input.prompt,
         ...(input.intent !== null ? { intent: input.intent } : {}),
@@ -227,7 +236,7 @@ export function teammateCommands(
       };
     },
     async execute(context, input) {
-      return mustDispatcher(host, context).teammates.close({
+      return resolveDispatcher(context).teammates.close({
         name: input.name,
         note: input.note,
       });
@@ -260,7 +269,7 @@ export function teammateCommands(
       return { query: historyQuery(commandPayload(payload)) };
     },
     async execute(context, input) {
-      return await mustDispatcher(host, context).teammates.history(input.query);
+      return await resolveDispatcher(context).teammates.history(input.query);
     },
   };
 
@@ -276,7 +285,7 @@ export function teammateCommands(
     parse: () => ({}),
     async execute(context) {
       return {
-        teammates: await mustDispatcher(host, context).teammates.list(),
+        teammates: await resolveDispatcher(context).teammates.list(),
       };
     },
   };
@@ -295,9 +304,7 @@ export function teammateCommands(
     },
     async execute(context, input) {
       return {
-        teammate: await mustDispatcher(host, context).teammates.status(
-          input.name,
-        ),
+        teammate: await resolveDispatcher(context).teammates.status(input.name),
       };
     },
   };
@@ -345,7 +352,7 @@ export function teammateCommands(
     },
     async execute(context, input) {
       try {
-        return await mustDispatcher(host, context).teammates.last(
+        return await resolveDispatcher(context).teammates.last(
           input.name,
           input.query,
         );
@@ -369,7 +376,7 @@ export function teammateCommands(
     ),
     parse: () => ({}),
     async execute(context) {
-      return await mustDispatcher(host, context).teammates.getCapabilities();
+      return await resolveDispatcher(context).teammates.getCapabilities();
     },
   };
 

@@ -49,7 +49,8 @@ Team's members are the same pair again, scoped to the Team.
   an* agent: a contained `TeammateService` built by `agent.ts` from the
   dispatcher root `identity.json`, structurally outside the `teammate/`
   collection so read chokepoints never enumerate it. The aggregate keeps
-  restart-notice injection (`restart-notice.ts`), role→MCP delegate assembly
+  restart-notice injection (`restart-notice.ts`, consuming the restart marker
+  owned by `restart-intent.ts`), role→MCP delegate assembly
   (`mcp-delegates.ts`), the admission/drain gate for external mutating work
   (`inbound-task-drain.ts`, `teammate-ops.ts`), the TeamLeader handle
   (`team-leader-handle.ts`), Team runtime stop containment
@@ -109,18 +110,18 @@ Team's members are the same pair again, scoped to the Team.
   modes), workspace resolution, and the repository-request reader that says
   what a caller may ask for a working directory.
 - **`scheduler/`, `workflow-service/`, `dispatcher-core-events/`, `mcp/`** —
-  cron, Workflow runs, the Core event publisher, and the shared MCP
+  cron, Workflow runs, the Core event publisher plus `conversation-projection.ts`
+  (the display-only stream of one Agent's conversation: input and activity
+  facts, keyed on the Agent and never on a submission), and the shared MCP
   descriptor/lease/projection helpers each delegate builds on.
-- **Root helpers** — `deduplicate.ts`, `serial-queue.ts`, `shutdown-errors.ts`,
-  `closed-fact.ts` (the one closed-fact broadcast a Team and a TeamMate each
-  publish their own fact through), `in-flight-work.ts` (the work a scope has
-  admitted and must join before it stops, counted the same way by the
-  dispatcher gate, a Workflow run, the Workflow service, and a TeamMate's
-  ordinary mutations),
-  `dispatcher-workspace.ts` (the dispatcher-cwd policy shared by startup, the
-  dispatcher service, `dreamux doctor`, and `worktree/`), `name-allocator.ts`,
-  `submission-sources.ts`, `channel-submission.ts`, and `frozen-snapshot.ts`
-  live at the root because no single service owns them.
+- **Root helpers** — `dispatcher-workspace.ts` (the dispatcher-cwd policy
+  shared by startup, the dispatcher service, `dreamux doctor`, and
+  `worktree/`), `name-allocator.ts`, `submission-sources.ts`, and
+  `channel-submission.ts` live at the root because no single service owns
+  them. The cross-domain primitives that used to live here too — the closed-fact
+  broadcast, in-flight-work admission counting, deduplication, the keyed serial
+  queue, and shutdown-failure aggregation — carried no service-layer
+  dependency of their own and moved to `platform/`.
 
 ## Invariants (why it's shaped this way)
 

@@ -9,18 +9,14 @@
  */
 import type {
   AgentRuntimeInterruptOutcome,
+  CoreCommandContext,
   CoreCommandDefinition,
   SubmitCommand,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
-import {
-  mustDispatcher,
-  mustDispatcherId,
-  mustDispatcherRow,
-  type CoreCommandHost,
-} from '../../command/host.js';
+import { mustDispatcherId } from '../../command/host.js';
 import { commandPayload } from '../../command/payload.js';
 import {
   NO_INPUT,
@@ -40,7 +36,12 @@ import {
   teamSubmitResult,
   teamSubmitResultOutput,
 } from '../team-service/types.js';
-import type { DispatcherSummary } from '../dispatcher-service/types.js';
+import type { DispatcherService } from '../dispatcher-service/index.js';
+import type {
+  DispatcherRuntimeStatus,
+  DispatcherSummary,
+} from '../dispatcher-service/types.js';
+import type { DispatcherRow } from '../../state/dispatcher-store.js';
 
 interface DispatcherSubmitInput {
   command: SubmitCommand;
@@ -58,8 +59,24 @@ interface DispatcherStatusResult {
   last_error: string | null;
 }
 
+/**
+ * Everything `dispatcherCommands` looks up on the process host. Narrower than
+ * `server/command-host.ts`'s full `CoreCommandHost`: only the members this
+ * namespace's four definitions actually call.
+ */
+interface DispatcherCommandsResolver {
+  summarize(): Promise<DispatcherSummary[]>;
+  dispatcherRuntimeStatus(
+    dispatcherId: string,
+  ): Promise<DispatcherRuntimeStatus>;
+  /** Throws when no dispatcher carries this id. */
+  dispatcherRow(dispatcherId: string): DispatcherRow;
+  /** Throws when the addressed dispatcher is not configured. */
+  dispatcher(context: CoreCommandContext): DispatcherService;
+}
+
 export function dispatcherCommands(
-  host: CoreCommandHost,
+  resolver: DispatcherCommandsResolver,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<
     'dispatcher.list',
@@ -74,7 +91,7 @@ export function dispatcherCommands(
       commandPayload(payload);
     },
     async execute() {
-      return { dispatchers: await host.summarize() };
+      return { dispatchers: await resolver.summarize() };
     },
   };
 
@@ -107,8 +124,8 @@ export function dispatcherCommands(
     },
     async execute(context) {
       const id = mustDispatcherId(context);
-      const row = mustDispatcherRow(host, id);
-      const runtime = await host.dispatcherRuntimeStatus(id);
+      const row = resolver.dispatcherRow(id);
+      const runtime = await resolver.dispatcherRuntimeStatus(id);
       return {
         dispatcher_id: row.dispatcher_id,
         channel_identity: row.channel_identity,
@@ -133,9 +150,9 @@ export function dispatcherCommands(
     },
     async execute(context, input) {
       return teamSubmitResult(
-        await mustDispatcher(host, context).submitToAgent(
-          channelSubmitInput(input.command),
-        ),
+        await resolver
+          .dispatcher(context)
+          .submitToAgent(channelSubmitInput(input.command)),
       );
     },
   };
@@ -155,7 +172,7 @@ export function dispatcherCommands(
       commandPayload(payload);
     },
     async execute(context) {
-      return mustDispatcher(host, context).interruptAgent();
+      return resolver.dispatcher(context).interruptAgent();
     },
   };
 

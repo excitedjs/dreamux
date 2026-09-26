@@ -16,7 +16,7 @@ import type {
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DispatcherChannelConfig } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { dispatcherCacheDir, dispatcherDir } from '../../platform/paths.js';
 
 export interface ChannelServiceOptions {

@@ -12,14 +12,7 @@ import type {
   AgentEntitySpawnResult,
   AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
-
-export interface TeamMateWorktreeRequest {
-  mode: 'reuse-cwd' | 'managed';
-  slug?: string | undefined;
-  base_ref?: string | undefined;
-  branch?: string | undefined;
-  cleanup?: 'keep' | 'delete-on-close' | undefined;
-}
+import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 
 export interface SpawnTeamMateInput {
   name: string;

@@ -19,7 +19,7 @@ import type { McpLeaseRegistry } from '../mcp/leases.js';
 import type { McpServerDelegate } from '../mcp/types.js';
 import type { AdmissionLedger } from './admission-ledger.js';
 import type { TurnAdmission } from './turn-recording.js';
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 
 export interface TeammateServiceDeps {
   config: ConfigReader;

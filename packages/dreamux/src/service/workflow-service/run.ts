@@ -1,10 +1,13 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { isUnsupportedFeatureError } from '@excitedjs/dreamux-utils';
+import {
+  errorInfo,
+  errorMessage,
+  isUnsupportedFeatureError,
+} from '@excitedjs/dreamux-utils';
 
-import { errorInfo, errorMessage } from '../../platform/error-info.js';
 import type { WorkflowCompletionFact } from '../completion-router/index.js';
-import { InFlightWork } from '../in-flight-work.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
 import type { CreateLockedTeammateOptions } from '../teammate-collection/index.js';

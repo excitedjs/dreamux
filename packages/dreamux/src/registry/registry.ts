@@ -14,9 +14,30 @@ import {
   parseProviderRef,
 } from './provider-ref.js';
 import type {
+  AgentRuntimeProvider,
+  ChannelProvider,
   ProviderDescriptor,
   ProviderKind,
 } from '@excitedjs/dreamux-types';
+
+/**
+ * A runnable provider implementation: the shape `register()` accepts for its
+ * `implementation` argument. Either neutral contract is valid regardless of
+ * `descriptor.kind` — the registry does not itself correlate the two, so this
+ * is a union, not a `descriptor.kind`-keyed mapping; a completely wrong
+ * implementation object (not a provider at all) is a compile error at the
+ * `register()` call site instead of only surfacing later at
+ * `getImplementation()`'s manual cast. Kind/contract agreement for the two
+ * package-loader call sites is enforced by each kind's `assertProvider`
+ * (`agent-runtime/external-provider.ts`, `channel/external-channel-provider.ts`)
+ * before `register()` runs; for the plugin-contribution call site
+ * (`registerBuiltinProvider`, called from `plugin/loader.ts`'s `contribute()`)
+ * there is no `assertProvider` step, so the typed `ContributeHost` closures in
+ * `plugin/loader.ts` (`channelProviders.contribute` / `agentRuntimeProviders.contribute`)
+ * are the only place that pairing is checked.
+ */
+export type ProviderImplementation =
+  AgentRuntimeProvider<unknown> | ChannelProvider<unknown>;
 
 /**
  * Provider kind and descriptor structural shapes are published by
@@ -88,18 +109,44 @@ export class ProviderRegistry {
   private readonly implementations = new Map<string, unknown>();
 
   /**
-   * Register a provider. Throws {@link DuplicateProviderError} on a repeated id.
+   * Register a provider descriptor, optionally together with its runnable
+   * implementation.
+   *
+   * Throws {@link DuplicateProviderError} / {@link DuplicateProviderRefError}
+   * on a repeated id/ref — unless `descriptor` is the exact object already
+   * registered under its id, in which case this call only adds
+   * `implementation`. That reuse is how a pre-registered builtin descriptor
+   * (`createBuiltinProviderRegistry`, registered with no `implementation`
+   * before its package loads) is later completed with the implementation its
+   * package loader resolves, without re-registering — the two are the same
+   * object by construction (`registry/provider-loader.ts`'s `seedDescriptor`
+   * reuses the looked-up descriptor rather than building a new one), so this
+   * is never mistaken for a second, conflicting registration under the same id.
+   *
+   * Throws {@link DuplicateProviderImplementationError} if `implementation` is
+   * given for a provider id that already has one.
    */
-  register(descriptor: ProviderDescriptor): void {
-    if (this.providers.has(descriptor.id)) {
+  register(
+    descriptor: ProviderDescriptor,
+    implementation?: ProviderImplementation,
+  ): void {
+    const existing = this.providers.get(descriptor.id);
+    if (existing === undefined) {
+      const canonicalRef = formatProviderRef(descriptor.ref);
+      if (this.providersByRef.has(canonicalRef)) {
+        throw new DuplicateProviderRefError(canonicalRef);
+      }
+      this.providers.set(descriptor.id, descriptor);
+      this.providersByRef.set(canonicalRef, descriptor);
+    } else if (existing !== descriptor) {
       throw new DuplicateProviderError(descriptor.id);
     }
-    const canonicalRef = formatProviderRef(descriptor.ref);
-    if (this.providersByRef.has(canonicalRef)) {
-      throw new DuplicateProviderRefError(canonicalRef);
+    if (implementation !== undefined) {
+      if (this.implementations.has(descriptor.id)) {
+        throw new DuplicateProviderImplementationError(descriptor.id);
+      }
+      this.implementations.set(descriptor.id, implementation);
     }
-    this.providers.set(descriptor.id, descriptor);
-    this.providersByRef.set(canonicalRef, descriptor);
   }
 
   has(id: string): boolean {
@@ -113,16 +160,6 @@ export class ProviderRegistry {
   hasRef(ref: string | ProviderRef): boolean {
     const parsed = typeof ref === 'string' ? parseProviderRef(ref) : ref;
     return this.providersByRef.has(formatProviderRef(parsed));
-  }
-
-  registerImplementation(providerId: string, implementation: unknown): void {
-    if (!this.providers.has(providerId)) {
-      throw new UnknownBuiltinProviderError(providerId);
-    }
-    if (this.implementations.has(providerId)) {
-      throw new DuplicateProviderImplementationError(providerId);
-    }
-    this.implementations.set(providerId, implementation);
   }
 
   getImplementation(providerId: string): unknown | undefined {

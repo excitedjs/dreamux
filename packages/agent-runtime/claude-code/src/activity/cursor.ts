@@ -1,6 +1,8 @@
-import { isScanDigest, scanDigest } from '@excitedjs/dreamux-utils';
-
-import { ClaudeActivityError } from './error.js';
+import {
+  ActivityError,
+  isScanDigest,
+  scanDigest,
+} from '@excitedjs/dreamux-utils';
 
 interface ClaudeCursorEnvelope {
   v: 1;
@@ -12,10 +14,6 @@ interface ClaudeCursorEnvelope {
   rw: number;
   rp: number | null;
   rd: string | null;
-}
-
-export function claudeQueryFingerprint(includeTools: boolean): string {
-  return scanDigest(JSON.stringify({ include_tools: includeTools }));
 }
 
 export function encodeClaudeCursor(input: {
@@ -51,20 +49,20 @@ export function decodeClaudeCursor(
     if (decoded.length === 0 || decoded.length > 3072) throw new Error('size');
     value = JSON.parse(decoded.toString('utf8'));
   } catch (error) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_invalid',
       'Claude Code activity cursor is invalid',
       { cause: error },
     );
   }
   if (!isEnvelope(value)) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_invalid',
       'Claude Code activity cursor is invalid',
     );
   }
   if (value.fp !== expectedFingerprint) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_query_mismatch',
       'Claude Code activity cursor belongs to a different query',
     );

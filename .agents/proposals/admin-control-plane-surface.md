@@ -52,7 +52,7 @@ rather than a method registry of its own:
   [`/packages/dreamux/src/admin/socket.ts`](/packages/dreamux/src/admin/socket.ts)
   and [`/packages/dreamux/src/admin/protocol.ts`](/packages/dreamux/src/admin/protocol.ts).
 - A Channel reaches the same registry in-process through its `invoke` port
-  ([`/packages/dreamux/src/channel/core-port.ts`](/packages/dreamux/src/channel/core-port.ts)),
+  ([`/packages/dreamux/src/service/channel-service/core-port.ts`](/packages/dreamux/src/service/channel-service/core-port.ts)),
   so no capability is admin-only and there is no second handler table.
 - Agent MCP is no longer a Command adapter. One generic stdio shim
   ([`/packages/dreamux/src/mcp/shim.ts`](/packages/dreamux/src/mcp/shim.ts))

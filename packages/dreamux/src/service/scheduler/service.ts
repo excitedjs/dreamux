@@ -2,7 +2,7 @@ import { Cron } from 'croner';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { RuleViolation } from '../../platform/errors.js';
 import { throwCallerMistake } from '../../command/errors.js';
 import { CronJobNotFoundError } from './errors.js';

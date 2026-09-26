@@ -15,7 +15,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 import { HookMap, SyncHook } from 'tapable';
 
-import { errorMessage } from '../platform/error-info.js';
+import { errorMessage } from '@excitedjs/dreamux-utils';
 import {
   isolatedTaps,
   loadPhaseTaps,

@@ -1,7 +1,7 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
+import type { RestartIntentConsumer } from '../dispatcher-service/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type {
   CoreCommandRegistry,
@@ -19,7 +19,7 @@ import type {
 } from '../dispatcher-service/types.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 
 export interface DispatchersOptions {
   config: ConfigReader;

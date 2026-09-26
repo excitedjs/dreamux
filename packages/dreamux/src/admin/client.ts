@@ -15,8 +15,9 @@
 import { connect, type Socket } from 'node:net';
 
 import type { JsonInvoker, JsonValue } from '@excitedjs/dreamux-types';
+import { errorMessage } from '@excitedjs/dreamux-utils';
 
-import { errorMessage, TransportError } from '../platform/errors.js';
+import { TransportError } from '../platform/errors.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
 

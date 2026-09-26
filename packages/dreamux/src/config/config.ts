@@ -1,56 +1,37 @@
-import { pathExists } from '../platform/fs-errors.js';
-
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { readFile, stat } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
+import type { ExternalAgentRuntimeModuleImporter } from '../agent-runtime/external-provider.js';
+import type { ExternalChannelModuleImporter } from '../channel/external-channel-provider.js';
+import type { ChannelProvider } from '@excitedjs/dreamux-types';
 import {
-  loadAgentRuntimeProviders,
-  type ExternalAgentRuntimeModuleImporter,
-} from '../agent-runtime/external-provider.js';
-import {
-  loadChannelProviders,
-  type ExternalChannelModuleImporter,
-} from '../channel/external-channel-provider.js';
-import {
-  createBuiltinProviderRegistry,
+  InvalidProviderRefError,
+  ReservedExternalProviderError,
+  UnknownBuiltinProviderError,
+  formatProviderRef,
+  type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
 import {
   describeType,
   isPlainObject,
-  publishFileExclusive,
   readProviderConfigObject,
+  redactSecretKeyValues,
   requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
-import { createLogger } from '../platform/logger.js';
+import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { RuleViolation } from '../platform/errors.js';
-import {
-  loadPlugins,
-  readPluginConfigs,
-  readPluginEntries,
-  type LoadedPlugin,
-  type PluginConfigEntry,
-  type PluginModuleImporter,
+import type {
+  PluginConfigEntry,
+  PluginModuleImporter,
 } from '../plugin/loader.js';
-import {
-  agentProviderRefs,
-  asChannelProvider,
-  channelProviderRefs,
-  expandHome,
-  readOptionalBoolean,
-  redactConfigSecrets,
-  resolveConfigProvider,
-} from './config-helpers.js';
-// eslint-disable-next-line no-restricted-syntax -- re-export shim preserving the pre-split import path (config-helpers.ts's single-importer overflow); callers still import expandHome from here
-export { expandHome } from './config-helpers.js';
 
 export interface DreamuxConfig {
   /**
    * The raw `plugins[]` entries, present iff the file has a `plugins` key.
    * Kept only so `stringifyConfig` round-trips them; the loaded plugins
-   * travel in {@link LoadConfigResult.plugins}.
+   * travel in `config/load.ts`'s `LoadConfigResult.plugins`.
    */
   plugins?: PluginConfigEntry[] | undefined;
   agents: Record<string, ResolvedAgentConfig>;
@@ -119,14 +100,6 @@ export interface ConfigPathOverrides {
   pluginModuleImporter?: PluginModuleImporter;
 }
 
-export interface LoadConfigResult {
-  config: DreamuxConfig;
-  configFile: string;
-  providerRegistry: ProviderRegistry;
-  /** Loaded and contributed, with configs read; `server` has not run. */
-  plugins: LoadedPlugin[];
-}
-
 export function globalConfigDir(overrides: ConfigPathOverrides = {}): string {
   if (overrides.configDir !== undefined) return overrides.configDir;
   return process.env['DREAMUX_CONFIG_DIR'] || join(homedir(), '.dreamux');
@@ -140,52 +113,6 @@ export function legacyGlobalConfigFile(
   overrides: ConfigPathOverrides = {},
 ): string {
   return join(globalConfigDir(overrides), 'config.toml');
-}
-
-export async function loadOrInitConfig(
-  overrides: ConfigPathOverrides = {},
-): Promise<{
-  config: DreamuxConfig;
-  configFile: string;
-  createdOnThisBoot: boolean;
-  providerRegistry: ProviderRegistry;
-  plugins: LoadedPlugin[];
-}> {
-  const file = globalConfigFile(overrides);
-  const providerRegistry = providerRegistryFor(overrides);
-  await assertNoLegacyTomlOnly(overrides);
-
-  const createdOnThisBoot = await publishFileExclusive(
-    file,
-    DEFAULT_CONFIG_JSON,
-    { mode: 0o600 },
-  );
-  const { config, plugins } = await readConfigFile(
-    file,
-    providerRegistry,
-    overrides,
-  );
-  return {
-    config,
-    configFile: file,
-    createdOnThisBoot,
-    providerRegistry,
-    plugins,
-  };
-}
-
-export async function loadConfig(
-  overrides: ConfigPathOverrides = {},
-): Promise<LoadConfigResult> {
-  const file = globalConfigFile(overrides);
-  const providerRegistry = providerRegistryFor(overrides);
-  await assertNoLegacyTomlOnly(overrides);
-  const { config, plugins } = await readConfigFile(
-    file,
-    providerRegistry,
-    overrides,
-  );
-  return { config, configFile: file, providerRegistry, plugins };
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {
@@ -227,117 +154,8 @@ export function redactConfigForDisplay(raw: string, file: string): string {
         'Fix the JSON syntax before running `dreamux config show`.',
     );
   }
-  redactConfigSecrets(parsed);
+  redactSecretKeyValues(parsed);
   return `${JSON.stringify(parsed, null, 2)}\n`;
-}
-
-/**
- * Open, parse, and resolve `config.json`: existence and mode checks, JSON
- * parse, one-time plugin load, then {@link resolveConfig}. Shared by the CLI
- * read path below (`doctor`/`onboard`/`loadConfig`) and `ConfigService`'s own
- * open sequence (`config/service.ts`'s `loadFile`), so "open the file" is
- * written once; `ConfigService` additionally holds `raw` (the parsed object,
- * returned here so it does not re-parse) for its `TransactionalStore`.
- */
-export async function readConfigFile(
-  file: string,
-  providerRegistry: ProviderRegistry,
-  overrides: ConfigPathOverrides,
-): Promise<{
-  raw: Record<string, unknown>;
-  config: DreamuxConfig;
-  plugins: LoadedPlugin[];
-}> {
-  if (!(await pathExists(file))) {
-    throw new Error(
-      `dreamux config is missing at ${file}.\n` +
-        'Run `dreamux onboard` to create it before starting the server.',
-    );
-  }
-  await assertConfigFileMode(file);
-  const text = await readFile(file, 'utf8');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `dreamux config parse error in ${file}: ${msg}\n` +
-        `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
-    );
-  }
-  // Plugins contribute providers config may address, so they load before
-  // provider refs are loaded and validated. A non-object top level is still
-  // reported by resolveConfig's mergeWithDefaults.
-  const entries = isPlainObject(parsed)
-    ? readPluginEntries(parsed, file)
-    : undefined;
-  const plugins = await loadPlugins({
-    registry: providerRegistry,
-    entries: entries ?? [],
-    // The serve file logger does not exist yet; contribute only registers.
-    logger: createLogger({ name: 'plugins' }),
-    importModule: overrides.pluginModuleImporter,
-  });
-  const config = await resolveConfig(
-    parsed,
-    file,
-    providerRegistry,
-    overrides,
-  );
-  readPluginConfigs(plugins, file);
-  return {
-    // resolveConfig's mergeWithDefaults already rejects a non-object top
-    // level before returning, so parsed is a plain object whenever this
-    // line runs.
-    raw: parsed as Record<string, unknown>,
-    config: entries === undefined ? config : { ...config, plugins: entries },
-    plugins,
-  };
-}
-
-/**
- * Loads the agent-runtime/channel providers `raw`'s `agents[]`/
- * `dispatchers[].channels[]` entries reference, then validates and shapes
- * `raw` into a `DreamuxConfig`. Deliberately excludes `plugins[]` loading
- * (`loadPlugins`/`readPluginConfigs`): that is a one-time, process-open step
- * — a plugin's `contribute()` registers providers and collides with itself
- * if run twice — so callers that may resolve a config more than once per
- * process (`ConfigService.replaceAgents`, `config/service.ts`) must not
- * route `plugins[]` through here.
- */
-export async function resolveConfig(
-  raw: unknown,
-  file: string,
-  providerRegistry: ProviderRegistry,
-  overrides: ConfigPathOverrides,
-): Promise<DreamuxConfig> {
-  await loadAgentRuntimeProviders({
-    registry: providerRegistry,
-    refs: agentProviderRefs(raw),
-    importModule: overrides.externalAgentRuntimeModuleImporter,
-  });
-  await loadChannelProviders({
-    registry: providerRegistry,
-    refs: channelProviderRefs(raw),
-    importModule: overrides.externalChannelModuleImporter,
-  });
-  return mergeWithDefaults(raw, file, providerRegistry);
-}
-
-export async function assertNoLegacyTomlOnly(
-  overrides: ConfigPathOverrides = {},
-): Promise<void> {
-  const jsonFile = globalConfigFile(overrides);
-  const tomlFile = legacyGlobalConfigFile(overrides);
-  if ((await pathExists(jsonFile)) || !(await pathExists(tomlFile))) return;
-  throw new Error(
-    `legacy dreamux config detected at ${tomlFile}, but ${jsonFile} does not exist.\n` +
-      'dreamux 0.x does not migrate TOML config; it will not read it or write default ' +
-      'JSON over an existing install.\n' +
-      `Recreate the config as JSON (run \`dreamux onboard\`, or write ${jsonFile} with a ` +
-      `dispatchers array), then move ${tomlFile} aside.`,
-  );
 }
 
 export async function assertConfigFileMode(file: string): Promise<void> {
@@ -349,11 +167,86 @@ export async function assertConfigFileMode(file: string): Promise<void> {
   );
 }
 
-function providerRegistryFor(overrides: ConfigPathOverrides): ProviderRegistry {
-  return overrides.providerRegistry ?? createBuiltinProviderRegistry();
+function readOptionalBoolean(
+  obj: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+  file: string,
+  prefix = '',
+): boolean {
+  const v = obj[key];
+  if (v === undefined) return fallback;
+  if (typeof v === 'boolean') return v;
+  throw new RuleViolation(
+    `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
+  );
 }
 
-async function mergeWithDefaults(
+export function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  if (!isAbsolute(path)) return path;
+  return path;
+}
+
+function resolveConfigProvider(
+  rawProvider: string,
+  expectedKind: ProviderDescriptor['kind'],
+  file: string,
+  prefix: string,
+  providerRegistry: ProviderRegistry,
+): { ref: string; descriptor: ProviderDescriptor } {
+  try {
+    const descriptor = providerRegistry.resolve(rawProvider);
+    if (descriptor.kind !== expectedKind) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is a ${descriptor.kind} provider, expected ${expectedKind}`,
+      );
+    }
+    return { ref: formatProviderRef(descriptor.ref), descriptor };
+  } catch (err) {
+    if (err instanceof InvalidProviderRefError) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider is invalid: ${err.message}`,
+      );
+    }
+    if (err instanceof ReservedExternalProviderError) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' was not loaded as an external ${expectedKind} provider.\n` +
+          err.message,
+      );
+    }
+    if (err instanceof UnknownBuiltinProviderError) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider references unknown builtin provider '${err.id}'`,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Structural check for a loaded channel implementation, guarding
+ * `mergeWithDefaults`'s config-validation path. `channel/catalog.ts` carries
+ * an identical check for its own read path (`asChannelProvider`, guarding
+ * `registry.getImplementation()`'s output there too).
+ */
+function asChannelProvider(value: unknown): ChannelProvider<unknown> | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Partial<ChannelProvider<unknown>>;
+  if (typeof candidate.createSession !== 'function') return null;
+  return value as ChannelProvider<unknown>;
+}
+
+/**
+ * Validates and shapes a parsed config file (`raw`) into a {@link DreamuxConfig}.
+ * Exported for `config/load.ts`'s `resolveConfig`, which loads the
+ * agent-runtime/channel providers `raw` references before calling this — this
+ * function itself does no loading, only validation, so it never contributes a
+ * provider twice no matter how many times a caller re-validates the same raw
+ * config within one process (`ConfigService.replaceAgents`).
+ */
+export async function mergeWithDefaults(
   raw: unknown,
   file: string,
   providerRegistry: ProviderRegistry,

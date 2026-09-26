@@ -28,9 +28,12 @@ import type {
   JsonValue,
 } from '@excitedjs/dreamux-types';
 
-import { commandFailure } from '../command/errors.js';
-import { errorInfo } from '../platform/error-info.js';
-import { DreamuxError, ServerShuttingDownError } from '../platform/errors.js';
+import { commandFailure } from '../../command/errors.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
+import {
+  DreamuxError,
+  ServerShuttingDownError,
+} from '../../platform/errors.js';
 
 export interface ChannelCorePortOptions {
   /** The Server-owned admitted port, never a raw registry. */

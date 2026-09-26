@@ -1,4 +1,4 @@
-import { isPlainObject } from './config-validate.js';
+import { isPlainObject } from './json-shape.js';
 
 /**
  * What a conversation, a log line, and a printed config must not publish

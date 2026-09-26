@@ -3,7 +3,7 @@ import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from '../shutdown-errors.js';
+} from '../../platform/shutdown-errors.js';
 import type { TeammateService } from '../teammate-service/index.js';
 
 /**

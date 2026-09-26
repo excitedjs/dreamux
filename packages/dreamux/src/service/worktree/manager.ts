@@ -26,10 +26,8 @@ import type {
   AgentEntityWorktreeCleanupState,
   AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
-import type {
-  TeamMateSharedWorkspace,
-  TeamMateWorktreeRequest,
-} from '../teammate-collection/types.js';
+import type { TeamMateSharedWorkspace } from '../teammate-collection/types.js';
+import type { TeamMateWorktreeRequest } from './types.js';
 
 export type WorktreeCleanupBlockedReason = 'dirty' | 'unmerged';
 

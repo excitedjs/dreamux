@@ -5,7 +5,7 @@ import type {
   TeamStateTeammateSummary,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
-import type { TransactionalStore } from '@excitedjs/dreamux-utils';
+import { errorInfo, type TransactionalStore } from '@excitedjs/dreamux-utils';
 import { AsyncSeriesHook } from 'tapable';
 
 import type { CompletionInitiator } from '../completion-router/index.js';
@@ -47,12 +47,11 @@ import {
   teamLeaderAgentBase,
   type TeamLeaderCreationInput,
 } from './leader-agent.js';
-import { errorInfo } from '../../platform/error-info.js';
 import { isolatedTaps, launchDraftTaps } from '../../plugin/hooks.js';
 import {
   ClosedFactPublisher,
   type ClosedSubscription,
-} from '../closed-fact.js';
+} from '../../platform/closed-fact.js';
 import { TeamClosing } from './closing.js';
 import { TeamWorktreeCleanup } from '../team-collection/worktree-cleanup.js';
 import { TeamLeaderCompletionTargets } from './completion-targets.js';

@@ -1286,7 +1286,7 @@ Source:
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
-- `/packages/dreamux/src/channel/conversation-projection.ts`
+- `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`
 - `/packages/dreamux/src/service/teammate-service/index.ts`
 - `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
@@ -1486,7 +1486,7 @@ surface remain.
 
 Source:
 
-- `/packages/dreamux/src/channel/conversation-projection.ts`
+- `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`
 - `/packages/dreamux-utils/src/redaction.ts`
 - `/packages/dreamux/src/service/teammate-service/index.ts`
 - `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`

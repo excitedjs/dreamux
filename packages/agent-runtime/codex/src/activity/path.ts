@@ -3,15 +3,35 @@ import { basename, isAbsolute, join, resolve } from 'node:path';
 import { createZstdDecompress } from 'node:zlib';
 
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
-import { isPathWithin } from '@excitedjs/dreamux-utils';
+import {
+  ActivityError,
+  createScanBudget,
+  isPathWithin,
+  type ScanBudget,
+} from '@excitedjs/dreamux-utils';
 
-import { createCodexScanBudget, type CodexScanBudget } from './budget.js';
-import { CodexActivityError } from './error.js';
 import { openCodexRollout, type CodexOpenedRollout } from './opened-file.js';
 
 const ROLLOUT_FILENAME =
   /^rollout-[^/]+-[0-9a-f-]{36}(?:_[0-9a-f-]{36})?\.jsonl(?:\.zst)?$/i;
 const MAX_METADATA_BYTES = 1_048_576;
+const SCAN_BUDGET_EXCEEDED_MESSAGE =
+  'Codex activity read exceeded its bounded limit';
+
+/** The default bounded budget for a Codex activity discovery scan. */
+export function createCodexScanBudget(
+  input: {
+    maxEntries?: number;
+    maxElapsedMs?: number;
+    now?: () => number;
+  } = {},
+): ScanBudget {
+  return createScanBudget({
+    ...input,
+    limitError: () =>
+      new ActivityError('scan_unsupported', SCAN_BUDGET_EXCEEDED_MESSAGE),
+  });
+}
 
 export interface CodexRolloutRoots {
   home: string;
@@ -41,7 +61,7 @@ export async function resolveCodexRolloutRoots(
   let home: string;
   if (configured !== undefined) {
     if (!isAbsolute(configured)) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'invalid',
         'Explicit Codex home must be an absolute directory',
       );
@@ -53,7 +73,7 @@ export async function resolveCodexRolloutRoots(
       throw classifyRootError(error);
     }
     if (!info.isDirectory()) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'invalid',
         'Explicit Codex home must be a directory',
       );
@@ -93,16 +113,13 @@ export async function locateCodexRollout(
   locator: string | null | undefined,
   expectedSessionId: string,
   roots: CodexRolloutRoots,
-  budget: CodexScanBudget = createCodexScanBudget(),
+  budget: ScanBudget = createCodexScanBudget(),
 ): Promise<CodexValidatedRollout> {
   if (locator !== null && locator !== undefined) {
     try {
       return await validateCodexRolloutPath(locator, expectedSessionId, roots);
     } catch (error) {
-      if (
-        !(error instanceof CodexActivityError) ||
-        error.detail !== 'not_found'
-      ) {
+      if (!(error instanceof ActivityError) || error.detail !== 'not_found') {
         throw error;
       }
     }
@@ -117,7 +134,7 @@ export async function locateCodexRollout(
       );
     } catch (error) {
       if (
-        error instanceof CodexActivityError &&
+        error instanceof ActivityError &&
         (error.detail === 'session_mismatch' || error.detail === 'not_found')
       ) {
         continue;
@@ -125,7 +142,7 @@ export async function locateCodexRollout(
       throw error;
     }
   }
-  throw new CodexActivityError(
+  throw new ActivityError(
     'not_found',
     'Codex activity is unavailable for this session',
   );
@@ -134,7 +151,7 @@ export async function locateCodexRollout(
 export async function findCodexRolloutById(
   roots: CodexRolloutRoots,
   rolloutId: string,
-  budget: CodexScanBudget = createCodexScanBudget(),
+  budget: ScanBudget = createCodexScanBudget(),
 ): Promise<CodexValidatedRollout> {
   const candidates = await discoverRollouts(roots, rolloutId, budget);
   for (const candidate of candidates) {
@@ -149,7 +166,7 @@ export async function findCodexRolloutById(
       });
     } catch (error) {
       if (
-        error instanceof CodexActivityError &&
+        error instanceof ActivityError &&
         (error.detail === 'session_mismatch' || error.detail === 'not_found')
       ) {
         continue;
@@ -157,10 +174,7 @@ export async function findCodexRolloutById(
       throw error;
     }
   }
-  throw new CodexActivityError(
-    'not_found',
-    'Codex activity history is unavailable',
-  );
+  throw new ActivityError('not_found', 'Codex activity history is unavailable');
 }
 
 export async function readCodexRolloutText(
@@ -168,7 +182,7 @@ export async function readCodexRolloutText(
   maxDecodedBytes: number,
 ): Promise<string> {
   if (opened.path.endsWith('.zst') && opened.size > maxDecodedBytes) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Codex activity requires a native read index',
     );
@@ -187,7 +201,7 @@ export async function readCodexRolloutText(
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       decodedBytes += buffer.length;
       if (decodedBytes > maxDecodedBytes) {
-        throw new CodexActivityError(
+        throw new ActivityError(
           'scan_unsupported',
           'Codex activity exceeds the bounded limit',
         );
@@ -195,8 +209,8 @@ export async function readCodexRolloutText(
       chunks.push(buffer);
     }
   } catch (error) {
-    if (error instanceof CodexActivityError) throw error;
-    throw new CodexActivityError('unreadable', 'Codex activity is unreadable', {
+    if (error instanceof ActivityError) throw error;
+    throw new ActivityError('unreadable', 'Codex activity is unreadable', {
       cause: error,
     });
   } finally {
@@ -237,8 +251,8 @@ async function readCodexSessionMetadata(
       if (metadata !== null) return metadata;
     }
   } catch (error) {
-    if (error instanceof CodexActivityError) throw error;
-    throw new CodexActivityError(
+    if (error instanceof ActivityError) throw error;
+    throw new ActivityError(
       'unreadable',
       'Codex activity metadata is unreadable',
       { cause: error },
@@ -247,13 +261,13 @@ async function readCodexSessionMetadata(
     stream.destroy();
     source.destroy();
   }
-  throw new CodexActivityError('invalid', 'Codex activity metadata is invalid');
+  throw new ActivityError('invalid', 'Codex activity metadata is invalid');
 }
 
 async function discoverRollouts(
   roots: CodexRolloutRoots,
   id: string,
-  budget: CodexScanBudget,
+  budget: ScanBudget,
 ): Promise<string[]> {
   const matches: string[] = [];
   for (const root of [roots.sessions, roots.archived]) {
@@ -265,7 +279,7 @@ async function discoverRollouts(
         opened = await opendir(directory);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        throw new CodexActivityError(
+        throw new ActivityError(
           'unreadable',
           'Codex activity source is unreadable',
           { cause: error },
@@ -285,9 +299,9 @@ async function discoverRollouts(
           }
         }
       } catch (error) {
-        if (error instanceof CodexActivityError) throw error;
+        if (error instanceof ActivityError) throw error;
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        throw new CodexActivityError(
+        throw new ActivityError(
           'unreadable',
           'Codex activity source is unreadable',
           { cause: error },
@@ -309,7 +323,7 @@ async function existingRepresentation(path: string): Promise<string> {
       if (info.isFile()) return candidate;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw new CodexActivityError(
+        throw new ActivityError(
           'unreadable',
           'Codex activity source is unreadable',
           { cause: error },
@@ -317,7 +331,7 @@ async function existingRepresentation(path: string): Promise<string> {
       }
     }
   }
-  throw new CodexActivityError(
+  throw new ActivityError(
     'not_found',
     'Codex activity is unavailable for this session',
   );
@@ -330,7 +344,7 @@ async function canonicalExistingRoots(
   for (const root of [roots.sessions, roots.archived]) {
     const canonical = await realpath(root).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw new CodexActivityError(
+      throw new ActivityError(
         'unreadable',
         'Codex activity source is unreadable',
         { cause: error },
@@ -339,7 +353,7 @@ async function canonicalExistingRoots(
     if (canonical !== null) result.push(canonical);
   }
   if (result.length === 0) {
-    throw new CodexActivityError('not_found', 'Codex activity is unavailable');
+    throw new ActivityError('not_found', 'Codex activity is unavailable');
   }
   return result;
 }
@@ -360,7 +374,7 @@ async function validateCodexRollout(input: {
       input.expectedRolloutId !== undefined &&
       rolloutId.toLowerCase() !== input.expectedRolloutId.toLowerCase()
     ) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'session_mismatch',
         'Codex activity identity does not match',
       );
@@ -370,7 +384,7 @@ async function validateCodexRollout(input: {
       input.expectedSessionId !== undefined &&
       metadata.sessionId !== input.expectedSessionId
     ) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'session_mismatch',
         'Codex activity does not belong to the selected session',
       );
@@ -398,10 +412,7 @@ function metadataFromLine(
   const meta = asRecord(payload?.['meta']) ?? payload;
   const id = stringValue(meta?.['id']) ?? stringValue(meta?.['session_id']);
   if (id === null) {
-    throw new CodexActivityError(
-      'invalid',
-      'Codex activity metadata is invalid',
-    );
+    throw new ActivityError('invalid', 'Codex activity metadata is invalid');
   }
   const historyBaseRecord = asRecord(meta?.['history_base']);
   const rolloutId = stringValue(historyBaseRecord?.['thread_id']);
@@ -415,15 +426,15 @@ function metadataFromLine(
   };
 }
 
-function metadataTooLarge(): CodexActivityError {
-  return new CodexActivityError(
+function metadataTooLarge(): ActivityError {
+  return new ActivityError(
     'invalid',
     'Codex activity metadata exceeds its bounded record size',
   );
 }
 
-function classifyRootError(error: unknown): CodexActivityError {
-  return new CodexActivityError(
+function classifyRootError(error: unknown): ActivityError {
+  return new ActivityError(
     (error as NodeJS.ErrnoException).code === 'ENOENT'
       ? 'not_found'
       : 'unreadable',
@@ -444,7 +455,7 @@ function rolloutIdsFromPath(path: string): string[] {
 
 function assertNativeRolloutPath(candidate: string): void {
   if (!isAbsolute(candidate) || !ROLLOUT_FILENAME.test(basename(candidate))) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'invalid',
       'Codex activity source is not a native rollout path',
     );
@@ -454,10 +465,7 @@ function assertNativeRolloutPath(candidate: string): void {
 function homeDirectory(env: DreamuxEnvironment): string {
   const value = env['HOME'];
   if (value === undefined || value === '') {
-    throw new CodexActivityError(
-      'not_found',
-      'Codex home directory is unavailable',
-    );
+    throw new ActivityError('not_found', 'Codex home directory is unavailable');
   }
   return value;
 }

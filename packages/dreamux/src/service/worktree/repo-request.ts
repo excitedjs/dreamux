@@ -19,7 +19,7 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 import { STRING, enumOf, objectSchema } from '../../command/schema.js';
-import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
+import type { TeamMateWorktreeRequest } from './types.js';
 
 /**
  * The complete repository policy a Team or TeamMate may request.

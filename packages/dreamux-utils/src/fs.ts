@@ -1,15 +1,21 @@
 /**
  * Filesystem write helpers shared across Dreamux providers and host.
  *
- * Domain note: these are primitives (atomic write, future: tmpdir,
- * safe unlink). Dreamux host-owned path/layout contracts live in
- * `@excitedjs/dreamux` — do not add them here.
+ * Domain note: these are atomic-write primitives, one per publish semantic
+ * (create-only vs. overwrite). Dreamux host-owned path/layout contracts live
+ * in `@excitedjs/dreamux` — do not add them here.
  */
 
 import { randomBytes } from 'node:crypto';
-import { link, mkdir, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+/**
+ * Both publish primitives below write to this sibling path with `wx`
+ * (create, exclusive) before moving the result into place, so a collision on
+ * the random suffix throws instead of one in-flight writer silently
+ * clobbering another's temp file.
+ */
 function tempSiblingPath(path: string): string {
   const suffix =
     process.pid.toString(16) +
@@ -48,6 +54,32 @@ export async function publishFileExclusive(
     }
   } finally {
     await rm(tmp, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Write a complete file to `path`, replacing whatever is already there: the
+ * full contents land in a sibling temp file first, then `rename()` swaps it
+ * over the target. A reader never observes a partial write, and a write that
+ * fails partway leaves the previous file, if any, untouched. This is the
+ * overwrite counterpart to `publishFileExclusive` above — same tmp+publish
+ * shape, but `rename()` replaces an existing target instead of `link()`
+ * refusing one.
+ */
+export async function writeFileAtomic(
+  path: string,
+  data: string,
+  options: { mode?: number } = {},
+): Promise<void> {
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true });
+  const tmp = tempSiblingPath(path);
+  try {
+    await writeFile(tmp, data, { flag: 'wx', mode: options.mode ?? 0o600 });
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
   }
 }
 

@@ -119,10 +119,10 @@ Command and stays hand-edit-with-the-daemon-stopped only.
 Source:
 
 - `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/config/load.ts`
 - `/packages/dreamux/src/config/service.ts`
 - `/packages/dreamux/src/config/commands.ts`
 - `/packages/dreamux/src/plugin/loader.ts`
-- `/packages/dreamux/src/config/config-helpers.ts`
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/onboard/run.ts`
 

@@ -4,6 +4,12 @@ import {
   AgentEntityCollectionStore,
   AgentIdentityStore,
 } from '../agent-entity/identity-store.js';
+import {
+  clampHistoryLimit,
+  decodeCursor,
+  encodeCursor,
+  previewText,
+} from '../../platform/history-page.js';
 import { teamMateCollectionDir } from '../../platform/paths.js';
 import { toStatus } from '../agent-entity/read-helpers.js';
 import type { TeamService } from '../team-service/index.js';
@@ -12,13 +18,7 @@ import type {
   AgentEntityIdentity,
   AgentEntityIdentityStatus,
 } from '../agent-entity/types.js';
-import {
-  clampTeamHistoryLimit,
-  decodeTeamCursor,
-  encodeTeamCursor,
-  matchesTeamHistoryQuery,
-  previewTeamText,
-} from './read-helpers.js';
+import { matchesTeamHistoryQuery } from './read-helpers.js';
 import type { TeamStore } from './store.js';
 import type {
   TeamHistoryQuery,
@@ -63,14 +63,13 @@ export class TeamCollectionReadModel {
         b.created_at - a.created_at ||
         a.team_name.localeCompare(b.team_name),
     );
-    const start =
-      input.cursor !== undefined ? decodeTeamCursor(input.cursor) : 0;
-    const limit = clampTeamHistoryLimit(input.limit);
+    const start = input.cursor !== undefined ? decodeCursor(input.cursor) : 0;
+    const limit = clampHistoryLimit(input.limit);
     const items = rows.slice(start, start + limit);
     const next = start + items.length;
     return {
       items,
-      next_cursor: next < rows.length ? encodeTeamCursor(next) : null,
+      next_cursor: next < rows.length ? encodeCursor(next) : null,
     };
   }
 
@@ -123,7 +122,7 @@ export class TeamCollectionReadModel {
       closed_at: team.closed_at,
       close_note: team.close_note,
       close_note_preview:
-        team.close_note === null ? null : previewTeamText(team.close_note),
+        team.close_note === null ? null : previewText(team.close_note),
       worktree_cleanup: team.worktree.cleanup_state,
     };
   }

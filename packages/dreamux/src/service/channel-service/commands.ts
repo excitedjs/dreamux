@@ -8,9 +8,11 @@
  * (`channel.invoke_tool` / `channel.mcp.*`): provider tools remain behind the
  * runtime-bound MCP delegates and the generic `mcp.*` transport Commands.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type {
+  CoreCommandContext,
+  CoreCommandDefinition,
+} from '@excitedjs/dreamux-types';
 
-import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
 import { commandPayload } from '../../command/payload.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
 import {
@@ -26,8 +28,13 @@ interface ChannelListResult {
   channels: ChannelMetadata[];
 }
 
+/** The one capability `channelCommands` needs from its addressed dispatcher. */
+interface ChannelCommandsDispatcher {
+  listChannels(): ChannelMetadata[];
+}
+
 export function channelCommands(
-  host: CoreCommandHost,
+  dispatcher: (context: CoreCommandContext) => ChannelCommandsDispatcher,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<'channel.list', void, ChannelListResult> = {
     name: 'channel.list',
@@ -53,7 +60,7 @@ export function channelCommands(
       commandPayload(payload);
     },
     async execute(context) {
-      return { channels: mustDispatcher(host, context).listChannels() };
+      return { channels: dispatcher(context).listChannels() };
     },
   };
 

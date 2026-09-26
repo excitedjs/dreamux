@@ -62,15 +62,15 @@ import {
   type ValidatedMcpTool,
 } from '../../mcp/catalog.js';
 import { failureText } from '../../mcp/failure-text.js';
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { StatedFailure } from '../../platform/errors.js';
 import {
   canonicalJsonValue,
+  deepFreeze,
   JsonValueError,
   JSON_VALUE_UNBOUNDED,
 } from '../../platform/json-value.js';
 import type { AgentRuntimeGenerationLease } from '../agent-entity/runtime-state.js';
-import { deepFreeze } from '../frozen-snapshot.js';
 import { unknownToolResult } from './projection.js';
 import type {
   McpDelegateCall,

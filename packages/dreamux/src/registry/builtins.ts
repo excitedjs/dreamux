@@ -8,6 +8,7 @@
 import { parseProviderRef } from './provider-ref.js';
 import {
   type ProviderDescriptor,
+  type ProviderImplementation,
   type ProviderKind,
   ProviderRegistry,
 } from './registry.js';
@@ -121,8 +122,7 @@ export function createBuiltinProviderRegistry(): ProviderRegistry {
 export function registerBuiltinProvider(
   registry: ProviderRegistry,
   spec: BuiltinSpec,
-  implementation: unknown,
+  implementation: ProviderImplementation,
 ): void {
-  registry.register(builtinDescriptor(spec));
-  registry.registerImplementation(spec.id, implementation);
+  registry.register(builtinDescriptor(spec), implementation);
 }

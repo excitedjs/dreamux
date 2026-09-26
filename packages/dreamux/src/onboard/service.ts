@@ -6,7 +6,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { build as buildPlist } from 'plist';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { expandHome } from '../config/config.js';
-import { errorMessage } from '../platform/error-info.js';
+import { errorMessage } from '@excitedjs/dreamux-utils';
 import {
   buildServicePath,
   logsRoot,
@@ -16,11 +16,8 @@ import {
 } from '../platform/paths.js';
 
 import { ensureDirectory, ensureTextFile, writeTextFile } from './ledger.js';
-import type {
-  CommandRunner,
-  OnboardFileLedger,
-  ServicePlatform,
-} from '../onboard/types.js';
+import type { CommandRunner } from '../platform/command-runner.js';
+import type { OnboardFileLedger, ServicePlatform } from '../onboard/types.js';
 import {
   isExecutable,
   MIN_SERVICE_NODE_VERSION,

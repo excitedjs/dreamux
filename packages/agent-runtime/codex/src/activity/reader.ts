@@ -3,20 +3,22 @@ import type {
   AgentActivityQuery,
   AgentActivityReadContext,
 } from '@excitedjs/dreamux-types';
-import { readBytesAt } from '@excitedjs/dreamux-utils';
+import {
+  activityQueryFingerprint,
+  ActivityError,
+  readBytesAt,
+} from '@excitedjs/dreamux-utils';
 
 import type { DispatcherCodexConfig } from '../config.js';
-import { createCodexScanBudget } from './budget.js';
 import {
-  codexQueryFingerprint,
   decodeCodexCursor,
   digest,
   encodeCodexCursor,
   type CodexCursorPosition,
 } from './cursor.js';
-import { CodexActivityError } from './error.js';
 import { openCodexRollout, type CodexOpenedRollout } from './opened-file.js';
 import {
+  createCodexScanBudget,
   findCodexRolloutById,
   locateCodexRollout,
   readCodexRolloutText,
@@ -80,13 +82,13 @@ export async function readCodexRecentActivity(
   );
   const lineage = await buildLineage(tail, roots, discoveryBudget);
   const generation = lineageGeneration(lineage);
-  const fingerprint = codexQueryFingerprint(includeTools);
+  const fingerprint = activityQueryFingerprint(includeTools);
   const cursor =
     query.cursor === undefined
       ? null
       : decodeCodexCursor(query.cursor, fingerprint);
   if (cursor !== null && cursor.gen !== generation) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
@@ -112,7 +114,7 @@ export async function readCodexRecentActivity(
       offset: anchor.entry.start,
     };
     if (cursor !== null && !isStrictlyOlder(position, cursor.pos)) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'scan_unsupported',
         'Codex activity pagination cannot make safe progress',
       );
@@ -135,7 +137,7 @@ export async function readCodexRecentActivity(
 function resolveLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_RECORD_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORD_LIMIT) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'invalid',
       `Codex activity limit must be an integer in 1..${MAX_RECORD_LIMIT}`,
     );
@@ -153,7 +155,7 @@ async function buildLineage(
   let current = tail;
   while (current.historyBase !== null) {
     if (visited.has(current.historyBase.rolloutId)) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'invalid',
         'Codex activity history contains a cycle',
       );
@@ -170,7 +172,7 @@ async function buildLineage(
     });
     current = parent;
     if (lineage.length > 64) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'scan_unsupported',
         'Codex activity history exceeds the bounded depth',
       );
@@ -200,7 +202,7 @@ async function scanRecords(input: {
     input.startPosition !== null &&
     input.startPosition.segment >= input.lineage.length
   ) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
@@ -337,7 +339,7 @@ function parseLines(
       try {
         value = JSON.parse(raw);
       } catch (error) {
-        throw new CodexActivityError(
+        throw new ActivityError(
           'invalid',
           'Codex activity contains an unreadable record',
           { cause: error },
@@ -363,7 +365,7 @@ async function verifyBoundaryDigest(
 ): Promise<void> {
   const segment = lineage[position.segment];
   if (segment === undefined) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
@@ -373,7 +375,7 @@ async function verifyBoundaryDigest(
     position.offset,
   );
   if (digest(boundaryBytes) !== expectedDigest) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
@@ -391,7 +393,7 @@ async function readBoundaryRecordBytes(
       return boundaryRecordFromBuffer(Buffer.from(text, 'utf8'), offset);
     }
     if (offset >= opened.size) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'cursor_stale',
         'Codex activity cursor is no longer valid',
       );
@@ -413,7 +415,7 @@ async function openValidatedSegment(
     (opened.dev !== transcript.dev || opened.ino !== transcript.ino)
   ) {
     await opened.handle.close();
-    throw new CodexActivityError(
+    throw new ActivityError(
       'unreadable',
       'Codex activity source changed after validation',
     );
@@ -424,7 +426,7 @@ async function openValidatedSegment(
 function boundaryRecordFromBuffer(bytes: Buffer, offset: number): Buffer {
   const newline = bytes.indexOf(0x0a, offset);
   if (newline < 0) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Codex activity cursor boundary exceeds the bounded limit',
     );

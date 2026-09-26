@@ -16,11 +16,9 @@
  * There is no code list, no allowlist, and no policy table: the class the
  * failure already is decides which of the two shapes it takes.
  */
-import {
-  DreamuxError,
-  StatedFailure,
-  errorMessage,
-} from '../platform/errors.js';
+import { errorMessage } from '@excitedjs/dreamux-utils';
+
+import { DreamuxError, StatedFailure } from '../platform/errors.js';
 
 /** One failure exactly as its own domain stated it. */
 export function statedFailureText(error: {

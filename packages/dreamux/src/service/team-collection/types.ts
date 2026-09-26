@@ -24,16 +24,19 @@ import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import type { TeammateAgentMcp } from '../teammate-service/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
 } from '../completion-router/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
-import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
+import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { RuleViolation } from '../../platform/errors.js';
-import { clampTeamHistoryLimit, decodeTeamCursor } from './read-helpers.js';
+import {
+  clampHistoryLimit,
+  decodeCursor,
+} from '../../platform/history-page.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -355,8 +358,8 @@ export function teamHistoryQuery(params: CommandPayload): TeamHistoryQuery {
   // its own words; asked here so a caller that sends an unusable page reads
   // which rule it broke, instead of a failure the scan raises later.
   try {
-    clampTeamHistoryLimit(limit ?? undefined);
-    if (cursor !== null) decodeTeamCursor(cursor);
+    clampHistoryLimit(limit ?? undefined);
+    if (cursor !== null) decodeCursor(cursor);
   } catch (error) {
     throwCallerMistake(error);
   }

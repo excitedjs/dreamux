@@ -170,8 +170,3 @@ export class ServerShuttingDownError extends StatedFailure {
     );
   }
 }
-
-/** The message of an arbitrary thrown value, for wrapping into a typed error. */
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

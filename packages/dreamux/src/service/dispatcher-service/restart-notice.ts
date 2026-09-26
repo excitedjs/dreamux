@@ -1,7 +1,7 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import { errorInfo } from '../../platform/error-info.js';
+import type { RestartIntentConsumer } from './restart-intent.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { SYSTEM_SOURCE } from '../submission-sources.js';
 import type { TeammateService } from '../teammate-service/index.js';
 

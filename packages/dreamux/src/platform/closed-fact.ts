@@ -1,6 +1,5 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-
-import { errorInfo } from '../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 
 export type ClosedListener<Fact> = (fact: Fact) => void | Promise<void>;
 

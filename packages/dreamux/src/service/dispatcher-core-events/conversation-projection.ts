@@ -7,11 +7,10 @@ import type {
   TeammateRole,
 } from '@excitedjs/dreamux-types';
 
-import { redactJson, redactText } from '@excitedjs/dreamux-utils';
+import { errorInfo, redactJson, redactText } from '@excitedjs/dreamux-utils';
 
-import { errorInfo } from '../platform/error-info.js';
-import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-events/index.js';
-import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
+import type { DispatcherCoreEventPublisher } from './index.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 
 /**
  * The projected Agent: its durable identity plus the runtime role its owner

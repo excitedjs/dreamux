@@ -13,7 +13,7 @@ import {
   type AgentEntityIdentity,
   type AgentEntityLastQuery,
 } from './types.js';
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { validateLastLimit } from './read-helpers.js';
 
 const ACTIVITY_ERROR_REASONS = new Set<AgentActivityError['reason']>([

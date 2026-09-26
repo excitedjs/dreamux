@@ -1,4 +1,4 @@
-import { InFlightWork } from '../in-flight-work.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
 
 /**
  * Dispatcher-owned admission gate for work that can publish runtime, scheduler,

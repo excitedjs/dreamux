@@ -37,7 +37,7 @@ import {
   normalizeAgentRuntimeSkillSources,
   type CanonicalSkillRoot,
 } from '../agent-runtime/skill-sources.js';
-import { errorInfo, errorMessage } from '../platform/error-info.js';
+import { errorInfo, errorMessage } from '@excitedjs/dreamux-utils';
 import { isThenable, PluginLoadError } from './loader.js';
 
 type TapFn = (...args: unknown[]) => unknown;

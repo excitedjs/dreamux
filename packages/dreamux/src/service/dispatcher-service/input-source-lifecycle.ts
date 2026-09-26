@@ -8,13 +8,13 @@ import type { AsyncSeriesHook } from 'tapable';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import {
   createChannelCorePort,
   type ChannelCorePortLease,
-} from '../../channel/core-port.js';
+} from '../channel-service/core-port.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
+import type { RestartIntentConsumer } from './restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
@@ -27,7 +27,7 @@ import type { TeamCollection } from '../team-collection/index.js';
 import type { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeammateAgentMcp } from '../teammate-service/types.js';
-import { collectShutdownFailure } from '../shutdown-errors.js';
+import { collectShutdownFailure } from '../../platform/shutdown-errors.js';
 import type { DispatcherWorkflows } from './dispatcher-workflows.js';
 import { createDispatcherAgent } from './agent.js';
 import { ensureDispatcherRootIdentity } from './identity.js';

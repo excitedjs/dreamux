@@ -4,10 +4,13 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
-import { isPathWithin } from '@excitedjs/dreamux-utils';
+import {
+  ActivityError,
+  createScanBudget,
+  isPathWithin,
+  type ScanBudget,
+} from '@excitedjs/dreamux-utils';
 
-import { createClaudeScanBudget, type ClaudeScanBudget } from './budget.js';
-import { ClaudeActivityError } from './error.js';
 import { claudeNativePathHash } from './native-hash.js';
 import {
   openClaudeRollout,
@@ -17,6 +20,23 @@ import {
 const MAX_SANITIZED_LENGTH = 200;
 const SESSION_FILENAME = /^[0-9a-f]{8}-[0-9a-f-]{27}\.jsonl$/i;
 const execFileAsync = promisify(execFile);
+const SCAN_BUDGET_EXCEEDED_MESSAGE =
+  'Claude Code activity discovery exceeded its bounded scan limit';
+
+/** The default bounded budget for a Claude Code activity discovery scan. */
+export function createClaudeScanBudget(
+  input: {
+    maxEntries?: number;
+    maxElapsedMs?: number;
+    now?: () => number;
+  } = {},
+): ScanBudget {
+  return createScanBudget({
+    ...input,
+    limitError: () =>
+      new ActivityError('scan_unsupported', SCAN_BUDGET_EXCEEDED_MESSAGE),
+  });
+}
 
 export interface ClaudeHistoryRoots {
   configHome: string;
@@ -67,7 +87,7 @@ export async function locateClaudeHistory(input: {
   cwd: string;
   locator?: string | null;
   env?: DreamuxEnvironment;
-  budget?: ClaudeScanBudget;
+  budget?: ScanBudget;
   worktreePaths?: readonly string[];
 }): Promise<ClaudeValidatedHistory> {
   assertSessionId(input.sessionId);
@@ -81,10 +101,7 @@ export async function locateClaudeHistory(input: {
         roots,
       );
     } catch (error) {
-      if (
-        !(error instanceof ClaudeActivityError) ||
-        error.detail !== 'not_found'
-      ) {
+      if (!(error instanceof ActivityError) || error.detail !== 'not_found') {
         throw error;
       }
     }
@@ -101,19 +118,13 @@ export async function locateClaudeHistory(input: {
     try {
       return await validateClaudeHistoryPath(candidate, input.sessionId, roots);
     } catch (error) {
-      if (
-        error instanceof ClaudeActivityError &&
-        error.detail === 'not_found'
-      ) {
+      if (error instanceof ActivityError && error.detail === 'not_found') {
         continue;
       }
       throw error;
     }
   }
-  throw new ClaudeActivityError(
-    'not_found',
-    'Claude Code activity is unavailable',
-  );
+  throw new ActivityError('not_found', 'Claude Code activity is unavailable');
 }
 
 export async function validateClaudeHistoryPath(
@@ -126,7 +137,7 @@ export async function validateClaudeHistoryPath(
     !SESSION_FILENAME.test(candidate.split(/[\\/]/).at(-1) ?? '') ||
     !candidate.endsWith(`${sessionId}.jsonl`)
   ) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'invalid',
       'Claude Code activity locator is not a native session path',
     );
@@ -135,7 +146,7 @@ export async function validateClaudeHistoryPath(
   const opened = await openClaudeRollout(candidate, canonicalProjects);
   try {
     if (opened.size === 0) {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'not_found',
         'Claude Code activity is unavailable',
       );
@@ -166,7 +177,7 @@ async function discoveryCandidates(input: {
   sessionId: string;
   cwd: string;
   env?: DreamuxEnvironment | undefined;
-  budget: ClaudeScanBudget;
+  budget: ScanBudget;
   worktreePaths?: readonly string[] | undefined;
 }): Promise<string[]> {
   const result: string[] = [];
@@ -220,14 +231,14 @@ async function discoveryCandidates(input: {
 
 async function readProjectDirectories(
   roots: ClaudeHistoryRoots,
-  budget: ClaudeScanBudget,
+  budget: ScanBudget,
 ): Promise<string[]> {
   let directory;
   try {
     directory = await opendir(roots.projects);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'unreadable',
       'Claude Code activity root is unreadable',
       { cause: error },
@@ -240,9 +251,9 @@ async function readProjectDirectories(
       if (entry.isDirectory()) entries.push(entry.name);
     }
   } catch (error) {
-    if (error instanceof ClaudeActivityError) throw error;
+    if (error instanceof ActivityError) throw error;
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return entries;
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'unreadable',
       'Claude Code activity root is unreadable',
       { cause: error },
@@ -284,7 +295,7 @@ async function canonicalProspectivePath(
     canonicalizeProspectivePath(root),
   ]);
   if (!isPathWithin(canonicalRoot, canonicalCandidate)) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'locator_outside_root',
       'Claude Code activity is unavailable for this session',
     );
@@ -299,7 +310,7 @@ async function canonicalRuntimeCwd(cwd: string): Promise<string> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return resolve(cwd);
     }
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'unreadable',
       'Claude Code runtime cwd is unreadable',
       { cause: error },
@@ -317,7 +328,7 @@ async function canonicalizeProspectivePath(path: string): Promise<string> {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') {
-        throw new ClaudeActivityError(
+        throw new ActivityError(
           'unreadable',
           'Claude Code activity path is unreadable',
           { cause: error },
@@ -326,7 +337,7 @@ async function canonicalizeProspectivePath(path: string): Promise<string> {
     }
     const parent = dirname(ancestor);
     if (parent === ancestor) {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'not_found',
         'Claude Code activity root is unavailable',
       );
@@ -340,13 +351,13 @@ async function canonicalExistingRoot(root: string): Promise<string> {
     return await realpath(root);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'not_found',
         'Claude Code activity root is unavailable',
         { cause: error },
       );
     }
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'unreadable',
       'Claude Code activity root is unreadable',
       { cause: error },
@@ -362,17 +373,14 @@ function pushUnique(result: string[], seen: Set<string>, value: string): void {
 
 function assertSessionId(sessionId: string): void {
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(sessionId)) {
-    throw new ClaudeActivityError(
-      'invalid',
-      'Claude Code session id is invalid',
-    );
+    throw new ActivityError('invalid', 'Claude Code session id is invalid');
   }
 }
 
 function requireHome(env: DreamuxEnvironment): string {
   const home = env['HOME'];
   if (home === undefined || home === '') {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'not_found',
       'Claude Code config home is unavailable',
     );

@@ -57,33 +57,3 @@ export interface OnboardRunResult {
     warnings: string[];
   } | null;
 }
-
-export interface CommandRunner {
-  run(
-    command: string,
-    args: string[],
-    options?: {
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
-      dryRun?: boolean;
-    },
-  ): Promise<void>;
-  check(
-    command: string,
-    args: string[],
-    options?: {
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
-      dryRun?: boolean;
-    },
-  ): Promise<boolean>;
-  capture(
-    command: string,
-    args: string[],
-    options?: {
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
-      dryRun?: boolean;
-    },
-  ): Promise<string>;
-}

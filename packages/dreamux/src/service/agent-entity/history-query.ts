@@ -15,8 +15,8 @@ import {
 import {
   clampHistoryLimit,
   decodeCursor,
-  optionalAgentEntityNameParam,
-} from './read-helpers.js';
+} from '../../platform/history-page.js';
+import { optionalAgentEntityNameParam } from './read-helpers.js';
 import type {
   AgentEntityHistoryQuery,
   AgentEntityIdentityStatus,

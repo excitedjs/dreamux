@@ -3,12 +3,12 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from '../shutdown-errors.js';
+} from '../../platform/shutdown-errors.js';
 import type { SchedulerService } from '../scheduler/service.js';
 import type { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { AgentEntityWorktreeIdentity } from '../agent-entity/types.js';
-import { errorMessage } from '../../platform/error-info.js';
+import { errorMessage } from '@excitedjs/dreamux-utils';
 import {
   TeamDissolveBlockedError,
   TeamDissolveFailedError,

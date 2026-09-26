@@ -9,9 +9,7 @@
  * and produce `dreamux config error in <file>: ...` messages.
  */
 
-export function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
+import { isPlainObject } from './json-shape.js';
 
 export function describeType(v: unknown): string {
   if (v === null) return 'null';

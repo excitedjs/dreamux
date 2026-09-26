@@ -27,7 +27,7 @@ import { ConfigService } from '../config/service.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
 import { startPlugins } from '../plugin/host.js';
 import { createLogger } from '../platform/logger.js';
-import { errorInfo } from '../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import {
   adminSocketPath,
   channelLogDir,

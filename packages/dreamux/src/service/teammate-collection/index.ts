@@ -1,7 +1,7 @@
 import type { DreamuxLogger, JsonSchema } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type { ConfigReader } from '../../config/service.js';
 import {
   agentRuntimeCapability,
@@ -14,13 +14,15 @@ import type {
 } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import {
-  clampHistoryLimit,
-  decodeCursor,
-  encodeCursor,
   matchesRecordQuery,
   toRecordRow,
   toStatus,
 } from '../agent-entity/read-helpers.js';
+import {
+  clampHistoryLimit,
+  decodeCursor,
+  encodeCursor,
+} from '../../platform/history-page.js';
 import {
   assertDispatcherScopedTeammate,
   assertTeamScopedAgent,
@@ -54,10 +56,10 @@ import { teammateSystemPromptOptions } from './system-prompt.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from '../shutdown-errors.js';
+} from '../../platform/shutdown-errors.js';
 import { createTeammateService } from '../teammate-service/factory.js';
 import { TeammateService } from '../teammate-service/index.js';
-import type { ClosedSubscription } from '../closed-fact.js';
+import type { ClosedSubscription } from '../../platform/closed-fact.js';
 import type { LockedTeammate } from '../teammate-service/types.js';
 import {
   toSubmissionResult,

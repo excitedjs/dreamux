@@ -8,13 +8,13 @@ import {
 import {
   DEFAULT_RESTART_ANNOUNCE,
   notifyResumedRestart,
-} from '../../daemon/restart-intent.js';
+} from '../../service/dispatcher-service/restart-intent.js';
 import {
   controlUserService,
   type DaemonVerb,
 } from '../../daemon/service-control.js';
-import { ExecaCommandRunner } from '../../onboard/commands.js';
-import { validateDispatcherId } from '../../state/dispatcher-id.js';
+import { ExecaCommandRunner } from '../../platform/command-runner.js';
+import { validateDispatcherId } from '../../platform/dispatcher-id.js';
 import { printServiceWarnings } from './service-output.js';
 import { noopHandler, type DreamuxCommand } from './types.js';
 

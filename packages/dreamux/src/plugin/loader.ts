@@ -16,18 +16,19 @@ import type {
   DreamuxPlugin,
 } from '@excitedjs/dreamux-types';
 import {
+  errorMessage,
   isPlainObject,
   rejectUnknownKeys,
   requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
 
-import { errorMessage } from '../platform/error-info.js';
 import {
   ALWAYS_LOADED_PLUGIN_REFS,
   BUILTIN_PLUGIN_PACKAGES,
   BUILTIN_PROVIDERS,
   parseProviderRef,
   registerBuiltinProvider,
+  type ProviderImplementation,
   type ProviderKind,
   type ProviderRef,
   type ProviderRegistry,
@@ -288,7 +289,7 @@ function contributePlugin(
   const contribute = (
     kind: ProviderKind,
     name: string,
-    provider: unknown,
+    provider: ProviderImplementation,
   ): void => {
     const other = context.providerSources.get(name);
     if (other !== undefined) {

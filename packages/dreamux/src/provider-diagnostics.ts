@@ -13,8 +13,8 @@ import {
   type DispatcherConfig,
   type DreamuxConfig,
 } from './config/config.js';
+import type { CommandRunner } from './platform/command-runner.js';
 import { dispatcherCacheDir, dispatcherDir } from './platform/paths.js';
-import type { CommandRunner } from './onboard/types.js';
 
 export type ProviderDiagnosticKind = 'agentRuntime' | 'channel';
 

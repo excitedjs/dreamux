@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 5 item 13: added writeFileAtomic(path, data, { mode? }) to fs.ts, the overwrite-and-replace counterpart to the existing create-only publishFileExclusive (same sibling-temp-file-then-swap shape, but rename() over an existing target instead of link() refusing one). TransactionalStore now calls it instead of its own inline write-tmp-then-rename sequence.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "053700@gmail.com"
+}

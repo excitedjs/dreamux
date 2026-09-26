@@ -3,16 +3,18 @@ import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 
-import { ExecaCommandRunner } from './commands.js';
 import { removeUserService } from './service.js';
-import type { CommandRunner, ServicePlatform } from '../onboard/types.js';
 import {
-  assertNoLegacyTomlOnly,
+  ExecaCommandRunner,
+  type CommandRunner,
+} from '../platform/command-runner.js';
+import type { ServicePlatform } from '../onboard/types.js';
+import {
   expandHome,
   globalConfigDir,
   globalConfigFile,
-  loadConfig,
 } from '../config/config.js';
+import { assertNoLegacyTomlOnly, loadConfig } from '../config/load.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';

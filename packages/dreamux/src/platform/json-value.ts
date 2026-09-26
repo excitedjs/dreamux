@@ -201,13 +201,24 @@ function assertEntryCount(
   }
 }
 
-function deepFreeze(value: JsonValue): JsonValue {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    for (const entry of value) deepFreeze(entry);
-    return Object.freeze(value);
+/**
+ * Freeze `value` in place, recursively, and return it.
+ *
+ * {@link canonicalJsonValue} calls this on the value it parses back, which is
+ * why it lives here rather than beside one caller: a sealed Core event and a
+ * validated MCP tool catalog are the same "hold this fact, prevent a later
+ * mutation from rewriting what was already broadcast" need, just applied
+ * directly to an object the caller already knows is JSON-shaped, without
+ * paying for another validate/serialize/parse round trip. `Object.isFrozen`
+ * short-circuits a value (or sub-value) that is already frozen, so freezing
+ * twice, or freezing a structure that shares a frozen branch, does no
+ * redundant work.
+ */
+export function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
   }
-  for (const entry of Object.values(value)) deepFreeze(entry);
+  for (const nested of Object.values(value)) deepFreeze(nested);
   return Object.freeze(value);
 }
 

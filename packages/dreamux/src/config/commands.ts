@@ -2,27 +2,27 @@
  * The Config namespace's canonical Commands.
  *
  * Neither is dispatcher-scoped: `agents[]` is a process-wide fact, addressed
- * the same way `server.status` is, so both definitions read `host.config`
- * directly rather than resolving a dispatcher through `mustDispatcher`. There
- * is no `config.dispatchers.*` pair — `dispatchers[]` has no Command and stays
- * a hand-edited, daemon-stopped-only file (`config/service.ts`).
+ * the same way `server.status` is, so both definitions read the injected
+ * `ConfigService` directly rather than resolving a dispatcher through
+ * `mustDispatcher`. There is no `config.dispatchers.*` pair — `dispatchers[]`
+ * has no Command and stays a hand-edited, daemon-stopped-only file
+ * (`config/service.ts`).
  *
  * `parse` on `config.agents.replace` narrows only as far as matching needs: an
  * array of plain objects, each with a non-empty string `id`. Everything else
  * about an entry — `provider`, `config`, and any key this Command does not
  * know about — passes through untouched. `ConfigService.replaceAgents` merges
- * by `id` and `resolveConfig` (`./config.js`) is the one validator for
+ * by `id` and `resolveConfig` (`./load.js`) is the one validator for
  * `provider`/`config` shape and for a duplicate `id`; narrowing either one a
  * second time here would just be a second, out-of-sync copy of that check.
  */
 import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../command/registry.js';
-import type { CoreCommandHost } from '../command/host.js';
 import { ValidationError } from '../command/errors.js';
 import { commandPayload } from '../command/payload.js';
 import { NO_INPUT, OBJECT, arrayOf, objectSchema } from '../command/schema.js';
-import type { AgentFileEntry } from './service.js';
+import type { AgentFileEntry, ConfigService } from './service.js';
 
 const AGENTS_SHAPE = objectSchema({ agents: arrayOf(OBJECT) }, ['agents']);
 
@@ -39,7 +39,7 @@ interface ConfigAgentsReplaceResult {
 }
 
 export function configCommands(
-  host: CoreCommandHost,
+  config: ConfigService,
 ): readonly AnyCoreCommand[] {
   const get: CoreCommandDefinition<
     'config.agents.get',
@@ -54,7 +54,7 @@ export function configCommands(
       commandPayload(payload);
     },
     async execute() {
-      return { agents: host.config.readAgents() };
+      return { agents: config.readAgents() };
     },
   };
 
@@ -78,7 +78,7 @@ export function configCommands(
       };
     },
     async execute(_context, input) {
-      return { agents: await host.config.replaceAgents(input.agents) };
+      return { agents: await config.replaceAgents(input.agents) };
     },
   };
 

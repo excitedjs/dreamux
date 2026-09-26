@@ -7,14 +7,14 @@ import type {
 
 import { STRING, enumOf, objectSchema } from '../../command/schema.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type { ConfigReader } from '../../config/service.js';
 import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
 } from '../completion-router/index.js';
 import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
-import type { ClosedListener } from '../closed-fact.js';
+import type { ClosedListener } from '../../platform/closed-fact.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';

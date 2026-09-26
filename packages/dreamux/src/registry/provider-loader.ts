@@ -19,14 +19,18 @@
  * loading path as package-backed `npm:` refs.
  */
 
-import { errorMessage as errMessage } from '../platform/error-info.js';
+import { errorMessage as errMessage } from '@excitedjs/dreamux-utils';
 import { resolveBuiltinProviderPackage } from './builtins.js';
 import {
   parseProviderRef,
   type NpmProviderRef,
   type ProviderRef,
 } from './provider-ref.js';
-import type { ProviderDescriptor, ProviderKind } from './registry.js';
+import type {
+  ProviderDescriptor,
+  ProviderImplementation,
+  ProviderKind,
+} from './registry.js';
 import type { ProviderRegistry } from './registry.js';
 
 export type ProviderModule = Record<string, unknown> & {
@@ -106,8 +110,15 @@ export interface LoadProviderPackagesOptions {
  * flow through import + factory + implementation registration. Skipping on
  * descriptor existence alone would silently leave pre-registered built-ins
  * without a loaded implementation (the slice-3 Codex/Claude extraction path).
+ *
+ * `TProvider extends ProviderImplementation` so the loaded value can reach
+ * `ProviderRegistry.register()` typed; the skeleton stays kind-agnostic
+ * otherwise — it never branches on which of the two contracts `TProvider` is.
  */
-export async function loadProviderPackages<TProvider, TFactoryContext>(
+export async function loadProviderPackages<
+  TProvider extends ProviderImplementation,
+  TFactoryContext,
+>(
   options: LoadProviderPackagesOptions,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
@@ -132,7 +143,10 @@ function isImplementationLoaded(
   return registry.getImplementation(descriptor.id) !== undefined;
 }
 
-async function loadOneProviderPackage<TProvider, TFactoryContext>(
+async function loadOneProviderPackage<
+  TProvider extends ProviderImplementation,
+  TFactoryContext,
+>(
   registry: ProviderRegistry,
   ref: ProviderRef,
   importModule: ProviderModuleImporter,
@@ -186,13 +200,12 @@ async function loadOneProviderPackage<TProvider, TFactoryContext>(
   });
 
   // The registered descriptor is Core's own: it is parsed from the configured
-  // ref, never read back off the loaded implementation. A pre-registered
-  // built-in keeps its existing descriptor; only its implementation is loaded
-  // from the package. Package-backed refs register both.
-  if (existing === undefined) {
-    registry.register(seedDescriptor);
-  }
-  registry.registerImplementation(seedDescriptor.id, provider);
+  // ref, never read back off the loaded implementation. `seedDescriptor` is
+  // `existing` itself when a built-in was pre-registered (same object, not a
+  // copy), so `register()` recognizes the completion and only adds the
+  // implementation instead of registering the descriptor a second time.
+  // Package-backed refs register both in this one call.
+  registry.register(seedDescriptor, provider);
 }
 
 function resolvePackageName<TProvider, TFactoryContext>(

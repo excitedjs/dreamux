@@ -9,7 +9,7 @@ import type { TeammateCollection } from '../teammate-collection/index.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from '../shutdown-errors.js';
+} from '../../platform/shutdown-errors.js';
 import type { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { closeAllBuilt } from './runtime-helpers.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';

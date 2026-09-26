@@ -16,7 +16,7 @@ import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from '../team-collection/create-re
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { TeamServiceDeps } from './types.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
   AgentEntityIdentity,
   AgentEntityWorktreeIdentity,

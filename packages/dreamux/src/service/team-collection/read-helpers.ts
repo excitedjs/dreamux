@@ -1,6 +1,4 @@
-import { Buffer } from 'node:buffer';
-
-import { RuleViolation } from '../../platform/errors.js';
+import { matchesGrepText } from '../../platform/history-page.js';
 import type { TeamHistoryQuery, TeamHistoryRow } from './types.js';
 import { validateTeamId } from './types.js';
 
@@ -30,49 +28,15 @@ export function matchesTeamHistoryQuery(
   return true;
 }
 
-export function clampTeamHistoryLimit(input: number | undefined): number {
-  if (input === undefined) return 20;
-  if (!Number.isInteger(input) || input < 1) {
-    throw new RuleViolation('history limit must be a positive integer');
-  }
-  return Math.min(input, 100);
-}
-
-export function encodeTeamCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
-}
-
-export function decodeTeamCursor(cursor: string): number {
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(cursor, 'base64url').toString('utf8'),
-    ) as { offset?: unknown };
-    if (
-      typeof parsed.offset === 'number' &&
-      Number.isInteger(parsed.offset) &&
-      parsed.offset >= 0
-    ) {
-      return parsed.offset;
-    }
-  } catch {
-    // Every unreadable cursor is the same broken rule, stated once below.
-  }
-  throw new RuleViolation('invalid history cursor');
-}
-
-export function previewTeamText(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
-}
-
 function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
-  const needle = grep.toLowerCase();
-  if (needle === '') return true;
-  return [
-    row.team_name,
-    row.intent,
-    row.source_repo,
-    row.leader_name,
-    row.close_note,
-  ].some((value) => value !== null && value.toLowerCase().includes(needle));
+  return matchesGrepText(
+    [
+      row.team_name,
+      row.intent,
+      row.source_repo,
+      row.leader_name,
+      row.close_note,
+    ],
+    grep,
+  );
 }

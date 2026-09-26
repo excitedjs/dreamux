@@ -145,7 +145,7 @@ app id.
 Source:
 
 - `/packages/dreamux/src/config/config.ts`
-- `/packages/dreamux/src/config/config-helpers.ts`
+- `/packages/dreamux/src/config/load.ts`
 - `/packages/dreamux/src/plugin/loader.ts`
 - `/packages/dreamux/src/agent-runtime/external-provider.ts`
 - `/packages/dreamux/src/channel/external-channel-provider.ts`

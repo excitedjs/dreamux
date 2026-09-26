@@ -3,9 +3,9 @@ import type { TeamStateTeammateSummary } from '@excitedjs/dreamux-types';
 import { requireLifecycleText } from '../agent-entity/types.js';
 import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
-import type { ClosedSubscription } from '../closed-fact.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
-import { InFlightWork } from '../in-flight-work.js';
+import type { ClosedSubscription } from '../../platform/closed-fact.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
 import { TeamService } from '../team-service/index.js';
 import type {
   TeamSchedulerLifecycle,

@@ -54,7 +54,7 @@ import {
   agentEntityLastQuery,
   agentEntityNameParam,
 } from '../agent-entity/read-helpers.js';
-import type { TeamMateWorktreeRequest } from './types.js';
+import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
 

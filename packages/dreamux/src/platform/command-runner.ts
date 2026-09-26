@@ -1,6 +1,40 @@
 import { execa } from 'execa';
 
-import type { CommandRunner } from '../onboard/types.js';
+/**
+ * Abstraction over running a host shell command. Onboarding, service
+ * install/uninstall, and provider diagnostics all shell out to check or
+ * launch external processes; this interface lets those call sites accept a
+ * fake runner in tests instead of spawning a real process.
+ */
+export interface CommandRunner {
+  run(
+    command: string,
+    args: string[],
+    options?: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      dryRun?: boolean;
+    },
+  ): Promise<void>;
+  check(
+    command: string,
+    args: string[],
+    options?: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      dryRun?: boolean;
+    },
+  ): Promise<boolean>;
+  capture(
+    command: string,
+    args: string[],
+    options?: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      dryRun?: boolean;
+    },
+  ): Promise<string>;
+}
 
 interface CommandOptions {
   cwd?: string;

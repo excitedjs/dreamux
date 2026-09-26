@@ -241,7 +241,7 @@ narrow decisions above. Everything else in this record stands.
   surfaces a warning with the manual fix. `dreamux doctor` now reports a
   `systemd linger` check.
 - **`daemon restart --notify-resumed --dispatcher <id>`** drops a one-shot
-  marker ([`/packages/dreamux/src/daemon/restart-intent.ts`](/packages/dreamux/src/daemon/restart-intent.ts),
+  marker ([`/packages/dreamux/src/service/dispatcher-service/restart-intent.ts`](/packages/dreamux/src/service/dispatcher-service/restart-intent.ts),
   path via `restartIntentPath()`) *before* triggering the restart — durable if
   the caller is reaped during a self-update. The freshly started server loads
   and deletes the marker once, and injects a `Restart completed.` turn into each

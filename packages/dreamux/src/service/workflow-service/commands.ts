@@ -12,10 +12,12 @@
  * The TeamMate MCP delegate that advertises the Workflow tools reads the same
  * helpers; neither adapter reads the other.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type {
+  CoreCommandContext,
+  CoreCommandDefinition,
+} from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
-import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
 import { commandPayload } from '../../command/payload.js';
 import {
   ANY,
@@ -25,6 +27,7 @@ import {
   STRING,
   objectSchema,
 } from '../../command/schema.js';
+import type { WorkflowOps } from './index.js';
 import {
   workflowRunIdParam,
   workflowRunInput,
@@ -45,7 +48,7 @@ interface WorkflowRunIdInput {
 }
 
 export function workflowCommands(
-  host: CoreCommandHost,
+  workflows: (context: CoreCommandContext) => WorkflowOps,
 ): readonly AnyCoreCommand[] {
   const run: CoreCommandDefinition<
     'workflow.run',
@@ -65,7 +68,7 @@ export function workflowCommands(
       return { request: workflowRunInput(commandPayload(payload)) };
     },
     async execute(context, input) {
-      return mustDispatcher(host, context).workflows.run(input.request);
+      return workflows(context).run(input.request);
     },
   };
 
@@ -81,7 +84,7 @@ export function workflowCommands(
     parse: (payload) => runIdInput(payload),
     async execute(context, input) {
       return workflowRunResult(
-        await mustDispatcher(host, context).workflows.status({
+        await workflows(context).status({
           run_id: input.runId,
         }),
       );
@@ -99,7 +102,7 @@ export function workflowCommands(
     output: OBJECT,
     parse: (payload) => runIdInput(payload),
     async execute(context, input) {
-      return mustDispatcher(host, context).workflows.stop({
+      return workflows(context).stop({
         run_id: input.runId,
       });
     },
@@ -116,7 +119,7 @@ export function workflowCommands(
     output: OBJECT,
     parse: () => ({}),
     async execute(context) {
-      const result = await mustDispatcher(host, context).workflows.list();
+      const result = await workflows(context).list();
       return { runs: result.runs.map(workflowRunResult) };
     },
   };

@@ -22,7 +22,8 @@ import {
   serviceUnitPath,
   SYSTEMD_UNIT,
 } from '../onboard/service.js';
-import type { CommandRunner, ServicePlatform } from '../onboard/types.js';
+import type { CommandRunner } from '../platform/command-runner.js';
+import type { ServicePlatform } from '../onboard/types.js';
 
 export type DaemonVerb = 'start' | 'stop' | 'restart';
 

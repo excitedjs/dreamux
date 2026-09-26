@@ -6,10 +6,10 @@ import type {
   TeammateRole,
 } from '@excitedjs/dreamux-types';
 
-import type { ProjectedAgent } from '../../channel/conversation-projection.js';
+import type { ProjectedAgent } from '../dispatcher-core-events/conversation-projection.js';
 
 import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
-import { errorMessage } from '../../platform/error-info.js';
+import { errorMessage } from '@excitedjs/dreamux-utils';
 import { toRecordRow, toStatus } from '../agent-entity/read-helpers.js';
 import { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
 import {
@@ -24,18 +24,18 @@ import {
 import {
   ClosedFactPublisher,
   type ClosedSubscription,
-} from '../closed-fact.js';
+} from '../../platform/closed-fact.js';
 import type {
   CompletionDeliveryResult,
   PreparedCompletionDelivery,
   PreparedCompletionFact,
 } from '../completion-router/index.js';
-import { deduplicate } from '../deduplicate.js';
-import { InFlightWork } from '../in-flight-work.js';
+import { deduplicate } from '../../platform/deduplicate.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from '../shutdown-errors.js';
+} from '../../platform/shutdown-errors.js';
 import { COMPLETION_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type {

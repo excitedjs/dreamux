@@ -7,9 +7,9 @@ import {
   type CompletionDeliveryPolicy,
   type CompletionInitiator,
 } from '../completion-router/index.js';
-import { deduplicate } from '../deduplicate.js';
-import { InFlightWork } from '../in-flight-work.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
+import { deduplicate } from '../../platform/deduplicate.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import type { CreateLockedTeammateOptions } from '../teammate-collection/index.js';
 import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
 import type { LockedTeammate } from '../teammate-service/types.js';

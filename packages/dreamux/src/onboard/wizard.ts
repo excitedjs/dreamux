@@ -39,7 +39,7 @@ import {
   formatProviderRef,
   type ProviderRegistry,
 } from '../registry/index.js';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { createLogger } from '../platform/logger.js';
 import { loadPlugins } from '../plugin/loader.js';
 import type {

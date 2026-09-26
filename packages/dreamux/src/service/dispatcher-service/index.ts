@@ -6,7 +6,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 import { AsyncSeriesHook, SyncHook } from 'tapable';
 
-import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
+import type { RestartIntentConsumer } from './restart-intent.js';
 import {
   adminSocketPath as defaultAdminSocketPath,
   dispatcherCronJobsPath,
@@ -14,7 +14,7 @@ import {
   teamCollectionDir,
   teamMateCollectionDir,
 } from '../../platform/paths.js';
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { isolatedTaps, launchDraftTaps } from '../../plugin/hooks.js';
 import { configuredDispatcherCwd } from '../dispatcher-workspace.js';
 import type { DispatcherRow } from '../../state/dispatcher-store.js';
@@ -33,7 +33,7 @@ import {
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from '../shutdown-errors.js';
+} from '../../platform/shutdown-errors.js';
 import { CompletionDeliveryPolicy } from '../completion-router/index.js';
 import { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateOps } from '../teammate-collection/types.js';
@@ -44,7 +44,7 @@ import {
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import { SCHEDULED_SOURCE } from '../submission-sources.js';
-import { createConversationProjection } from '../../channel/conversation-projection.js';
+import { createConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeammateSubmitInput } from '../teammate-service/submission.js';
 import { WorktreeManager } from '../worktree/manager.js';

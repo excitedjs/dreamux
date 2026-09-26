@@ -24,7 +24,7 @@ import type {
   TeamStateTeammateSummary,
 } from '@excitedjs/dreamux-types';
 
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { teamMateCollectionDir } from '../../platform/paths.js';
 import {
   AgentEntityCollectionStore,

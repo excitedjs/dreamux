@@ -5,9 +5,9 @@ import {
   BUILT_IN_DEFAULTS,
   globalConfigDir,
   globalConfigFile,
-  loadConfig,
   type DreamuxConfig,
 } from '../config/config.js';
+import { loadConfig } from '../config/load.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import {
@@ -37,7 +37,6 @@ import {
 import { diagnoseDispatcherWorkspace } from '../service/dispatcher-workspace.js';
 import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
 import { TeamStore } from '../service/team-collection/store.js';
-import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
   detectServiceNodeVersionManager,
@@ -47,7 +46,10 @@ import {
   serviceUnitPath,
   SYSTEMD_UNIT,
 } from '../onboard/service.js';
-import type { CommandRunner } from '../onboard/types.js';
+import {
+  ExecaCommandRunner,
+  type CommandRunner,
+} from '../platform/command-runner.js';
 import {
   launchdTarget,
   parseLaunchdDetail,

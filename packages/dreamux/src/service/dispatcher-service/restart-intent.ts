@@ -16,14 +16,14 @@
  *     stops a later cold boot / crash auto-heal from replaying the notice.
  *   - A TTL bounds staleness: a marker older than its TTL is ignored (and the
  *     file removed). The TTL is re-checked at claim time too, so a dispatcher
- *     that only starts long after boot (e.g. via a later admin `dispatcher
- *     start`) does not claim a stale notice.
+ *     whose agent runtime only activates long after boot does not claim a
+ *     stale notice.
  */
 
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { restartIntentPath } from '../platform/paths.js';
+import { restartIntentPath } from '../../platform/paths.js';
 import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 
 /** Default English notice injected into a resumed dispatcher after restart. */

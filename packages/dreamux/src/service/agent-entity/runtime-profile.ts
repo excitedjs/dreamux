@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { validateDispatcherId } from '../../state/dispatcher-id.js';
+import { validateDispatcherId } from '../../platform/dispatcher-id.js';
 import { DISPATCHER_AGENT_NAME, type AgentEntityIdentity } from './types.js';
 
 export function dispatcherRuntimeId(dispatcherId: string): string {

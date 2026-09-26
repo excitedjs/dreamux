@@ -3,7 +3,7 @@ import type {
   RuntimeCompletion,
 } from '@excitedjs/dreamux-types';
 
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 
 interface CompletionFactBase {
   status: 'completed' | 'failed' | 'stopped';

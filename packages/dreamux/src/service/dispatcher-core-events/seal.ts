@@ -15,7 +15,7 @@
  */
 import type { ChannelCoreEvent } from '@excitedjs/dreamux-types';
 
-import { deepFreeze } from '../frozen-snapshot.js';
+import { deepFreeze } from '../../platform/json-value.js';
 
 /**
  * The catalog itself.

@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { TransactionalStore } from '@excitedjs/dreamux-utils';
+import { errorMessage, TransactionalStore } from '@excitedjs/dreamux-utils';
 
-import { errorMessage } from '../../platform/error-info.js';
 import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { validateCronSchedule } from './cron-validation.js';

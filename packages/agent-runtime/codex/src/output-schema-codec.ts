@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import { unsupportedFeatureError } from '@excitedjs/dreamux-utils';
+import {
+  errorMessage,
+  unsupportedFeatureError,
+} from '@excitedjs/dreamux-utils';
 
 type SupportedType =
   'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null';
@@ -449,8 +452,4 @@ function fail(path: string, reason: string): never {
     'outputSchema',
     `codex outputSchema at ${path}: ${reason}`,
   );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

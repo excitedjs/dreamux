@@ -8,7 +8,7 @@
 import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from './command/registry.js';
-import type { CoreCommandHost } from './command/host.js';
+import type { CoreCommandHost } from './server/command-host.js';
 import { commandPayload } from './command/payload.js';
 import {
   INTEGER,

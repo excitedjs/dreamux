@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { assertUnixSocketPathBudget } from '@excitedjs/dreamux-utils';
 
 import { pathExists } from './fs-errors.js';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { validateDispatcherId } from './dispatcher-id.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(dirname(HERE));

@@ -5,7 +5,7 @@ import {
   DISABLE_FEATURE_CRON,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type { ConfigReader } from '../../config/service.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';

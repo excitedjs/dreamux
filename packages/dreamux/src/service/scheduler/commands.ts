@@ -18,7 +18,6 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
-import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
 import { commandPayload, type CommandPayload } from '../../command/payload.js';
 import {
   BOOLEAN,
@@ -57,12 +56,20 @@ function cronOwnerInput(params: CommandPayload): CronOwnerInput {
   return { teamId: optionalTeamNameParam(params, 'team_id') };
 }
 
+/** The one capability `schedulerCommands` needs from its addressed dispatcher. */
+interface SchedulerCommandsDispatcher {
+  readonly scheduler: SchedulerCommands;
+  teamScheduler(teamId: string): Promise<SchedulerCommands>;
+}
+
 async function schedulerFor(
-  host: CoreCommandHost,
+  resolveDispatcher: (
+    context: CoreCommandContext,
+  ) => SchedulerCommandsDispatcher,
   context: CoreCommandContext,
   input: CronOwnerInput,
 ): Promise<SchedulerCommands> {
-  const dispatcher = mustDispatcher(host, context);
+  const dispatcher = resolveDispatcher(context);
   const { teamId } = input;
   if (teamId === null) return dispatcher.scheduler;
   // Resolving a Team-scoped owner can fail with a fact the Team already states:
@@ -83,7 +90,7 @@ interface CronDeleteInput extends CronOwnerInput {
 }
 
 export function schedulerCommands(
-  host: CoreCommandHost,
+  dispatcher: (context: CoreCommandContext) => SchedulerCommandsDispatcher,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<
     'scheduler.cron.list',
@@ -97,7 +104,7 @@ export function schedulerCommands(
     parse: (payload) => cronOwnerInput(commandPayload(payload)),
     async execute(context, input) {
       return cronListResult(
-        await (await schedulerFor(host, context, input)).list(),
+        await (await schedulerFor(dispatcher, context, input)).list(),
       );
     },
   };
@@ -130,7 +137,9 @@ export function schedulerCommands(
     },
     async execute(context, input) {
       return cronJobResult(
-        await (await schedulerFor(host, context, input)).create(input.request),
+        await (
+          await schedulerFor(dispatcher, context, input)
+        ).create(input.request),
       );
     },
   };
@@ -165,7 +174,9 @@ export function schedulerCommands(
     },
     async execute(context, input) {
       return cronJobResult(
-        await (await schedulerFor(host, context, input)).update(input.request),
+        await (
+          await schedulerFor(dispatcher, context, input)
+        ).update(input.request),
       );
     },
   };
@@ -184,7 +195,7 @@ export function schedulerCommands(
       return { ...cronOwnerInput(params), id: cronJobIdParam(params) };
     },
     async execute(context, input) {
-      return (await schedulerFor(host, context, input)).delete(input.id);
+      return (await schedulerFor(dispatcher, context, input)).delete(input.id);
     },
   };
 

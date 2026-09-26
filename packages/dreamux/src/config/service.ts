@@ -8,7 +8,7 @@
  * so every read sees the same committed value and every write goes through
  * the store's own serialized read-decide-replace: no second reservation,
  * file-open, or validation path beside the one `readConfigFile`/
- * `resolveConfig` (`./config.js`) already gives the file-read path
+ * `resolveConfig` (`./load.js`) already gives the file-read path
  * `doctor`/`onboard`/`loadConfig` use.
  *
  * The store's value pairs the parsed file (`raw`) with its resolved shape
@@ -34,13 +34,15 @@ import { throwCallerMistake } from '../command/errors.js';
 import type { LoadedPlugin } from '../plugin/loader.js';
 import type { ProviderRegistry } from '../registry/index.js';
 import {
-  assertNoLegacyTomlOnly,
   globalConfigFile,
-  readConfigFile,
-  resolveConfig,
   type ConfigPathOverrides,
   type DreamuxConfig,
 } from './config.js';
+import {
+  assertNoLegacyTomlOnly,
+  readConfigFile,
+  resolveConfig,
+} from './load.js';
 
 /**
  * One `agents[]` entry in file shape — whatever the operator wrote, with
@@ -143,7 +145,7 @@ export class ConfigService implements ConfigReader {
    * then run it through `resolveConfig` — the identical loader/validator a
    * fresh `dreamux serve` uses, so a write this rejects is a write the next
    * start would also reject. `resolveConfig`'s own validators raise a
-   * `RuleViolation` for a malformed candidate (`config.ts`/`config-helpers.ts`);
+   * `RuleViolation` for a malformed candidate (`config.ts`'s `mergeWithDefaults`);
    * {@link throwCallerMistake} re-types exactly that into the caller's
    * mistake, so `config.agents.replace` reports `BAD_REQUEST` instead of
    * `INTERNAL` for a bad payload. Either way this call rejects with file and
@@ -191,7 +193,7 @@ export class ConfigService implements ConfigReader {
   /**
    * The store's `load()` callback — the whole open sequence, including
    * one-time plugin loading. Delegates the "open the file" sequence to
-   * `readConfigFile` (`./config.js`), the same function the CLI read path
+   * `readConfigFile` (`./load.js`), the same function the CLI read path
    * (`doctor`/`onboard`/`loadConfig`) uses, so today's checks, order, and
    * messages (legacy TOML, missing file, file mode, parse) stay one
    * implementation. `TransactionalStore.load()` guarantees this runs at most
@@ -253,7 +255,10 @@ function mergeAgentEntries(
  * as submitted. Arrays walk by index, mirroring `redactSecretKeyValues`'s own
  * walk (`@excitedjs/dreamux-utils/src/redaction.ts`).
  */
-function restoreCommittedSecrets(submitted: unknown, committed: unknown): unknown {
+function restoreCommittedSecrets(
+  submitted: unknown,
+  committed: unknown,
+): unknown {
   if (Array.isArray(submitted)) {
     const committedArray = Array.isArray(committed) ? committed : undefined;
     return submitted.map((item, index) =>

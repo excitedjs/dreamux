@@ -94,8 +94,9 @@ Admin callers may pass validated `skill_sources` on `teammate.spawn` /
 control-plane slices (events, protocol baseline, introspection, authentication)
 are the one [active proposal](../proposals/admin-control-plane-surface.md).
 
-Key source: `/packages/dreamux/src/command/`,
-`/packages/dreamux/src/admin/socket.ts`.
+Key source: `/packages/dreamux/src/command/` (registry, schema/validation,
+`mustDispatcherId`), `/packages/dreamux/src/server/` (catalog composition,
+`CoreCommandHost`), `/packages/dreamux/src/admin/socket.ts`.
 
 ## MCP Protocol Boundary
 

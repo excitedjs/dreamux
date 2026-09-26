@@ -9,7 +9,6 @@
  * top-level `dreamux uninstall`.
  */
 
-import { ExecaCommandRunner } from '../onboard/commands.js';
 import { homedir } from 'node:os';
 import {
   installUserService,
@@ -24,16 +23,14 @@ import {
   type ServiceRemoveResult,
 } from '../onboard/service.js';
 import { TransparentFileLedger } from '../onboard/ledger.js';
-import type {
-  CommandRunner,
-  OnboardFileLedgerEntry,
-} from '../onboard/types.js';
-import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
-  type DreamuxConfig,
-  globalConfigDir,
-  loadConfig,
-} from '../config/config.js';
+  ExecaCommandRunner,
+  type CommandRunner,
+} from '../platform/command-runner.js';
+import type { OnboardFileLedgerEntry } from '../onboard/types.js';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
+import { type DreamuxConfig, globalConfigDir } from '../config/config.js';
+import { loadConfig } from '../config/load.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import {

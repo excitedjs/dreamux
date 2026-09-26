@@ -19,11 +19,10 @@
  * correctly the first time `update()`/`remove()` runs.
  */
 
-import { randomBytes } from 'node:crypto';
-import { mkdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { publishFileExclusive } from './fs.js';
+import { publishFileExclusive, writeFileAtomic } from './fs.js';
 
 export interface TransactionalStoreOptions<T> {
   /** Absolute path of the one file this store owns. */
@@ -168,23 +167,12 @@ export class TransactionalStore<T> {
     }
   }
 
-  /**
-   * Sibling temp file, fully written, then renamed over the target. Mode
-   * `0600`, no fsync. The temp file is opened `wx` (create, exclusive) so a
-   * collision on the random suffix throws instead of silently overwriting
-   * another in-flight write.
-   */
+  /** Mode `0600`, no fsync — see `writeFileAtomic` for the tmp+rename shape. */
   private async publishReplace(value: T): Promise<void> {
     await this.ensureDir();
-    const data = this.encode(value);
-    const tmp = `${this.opts.path}.tmp-${tempSuffix()}`;
-    try {
-      await writeFile(tmp, data, { flag: 'wx', mode: 0o600 });
-      await rename(tmp, this.opts.path);
-    } catch (err) {
-      await rm(tmp, { force: true }).catch(() => undefined);
-      throw err;
-    }
+    await writeFileAtomic(this.opts.path, this.encode(value), {
+      mode: 0o600,
+    });
   }
 
   private enqueue<R>(fn: () => Promise<R>): Promise<R> {
@@ -195,14 +183,4 @@ export class TransactionalStore<T> {
     );
     return settled;
   }
-}
-
-function tempSuffix(): string {
-  return (
-    process.pid.toString(16) +
-    '-' +
-    Date.now().toString(36) +
-    '-' +
-    randomBytes(4).toString('hex')
-  );
 }

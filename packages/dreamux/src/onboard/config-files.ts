@@ -4,7 +4,7 @@ import {
   type DispatcherProviderConfig,
   stringifyConfig,
 } from '../config/config.js';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import type { OnboardAnswers } from '../onboard/types.js';
 
 export function buildDreamuxConfigJson(answers: OnboardAnswers): string {

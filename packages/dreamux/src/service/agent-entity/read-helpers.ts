@@ -1,5 +1,3 @@
-import { Buffer } from 'node:buffer';
-
 import type { AgentRuntimeStatus } from '@excitedjs/dreamux-types';
 
 import { RuleViolation, throwCallerMistake } from '../../command/errors.js';
@@ -11,6 +9,7 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
+import { matchesGrepText, previewText } from '../../platform/history-page.js';
 import {
   validateTeamMateName,
   type AgentEntityHistoryQuery,
@@ -107,14 +106,6 @@ export function matchesRecordQuery(
   return true;
 }
 
-export function clampHistoryLimit(input: number | undefined): number {
-  if (input === undefined) return 20;
-  if (!Number.isInteger(input) || input < 1) {
-    throw new RuleViolation('history limit must be a positive integer');
-  }
-  return Math.min(input, 100);
-}
-
 /**
  * Read an agent entity name parameter.
  *
@@ -187,44 +178,12 @@ export function agentEntityLastQuery(
   };
 }
 
-export function encodeCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
-}
-
-export function decodeCursor(cursor: string): number {
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(cursor, 'base64url').toString('utf8'),
-    ) as Record<string, unknown>;
-    if (
-      typeof parsed['offset'] === 'number' &&
-      Number.isInteger(parsed['offset']) &&
-      parsed['offset'] >= 0
-    ) {
-      return parsed['offset'];
-    }
-  } catch {
-    // Every unreadable cursor is the same broken rule, stated once below.
-  }
-  throw new RuleViolation('invalid history cursor');
-}
-
 function recordRowMatchesText(
   row: AgentEntityRecordRow,
   grep: string,
 ): boolean {
-  const needle = grep.trim().toLowerCase();
-  if (needle === '') return true;
-  return [
-    row.name,
-    row.agent_runtime,
-    row.source_repo,
-    row.intent,
-    row.close_note,
-  ].some((value) => value !== null && value.toLowerCase().includes(needle));
-}
-
-function previewText(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
+  return matchesGrepText(
+    [row.name, row.agent_runtime, row.source_repo, row.intent, row.close_note],
+    grep,
+  );
 }
