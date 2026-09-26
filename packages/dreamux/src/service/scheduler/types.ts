@@ -9,7 +9,7 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 
-import type { InboundDeliveryResult } from '../teammate-service/turn-recording.js';
+import type { TurnAdmission } from '../agent/admission.js';
 
 import type { CronJob, CronJobStore } from './store.js';
 
@@ -47,7 +47,7 @@ export interface SchedulerServiceOptions {
     jobId: string;
     prompt: string;
     sourceId: string;
-  }): Promise<InboundDeliveryResult>;
+  }): Promise<TurnAdmission>;
   log: DreamuxLogger;
   now?: () => number;
 }

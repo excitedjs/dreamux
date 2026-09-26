@@ -4,8 +4,8 @@ import type { ChannelService } from '../channel-service/index.js';
 import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type { SchedulerService } from '../scheduler/service.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import type { TeammateService } from '../teammate-service/index.js';
-import type { TeammateCollection } from '../teammate-collection/index.js';
+import type { AgentService } from '../agent/service.js';
+import type { TeammateCollection } from '../agent/index.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -31,7 +31,7 @@ export async function rollbackFailedInputSourceStart(input: {
   teams: TeamCollection;
   teammates: TeammateCollection;
   admittedTasks: DispatcherTaskDrain;
-  agent: TeammateService | null;
+  agent: AgentService | null;
   log: DreamuxLogger;
 }): Promise<void> {
   const failures: unknown[] = [];

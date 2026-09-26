@@ -86,7 +86,7 @@ export type McpDelegateResult =
  * One Agent-facing MCP server, implemented by the layer that owns its tools.
  *
  * Implementations live with their domain — `service/team-collection`,
- * `service/teammate-collection`, `service/scheduler`, `service/channel-service`
+ * `service/agent`, `service/scheduler`, `service/channel-service`
  * — never here, and never in a transport module.
  */
 export interface McpServerDelegate {

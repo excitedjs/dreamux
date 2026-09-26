@@ -6,7 +6,7 @@ import type {
   CompletionInitiator,
 } from '../completion-router/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import type { TeammateCollection } from '../teammate-collection/index.js';
+import type { TeammateCollection } from '../agent/index.js';
 import {
   WorkflowService,
   type WorkflowOps,

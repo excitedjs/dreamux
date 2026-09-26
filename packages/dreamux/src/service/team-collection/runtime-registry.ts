@@ -1,6 +1,6 @@
 import type { TeamStateTeammateSummary } from '@excitedjs/dreamux-types';
 
-import { requireLifecycleText } from '../agent-entity/types.js';
+import { requireLifecycleText } from '../agent/identity.js';
 import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { ClosedSubscription } from '../../platform/closed-fact.js';
@@ -12,7 +12,7 @@ import type {
   TeamServiceCreateOutput,
   TeamServiceDeps,
 } from '../team-service/types.js';
-import type { TeamMateSharedWorkspace } from '../teammate-collection/types.js';
+import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { TeamClosedError, teamErrorInfo } from './errors.js';
 import { readTeamRoster } from './roster-reader.js';
@@ -451,7 +451,7 @@ export class TeamRuntimeRegistry {
       // Each Team gets its own already-resolved root; nothing below rebuilds it.
       teamRoot: this.opts.store.teamRoot(teamId),
       names: collection.names,
-      admissions: collection.admissions,
+      agentServiceFactory: collection.agentServiceFactory,
       conversationProjection: collection.conversationProjection,
       completionDelivery: collection.completionDelivery,
       leaderCompletionInitiator: collection.dispatcherCompletionInitiator,

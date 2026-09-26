@@ -19,7 +19,7 @@ lives under `/packages/dreamux/src/service/`.
 
 Each `DispatcherService` is one dispatcher-local aggregate and owns:
 
-- the dispatcher's contained agent (a `TeammateService` built from the
+- the dispatcher's contained agent (an `AgentService` built from the
   dispatcher root `identity.json`, structurally outside the `teammate/`
   collection so read chokepoints never enumerate it);
 - a dispatcher-local `ChannelService`;
@@ -44,7 +44,7 @@ Source:
 
 - `/packages/dreamux/src/server.ts`
 - `/packages/dreamux/src/service/CLAUDE.md`
-- `/packages/dreamux/src/service/agent-entity/`
+- `/packages/dreamux/src/service/agent/`
 - `/packages/dreamux/src/service/dispatchers/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/index.ts`
@@ -58,7 +58,7 @@ things:
 |---|---|---|
 | `Dispatchers` | `DispatcherService` | aggregate factory/cache vs. one dispatcher's object graph |
 | `TeamCollection` | `TeamService` | Team store, worktrees, create/list/history vs. one Team's record and lifecycle |
-| `TeammateCollection` | `TeammateService` | scoped construction/cache/reads vs. entity-owned lifecycle |
+| `TeammateCollection` | `AgentService` | scoped construction/cache/reads vs. entity-owned lifecycle |
 
 A **Collection** owns its store, its factory, lookup and list, the instances
 this process holds, materialization dedup, and exact-instance eviction. It does
@@ -67,14 +67,14 @@ owns no bulk runtime or membership shutdown verb, apart from the Team-scoped
 bulk member close a dissolve needs.
 
 A **Service** owns exactly one entity: its record or identity, its operations,
-its runtime-backed work, and its close. `TeammateService` is the sole command
+its runtime-backed work, and its close. `AgentService` is the sole command
 owner for every dispatcher agent, TeamMate, TeamLeader, and Team member — it
 owns mutation admission, its process-local Workflow lock, raw runtime authority,
 in-process `Turn` objects, terminal outcome and delivery convergence, close
 single-flight, and the committed retirement fact.
 
 The dispatcher *has* an agent; it is not itself an Agent Runtime. Each
-`TeamService` directly builds and holds its TeamLeader `TeammateService` through
+`TeamService` directly builds and holds its TeamLeader `AgentService` through
 `team-service/leader-agent.ts`, using the identity store, worktree manager, and
 completion-delivery policy its owning `TeamCollection` injects. The per-Team
 `TeammateCollection` is members-only: the TeamLeader lives at the Team root and
@@ -92,8 +92,8 @@ Source:
 - `/packages/dreamux/src/service/team-collection/index.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 
 ## Contracts
 
@@ -144,7 +144,8 @@ predicate before projecting any physically discovered identity.
 
 Source:
 
-- `/packages/dreamux/src/service/agent-entity/read-helpers.ts`
+- `/packages/dreamux/src/service/agent/records.ts`
+- `/packages/dreamux/src/service/agent/requests.ts`
 - `/packages/dreamux/src/service/team-service/leader-agent.ts`
 - `/packages/dreamux/src/platform/paths.ts`
 
@@ -209,10 +210,9 @@ byte/char/cursor-length cap of its own on top of them.
 
 Source:
 
-- `/packages/dreamux/src/service/teammate-collection/`
-- `/packages/dreamux/src/service/teammate-service/`
-- `/packages/dreamux/src/service/agent-entity/types.ts`
-- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
+- `/packages/dreamux/src/service/agent/`
+- `/packages/dreamux/src/service/agent/identity.ts`
+- `/packages/dreamux/src/service/agent/activity.ts`
 - `/packages/dreamux-utils/src/activity-scan.ts`
 - `/packages/agent-runtime/codex/src/activity/`
 - `/packages/agent-runtime/claude-code/src/activity/`
@@ -277,7 +277,7 @@ Source:
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/team-collection/create-request.ts`
 - `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 
 ### Dissolve
 
@@ -385,7 +385,7 @@ read at the moment delivery would start. The producer never learns that its
 owner is going away, and no teardown walks the producer population:
 
 - an entity reports a turn only while it is `active` and not under host
-  release (`TeammateService` states this through the coordinator's
+  release (`AgentService` states this through the coordinator's
   `owesCompletion`). A turn its own close, host stop, or dissolve ended is
   settled for convergence and dropped for good, so a later `ensureDelivery()`
   cannot revive it; a delivery already under way is never retracted. Both
@@ -412,8 +412,8 @@ Source:
 
 - `/packages/dreamux/src/service/completion-router/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/inbound-task-drain.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-recording.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/service/agent/admission.ts`
+- `/packages/dreamux/src/service/agent/turn.ts`
 - `/packages/dreamux/src/service/workflow-service/run.ts`
 
 ### Workspaces
@@ -437,7 +437,7 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/service/worktree/`
-- `/packages/dreamux/src/service/agent-entity/agent-config.ts`
+- `/packages/dreamux/src/config/config.ts`
 
 ### MCP Boundaries
 
@@ -474,7 +474,7 @@ Source:
 - `/packages/dreamux/src/service/mcp/`
 - `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
-- `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/agent/mcp.ts`
 - `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
 - `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
 

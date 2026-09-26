@@ -1283,12 +1283,12 @@ Source:
 
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 ### Feishu conversation display
@@ -1488,8 +1488,8 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`
 - `/packages/dreamux-utils/src/redaction.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 - `/packages/dreamux/src/platform/home-paths.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-state.ts`

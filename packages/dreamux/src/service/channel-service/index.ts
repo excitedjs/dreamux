@@ -55,7 +55,7 @@ export class ChannelService {
 
   /**
    * Resolved once at construction, not per-call. Unlike the launch/resume
-   * capability sites (`TeammateService`), there is no live fact to observe
+   * capability sites (`AgentService`), there is no live fact to observe
    * here: `dispatchers[].channels[]` is never touched by
    * `config.agents.replace`, so a single resolve is a type-uniformity
    * convenience over `opts.config`, not a liveness requirement.

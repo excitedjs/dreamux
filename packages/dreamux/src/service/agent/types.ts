@@ -11,7 +11,7 @@ import type {
   AgentEntitySendResult,
   AgentEntitySpawnResult,
   AgentEntityWorktreeIdentity,
-} from '../agent-entity/types.js';
+} from './identity.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 
 export interface SpawnTeamMateInput {

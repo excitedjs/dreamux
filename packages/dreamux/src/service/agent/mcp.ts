@@ -26,10 +26,10 @@ import {
   optionalNonBlankString,
   type CommandPayload,
 } from '../../command/payload.js';
-import { historyQuery } from '../agent-entity/history-query.js';
+import { historyQuery } from './requests.js';
 import { repoRequest, repoWorktree } from '../worktree/repo-request.js';
-import { mapAgentActivityCommandError } from '../agent-entity/activity-errors.js';
-import type { AgentEntitySpawnResult } from '../agent-entity/types.js';
+import { mapAgentActivityCommandError } from './activity.js';
+import type { AgentEntitySpawnResult } from './identity.js';
 import type { DispatcherService } from '../dispatcher-service/index.js';
 import type { TeamLeaderHandle } from '../dispatcher-service/team-leader-handle.js';
 import {
@@ -53,7 +53,7 @@ import { teammateToolDescriptors } from './mcp-tool-descriptors.js';
 import {
   agentEntityLastQuery,
   agentEntityNameParam,
-} from '../agent-entity/read-helpers.js';
+} from './requests.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';

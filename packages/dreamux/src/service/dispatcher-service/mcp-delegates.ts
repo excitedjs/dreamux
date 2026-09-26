@@ -18,7 +18,7 @@ import { channelMcpDelegates } from '../channel-service/mcp-delegates.js';
 import type { McpServerDelegate } from '../mcp/types.js';
 import { createCronMcpDelegate } from '../scheduler/mcp-delegate.js';
 import { createTeamMcpDelegate } from '../team-collection/mcp-delegate.js';
-import { createTeamMateMcpDelegate } from '../teammate-collection/mcp-delegate.js';
+import { createTeamMateMcpDelegate } from '../agent/mcp.js';
 import type { DispatcherService } from './index.js';
 
 interface RoleDelegateInput {

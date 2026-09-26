@@ -1,34 +1,28 @@
 import type { DreamuxLogger, JsonSchema } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type {
+  AgentRuntimeProviderCatalog,
+  AgentRuntimePublicCapabilities,
+} from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
-import type { ConfigReader } from '../../config/service.js';
 import {
-  agentRuntimeCapability,
   defaultAgentRuntime,
-} from '../agent-entity/agent-config.js';
+  type ResolvedAgentConfig,
+} from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import type {
   AgentEntityCollectionStore,
   AgentIdentityStore,
   AgentNameRegistry,
-} from '../agent-entity/identity-store.js';
-import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
-import {
-  matchesRecordQuery,
-  toRecordRow,
-  toStatus,
-} from '../agent-entity/read-helpers.js';
+} from './store.js';
+import { matchesRecordQuery, toRecordRow, toStatus } from './records.js';
 import {
   clampHistoryLimit,
   decodeCursor,
   encodeCursor,
 } from '../../platform/history-page.js';
-import {
-  assertDispatcherScopedTeammate,
-  assertTeamScopedAgent,
-  childAgentRuntimeId,
-} from '../agent-entity/runtime-profile.js';
-import { readAgentActivity } from '../agent-entity/activity-reader.js';
+import { childAgentRuntimeId } from './runtime-id.js';
+import { readAgentActivity } from './activity.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -41,10 +35,11 @@ import {
   type AgentEntityLastQuery,
   type AgentEntityLastResult,
   type AgentEntityRecordRow,
+  type AgentEntityRuntimeCapability,
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
   type AgentEntitySpawnResult,
-} from '../agent-entity/types.js';
+} from './identity.js';
 import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
@@ -57,14 +52,12 @@ import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
-import { createTeammateService } from '../teammate-service/factory.js';
-import { TeammateService } from '../teammate-service/index.js';
+import type { AgentServiceFactory } from './factory.js';
+import { AgentService } from './service.js';
 import type { ClosedSubscription } from '../../platform/closed-fact.js';
-import type { LockedTeammate } from '../teammate-service/types.js';
-import {
-  toSubmissionResult,
-  type TurnCompletionDelivery,
-} from '../teammate-service/turn-recording.js';
+import type { LockedTeammate } from './service-types.js';
+import { toSubmissionResult } from './admission.js';
+import type { TurnCompletionDelivery } from './turn.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
@@ -94,7 +87,7 @@ export interface TeammateCollectionOptions {
   store: AgentEntityCollectionStore;
   /** The dispatcher-global name namespace; agent names stay dispatcher-unique. */
   names: AgentNameRegistry;
-  admissions: AdmissionLedger;
+  agentServiceFactory: AgentServiceFactory;
   completionDelivery?: CompletionDeliveryPolicy;
   conversationProjection: ConversationProjection;
   /**
@@ -135,7 +128,7 @@ interface ClosedTeamMateRecord {
  * when it reads one, and `send` — the one verb that reopens — is the only
  * caller that turns it back into an entity.
  */
-type ResolvedTeamMate = TeammateService | ClosedTeamMateRecord;
+type ResolvedTeamMate = AgentService | ClosedTeamMateRecord;
 
 interface FreshIdentityAllocation {
   readonly name: string;
@@ -150,7 +143,7 @@ export class TeammateCollection implements TeammateOps {
   private readonly teamScope: string | null;
   private readonly store: AgentEntityCollectionStore;
   private readonly worktrees: WorktreeManager;
-  private readonly entities = new Map<string, TeammateService>();
+  private readonly entities = new Map<string, AgentService>();
   private readonly subscriptions = new Map<string, ClosedSubscription>();
   private readonly materializations = new Map<
     string,
@@ -163,7 +156,7 @@ export class TeammateCollection implements TeammateOps {
    * {@link entities} — but a second send must still find the one already
    * reopening rather than start a second runtime for the same Agent.
    */
-  private readonly reopening = new Map<string, TeammateService>();
+  private readonly reopening = new Map<string, AgentService>();
 
   constructor(private readonly opts: TeammateCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -227,8 +220,8 @@ export class TeammateCollection implements TeammateOps {
    * the collection had. Registered before anything is awaited, so a second send
    * finds the Agent already reopening rather than starting a second runtime.
    */
-  private reopenFrom(resolved: ResolvedTeamMate): TeammateService {
-    if (resolved instanceof TeammateService) return resolved;
+  private reopenFrom(resolved: ResolvedTeamMate): AgentService {
+    if (resolved instanceof AgentService) return resolved;
     const reopening = this.reopening.get(resolved.identity.name);
     if (reopening !== undefined) return reopening;
     const entity = this.buildEntity(resolved.identity, resolved.store);
@@ -237,7 +230,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   private async sendResolved(
-    entity: TeammateService,
+    entity: AgentService,
     input: SendTeamMateInput,
   ): Promise<AgentEntitySendResult> {
     try {
@@ -272,7 +265,7 @@ export class TeammateCollection implements TeammateOps {
     // one reads the committed record here and answers from it: closing what is
     // already history constructs nothing.
     const resolved = await this.resolveEntity(name);
-    return resolved instanceof TeammateService
+    return resolved instanceof AgentService
       ? resolved.close({ note })
       : { teammate: toStatus(resolved.identity, null) };
   }
@@ -353,12 +346,41 @@ export class TeammateCollection implements TeammateOps {
       ],
       agent_runtimes: Object.entries(this.opts.config.current().agents).map(
         ([agentRuntimeId, agent]) =>
-          agentRuntimeCapability(
-            this.opts.agentRuntimeProviders,
-            agentRuntimeId,
-            agent,
-          ),
+          this.agentRuntimeCapability(agentRuntimeId, agent),
       ),
+    };
+  }
+
+  /**
+   * Project one `agents[]` entry as the runtime-facing capability descriptor
+   * `getCapabilities()` reports. Recovery and structured output are mandatory
+   * provider behavior, so neither is projected here; only whether the
+   * provider resolved, plus the bounded facts it declared about itself.
+   */
+  private agentRuntimeCapability(
+    agentRuntimeId: string,
+    agent: ResolvedAgentConfig,
+  ): AgentEntityRuntimeCapability {
+    let capabilities: AgentRuntimePublicCapabilities | null = null;
+    let unsupportedReason: string | null = null;
+    try {
+      // The catalog's snapshot, not a fresh `getCapabilities()` call: Core
+      // validated and froze it once at registration, so this projection cannot
+      // observe a provider object that changed underneath it.
+      capabilities = this.opts.agentRuntimeProviders.resolve(
+        agent.provider,
+      ).capabilities;
+    } catch (error) {
+      unsupportedReason =
+        error instanceof Error ? error.message : String(error);
+    }
+    return {
+      id: agentRuntimeId,
+      spawn: { agent_runtime: agentRuntimeId },
+      runtime_available: capabilities !== null,
+      unsupported_reason: unsupportedReason,
+      tags: capabilities?.tags ?? [],
+      public_config: capabilities?.publicConfig ?? null,
     };
   }
 
@@ -367,7 +389,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   /** Narrow containment query; callers invoke entity capabilities themselves. */
-  materializedEntities(): readonly TeammateService[] {
+  materializedEntities(): readonly AgentService[] {
     return [...this.entities.values()].filter((entity) => !entity.isRetired());
   }
 
@@ -403,9 +425,9 @@ export class TeammateCollection implements TeammateOps {
    * miss the one runtime it most needs to stop. Joining what is already in
    * flight is the whole of it: the fence refuses everything not yet started.
    */
-  private async heldMembers(): Promise<readonly TeammateService[]> {
+  private async heldMembers(): Promise<readonly AgentService[]> {
     await Promise.allSettled([...this.materializations.values()]);
-    const held = new Map<string, TeammateService>();
+    const held = new Map<string, AgentService>();
     for (const entity of this.materializedEntities()) {
       held.set(entity.name, entity);
     }
@@ -427,8 +449,8 @@ export class TeammateCollection implements TeammateOps {
   private async createFreshEntity(
     input: SpawnTeamMateRequest,
     options: CreateLockedTeammateOptions = {},
-    beforePublish?: (entity: TeammateService) => void,
-  ): Promise<TeammateService> {
+    beforePublish?: (entity: AgentService) => void,
+  ): Promise<AgentService> {
     requireLifecycleText(input.name, 'TeamMate spawn name');
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
     const identityPrompt = optionalLifecycleText(
@@ -530,12 +552,12 @@ export class TeammateCollection implements TeammateOps {
   private publishEntity(
     identity: AgentEntityIdentity,
     store: AgentIdentityStore,
-  ): TeammateService {
+  ): AgentService {
     return this.publish(this.buildEntity(identity, store));
   }
 
   /** Hold one live entity, once. */
-  private publish(entity: TeammateService): TeammateService {
+  private publish(entity: AgentService): AgentService {
     const name = entity.name;
     if (this.entities.get(name) === entity) return entity;
     this.entities.set(name, entity);
@@ -552,25 +574,19 @@ export class TeammateCollection implements TeammateOps {
     identity: AgentEntityIdentity,
     store: AgentIdentityStore,
     options: CreateLockedTeammateOptions = {},
-  ): TeammateService {
+  ): AgentService {
     const systemPrompt = teammateSystemPromptOptions(
       identity,
       options.systemPromptAppend,
     );
-    return createTeammateService({
-      dispatcherId: this.dispatcherId,
+    return this.opts.agentServiceFactory.create({
       identity,
       options: {
         runtimeId: childAgentRuntimeId(identity),
         // Every Agent a TeammateCollection owns is a TeamMate, Team-scoped or
         // not; the value comes from being this owner, never from the record.
         role: 'teammate',
-        ownsWorktreeOnClose: this.teamScope === null,
         loggerFields: { teammate: identity.name },
-        assertIdentityScope:
-          this.teamScope === null
-            ? assertDispatcherScopedTeammate
-            : assertTeamScopedAgent(this.teamScope),
         skillSources: identity.skill_sources,
         outputSchema: options.outputSchema,
         ...(systemPrompt ?? {}),
@@ -580,14 +596,13 @@ export class TeammateCollection implements TeammateOps {
       identities: store,
       onPersisted: this.store.onPersisted,
       peers: this.store,
-      admissions: this.opts.admissions,
       worktrees: this.worktrees,
       conversationProjection: this.opts.conversationProjection,
       log: this.opts.log,
     });
   }
 
-  private subscribeEntity(entity: TeammateService): ClosedSubscription {
+  private subscribeEntity(entity: AgentService): ClosedSubscription {
     const source = entity;
     return entity.onClosed((fact) => {
       if (this.entities.get(fact.name) === source && source.isRetired()) {
@@ -598,7 +613,7 @@ export class TeammateCollection implements TeammateOps {
     });
   }
 
-  private liveEntity(name: string): TeammateService | null {
+  private liveEntity(name: string): AgentService | null {
     const entity = this.entities.get(name) ?? null;
     if (entity === null || !entity.isRetired()) return entity;
     this.entities.delete(name);
@@ -735,7 +750,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   private async closeAfterFailedCreation(
-    entity: TeammateService,
+    entity: AgentService,
   ): Promise<void> {
     try {
       await entity.close({ note: 'TeamMate creation failed' });

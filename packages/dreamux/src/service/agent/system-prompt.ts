@@ -1,6 +1,6 @@
 import type { AgentRuntimeSystemPrompt } from '@excitedjs/dreamux-types';
 
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
+import type { AgentEntityIdentity } from './identity.js';
 
 /**
  * What one Agent of a TeammateCollection is told about itself, in the order it

@@ -5,7 +5,7 @@ import type {
   PreparedCompletionFact,
 } from '../completion-router/index.js';
 import { isTeamUnavailable } from '../team-collection/errors.js';
-import type { TurnCompletionDelivery } from '../teammate-service/turn-recording.js';
+import type { TurnCompletionDelivery } from '../agent/turn.js';
 
 export interface TeamCompletionTargetDeps {
   /** Run one delivery step inside the Team's work fence. */

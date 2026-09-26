@@ -204,7 +204,7 @@ Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/teammate-service/factory.ts`
+- `/packages/dreamux/src/service/agent/factory.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 
 ### System Prompt
@@ -245,7 +245,7 @@ re-supplied as `systemPrompt.append` fragments on every launch that rebuilds the
 create context — initial create/spawn, close/reopen, process restart, Team
 rebuild, and runtime resume.
 
-Prompt policy stays outside the generic `TeammateService` runtime container.
+Prompt policy stays outside the generic `AgentService` runtime container.
 `TeamService` supplies the TeamLeader default and identity fragments; owned
 operations may supply host-private fragments through their collection creation
 options, which is how Dynamic Workflow injects its workflow-role contract
@@ -280,7 +280,7 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 - `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-collection/index.ts`
+- `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/codex/src/runtime-support.ts`
 - `/packages/agent-runtime/codex/tests/system-prompt.test.ts`
@@ -345,11 +345,11 @@ Source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/agent-runtime/skill-sources.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 - `/packages/dreamux/src/service/team-collection/create-request.ts`
 - `/packages/dreamux/src/service/team-collection/commands.ts`
 - `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-collection/index.ts`
+- `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
@@ -362,7 +362,7 @@ names; each runtime maps the names it understands and ignores the rest.
 
 Current names:
 
-- `userInterrupt`, emitted for every agent at the shared `createTeammateService`
+- `userInterrupt`, emitted for every agent at the shared `AgentServiceFactory.create()`
   construction boundary. It disables the model-facing "ask the user a question"
   tool, which in a channel-only environment would wedge a turn waiting for an
   out-of-band answer. Claude Code maps it to the `AskUserQuestion` disallowed
@@ -387,7 +387,7 @@ Source:
 - `/packages/dreamux/src/agent-runtime/host-context.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 - `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
 ### Regression Trap: background origin is not completion ownership
@@ -590,7 +590,7 @@ Source:
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/control-rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 
 ### Claude Code Stream-Json Settlement
 
@@ -737,7 +737,7 @@ reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral
 digests, bounded scan accounting, exact positional reads, and path containment;
 duplicating those security and determinism primitives in each provider is not an
 accepted boundary. That module owns mechanism only and no record shape.
-`/packages/dreamux/src/service/agent-entity/activity-reader.ts` still validates
+`/packages/dreamux/src/service/agent/activity.ts` still validates
 each returned page's shape — record count against what was requested, and
 record/cursor field types — but imposes no byte/char/cursor-length magnitude
 cap of its own; a provider's own bounds are the only bound on what it returns.
@@ -1043,9 +1043,9 @@ new work rather than queueing it.
 Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
-- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
+- `/packages/dreamux/src/service/agent/activity.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
 - `/packages/dreamux/src/service/team-service/closing.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`

@@ -16,17 +16,17 @@ import {
 import type { ConfigReader } from '../../config/service.js';
 import type { RestartIntentConsumer } from './restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
+import type { AgentIdentityStore } from '../agent/store.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
+import type { AgentServiceFactory } from '../agent/factory.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { SchedulerService } from '../scheduler/service.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import type { TeammateCollection } from '../teammate-collection/index.js';
-import type { TeammateService } from '../teammate-service/index.js';
-import type { TeammateAgentMcp } from '../teammate-service/types.js';
+import type { TeammateCollection } from '../agent/index.js';
+import type { AgentService } from '../agent/service.js';
+import type { TeammateAgentMcp } from '../agent/service-types.js';
 import { collectShutdownFailure } from '../../platform/shutdown-errors.js';
 import type { DispatcherWorkflows } from './dispatcher-workflows.js';
 import { createDispatcherAgent } from './agent.js';
@@ -45,7 +45,7 @@ interface DispatcherInputSourceLifecycleOptions {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
   onPersisted: (identity: AgentEntityIdentity) => void;
-  admissions: AdmissionLedger;
+  agentServiceFactory: AgentServiceFactory;
   conversationProjection: ConversationProjection;
   log: DreamuxLogger;
   channels: ChannelService;
@@ -76,7 +76,7 @@ interface DispatcherInputSourceLifecycleOptions {
 
 /** Owns Dispatcher input-source preparation, startup state, and failed-start rollback. */
 export class DispatcherInputSourceLifecycle {
-  private agent_: TeammateService | null = null;
+  private agent_: AgentService | null = null;
   private workspaceCwd: string | null = null;
   /**
    * The prepare/start operation is its own fence: a nullable `Promise` field
@@ -98,7 +98,7 @@ export class DispatcherInputSourceLifecycle {
 
   constructor(private readonly opts: DispatcherInputSourceLifecycleOptions) {}
 
-  get agent(): TeammateService | null {
+  get agent(): AgentService | null {
     return this.agent_;
   }
 
@@ -202,7 +202,7 @@ export class DispatcherInputSourceLifecycle {
         agentRuntimeProviders: this.opts.agentRuntimeProviders,
         identities: this.opts.identities,
         onPersisted: this.opts.onPersisted,
-        admissions: this.opts.admissions,
+        agentServiceFactory: this.opts.agentServiceFactory,
         conversationProjection: this.opts.conversationProjection,
         log: this.opts.log,
         mcp: this.opts.agentMcp(),
@@ -385,7 +385,7 @@ export class DispatcherInputSourceLifecycle {
     return dispatcherConfig;
   }
 
-  private mustAgent(): TeammateService {
+  private mustAgent(): AgentService {
     const agent = this.agent_;
     if (agent === null) {
       throw new Error(

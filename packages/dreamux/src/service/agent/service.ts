@@ -10,8 +10,8 @@ import type { ProjectedAgent } from '../dispatcher-core-events/conversation-proj
 
 import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
 import { errorMessage } from '@excitedjs/dreamux-utils';
-import { toRecordRow, toStatus } from '../agent-entity/read-helpers.js';
-import { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
+import { toRecordRow, toStatus } from './records.js';
+import { AgentRuntimeStateStore } from './runtime-state.js';
 import {
   requireLifecycleText,
   type AgentEntityCloseResult,
@@ -20,7 +20,7 @@ import {
   type AgentEntityRecordRow,
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
-} from '../agent-entity/types.js';
+} from './identity.js';
 import {
   ClosedFactPublisher,
   type ClosedSubscription,
@@ -38,22 +38,23 @@ import {
 } from '../../platform/shutdown-errors.js';
 import { COMPLETION_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
-import type {
-  AdmissionLedger,
-  AgentEntityLedgerKey,
-} from './admission-ledger.js';
+import type { AgentEntityLedgerKey } from './admission.js';
 import { buildCompletionTurnText } from './completion-renderer.js';
-import { TeammateRuntimeOwner } from './runtime-owner.js';
+import {
+  RuntimeGeneration,
+  RuntimeTerminationUnproven,
+} from './runtime-generation.js';
 import { renderSubmission, type TeammateSubmitInput } from './submission.js';
 import {
   asCompletionDeliveryResult,
   failedAdmissionReason,
   toSubmissionResult,
+  type AdmissionLedger,
   type TurnAdmission,
-  type TurnCompletionDelivery,
-} from './turn-recording.js';
-import { EntityTurnCoordinator } from './turn-coordinator.js';
+} from './admission.js';
+import { EntityTurnCoordinator, type TurnCompletionDelivery } from './turn.js';
 import {
+  agentRoleNoun,
   teammateClosedFact,
   type EntityPhase,
   type LockedTeammate,
@@ -61,12 +62,12 @@ import {
   type TeammateServiceDeps,
   type TeammateServiceOptions,
   type WorkflowTeammateSubmitInput,
-} from './types.js';
+} from './service-types.js';
 
-/** One canonical TeamMate entity and the sole owner of its live lifecycle. */
-export class TeammateService {
+/** One canonical Agent entity and the sole owner of its live lifecycle. */
+export class AgentService {
   private state: AgentRuntimeStateStore;
-  private readonly runtimeOwner: TeammateRuntimeOwner;
+  private readonly runtimeGeneration: RuntimeGeneration;
   private readonly turns: EntityTurnCoordinator;
   /**
    * Core's own bounded, process-local source dedupe. It reserves a key before
@@ -96,7 +97,6 @@ export class TeammateService {
    */
   private hostStop: Promise<void> | null = null;
   private readonly closed: ClosedFactPublisher<TeammateClosedFact>;
-  private readonly ownsWorktreeOnClose: boolean;
   /** The runtime role this entity's owner derived; the display fact carries it. */
   private readonly role: TeammateRole;
 
@@ -106,7 +106,6 @@ export class TeammateService {
     identity: AgentEntityIdentity,
     options: TeammateServiceOptions,
   ) {
-    this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
     this.admissions = deps.admissions;
     this.ledgerKey = {
       dispatcherId,
@@ -122,20 +121,15 @@ export class TeammateService {
     this.closed = new ClosedFactPublisher<TeammateClosedFact>(deps.log);
     this.turns = new EntityTurnCoordinator({
       identity: () => this.current(),
+      role: this.role,
       isActive: () => this.phase === 'active',
       owesCompletion: () => this.phase === 'active' && this.hostStop === null,
     });
-    this.runtimeOwner = new TeammateRuntimeOwner(
+    this.runtimeGeneration = new RuntimeGeneration(
       deps,
       dispatcherId,
       this.state,
       options,
-      {
-        isActive: () => this.phase === 'active',
-        markClosing: () => {
-          this.phase = 'closing';
-        },
-      },
     );
   }
 
@@ -166,19 +160,21 @@ export class TeammateService {
 
   lock(): LockedTeammate {
     if (this.phase !== 'active') {
-      throw new Error(`TeamMate ${JSON.stringify(this.name)} is not active`);
+      throw new Error(`${agentRoleNoun(this.role, this.name)} is not active`);
     }
     if (this.lockToken !== null) {
       throw new Error(
-        `TeamMate ${JSON.stringify(this.name)} is already locked`,
+        `${agentRoleNoun(this.role, this.name)} is already locked`,
       );
     }
     if (!this.ordinaryMutations.idle) {
-      throw new Error(`TeamMate ${JSON.stringify(this.name)} is being mutated`);
+      throw new Error(
+        `${agentRoleNoun(this.role, this.name)} is being mutated`,
+      );
     }
     if (this.turns.hasUnsettledCurrent()) {
       throw new Error(
-        `TeamMate ${JSON.stringify(this.name)} has an active Turn`,
+        `${agentRoleNoun(this.role, this.name)} has an active Turn`,
       );
     }
     const token = Object.freeze({});
@@ -191,7 +187,10 @@ export class TeammateService {
       },
       close: (input) => {
         this.assertLockToken(token);
-        requireLifecycleText(input.note, 'TeamMate close note');
+        requireLifecycleText(
+          input.note,
+          `${agentRoleNoun(this.role, this.name)} close note`,
+        );
         return this.closeAuthorized(input.note, token);
       },
       unlock: () => this.unlock(token),
@@ -298,9 +297,9 @@ export class TeammateService {
     wake: boolean,
   ): Promise<TurnAdmission> {
     if (wake) {
-      await this.runtimeOwner.ensureStarted();
+      if (!(await this.ensureRuntimeStarted())) return { status: 'stopped' };
     } else if (
-      (await this.runtimeOwner
+      (await this.runtimeGeneration
         .existingRuntimeAfterStart()
         .catch(() => null)) === null
     ) {
@@ -311,7 +310,7 @@ export class TeammateService {
     if (input.intent !== undefined && input.intent !== '') {
       await this.state.updateIntent(input.intent);
     }
-    const runtime = this.runtimeOwner.mustRuntime();
+    const runtime = this.runtimeGeneration.mustRuntime();
     return this.turns.submitRuntimeTurn(
       () => runtime.submit({ text }),
       input.deliverCompletion ?? null,
@@ -320,7 +319,7 @@ export class TeammateService {
 
   /** Interrupt the current turn without waking this Agent. */
   interrupt(): Promise<AgentRuntimeInterruptOutcome> {
-    return this.runtimeOwner.interrupt();
+    return this.runtimeGeneration.interrupt();
   }
 
   /**
@@ -341,7 +340,7 @@ export class TeammateService {
   }
 
   private projectFailedEnd(reason: string): void {
-    // Every card is this TeamMate's, one at a time, and this end closes the one
+    // Every card is this entity's, one at a time, and this end closes the one
     // that is open. `unsettled_turn` says which shape follows: a non-`submitted`
     // admission never retains a turn of its own, so `true` means work was
     // already running and will open a further card for the rest of itself.
@@ -375,7 +374,7 @@ export class TeammateService {
       return unsupportedPreparedCompletion('teammate is not writable');
     }
     try {
-      const runtime = await this.runtimeOwner
+      const runtime = await this.runtimeGeneration
         .existingRuntimeAfterStart()
         .catch(() => null);
       if (runtime === null) {
@@ -451,7 +450,7 @@ export class TeammateService {
     // gone and report a stop nobody is left to read.
     const failures: unknown[] = [];
     await collectShutdownFailure(failures, () =>
-      this.runtimeOwner.stopRuntime(),
+      this.runtimeGeneration.stopRuntime(),
     );
     await this.turns.drainAdmissions();
     await this.ordinaryMutations.drain();
@@ -460,15 +459,18 @@ export class TeammateService {
     );
     throwShutdownFailures(
       failures,
-      `TeamMate ${JSON.stringify(this.name)} did not converge during host stop`,
+      `${agentRoleNoun(this.role, this.name)} did not converge during host stop`,
     );
   }
 
   close(input: { note: string }): Promise<AgentEntityCloseResult> {
-    requireLifecycleText(input.note, 'TeamMate close note');
+    requireLifecycleText(
+      input.note,
+      `${agentRoleNoun(this.role, this.name)} close note`,
+    );
     if (this.lockToken !== null) {
       return Promise.reject(
-        new Error(`TeamMate ${JSON.stringify(this.name)} is locked`),
+        new Error(`${agentRoleNoun(this.role, this.name)} is locked`),
       );
     }
     return this.closeAuthorized(input.note, null);
@@ -496,18 +498,18 @@ export class TeammateService {
   private effectiveIdentityStatus(
     identity: AgentEntityIdentity,
   ): AgentEntityIdentityStatus {
-    if (this.phase === 'closing' && this.runtimeOwner.hasNoRuntimeAuthority()) {
+    if (this.phase === 'closing' && this.runtimeGeneration.hasNoRuntimeAuthority()) {
       return 'stopped';
     }
     return identity.status;
   }
 
   runtimeStatus(): AgentRuntimeStatus | null {
-    return this.runtimeOwner.runtimeStatus();
+    return this.runtimeGeneration.runtimeStatus();
   }
 
   sessionId(): string | null {
-    return this.runtimeOwner.sessionId();
+    return this.runtimeGeneration.sessionId();
   }
 
   /**
@@ -515,17 +517,58 @@ export class TeammateService {
    * started in this process. Callers must not read `null` as "fresh".
    */
   startContinuity(): AgentRuntimeStartOutcome['continuity'] | null {
-    return this.runtimeOwner.startContinuity();
+    return this.runtimeGeneration.startContinuity();
   }
 
   /** Composition-only eager activation; lifecycle callers use admitted inputs. */
   async activate(): Promise<void> {
     const leave = this.enterOrdinaryMutation('activation');
     try {
-      await this.runtimeOwner.ensureStarted();
+      await this.ensureRuntimeStarted();
     } finally {
       leave();
     }
+  }
+
+  /**
+   * Start this entity's runtime, keeping this class's own `phase` in sync
+   * with what a start actually produced. Every caller of
+   * `runtimeGeneration.ensureStarted()` goes through here instead of calling
+   * it directly, because `ensureStarted()` no longer notices a close that
+   * raced it: it either starts the runtime and returns, or fails to.
+   *
+   * A close moving `phase` away from `'active'` while a start this method
+   * began is still in flight is the one race this method exists for: checked
+   * once before spending a launch on an entity already leaving, and again
+   * once that launch resolves, since `phase` may have moved during the
+   * awaited native start. The runtime a losing start produced is stopped here
+   * rather than left for a caller to notice was returned but unusable —
+   * `runtimeGeneration.stopRuntime()` is idempotent, so a close racing the
+   * same runtime concurrently costs nothing extra. A host stop is not this
+   * race: it never moves `phase`, and its own `stopRuntime()` call already
+   * joins a start in flight the same way.
+   *
+   * A start whose own rollback could not prove the runtime dead is the one
+   * runtime failure that changes this entity's lifecycle on its own: moving
+   * `phase` to `'closing'` is what keeps every later caller from reusing a
+   * runtime handle nothing here could stop, since `ensureStarted()` treats a
+   * non-null handle as already live and never revisits it.
+   *
+   * Returns whether the runtime is up and this entity is still active.
+   */
+  private async ensureRuntimeStarted(): Promise<boolean> {
+    if (this.phase !== 'active') return false;
+    try {
+      await this.runtimeGeneration.ensureStarted();
+    } catch (error) {
+      if (error instanceof RuntimeTerminationUnproven) this.phase = 'closing';
+      throw error;
+    }
+    if (this.phase !== 'active') {
+      await this.runtimeGeneration.stopRuntime();
+      return false;
+    }
+    return true;
   }
 
   private async submitLocked(
@@ -533,10 +576,8 @@ export class TeammateService {
     token: object,
   ): Promise<TurnAdmission> {
     this.assertLockToken(token);
-    if (this.phase !== 'active') return { status: 'stopped' };
-    await this.runtimeOwner.ensureStarted();
+    if (!(await this.ensureRuntimeStarted())) return { status: 'stopped' };
     this.assertLockToken(token);
-    if (this.phase !== 'active') return { status: 'stopped' };
     return this.submitAdmitted(
       { source: input.source, text: input.prompt },
       { wake: true },
@@ -585,12 +626,14 @@ export class TeammateService {
     if (
       this.phase === 'active' &&
       identity.status === 'closed' &&
-      this.runtimeOwner.hasNoRuntimeAuthority()
+      this.runtimeGeneration.hasNoRuntimeAuthority()
     ) {
       const closedAt = identity.closed_at;
       if (closedAt === null) {
         return Promise.reject(
-          new Error('durable closed TeamMate has no closed_at'),
+          new Error(
+            `durable closed ${agentRoleNoun(this.role, this.name)} has no closed_at`,
+          ),
         );
       }
       this.phase = 'closed';
@@ -607,14 +650,13 @@ export class TeammateService {
     closeNote: string,
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
-    await this.runtimeOwner.stopRuntime();
+    await this.runtimeGeneration.stopRuntime();
     await this.turns.drainAdmissions();
     await this.ordinaryMutations.drain();
     await this.turns.convergeRetainedTurns();
 
     const identity = this.current();
     const shouldCleanup =
-      this.ownsWorktreeOnClose &&
       identity.worktree.mode === 'managed' &&
       identity.worktree.cleanup === 'delete-on-close';
     const worktree = shouldCleanup
@@ -643,14 +685,16 @@ export class TeammateService {
     this.assertLockToken(token);
     if (this.phase === 'closing') {
       throw new Error(
-        `TeamMate ${JSON.stringify(this.name)} cannot unlock while closing`,
+        `${agentRoleNoun(this.role, this.name)} cannot unlock while closing`,
       );
     }
     this.lockToken = null;
     if (this.phase === 'closed') {
       const closedAt = this.current().closed_at;
       if (closedAt === null) {
-        throw new Error('closed-held TeamMate has no durable closed_at');
+        throw new Error(
+          `closed-held ${agentRoleNoun(this.role, this.name)} has no durable closed_at`,
+        );
       }
       this.closed.publish(teammateClosedFact(this.current(), closedAt));
     }
@@ -663,7 +707,7 @@ export class TeammateService {
       this.hostStop !== null
     ) {
       throw new Error(
-        `TeamMate ${JSON.stringify(this.name)} cannot accept ${label}`,
+        `${agentRoleNoun(this.role, this.name)} cannot accept ${label}`,
       );
     }
     return this.ordinaryMutations.enter();
@@ -671,7 +715,9 @@ export class TeammateService {
 
   private assertLockToken(token: object): void {
     if (this.lockToken !== token) {
-      throw new Error(`stale TeamMate lock for ${JSON.stringify(this.name)}`);
+      throw new Error(
+        `stale lock for ${agentRoleNoun(this.role, this.name)}`,
+      );
     }
   }
 

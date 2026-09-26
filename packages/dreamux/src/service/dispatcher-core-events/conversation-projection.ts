@@ -10,7 +10,7 @@ import type {
 import { errorInfo, redactJson, redactText } from '@excitedjs/dreamux-utils';
 
 import type { DispatcherCoreEventPublisher } from './index.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
 
 /**
  * The projected Agent: its durable identity plus the runtime role its owner

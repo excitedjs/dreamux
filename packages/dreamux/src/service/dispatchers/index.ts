@@ -9,7 +9,7 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import type { SyncHook } from 'tapable';
-import { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import { AgentIdentityStore } from '../agent/store.js';
 import { dispatcherDir } from '../../platform/paths.js';
 import { DispatcherService } from '../dispatcher-service/index.js';
 import type {
@@ -18,7 +18,7 @@ import type {
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
-import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
+import { runtimeStatusToIdentityStatus } from '../agent/identity.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 
 export interface DispatchersOptions {

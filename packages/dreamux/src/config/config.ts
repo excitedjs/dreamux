@@ -86,6 +86,58 @@ export function dispatcherAgent(
   return config.agents[dispatcher.agentRuntime]!;
 }
 
+/**
+ * A dispatcher's own `agentRuntime` — the id a spawn launches when it names
+ * none — looked up by dispatcher id rather than taken as a precomputed field,
+ * so a caller that only holds an id still gets it. Throws when `dispatcherId`
+ * names no configured dispatcher, since there is then no `agentRuntime` to
+ * default to.
+ */
+export function defaultAgentRuntime(
+  config: DreamuxConfig,
+  dispatcherId: string,
+): string {
+  const dispatcherCfg =
+    config.dispatchers.find((entry) => entry.id === dispatcherId) ?? null;
+  if (dispatcherCfg === null) {
+    throw new Error(
+      `cannot spawn a teammate for unknown dispatcher '${dispatcherId}': ` +
+        'no dispatcher config to resolve a default agentRuntime from. Pass an ' +
+        'explicit agentRuntime (an agents[].id).',
+    );
+  }
+  return dispatcherCfg.agentRuntime;
+}
+
+/**
+ * Resolve one `agents[]` entry by id, with an error naming every declared
+ * agent id when the reference does not match — the caller-facing companion to
+ * {@link dispatcherAgent}'s already-validated lookup, used wherever an
+ * `agentRuntime` id arrives from outside the loader (a spawn request, a
+ * persisted identity) and may not name a currently-declared agent.
+ */
+export function resolveAgent(
+  config: DreamuxConfig,
+  dispatcherId: string,
+  agentRuntimeId: string,
+): ResolvedAgentConfig {
+  const agent = config.agents[agentRuntimeId];
+  if (agent === undefined) {
+    const known = Object.keys(config.agents);
+    const knownHint =
+      known.length > 0
+        ? `Known agents: ${known.map((id) => `'${id}'`).join(', ')}.`
+        : 'No agents are declared.';
+    throw new Error(
+      `teammate for dispatcher '${dispatcherId}' references agentRuntime ` +
+        `'${agentRuntimeId}', which matches no agents[].id. ${knownHint} ` +
+        'Add the agent to config and rebuild, or respawn the teammate with a ' +
+        'known agent id.',
+    );
+  }
+  return agent;
+}
+
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
   agents: {},
   dispatchers: [],

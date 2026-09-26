@@ -25,7 +25,7 @@ import {
   type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
   type AgentEntityWorktreeIdentity,
-} from './types.js';
+} from './identity.js';
 
 export interface AgentIdentityCreateInput {
   name: string;

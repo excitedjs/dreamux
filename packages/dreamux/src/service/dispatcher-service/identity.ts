@@ -1,9 +1,9 @@
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentIdentityStore } from '../agent/store.js';
 import {
   DISPATCHER_AGENT_NAME,
   type AgentEntityIdentity,
   type AgentEntityWorktreeIdentity,
-} from '../agent-entity/types.js';
+} from '../agent/identity.js';
 
 export interface DispatcherIdentityEnsureInput {
   dispatcherId: string;
@@ -56,7 +56,7 @@ export function ensureDispatcherRootIdentity(
 /**
  * Upsert the dispatcher-owned root identity while preserving compatible runtime
  * recovery state. This policy is dispatcher config compatibility, not a generic
- * agent-entity store rule.
+ * Agent entity store rule.
  */
 export async function ensureDispatcherIdentity(
   identities: AgentIdentityStore,

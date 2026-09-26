@@ -84,7 +84,7 @@ Source:
 ## Owner Admission
 
 `SchedulerService` is generalized over an owner and takes that owner's
-admission gate plus its scheduled-submit callback. `TeammateService` carries no
+admission gate plus its scheduled-submit callback. `AgentService` carries no
 scheduler, so "only the dispatcher and each TeamLeader have cron" is structural
 rather than a per-instance capability policy. The dispatcher scheduler
 submits into the dispatcher agent; a Team's scheduler submits into its

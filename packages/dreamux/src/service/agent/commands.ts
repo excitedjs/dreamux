@@ -8,7 +8,7 @@
  * payload field a model could set. Name validation, roster scoping,
  * close/reopen semantics, and Activity reads stay inside the collection and its
  * services; these definitions own the declared payload schema and the caller
- * context. The input codecs live with the agent-entity types and readers
+ * context. The input codecs live with the Agent entity types and readers
  * that own the facts they read, and a failure states its own reason and next
  * step where the rule is. The TeamMate MCP delegate reads the same helpers;
  * neither adapter reads the other.
@@ -31,7 +31,7 @@ import {
   optionalNonBlankString,
   optionalString,
 } from '../../command/payload.js';
-import { historyQuery } from '../agent-entity/history-query.js';
+import { historyQuery } from './requests.js';
 import {
   REPO_REQUEST_SCHEMA,
   repoRequest,
@@ -48,7 +48,7 @@ import {
   enumOf,
   objectSchema,
 } from '../../command/schema.js';
-import { mapAgentActivityCommandError } from '../agent-entity/activity-errors.js';
+import { mapAgentActivityCommandError } from './activity.js';
 import type {
   AgentEntityCapabilities,
   AgentEntityCloseResult,
@@ -58,11 +58,11 @@ import type {
   AgentEntityLastResult,
   AgentEntityRuntimeStatus,
   AgentEntitySpawnResult,
-} from '../agent-entity/types.js';
+} from './identity.js';
 import {
   agentEntityLastQuery,
   agentEntityNameParam,
-} from '../agent-entity/read-helpers.js';
+} from './requests.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import type { TeammateOps } from './types.js';
 

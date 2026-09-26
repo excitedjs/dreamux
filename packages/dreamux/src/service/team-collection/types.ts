@@ -2,7 +2,7 @@ import {
   assertNotReservedAgentName,
   type AgentEntityIdentityStatus,
   type AgentEntityWorktreeIdentity,
-} from '../agent-entity/types.js';
+} from '../agent/identity.js';
 import type {
   AgentRuntimeSkillSource,
   DreamuxLogger,
@@ -20,9 +20,9 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
-import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
-import type { TeammateAgentMcp } from '../teammate-service/types.js';
+import type { AgentNameRegistry } from '../agent/store.js';
+import type { AgentServiceFactory } from '../agent/factory.js';
+import type { TeammateAgentMcp } from '../agent/service-types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
@@ -52,7 +52,7 @@ export interface TeamCollectionOptions {
   root: string;
   /** The dispatcher-global agent-name namespace. */
   names: AgentNameRegistry;
-  admissions: AdmissionLedger;
+  agentServiceFactory: AgentServiceFactory;
   // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
   // unchanged into each team's own collection so it stays topology-free (#233).
   completionDelivery: CompletionDeliveryPolicy;

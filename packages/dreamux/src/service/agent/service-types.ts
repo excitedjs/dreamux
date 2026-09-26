@@ -11,14 +11,12 @@ import type { ConfigReader } from '../../config/service.js';
 import type {
   AgentEntityCollectionStore,
   AgentIdentityStore,
-} from '../agent-entity/identity-store.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { AgentEntityCloseResult } from '../agent-entity/types.js';
+} from './store.js';
+import type { AgentEntityCloseResult, AgentEntityIdentity } from './identity.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 import type { McpServerDelegate } from '../mcp/types.js';
-import type { AdmissionLedger } from './admission-ledger.js';
-import type { TurnAdmission } from './turn-recording.js';
+import type { AdmissionLedger, TurnAdmission } from './admission.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 
 export interface TeammateServiceDeps {
@@ -144,10 +142,22 @@ export interface TeammateServiceOptions {
    * presentation and routing only and is never persisted.
    */
   role: TeammateRole;
-  ownsWorktreeOnClose: boolean;
   loggerFields?: Record<string, unknown>;
-  assertIdentityScope?: (
-    identity: AgentEntityIdentity,
-    dispatcherId: string,
-  ) => void;
+}
+
+/**
+ * The noun phrase an error message uses for one entity, worded by the actual
+ * role its owner constructed it with. `AgentService` holds a Dispatcher's own
+ * Agent and a Team's leader as well as ordinary TeamMates, so a hardcoded
+ * "TeamMate" is wrong for the other two roles.
+ */
+export function agentRoleNoun(role: TeammateRole, name: string): string {
+  switch (role) {
+    case 'dispatcher':
+      return 'the Dispatcher agent';
+    case 'team_leader':
+      return `Team leader ${JSON.stringify(name)}`;
+    case 'teammate':
+      return `TeamMate ${JSON.stringify(name)}`;
+  }
 }

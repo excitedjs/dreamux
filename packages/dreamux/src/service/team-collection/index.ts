@@ -1,7 +1,7 @@
 import type { TeamSummary } from '@excitedjs/dreamux-types';
 
 import type { WorktreeManager } from '../worktree/manager.js';
-import { requireLifecycleText } from '../agent-entity/types.js';
+import { requireLifecycleText } from '../agent/identity.js';
 import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
 import { TeamStore } from './store.js';
 import type {

@@ -13,33 +13,51 @@ import {
   DISABLE_FEATURE_USER_INTERRUPT,
   hostRuntimePaths,
 } from '../../agent-runtime/index.js';
-import type { ResolvedAgentConfig } from '../../config/config.js';
-import { resolveAgent } from '../agent-entity/agent-config.js';
+import {
+  resolveAgent,
+  type ResolvedAgentConfig,
+} from '../../config/config.js';
 import type {
   AgentRuntimeGenerationLease,
   AgentRuntimeStateStore,
-} from '../agent-entity/runtime-state.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
+} from './runtime-state.js';
 import {
   assertUniqueMcpServerNames,
   mcpServerDescriptor,
 } from '../mcp/descriptor.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { reprepareDeletedManagedWorktree } from '../worktree/workspaces.js';
-import type { TeammateServiceDeps, TeammateServiceOptions } from './types.js';
+import {
+  agentRoleNoun,
+  type TeammateServiceDeps,
+  type TeammateServiceOptions,
+} from './service-types.js';
 
 interface RuntimeLaunchSpec {
   provider: AgentRuntimeProvider<unknown>;
   context: AgentRuntimeCreateContext<unknown>;
 }
 
-interface TeammateRuntimeOwnerCallbacks {
-  isActive: () => boolean;
-  markClosing: () => void;
+/**
+ * A start's own rollback could not prove the native runtime it launched is
+ * dead: `runtime.start()` failed and the `runtime.stop()` that followed also
+ * failed, so a process may still be running under write authority this
+ * generation already revoked.
+ *
+ * Carries both failures, the same information an `AggregateError` carries.
+ * `AgentService` catches this specific type to move its own `phase` to
+ * `'closing'` — the one runtime-generation failure that changes what the
+ * entity's lifecycle owner believes about itself.
+ */
+export class RuntimeTerminationUnproven extends AggregateError {
+  constructor(startError: unknown, stopError: unknown, message: string) {
+    super([startError, stopError], message);
+    this.name = 'RuntimeTerminationUnproven';
+  }
 }
 
-/** Raw runtime authority retained exclusively inside one TeamMate entity. */
-export class TeammateRuntimeOwner {
+/** Raw runtime authority retained exclusively inside one Agent entity. */
+export class RuntimeGeneration {
   private runtime: AgentRuntime | null = null;
   private starting: Promise<void> | null = null;
   /**
@@ -57,24 +75,15 @@ export class TeammateRuntimeOwner {
    * asking the runtime, which no longer answers questions about itself.
    */
   private continuity: AgentRuntimeStartOutcome['continuity'] | null = null;
-  private readonly assertIdentityScope: (
-    identity: AgentEntityIdentity,
-    dispatcherId: string,
-  ) => void;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
     private readonly dispatcherId: string,
     private readonly state: AgentRuntimeStateStore,
     private readonly options: TeammateServiceOptions,
-    private readonly callbacks: TeammateRuntimeOwnerCallbacks,
-  ) {
-    this.assertIdentityScope =
-      options.assertIdentityScope ?? assertIdentityBelongsToDispatcher;
-  }
+  ) {}
 
   async ensureStarted(): Promise<void> {
-    this.assertIdentityScope(this.state.current(), this.dispatcherId);
     if (this.starting !== null) return this.starting;
     if (this.runtime !== null) return;
     const promise = this.startFromRecord().finally(() => {
@@ -109,7 +118,7 @@ export class TeammateRuntimeOwner {
   mustRuntime(): AgentRuntime {
     if (this.runtime === null) {
       throw new Error(
-        `TeamMate ${JSON.stringify(this.state.current().name)} is not running`,
+        `${agentRoleNoun(this.options.role, this.state.current().name)} is not running`,
       );
     }
     return this.runtime;
@@ -173,7 +182,7 @@ export class TeammateRuntimeOwner {
     if (failures.length > 1) {
       throw new AggregateError(
         failures,
-        `TeamMate ${JSON.stringify(this.state.current().name)} could not prove runtime termination`,
+        `${agentRoleNoun(this.options.role, this.state.current().name)} could not prove runtime termination`,
       );
     }
   }
@@ -229,9 +238,6 @@ export class TeammateRuntimeOwner {
         lastError: null,
       });
     }
-    if (!this.callbacks.isActive()) {
-      throw new Error(`TeamMate ${JSON.stringify(identity.name)} is closing`);
-    }
     // One lease per attempt, covering both push-only sinks. Every failure path
     // below revokes it, so a start that did not complete leaves no partial
     // write authority behind.
@@ -261,13 +267,12 @@ export class TeammateRuntimeOwner {
     this.runtime = runtime;
     try {
       // One start path for every provider: recovery is mandatory provider
-      // behavior, so Core never branches on a resume capability. The outcome is
-      // captured before any submission is admitted.
+      // behavior, so Core never branches on a resume capability. The outcome
+      // is captured before any submission is admitted. Whether this entity is
+      // still meant to be running is its lifecycle owner's question, answered
+      // once this resolves — a start never aborts itself mid-launch.
       const outcome = await runtime.start();
       this.continuity = outcome.continuity;
-      if (!this.callbacks.isActive()) {
-        throw new Error(`TeamMate ${JSON.stringify(identity.name)} is closing`);
-      }
     } catch (error) {
       // Roll back every piece of ownership this attempt took, in the order each
       // piece requires. MCP authority goes first and synchronously: the native
@@ -283,10 +288,10 @@ export class TeammateRuntimeOwner {
         this.continuity = null;
       } catch (stopError) {
         this.state.revokeRuntimeGeneration();
-        this.callbacks.markClosing();
-        throw new AggregateError(
-          [error, stopError],
-          `TeamMate ${JSON.stringify(identity.name)} start failed and runtime termination could not be proved`,
+        throw new RuntimeTerminationUnproven(
+          error,
+          stopError,
+          `${agentRoleNoun(this.options.role, identity.name)} start failed and runtime termination could not be proved`,
         );
       }
       this.state.revokeRuntimeGeneration();
@@ -441,14 +446,5 @@ export class TeammateRuntimeOwner {
       );
     }
     return this.deps.worktrees;
-  }
-}
-
-function assertIdentityBelongsToDispatcher(
-  identity: AgentEntityIdentity,
-  dispatcherId: string,
-): void {
-  if (identity.dispatcher_id !== dispatcherId) {
-    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
   }
 }

@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import type { TeamStateTeammateSummary } from '@excitedjs/dreamux-types';
 import { TransactionalStore } from '@excitedjs/dreamux-utils';
 
-import type { AgentEntityWorktreeIdentity } from '../agent-entity/types.js';
+import type { AgentEntityWorktreeIdentity } from '../agent/identity.js';
 
 import { isNotFound } from '../../platform/fs-errors.js';
 import { collectionEntityDir } from '../../platform/paths.js';

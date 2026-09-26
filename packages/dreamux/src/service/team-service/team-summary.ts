@@ -1,5 +1,5 @@
 import type { TeamSummary } from '@excitedjs/dreamux-types';
-import type { AgentEntityRuntimeStatus } from '../agent-entity/types.js';
+import type { AgentEntityRuntimeStatus } from '../agent/identity.js';
 import type { TeamRecord } from '../team-collection/types.js';
 
 /** Stable and workspace facts belong to the Team record; leader facts may be absent. */

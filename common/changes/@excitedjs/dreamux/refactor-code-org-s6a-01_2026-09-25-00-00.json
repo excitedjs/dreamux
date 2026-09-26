@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6a item 1: merged service/agent-entity/, service/teammate-service/, and service/teammate-collection/ into one service/agent/ directory, following the store -> service -> collection direction (identity/store/runtime-state/activity/records/requests/runtime-id, then runtime-generation/turn/admission/submission/completion-renderer/factory/service, then index/commands/mcp/mcp-tool-descriptors/system-prompt/errors/types), plus agent-config.ts and dissolve-members.ts moved as-is and teammate-service/types.ts kept as its own service-types.ts file (a plan gap this item resolved rather than folding it into service.ts, which would have created a service.ts <-> runtime-generation.ts import cycle). Folded activity-errors.ts into activity.ts and split turn-coordinator.ts + turn-recording.ts into turn.ts (EntityTurn/EntityTurnCoordinator/TurnOutcome/TurnCompletionDelivery, with one deduped asError) and admission.ts (AdmissionLedger/TurnAdmission/InboundDeliveryResult and their mapping functions). Dropped the dead CreateTeamLeaderInput type (zero importers). No class or exported type was renamed: TeammateService, TeammateCollection, TeammateRuntimeOwner, and every public type keep their current names this item. Updated every importer's module specifier across dispatcher-service/, team-collection/, team-service/, workflow-service/, scheduler/, mcp/, worktree/, dispatchers/, dispatcher-core-events/, channel-submission.ts, and server/command-catalog.ts to the new paths; this is a code-location move only; behavior, public names, and persisted formats are unchanged. Collapsed the three directories' .dependency-cruiser.cjs layer entries into one service-agent layer (positioned directly before the reduced service-collections layer, which still depends on it) and added a warn-only intra-directory direction rule for the same store/service/collection split.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

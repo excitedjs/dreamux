@@ -13,21 +13,17 @@ import {
 import type { ConfigReader } from '../../config/service.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
 import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from '../team-collection/create-request.js';
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentIdentityStore } from '../agent/store.js';
 import type { TeamServiceDeps } from './types.js';
-import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
+import type { AgentServiceFactory } from '../agent/factory.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
   AgentEntityIdentity,
   AgentEntityWorktreeIdentity,
-} from '../agent-entity/types.js';
-import { createTeammateService } from '../teammate-service/factory.js';
-import {
-  assertTeamScopedAgent,
-  childAgentRuntimeId,
-} from '../agent-entity/runtime-profile.js';
-import type { TeammateService } from '../teammate-service/index.js';
-import type { TeammateAgentMcp } from '../teammate-service/types.js';
+} from '../agent/identity.js';
+import { childAgentRuntimeId } from '../agent/runtime-id.js';
+import type { AgentService } from '../agent/service.js';
+import type { TeammateAgentMcp } from '../agent/service-types.js';
 import type { TeamRecord } from '../team-collection/types.js';
 import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
 
@@ -42,7 +38,7 @@ export interface TeamLeaderAgentDeps {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
   onPersisted: (identity: AgentEntityIdentity) => void;
-  admissions: AdmissionLedger;
+  agentServiceFactory: AgentServiceFactory;
   conversationProjection: ConversationProjection;
   worktrees: WorktreeManager;
   log: DreamuxLogger;
@@ -50,21 +46,18 @@ export interface TeamLeaderAgentDeps {
 
 export function createTeamLeaderAgent(
   deps: TeamLeaderAgentDeps,
-): TeammateService {
+): AgentService {
   const teamId = deps.identity.team_id;
   if (teamId === null) {
     throw new Error('TeamLeader identity must have a team_id');
   }
-  return createTeammateService({
-    dispatcherId: deps.dispatcherId,
+  return deps.agentServiceFactory.create({
     identity: deps.identity,
     options: {
       runtimeId: childAgentRuntimeId(deps.identity),
       // This Agent is the Team's leader; the role follows from that ownership.
       role: 'team_leader',
-      ownsWorktreeOnClose: false,
       loggerFields: { teammate: deps.identity.name },
-      assertIdentityScope: assertTeamScopedAgent(teamId),
       mcp: deps.mcp,
       skillSources: deps.skillSources,
       disabledFeatures: deps.disabledFeatures,
@@ -74,7 +67,6 @@ export function createTeamLeaderAgent(
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
     onPersisted: deps.onPersisted,
-    admissions: deps.admissions,
     conversationProjection: deps.conversationProjection,
     worktrees: deps.worktrees,
     log: deps.log,
@@ -146,7 +138,7 @@ export function teamLeaderAgentBase(input: {
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: input.identities,
     onPersisted: input.onPersisted,
-    admissions: deps.admissions,
+    agentServiceFactory: deps.agentServiceFactory,
     conversationProjection: deps.conversationProjection,
     worktrees: deps.worktrees,
     log: deps.log,
@@ -167,7 +159,7 @@ export async function createTeamLeaderAgentForTeam(
   deps: Omit<TeamLeaderForTeamDeps, 'identity'> & {
     creation: TeamLeaderCreationInput;
   },
-): Promise<TeammateService> {
+): Promise<AgentService> {
   const { creation, ...rest } = deps;
   const identity = await deps.identities.create(
     {
@@ -202,7 +194,7 @@ export async function createTeamLeaderAgentForTeam(
  */
 export async function restoreTeamLeaderAgentForTeam(
   deps: TeamLeaderForTeamDeps,
-): Promise<TeammateService> {
+): Promise<AgentService> {
   const { teamId, workspace, leaderMcp, beforeLaunch, ...agentDeps } = deps;
   const leaderName = deps.identity.name;
   const baseSkills = [
@@ -270,7 +262,7 @@ function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
  */
 export async function leaderForOpenTeam(
   deps: Omit<TeamLeaderForTeamDeps, 'identity'> & { record: TeamRecord },
-): Promise<TeammateService> {
+): Promise<AgentService> {
   const { record, ...rest } = deps;
   const identity = await deps.identities.read();
   if (identity === null || !alignedWithLeader(identity, record)) {

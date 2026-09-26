@@ -23,7 +23,7 @@ import { dispatcherCommands } from '../service/dispatchers/commands.js';
 import { mcpCommands } from '../service/mcp/commands.js';
 import { schedulerCommands } from '../service/scheduler/commands.js';
 import { teamCommands } from '../service/team-collection/commands.js';
-import { teammateCommands } from '../service/teammate-collection/commands.js';
+import { teammateCommands } from '../service/agent/commands.js';
 import { workflowCommands } from '../service/workflow-service/commands.js';
 import { CoreCommands } from '../command/registry.js';
 import {

@@ -30,7 +30,7 @@ import {
 import {
   isSafeTagName,
   type TeammateSubmitInput,
-} from './teammate-service/submission.js';
+} from './agent/submission.js';
 import { CHANNEL_SOURCE } from './submission-sources.js';
 
 /**

@@ -9,7 +9,7 @@ authoritative, and source wins over both.
 `dreamux serve` runs one local Node process. The server owns admin IPC,
 configuration loading, provider registries, durable state, and one
 `DispatcherService` per enabled dispatcher. Each `DispatcherService` *has an*
-agent: a contained `TeammateService` that owns the agent runtime lifecycle.
+agent: a contained `AgentService` that owns the agent runtime lifecycle.
 Dispatcher-only concerns — channel sessions, restart-notice injection, role MCP
 assembly, completion routing, the neutral conversation projection — stay on
 `DispatcherService`.
@@ -117,7 +117,7 @@ through, no sanitized catch-all — is owned by
 
 ## Teams, TeamMates, And Completion Routing
 
-The Dispatcher Service owns TeamMate and Team state; `TeammateService` is the
+The Dispatcher Service owns TeamMate and Team state; `AgentService` is the
 sole lifecycle command owner for every conversational agent, and Collections
 own construction, caching, and eviction. A Team's `record.json` is the sole
 existence, name, and idempotency authority; dissolve is a submission whose

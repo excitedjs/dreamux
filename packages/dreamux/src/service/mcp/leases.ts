@@ -70,7 +70,7 @@ import {
   JsonValueError,
   JSON_VALUE_UNBOUNDED,
 } from '../../platform/json-value.js';
-import type { AgentRuntimeGenerationLease } from '../agent-entity/runtime-state.js';
+import type { AgentRuntimeGenerationLease } from '../agent/runtime-state.js';
 import { unknownToolResult } from './projection.js';
 import type {
   McpDelegateCall,

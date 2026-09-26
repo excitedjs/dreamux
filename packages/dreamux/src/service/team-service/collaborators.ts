@@ -4,8 +4,8 @@ import {
   teamCronJobsPath,
   teamMateCollectionDir,
 } from '../../platform/paths.js';
-import { AgentEntityCollectionStore } from '../agent-entity/identity-store.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
+import { AgentEntityCollectionStore } from '../agent/store.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
 import type { CompletionInitiator } from '../completion-router/index.js';
 import { SchedulerService } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
@@ -16,9 +16,9 @@ import type {
 import {
   TeammateCollection,
   type CreateLockedTeammateOptions,
-} from '../teammate-collection/index.js';
-import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
-import type { LockedTeammate } from '../teammate-service/types.js';
+} from '../agent/index.js';
+import type { SpawnTeamMateRequest } from '../agent/types.js';
+import type { LockedTeammate } from '../agent/service-types.js';
 import { WorkflowService } from '../workflow-service/index.js';
 import type { TeamServiceDeps } from './types.js';
 
@@ -48,7 +48,7 @@ export function buildTeamMembers(input: {
       onPersisted: input.onPersisted,
     }),
     names: deps.names,
-    admissions: deps.admissions,
+    agentServiceFactory: deps.agentServiceFactory,
     conversationProjection: deps.conversationProjection,
     completionDelivery: deps.completionDelivery,
     initiatorFor: async () => input.leaderCompletionTarget(),

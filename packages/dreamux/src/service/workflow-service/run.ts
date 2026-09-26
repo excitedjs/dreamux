@@ -9,13 +9,11 @@ import type { WorkflowCompletionFact } from '../completion-router/index.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
-import type { CreateLockedTeammateOptions } from '../teammate-collection/index.js';
-import type {
-  Turn,
-  TurnAdmission,
-} from '../teammate-service/turn-recording.js';
-import type { LockedTeammate } from '../teammate-service/types.js';
+import type { SpawnTeamMateRequest } from '../agent/types.js';
+import type { CreateLockedTeammateOptions } from '../agent/index.js';
+import type { Turn } from '../agent/turn.js';
+import type { TurnAdmission } from '../agent/admission.js';
+import type { LockedTeammate } from '../agent/service-types.js';
 import { WORKFLOW_AGENT_SYSTEM_PROMPT } from './agent-policy.js';
 import {
   WorkflowJournal,

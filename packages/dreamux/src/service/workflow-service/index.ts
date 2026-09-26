@@ -10,9 +10,9 @@ import {
 import { deduplicate } from '../../platform/deduplicate.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
-import type { CreateLockedTeammateOptions } from '../teammate-collection/index.js';
-import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
-import type { LockedTeammate } from '../teammate-service/types.js';
+import type { CreateLockedTeammateOptions } from '../agent/index.js';
+import type { SpawnTeamMateRequest } from '../agent/types.js';
+import type { LockedTeammate } from '../agent/service-types.js';
 import {
   canonicalJsonValue,
   JSON_VALUE_UNBOUNDED,

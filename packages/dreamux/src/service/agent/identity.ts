@@ -10,8 +10,9 @@ export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /**
  * The fixed name of the dispatcher's own agent entity (issue #233 Phase 5).
- * Single source of truth: identity-store, dispatcher-agent factory, and
- * runtime-profile scope assertion all import this one constant.
+ * Single source of truth: this module declares it, and
+ * dispatcher-service/identity.ts's ensureDispatcherIdentity is the only
+ * other importer.
  */
 export const DISPATCHER_AGENT_NAME = 'dispatcher';
 
@@ -110,25 +111,6 @@ export interface AgentEntityRuntimeStatus {
   last_error: string | null;
   closed_at: number | null;
   close_note: string | null;
-}
-
-export interface CreateTeamLeaderInput {
-  name: string;
-  /**
-   * Optional explicit first-turn prompt. When omitted, no runtime starts and
-   * no turn fires at creation — the team no longer fabricates a synthetic
-   * default prompt to auto-run a turn. A leader created without a prompt waits
-   * for a bound channel or a dispatcher `send` to start its runtime with its
-   * first real turn.
-   */
-  prompt?: string;
-  agentRuntime: string;
-  sourceCwd: string;
-  sourceRepo: string | null;
-  runtimeCwd: string;
-  worktree: AgentEntityWorktreeIdentity;
-  intent?: string | null;
-  identity?: string;
 }
 
 export type AgentEntityWorktreeCleanupState =
@@ -266,7 +248,7 @@ export interface AgentEntityCapabilities {
 
 /**
  * Validate an agent entity name (dispatcher, teammate, team leader, or team
- * member). The neutral name used by the agent-entity stores and shared
+ * member). The neutral name used by the Agent entity stores and shared
  * runtime holder; teammate-facing request/types may keep a `TeamMate*`
  * wrapper or alias on top.
  */
@@ -283,8 +265,8 @@ export function validateAgentEntityName(name: string): string {
 
 /**
  * TeamMate-facing alias of {@link validateAgentEntityName}. Kept so
- * teammate-collection request types can express the teammate-specific
- * validation word without the neutral agent-entity layer carrying
+ * `TeammateCollection`'s request types can express the teammate-specific
+ * validation word without the neutral Agent entity layer carrying
  * teammate-only terminology.
  */
 export const validateTeamMateName = validateAgentEntityName;

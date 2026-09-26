@@ -71,7 +71,6 @@ const LAYERS = [
   {
     name: 'service-primitives',
     path: [
-      '^src/service/agent-entity/',
       '^src/service/worktree/',
       '^src/service/mcp/',
       '^src/service/completion-router/',
@@ -82,19 +81,23 @@ const LAYERS = [
   },
   {
     name: 'service-mid',
-    path: [
-      '^src/service/teammate-service/',
-      '^src/service/workflow-service/',
-      '^src/service/scheduler/',
-    ],
+    path: ['^src/service/workflow-service/', '^src/service/scheduler/'],
+  },
+  {
+    // service/agent/ holds the neutral identity/activity/runtime-state
+    // stores, the per-entity AgentService, and TeammateCollection in one
+    // directory: one physical directory can only occupy one layer, so it
+    // takes the highest (outermost) rank of the tiers it merges -
+    // team-collection/ and team-service/ depend on it (constructing against
+    // its outermost file, index.ts's TeammateCollection), never the
+    // reverse, so it must sit strictly before the reduced
+    // service-collections layer below.
+    name: 'service-agent',
+    path: ['^src/service/agent/'],
   },
   {
     name: 'service-collections',
-    path: [
-      '^src/service/teammate-collection/',
-      '^src/service/team-collection/',
-      '^src/service/team-service/',
-    ],
+    path: ['^src/service/team-collection/', '^src/service/team-service/'],
   },
   {
     name: 'service-orchestration',
@@ -162,16 +165,6 @@ const namedEdgeRules = [
     to: { path: '^src/service/team-collection/(runtime-registry|index)\\.ts$' },
   },
   {
-    name: 'teammate-service-not-to-teammate-collection',
-    comment:
-      'teammate-service/ must not import teammate-collection/ at all - ' +
-      'unlike the team-service/team-collection pair, there is no shared-type ' +
-      'carve-out here (see tests/collection-ownership.test.ts).',
-    severity: 'warn',
-    from: { path: '^src/service/teammate-service/' },
-    to: { path: '^src/service/teammate-collection/' },
-  },
-  {
     name: 'channel-not-to-team-or-teammate',
     comment:
       'Channel decides where a message goes by naming a Team; it must not ' +
@@ -182,10 +175,47 @@ const namedEdgeRules = [
     to: {
       path: [
         '^src/service/team-service/',
-        '^src/service/teammate-service/',
+        '^src/service/agent/',
         '^src/service/team-collection/',
-        '^src/service/teammate-collection/',
       ],
+    },
+  },
+  {
+    // R7's "one declared direction" for the merged service/agent/ directory:
+    // store <- service <- collection. Store-tier files never reach into the
+    // service or collection tier; service-tier files never reach into the
+    // collection tier. Regex groups partition every file the directory holds
+    // (the plan's own file map plus service-types.ts and dissolve-members.ts,
+    // which the plan's file map table omitted but which still live in one of
+    // the three tiers), each anchored with `\.ts$` so a name never
+    // prefix-matches a longer sibling (e.g. `service` must not match
+    // `service-types`, `mcp` must not match `mcp-tool-descriptors`).
+    name: 'service-agent-store-not-to-service-or-collection',
+    comment:
+      'service/agent/ store-tier files (identity, store, runtime-state, ' +
+      'activity, records, requests, runtime-id) must not import the ' +
+      'service- or collection-tier files in the same directory.',
+    severity: 'warn',
+    from: {
+      path: '^src/service/agent/(identity|store|runtime-state|activity|records|requests|runtime-id)\\.ts$',
+    },
+    to: {
+      path: '^src/service/agent/(runtime-generation|turn|admission|submission|completion-renderer|factory|service|service-types|index|commands|mcp|mcp-tool-descriptors|system-prompt|errors|types|dissolve-members)\\.ts$',
+    },
+  },
+  {
+    name: 'service-agent-service-not-to-collection',
+    comment:
+      'service/agent/ service-tier files (runtime-generation, turn, ' +
+      'admission, submission, completion-renderer, factory, service, ' +
+      'service-types) must not import the collection-tier files in the ' +
+      'same directory.',
+    severity: 'warn',
+    from: {
+      path: '^src/service/agent/(runtime-generation|turn|admission|submission|completion-renderer|factory|service|service-types)\\.ts$',
+    },
+    to: {
+      path: '^src/service/agent/(index|commands|mcp|mcp-tool-descriptors|system-prompt|errors|types|dissolve-members)\\.ts$',
     },
   },
   {

@@ -225,10 +225,10 @@ cold provider query and stores no copy, index, or cursor in Dreamux state.
 
 Source:
 
-- `/packages/dreamux/src/service/agent-entity/types.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent/identity.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 - `/packages/dreamux/src/agent-runtime/skill-sources.ts`
-- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
+- `/packages/dreamux/src/service/agent/activity.ts`
 
 ### Team Records
 
@@ -367,7 +367,7 @@ state mechanisms:
 - no persisted runtime socket path;
 - no workspace-local `.codex/skills` installation;
 - no dispatcher-root `status.json` recovery authority (`identity.json` is the
-  Dreamux agent-entity recovery state);
+  Dreamux Agent entity recovery state);
 - no durable `runtime/<name>/` scratch under the dispatcher state root (runtime
   scratch is volatile and lives under `run/`).
 
@@ -382,14 +382,14 @@ path creates, reads, validates, or deletes it, `dreamux serve` starts with it
 present, and `dreamux doctor` does not report it. The `teammate/` and `team/`
 directories themselves stay valid as the current per-entity collection roots;
 the reserved-name guard (`assertNotReservedAgentName`,
-`service/agent-entity/types.ts`) still keeps a real entity directory from
+`service/agent/identity.ts`) still keeps a real entity directory from
 taking one of these leaf names, so a live entity can never collide with a
 leftover.
 
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/dreamux/src/service/agent-entity/types.ts`
+- `/packages/dreamux/src/service/agent/identity.ts`
 
 ### Transactional Stores
 
@@ -458,7 +458,7 @@ Source:
 
 - `/packages/dreamux-utils/src/transactional-store.ts`
 - `/packages/dreamux-utils/src/fs.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/dreamux/src/service/workflow-service/store.ts`
@@ -668,7 +668,7 @@ Source:
 
 - `/packages/dreamux/src/platform/errors.ts`
 - `/packages/dreamux-utils/src/transactional-store.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 
 ## Invariants
 

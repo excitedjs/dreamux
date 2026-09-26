@@ -29,7 +29,7 @@ import { teamMateCollectionDir } from '../../platform/paths.js';
 import {
   AgentEntityCollectionStore,
   AgentIdentityStore,
-} from '../agent-entity/identity-store.js';
+} from '../agent/store.js';
 import { alignedWithLeader } from '../team-service/leader-agent.js';
 import type { TeamRecord } from './types.js';
 

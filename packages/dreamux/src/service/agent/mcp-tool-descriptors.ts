@@ -26,7 +26,7 @@ import {
   MAX_WORKFLOW_MAX_CONCURRENCY,
   MIN_WORKFLOW_MAX_CONCURRENCY,
 } from '../workflow-service/limits.js';
-import type { TeamMateMcpScope } from './mcp-delegate.js';
+import type { TeamMateMcpScope } from './mcp.js';
 
 /**
  * One spawnable agent runtime row of `get_capabilities`.

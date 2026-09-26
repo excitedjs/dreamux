@@ -35,18 +35,19 @@ import {
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
 import { CompletionDeliveryPolicy } from '../completion-router/index.js';
-import { TeammateCollection } from '../teammate-collection/index.js';
-import type { TeammateOps } from '../teammate-collection/types.js';
+import { TeammateCollection } from '../agent/index.js';
+import type { TeammateOps } from '../agent/types.js';
 import {
   AgentEntityCollectionStore,
   AgentNameRegistry,
-} from '../agent-entity/identity-store.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import { AdmissionLedger } from '../teammate-service/admission-ledger.js';
+} from '../agent/store.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
+import { AdmissionLedger } from '../agent/admission.js';
+import { AgentServiceFactory } from '../agent/factory.js';
 import { SCHEDULED_SOURCE } from '../submission-sources.js';
 import { createConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
-import type { TeammateService } from '../teammate-service/index.js';
-import type { TeammateSubmitInput } from '../teammate-service/submission.js';
+import type { AgentService } from '../agent/service.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { TeamCollection } from '../team-collection/index.js';
 import { SchedulerService } from '../scheduler/service.js';
@@ -63,10 +64,7 @@ import type {
   TeamHistoryQuery,
 } from '../team-collection/types.js';
 import type { TeamService } from '../team-service/index.js';
-import {
-  asInboundDeliveryResult,
-  type TurnAdmission,
-} from '../teammate-service/turn-recording.js';
+import type { TurnAdmission } from '../agent/admission.js';
 import type {
   DispatcherRuntimeStatus,
   DispatcherServiceOptions,
@@ -192,8 +190,12 @@ export class DispatcherService implements Dispatcher {
       log: opts.log,
     });
     // Dispatcher-lifetime, so source dedupe survives an entity service being
-    // retired and rematerialized under the same name.
-    const admissions = new AdmissionLedger();
+    // retired and rematerialized under the same name — the factory binds it
+    // once, alongside the dispatcher id, for every Agent it builds.
+    const agentServiceFactory = new AgentServiceFactory(
+      opts.id,
+      new AdmissionLedger(),
+    );
     const conversationProjection = createConversationProjection({
       coreEvents: this.coreEvents.publisher,
       log: opts.log,
@@ -215,13 +217,11 @@ export class DispatcherService implements Dispatcher {
       }),
       admit: (task) => this.admitOperation(task),
       submitScheduled: async (input) =>
-        asInboundDeliveryResult(
-          await this.mustAgent().submitInput({
-            source: SCHEDULED_SOURCE,
-            text: input.prompt,
-            sourceId: input.sourceId,
-          }),
-        ),
+        this.mustAgent().submitInput({
+          source: SCHEDULED_SOURCE,
+          text: input.prompt,
+          sourceId: input.sourceId,
+        }),
       log: opts.log,
     });
 
@@ -233,7 +233,7 @@ export class DispatcherService implements Dispatcher {
       worktrees,
       store: teamMateStore,
       names,
-      admissions,
+      agentServiceFactory,
       conversationProjection,
       completionDelivery,
       // These TeamMates are the dispatcher's own, so their completions go to
@@ -252,7 +252,7 @@ export class DispatcherService implements Dispatcher {
       worktrees,
       root: teamRoot,
       names,
-      admissions,
+      agentServiceFactory,
       conversationProjection,
       completionDelivery,
       // A TeamLeader reports back to the dispatcher's own Agent; its Team's
@@ -297,7 +297,7 @@ export class DispatcherService implements Dispatcher {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       identities,
       onPersisted: onDispatcherAgentPersisted,
-      admissions,
+      agentServiceFactory,
       conversationProjection,
       log: opts.log,
       channels: this.channels,
@@ -667,7 +667,7 @@ export class DispatcherService implements Dispatcher {
     });
   }
 
-  private mustAgent(): TeammateService {
+  private mustAgent(): AgentService {
     const agent = this.inputSources.agent;
     if (agent === null) {
       throw new Error(`dispatcher '${this.id}' agent is not prepared`);

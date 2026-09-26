@@ -1,6 +1,7 @@
 import type {
   DreamuxLogger,
   RuntimeCompletion,
+  TeammateRole,
 } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
@@ -13,6 +14,8 @@ interface CompletionFactBase {
 export interface TeammateCompletionFact extends CompletionFactBase {
   kind: 'teammate';
   source: string;
+  /** The producing Agent's runtime role, so delivery can word the notice accordingly. */
+  role: TeammateRole;
 }
 
 export interface WorkflowCompletionFact extends CompletionFactBase {

@@ -1,6 +1,6 @@
 import type { DispatcherRow } from '../../state/dispatcher-store.js';
-import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
-import type { TeammateService } from '../teammate-service/index.js';
+import { runtimeStatusToIdentityStatus } from '../agent/identity.js';
+import type { AgentService } from '../agent/service.js';
 import type {
   DispatcherRuntimeStatus,
   DispatcherSummary,
@@ -8,7 +8,7 @@ import type {
 } from './types.js';
 
 export function dispatcherRuntimeStatus(
-  agent: TeammateService | null,
+  agent: AgentService | null,
 ): DispatcherRuntimeStatus {
   const runtimeStatus = agent?.runtimeStatus() ?? null;
   const identity = agent?.current() ?? null;
@@ -20,7 +20,7 @@ export function dispatcherRuntimeStatus(
 }
 
 export function liveDispatcherRuntimeStatus(
-  agent: TeammateService | null,
+  agent: AgentService | null,
 ): LiveDispatcherRuntimeStatus | null {
   const runtimeStatus = agent?.runtimeStatus() ?? null;
   if (runtimeStatus === null) return null;
@@ -34,7 +34,7 @@ export function liveDispatcherRuntimeStatus(
 
 export function dispatcherSummary(
   row: DispatcherRow,
-  agent: TeammateService | null,
+  agent: AgentService | null,
 ): DispatcherSummary {
   const runtimeStatus = agent?.runtimeStatus() ?? null;
   const identity = agent?.current() ?? null;

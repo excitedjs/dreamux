@@ -24,10 +24,10 @@
  */
 import type { TeammateInputNotice } from '@excitedjs/dreamux-types';
 
-import type { TurnCompletionDelivery } from './turn-recording.js';
+import type { TurnCompletionDelivery } from './turn.js';
 
 /**
- * One admitted submission, as `TeammateService` accepts it.
+ * One admitted submission, as `AgentService` accepts it.
  *
  * The first four fields are the complete model-facing input. The rest are
  * Core-only facts that are never rendered: `notice` says which producer an

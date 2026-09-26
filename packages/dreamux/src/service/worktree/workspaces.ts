@@ -6,12 +6,12 @@ import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type {
   AgentEntityCollectionStore,
   AgentIdentityUpdateInput,
-} from '../agent-entity/identity-store.js';
+} from '../agent/store.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
-} from '../teammate-collection/types.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
+} from '../agent/types.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
 import { reuseCwdWorktree, WorktreeManager } from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {

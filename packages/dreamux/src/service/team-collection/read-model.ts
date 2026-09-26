@@ -3,7 +3,7 @@ import type { DreamuxLogger, TeamSummary } from '@excitedjs/dreamux-types';
 import {
   AgentEntityCollectionStore,
   AgentIdentityStore,
-} from '../agent-entity/identity-store.js';
+} from '../agent/store.js';
 import {
   clampHistoryLimit,
   decodeCursor,
@@ -11,13 +11,13 @@ import {
   previewText,
 } from '../../platform/history-page.js';
 import { teamMateCollectionDir } from '../../platform/paths.js';
-import { toStatus } from '../agent-entity/read-helpers.js';
+import { toStatus } from '../agent/records.js';
 import type { TeamService } from '../team-service/index.js';
 import { teamSummary } from '../team-service/team-summary.js';
 import type {
   AgentEntityIdentity,
   AgentEntityIdentityStatus,
-} from '../agent-entity/types.js';
+} from '../agent/identity.js';
 import { matchesTeamHistoryQuery } from './read-helpers.js';
 import type { TeamStore } from './store.js';
 import type {

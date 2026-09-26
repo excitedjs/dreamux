@@ -1,10 +1,10 @@
-import type { AgentEntityCollectionStore } from '../agent-entity/identity-store.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
+import type { AgentEntityCollectionStore } from './store.js';
+import type { AgentEntityIdentity } from './identity.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
-import type { TeammateService } from '../teammate-service/index.js';
+import type { AgentService } from './service.js';
 
 /**
  * Close every member of a dissolving Team.
@@ -29,7 +29,7 @@ import type { TeammateService } from '../teammate-service/index.js';
 export async function closeMembersForDissolve(input: {
   teamId: string;
   note: string;
-  held: readonly TeammateService[];
+  held: readonly AgentService[];
   roster: readonly AgentEntityIdentity[];
   store: AgentEntityCollectionStore;
 }): Promise<void> {

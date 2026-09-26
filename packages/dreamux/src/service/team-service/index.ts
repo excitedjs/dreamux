@@ -12,27 +12,24 @@ import type { CompletionInitiator } from '../completion-router/index.js';
 import type { SchedulerService } from '../scheduler/service.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import type { TeamStore } from '../team-collection/store.js';
-import type { TeammateCollection } from '../teammate-collection/index.js';
-import type { CreateLockedTeammateOptions } from '../teammate-collection/index.js';
+import type { TeammateCollection } from '../agent/index.js';
+import type { CreateLockedTeammateOptions } from '../agent/index.js';
 import type {
   SpawnTeamMateRequest,
   TeamWorkspaceLoan,
   TeammateOps,
-} from '../teammate-collection/types.js';
-import { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { TeammateSubmitInput } from '../teammate-service/submission.js';
+} from '../agent/types.js';
+import { AgentIdentityStore } from '../agent/store.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
 import { SCHEDULED_SOURCE } from '../submission-sources.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
   type AgentEntityIdentityStatus,
   type AgentEntityRuntimeStatus,
-} from '../agent-entity/types.js';
-import type { TeammateService } from '../teammate-service/index.js';
-import {
-  asInboundDeliveryResult,
-  type TurnAdmission,
-} from '../teammate-service/turn-recording.js';
+} from '../agent/identity.js';
+import type { AgentService } from '../agent/service.js';
+import type { TurnAdmission } from '../agent/admission.js';
 import type {
   TeamDissolveCommand,
   TeamDissolveReceipt,
@@ -79,7 +76,7 @@ import type {
 
 /**
  * A single team entity (issue #233): holds its own {@link TeamRecord}, *has a*
- * leader {@link TeammateService} (Phase 4, at the team root), and OWNS its
+ * leader {@link AgentService} (Phase 4, at the team root), and OWNS its
  * members' team-scoped {@link TeammateCollection}. It owns every per-team
  * runtime and resource operation, dissolve included, and is the only writer of
  * its own record. Admin `team_leader` target calls are forwarded to this Team's
@@ -92,8 +89,8 @@ export class TeamService implements Team {
    * per Team id (for the life of the collection), so this is the same
    * committed value every write through `deps.store` publishes. */
   private readonly recordHandle: TransactionalStore<TeamRecord | null>;
-  private leader_: TeammateService | null = null;
-  private leaderBuild: Promise<TeammateService> | null = null;
+  private leader_: AgentService | null = null;
+  private leaderBuild: Promise<AgentService> | null = null;
   private readonly roster: TeamRosterProjection;
   readonly id: string;
   /** Stored at construction: the `team` hook sees a created Team before its record exists. */
@@ -200,13 +197,11 @@ export class TeamService implements Team {
       // A scheduled turn is an ordinary leader submission and takes the one
       // entry every other invoker takes, aggregate transition included.
       submitScheduled: async (input) =>
-        asInboundDeliveryResult(
-          await this.submitToLeader({
-            source: SCHEDULED_SOURCE,
-            text: input.prompt,
-            sourceId: input.sourceId,
-          }),
-        ),
+        this.submitToLeader({
+          source: SCHEDULED_SOURCE,
+          text: input.prompt,
+          sourceId: input.sourceId,
+        }),
       log: deps.log,
     });
     this.scheduler_ = scheduler.service;
@@ -290,7 +285,7 @@ export class TeamService implements Team {
     // `deps.store`'s own id-keyed map), so `service.mustRecord()` already
     // reflects `published` from this point on with no separate assignment.
     let team = published;
-    let leader: TeammateService | null = null;
+    let leader: AgentService | null = null;
     try {
       // The TeamMate layer owns identity creation: the Team hands over its own
       // creation inputs and gets back a leader, rather than assembling and
@@ -660,7 +655,7 @@ export class TeamService implements Team {
    */
   private async createLeader(
     creation: TeamLeaderCreationInput,
-  ): Promise<TeammateService> {
+  ): Promise<AgentService> {
     return createTeamLeaderAgentForTeam({
       ...this.leaderAgentBase(),
       creation,
@@ -724,7 +719,7 @@ export class TeamService implements Team {
   }
 
   /** This Team's leader, materialized from the identity at its root when this Team is holding none, and built once however many ordinary uses ask at the same time — two would be two Agents over one identity. */
-  private async leaderService(): Promise<TeammateService> {
+  private async leaderService(): Promise<AgentService> {
     if (this.leader_ !== null) return this.leader_;
     this.leaderBuild ??= leaderForOpenTeam({
       ...this.leaderAgentBase(),

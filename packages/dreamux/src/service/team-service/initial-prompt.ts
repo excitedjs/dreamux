@@ -1,5 +1,5 @@
-import type { TeammateService } from '../teammate-service/index.js';
-import { toSubmissionResult } from '../teammate-service/turn-recording.js';
+import type { AgentService } from '../agent/service.js';
+import { toSubmissionResult } from '../agent/admission.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import { resolveTeamLeaderCompletionDelivery } from './completion-targets.js';
 import type { TeamServiceDeps } from './types.js';
@@ -10,7 +10,7 @@ import type { TeamServiceDeps } from './types.js';
  */
 export async function submitInitialLeaderPrompt(input: {
   deps: TeamServiceDeps;
-  leader: TeammateService;
+  leader: AgentService;
   prompt: string;
 }): Promise<void> {
   const { deps, leader } = input;

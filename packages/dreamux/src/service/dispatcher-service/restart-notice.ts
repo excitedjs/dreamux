@@ -3,11 +3,11 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { RestartIntentConsumer } from './restart-intent.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import { SYSTEM_SOURCE } from '../submission-sources.js';
-import type { TeammateService } from '../teammate-service/index.js';
+import type { AgentService } from '../agent/service.js';
 
 export async function injectRestartNoticeIfNeeded(input: {
   dispatcherId: string;
-  agent: TeammateService;
+  agent: AgentService;
   restartIntent: RestartIntentConsumer | null;
   now: number;
   log: DreamuxLogger;

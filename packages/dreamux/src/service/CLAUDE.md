@@ -24,8 +24,11 @@ The layout is symmetric on purpose, and the two halves own different things:
   operations, its runtime-backed work, and its close.
 
 `Dispatchers` → `DispatcherService` → (`TeamCollection` → `TeamService`,
-`TeammateCollection` → `TeammateService`) is that pattern at every level. A
-Team's members are the same pair again, scoped to the Team.
+`TeammateCollection` → `AgentService`) is that pattern at every level.
+`AgentService` carries that name rather than `TeammateService` because the
+same class is also the dispatcher agent and a Team's leader, each built
+outside any Collection. A Team's members are the same pair again, scoped to
+the Team.
 
 ## What goes where
 
@@ -46,9 +49,10 @@ Team's members are the same pair again, scoped to the Team.
   accepted requests, then shuts down dispatchers and the socket. A request
   racing the fence gets `ServerShuttingDownError`.
 - **`dispatcher-service/index.ts`** — one dispatcher-local aggregate. It *has
-  an* agent: a contained `TeammateService` built by `agent.ts` from the
-  dispatcher root `identity.json`, structurally outside the `teammate/`
-  collection so read chokepoints never enumerate it. The aggregate keeps
+  an* agent: a contained `AgentService`, built by `agent.ts` through the
+  per-dispatcher `AgentServiceFactory` from the dispatcher root
+  `identity.json`, structurally outside the `teammate/` collection so read
+  chokepoints never enumerate it. The aggregate keeps
   restart-notice injection (`restart-notice.ts`, consuming the restart marker
   owned by `restart-intent.ts`), role→MCP delegate assembly
   (`mcp-delegates.ts`), the admission/drain gate for external mutating work
@@ -93,19 +97,39 @@ Team's members are the same pair again, scoped to the Team.
   `ClosedFactPublisher`.
   `DispatcherService.team()` returns a `TeamLeaderHandle` to admin/MCP
   team-leader callers, never the concrete `TeamService`.
-- **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
-  `TeammateCollection` constructs, subscribes to, caches, resolves, and reads
-  entities, and owns the Team-scoped bulk close a dissolve needs
-  (`dissolve-members.ts`); it does not own an entity's close state machine.
-  `TeammateService` owns one identity, its process-local Workflow lock, its
-  runtime, its canonical Turn objects, terminal outcome/delivery convergence,
-  and idempotent logical close; its retirement broadcast is the shared
-  `ClosedFactPublisher`.
-  `completion-router/` is the stateless per-dispatcher delivery policy; it
-  keeps no Turn registry or terminal cache, and reads the dispatcher admission
-  gate before it queues a delivery.
-- **`agent-entity/`** — neutral identity/activity/runtime-state stores, agent
-  config, read helpers, and the history-query reader. Never under a Collection.
+- **`agent/` + `completion-router/`** — `agent/` is one directory, files
+  ordered by R7's declared direction rather than by the class-plus-helpers
+  rule above: store → service → collection. Two `warn`-severity
+  `.dependency-cruiser.cjs` rules hold that direction — a store-tier file
+  never imports a service- or collection-tier file, and a service-tier file
+  never imports a collection-tier file. The store tier (`identity.ts`,
+  `store.ts`, `runtime-state.ts`, `activity.ts`, `records.ts`, `requests.ts`,
+  `runtime-id.ts`) is neutral identity/activity/runtime-state persistence and
+  history-query reading; it is never under a Collection, and it is shared —
+  `team-service/` and `dispatcher-service/` read it directly for the Team
+  leader and the dispatcher agent, both of which live outside
+  `TeammateCollection`. The service tier (`runtime-generation.ts`, `turn.ts`,
+  `admission.ts`, `submission.ts`, `completion-renderer.ts`, `factory.ts`,
+  `service.ts`) is `AgentService` — named for the entity rather than for
+  `TeammateCollection`, because the same class also serves as the dispatcher
+  agent and a Team's leader. It owns one identity, its process-local Workflow
+  lock, its runtime, its canonical Turn objects, terminal outcome/delivery
+  convergence, and idempotent logical close; its retirement broadcast is the
+  shared `ClosedFactPublisher`, and it is constructed per-entity by
+  `AgentServiceFactory`, the per-dispatcher factory that owns the shared
+  `AdmissionLedger`. The collection tier (`index.ts`, `commands.ts`,
+  `mcp.ts`, `mcp-tool-descriptors.ts`, `system-prompt.ts`, `errors.ts`,
+  `types.ts`) is `TeammateCollection`: it constructs, subscribes to, caches,
+  resolves, and reads ordinary-TeamMate entities only — never the dispatcher
+  agent or a Team's leader — and owns the Team-scoped bulk close a dissolve
+  needs (`dissolve-members.ts`); it does not own an entity's close state
+  machine. This directory merge and the `AgentService` rename are a
+  code-location and naming change only: `identity.json`'s shape, field
+  meanings, and owner are unchanged, so no
+  `packages/dreamux/skills/dispatcher/dreamux-maintenance/` update
+  accompanies it. `completion-router/` is the stateless per-dispatcher
+  delivery policy; it keeps no Turn registry or terminal cache, and reads
+  the dispatcher admission gate before it queues a delivery.
 - **`worktree/`** — `WorktreeManager` (default work dir, reuse-cwd, and managed
   modes), workspace resolution, and the repository-request reader that says
   what a caller may ask for a working directory.

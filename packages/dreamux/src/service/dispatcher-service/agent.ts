@@ -7,16 +7,12 @@ import {
 } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
-import { createTeammateService } from '../teammate-service/factory.js';
-import {
-  assertDispatcherRootAgent,
-  dispatcherRuntimeId,
-} from '../agent-entity/runtime-profile.js';
-import type { TeammateService } from '../teammate-service/index.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { TeammateAgentMcp } from '../teammate-service/types.js';
+import type { AgentIdentityStore } from '../agent/store.js';
+import type { AgentServiceFactory } from '../agent/factory.js';
+import { dispatcherRuntimeId } from '../agent/runtime-id.js';
+import type { AgentService } from '../agent/service.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
+import type { TeammateAgentMcp } from '../agent/service-types.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -30,9 +26,9 @@ import { composeLaunchDraft } from '../../plugin/hooks.js';
 export interface DispatcherAgentDeps {
   id: string;
   /**
-   * Forwarded verbatim into {@link createTeammateService}'s own `config`
+   * Forwarded verbatim into {@link AgentServiceFactory.create}'s own `config`
    * field: this factory itself never reads a fact off it, only builds the
-   * contained `TeammateService` that will call `.current()` at each launch
+   * contained `AgentService` that will call `.current()` at each launch
    * (`config/service.ts`'s `ConfigReader` doc).
    */
   config: ConfigReader;
@@ -42,14 +38,14 @@ export interface DispatcherAgentDeps {
   identity: AgentEntityIdentity;
   identities: AgentIdentityStore;
   onPersisted: (identity: AgentEntityIdentity) => void;
-  admissions: AdmissionLedger;
+  agentServiceFactory: AgentServiceFactory;
   conversationProjection: ConversationProjection;
   /** This Dispatcher's `beforeLaunch` hook, run once per Agent construction. */
   beforeLaunch: AsyncSeriesHook<[LaunchDraft]>;
 }
 
 /**
- * Build the dispatcher's own agent as a contained {@link TeammateService} (issue
+ * Build the dispatcher's own agent as a contained {@link AgentService} (issue
  * #233 Phase 5). The dispatcher *has an* agent rather than *being* one: the
  * shared entity owns the runtime lifecycle (start/resume/stop), the
  * in-process Turn lifecycle and `completionInput` as a delivery target,
@@ -66,7 +62,7 @@ export interface DispatcherAgentDeps {
  */
 export async function createDispatcherAgent(
   deps: DispatcherAgentDeps,
-): Promise<TeammateService> {
+): Promise<AgentService> {
   const builtinSkills = [
     {
       name: 'dispatcher',
@@ -80,14 +76,12 @@ export async function createDispatcherAgent(
     },
   ];
   const draft = await composeLaunchDraft(deps.beforeLaunch, builtinSkills);
-  return createTeammateService({
-    dispatcherId: deps.id,
+  return deps.agentServiceFactory.create({
     identity: deps.identity,
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
     onPersisted: deps.onPersisted,
-    admissions: deps.admissions,
     conversationProjection: deps.conversationProjection,
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
@@ -97,9 +91,7 @@ export async function createDispatcherAgent(
       runtimeId: dispatcherRuntimeId(deps.id),
       // This Agent is the Dispatcher Service's own; the role follows from that.
       role: 'dispatcher',
-      ownsWorktreeOnClose: false,
       loggerFields: {},
-      assertIdentityScope: assertDispatcherRootAgent,
       skillSources: [...builtinSkills, ...draft.skillSources],
       disabledFeatures: [DISABLE_FEATURE_CRON],
       systemPrompt: {

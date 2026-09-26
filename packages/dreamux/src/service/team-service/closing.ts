@@ -5,9 +5,9 @@ import {
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
 import type { SchedulerService } from '../scheduler/service.js';
-import type { TeammateCollection } from '../teammate-collection/index.js';
-import type { TeammateService } from '../teammate-service/index.js';
-import type { AgentEntityWorktreeIdentity } from '../agent-entity/types.js';
+import type { TeammateCollection } from '../agent/index.js';
+import type { AgentService } from '../agent/service.js';
+import type { AgentEntityWorktreeIdentity } from '../agent/identity.js';
 import { errorMessage } from '@excitedjs/dreamux-utils';
 import {
   TeamDissolveBlockedError,
@@ -49,7 +49,7 @@ export interface TeamClosingDeps {
    * The materialized TeamLeader, or `null` for a Team whose creation failed
    * before its leader existed.
    */
-  leader: () => TeammateService | null;
+  leader: () => AgentService | null;
   /**
    * Close this Team's leader for the dissolve, and let the wrapper go.
    *

@@ -3,12 +3,14 @@ import type {
   AgentRuntimeStateUpdate,
   AgentRuntimeStatus,
 } from '@excitedjs/dreamux-types';
-import type { AgentIdentityStore } from './identity-store.js';
-import type { AgentIdentityUpdateInput } from './identity-store.js';
+import type {
+  AgentIdentityStore,
+  AgentIdentityUpdateInput,
+} from './store.js';
 import {
   runtimeStatusToIdentityStatus,
   type AgentEntityIdentity,
-} from './types.js';
+} from './identity.js';
 
 /**
  * The `Error` a revoked lease rejects with. Providers branch on `error.name`,

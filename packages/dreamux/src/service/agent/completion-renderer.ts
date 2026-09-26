@@ -1,3 +1,5 @@
+import type { TeammateRole } from '@excitedjs/dreamux-types';
+
 import { resolveCompletionBody } from '@excitedjs/dreamux-utils';
 
 import type { PreparedCompletionFact } from '../completion-router/index.js';
@@ -25,23 +27,57 @@ export async function buildCompletionTurnText(
 function completionStatusLine(completion: PreparedCompletionFact): string {
   switch (completion.kind) {
     case 'teammate':
-      return teammateStatusLine(completion.source, completion.status);
+      return teammateStatusLine(
+        completion.role,
+        completion.source,
+        completion.status,
+      );
     case 'workflow':
       return workflowStatusLine(completion.runId, completion.status);
   }
 }
 
+/**
+ * Word the completion notice by the producing Agent's actual role: a
+ * Dispatcher's own Agent and a Team's leader are not TeamMates, so a fixed
+ * "TeamMate" noun misdescribes their completion to the recipient.
+ */
 function teammateStatusLine(
+  role: TeammateRole,
   source: string,
   status: PreparedCompletionFact['status'],
 ): string {
+  const { subject, possessive } = roleSubject(role, source);
   switch (status) {
     case 'completed':
-      return `TeamMate ${source} has finished its task.`;
+      return `${subject} has finished its task.`;
     case 'failed':
-      return `TeamMate ${source}'s task failed.`;
+      return `${possessive} task failed.`;
     case 'stopped':
-      return `TeamMate ${source}'s task was stopped.`;
+      return `${possessive} task was stopped.`;
+  }
+}
+
+function roleSubject(
+  role: TeammateRole,
+  source: string,
+): { subject: string; possessive: string } {
+  switch (role) {
+    case 'dispatcher':
+      return {
+        subject: 'The Dispatcher agent',
+        possessive: "The Dispatcher agent's",
+      };
+    case 'team_leader':
+      return {
+        subject: `Team leader ${source}`,
+        possessive: `Team leader ${source}'s`,
+      };
+    case 'teammate':
+      return {
+        subject: `TeamMate ${source}`,
+        possessive: `TeamMate ${source}'s`,
+      };
   }
 }
 

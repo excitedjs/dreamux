@@ -13,14 +13,14 @@ import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
 } from '../completion-router/index.js';
-import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
+import type { AgentNameRegistry } from '../agent/store.js';
 import type { ClosedListener } from '../../platform/closed-fact.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
-import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
-import type { TurnAdmission } from '../teammate-service/turn-recording.js';
-import type { TeammateAgentMcp } from '../teammate-service/types.js';
-import type { TeamMateSharedWorkspace } from '../teammate-collection/types.js';
+import type { AgentServiceFactory } from '../agent/factory.js';
+import type { TurnAdmission } from '../agent/admission.js';
+import type { TeammateAgentMcp } from '../agent/service-types.js';
+import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
   TeamCreateRequestIdentity,
@@ -74,7 +74,7 @@ export interface TeamServiceDeps {
   teamRoot: string;
   /** The dispatcher-global agent-name namespace. */
   names: AgentNameRegistry;
-  admissions: AdmissionLedger;
+  agentServiceFactory: AgentServiceFactory;
   conversationProjection: ConversationProjection;
   completionDelivery: CompletionDeliveryPolicy;
   /**

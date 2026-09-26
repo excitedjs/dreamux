@@ -7,7 +7,7 @@ import type {
 import type {
   AgentEntityIdentity,
   AgentEntityRuntimeStatus,
-} from '../agent-entity/types.js';
+} from '../agent/identity.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type { TeamRecord } from '../team-collection/types.js';

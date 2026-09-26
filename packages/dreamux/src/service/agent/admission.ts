@@ -23,7 +23,11 @@
  * The ledger is deliberately process-local: it carries no cross-restart
  * delivery guarantee.
  */
-import type { TurnAdmission } from './turn-recording.js';
+import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
+
+import type { CompletionDeliveryResult } from '../completion-router/index.js';
+import type { AgentEntitySubmissionResult } from './identity.js';
+import type { Turn } from './turn.js';
 
 /**
  * Committed keys retained across the whole Dispatcher. Bounded so a long-lived
@@ -126,4 +130,87 @@ export class AdmissionLedger {
       if (evicted !== undefined) this.committed.delete(evicted);
     }
   }
+}
+
+export type TurnAdmission =
+  | { status: 'submitted'; turn: Turn }
+  | { status: 'duplicate' | 'stopped' | 'skipped' }
+  | { status: 'failed' | 'ambiguous'; error: Error };
+
+export function toSubmissionResult(
+  admission: TurnAdmission,
+): AgentEntitySubmissionResult {
+  switch (admission.status) {
+    case 'submitted':
+      return { status: 'submitted' };
+    case 'duplicate':
+    case 'stopped':
+      return { status: admission.status };
+    case 'failed':
+      return { status: 'failed', error: admission.error.message };
+    case 'ambiguous':
+      return { status: 'ambiguous', error: admission.error.message };
+    case 'skipped':
+      return { status: 'stopped', error: 'turn skipped' };
+  }
+}
+
+/**
+ * State an admission's decision in the shape a completion push-back reads.
+ *
+ * Beside {@link toSubmissionResult} for the same reason it exists: the
+ * admission decides, and every caller-facing shape is one stated mapping of
+ * that decision rather than a second authority that could drift from it.
+ */
+export function asCompletionDeliveryResult(
+  result: TurnAdmission,
+): CompletionDeliveryResult {
+  switch (result.status) {
+    case 'submitted':
+    case 'duplicate':
+      return { status: 'accepted' };
+    case 'stopped':
+      return { status: 'unsupported', reason: 'runtime stopped' };
+    case 'failed':
+      return { status: 'failed', error: result.error };
+    case 'ambiguous':
+      return { status: 'ambiguous', error: result.error };
+    case 'skipped':
+      return {
+        status: 'failed',
+        error: new Error('completion delivery unexpectedly skipped'),
+      };
+  }
+}
+
+/**
+ * Why an admission that produced no turn fails the display surface its input
+ * opened; `null` when a turn exists and the runtime will end it.
+ *
+ * Only a `submitted` admission produces a turn, and only a live turn's runtime
+ * ever reports a native end — so every other outcome would leave that surface
+ * open forever. All four are the same verdict, `failed`: nothing answered the
+ * input. Only the reason differs, so only the reason is returned. Another
+ * stated mapping of the one decision, for the same reason as
+ * {@link toSubmissionResult} and {@link asCompletionDeliveryResult}.
+ */
+export function failedAdmissionReason(result: TurnAdmission): string | null {
+  switch (result.status) {
+    case 'submitted':
+    case 'duplicate':
+      return null;
+    case 'stopped':
+      return 'the agent runtime is not running';
+    case 'skipped':
+      return 'the agent runtime skipped this input';
+    case 'failed':
+    case 'ambiguous':
+      return result.error.message;
+  }
+}
+
+export function admissionWithoutTurn(
+  admission: Exclude<RuntimeAdmission, { status: 'submitted' }>,
+): TurnAdmission {
+  return admission;
 }
