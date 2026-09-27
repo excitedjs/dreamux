@@ -18,14 +18,13 @@ import type {
 import {
   errorMessage,
   isPlainObject,
+  readNonEmptyString,
   rejectUnknownKeys,
-  requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
 
 import {
   ALWAYS_LOADED_PLUGIN_REFS,
   BUILTIN_PLUGIN_PACKAGES,
-  BUILTIN_PROVIDERS,
   parseProviderRef,
   registerBuiltinProvider,
   type ProviderImplementation,
@@ -112,7 +111,7 @@ export function readPluginEntries(
       entry = { ref: item };
     } else if (isPlainObject(item)) {
       rejectUnknownKeys(item, new Set(['ref', 'config']), file, `${prefix}.`);
-      entry = { ref: requireNonEmptyString(item, 'ref', file, `${prefix}.`) };
+      entry = { ref: readNonEmptyString(item, 'ref', file, `${prefix}.`) };
       if ('config' in item) entry.config = item['config'];
     } else {
       throw new Error(
@@ -141,9 +140,10 @@ export async function loadPlugins(options: {
   importModule?: PluginModuleImporter | undefined;
 }): Promise<LoadedPlugin[]> {
   const importModule = options.importModule ?? defaultImportModule;
-  const providerSources = new Map<string, string>(
-    BUILTIN_PROVIDERS.map((spec) => [spec.id, 'Dreamux core']),
-  );
+  // Every provider, built-in or plugin-supplied, is contributed by a plugin
+  // now, so the first `contribute()` call to claim a name is its source; there
+  // is nothing to pre-seed.
+  const providerSources = new Map<string, string>();
   const sources = [
     ...ALWAYS_LOADED_PLUGIN_REFS.map((ref) => ({
       ref,

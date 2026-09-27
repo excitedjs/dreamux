@@ -4,11 +4,8 @@ import type { DispatcherConfig } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
 import type { RestartIntentConsumer } from '../dispatcher-service/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
-import type {
-  CoreCommandRegistry,
-  Dispatcher,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { Dispatcher, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { CoreCommandRegistry } from '../../command/types.js';
 import type { SyncHook } from 'tapable';
 import { AgentIdentityStore } from '../agent/store.js';
 import { dispatcherDir } from '../../platform/paths.js';

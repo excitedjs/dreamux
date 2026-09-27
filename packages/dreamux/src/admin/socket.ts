@@ -19,7 +19,8 @@ import { dirname } from 'node:path';
 
 import type { Server } from '../server.js';
 import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
-import type { CoreCommandContext, JsonValue } from '@excitedjs/dreamux-types';
+import type { JsonValue } from '@excitedjs/dreamux-types';
+import type { CoreCommandContext } from '../command/types.js';
 import {
   DreamuxError,
   TransportError,

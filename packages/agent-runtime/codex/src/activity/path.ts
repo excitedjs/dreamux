@@ -10,6 +10,7 @@ import {
   type ScanBudget,
 } from '@excitedjs/dreamux-utils';
 
+import { resolveCodexHomeDir } from '../paths.js';
 import { openCodexRollout, type CodexOpenedRollout } from './opened-file.js';
 
 const ROLLOUT_FILENAME =
@@ -58,9 +59,19 @@ export async function resolveCodexRolloutRoots(
   env: DreamuxEnvironment = process.env,
 ): Promise<CodexRolloutRoots> {
   const configured = env['CODEX_HOME'];
+  if (
+    configured === undefined &&
+    (env['HOME'] === undefined || env['HOME'] === '')
+  ) {
+    throw new ActivityError('not_found', 'Codex home directory is unavailable');
+  }
+  // resolveCodexHomeDir is pure/non-throwing (it also backs the doctor, which
+  // has no missing-HOME failure mode of its own); the guard above preserves
+  // this reader's own typed-error contract for that case.
+  const candidate = resolveCodexHomeDir(env);
   let home: string;
   if (configured !== undefined) {
-    if (!isAbsolute(configured)) {
+    if (!isAbsolute(candidate)) {
       throw new ActivityError(
         'invalid',
         'Explicit Codex home must be an absolute directory',
@@ -68,7 +79,7 @@ export async function resolveCodexRolloutRoots(
     }
     let info;
     try {
-      info = await stat(configured);
+      info = await stat(candidate);
     } catch (error) {
       throw classifyRootError(error);
     }
@@ -78,14 +89,13 @@ export async function resolveCodexRolloutRoots(
         'Explicit Codex home must be a directory',
       );
     }
-    home = await realpath(configured).catch((error: unknown) => {
+    home = await realpath(candidate).catch((error: unknown) => {
       throw classifyRootError(error);
     });
   } else {
-    const fallback = join(homeDirectory(env), '.codex');
-    home = await realpath(fallback).catch((error: unknown) => {
+    home = await realpath(candidate).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return resolve(fallback);
+        return resolve(candidate);
       }
       throw classifyRootError(error);
     });
@@ -460,14 +470,6 @@ function assertNativeRolloutPath(candidate: string): void {
       'Codex activity source is not a native rollout path',
     );
   }
-}
-
-function homeDirectory(env: DreamuxEnvironment): string {
-  const value = env['HOME'];
-  if (value === undefined || value === '') {
-    throw new ActivityError('not_found', 'Codex home directory is unavailable');
-  }
-  return value;
 }
 
 function parseObject(value: string): Record<string, unknown> | null {

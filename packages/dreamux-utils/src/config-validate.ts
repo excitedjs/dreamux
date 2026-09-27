@@ -1,12 +1,11 @@
 /**
- * Neutral config validation primitives.
+ * Shared JSON-shape validation helpers for Dreamux config readers.
  *
- * Extracted from `config/config.ts` so that per-runtime config readers (each
- * builtin's `agent-runtime/builtin/<name>/config.ts`) can validate their own
- * config blocks without importing `config/config.ts` — importing the host
- * config module from a builtin would re-form the builtin -> config import
- * cycle. These helpers are runtime-agnostic: they only know about JSON shapes
- * and produce `dreamux config error in <file>: ...` messages.
+ * Any code that reads a config block validates it with these: each provider
+ * package's own `config.ts` for its provider's block, and the host's config
+ * module and plugin loader for theirs. They are runtime-agnostic — they know
+ * only JSON shapes — and every rejection they throw is a
+ * `dreamux config error in <file>: ...` message.
  */
 
 import { isPlainObject } from './json-shape.js';
@@ -53,7 +52,7 @@ function requireString(
   return ensureString(v, `${prefix}${key}`, file);
 }
 
-export function requireNonEmptyString(
+export function readNonEmptyString(
   obj: Record<string, unknown>,
   key: string,
   file: string,
@@ -92,7 +91,7 @@ export function readOptionalBoolean(
   );
 }
 
-export function requireStringArray(
+export function readStringArray(
   obj: Record<string, unknown>,
   key: string,
   fallback: string[],
@@ -116,7 +115,7 @@ export function requireStringArray(
   });
 }
 
-export function requireStringRecord(
+export function readStringRecord(
   obj: Record<string, unknown>,
   key: string,
   fallback: Record<string, string>,
@@ -156,7 +155,7 @@ function readInt(
   );
 }
 
-export function requirePositiveInt(
+export function readPositiveInt(
   obj: Record<string, unknown>,
   key: string,
   fallback: number,

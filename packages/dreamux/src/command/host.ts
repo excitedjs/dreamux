@@ -15,7 +15,7 @@
  * closed around domain fields only.
  */
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
-import type { CoreCommandContext } from '@excitedjs/dreamux-types';
+import type { CoreCommandContext } from './types.js';
 import { ValidationError, throwCallerMistake } from './errors.js';
 
 export function mustDispatcherId(context: CoreCommandContext): string {

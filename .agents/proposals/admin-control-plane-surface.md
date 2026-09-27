@@ -250,7 +250,7 @@ domain-owned Command registry is the shape to keep.
 A Command now receives a `CoreCommandContext` carrying only what its adapter
 can actually prove — the request `source` plus, where the adapter is bound to
 one, `dispatcher_id` and `channel_id`
-([`/packages/dreamux-types/src/command.ts`](/packages/dreamux-types/src/command.ts)).
+([`/packages/dreamux/src/command/types.ts`](/packages/dreamux/src/command/types.ts)).
 Scope a caller merely asserts still travels in the payload, which is a v0 shape
 rather than a stable identity contract.
 

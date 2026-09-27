@@ -1,7 +1,7 @@
 import { pathExists } from '../platform/fs-errors.js';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, resolve, sep } from 'node:path';
 
 import { removeUserService } from './service.js';
 import {
@@ -16,6 +16,10 @@ import {
 } from '../config/config.js';
 import { assertNoLegacyTomlOnly, loadConfig } from '../config/load.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
+import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { loadPlugins } from '../plugin/loader.js';
+import { createLogger } from '../platform/logger.js';
+import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 
@@ -56,12 +60,25 @@ export async function runUninstall(
   const runDir = normalizePath(runRoot());
   const cacheDir = normalizePath(cacheRoot());
   const logDir = normalizePath(logsRoot());
+  const protectedRoots = await resolveOperatorStateRoots();
 
-  assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
-  assertSafeOwnedDirectory(runDir, 'dreamux run directory');
-  assertSafeOwnedDirectory(cacheDir, 'dreamux cache directory');
-  assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
-  assertSafeOwnedDirectory(configDir, 'dreamux config directory');
+  assertSafeOwnedDirectory(
+    stateDir,
+    'dreamux state directory',
+    protectedRoots,
+  );
+  assertSafeOwnedDirectory(runDir, 'dreamux run directory', protectedRoots);
+  assertSafeOwnedDirectory(
+    cacheDir,
+    'dreamux cache directory',
+    protectedRoots,
+  );
+  assertSafeOwnedDirectory(logDir, 'dreamux logs directory', protectedRoots);
+  assertSafeOwnedDirectory(
+    configDir,
+    'dreamux config directory',
+    protectedRoots,
+  );
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
   const removal = await removeUserService({
@@ -82,20 +99,35 @@ export async function runUninstall(
     entries,
     'dreamux state directory',
     dryRun,
+    protectedRoots,
   );
-  await removeOwnedDirectory(runDir, entries, 'dreamux run directory', dryRun);
+  await removeOwnedDirectory(
+    runDir,
+    entries,
+    'dreamux run directory',
+    dryRun,
+    protectedRoots,
+  );
   await removeOwnedDirectory(
     cacheDir,
     entries,
     'dreamux cache directory',
     dryRun,
+    protectedRoots,
   );
-  await removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
+  await removeOwnedDirectory(
+    logDir,
+    entries,
+    'dreamux logs directory',
+    dryRun,
+    protectedRoots,
+  );
   await removeOwnedDirectory(
     configDir,
     entries,
     'dreamux config directory',
     dryRun,
+    protectedRoots,
   );
 
   return {
@@ -129,8 +161,9 @@ async function removeOwnedDirectory(
   entries: UninstallEntry[],
   reason: string,
   dryRun: boolean,
+  protectedRoots: readonly string[],
 ): Promise<void> {
-  assertSafeOwnedDirectory(path, reason);
+  assertSafeOwnedDirectory(path, reason, protectedRoots);
   await removePath(path, entries, reason, dryRun);
 }
 
@@ -153,7 +186,11 @@ async function removePath(
   entries.push({ path, status: 'removed', reason });
 }
 
-function assertSafeOwnedDirectory(path: string, reason: string): void {
+function assertSafeOwnedDirectory(
+  path: string,
+  reason: string,
+  protectedRoots: readonly string[],
+): void {
   const normalized = normalizePath(path);
   const home = normalizePath(homedir());
   if (
@@ -164,10 +201,10 @@ function assertSafeOwnedDirectory(path: string, reason: string): void {
   ) {
     throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
   }
-  for (const protectedRoot of operatorStateRoots()) {
+  for (const protectedRoot of protectedRoots) {
     if (isSameOrInside(normalized, protectedRoot)) {
       throw new Error(
-        `refusing to remove unsafe ${reason}: ${path} is inside operator Codex/Claude state ${protectedRoot}`,
+        `refusing to remove unsafe ${reason}: ${path} is inside operator agent runtime state ${protectedRoot}`,
       );
     }
   }
@@ -177,12 +214,31 @@ function normalizePath(path: string): string {
   return resolve(expandHome(path));
 }
 
-function operatorStateRoots(): string[] {
-  return uniquePaths([joinHome('.codex'), joinHome('.claude')]);
-}
-
-function joinHome(child: string): string {
-  return normalizePath(join(homedir(), child));
+/**
+ * Directories uninstall must never remove, sourced from every always-loaded
+ * Agent Runtime provider's own `operatorStateRoot` (e.g. Codex's `~/.codex`,
+ * Claude Code's `~/.claude`) instead of a host-side hard-coded list — a
+ * provider added or removed from the always-loaded set stays correctly
+ * protected without an uninstall-side edit. Building the registry this way
+ * (empty `entries`, same as `onboard/wizard.ts`'s `onboardProviderRegistry`)
+ * needs no config file: only the always-loaded plugins register.
+ */
+async function resolveOperatorStateRoots(): Promise<string[]> {
+  const registry = createBuiltinProviderRegistry();
+  await loadPlugins({
+    registry,
+    entries: [],
+    logger: createLogger({ name: 'uninstall' }),
+  });
+  const roots: Array<string | undefined> = registry
+    .listByKind('agentRuntime')
+    .map((descriptor) => {
+      const implementation = asAgentRuntimeProvider(
+        registry.getImplementation(descriptor.id),
+      );
+      return implementation?.operatorStateRoot?.(process.env);
+    });
+  return uniquePaths(roots);
 }
 
 function uniquePaths(paths: Array<string | undefined>): string[] {

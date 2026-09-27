@@ -10,12 +10,12 @@
  * them — each stating its own reason and next step. The cron MCP delegate
  * reads the same `requests.ts` helpers; neither adapter reads the other.
  */
+import type { JsonSchema } from '@excitedjs/dreamux-types';
+
 import type {
   CoreCommandContext,
   CoreCommandDefinition,
-  JsonSchema,
-} from '@excitedjs/dreamux-types';
-
+} from '../../command/types.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
 import { commandPayload, type CommandPayload } from '../../command/payload.js';
 import {

@@ -1,8 +1,6 @@
-import type {
-  CoreCommandRegistry,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
+import type { CoreCommandRegistry } from '../../command/types.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import type { ConfigReader } from '../../config/service.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';

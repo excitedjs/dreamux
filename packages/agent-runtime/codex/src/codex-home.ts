@@ -2,13 +2,14 @@
  * Codex home/auth pre-start validation (issue #209 cleanup — relocated from
  * Dreamux core into the owning package).
  *
- * This is the codex-engine readiness check: it validates that Codex's own global
- * home (`~/.codex`) exists, parses its `config.toml`, carries usable auth, and
- * that the representative app-server socket placement is sane. It is
- * codex-specific and carries NO `~/.dreamux` knowledge — the host's socket
- * placement arrives as a neutral sample (`socketPath`) computed from the path
- * context's `runtimeSocketDirs()`, and `dispatcherCwd` is optional (the
- * validation never reads it).
+ * This is the codex-engine readiness check: it validates that the Codex home a
+ * runtime will actually use (its `extra_env`'s `CODEX_HOME` override, or else
+ * `~/.codex` — see `paths.ts`'s `resolveCodexHomeDir`) exists, parses its
+ * `config.toml`, carries usable auth, and that the representative app-server
+ * socket placement is sane. It is codex-specific and carries NO `~/.dreamux`
+ * knowledge — the host's socket placement arrives as a neutral sample
+ * (`socketPath`) computed from the path context's `runtimeSocketDirs()`, and
+ * `dispatcherCwd` is optional (the validation never reads it).
  */
 import { readFile } from 'node:fs/promises';
 import { join, normalize, sep } from 'node:path';
@@ -22,7 +23,7 @@ import {
 } from '@excitedjs/dreamux-utils';
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
 
-import { dispatcherCodexConfigPath, dispatcherCodexHome } from './paths.js';
+import { resolveCodexHomeDir } from './paths.js';
 
 export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES =
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;
@@ -52,10 +53,6 @@ export interface DispatcherCodexHomeDoctorResult {
   context: DispatcherCodexHomeDoctorContext;
 }
 
-export type DispatcherCodexHomeDoctor = (
-  context: DispatcherCodexHomeDoctorContext,
-) => void | Promise<void>;
-
 interface DoctorContextOptions {
   codexCliArgs?: string[] | undefined;
   dispatcherCwd?: string;
@@ -68,14 +65,23 @@ interface DoctorOptions {
   codexCliArgs?: string[];
 }
 
+/**
+ * Build the doctor context for a runtime, from the same env its Codex child
+ * would actually spawn with — a per-agent `CODEX_HOME` override in
+ * `extra_env` must be reflected here too, not just in the runtime's own spawn
+ * path. Pass `paths.ts`'s `codexSpawnEnv` result, not the ambient diagnostic
+ * env.
+ */
 export function dispatcherCodexHomeDoctorContext(
   dispatcherId: string,
+  env: DreamuxEnvironment,
   options: DoctorContextOptions = {},
 ): DispatcherCodexHomeDoctorContext {
+  const codexHome = resolveCodexHomeDir(env);
   return {
     dispatcherId,
-    codexHome: dispatcherCodexHome(dispatcherId),
-    configPath: dispatcherCodexConfigPath(dispatcherId),
+    codexHome,
+    configPath: join(codexHome, 'config.toml'),
     dispatcherCwd: options.dispatcherCwd ?? '',
     socketPath: options.socketPath ?? '',
     codexCliArgs: options.codexCliArgs ?? [],
@@ -83,18 +89,13 @@ export function dispatcherCodexHomeDoctorContext(
 }
 
 export async function validateDispatcherCodexHome(
-  input: string | DispatcherCodexHomeDoctorContext,
+  input: DispatcherCodexHomeDoctorContext,
   options: DoctorOptions = {},
 ): Promise<DispatcherCodexHomeDoctorResult> {
-  const context =
-    typeof input === 'string'
-      ? dispatcherCodexHomeDoctorContext(input, {
-          codexCliArgs: options.codexCliArgs,
-        })
-      : {
-          ...input,
-          codexCliArgs: options.codexCliArgs ?? input.codexCliArgs,
-        };
+  const context: DispatcherCodexHomeDoctorContext = {
+    ...input,
+    codexCliArgs: options.codexCliArgs ?? input.codexCliArgs,
+  };
   const errors: string[] = [];
   const env = options.env ?? process.env;
 
@@ -142,21 +143,6 @@ export async function validateDispatcherCodexHome(
     errors,
     context,
   };
-}
-
-export async function assertDispatcherCodexHomeReady(
-  context: DispatcherCodexHomeDoctorContext,
-): Promise<void> {
-  const result = await validateDispatcherCodexHome(context);
-  if (result.ok) return;
-  throw new Error(formatDispatcherCodexHomeErrors(result));
-}
-
-export function formatDispatcherCodexHomeErrors(
-  result: DispatcherCodexHomeDoctorResult,
-): string {
-  const header = `dispatcher '${result.context.dispatcherId}' Codex home is not ready`;
-  return [header, ...result.errors.map((e) => `- ${e}`)].join('\n');
 }
 
 function formatTomlError(err: unknown, file: string): string {

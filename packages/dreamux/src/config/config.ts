@@ -16,9 +16,9 @@ import {
 import {
   describeType,
   isPlainObject,
+  readNonEmptyString,
   readProviderConfigObject,
   redactSecretKeyValues,
-  requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { RuleViolation } from '../platform/errors.js';
@@ -381,14 +381,14 @@ async function readAgents(
         `dreamux config error in ${file}: agents[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
-    const id = requireNonEmptyString(raw, 'id', file, prefix);
+    const id = readNonEmptyString(raw, 'id', file, prefix);
     if (Object.prototype.hasOwnProperty.call(out, id)) {
       throw new RuleViolation(
         `dreamux config error in ${file}: agents[${index}].id duplicates agent '${id}'`,
       );
     }
     const provider = resolveConfigProvider(
-      requireNonEmptyString(raw, 'provider', file, prefix),
+      readNonEmptyString(raw, 'provider', file, prefix),
       'agentRuntime',
       file,
       prefix,
@@ -408,10 +408,9 @@ async function readAgents(
     if (runtimeProvider === null) {
       throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
-          'Its provider package did not yield a runnable agentRuntime ' +
-          'implementation. Pass a providerRegistry seeded with the builtin ' +
-          'descriptors (the default) so the loader can resolve the package, or ' +
-          'register a valid implementation before config validation.',
+          'Its provider package or plugin did not yield a runnable agentRuntime ' +
+          'implementation. Register a valid implementation for this ref before ' +
+          'config validation runs.',
       );
     }
     const parsedConfig =
@@ -482,7 +481,7 @@ async function readDispatchers(
     }
     rejectLegacyDispatcherProviderKeys(raw, prefix, file);
     const id = validateDispatcherId(
-      requireNonEmptyString(raw, 'id', file, prefix),
+      readNonEmptyString(raw, 'id', file, prefix),
       `${prefix}id`,
     );
     if (ids.has(id)) {
@@ -537,7 +536,7 @@ function resolveAgentRuntime(
         `and set ${prefix}agentRuntime to that agent's id, then rebuild ${file}.`,
     );
   }
-  const agentRuntimeId = requireNonEmptyString(
+  const agentRuntimeId = readNonEmptyString(
     raw,
     'agentRuntime',
     file,
@@ -599,7 +598,7 @@ async function readDispatcherChannels(
           'delete this key.',
       );
     }
-    const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
+    const id = readNonEmptyString(raw, 'id', file, channelPrefix);
     if (channelIds.has(id)) {
       throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}id='${id}' duplicates another channel in this dispatcher; channel ids must be unique per dispatcher.`,
@@ -607,7 +606,7 @@ async function readDispatcherChannels(
     }
     channelIds.add(id);
     const provider = resolveConfigProvider(
-      requireNonEmptyString(raw, 'provider', file, channelPrefix),
+      readNonEmptyString(raw, 'provider', file, channelPrefix),
       'channel',
       file,
       channelPrefix,
@@ -631,10 +630,9 @@ async function readDispatcherChannels(
     if (channelProvider === null) {
       throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but has no channel implementation.\n` +
-          'Its provider package did not yield a usable channel implementation. ' +
-          'Pass a providerRegistry seeded with the builtin descriptors (the ' +
-          'default) so the loader can resolve the package, or register a valid ' +
-          'implementation before config validation.',
+          'Its provider package or plugin did not yield a usable channel ' +
+          'implementation (one exposing createSession). Register a valid ' +
+          'implementation for this ref before config validation runs.',
       );
     }
     const parsed =

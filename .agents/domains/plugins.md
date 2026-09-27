@@ -111,8 +111,8 @@ plugins change with it.
 
 `plugins[]` is an optional top-level config array; each entry is a ref string
 or `{ ref, config }`, with `builtin:<id>` or `npm:<package>[#export]` refs.
-`builtin:feishu` is loaded always, before the listed entries, and is not
-listed; `builtin:bootstrap` is opt-in.
+`builtin:codex`, `builtin:claude-code`, and `builtin:feishu` are loaded always,
+before the listed entries, and are not listed; `builtin:bootstrap` is opt-in.
 
 Order, all inside `loadConfig` except the last two steps:
 
@@ -122,8 +122,8 @@ Order, all inside `loadConfig` except the last two steps:
    package, call the factory, reject a duplicate plugin name naming both
    sources, run `contribute`. A contributed provider is registered as
    `builtin:<name>` through `registerBuiltinProvider`, so config addresses it
-   with the same ref grammar; a provider name already taken by core or another
-   plugin fails naming both sources.
+   with the same ref grammar; a provider name already taken by another plugin
+   fails naming both sources.
 3. Load and validate provider refs as before; refs to contributed providers
    resolve from the registry like any built-in. A `builtin:<name>` ref that no
    loaded plugin contributes and Dreamux does not ship fails loading with that

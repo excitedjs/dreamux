@@ -30,8 +30,8 @@ the rush path only.
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
 | `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider- and plugin-authoring contracts |
 | `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared utility helpers with **no Dreamux dependency of any kind** (transcript bounds, digest validation, positional reads, deterministic rendering, path containment) plus the one redaction capability — secret key names, text rules, and the JSON walk — that core, the logger, and config display all call |
-| `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | built-in Codex Agent Runtime provider behind `builtin:codex` |
-| `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | built-in Claude Code Agent Runtime provider behind `builtin:claude-code` |
+| `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | always-loaded built-in Codex plugin: contributes the Agent Runtime provider behind `builtin:codex` |
+| `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | always-loaded built-in Claude Code plugin: contributes the Agent Runtime provider behind `builtin:claude-code` |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
 | `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | always-loaded built-in Feishu plugin: contributes the Channel provider behind `builtin:feishu` and publishes the Feishu extension api |
 | `@excitedjs/dreamux-plugin-bootstrap` | `/packages/plugins/bootstrap/` | built-in opt-in bootstrap plugin behind `builtin:bootstrap`: profile files from the Dispatcher cwd's `.workspace/` in the Dispatcher and TeamLeader launch prompts |
@@ -55,9 +55,9 @@ Owner for install/build/test, change files, and release:
 ## Provider Seams
 
 Two seams, three built-in providers resolved through one registry/catalog
-shape: `builtin:codex` and `builtin:claude-code` load through the provider
-loader exactly like external `npm:` refs, and `builtin:feishu` is contributed
-into the same registry by the always-loaded Feishu plugin:
+shape: `builtin:codex`, `builtin:claude-code`, and `builtin:feishu` are each
+contributed into the same registry by their own always-loaded plugin, before
+an operator-configured `npm:` provider or plugin loads into it:
 
 - **Agent Runtime** — a provider factory creates a runtime handle with
   `start` / `submit({ text })` / `stop`; provider-private session state crosses

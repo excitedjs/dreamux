@@ -33,8 +33,12 @@ runtime socket allocation belongs in
 their own runtime-specific paths from the neutral path context. `~/.codex/`
 remains Codex's own global auth/config/memory home: dispatcher app-server
 processes follow Codex there and Dreamux creates no dispatcher-private
-`CODEX_HOME`. Dreamux bundled skills are injected at runtime by role and are
-never installed into a dispatcher workspace.
+`CODEX_HOME`. Doctor and the cold activity reader resolve the Codex home from
+the same per-agent `extra_env` the runtime actually spawns with, not always
+the operator's default `~/.codex`, so an agent-level `CODEX_HOME` override is
+honored consistently everywhere Dreamux looks at Codex's home. Dreamux bundled
+skills are injected at runtime by role and are never installed into a
+dispatcher workspace.
 
 Not every file under `state/` is Core's. Each document names its owner below,
 and only that owner decides whether a field can be maintained externally.
@@ -47,6 +51,7 @@ Source:
 - `/packages/dreamux/src/config/service.ts`
 - `/packages/dreamux/src/config/commands.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/agent-runtime/codex/src/paths.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 

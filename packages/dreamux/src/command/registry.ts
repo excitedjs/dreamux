@@ -25,13 +25,13 @@
  * no product path needs, and the right fix for a result that does grow is
  * pagination owned by the domain that produces it.
  */
+import type { JsonValue } from '@excitedjs/dreamux-types';
+
 import type {
   CoreCommandContext,
   CoreCommandDefinition,
   CoreCommandRegistry,
-  JsonValue,
-} from '@excitedjs/dreamux-types';
-
+} from './types.js';
 import {
   canonicalJsonValue,
   JsonValueError,

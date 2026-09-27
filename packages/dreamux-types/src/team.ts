@@ -4,14 +4,43 @@
  * The Team owns its canonical Commands and its aggregate state event. Both
  * Command payloads below are the two whose contracts change materially for
  * Channel use; every other canonical Team Command keeps its current domain
- * behavior and is defined by its own domain-owned Command module in Core.
+ * behavior and is defined by its own domain-owned Command module in Core. The
+ * published Channel Command failure shape lives here too, rather than with a
+ * generic Command port module, because {@link TeamSubmitResult} is its only
+ * consumer.
  */
 import type {
   AgentRuntimeSkillSource,
   AgentRuntimeStatus,
 } from './agent-runtime.js';
-import type { ChannelCommandError } from './command.js';
 import type { TeamContainedRole, TeammateStatus } from './teammate.js';
+
+/**
+ * A typed Command failure returned across the generic Channel Command port.
+ * `code` stays an open string because each domain owns its own failure
+ * vocabulary; the two codes that carry a cross-domain rule are named by
+ * {@link ChannelCommandRetryableErrorCode}.
+ */
+export interface ChannelCommandError {
+  readonly code: string;
+  readonly message: string;
+  /**
+   * The next step the failure stated for itself, when it stated one.
+   *
+   * Present exactly when the failure's own author wrote both halves of it — the
+   * reason and what to do about it — so a caller rendering this for an agent can
+   * repeat it as it stands. Absent means no next step was ever authored: a
+   * renderer carries the `code` and the `message` alone, and says nothing more.
+   */
+  readonly action?: string;
+}
+
+/**
+ * The only pre-admission failures that permit a Channel to remove a stale
+ * binding and retry once to the Dispatcher Agent. Every other failure — and any
+ * `ambiguous` outcome — is never retried.
+ */
+export type ChannelCommandRetryableErrorCode = 'TEAM_NOT_FOUND' | 'TEAM_CLOSED';
 
 /**
  * A Team's repository policy. It is the complete existing Team-creation
@@ -78,6 +107,22 @@ export type TeamCreateParams = Omit<TeamCreateCommand, 'request_id'>;
 
 export type TeamStatus = 'starting' | 'running' | 'closed';
 
+/**
+ * A managed worktree's cleanup outcome, as {@link TeamSummary} reports it. Named
+ * so a caller can hold or narrow the value by type rather than repeating the
+ * nine-member literal union at every read site.
+ */
+export type TeamWorktreeCleanupState =
+  | 'not-managed'
+  | 'managed-active'
+  | 'cleanup-pending'
+  | 'kept'
+  | 'deleted'
+  | 'retained-dirty'
+  | 'retained-unmerged'
+  | 'retained-unique-commits'
+  | 'retained-error';
+
 /** The current Team facts shared by create and status; `team.list` is a compact row. */
 export interface TeamSummary {
   readonly team_name: string;
@@ -103,16 +148,7 @@ export interface TeamSummary {
   readonly source_repo: string | null;
   readonly worktree_mode: 'reuse-cwd' | 'managed';
   readonly worktree_cleanup_mode: 'keep' | 'delete-on-close';
-  readonly worktree_cleanup:
-    | 'not-managed'
-    | 'managed-active'
-    | 'cleanup-pending'
-    | 'kept'
-    | 'deleted'
-    | 'retained-dirty'
-    | 'retained-unmerged'
-    | 'retained-unique-commits'
-    | 'retained-error';
+  readonly worktree_cleanup: TeamWorktreeCleanupState;
 }
 
 /**

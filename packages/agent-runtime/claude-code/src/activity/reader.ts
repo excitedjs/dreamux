@@ -11,6 +11,7 @@ import {
 } from '@excitedjs/dreamux-utils';
 
 import type { DispatcherClaudeCodeConfig } from '../config.js';
+import { claudeSpawnEnv } from '../paths.js';
 import { decodeClaudeCursor, digest, encodeClaudeCursor } from './cursor.js';
 import {
   openClaudeRollout,
@@ -73,7 +74,7 @@ export async function readClaudeRecentActivity(
   const limit = resolveLimit(query.limit);
   const sessionId = query.sessionId;
   const includeTools = query.includeTools ?? true;
-  const env = effectiveEnvironment(context);
+  const env = claudeSpawnEnv(context.config.extra_env);
   const located = await locateClaudeHistory({
     sessionId,
     cwd: context.cwd,
@@ -539,15 +540,6 @@ function parseRecord(raw: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function effectiveEnvironment(
-  context: AgentActivityReadContext<DispatcherClaudeCodeConfig>,
-): Record<string, string | undefined> {
-  return {
-    ...process.env,
-    ...context.config.extra_env,
-  };
 }
 
 function timestampIso(value: unknown): string | null {

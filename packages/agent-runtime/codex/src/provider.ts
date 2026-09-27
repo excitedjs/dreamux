@@ -5,7 +5,6 @@ import { CodexRuntime } from './runtime.js';
 import type { CodexRuntimeDeps } from './runtime-deps.js';
 import {
   DEFAULT_CODEX_BIN,
-  dispatcherCodexConfig,
   readDispatcherCodexConfig,
   type DispatcherCodexConfig,
 } from './config.js';
@@ -14,6 +13,7 @@ import { resolveCodexBinPath } from './bin.js';
 import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
 import { allocateCodexSocketPath } from './internal/socket.js';
 import { readCodexRecentActivity } from './activity/reader.js';
+import { resolveCodexHomeDir } from './paths.js';
 import {
   compileCodexOutputSchema,
   type CodexOutputSchemaCodec,
@@ -21,10 +21,8 @@ import {
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
-  AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeProviderCapabilities,
-  AgentRuntimeProviderFactory,
   AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
 
@@ -35,16 +33,12 @@ import type {
  * package owns the allocation policy). Role-gated bundled skills arrive as
  * neutral `skillSources`. Registration identity is Core's: the provider
  * carries no descriptor. What remains here are the test/host seams
- * (process/WS factories, the optional Codex home pre-start check, restart
- * backoff) that let core and tests wire behavior without changing the
- * provider.
+ * (process/WS factories, restart backoff) that let core and tests wire
+ * behavior without changing the provider. The Codex home/auth pre-start check
+ * runs unconditionally as part of `diagnostic.ts`'s doctor capability, not as
+ * a runtime-start hook.
  */
 export interface CodexAgentRuntimeProviderOptions {
-  /** Optional Codex home/auth pre-start check, invoked with the runtime id and cwd. */
-  codexHomeDoctor?: (info: {
-    runtimeId: string;
-    cwd: string;
-  }) => void | Promise<void>;
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   restartBackoffBaseMs?: number;
@@ -94,6 +88,7 @@ export function createCodexAgentRuntimeProvider(
   return {
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: codexAgentRuntimeDiagnostic,
+    operatorStateRoot: resolveCodexHomeDir,
     onboard: {
       async collect(_context, prompts): Promise<Record<string, unknown>> {
         const bin = await prompts.text({
@@ -155,7 +150,6 @@ export function createCodexAgentRuntimeProvider(
         systemPromptReplace,
         systemPromptAppend,
         logger: context.logger,
-        codexHomeDoctor: options.codexHomeDoctor,
         codexProcessFactory: options.codexProcessFactory,
         codexClientFactory: options.codexClientFactory,
         restartBackoffBaseMs: options.restartBackoffBaseMs,
@@ -165,30 +159,3 @@ export function createCodexAgentRuntimeProvider(
     },
   };
 }
-
-/** Re-export the typed accessor for a runtime's resolved codex config. */
-export { dispatcherCodexConfig };
-
-export function codexRuntimeArgsForMcpServers(
-  servers: readonly AgentRuntimeMcpServer[],
-): string[] {
-  return codexMcpServerArgs(servers);
-}
-
-/**
- * Default export — the factory Dreamux core's generic provider-loader selects
- * for the `builtin:codex` ref (it imports this package and calls the default
- * export with `{ ref }`). It returns a provider on package defaults: a
- * standalone volatile-socket allocator and no host-injected bundled skills.
- *
- * This is the production path. Core drives the loaded provider through the
- * neutral facade alone — it holds no adapter for this package — and supplies
- * every host contract (socket root, skill sources, MCP servers, state lease)
- * through the neutral create context. The options argument of
- * {@link createCodexAgentRuntimeProvider} exists for embedders and tests.
- */
-const codexAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<
-  DispatcherCodexConfig
-> = () => createCodexAgentRuntimeProvider();
-
-export default codexAgentRuntimeProviderFactory;

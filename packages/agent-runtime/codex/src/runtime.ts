@@ -4,13 +4,13 @@ import { CodexProcess, type CodexProcessExit } from './supervisor.js';
 import { CodexWsClient } from './rpc.js';
 import { performInitializeHandshake } from './handshake.js';
 import type {
+  ServerRequest,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
 } from './types.js';
 import { TurnManager } from './turn-manager.js';
-import { createFailFastApprovalHandler } from './approval.js';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
@@ -24,13 +24,59 @@ import type {
   AgentRuntimeSubmissionInput,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
-import { codexProcessEnv, codexThreadInstructions } from './runtime-support.js';
+import { codexSpawnEnv } from './paths.js';
+import { codexThreadInstructions } from './system-prompt.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
 import type { CodexRuntimeDeps } from './runtime-deps.js';
 import { CodexReasoningEffort } from './reasoning-effort.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
+
+/**
+ * A method name like `exec_command_approval`, `apply_patch_approval`, etc.
+ */
+const APPROVAL_METHOD_HINTS = ['approval', 'approve', 'confirm', 'review'];
+
+function looksLikeApprovalRequest(method: string): boolean {
+  const m = method.toLowerCase();
+  return APPROVAL_METHOD_HINTS.some((h) => m.includes(h));
+}
+
+/**
+ * Server→client request handler for Codex server-requests (issue #2, "trust
+ * model" and "implementation pitfalls"):
+ *   - MVP runs Codex with approval-policy=never (or auto-approve).
+ *   - If a server-request still arrives (e.g. because policy was
+ *     misconfigured or codex escalates anyway), fail loudly — never return
+ *     null. Silent null is the trap that hangs the daemon.
+ *
+ * `onReject` is an observer hook for logs/metrics only: a runtime package
+ * knows nothing about Channels, so this handler must not try to reach a user
+ * — the rejection travels back to codex, and Core decides what any Channel
+ * says.
+ */
+function createFailFastApprovalHandler(opts: {
+  onReject?: (req: ServerRequest) => void | Promise<void>;
+}) {
+  return async (req: ServerRequest): Promise<unknown> => {
+    if (opts.onReject !== undefined) {
+      try {
+        await opts.onReject(req);
+      } catch {
+        /* observer hook, must not mask the rejection itself */
+      }
+    }
+    if (looksLikeApprovalRequest(req.method)) {
+      throw new Error(
+        `approvals are not supported in this version (${req.method}). Configure codex approval-policy=never, or deploy this dispatcher in a trusted-local environment.`,
+      );
+    }
+    throw new Error(
+      `dispatcher received an unsupported codex server-request: ${req.method} (id=${req.id})`,
+    );
+  };
+}
 
 export class CodexRuntime implements AgentRuntime {
   private process: CodexProcess | null = null;
@@ -179,10 +225,6 @@ export class CodexRuntime implements AgentRuntime {
     const cwd = this.deps.cwd;
     const socketPath = this.deps.allocateSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.() ?? [];
-    if (this.deps.codexHomeDoctor !== undefined) {
-      await this.deps.codexHomeDoctor({ runtimeId: this.dispatcherId, cwd });
-      this.assertGeneration(generation);
-    }
     const codexLogDir = join(this.paths.logsDir(), 'codex-app-server');
     const factory =
       this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
@@ -193,7 +235,7 @@ export class CodexRuntime implements AgentRuntime {
       stderrLogPath: join(codexLogDir, `${this.dispatcherId}.stderr.log`),
       binPath: this.deps.codexBinPath,
       extraArgs,
-      env: codexProcessEnv(this.deps.extraEnv),
+      env: codexSpawnEnv(this.deps.extraEnv),
     });
     this.process = process;
     process.onExit((exit) => {

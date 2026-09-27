@@ -18,14 +18,16 @@
  */
 import type {
   AgentRuntimeInterruptOutcome,
-  CoreCommandContext,
-  CoreCommandDefinition,
   TeamCreateCommand,
   TeamSummary,
   TeamSubmitCommand,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
+import type {
+  CoreCommandContext,
+  CoreCommandDefinition,
+} from '../../command/types.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
 import type { TeamsPort } from './teams-port.js';
 import { optionalParsedSkillSources } from '../../agent-runtime/skill-sources.js';

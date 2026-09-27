@@ -20,10 +20,10 @@ import type {
   ChannelInstance,
   ChannelMcpCaller,
   ChannelSessionMcpCapability,
-  CoreCommandRegistry,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
+import type { CoreCommandRegistry } from '../../command/types.js';
 import type {
   ChannelProviderCatalog,
   RegisteredChannelProvider,

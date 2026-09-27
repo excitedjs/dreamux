@@ -15,15 +15,14 @@ Dreamux has two live provider seams:
 - `channel` creates Channel sessions, resolves Channel targets, and owns
   provider-specific tools.
 
-The built-in refs are stable aliases. Core resolves the two Agent Runtime refs
-to packages through the same loader path as package-backed providers;
-`builtin:feishu` is contributed into the same registry by the always-loaded
-Feishu plugin:
+The built-in refs are stable aliases. All three are contributed into the
+registry by their own always-loaded plugin — the same mechanism, and the same
+registry, an operator-listed `plugins[]` entry uses:
 
 | Ref | Kind | Package | Registered by |
 |---|---|---|---|
-| `builtin:codex` | `agentRuntime` | `@excitedjs/agent-runtime-codex` | provider loader |
-| `builtin:claude-code` | `agentRuntime` | `@excitedjs/agent-runtime-claude-code` | provider loader |
+| `builtin:codex` | `agentRuntime` | `@excitedjs/agent-runtime-codex` | the `codex` plugin's `contribute` |
+| `builtin:claude-code` | `agentRuntime` | `@excitedjs/agent-runtime-claude-code` | the `claude-code` plugin's `contribute` |
 | `builtin:feishu` | `channel` | `@excitedjs/feishu-channel` | the `feishu` plugin's `contribute` |
 
 A provider any plugin contributes is addressed as `builtin:<name>`, with the
@@ -285,7 +284,7 @@ Source:
 - `/packages/dreamux/src/service/team/leader.ts`
 - `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/codex/src/runtime-support.ts`
+- `/packages/agent-runtime/codex/src/system-prompt.ts`
 - `/packages/agent-runtime/codex/tests/system-prompt.test.ts`
 - `/packages/agent-runtime/claude-code/src/provider.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
@@ -408,7 +407,6 @@ erase its started group. Core continues routing shared completion tokens to the
 recipients captured on each submitted request.
 
 Source: `/packages/agent-runtime/claude-code/src/rpc.ts`,
-`/packages/agent-runtime/claude-code/src/runtime-session.ts`,
 `/packages/agent-runtime/claude-code/src/runtime.ts`,
 `/packages/dreamux/src/service/completion-router/index.ts`.
 
@@ -683,7 +681,6 @@ retain evidence gaps; deterministic coverage is not a universal ordering guarant
 Source:
 
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
-- `/packages/agent-runtime/claude-code/src/runtime-session.ts`
 - `/packages/agent-runtime/claude-code/src/runtime-activity.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/types.ts`
@@ -869,6 +866,23 @@ it, and `readRecentActivity` answers a bounded cold read of a session's recent
 tail. The cold read never materializes an entity or starts a runtime, so a
 closed teammate stays readable, and it is required to produce records for a turn
 that is still in progress.
+
+`RuntimeActivity` (this section) and `AgentActivityRecord` (the cold-read
+member of `readRecentActivity`'s page, projected into Core's own `last`-read
+response shape, `AgentEntityActivityRecord`, by
+`/packages/dreamux/src/service/agent/activity.ts` — nothing here is written to
+disk; an agent's on-disk state is `identity.json` only) stay two contracts, not
+one split into a live and a cold view of the same shape. No code anywhere in
+the repo projects one into the other today. Operator ruling, 2026-09-24 (R32):
+these are two mechanisms with different origins (rollout-file replay vs. RPC
+push), so forcing them into one would likely mean writing a pile of glue code;
+a shape-only unification is fine only if it is pure deletion, with nothing
+added. Unifying them here would not meet that bar: it would either enrich the
+minimal cold contract with live-only detail a rollout/session replay cannot
+honestly reconstruct (an addition, not a deletion) or drop live richness to
+match the cold shape (a capability loss nobody asked for). Both contracts stay
+as they are; see
+[R32 in the code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md).
 
 `RuntimeActivity` carries **no submission**. A provider folds any number of
 Dreamux submissions into one native turn, so an activity cannot honestly name

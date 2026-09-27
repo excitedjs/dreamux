@@ -11,7 +11,7 @@
 import type {
   CoreCommandContext,
   CoreCommandDefinition,
-} from '@excitedjs/dreamux-types';
+} from '../../command/types.js';
 
 import { commandPayload } from '../../command/payload.js';
 import type { AnyCoreCommand } from '../../command/registry.js';

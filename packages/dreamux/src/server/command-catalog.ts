@@ -20,7 +20,7 @@
  * still handed the whole `dispatcher` function, since `DispatcherService`
  * structurally satisfies each of their own narrower parameter types.
  */
-import type { CoreCommandContext } from '@excitedjs/dreamux-types';
+import type { CoreCommandContext } from '../command/types.js';
 
 import { serverCommands } from '../server-commands.js';
 import { configCommands } from '../config/commands.js';

@@ -1,16 +1,4 @@
-/**
- * Build the process env for a Codex app-server child: `{ ...process.env,
- * ...extraEnv }`, where `extraEnv` is this provider's own `config.extra_env`.
- * The child inherits the operator's ambient `CODEX_HOME` like a vanilla
- * `codex` invocation — Dreamux creates no dispatcher-private Codex home (MVP),
- * so there is nothing to strip.
- */
-export function codexProcessEnv(
-  extraEnv: Record<string, string> = {},
-): NodeJS.ProcessEnv {
-  return { ...globalThis.process.env, ...extraEnv };
-}
-
+/** Map a runtime's replace/append system prompt onto Codex's thread-start/resume instructions fields. */
 export function codexThreadInstructions(options: {
   systemPromptReplace?: string | undefined;
   systemPromptAppend?: readonly string[] | undefined;

@@ -22,12 +22,12 @@
 import type {
   ChannelCorePort,
   ChannelEventSource,
-  CoreCommandRegistry,
   DreamuxLogger,
   JsonInvoker,
   JsonValue,
 } from '@excitedjs/dreamux-types';
 
+import type { CoreCommandRegistry } from '../../command/types.js';
 import { commandFailure } from '../../command/errors.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import {

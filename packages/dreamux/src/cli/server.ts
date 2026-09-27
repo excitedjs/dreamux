@@ -40,15 +40,13 @@ import {
 import { sweepRuntimeSocketDirs } from '../platform/runtime-sockets.js';
 
 export async function runServe(): Promise<void> {
-  // Seed a registry with the builtin provider DESCRIPTORS and hand it to
-  // ConfigService.open, which loads every referenced provider implementation —
-  // builtin AND npm, both kinds — through the single dynamic loader before
-  // parsing agents[]/channels[] (each entry's config is parsed through its
-  // provider's readConfig, so the implementation must be present first).
-  // `builtin:*` is just an alias the loader resolves to a package name; there
-  // is no separate static builtin-registration path. The populated registry
-  // then backs the Server's runtime + channel catalogs (Server builds them
-  // from it).
+  // Hand an empty registry to ConfigService.open, which loads plugins first —
+  // contributing codex/claude-code/feishu, the always-loaded built-ins, each
+  // with its descriptor and implementation registered together — then loads
+  // any npm:-ref provider agents[]/channels[] name, before parsing them (each
+  // entry's config is parsed through its provider's readConfig, so the
+  // implementation must be present first). The populated registry then backs
+  // the Server's runtime + channel catalogs (Server builds them from it).
   const providerRegistry = createBuiltinProviderRegistry();
 
   // Open ~/.dreamux/config.json before anything else starts. Missing or invalid

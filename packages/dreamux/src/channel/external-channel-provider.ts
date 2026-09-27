@@ -11,9 +11,11 @@
  * optional config, onboard, and diagnostic capabilities. Like the Agent Runtime
  * contract, it asserts no registration identity: a provider has no `ref` or
  * `descriptor` member to echo, and its factory receives only the published
- * ref-only `ProviderFactoryContext`. `builtin:feishu` resolves to
- * `@excitedjs/feishu-channel` through the same loading path once the alias is
- * resolved; a missing built-in channel package fails loud with the named ref.
+ * ref-only `ProviderFactoryContext`. `builtin:feishu` never actually reaches
+ * this loader: the always-loaded Feishu plugin registers its descriptor and
+ * implementation together, before this loader ever runs. A `builtin:` channel
+ * ref that reaches here anyway names an id no loaded plugin contributes and
+ * fails loud with the named ref.
  *
  * Unsettled for external providers: a channel provider's registration id is now
  * a segment of the model-facing MCP server name — `channel-<id>` on Claude

@@ -1,9 +1,9 @@
 import type {
   AgentRuntimeStatus,
-  CoreCommandRegistry,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
+import type { CoreCommandRegistry } from '../../command/types.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DispatcherConfig } from '../../config/config.js';

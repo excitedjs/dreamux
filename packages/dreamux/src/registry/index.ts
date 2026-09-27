@@ -2,8 +2,10 @@
  * Provider registry + provider references.
  *
  * Process-local provider registration/lookup and the public provider-ref
- * grammar. Builtin providers are registered eagerly; external `npm:` runtime
- * refs are dynamically loaded before config validation resolves them.
+ * grammar. Every built-in provider registers through its always-loaded
+ * plugin's `contribute()` (`../plugin/loader.js`) before config validation
+ * runs; external `npm:` refs are dynamically loaded after, by the provider
+ * package loader in this directory.
  */
 
 // This directory's own barrel (not the package entry point), re-exporting

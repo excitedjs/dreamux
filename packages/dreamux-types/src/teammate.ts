@@ -10,7 +10,7 @@
  * Dispatcher-scoped TeamMate publishes its first `teammate.state`; later
  * transitions publish the same kind. There is no separate creation event.
  */
-import type { RuntimeActivity } from './agent-runtime.js';
+import type { RuntimeActivity } from './activity.js';
 
 /**
  * The role a TeamMate presents at this boundary.

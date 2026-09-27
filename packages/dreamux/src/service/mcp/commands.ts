@@ -27,7 +27,7 @@
  * live in the lease the token resolves to, which is what keeps the shim
  * genuinely identity-free.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { CoreCommandDefinition } from '../../command/types.js';
 
 import { ValidationError } from '../../command/errors.js';
 import { commandPayload, mustNonEmptyString } from '../../command/payload.js';

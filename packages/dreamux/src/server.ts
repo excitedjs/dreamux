@@ -390,11 +390,12 @@ export class Server {
 
 /**
  * Every dispatcher's runtime provider must already have a loaded implementation
- * in `registry` (builtin and npm alike load through resolveConfig's single
- * dynamic path, `config/load.js`, which both `loadConfig` and
- * `ConfigService.open` run). A descriptor without an implementation — or a ref
- * that does not resolve at all — means the registry was not one that path
- * loaded. Fail loud.
+ * in `registry` (`config/load.js`'s `readConfigFile`, which both `loadConfig`
+ * and `ConfigService.open` run, contributes every built-in through
+ * `loadPlugins` and then loads any `npm:`-ref provider through
+ * `resolveConfig`'s dynamic path). A descriptor without an implementation — or
+ * a ref that does not resolve at all — means the registry was not one that
+ * path loaded. Fail loud.
  */
 function assertRuntimeImplementationsLoaded(
   config: DreamuxConfig,

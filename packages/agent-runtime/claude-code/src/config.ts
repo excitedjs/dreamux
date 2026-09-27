@@ -1,24 +1,23 @@
 /**
- * Builtin `builtin:claude-code` runtime config: schema type, defaults, reader,
- * and the typed accessor.
+ * Builtin `builtin:claude-code` runtime config: schema type, defaults, and
+ * reader.
  *
  * Owned by the `@excitedjs/agent-runtime-claude-code` package (issue #209). It
  * depends only on the shared neutral validation primitives
- * (`@excitedjs/dreamux-utils`) and the package's own provider ref
- * (`./provider-ref`); it never imports `@excitedjs/dreamux` core. Core re-exports
- * these symbols through its `config/config.ts` (via the package's light
- * `./config` subpath) so the non-builtin callers (doctor, tests) keep their
- * import paths, and the cold-start config path never pulls in the runtime engine.
+ * (`@excitedjs/dreamux-utils`); it never imports `@excitedjs/dreamux` core.
+ * The package's `./config` export subpath (see `package.json`) resolves to
+ * this module directly, so a config-only consumer (doctor, tests) never pulls
+ * in the runtime engine through the package's main `./index.js`/`plugin.js`
+ * chain.
  */
 
-import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
 import {
   readOptionalBoolean,
   readOptionalString,
+  readPositiveInt,
+  readStringArray,
+  readStringRecord,
   rejectUnknownKeys,
-  requirePositiveInt,
-  requireStringArray,
-  requireStringRecord,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -137,21 +136,21 @@ export function readDispatcherClaudeCodeConfig(
       file,
       prefix,
     ),
-    extra_args: requireStringArray(
+    extra_args: readStringArray(
       rawClaude,
       'extra_args',
       defaults.extra_args,
       file,
       prefix,
     ),
-    extra_env: requireStringRecord(
+    extra_env: readStringRecord(
       rawClaude,
       'extra_env',
       defaults.extra_env,
       file,
       prefix,
     ),
-    turn_timeout_ms: requirePositiveInt(
+    turn_timeout_ms: readPositiveInt(
       rawClaude,
       'turn_timeout_ms',
       defaults.turn_timeout_ms,
@@ -159,22 +158,4 @@ export function readDispatcherClaudeCodeConfig(
       prefix,
     ),
   };
-}
-
-/**
- * Typed accessor for a dispatcher's resolved claude-code agent config. Typed
- * structurally (not against the host's `ResolvedAgentConfig`) so this module
- * never imports the host config type — the host's `agents[]` entry shape
- * still satisfies it at the call sites.
- */
-export function dispatcherClaudeCodeConfig(
-  agent: { provider: string; config: unknown },
-  dispatcherId: string,
-): DispatcherClaudeCodeConfig {
-  if (agent.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
-    throw new Error(
-      `dispatcher '${dispatcherId}' runtime provider ${JSON.stringify(agent.provider)} is not wired to Claude Code`,
-    );
-  }
-  return agent.config as DispatcherClaudeCodeConfig;
 }

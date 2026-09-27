@@ -36,9 +36,6 @@ export interface CodexRuntimeDeps {
   codexProcessFactory?:
     ((opts: CodexProcessOptions) => CodexProcess) | undefined;
   codexClientFactory?: ((socketPath: string) => CodexWsClient) | undefined;
-  codexHomeDoctor?:
-    | ((info: { runtimeId: string; cwd: string }) => void | Promise<void>)
-    | undefined;
   resolveExtraArgs?: () => string[];
   handshakeTimeoutMs?: number;
   extraEnv?: Record<string, string>;

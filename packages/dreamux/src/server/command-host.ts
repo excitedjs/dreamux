@@ -17,7 +17,7 @@ import type {
   DispatcherSummary,
 } from '../service/dispatcher-service/types.js';
 import { mustDispatcherId } from '../command/host.js';
-import type { CoreCommandContext } from '@excitedjs/dreamux-types';
+import type { CoreCommandContext } from '../command/types.js';
 import { DispatcherNotFoundError } from '../service/dispatchers/errors.js';
 import type { McpLeaseRegistry } from '../service/mcp/leases.js';
 import type { ConfigService } from '../config/service.js';

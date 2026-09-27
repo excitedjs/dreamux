@@ -14,13 +14,16 @@
  *
  * Kind-specific contract assertions stay with each kind's loader (see
  * `../agent-runtime/external-provider.ts` and
- * `../channel/external-channel-provider.ts`). `builtin:*` refs resolve to their
- * package through {@link resolveBuiltinProviderPackage} and then use the same
- * loading path as package-backed `npm:` refs.
+ * `../channel/external-channel-provider.ts`). A `builtin:` ref never resolves
+ * to a package name here: every built-in ships as an always-loaded plugin and
+ * registers its descriptor and implementation together before this skeleton
+ * runs, so a `builtin:` ref reaching {@link loadProviderPackages} unregistered
+ * names an id no loaded plugin contributes and fails loud immediately; only
+ * an `npm:` ref resolves to a package and flows through import + factory.
  */
 
 import { errorMessage as errMessage } from '@excitedjs/dreamux-utils';
-import { resolveBuiltinProviderPackage } from './builtins.js';
+import { UnknownBuiltinProviderPackageError } from './builtins.js';
 import {
   parseProviderRef,
   type NpmProviderRef,
@@ -104,12 +107,13 @@ export interface LoadProviderPackagesOptions {
  * flow through here; refs are de-duplicated by canonical form.
  *
  * The skip condition is implementation-aware, not descriptor-aware: a ref is
- * skipped only once its *implementation* is registered. A built-in descriptor
- * may already exist in the registry (the builtin descriptors are pre-registered)
- * while its package implementation has not been loaded yet — that ref must still
- * flow through import + factory + implementation registration. Skipping on
- * descriptor existence alone would silently leave pre-registered built-ins
- * without a loaded implementation (the slice-3 Codex/Claude extraction path).
+ * skipped only once its *implementation* is registered. Every built-in
+ * (`codex`, `claude-code`, `feishu`) registers descriptor and implementation
+ * together from its plugin's `contribute()`, so this skeleton never sees one
+ * of their refs with a descriptor but no implementation — but a caller is
+ * free to pre-register a bare descriptor ahead of time (`ProviderRegistry.register`
+ * accepts one with no `implementation`), and skipping on descriptor existence
+ * alone would then silently leave it without a loaded implementation.
  *
  * `TProvider extends ProviderImplementation` so the loaded value can reach
  * `ProviderRegistry.register()` typed; the skeleton stays kind-agnostic
@@ -131,8 +135,8 @@ export async function loadProviderPackages<
 
 /**
  * True when `ref` already has both a registered descriptor and a registered
- * implementation. A descriptor without an implementation (a pre-registered
- * built-in awaiting its package) returns false so the loader proceeds.
+ * implementation. A descriptor registered without an implementation returns
+ * false so the loader proceeds to load and register one.
  */
 function isImplementationLoaded(
   registry: ProviderRegistry,
@@ -201,10 +205,12 @@ async function loadOneProviderPackage<
 
   // The registered descriptor is Core's own: it is parsed from the configured
   // ref, never read back off the loaded implementation. `seedDescriptor` is
-  // `existing` itself when a built-in was pre-registered (same object, not a
-  // copy), so `register()` recognizes the completion and only adds the
-  // implementation instead of registering the descriptor a second time.
-  // Package-backed refs register both in this one call.
+  // `existing` itself when a caller pre-registered a bare descriptor for this
+  // ref (same object, not a copy), so `register()` recognizes the completion
+  // and only adds the implementation instead of registering the descriptor a
+  // second time — no in-repo caller does this today (see `registry.ts`'s
+  // `register()` doc comment), so in practice every ref registers both in
+  // this one call.
   registry.register(seedDescriptor, provider);
 }
 
@@ -213,11 +219,10 @@ function resolvePackageName<TProvider, TFactoryContext>(
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): string {
   if (ref.source === 'npm') return ref.package;
-  try {
-    return resolveBuiltinProviderPackage(ref.id);
-  } catch (err) {
-    throw spec.createLoadError(ref.raw, errMessage(err), { cause: err });
-  }
+  // A `builtin:` ref only ever reaches here unregistered (see the module
+  // comment): there is no package to resolve it to, only the named failure.
+  const err = new UnknownBuiltinProviderPackageError(ref.id);
+  throw spec.createLoadError(ref.raw, errMessage(err), { cause: err });
 }
 
 async function importProviderModule<TProvider, TFactoryContext>(

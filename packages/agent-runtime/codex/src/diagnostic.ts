@@ -4,9 +4,13 @@
  *
  * Declares the codex bin check (deduped + executed by Dreamux core) and runs
  * the codex-home validation plus the codex version gate (#147) itself,
- * entirely against the neutral `@excitedjs/dreamux-types` diagnostic context. The
- * representative app-server socket sample is derived from the neutral path
- * context's `runtimeSocketDirs()`, so the package never names `~/.dreamux`.
+ * against the neutral `@excitedjs/dreamux-types` diagnostic context. The
+ * codex-home check runs against the runtime's actual spawn env (ambient env
+ * plus its own `config.extra_env`, via `paths.ts`'s `codexSpawnEnv`) rather
+ * than the ambient diagnostic env alone, so a per-agent `CODEX_HOME` or auth
+ * override is validated where it actually applies. The representative
+ * app-server socket sample is derived from the neutral path context's
+ * `runtimeSocketDirs()`, so the package never names `~/.dreamux`.
  */
 import type {
   AgentRuntimeBinCheck,
@@ -24,6 +28,7 @@ import {
 } from './codex-home.js';
 import { representativeCodexSocketPath } from './internal/socket.js';
 import { resolveCodexBinPath } from './bin.js';
+import { codexSpawnEnv } from './paths.js';
 import { MIN_CODEX_VERSION, codexVersionSatisfies } from './version.js';
 
 type CodexDiagnosticContext =
@@ -70,16 +75,25 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
       runner,
     ): Promise<AgentRuntimeDiagnosticResult> {
       const cliArgs = codexArgsToCli(codexArgsFromConfig(context.config));
-      const socketDirs = context.paths?.runtimeSocketDirs() ?? [];
-      const homeContext = dispatcherCodexHomeDoctorContext(context.runtime_id, {
-        codexCliArgs: cliArgs,
-        socketPath: representativeCodexSocketPath(
-          socketDirs,
-          context.runtime_id,
-        ),
-      });
+      const socketDirs = context.paths.runtimeSocketDirs();
+      // Validate against the env this runtime's Codex child actually spawns
+      // with (ambient env plus its own `extra_env`), not the ambient
+      // diagnostic env alone — an operator's per-agent `CODEX_HOME` or auth
+      // override in `extra_env` must be honored here too.
+      const env = codexSpawnEnv(context.config.extra_env);
+      const homeContext = dispatcherCodexHomeDoctorContext(
+        context.runtime_id,
+        env,
+        {
+          codexCliArgs: cliArgs,
+          socketPath: representativeCodexSocketPath(
+            socketDirs,
+            context.runtime_id,
+          ),
+        },
+      );
       const home = await validateDispatcherCodexHome(homeContext, {
-        env: context.env,
+        env,
         codexCliArgs: cliArgs,
       });
       const errors = [...home.errors];

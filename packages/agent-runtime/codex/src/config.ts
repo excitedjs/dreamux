@@ -1,22 +1,19 @@
 /**
- * Builtin `builtin:codex` runtime config: schema type, defaults, reader, and
- * the typed accessor.
+ * Builtin `builtin:codex` runtime config: schema type, defaults, and reader.
  *
  * Codex runtime config is owned by this package (the `builtin:codex` provider),
  * not by the Dreamux host config module. It depends only on the shared neutral
- * validation primitives (`@excitedjs/dreamux-utils`) and the package-local
- * provider ref, never on `@excitedjs/dreamux` core. The Dreamux host config
- * module re-exports these so
+ * validation primitives (`@excitedjs/dreamux-utils`), never on
+ * `@excitedjs/dreamux` core. The Dreamux host config module re-exports these so
  * the non-builtin callers (doctor, daemon, tests) keep their import paths.
  */
 
-import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import {
   readOptionalString,
+  readPositiveInt,
+  readStringArray,
+  readStringRecord,
   rejectUnknownKeys,
-  requirePositiveInt,
-  requireStringArray,
-  requireStringRecord,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -112,21 +109,21 @@ export function readDispatcherCodexConfig(
   return {
     bin,
     sandbox_mode: sandboxMode,
-    extra_args: requireStringArray(
+    extra_args: readStringArray(
       rawCodex,
       'extra_args',
       defaults.extra_args,
       file,
       prefix,
     ),
-    extra_env: requireStringRecord(
+    extra_env: readStringRecord(
       rawCodex,
       'extra_env',
       defaults.extra_env,
       file,
       prefix,
     ),
-    initialize_timeout_ms: requirePositiveInt(
+    initialize_timeout_ms: readPositiveInt(
       rawCodex,
       'initialize_timeout_ms',
       defaults.initialize_timeout_ms,
@@ -134,22 +131,4 @@ export function readDispatcherCodexConfig(
       prefix,
     ),
   };
-}
-
-/**
- * Typed accessor for a dispatcher's resolved codex agent config. Typed
- * structurally (not against the host's `ResolvedAgentConfig`) so this module
- * never imports the host config type — the host's `agents[]` entry shape
- * still satisfies it at the call sites.
- */
-export function dispatcherCodexConfig(
-  agent: { provider: string; config: unknown },
-  dispatcherId: string,
-): DispatcherCodexConfig {
-  if (agent.provider !== BUILTIN_CODEX_PROVIDER_REF) {
-    throw new Error(
-      `dispatcher '${dispatcherId}' runtime provider ${JSON.stringify(agent.provider)} is not wired to Codex`,
-    );
-  }
-  return agent.config as DispatcherCodexConfig;
 }

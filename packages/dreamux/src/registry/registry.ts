@@ -100,8 +100,10 @@ export class ReservedExternalProviderError extends Error {
 }
 
 /**
- * In-process registry of provider descriptors. Construct an empty one and
- * register providers, or use `createBuiltinProviderRegistry` for the builtins.
+ * In-process registry of provider descriptors. Construct an empty one
+ * (`createBuiltinProviderRegistry` is one such empty registry, the one every
+ * host entry point starts from before `loadPlugins` contributes the built-in
+ * providers) and register providers into it.
  */
 export class ProviderRegistry {
   private readonly providers = new Map<string, ProviderDescriptor>();
@@ -115,13 +117,18 @@ export class ProviderRegistry {
    * Throws {@link DuplicateProviderError} / {@link DuplicateProviderRefError}
    * on a repeated id/ref — unless `descriptor` is the exact object already
    * registered under its id, in which case this call only adds
-   * `implementation`. That reuse is how a pre-registered builtin descriptor
-   * (`createBuiltinProviderRegistry`, registered with no `implementation`
-   * before its package loads) is later completed with the implementation its
-   * package loader resolves, without re-registering — the two are the same
-   * object by construction (`registry/provider-loader.ts`'s `seedDescriptor`
-   * reuses the looked-up descriptor rather than building a new one), so this
-   * is never mistaken for a second, conflicting registration under the same id.
+   * `implementation`. That reuse lets a descriptor registered with no
+   * `implementation` be completed later by whatever resolves the
+   * implementation, without re-registering, as long as the same descriptor
+   * object is passed both times (`registry/provider-loader.ts`'s
+   * `seedDescriptor` would reuse a looked-up descriptor this way rather than
+   * building a new one) — that identity check is what stops this from ever
+   * being mistaken for a second, conflicting registration under the same id.
+   * No caller registers a descriptor without its implementation today: every
+   * built-in provider (`codex`, `claude-code`, `feishu`) registers both
+   * together from its plugin's `contribute()`, and every `npm:`-ref provider
+   * registers both together the first time its package loader resolves it.
+   * This branch is unexercised; it is left in place rather than removed.
    *
    * Throws {@link DuplicateProviderImplementationError} if `implementation` is
    * given for a provider id that already has one.

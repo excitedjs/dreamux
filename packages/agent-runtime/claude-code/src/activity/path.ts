@@ -11,6 +11,7 @@ import {
   type ScanBudget,
 } from '@excitedjs/dreamux-utils';
 
+import { resolveClaudeConfigHomeDir } from '../paths.js';
 import { claudeNativePathHash } from './native-hash.js';
 import {
   openClaudeRollout,
@@ -55,14 +56,22 @@ export function claudeHistoryRoots(
   env: DreamuxEnvironment = process.env,
   runtimeCwd = process.cwd(),
 ): ClaudeHistoryRoots {
-  const configured = env['CLAUDE_CONFIG_DIR'];
-  const configHome = (
-    configured === undefined || configured === ''
-      ? join(requireHome(env), '.claude')
-      : isAbsolute(configured)
-        ? configured
-        : resolve(runtimeCwd, configured)
-  ).normalize('NFC');
+  // resolveClaudeConfigHomeDir is pure/non-throwing (it falls back to this
+  // process's own home directory when HOME is absent); the guard here
+  // preserves this reader's own typed-error contract for that case instead.
+  if (
+    (env['CLAUDE_CONFIG_DIR'] === undefined ||
+      env['CLAUDE_CONFIG_DIR'] === '') &&
+    (env['HOME'] === undefined || env['HOME'] === '')
+  ) {
+    throw new ActivityError(
+      'not_found',
+      'Claude Code config home is unavailable',
+    );
+  }
+  const configHome = resolveClaudeConfigHomeDir(env, runtimeCwd).normalize(
+    'NFC',
+  );
   return { configHome, projects: join(configHome, 'projects') };
 }
 
@@ -375,15 +384,4 @@ function assertSessionId(sessionId: string): void {
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(sessionId)) {
     throw new ActivityError('invalid', 'Claude Code session id is invalid');
   }
-}
-
-function requireHome(env: DreamuxEnvironment): string {
-  const home = env['HOME'];
-  if (home === undefined || home === '') {
-    throw new ActivityError(
-      'not_found',
-      'Claude Code config home is unavailable',
-    );
-  }
-  return home;
 }

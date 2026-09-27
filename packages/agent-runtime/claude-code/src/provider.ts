@@ -2,7 +2,6 @@ import { ClaudeCodeRuntime } from './runtime.js';
 import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
   DEFAULT_CLAUDE_CODE_BIN,
-  dispatcherClaudeCodeConfig,
   readDispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,
 } from './config.js';
@@ -12,12 +11,12 @@ import {
 } from './supervisor.js';
 import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
 import { readClaudeRecentActivity } from './activity/reader.js';
+import { resolveClaudeConfigHomeDir } from './paths.js';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
   AgentRuntimeProviderCapabilities,
-  AgentRuntimeProviderFactory,
 } from '@excitedjs/dreamux-types';
 
 function normalizedSystemPromptAppend(
@@ -70,6 +69,7 @@ export function createClaudeCodeAgentRuntimeProvider(
   return {
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: claudeCodeAgentRuntimeDiagnostic,
+    operatorStateRoot: (env) => resolveClaudeConfigHomeDir(env, process.cwd()),
     onboard: {
       async collect(_context, prompts): Promise<Record<string, unknown>> {
         const bin = await prompts.text({
@@ -119,24 +119,3 @@ export function createClaudeCodeAgentRuntimeProvider(
     },
   };
 }
-
-/** Re-export the typed accessor for a runtime's resolved claude-code config. */
-export { dispatcherClaudeCodeConfig };
-
-/**
- * Default export — the factory Dreamux core's generic provider-loader selects
- * for the `builtin:claude-code` ref (it imports this package and calls the
- * default export with `{ ref }`). It returns a provider on package defaults:
- * the real resident-session factory and an identity bin resolver.
- *
- * This is the production path. Core drives the loaded provider through the
- * neutral facade alone — it holds no adapter for this package — and supplies
- * every host contract (state lease, path context, skill sources, MCP servers)
- * through the neutral create context. The options argument of
- * {@link createClaudeCodeAgentRuntimeProvider} exists for embedders and tests.
- */
-const claudeCodeAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<
-  DispatcherClaudeCodeConfig
-> = () => createClaudeCodeAgentRuntimeProvider();
-
-export default claudeCodeAgentRuntimeProviderFactory;

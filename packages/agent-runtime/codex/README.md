@@ -1,10 +1,12 @@
 # @excitedjs/agent-runtime-codex
 
-The built-in **Codex** Agent Runtime provider for
-[Dreamux](https://github.com/excitedjs/dreamux), published behind the stable
-`builtin:codex` alias.
+The built-in **Codex** Dreamux plugin, always loaded by
+[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the
+plugin factory: the plugin contributes the Codex `AgentRuntimeProvider`,
+published behind the stable `builtin:codex` alias.
 
-It implements the public `AgentRuntimeProvider` contract from
+The provider it contributes implements the public `AgentRuntimeProvider`
+contract from
 [`@excitedjs/dreamux-types`](../../dreamux-types) against the Codex
 `app-server`: process supervision, the WebSocket RPC client, the `initialize`
 handshake, thread start/resume, the per-runtime turn manager, teammate
@@ -54,15 +56,17 @@ modified. The feature uses stock `turn/start` parameters without a proxy.
 
 ## Standalone use
 
-External callers can register this provider directly:
+External callers can construct the bare provider directly, without going
+through the plugin:
 
 ```ts
 import { createCodexAgentRuntimeProvider } from '@excitedjs/agent-runtime-codex';
 ```
 
-The factory accepts the neutral create context plus optional host hooks
-(socket allocator, base process env, workspace skill preparation, and test
-factories for the Codex process / WS client / home doctor).
+The factory accepts the neutral create context plus optional test/embedder
+seams (`codexProcessFactory`, `codexClientFactory`, `restartBackoffBaseMs`,
+`restartBackoffMaxMs`); the plugin (this package's default export) constructs
+the provider on package defaults with none of these set.
 
 ## Portable Structured Output
 

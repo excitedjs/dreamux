@@ -5,7 +5,7 @@
  * dispatchers — so it is owned here, beside the process it describes, rather
  * than by any dispatcher-local service.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { CoreCommandDefinition } from './command/types.js';
 
 import type { AnyCoreCommand } from './command/registry.js';
 import type { CoreCommandHost } from './server/command-host.js';

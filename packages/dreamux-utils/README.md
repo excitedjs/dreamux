@@ -18,7 +18,7 @@ This package depends on `@excitedjs/dreamux-types` only — never on
   `errorInfo`, `ErrorInfo`).
 - **config-validate** — neutral config-validation primitives that produce
   `dreamux config error in <file>: ...` messages (`rejectUnknownKeys`,
-  `requireNonEmptyString`, `requireStringArray`, …), built on `json-shape`.
+  `readNonEmptyString`, `readStringArray`, …), built on `json-shape`.
 - **os** — platform/filesystem primitives (`isProcessAlive`, `killProcessGroup`,
   `ensureOwnerOnlyDir`, `removeEmptyLogFile`, `pathExists`). These are generic OS
   helpers, not Dreamux layout/path contracts.

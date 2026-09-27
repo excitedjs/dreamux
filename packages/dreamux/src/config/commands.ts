@@ -16,7 +16,7 @@
  * `provider`/`config` shape and for a duplicate `id`; narrowing either one a
  * second time here would just be a second, out-of-sync copy of that check.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { CoreCommandDefinition } from '../command/types.js';
 
 import type { AnyCoreCommand } from '../command/registry.js';
 import { ValidationError } from '../command/errors.js';

@@ -10,6 +10,7 @@ import {
 } from '@excitedjs/dreamux-utils';
 
 import type { DispatcherCodexConfig } from '../config.js';
+import { codexSpawnEnv } from '../paths.js';
 import {
   decodeCodexCursor,
   digest,
@@ -72,7 +73,9 @@ export async function readCodexRecentActivity(
 ): Promise<AgentActivityPage> {
   const limit = resolveLimit(query.limit);
   const includeTools = query.includeTools ?? true;
-  const roots = await resolveCodexRolloutRoots(effectiveEnvironment(context));
+  const roots = await resolveCodexRolloutRoots(
+    codexSpawnEnv(context.config.extra_env),
+  );
   const discoveryBudget = createCodexScanBudget();
   const tail = await locateCodexRollout(
     null,
@@ -432,15 +435,6 @@ function boundaryRecordFromBuffer(bytes: Buffer, offset: number): Buffer {
     );
   }
   return bytes.subarray(offset, newline + 1);
-}
-
-function effectiveEnvironment(
-  context: AgentActivityReadContext<DispatcherCodexConfig>,
-): Record<string, string | undefined> {
-  return {
-    ...process.env,
-    ...context.config.extra_env,
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

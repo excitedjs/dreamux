@@ -15,7 +15,7 @@ import {
   handleProtocolEvent,
   type NativeActivityState,
 } from './runtime-activity.js';
-import { buildClaudeProcessEnv } from './runtime-session.js';
+import { claudeSpawnEnv } from './paths.js';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
@@ -356,7 +356,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       bin: this.bin,
       args,
       cwd: this.cwd,
-      env: buildClaudeProcessEnv(this.config.extra_env),
+      env: claudeSpawnEnv(this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
       sessionId: candidateSessionId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,

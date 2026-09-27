@@ -1,4 +1,4 @@
-import { turnFailureMessage } from './runtime-session.js';
+import { turnFailureMessage } from './rpc.js';
 import { toolDisplay } from './tool-display.js';
 import type { ClaudeActivityLine, ClaudeProtocolEvent } from './types.js';
 import type {

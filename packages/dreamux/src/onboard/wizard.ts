@@ -378,8 +378,9 @@ function parseJsonObject(
 }
 
 /**
- * The built-in registry plus the always-loaded plugins' providers, so
- * `builtin:feishu` (contributed by the Feishu plugin) resolves during onboard.
+ * An empty registry with the always-loaded plugins' providers contributed
+ * into it, so `builtin:codex` / `builtin:claude-code` / `builtin:feishu` all
+ * resolve during onboard.
  */
 async function onboardProviderRegistry(): Promise<ProviderRegistry> {
   const registry = createBuiltinProviderRegistry();

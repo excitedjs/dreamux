@@ -1,19 +1,19 @@
 /**
- * The generic Core Command port (declaration-only).
+ * The generic Core Command port's shape.
  *
  * There is one authoritative Command registry, not an admin method table plus a
  * separate Channel catalog. Both adapters — the `admin.sock` NDJSON server and
  * the in-process Channel invoker — resolve the same definition, run the same
  * validation, attach their factual caller context, execute the same domain
- * handler, and return the same typed result or error.
+ * handler, and return the same typed result or error. See `registry.ts` for the
+ * one implementation every adapter shares.
  *
- * These types carry no exposure/audience property, allowlist, describe-by-caller
- * hook, or capability negotiation: every registered Command is callable through
- * every adapter, subject only to its ordinary input and domain invariants.
- * Canonical Command payloads themselves live with the domain that owns them
- * (see `team.ts`).
+ * Declared in core, not `@excitedjs/dreamux-types`: every consumer of these four
+ * types is inside this package. An external Agent Runtime or Channel provider
+ * never sees a Command directly — a Channel's own generic port is the published
+ * `JsonInvoker` (`@excitedjs/dreamux-types`'s `invoke.ts`), a different seam.
  */
-import type { JsonSchema, JsonValue } from './json.js';
+import type { JsonSchema, JsonValue } from '@excitedjs/dreamux-types';
 
 /**
  * Which adapter admitted this Command invocation.
@@ -58,30 +58,3 @@ export interface CoreCommandRegistry {
     payload: JsonValue,
   ): Promise<JsonValue>;
 }
-
-/**
- * A typed Command failure returned across the generic port. `code` stays an
- * open string because each domain owns its own failure vocabulary; the two
- * codes that carry a cross-domain rule are named by
- * {@link ChannelCommandRetryableErrorCode}.
- */
-export interface ChannelCommandError {
-  readonly code: string;
-  readonly message: string;
-  /**
-   * The next step the failure stated for itself, when it stated one.
-   *
-   * Present exactly when the failure's own author wrote both halves of it — the
-   * reason and what to do about it — so a caller rendering this for an agent can
-   * repeat it as it stands. Absent means no next step was ever authored: a
-   * renderer carries the `code` and the `message` alone, and says nothing more.
-   */
-  readonly action?: string;
-}
-
-/**
- * The only pre-admission failures that permit a Channel to remove a stale
- * binding and retry once to the Dispatcher Agent. Every other failure — and any
- * `ambiguous` outcome — is never retried.
- */
-export type ChannelCommandRetryableErrorCode = 'TEAM_NOT_FOUND' | 'TEAM_CLOSED';

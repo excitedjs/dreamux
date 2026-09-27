@@ -9,12 +9,14 @@
  */
 import type {
   AgentRuntimeInterruptOutcome,
-  CoreCommandContext,
-  CoreCommandDefinition,
   SubmitCommand,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
+import type {
+  CoreCommandContext,
+  CoreCommandDefinition,
+} from '../../command/types.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcherId } from '../../command/host.js';
 import { commandPayload } from '../../command/payload.js';

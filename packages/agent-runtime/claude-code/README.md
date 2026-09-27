@@ -1,10 +1,12 @@
 # @excitedjs/agent-runtime-claude-code
 
-The built-in **Claude Code** Agent Runtime provider for
-[Dreamux](https://github.com/excitedjs/dreamux), published behind the stable
-`builtin:claude-code` alias.
+The built-in **Claude Code** Dreamux plugin, always loaded by
+[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the
+plugin factory: the plugin contributes the Claude Code `AgentRuntimeProvider`,
+published behind the stable `builtin:claude-code` alias.
 
-It implements the public `AgentRuntimeProvider` contract from
+The provider it contributes implements the public `AgentRuntimeProvider`
+contract from
 [`@excitedjs/dreamux-types`](../../dreamux-types) against a resident `claude`
 stream-json child: process supervision, the stream-json wire protocol (line
 framing, result aggregation, control-request replies), pending-request idle
@@ -26,11 +28,20 @@ come from `@excitedjs/dreamux-utils`.
 
 ## Loading
 
-Dreamux core resolves `builtin:claude-code` through the generic provider loader
-and supplies host contracts through the neutral create context. The package
-default-exports that provider factory, so
-`loadExternalAgentRuntimeProviders({ refs: ['builtin:claude-code'] })` can load it
-through the same package-loader path as external `npm:` providers.
+Dreamux always loads this package's plugin, which contributes the provider
+under `builtin:claude-code` through the neutral plugin `contribute(host)`
+hook; core supplies host contracts through the neutral create context.
+External callers can construct the bare provider directly, without going
+through the plugin:
+
+```ts
+import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-claude-code';
+```
+
+The factory accepts the neutral create context plus optional test/embedder
+seams (`resolveBinPath`, `sessionFactory`, `generateSessionId`); the plugin
+(this package's default export) constructs the provider on package defaults
+with none of these set.
 
 ## Resident session and request settlement
 
@@ -101,7 +112,8 @@ the neutral `AgentRuntime` and `RuntimeSubmission` contracts are unchanged.
 
 ## Direct stream RPC consumers
 
-The exported `ClaudeCodeStreamRpc` has the same single `submit()` path, returning
+`ClaudeCodeStreamRpc` (package-internal; see `./rpc.ts`, no longer part of the
+public barrel) has the same single `submit()` path, returning
 `Promise<RuntimeAdmission>` in place of `submitTurn()` and `steerTurn()`. Accepted
 handles own eventual settlement; callers no longer await an aggregate window.
 Replace `failPending(error)` with `fail(error)` for transport failure or `stop()`

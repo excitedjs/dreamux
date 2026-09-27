@@ -1,28 +1,37 @@
 /**
- * Codex home/config paths (issue #209 cleanup — relocated from Dreamux core).
+ * Codex spawn-env and home-path resolution.
  *
- * These resolve Codex's OWN global home (`~/.codex`) and config file. They are
- * codex-engine-specific and homedir-only: they carry no `~/.dreamux` knowledge,
- * so they belong to this package, not to Dreamux core. Dreamux does NOT create a
- * dispatcher-private `CODEX_HOME` for the MVP — every runtime follows the
- * operator's global Codex home — so the per-runtime accessors accept an id only
- * for call-site symmetry and ignore it.
+ * The Codex app-server child spawns with the ambient process env (what a
+ * vanilla `codex` invocation would see) plus this provider's own
+ * `config.extra_env`. Codex itself resolves its home from that same merged
+ * env — an explicit `CODEX_HOME` override, else `$HOME/.codex` — so both the
+ * runtime spawn path and anything that needs to know which Codex home a
+ * runtime will actually use (the activity reader, the pre-start doctor) share
+ * one derivation here. It is codex-engine-specific and carries no
+ * `~/.dreamux` knowledge, so it belongs to this package, not to Dreamux core.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-/** The operator's global Codex home (`~/.codex`). */
-export function operatorCodexHome(): string {
-  return join(homedir(), '.codex');
+import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
+
+/** The process env a Codex app-server child spawns with. */
+export function codexSpawnEnv(
+  extraEnv: Record<string, string> = {},
+): NodeJS.ProcessEnv {
+  return { ...globalThis.process.env, ...extraEnv };
 }
 
-/** A runtime's Codex home — the operator's global home (no dispatcher-private home). */
-export function dispatcherCodexHome(id: string): string {
-  void id;
-  return operatorCodexHome();
-}
-
-/** A runtime's Codex `config.toml` path, under its (operator-global) Codex home. */
-export function dispatcherCodexConfigPath(id: string): string {
-  return join(dispatcherCodexHome(id), 'config.toml');
+/**
+ * The Codex home that applies for a given env: an explicit `CODEX_HOME`
+ * override, else `$HOME/.codex` (falling back to the running process's own
+ * home directory if the env carries no `HOME`). Pure and non-throwing — it
+ * only says what path applies; a caller that needs existence/validity checks
+ * (the activity reader, the doctor) layers its own error semantics on top.
+ */
+export function resolveCodexHomeDir(env: DreamuxEnvironment): string {
+  const configured = env['CODEX_HOME'];
+  if (configured !== undefined) return configured;
+  const home = env['HOME'];
+  return join(home !== undefined && home !== '' ? home : homedir(), '.codex');
 }

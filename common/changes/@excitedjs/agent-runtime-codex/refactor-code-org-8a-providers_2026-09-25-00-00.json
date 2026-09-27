@@ -1,0 +1,21 @@
+{
+  "changes": [
+    {
+      "comment": "Fixed the codex doctor to validate the Codex home actually in effect for an agent, instead of always ~/.codex: it now resolves CODEX_HOME (and the OPENAI_API_KEY/CODEX_API_KEY/CODEX_ACCESS_TOKEN auth check) from the same effective env the runtime spawns its Codex child with (ambient env plus the agent's own extra_env), via one CODEX_HOME resolver paths.ts now shares between the runtime spawn path, the activity reader, and the doctor. Previously doctor ignored extra_env entirely and always checked the operator's global ~/.codex, so an operator-configured per-agent CODEX_HOME or auth override produced false doctor failures or false passes. Also removed the dead codexHomeDoctor hook end to end: CodexAgentRuntimeProviderOptions no longer has a codexHomeDoctor field (nothing in this repo ever supplied it), and codex-home.ts's assertDispatcherCodexHomeReady, formatDispatcherCodexHomeErrors, and DispatcherCodexHomeDoctor type, which only existed to serve that hook, are gone from the package's exports along with paths.ts's operatorCodexHome/dispatcherCodexHome/dispatcherCodexConfigPath (replaced by the internal codexSpawnEnv/resolveCodexHomeDir). dispatcherCodexHomeDoctorContext now takes a required env argument, and validateDispatcherCodexHome no longer accepts a bare dispatcher-id string (its only caller already passed a full context). Nothing persisted changes.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    },
+    {
+      "comment": "The package's default export now means 'the Dreamux plugin factory that contributes the builtin:codex AgentRuntimeProvider' instead of 'the bare provider factory'. createCodexAgentRuntimeProvider is the named export for constructing the bare provider directly. Shrunk the public barrel (index.ts) to the plugin default, createCodexAgentRuntimeProvider plus its options type, and the DispatcherCodexConfig reader/defaults; everything else (the process/RPC classes and their types, the handshake/args/mcp-config helpers, resolveCodexBinPath, the provider diagnostic, and the codex-home doctor family) is now reachable only from inside this package. Also deleted two dead exports with no caller anywhere in this repo: dispatcherCodexConfig (a provider-ref equality check duplicating a ref string Dreamux core already owns) and codexRuntimeArgsForMcpServers (an unused pass-through of codexMcpServerArgs), and the package's own provider-ref.ts (the identical builtin:codex ref string is declared and used at Dreamux core's registry/builtins.ts). Anyone who configured agents[].provider: 'npm:@excitedjs/agent-runtime-codex' directly (nothing in this repo does) now fails loudly at the provider loader's factory-shape check instead of loading a provider.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    },
+    {
+      "comment": "Implemented the new AgentRuntimeProvider.operatorStateRoot capability, returning the operator's default Codex home (resolveCodexHomeDir(process.env), with no per-agent extra_env override applied). Dreamux core's uninstall guard now sources its protected Codex path from this instead of a hard-coded ~/.codex literal: for a default install the protected path is still ~/.codex, but if CODEX_HOME is set in the environment dreamux uninstall runs in, the guard now protects that directory instead.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}
