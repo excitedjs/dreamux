@@ -1510,6 +1510,9 @@ Source:
 - `/packages/channel/feishu-channel/src/cot/recipients.ts`
 - `/packages/channel/feishu-channel/src/cot/card.ts`
 - `/packages/channel/feishu-channel/src/cot/bytes.ts`
+- `/packages/channel/feishu-channel/src/cot/diagnostics.ts`
+- `/packages/channel/feishu-channel/src/cot/io.ts`
+- `/packages/channel/feishu-channel/src/cot/inbound-correlations.ts`
 - `/packages/channel/feishu-transport/src/transport/cot.ts`
 
 ### Feishu extensions

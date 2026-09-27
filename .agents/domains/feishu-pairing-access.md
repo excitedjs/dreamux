@@ -33,6 +33,7 @@ Source:
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/session/card-actions.ts`
 - `/packages/channel/feishu-channel/src/inbound/attachments.ts`
 - `/packages/channel/feishu-transport/`
 
