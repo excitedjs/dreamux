@@ -21,10 +21,7 @@
  */
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 
-import type {
-  AskUserOption,
-  AskUserQuestionSpec,
-} from '../cards/ask-user.js';
+import type { AskUserOption, AskUserQuestionSpec } from '../cards/ask-user.js';
 import {
   asRecord,
   closedObjectSchema,

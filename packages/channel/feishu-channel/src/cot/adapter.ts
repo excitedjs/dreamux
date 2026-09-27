@@ -57,7 +57,11 @@ import {
   type CotToolCallActivity,
   type FeishuCotTerminal,
 } from './card.js';
-import { cotErrorCategory, cotLogScope, type CotLogScope } from './diagnostics.js';
+import {
+  cotErrorCategory,
+  cotLogScope,
+  type CotLogScope,
+} from './diagnostics.js';
 import { FeishuInboundCorrelations } from './inbound-correlations.js';
 import { FeishuCotIo, type FeishuCotIoHandle } from './io.js';
 import {

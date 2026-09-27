@@ -49,7 +49,11 @@ import type {
   McpServerDelegate,
 } from '../mcp/types.js';
 import { WORKFLOW_TOOL_RECORDS } from '../workflow-service/mcp.js';
-import { REPO_REQUEST_SCHEMA, repoRequest, repoWorktree } from '../worktree/repo-request.js';
+import {
+  REPO_REQUEST_SCHEMA,
+  repoRequest,
+  repoWorktree,
+} from '../worktree/repo-request.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import {
   agentCloseRequest,
@@ -212,9 +216,7 @@ const AGENT_RUNTIME_CAPABILITY_SCHEMA: JsonSchema = objectSchema(
   ],
 );
 
-function teammateToolRecords(
-  scope: TeamMateMcpScope,
-): TeammateMcpToolRecord[] {
+function teammateToolRecords(scope: TeamMateMcpScope): TeammateMcpToolRecord[] {
   const callerKind = scope.kind;
   // The pointer to the hand-down skill opens the description of the tool the
   // model is about to call, which is where the intent to hand work down forms.

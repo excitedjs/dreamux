@@ -120,7 +120,6 @@ export class DispatcherService implements Dispatcher {
   readonly id: string;
   readonly cwd: string;
   readonly hooks: Dispatcher['hooks'];
-  private readonly log: DreamuxLogger;
   private readonly _teammates: TeammateCollection;
   private readonly _teams: TeamCollection;
   /**
@@ -180,7 +179,6 @@ export class DispatcherService implements Dispatcher {
         opts.log,
       ),
     });
-    this.log = opts.log;
     const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
     const completionDelivery = new CompletionDeliveryPolicy({
       dispatcherId: opts.id,

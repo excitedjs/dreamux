@@ -34,7 +34,10 @@ export class TeamStore {
   /** One `TransactionalStore` per Team id, built lazily and held for the life
    * of this collection — a Team's record is read once and then served from
    * memory until this Team's own write path replaces it. */
-  private readonly stores = new Map<string, TransactionalStore<TeamRecord | null>>();
+  private readonly stores = new Map<
+    string,
+    TransactionalStore<TeamRecord | null>
+  >();
 
   constructor(
     private readonly opts: {
@@ -160,8 +163,8 @@ export class TeamStore {
       created_at: now,
       updated_at: now,
     };
-    const result = await this.storeFor(team.team_id).update(
-      (current) => (current !== null ? current : team),
+    const result = await this.storeFor(team.team_id).update((current) =>
+      current !== null ? current : team,
     );
     // `update`'s own no-op path returns the exact loaded reference when
     // `change` did not take the `: team` branch, so this is `true` if and
@@ -316,7 +319,9 @@ function readWorktree(
     branch: record['branch'] as string | null,
     base_ref: record['base_ref'] as string | null,
     cleanup: record['cleanup'],
-    cleanup_state: record['cleanup_state'] as AgentEntityWorktreeIdentity['cleanup_state'],
+    cleanup_state: record[
+      'cleanup_state'
+    ] as AgentEntityWorktreeIdentity['cleanup_state'],
     cleanup_error: record['cleanup_error'] as string | null,
   };
 }

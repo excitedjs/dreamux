@@ -1,7 +1,4 @@
-import type {
-  FeishuInboundEvent,
-  Mention,
-} from '@excitedjs/feishu-transport';
+import type { FeishuInboundEvent, Mention } from '@excitedjs/feishu-transport';
 
 import type { PeerBot } from '../chat-bots-store.js';
 import type { FormattedFeishuAttachment } from './attachments.js';

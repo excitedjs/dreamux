@@ -142,7 +142,9 @@ export interface TeammateCollectionOptions {
    * and `createLocked` alike. Required, matching `admitOperation`/`isClosing`:
    * every owner already supplies one, dispatcher-root or Team-scoped.
    */
-  teammateLaunch: AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>;
+  teammateLaunch: AsyncSeriesHook<
+    [LaunchDraft, Readonly<{ teamId: string | null }>]
+  >;
   log: DreamuxLogger;
 }
 
@@ -402,9 +404,7 @@ export class TeammateCollection implements TeammateOps {
     return this.liveEntity(identity.name)?.status() ?? toStatus(identity, null);
   }
 
-  history(
-    input: AgentEntityHistoryQuery,
-  ): Promise<AgentEntityHistoryResult> {
+  history(input: AgentEntityHistoryQuery): Promise<AgentEntityHistoryResult> {
     return this.opts.admitOperation(() => this.historyAdmitted(input));
   }
 
@@ -572,7 +572,8 @@ export class TeammateCollection implements TeammateOps {
     const reopened = await Promise.allSettled([...this.reopening.values()]);
     for (const outcome of reopened) {
       if (outcome.status !== 'fulfilled') continue;
-      if (!outcome.value.isRetired()) held.set(outcome.value.name, outcome.value);
+      if (!outcome.value.isRetired())
+        held.set(outcome.value.name, outcome.value);
     }
     return [...held.values()];
   }
@@ -925,9 +926,7 @@ export class TeammateCollection implements TeammateOps {
       policy.deliverRuntime(initiator, completion, fact);
   }
 
-  private async closeAfterFailedCreation(
-    entity: AgentService,
-  ): Promise<void> {
+  private async closeAfterFailedCreation(entity: AgentService): Promise<void> {
     try {
       await entity.close({ note: 'TeamMate creation failed' });
     } catch (cleanupError) {

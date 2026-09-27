@@ -170,7 +170,7 @@ interface OpenRound {
   messageId?: string;
   /** Where `messageId` landed, from the same send response — set together. */
   chatId?: string;
-  threadId?: string;
+  threadId?: string | undefined;
   timer?: unknown;
 }
 

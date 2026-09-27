@@ -237,14 +237,17 @@ export class AgentIdentityStore {
             `agent identity at ${this.path} has no identity to update`,
           );
         }
-        const input = typeof patch === 'function' ? await patch(current) : patch;
+        const input =
+          typeof patch === 'function' ? await patch(current) : patch;
         return mergeIdentity(current, input);
       }, afterIdentityStatusChange(onPersisted))
       .then((next) => {
         // `change` above always throws on a null current and otherwise
         // returns a merged, non-null identity, so this is never null.
         if (next === null) {
-          throw new Error(`agent identity at ${this.path} update lost its result`);
+          throw new Error(
+            `agent identity at ${this.path} update lost its result`,
+          );
         }
         return next;
       });

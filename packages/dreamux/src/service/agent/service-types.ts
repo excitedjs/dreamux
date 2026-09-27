@@ -12,7 +12,10 @@ import type {
   AgentEntityCollectionStore,
   AgentIdentityStore,
 } from './store.js';
-import type { AgentEntityCloseResult, AgentEntityIdentity } from './identity.js';
+import type {
+  AgentEntityCloseResult,
+  AgentEntityIdentity,
+} from './identity.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 import type { McpServerDelegate } from '../mcp/types.js';

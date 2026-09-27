@@ -20,10 +20,16 @@ import type {
   TeamWorkspaceLoan,
   TeammateOps,
 } from '../agent/types.js';
-import { AgentIdentityStore, AgentEntityCollectionStore } from '../agent/store.js';
+import {
+  AgentIdentityStore,
+  AgentEntityCollectionStore,
+} from '../agent/store.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import { AGENT_TASK_SOURCE, SCHEDULED_SOURCE } from '../submission-sources.js';
-import { teamCronJobsPath, teamMateCollectionDir } from '../../platform/paths.js';
+import {
+  teamCronJobsPath,
+  teamMateCollectionDir,
+} from '../../platform/paths.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -61,7 +67,10 @@ import {
   type TeamRecord,
   type TeamServiceCreateInput,
 } from './types.js';
-import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
+import {
+  WorkflowService,
+  type WorkflowOps,
+} from '../workflow-service/index.js';
 
 /**
  * What one Team is built from.

@@ -2,10 +2,7 @@ import type {
   AgentEntityCapabilities,
   AgentEntitySpawnResult,
 } from '../agent/identity.js';
-import type {
-  SpawnTeamMateRequest,
-  TeammateOps,
-} from '../agent/types.js';
+import type { SpawnTeamMateRequest, TeammateOps } from '../agent/types.js';
 import type { TeamService } from './service.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 

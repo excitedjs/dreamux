@@ -64,7 +64,9 @@ export interface TeamCollectionOptions {
    * construction). One hook object on the Dispatcher, not one per Team — a
    * Team only ever passes its own id as the hook's per-call context.
    */
-  teammateLaunch: AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>;
+  teammateLaunch: AsyncSeriesHook<
+    [LaunchDraft, Readonly<{ teamId: string | null }>]
+  >;
   /**
    * The owning Dispatcher's `createTeam` hook. Fired once per `createFromRequest`
    * call that is not a replay of an already-accepted request, on the caller's

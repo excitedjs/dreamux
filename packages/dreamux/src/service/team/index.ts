@@ -168,8 +168,12 @@ export class TeamCollection implements TeamsPort {
         // `request_id` is excluded from what a tap sees: replay identity is
         // decided above, against `payloadHash` alone, before this hook ever
         // runs.
-        const { name_prefix, intent, leader, repo: requestedRepo } =
-          input.command;
+        const {
+          name_prefix,
+          intent,
+          leader,
+          repo: requestedRepo,
+        } = input.command;
         const resolved = await this.opts.applyCreateTeamHook({
           name_prefix,
           intent,
@@ -187,7 +191,7 @@ export class TeamCollection implements TeamsPort {
           resolved.leader.skill_sources !== undefined
             ? parseAgentRuntimeSkillSources(
                 resolved.leader.skill_sources,
-                "plugin \"createTeam\" hook output's leader.skill_sources",
+                'plugin "createTeam" hook output\'s leader.skill_sources',
               )
             : null;
         const skillSources = await normalizeSkillSources(parsedSkillSources, {

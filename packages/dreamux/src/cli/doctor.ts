@@ -217,9 +217,7 @@ export function printDoctorResult(result: DreamuxDoctorResult): void {
   }
 }
 
-async function readConfigForDoctor(
-  checks: DoctorCheck[],
-): Promise<{
+async function readConfigForDoctor(checks: DoctorCheck[]): Promise<{
   config: DreamuxConfig;
   configFile: string;
   catalogs: ProviderDiagnosticCatalogs;

@@ -7,11 +7,7 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 
-import type {
-  CronCreateRequest,
-  CronJob,
-  CronUpdateRequest,
-} from './types.js';
+import type { CronCreateRequest, CronJob, CronUpdateRequest } from './types.js';
 
 /**
  * Read one cron creation request, as every surface asks it.

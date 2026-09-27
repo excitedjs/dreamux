@@ -19,7 +19,10 @@ import { dirname } from 'node:path';
 
 import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
 import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
-import type { CoreCommandContext, CoreCommandRegistry } from '../command/types.js';
+import type {
+  CoreCommandContext,
+  CoreCommandRegistry,
+} from '../command/types.js';
 import {
   DreamuxError,
   TransportError,

@@ -87,11 +87,11 @@ import { FeishuInboundTargeting } from '../inbound/target.js';
 import { FeishuRouting } from '../routing/index.js';
 import { FeishuRoutingStore } from '../routing/store.js';
 import { describeTarget, type FeishuTarget } from '../routing/target.js';
+import { FeishuCardActions } from './card-actions.js';
 import {
-  FeishuCardActions,
-  type FeishuCardActionResult,
-} from './card-actions.js';
-import { createFeishuLifecycle, type OwnedFeishuLifecycle } from './lifecycle.js';
+  createFeishuLifecycle,
+  type OwnedFeishuLifecycle,
+} from './lifecycle.js';
 import type {
   FeishuListChatBotsResult,
   FeishuToolSession,
@@ -337,7 +337,9 @@ export class FeishuChannelSession {
       throw new Error('Feishu channel session was started before initialize');
     }
     if (!this.lifecycle.isLive()) {
-      throw new Error('Feishu channel session was closed before it could start');
+      throw new Error(
+        'Feishu channel session was closed before it could start',
+      );
     }
     try {
       await this.bot.start(
@@ -522,7 +524,7 @@ export class FeishuChannelSession {
 
   // ── MCP tool backing ───────────────────────────────────────────────────
 
-  toolSession(caller: ChannelMcpCaller): FeishuToolSession {
+  toolSession(): FeishuToolSession {
     return {
       logger: this.opts.log,
       channelId: this.opts.channelId,

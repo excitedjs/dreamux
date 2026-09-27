@@ -415,7 +415,11 @@ export async function resolveManagedServiceAnswers(
   input: ResolveManagedServiceAnswersInput,
 ): Promise<ServiceInstallAnswers> {
   const fallbackDirs = await probeStandardExecDirs(
-    { platform: input.host.platform, homeDir: input.host.homeDir, env: input.env },
+    {
+      platform: input.host.platform,
+      homeDir: input.host.homeDir,
+      env: input.env,
+    },
     input.execDirProbe,
   );
   const resolveEnv = withUserLocalBinPath(input.env, fallbackDirs);

@@ -9,10 +9,7 @@ import type { TeammateCollection } from '../agent/index.js';
 import type { AgentService } from '../agent/service.js';
 import type { AgentEntityWorktreeIdentity } from '../agent/identity.js';
 import { errorMessage } from '@excitedjs/dreamux-utils';
-import {
-  TeamDissolveBlockedError,
-  TeamDissolveFailedError,
-} from './errors.js';
+import { TeamDissolveBlockedError, TeamDissolveFailedError } from './errors.js';
 import type { TeamDissolveCommand, TeamRecord } from './types.js';
 import type {
   WorktreeCleanupAssessment,

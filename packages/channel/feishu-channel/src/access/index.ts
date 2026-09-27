@@ -129,7 +129,9 @@ export class FeishuAccess {
    * `observed_chats`, `warnings`) or per-entry fields (`kind`, `replies`) are
    * read and discarded, never round-tripped into memory or back to disk.
    */
-  private async readFromDisk(stateDir: string): Promise<DispatcherAccessStateV3> {
+  private async readFromDisk(
+    stateDir: string,
+  ): Promise<DispatcherAccessStateV3> {
     const path = join(stateDir, 'access.json');
     let raw: string;
     try {

@@ -533,12 +533,7 @@ function resolveAgentRuntime(
         `and set ${prefix}agentRuntime to that agent's id, then rebuild ${file}.`,
     );
   }
-  const agentRuntimeId = readNonEmptyString(
-    raw,
-    'agentRuntime',
-    file,
-    prefix,
-  );
+  const agentRuntimeId = readNonEmptyString(raw, 'agentRuntime', file, prefix);
   if (!Object.prototype.hasOwnProperty.call(agents, agentRuntimeId)) {
     const known = Object.keys(agents);
     const knownHint =

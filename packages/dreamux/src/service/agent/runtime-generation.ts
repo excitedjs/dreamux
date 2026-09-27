@@ -13,10 +13,7 @@ import {
   DISABLE_FEATURE_USER_INTERRUPT,
   hostRuntimePaths,
 } from '../../agent-runtime/index.js';
-import {
-  resolveAgent,
-  type ResolvedAgentConfig,
-} from '../../config/config.js';
+import { resolveAgent, type ResolvedAgentConfig } from '../../config/config.js';
 import type {
   AgentRuntimeGenerationLease,
   AgentRuntimeStateStore,

@@ -6,7 +6,7 @@ import type {
   DreamuxConfig,
   ResolvedAgentConfig,
 } from '../../config/config.js';
-import type { AgentEntityRuntimeCapability } from './types.js';
+import type { AgentEntityRuntimeCapability } from './identity.js';
 
 export function defaultAgentRuntime(
   config: DreamuxConfig,

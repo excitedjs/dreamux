@@ -287,14 +287,12 @@ export class ChannelService {
 
   /** Public Channel metadata in configuration order, without starting sessions. */
   list(): ChannelMetadata[] {
-    return this.channelConfigs_.map(
-      (channelConfig): ChannelMetadata => ({
-        channel_id: channelConfig.id,
-        provider: channelConfig.provider,
-        identity: channelConfig.identity ?? '',
-        live: this.entries.get(channelConfig.id)?.live ?? false,
-      }),
-    );
+    return this.channelConfigs_.map((channelConfig): ChannelMetadata => ({
+      channel_id: channelConfig.id,
+      provider: channelConfig.provider,
+      identity: channelConfig.identity ?? '',
+      live: this.entries.get(channelConfig.id)?.live ?? false,
+    }));
   }
 
   /**

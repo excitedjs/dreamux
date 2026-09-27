@@ -59,17 +59,9 @@ export async function runUninstall(
   const logDir = normalizePath(logsRoot());
   const protectedRoots = await resolveOperatorStateRoots();
 
-  assertSafeOwnedDirectory(
-    stateDir,
-    'dreamux state directory',
-    protectedRoots,
-  );
+  assertSafeOwnedDirectory(stateDir, 'dreamux state directory', protectedRoots);
   assertSafeOwnedDirectory(runDir, 'dreamux run directory', protectedRoots);
-  assertSafeOwnedDirectory(
-    cacheDir,
-    'dreamux cache directory',
-    protectedRoots,
-  );
+  assertSafeOwnedDirectory(cacheDir, 'dreamux cache directory', protectedRoots);
   assertSafeOwnedDirectory(logDir, 'dreamux logs directory', protectedRoots);
   assertSafeOwnedDirectory(
     configDir,

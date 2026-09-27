@@ -241,16 +241,24 @@ async function registerLaunchd(
     { dryRun: options.answers.dryRun },
   );
   if (!loaded) {
-    await options.host.runner.run('launchctl', ['bootstrap', domain, unitPath], {
-      dryRun: options.answers.dryRun,
-    });
+    await options.host.runner.run(
+      'launchctl',
+      ['bootstrap', domain, unitPath],
+      {
+        dryRun: options.answers.dryRun,
+      },
+    );
   } else if (unitStatus !== 'unchanged') {
     await options.host.runner.run('launchctl', ['bootout', serviceTarget], {
       dryRun: options.answers.dryRun,
     });
-    await options.host.runner.run('launchctl', ['bootstrap', domain, unitPath], {
-      dryRun: options.answers.dryRun,
-    });
+    await options.host.runner.run(
+      'launchctl',
+      ['bootstrap', domain, unitPath],
+      {
+        dryRun: options.answers.dryRun,
+      },
+    );
   }
   if (options.answers.startService) {
     await options.host.runner.run(

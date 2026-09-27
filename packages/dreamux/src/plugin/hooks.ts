@@ -30,7 +30,11 @@ import type {
   DreamuxLogger,
   LaunchDraft,
 } from '@excitedjs/dreamux-types';
-import type { AsyncSeriesHook, AsyncSeriesWaterfallHook, SyncHook } from 'tapable';
+import type {
+  AsyncSeriesHook,
+  AsyncSeriesWaterfallHook,
+  SyncHook,
+} from 'tapable';
 
 import {
   canonicalizeRequiredSkillSources,
@@ -54,7 +58,10 @@ interface RegisteredTap {
  * `AsyncSeriesWaterfallHook`, whose `intercept({result})` callback genuinely
  * carries the waterfall's threaded value rather than `void`.
  */
-type InterceptableHook<R = void> = Pick<SyncHook<unknown[], R>, 'name' | 'intercept'>;
+type InterceptableHook<R = void> = Pick<
+  SyncHook<unknown[], R>,
+  'name' | 'intercept'
+>;
 
 const owners = new AsyncLocalStorage<string>();
 const ownersByHook = new WeakMap<object, (string | null)[]>();

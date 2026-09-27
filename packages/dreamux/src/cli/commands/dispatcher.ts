@@ -1,11 +1,7 @@
 import type { CommandModule } from 'yargs';
 
 import { requiredDispatcherId, withRequiredDispatcherId } from './parse.js';
-import {
-  noopHandler,
-  runAdminCommand,
-  type DreamuxCommand,
-} from './types.js';
+import { noopHandler, runAdminCommand, type DreamuxCommand } from './types.js';
 
 type DispatcherVerb = 'status';
 

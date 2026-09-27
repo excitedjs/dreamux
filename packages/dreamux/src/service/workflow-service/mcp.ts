@@ -148,9 +148,7 @@ export const WORKFLOW_TOOL_RECORDS: WorkflowMcpToolRecord[] = [
       [],
       {
         title: 'List workflows',
-        output: objectSchema({ runs: arrayOf(workflowRunSchema()) }, [
-          'runs',
-        ]),
+        output: objectSchema({ runs: arrayOf(workflowRunSchema()) }, ['runs']),
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),

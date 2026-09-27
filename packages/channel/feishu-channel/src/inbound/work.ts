@@ -45,8 +45,7 @@ export function createFeishuInboundWork(
     Math.max(0, deadlineAt - now()),
   );
 
-  const sessionActive = (): boolean =>
-    !fence.signal.aborted && fence.isLive();
+  const sessionActive = (): boolean => !fence.signal.aborted && fence.isLive();
   const assertSessionActive = (): void => {
     if (!sessionActive() || stopReason === 'session_closed') {
       throw new FeishuOperationError('aborted');

@@ -20,11 +20,7 @@ import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
 import { appendBatchFits, cotEventBytes, outboxAdmits } from './bytes.js';
 import type { FeishuCotTerminal } from './card.js';
-import {
-  sameTarget,
-  targetKey,
-  type FeishuTarget,
-} from '../routing/target.js';
+import { sameTarget, targetKey, type FeishuTarget } from '../routing/target.js';
 
 const IDENTITY_KEY_SEPARATOR = '\0';
 

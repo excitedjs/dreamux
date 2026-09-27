@@ -48,8 +48,7 @@ import type { FeishuTarget } from '../routing/target.js';
 
 /** The card-action callback's own answer, or nothing for a key it does not own. */
 export type FeishuCardActionResult =
-  | FeishuCardActionResponse
-  | Record<string, never>;
+  FeishuCardActionResponse | Record<string, never>;
 
 /** The card-action-forward path's words for each outcome. The classification is shared. */
 const EXTENSION_FORWARD_MESSAGES: SubmitOutcomeMessages = {
@@ -273,7 +272,9 @@ export class FeishuCardActions {
         },
         '[card-action] owner lookup failed',
       );
-      return { toast: { type: 'error', content: 'Owner 校验失败，请稍后重试' } };
+      return {
+        toast: { type: 'error', content: 'Owner 校验失败，请稍后重试' },
+      };
     }
 
     if (ownerSet.size === 0) {
@@ -329,8 +330,7 @@ export class FeishuCardActions {
     sourceId: string;
     attrs?: Readonly<Record<string, string>> | undefined;
     knownLanding?:
-      | { chatId: string; threadId?: string | undefined }
-      | undefined;
+      { chatId: string; threadId?: string | undefined } | undefined;
   }): Promise<{ target: FeishuTarget; outcome: FeishuSubmitOutcome }> {
     const { knownLanding, ...submission } = input;
     const route =

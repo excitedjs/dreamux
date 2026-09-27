@@ -14,12 +14,11 @@ export function createUninstallCommand(): CommandModule<{}, UninstallArgv> {
     command: 'uninstall',
     describe: 'Remove files and user service created by onboard',
     builder: (y) =>
-      y
-        .option('dry-run', {
-          type: 'boolean',
-          describe:
-            'Print the planned removals without deleting or unregistering',
-        }) as Argv<UninstallArgv>,
+      y.option('dry-run', {
+        type: 'boolean',
+        describe:
+          'Print the planned removals without deleting or unregistering',
+      }) as Argv<UninstallArgv>,
     handler: async (argv) => {
       const result = await runUninstall({
         dryRun: argv.dryRun,

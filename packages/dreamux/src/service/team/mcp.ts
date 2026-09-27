@@ -31,10 +31,7 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import {
-  REPO_REQUEST_SCHEMA,
-  repoRequest,
-} from '../worktree/repo-request.js';
+import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -233,33 +230,33 @@ function teamToolRecords(
     return [
       {
         descriptor: tool(
-        'dissolve',
-        "Call this only when the Team's work is complete. Your system prompt names the Team's workspace and its cleanup mode. Under cleanup: delete-on-close Dreamux removes the managed worktree when the Team dissolves, so first check it for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Under cleanup: keep, and in a reused directory, nothing is removed and nothing blocks the dissolve. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team's Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. A non-forced request checks the managed delete-on-close worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
-        {
-          note: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 2000,
-            pattern: '\\S',
-            description: 'Why the Team stops; recorded on it.',
+          'dissolve',
+          "Call this only when the Team's work is complete. Your system prompt names the Team's workspace and its cleanup mode. Under cleanup: delete-on-close Dreamux removes the managed worktree when the Team dissolves, so first check it for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Under cleanup: keep, and in a reused directory, nothing is removed and nothing blocks the dissolve. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team's Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. A non-forced request checks the managed delete-on-close worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
+          {
+            note: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 2000,
+              pattern: '\\S',
+              description: 'Why the Team stops; recorded on it.',
+            },
+            force: {
+              type: 'boolean',
+              description:
+                "Only with the user's explicit confirmation in this conversation. " +
+                'It only overrides a delete-on-close removal blocked by ' +
+                'uncommitted, untracked, or unmerged work, by discarding that ' +
+                'work; under cleanup: keep the checkout and its changes are ' +
+                'retained; never the branch, its commits, a reused directory, or ' +
+                'the source repository.',
+            },
           },
-          force: {
-            type: 'boolean',
-            description:
-              "Only with the user's explicit confirmation in this conversation. " +
-              'It only overrides a delete-on-close removal blocked by ' +
-              'uncommitted, untracked, or unmerged work, by discarding that ' +
-              'work; under cleanup: keep the checkout and its changes are ' +
-              'retained; never the branch, its commits, a reused directory, or ' +
-              'the source repository.',
+          ['note'],
+          {
+            title: 'Dissolve this Team',
+            output: dissolveReceiptSchema(),
+            annotations: DESTRUCTIVE_ANNOTATIONS,
           },
-        },
-        ['note'],
-        {
-          title: 'Dissolve this Team',
-          output: dissolveReceiptSchema(),
-          annotations: DESTRUCTIVE_ANNOTATIONS,
-        },
         ),
         execute: (args) => dissolve(teams, caller, args),
       },
@@ -268,233 +265,234 @@ function teamToolRecords(
   return [
     {
       descriptor: tool(
-      'create',
-      "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate the Team's work directory by the dispatcher's workspace policy (a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader's first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel's own decision, made with that channel's tools. With `prompt`, returns a receipt at once and the TeamLeader's completion is pushed later as a new message; without it, the Team is created and nothing is submitted.",
-      {
-        name_prefix: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 64,
-          description:
-            'Requested label; the concrete team_name comes back in the result.',
+        'create',
+        "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate the Team's work directory by the dispatcher's workspace policy (a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader's first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel's own decision, made with that channel's tools. With `prompt`, returns a receipt at once and the TeamLeader's completion is pushed later as a new message; without it, the Team is created and nothing is submitted.",
+        {
+          name_prefix: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            description:
+              'Requested label; the concrete team_name comes back in the result.',
+          },
+          repo: {
+            ...REPO_REQUEST_SCHEMA,
+            description:
+              "Where the Team works; omit for the dispatcher's workspace default: a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled.",
+          },
+          leader_agent_runtime: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            description:
+              'Agent runtime id for the TeamLeader, from ' +
+              'get_capabilities.agent_runtimes[].id on the teammate server.',
+          },
+          intent: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2000,
+            description:
+              "One-line subject of the Team's work; shown in list and history and " +
+              'kept for recovery.',
+          },
+          identity: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 4000,
+            description:
+              "Standing role and boundaries appended to the TeamLeader's system " +
+              'prompt for every turn.',
+          },
+          prompt: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 20000,
+            description:
+              "The TeamLeader's first turn; omit it and no TeamLeader process " +
+              'starts until a routed inbound or a later send arrives.',
+          },
         },
-        repo: {
-          ...REPO_REQUEST_SCHEMA,
-          description:
-            "Where the Team works; omit for the dispatcher's workspace default: a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled.",
+        ['name_prefix', 'leader_agent_runtime', 'intent'],
+        {
+          title: 'Create a Team',
+          output: OBJECT,
+          annotations: MUTATING_ANNOTATIONS,
         },
-        leader_agent_runtime: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 128,
-          description:
-            'Agent runtime id for the TeamLeader, from ' +
-            'get_capabilities.agent_runtimes[].id on the teammate server.',
-        },
-        intent: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 2000,
-          description:
-            "One-line subject of the Team's work; shown in list and history and " +
-            'kept for recovery.',
-        },
-        identity: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 4000,
-          description:
-            "Standing role and boundaries appended to the TeamLeader's system " +
-            'prompt for every turn.',
-        },
-        prompt: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 20000,
-          description:
-            "The TeamLeader's first turn; omit it and no TeamLeader process " +
-            'starts until a routed inbound or a later send arrives.',
-        },
-      },
-      ['name_prefix', 'leader_agent_runtime', 'intent'],
-      {
-        title: 'Create a Team',
-        output: OBJECT,
-        annotations: MUTATING_ANNOTATIONS,
-      },
       ),
       execute: (args) => create(teams, args),
     },
     {
       descriptor: tool(
-      'send',
-      "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Submit a follow-up turn to a Team's TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel. Returns a receipt at once; the completion is pushed later as a new message.",
-      {
-        team_name: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 64,
-          description: 'The concrete team_name returned by create.',
+        'send',
+        "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Submit a follow-up turn to a Team's TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel. Returns a receipt at once; the completion is pushed later as a new message.",
+        {
+          team_name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            description: 'The concrete team_name returned by create.',
+          },
+          prompt: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 20000,
+            description: 'The next turn for the TeamLeader.',
+          },
+          intent: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2000,
+            description:
+              "Replaces the Team's recorded subject before the turn.",
+          },
         },
-        prompt: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 20000,
-          description: 'The next turn for the TeamLeader.',
+        ['team_name', 'prompt'],
+        {
+          title: 'Send a TeamLeader turn',
+          output: teamSubmitResultOutput,
+          annotations: MUTATING_ANNOTATIONS,
         },
-        intent: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 2000,
-          description: "Replaces the Team's recorded subject before the turn.",
-        },
-      },
-      ['team_name', 'prompt'],
-      {
-        title: 'Send a TeamLeader turn',
-        output: teamSubmitResultOutput,
-        annotations: MUTATING_ANNOTATIONS,
-      },
       ),
       execute: (args) => send(teams, args),
     },
     {
       descriptor: tool(
-      'list',
-      'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, and member count). Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
-      {},
-      [],
-      {
-        title: 'List Teams',
-        output: objectSchema({ teams: arrayOf(OBJECT) }, ['teams']),
-        annotations: READ_ONLY_ANNOTATIONS,
-      },
+        'list',
+        'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, and member count). Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
+        {},
+        [],
+        {
+          title: 'List Teams',
+          output: objectSchema({ teams: arrayOf(OBJECT) }, ['teams']),
+          annotations: READ_ONLY_ANNOTATIONS,
+        },
       ),
       execute: () => list(teams),
     },
     {
       descriptor: tool(
-      'status',
-      "Read one Team's current summary by its team_name, using the same fields returned by create.",
-      {
-        team_name: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 64,
-          description: 'The concrete team_name returned by create.',
+        'status',
+        "Read one Team's current summary by its team_name, using the same fields returned by create.",
+        {
+          team_name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            description: 'The concrete team_name returned by create.',
+          },
         },
-      },
-      ['team_name'],
-      {
-        title: 'Read Team status',
-        output: OBJECT,
-        annotations: READ_ONLY_ANNOTATIONS,
-      },
+        ['team_name'],
+        {
+          title: 'Read Team status',
+          output: OBJECT,
+          annotations: READ_ONLY_ANNOTATIONS,
+        },
       ),
       execute: (args) => status(teams, args),
     },
     {
       descriptor: tool(
-      'history',
-      'Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.',
-      {
-        team_name: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 64,
-          description: 'Exact concrete team_name.',
-        },
-        status: {
-          type: 'string',
-          enum: ['starting', 'running', 'closed'],
-          description: 'Filter by Team status: starting, running, or closed.',
-        },
-        repo: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 4096,
-          description:
-            'Case-insensitive substring of the source repository path.',
-        },
-        grep: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 500,
-          description:
-            'Case-insensitive substring over team_name, intent, source ' +
-            'repository, leader name, and close note.',
-        },
-        since: {
-          type: 'integer',
-          description:
-            "Epoch milliseconds; lower bound on a record's last update.",
-        },
-        until: {
-          type: 'integer',
-          description:
-            "Epoch milliseconds; upper bound on a record's last update.",
-        },
-        limit: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 100,
-          description: 'Rows per page; default 20, max 100.',
-        },
-        cursor: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 1000,
-          description: 'next_cursor from the previous page.',
-        },
-      },
-      [],
-      {
-        title: 'Search Teams',
-        output: objectSchema(
-          {
-            items: arrayOf(OBJECT),
-            next_cursor: { type: ['string', 'null'] },
+        'history',
+        'Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.',
+        {
+          team_name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            description: 'Exact concrete team_name.',
           },
-          ['items', 'next_cursor'],
-        ),
-        annotations: READ_ONLY_ANNOTATIONS,
-      },
+          status: {
+            type: 'string',
+            enum: ['starting', 'running', 'closed'],
+            description: 'Filter by Team status: starting, running, or closed.',
+          },
+          repo: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 4096,
+            description:
+              'Case-insensitive substring of the source repository path.',
+          },
+          grep: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 500,
+            description:
+              'Case-insensitive substring over team_name, intent, source ' +
+              'repository, leader name, and close note.',
+          },
+          since: {
+            type: 'integer',
+            description:
+              "Epoch milliseconds; lower bound on a record's last update.",
+          },
+          until: {
+            type: 'integer',
+            description:
+              "Epoch milliseconds; upper bound on a record's last update.",
+          },
+          limit: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 100,
+            description: 'Rows per page; default 20, max 100.',
+          },
+          cursor: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 1000,
+            description: 'next_cursor from the previous page.',
+          },
+        },
+        [],
+        {
+          title: 'Search Teams',
+          output: objectSchema(
+            {
+              items: arrayOf(OBJECT),
+              next_cursor: { type: ['string', 'null'] },
+            },
+            ['items', 'next_cursor'],
+          ),
+          annotations: READ_ONLY_ANNOTATIONS,
+        },
       ),
       execute: (args) => history(teams, args),
     },
     {
       descriptor: tool(
-      'dissolve',
-      "Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team's worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. A non-forced request checks such a worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
-      {
-        team_name: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 64,
-          description: 'The concrete team_name returned by create.',
+        'dissolve',
+        "Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team's worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. A non-forced request checks such a worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
+        {
+          team_name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            description: 'The concrete team_name returned by create.',
+          },
+          note: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2000,
+            description: 'Why the Team stops; recorded on it.',
+          },
+          force: {
+            type: 'boolean',
+            description:
+              'Only overrides a delete-on-close removal blocked by uncommitted, ' +
+              'untracked, or unmerged work, by discarding that work; under ' +
+              'cleanup: keep the checkout and its changes are retained; never ' +
+              'the branch, its commits, a reused directory, or the source ' +
+              'repository.',
+          },
         },
-        note: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 2000,
-          description: 'Why the Team stops; recorded on it.',
+        ['team_name', 'note'],
+        {
+          title: 'Dissolve a Team',
+          output: dissolveReceiptSchema(),
+          annotations: DESTRUCTIVE_ANNOTATIONS,
         },
-        force: {
-          type: 'boolean',
-          description:
-            'Only overrides a delete-on-close removal blocked by uncommitted, ' +
-            'untracked, or unmerged work, by discarding that work; under ' +
-            'cleanup: keep the checkout and its changes are retained; never ' +
-            'the branch, its commits, a reused directory, or the source ' +
-            'repository.',
-        },
-      },
-      ['team_name', 'note'],
-      {
-        title: 'Dissolve a Team',
-        output: dissolveReceiptSchema(),
-        annotations: DESTRUCTIVE_ANNOTATIONS,
-      },
       ),
       execute: (args) => dissolve(teams, caller, args),
     },

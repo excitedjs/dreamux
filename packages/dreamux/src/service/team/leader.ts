@@ -63,9 +63,7 @@ export interface TeamLeaderAgentDeps {
   log: DreamuxLogger;
 }
 
-export function createTeamLeaderAgent(
-  deps: TeamLeaderAgentDeps,
-): AgentService {
+export function createTeamLeaderAgent(deps: TeamLeaderAgentDeps): AgentService {
   const teamId = deps.identity.team_id;
   if (teamId === null) {
     throw new Error('TeamLeader identity must have a team_id');

@@ -3,10 +3,7 @@ import type {
   AgentRuntimeStateUpdate,
   AgentRuntimeStatus,
 } from '@excitedjs/dreamux-types';
-import type {
-  AgentIdentityStore,
-  AgentIdentityUpdateInput,
-} from './store.js';
+import type { AgentIdentityStore, AgentIdentityUpdateInput } from './store.js';
 import {
   runtimeStatusToIdentityStatus,
   type AgentEntityIdentity,

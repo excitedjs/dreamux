@@ -264,10 +264,7 @@ export class WorkflowRun {
     }
     this.terminalIntent = { status: 'stopped', result: null, error: null };
     this.closeOnTerminalIntent('stopped');
-    this.deps.log.info(
-      { run_id: this.record.run_id },
-      'stopping workflow run',
-    );
+    this.deps.log.info({ run_id: this.record.run_id }, 'stopping workflow run');
     void this.runner.send({ type: 'abort' }).catch((error: unknown) => {
       this.deps.log.warn(
         { run_id: this.record.run_id, err: errorInfo(error) },
@@ -793,7 +790,8 @@ export class WorkflowRun {
         run_id: this.record.run_id,
         status: candidate.status,
         agent_count: candidate.agents.length,
-        err: candidate.error === null ? undefined : { message: candidate.error },
+        err:
+          candidate.error === null ? undefined : { message: candidate.error },
       },
       'workflow run terminal',
     );

@@ -101,7 +101,7 @@ function resolveTool(
       run: () =>
         session.fencedToolCall(() =>
           builtin.handle(
-            { caller, session: session.toolSession(caller) },
+            { caller, session: session.toolSession() },
             builtin.parse(call.arguments),
           ),
         ),

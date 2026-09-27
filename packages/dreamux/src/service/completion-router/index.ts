@@ -56,7 +56,10 @@ type DeadlineResult<T> =
 /** Stateful completion-token router and transport delivery policy. */
 export class CompletionDeliveryPolicy {
   private readonly attemptTimeoutMs: number;
-  private readonly completions = new WeakMap<RuntimeCompletion, Promise<void>>();
+  private readonly completions = new WeakMap<
+    RuntimeCompletion,
+    Promise<void>
+  >();
   private readonly recipientTails = new WeakMap<object, Promise<void>>();
 
   constructor(

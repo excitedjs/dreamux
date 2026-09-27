@@ -34,10 +34,7 @@ import {
   channelSubmitInput,
   parseChannelSubmission,
 } from '../agent/channel-submission.js';
-import {
-  teamSubmitResult,
-  teamSubmitResultOutput,
-} from '../team/requests.js';
+import { teamSubmitResult, teamSubmitResultOutput } from '../team/requests.js';
 import type { DispatcherService } from '../dispatcher-service/index.js';
 import type {
   DispatcherRuntimeStatus,

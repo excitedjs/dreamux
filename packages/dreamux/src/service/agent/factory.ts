@@ -1,9 +1,15 @@
 import type { AdmissionLedger } from './admission.js';
 import type { AgentEntityIdentity } from './identity.js';
 import { AgentService } from './service.js';
-import type { TeammateServiceDeps, TeammateServiceOptions } from './service-types.js';
+import type {
+  TeammateServiceDeps,
+  TeammateServiceOptions,
+} from './service-types.js';
 
-export interface CreateAgentServiceInput extends Omit<TeammateServiceDeps, 'admissions'> {
+export interface CreateAgentServiceInput extends Omit<
+  TeammateServiceDeps,
+  'admissions'
+> {
   identity: AgentEntityIdentity;
   options: TeammateServiceOptions;
 }

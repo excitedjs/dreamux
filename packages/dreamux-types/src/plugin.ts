@@ -138,7 +138,9 @@ export interface Dispatcher {
      * `teamId` is `null` for a dispatcher-owned TeamMate, the owning Team's id
      * otherwise.
      */
-    teammateLaunch: AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>;
+    teammateLaunch: AsyncSeriesHook<
+      [LaunchDraft, Readonly<{ teamId: string | null }>]
+    >;
     /**
      * Runs once per `team.create` request that is not a replay of an already
      * accepted one, before the Team is constructed. Each tap receives the

@@ -20,10 +20,7 @@ import {
   type FeishuInboundWorkContext,
 } from './work.js';
 import { createFeishuLifecycle } from '../session/lifecycle.js';
-import {
-  formatFeishuCreateTime,
-  renderFeishuBody,
-} from './render.js';
+import { formatFeishuCreateTime, renderFeishuBody } from './render.js';
 
 const FEISHU_MAX_RESOURCE_BYTES = 25 * 1024 * 1024;
 const FEISHU_MAX_AGGREGATE_RESOURCE_BYTES = 100 * 1024 * 1024;

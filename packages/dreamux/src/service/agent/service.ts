@@ -530,7 +530,10 @@ export class AgentService {
   private effectiveIdentityStatus(
     identity: AgentEntityIdentity,
   ): AgentEntityIdentityStatus {
-    if (this.phase === 'closing' && this.runtimeGeneration.hasNoRuntimeAuthority()) {
+    if (
+      this.phase === 'closing' &&
+      this.runtimeGeneration.hasNoRuntimeAuthority()
+    ) {
       return 'stopped';
     }
     return identity.status;
@@ -747,9 +750,7 @@ export class AgentService {
 
   private assertLockToken(token: object): void {
     if (this.lockToken !== token) {
-      throw new Error(
-        `stale lock for ${agentRoleNoun(this.role, this.name)}`,
-      );
+      throw new Error(`stale lock for ${agentRoleNoun(this.role, this.name)}`);
     }
   }
 
