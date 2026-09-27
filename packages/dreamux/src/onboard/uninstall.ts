@@ -3,12 +3,10 @@ import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, resolve, sep } from 'node:path';
 
-import { removeUserService } from './service.js';
-import {
-  ExecaCommandRunner,
-  type CommandRunner,
-} from '../platform/command-runner.js';
-import type { ServicePlatform } from '../onboard/types.js';
+import { removeUserService } from '../daemon/install.js';
+import { createServiceHost } from '../daemon/host.js';
+import type { ServicePlatform } from '../daemon/unit.js';
+import type { CommandRunner } from '../platform/command-runner.js';
 import {
   expandHome,
   globalConfigDir,
@@ -30,7 +28,6 @@ export interface UninstallEntry {
 }
 
 export interface RunUninstallOptions {
-  configDir?: string | undefined;
   runner?: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;
@@ -50,12 +47,12 @@ export interface UninstallRunResult {
 export async function runUninstall(
   options: RunUninstallOptions = {},
 ): Promise<UninstallRunResult> {
-  const runner = options.runner ?? new ExecaCommandRunner();
+  const host = createServiceHost(options);
   const dryRun = options.dryRun ?? false;
-  const configDir = normalizePath(options.configDir ?? globalConfigDir());
+  const configDir = normalizePath(globalConfigDir());
   const entries: UninstallEntry[] = [];
   const warnings: string[] = [];
-  await warnIfConfigIsNotReadable(configDir, warnings);
+  await warnIfConfigIsNotReadable(warnings);
   const stateDir = normalizePath(stateRoot());
   const runDir = normalizePath(runRoot());
   const cacheDir = normalizePath(cacheRoot());
@@ -81,13 +78,7 @@ export async function runUninstall(
   );
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
-  const removal = await removeUserService({
-    runner,
-    platform: options.platform,
-    homeDir: options.homeDir ?? homedir(),
-    uid: options.uid,
-    dryRun,
-  });
+  const removal = await removeUserService({ host, dryRun });
   entries.push({
     path: removal.unitPath,
     status: removal.removed ? 'removed' : 'missing',
@@ -140,14 +131,11 @@ export async function runUninstall(
   };
 }
 
-async function warnIfConfigIsNotReadable(
-  configDir: string,
-  warnings: string[],
-): Promise<void> {
+async function warnIfConfigIsNotReadable(warnings: string[]): Promise<void> {
   try {
-    await assertNoLegacyTomlOnly({ configDir });
-    if (!(await pathExists(globalConfigFile({ configDir })))) return;
-    await loadConfig({ configDir });
+    await assertNoLegacyTomlOnly();
+    if (!(await pathExists(globalConfigFile()))) return;
+    await loadConfig();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(

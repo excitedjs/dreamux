@@ -1,4 +1,5 @@
 import type { ProviderDiagnosticResult } from '@excitedjs/dreamux-types';
+import type { ServicePlatform } from '../daemon/unit.js';
 import type { ProviderDiagnosticReport } from '../provider-diagnostics.js';
 
 export type OnboardFileStatus =
@@ -15,8 +16,6 @@ export interface OnboardFileLedger {
   record(path: string, status: OnboardFileStatus, reason: string): void;
 }
 
-export type ServicePlatform = 'launchd' | 'systemd';
-
 export interface OnboardAgentRuntimeConfig {
   id: string;
   provider: string;
@@ -30,7 +29,6 @@ export interface OnboardChannelConfig {
 }
 
 export interface OnboardAnswers {
-  configDir: string;
   dispatcherId: string;
   dispatcherCwd: string;
   agentRuntime: OnboardAgentRuntimeConfig;

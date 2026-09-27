@@ -7,7 +7,6 @@ import {
 
 interface UninstallArgv {
   dryRun?: boolean;
-  configDir?: string;
 }
 
 export function createUninstallCommand(): CommandModule<{}, UninstallArgv> {
@@ -20,15 +19,10 @@ export function createUninstallCommand(): CommandModule<{}, UninstallArgv> {
           type: 'boolean',
           describe:
             'Print the planned removals without deleting or unregistering',
-        })
-        .option('config-dir', {
-          type: 'string',
-          describe: 'dreamux global config directory',
         }) as Argv<UninstallArgv>,
     handler: async (argv) => {
       const result = await runUninstall({
         dryRun: argv.dryRun,
-        configDir: argv.configDir,
       });
       printUninstallResult(result);
     },

@@ -20,6 +20,7 @@ import {
   readProviderConfigObject,
   redactSecretKeyValues,
 } from '@excitedjs/dreamux-utils';
+import { dreamuxRoot } from '../platform/paths.js';
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { RuleViolation } from '../platform/errors.js';
 import type {
@@ -145,26 +146,22 @@ export const BUILT_IN_DEFAULTS: DreamuxConfig = {
 export const DEFAULT_CONFIG_JSON = stringifyConfig(BUILT_IN_DEFAULTS);
 
 export interface ConfigPathOverrides {
-  configDir?: string;
   providerRegistry?: ProviderRegistry;
   externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
   externalChannelModuleImporter?: ExternalChannelModuleImporter;
   pluginModuleImporter?: PluginModuleImporter;
 }
 
-export function globalConfigDir(overrides: ConfigPathOverrides = {}): string {
-  if (overrides.configDir !== undefined) return overrides.configDir;
-  return process.env['DREAMUX_CONFIG_DIR'] || join(homedir(), '.dreamux');
+export function globalConfigDir(): string {
+  return dreamuxRoot();
 }
 
-export function globalConfigFile(overrides: ConfigPathOverrides = {}): string {
-  return join(globalConfigDir(overrides), 'config.json');
+export function globalConfigFile(): string {
+  return join(globalConfigDir(), 'config.json');
 }
 
-export function legacyGlobalConfigFile(
-  overrides: ConfigPathOverrides = {},
-): string {
-  return join(globalConfigDir(overrides), 'config.toml');
+export function legacyGlobalConfigFile(): string {
+  return join(globalConfigDir(), 'config.toml');
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {

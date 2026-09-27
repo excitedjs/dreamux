@@ -4,8 +4,9 @@ This reference owns the current host envelope, config path authority, provider
 opacity, and safe structural editing workflow.
 
 Use `dreamux config path` as the config path authority.
-`DREAMUX_CONFIG_DIR` may relocate `config.json`. Do not use `dreamux config
-show` to inspect provider config; it is not a field-targeted secret-safe view.
+`DREAMUX_ROOT` may relocate `config.json` (and every other Dreamux-owned
+path). Do not use `dreamux config show` to inspect provider config; it is not
+a field-targeted secret-safe view.
 
 While `dreamux serve` runs, the Config Service holds `config.json` in memory
 as the running process's single authority over it; a hand edit made to the

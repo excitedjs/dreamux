@@ -1,12 +1,7 @@
 import { pathExists } from '../platform/fs-errors.js';
-import { homedir } from 'node:os';
 
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
-import {
-  globalConfigFile,
-  stringifyConfig,
-  type DreamuxConfig,
-} from '../config/config.js';
+import { globalConfigFile, stringifyConfig } from '../config/config.js';
 import {
   assertNoLegacyTomlOnly,
   loadConfig,
@@ -14,23 +9,19 @@ import {
 } from '../config/load.js';
 import {
   dispatcherDir,
+  dreamuxRoot,
   logsRoot,
-  probeStandardExecDirs,
   stateRoot,
   type ExecDirProbe,
 } from '../platform/paths.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import {
-  providerBinChecksForConfig,
   runDispatcherProviderDiagnostics,
   type ProviderDiagnosticCatalogs,
   type ProviderDiagnosticReport,
 } from '../provider-diagnostics.js';
-import {
-  ExecaCommandRunner,
-  type CommandRunner,
-} from '../platform/command-runner.js';
+import type { CommandRunner } from '../platform/command-runner.js';
 import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
   ensureDirectory,
@@ -38,14 +29,13 @@ import {
   writeTextFile,
 } from './ledger.js';
 import {
-  installUserService,
   managedServiceEnvironment,
-  resolveServiceExecutable,
-  selectServiceNodeBin,
+  resolveManagedServiceAnswers,
   type ServiceNodeProbe,
   validateManagedServiceLaunch,
-  withUserLocalBinPath,
-} from './service.js';
+} from '../daemon/environment.js';
+import { createServiceHost } from '../daemon/host.js';
+import { installUserService } from '../daemon/install.js';
 import type {
   OnboardAnswers,
   OnboardDoctorResult,
@@ -77,24 +67,13 @@ export async function runOnboard(
 ): Promise<OnboardRunResult> {
   const answers = options.answers;
   const ledger = options.ledger ?? new TransparentFileLedger();
-  const runner = options.runner ?? new ExecaCommandRunner();
+  const host = createServiceHost(options);
   const env = options.env ?? process.env;
-  const platform = options.platform ?? process.platform;
-  const homeDir = options.homeDir ?? homedir();
-  const configPath = globalConfigFile({ configDir: answers.configDir });
-  const existingConfig = await readExistingDreamuxConfig(answers.configDir);
+  const configPath = globalConfigFile();
+  const existingConfig = await readExistingDreamuxConfig();
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
-  const serviceNodeBin =
-    answers.registerService && !answers.dryRun
-      ? await selectServiceNodeBin({
-          platform,
-          currentNodeBin: process.execPath,
-          runner,
-          probe: options.nodeProbe,
-        })
-      : process.execPath;
 
-  await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
+  await ensureDirectory(dreamuxRoot(), ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
   });
   await ensureDirectory(stateRoot(), ledger, 'dreamux state directory', {
@@ -127,38 +106,36 @@ export async function runOnboard(
   // symlinks are outside Dreamux-owned state and are left untouched; operators
   // may delete them manually.
 
-  const loaded = answers.dryRun
-    ? null
-    : await loadConfig({ configDir: answers.configDir });
+  const loaded = answers.dryRun ? null : await loadConfig();
   const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
-  const fallbackDirs = answers.registerService
-    ? await probeStandardExecDirs(
-        { platform, homeDir, env },
-        options.execDirProbe,
-      )
-    : [];
-  const providerBinChecks =
-    answers.registerService &&
-    !answers.dryRun &&
-    loaded !== null &&
-    catalogs !== null
-      ? await resolveProviderBinChecks(
-          loaded.config,
-          catalogs,
-          env,
-          fallbackDirs,
-        )
-      : [];
   // Persist the effective env/homeDir and captured fallback dirs (not the
   // optional raw option values) so managedServicePath renders the same PATH
   // used by provider resolution. In normal CLI use options.env is undefined, so
   // env falls back to process.env — that ambient PATH must be persisted into
-  // the service unit.
+  // the service unit. Skip the pipeline entirely when the operator opted out
+  // of the managed service — there is nothing to resolve.
+  const { nodeBin, providerBinChecks, fallbackDirs } = answers.registerService
+    ? await resolveManagedServiceAnswers({
+        config: loaded?.config ?? null,
+        catalogs,
+        dreamuxBin: answers.dreamuxBin,
+        startService: answers.startService,
+        dryRun: answers.dryRun,
+        host,
+        env,
+        nodeProbe: options.nodeProbe,
+        execDirProbe: options.execDirProbe,
+      })
+    : {
+        nodeBin: process.execPath,
+        providerBinChecks: [] as ProviderBinCheck[],
+        fallbackDirs: [] as string[],
+      };
   const effectiveAnswers = {
     ...answers,
-    nodeBin: serviceNodeBin,
+    nodeBin,
     providerBinChecks,
-    homeDir,
+    homeDir: host.homeDir,
     env,
     fallbackDirs,
   };
@@ -168,7 +145,7 @@ export async function runOnboard(
     loaded,
     catalogs,
     env,
-    runner,
+    host.runner,
   );
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
@@ -176,7 +153,7 @@ export async function runOnboard(
   if (effectiveAnswers.registerService && !effectiveAnswers.dryRun) {
     const serviceLaunch = await validateManagedServiceLaunch(
       effectiveAnswers,
-      runner,
+      host.runner,
     );
     if (!serviceLaunch.ok) {
       throw new Error(formatServiceLaunchFailure(serviceLaunch.errors));
@@ -187,10 +164,7 @@ export async function runOnboard(
     ? await installUserService({
         answers: effectiveAnswers,
         ledger,
-        runner,
-        platform,
-        homeDir,
-        uid: options.uid,
+        host,
       })
     : null;
 
@@ -209,11 +183,11 @@ function formatServiceLaunchFailure(errors: string[]): string {
   ].join('\n');
 }
 
-async function readExistingDreamuxConfig(configDir: string) {
-  const configPath = globalConfigFile({ configDir });
-  await assertNoLegacyTomlOnly({ configDir });
+async function readExistingDreamuxConfig() {
+  const configPath = globalConfigFile();
+  await assertNoLegacyTomlOnly();
   if (!(await pathExists(configPath))) return undefined;
-  return (await loadConfig({ configDir })).config;
+  return (await loadConfig()).config;
 }
 
 function catalogsFromLoadedConfig(
@@ -227,32 +201,6 @@ function catalogsFromLoadedConfig(
       registry: loaded.providerRegistry,
     }),
   };
-}
-
-async function resolveProviderBinChecks(
-  config: DreamuxConfig,
-  catalogs: ProviderDiagnosticCatalogs,
-  env: NodeJS.ProcessEnv,
-  fallbackDirs: string[],
-): Promise<ProviderBinCheck[]> {
-  const checks = providerBinChecksForConfig({
-    config,
-    catalogs,
-    env,
-    scope: 'managedService',
-  });
-  // Bare provider binaries (e.g. a `local-agent` installed to
-  // $HOME/.local/bin) resolve against the effective service PATH, which the
-  // service unit also includes. Resolve against that augmented PATH so the
-  // daemon-install preflight and the running service agree. process.env is
-  // never mutated; platform/homeDir/env are passed explicitly by the caller.
-  const resolveEnv = withUserLocalBinPath(env, fallbackDirs);
-  return await Promise.all(
-    checks.map(async (check) => ({
-      ...check,
-      bin: await resolveServiceExecutable(check.bin, resolveEnv),
-    })),
-  );
 }
 
 async function runDispatcherDoctor(

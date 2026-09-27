@@ -31,10 +31,6 @@ function buildOnboardOptions(y: Argv): Argv<OnboardCliOptions> {
       type: 'boolean',
       describe: 'Print the planned file ledger without writing or registering',
     })
-    .option('config-dir', {
-      type: 'string',
-      describe: 'dreamux global config directory',
-    })
     .option('dispatcher-id', {
       type: 'string',
       describe: 'Dispatcher id to create or update',

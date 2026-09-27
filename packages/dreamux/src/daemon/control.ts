@@ -15,20 +15,19 @@
  * stopped is a `bootout`; start/restart then re-bootstrap when needed.
  */
 
-import { homedir } from 'node:os';
-
+import type { CommandRunner } from '../platform/command-runner.js';
+import { createServiceHost } from './host.js';
 import {
-  LAUNCHD_LABEL,
+  launchdTarget,
   serviceUnitPath,
   SYSTEMD_UNIT,
-} from '../onboard/service.js';
-import type { CommandRunner } from '../platform/command-runner.js';
-import type { ServicePlatform } from '../onboard/types.js';
+  type ServicePlatform,
+} from './unit.js';
 
 export type DaemonVerb = 'start' | 'stop' | 'restart';
 
 export interface ServiceControlOptions {
-  runner: CommandRunner;
+  runner?: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;
   uid?: number;
@@ -46,45 +45,42 @@ export async function controlUserService(
   verb: DaemonVerb,
   options: ServiceControlOptions,
 ): Promise<ServiceControlResult> {
-  const homeDir = options.homeDir ?? homedir();
-  const unit = serviceUnitPath(options.platform, homeDir);
+  const host = createServiceHost(options);
+  const unit = serviceUnitPath(host.platform, host.homeDir);
   const dryRun = options.dryRun ?? false;
   const commands: Array<{ command: string; args: string[] }> = [];
 
   if (unit.platform === 'systemd') {
     const args = ['--user', verb, SYSTEMD_UNIT];
-    await options.runner.run('systemctl', args, { dryRun });
+    await host.runner.run('systemctl', args, { dryRun });
     commands.push({ command: 'systemctl', args });
     return { platform: 'systemd', verb, commands };
   }
 
-  const uid = options.uid ?? process.getuid?.();
-  if (uid === undefined) {
-    throw new Error('launchd user service control requires a numeric uid');
-  }
-  const target = `gui/${uid}/${LAUNCHD_LABEL}`;
-  const loaded = await options.runner.check('launchctl', ['print', target], {
+  const target = launchdTarget(host.uid);
+  const domain = `gui/${host.uid}`;
+  const loaded = await host.runner.check('launchctl', ['print', target], {
     dryRun,
   });
 
   if (verb === 'stop') {
     if (loaded) {
       const args = ['bootout', target];
-      await options.runner.run('launchctl', args, { dryRun });
+      await host.runner.run('launchctl', args, { dryRun });
       commands.push({ command: 'launchctl', args });
     }
     return { platform: 'launchd', verb, commands };
   }
 
   if (!loaded) {
-    const args = ['bootstrap', `gui/${uid}`, unit.path];
-    await options.runner.run('launchctl', args, { dryRun });
+    const args = ['bootstrap', domain, unit.path];
+    await host.runner.run('launchctl', args, { dryRun });
     commands.push({ command: 'launchctl', args });
     if (verb === 'start') return { platform: 'launchd', verb, commands };
   }
   const args =
     verb === 'restart' ? ['kickstart', '-k', target] : ['kickstart', target];
-  await options.runner.run('launchctl', args, { dryRun });
+  await host.runner.run('launchctl', args, { dryRun });
   commands.push({ command: 'launchctl', args });
   return { platform: 'launchd', verb, commands };
 }

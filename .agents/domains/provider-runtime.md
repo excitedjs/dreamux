@@ -110,7 +110,7 @@ Source:
 ### Operator Config
 
 The operator config is JSON at the path reported by `dreamux config path`:
-normally `~/.dreamux/config.json`, relocatable with `DREAMUX_CONFIG_DIR`.
+normally `~/.dreamux/config.json`, relocatable with `DREAMUX_ROOT`.
 
 Current schema:
 

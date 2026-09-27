@@ -147,7 +147,12 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
   `<root>/config.json`; `DREAMUX_CONFIG_DIR` and onboard `--config-dir` are
   deleted; the service unit writes `DREAMUX_ROOT`. An install that used a
   non-default config directory must re-run the service install (`BREAKING:`
-  with `Rebuild:`).
+  with `Rebuild:`). **Inference:** `dreamux uninstall`'s `--config-dir`
+  option is deleted too, for the same reason — the option has nothing left
+  to relocate once `config.json` is root-derived. As a result, `dreamux
+  uninstall`'s directory-removal loop also now removes the (by-then-empty)
+  `DREAMUX_ROOT` directory itself, since `configDir` and the root are now
+  the same path.
 - R27 onboard and the config directory: **selected** "onboard 也认这个变量"
   (inference: superseded in effect by R26, so onboard follows `DREAMUX_ROOT`).
 

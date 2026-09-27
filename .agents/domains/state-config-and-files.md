@@ -21,11 +21,11 @@ Dreamux local files split by volatility and ownership:
   logs/                diagnostics
 ```
 
-Two environment overrides exist and they are not the same knob.
-`DREAMUX_CONFIG_DIR` relocates where `config.json` is looked up and nothing
-else; `DREAMUX_ROOT` relocates the whole Dreamux home, which is why every
-`state/`, `run/`, `cache/`, and `logs/` path follows it and `access.json` in
-particular is independent of `DREAMUX_CONFIG_DIR`.
+One environment override relocates the whole Dreamux home: `DREAMUX_ROOT`.
+Every `config.json`, `state/`, `run/`, `cache/`, and `logs/` path follows it,
+though `access.json` and `config.json` reach the root through different
+builders (`stateRoot()` for the former, `dreamuxRoot()` directly for the
+latter).
 
 Path builders belong in `/packages/dreamux/src/platform/paths.ts`. Volatile
 runtime socket allocation belongs in
@@ -60,8 +60,8 @@ Source:
 ### Operator Config
 
 The path reported by `dreamux config path` is the only Dreamux operator config
-source. It is normally `~/.dreamux/config.json`, may be relocated by
-`DREAMUX_CONFIG_DIR`, and is mode `0600` because provider configs may contain
+source. It is normally `~/.dreamux/config.json`, relocatable with
+`DREAMUX_ROOT`, and is mode `0600` because provider configs may contain
 secrets.
 
 It declares:
@@ -318,7 +318,7 @@ incompatible document fails loud and the operator recreates the rows through the
 Channel's own `bind_channel` / `bind_collaboration_space` tools.
 
 `access.json` is the deliberate mixed-ownership exception. Its path is fixed
-under the state root, independent of `DREAMUX_CONFIG_DIR`. `version` is
+under the state root. `version` is
 Channel/schema-owned; `dm_policy` and `group.*` are operator policy;
 `allow_users` is shared between live pairing/Owner approval and a quiesced
 operator; `pending` is Channel runtime ledger, not operator-editable. The
@@ -597,8 +597,11 @@ creation in the transparent file ledger without touching the filesystem.
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/dreamux/src/onboard/service.ts`
-- `/packages/dreamux/src/onboard/service-node.ts`
+- `/packages/dreamux/src/daemon/unit.ts`
+- `/packages/dreamux/src/daemon/environment.ts`
+- `/packages/dreamux/src/daemon/host.ts`
+- `/packages/dreamux/src/daemon/control.ts`
+- `/packages/dreamux/src/daemon/status.ts`
 - `/packages/dreamux/src/daemon/install.ts`
 - `/packages/dreamux/src/onboard/ledger.ts`
 

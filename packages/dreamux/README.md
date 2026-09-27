@@ -301,7 +301,8 @@ Before deploying, review every non-empty `allow_chats` entry under both
 be trusted and whose passive known-bot observation should remain enabled.
 
 The access path is always `~/.dreamux/state/<id>/access.json`;
-`DREAMUX_CONFIG_DIR` and `dreamux config path` affect `config.json` only. For a
+`DREAMUX_ROOT` is the one relocation variable for both `config.json` and
+`access.json`; `dreamux config path` still names `config.json` only. For a
 manual access edit, fully stop the owning Dispatcher, confirm it stopped,
 re-read after stop, apply only the requested policy/shared-authority fields via
 an owner-only sibling temporary file and atomic replacement at mode `0600`,

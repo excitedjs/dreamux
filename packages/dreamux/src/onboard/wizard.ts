@@ -1,5 +1,4 @@
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import {
   cancel,
@@ -51,7 +50,6 @@ import type {
 export interface OnboardCliOptions {
   yes?: boolean;
   dryRun?: boolean;
-  configDir?: string;
   dispatcherId?: string;
   dispatcherCwd?: string;
   agent?: string | string[];
@@ -78,10 +76,6 @@ export async function collectOnboardAnswers(
   if (!interactive) return await answersFromOptions(options, false);
 
   intro('dreamux onboard');
-  const configDir = await promptText(
-    'dreamux config directory',
-    defaultConfigDir(options),
-  );
   const dispatcherId = validateDispatcherId(
     await promptText(
       'dispatcher id',
@@ -117,7 +111,6 @@ export async function collectOnboardAnswers(
   const answers = await answersFromOptions(
     {
       ...options,
-      configDir,
       dispatcherId,
       dispatcherCwd,
       agent: agentProvider,
@@ -126,6 +119,7 @@ export async function collectOnboardAnswers(
       startService,
     },
     true,
+    registry,
   );
   outro('Collected onboarding inputs.');
   return answers;
@@ -134,6 +128,7 @@ export async function collectOnboardAnswers(
 export async function answersFromOptions(
   options: OnboardCliOptions,
   fromInteractive: boolean,
+  registry?: ProviderRegistry,
 ): Promise<OnboardAnswers> {
   const dispatcherId = validateDispatcherId(
     options.dispatcherId ?? DEFAULT_DISPATCHER_ID,
@@ -146,10 +141,18 @@ export async function answersFromOptions(
     'agent',
   );
   const channelSelections = parseChannelSelections(options.channel);
-  const registry = await onboardProviderRegistry();
-  await loadSelectedProviders(registry, agentSelection, channelSelections);
-  const agentCatalog = new AgentRuntimeProviderCatalog({ registry });
-  const channelCatalog = new ChannelProviderCatalog({ registry });
+  const effectiveRegistry = registry ?? (await onboardProviderRegistry());
+  await loadSelectedProviders(
+    effectiveRegistry,
+    agentSelection,
+    channelSelections,
+  );
+  const agentCatalog = new AgentRuntimeProviderCatalog({
+    registry: effectiveRegistry,
+  });
+  const channelCatalog = new ChannelProviderCatalog({
+    registry: effectiveRegistry,
+  });
   const promptHost = promptHostForMode(fromInteractive);
 
   const agentConfigJson = parseConfigJsonMap(
@@ -164,7 +167,6 @@ export async function answersFromOptions(
   );
 
   return {
-    configDir: normalizePath(options.configDir ?? defaultConfigDir(options)),
     dispatcherId,
     dispatcherCwd: normalizePath(dispatcherCwd),
     agentRuntime: await onboardAgentRuntime(
@@ -453,10 +455,6 @@ function nonInteractivePromptValue(
   throw new Error(
     `provider onboard prompt '${input.message}' requires interactive input; pass --agent-config-json or --channel-config-json`,
   );
-}
-
-function defaultConfigDir(options: OnboardCliOptions): string {
-  return options.configDir ?? join(homedir(), '.dreamux');
 }
 
 async function promptText(

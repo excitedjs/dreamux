@@ -104,7 +104,7 @@ export class ConfigService implements ConfigReader {
   ): Promise<ConfigService> {
     const { providerRegistry, ...overrides } = options;
     const service = new ConfigService(
-      globalConfigFile(overrides),
+      globalConfigFile(),
       providerRegistry,
       overrides,
     );
@@ -203,7 +203,7 @@ export class ConfigService implements ConfigReader {
    * `ConfigService`.
    */
   private async loadFile(): Promise<ConfigServiceState> {
-    await assertNoLegacyTomlOnly(this.overrides);
+    await assertNoLegacyTomlOnly();
     const { raw, config, plugins } = await readConfigFile(
       this.file,
       this.providerRegistry,

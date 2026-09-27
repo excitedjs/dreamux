@@ -1,9 +1,7 @@
-import { readFile } from 'node:fs/promises';
-import { homedir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
 
 import {
   BUILT_IN_DEFAULTS,
-  globalConfigDir,
   globalConfigFile,
   type DreamuxConfig,
 } from '../config/config.js';
@@ -43,45 +41,19 @@ import {
   MIN_SERVICE_NODE_VERSION,
   nodeVersionSatisfies,
   type ServiceNodeProbe,
-  serviceUnitPath,
-  SYSTEMD_UNIT,
-} from '../onboard/service.js';
-import {
-  ExecaCommandRunner,
-  type CommandRunner,
-} from '../platform/command-runner.js';
-import {
-  launchdTarget,
-  parseLaunchdDetail,
-  parseLaunchdPid,
-  parseLaunchdPlist,
-  parsePositiveInt,
-  parseSystemdProperties,
-  parseSystemdUnit,
-  systemdDetail,
-} from './service-status-parse.js';
+} from '../daemon/environment.js';
+import { createServiceHost } from '../daemon/host.js';
+import { getServiceStatus, type ServiceStatus } from '../daemon/status.js';
+import type { CommandRunner } from '../platform/command-runner.js';
 
 export interface DoctorOptions {
   env?: NodeJS.ProcessEnv;
   runner?: CommandRunner;
-  platform?: NodeJS.Platform | undefined;
-  homeDir?: string | undefined;
+  platform?: NodeJS.Platform;
+  homeDir?: string;
   uid?: number | undefined;
   nodeProbe?: ServiceNodeProbe;
   userName?: string;
-}
-
-export interface ServiceStatus {
-  platform: 'launchd' | 'systemd';
-  unitPath: string;
-  installed: boolean;
-  loaded: boolean;
-  running: boolean;
-  enabled: boolean;
-  pid: number | null;
-  detail: string | null;
-  environment: Record<string, string> | null;
-  execStart: string[] | null;
 }
 
 export interface DoctorCheck {
@@ -110,13 +82,10 @@ type ProviderBinaryCheck = ProviderBinCheck;
 export async function runDreamuxDoctor(
   options: DoctorOptions = {},
 ): Promise<DreamuxDoctorResult> {
-  const runner = options.runner ?? new ExecaCommandRunner();
+  const host = createServiceHost(options);
   const checks: DoctorCheck[] = [];
-  const configDir = globalConfigDir();
-  const { config, configFile, catalogs, plugins } = await readConfigForDoctor(
-    configDir,
-    checks,
-  );
+  const { config, configFile, catalogs, plugins } =
+    await readConfigForDoctor(checks);
   // Before the channel diagnostics below: api publication is where extensions
   // register into their channel provider.
   checks.push(...pluginDoctorChecks(plugins, createLogger({ name: 'doctor' })));
@@ -135,7 +104,7 @@ export async function runDreamuxDoctor(
   )) {
     checks.push({
       name: check.name,
-      ok: await runner.check(check.bin, check.args, { env: doctorEnv }),
+      ok: await host.runner.check(check.bin, check.args, { env: doctorEnv }),
       detail: check.bin,
     });
   }
@@ -182,12 +151,7 @@ export async function runDreamuxDoctor(
     }
   }
 
-  const service = await getServiceStatus({
-    runner,
-    platform: options.platform,
-    homeDir: options.homeDir,
-    uid: options.uid,
-  });
+  const service = await getServiceStatus(host);
   checks.push({
     name: 'user service',
     ok: true,
@@ -197,13 +161,16 @@ export async function runDreamuxDoctor(
   });
   if (service.platform === 'systemd' && service.installed) {
     checks.push(
-      await systemdLingerCheck(runner, options.userName ?? userInfo().username),
+      await systemdLingerCheck(
+        host.runner,
+        options.userName ?? userInfo().username,
+      ),
     );
   }
   await addManagedServiceLaunchChecks(
     checks,
     service,
-    runner,
+    host.runner,
     options.nodeProbe ?? defaultServiceNodeProbe,
     catalogs,
     config,
@@ -212,7 +179,7 @@ export async function runDreamuxDoctor(
   const dispatchers = await readDispatchers(
     catalogs,
     config,
-    runner,
+    host.runner,
     options.env ?? process.env,
     service,
   );
@@ -257,7 +224,6 @@ export function printDoctorResult(result: DreamuxDoctorResult): void {
 }
 
 async function readConfigForDoctor(
-  configDir: string,
   checks: DoctorCheck[],
 ): Promise<{
   config: DreamuxConfig;
@@ -266,7 +232,7 @@ async function readConfigForDoctor(
   plugins: LoadedPlugin[];
 }> {
   try {
-    const loaded = await loadConfig({ configDir });
+    const loaded = await loadConfig();
     checks.push({
       name: 'config',
       ok: true,
@@ -294,7 +260,7 @@ async function readConfigForDoctor(
     }
     return {
       config: BUILT_IN_DEFAULTS,
-      configFile: globalConfigFile({ configDir }),
+      configFile: globalConfigFile(),
       catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
       plugins: [],
     };
@@ -343,94 +309,6 @@ async function readDispatchers(
       };
     }),
   );
-}
-
-async function getServiceStatus(
-  options: DoctorOptions,
-): Promise<ServiceStatus> {
-  const runner = options.runner ?? new ExecaCommandRunner();
-  const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
-  if (unit.platform === 'launchd') {
-    return launchdStatus(unit.path, runner, options.uid);
-  }
-  return systemdStatus(unit.path, runner);
-}
-
-async function launchdStatus(
-  unitPath: string,
-  runner: CommandRunner,
-  uid?: number,
-): Promise<ServiceStatus> {
-  const installed = await pathExists(unitPath);
-  const target = launchdTarget(uid);
-  let raw = '';
-  let loaded = false;
-  try {
-    raw = await runner.capture('launchctl', ['print', target]);
-    loaded = true;
-  } catch {
-    loaded = false;
-  }
-  const pid = parseLaunchdPid(raw);
-  const unitFile = installed
-    ? parseLaunchdPlist(await readFile(unitPath, 'utf8'))
-    : { environment: null, execStart: null };
-  return {
-    platform: 'launchd',
-    unitPath,
-    installed,
-    enabled: installed,
-    loaded,
-    running: pid !== null || /\bstate = running\b/.test(raw),
-    pid,
-    detail: parseLaunchdDetail(raw),
-    environment: unitFile.environment,
-    execStart: unitFile.execStart,
-  };
-}
-
-async function systemdStatus(
-  unitPath: string,
-  runner: CommandRunner,
-): Promise<ServiceStatus> {
-  const enabled = await runner.check('systemctl', [
-    '--user',
-    'is-enabled',
-    SYSTEMD_UNIT,
-  ]);
-  const active = await runner.check('systemctl', [
-    '--user',
-    'is-active',
-    SYSTEMD_UNIT,
-  ]);
-  let raw = '';
-  try {
-    raw = await runner.capture('systemctl', [
-      '--user',
-      'show',
-      SYSTEMD_UNIT,
-      '--property=LoadState,ActiveState,SubState,MainPID,Result',
-    ]);
-  } catch {
-    raw = '';
-  }
-  const installed = await pathExists(unitPath);
-  const unitFile = installed
-    ? parseSystemdUnit(await readFile(unitPath, 'utf8'))
-    : { environment: null, execStart: null };
-  const props = parseSystemdProperties(raw);
-  return {
-    platform: 'systemd',
-    unitPath,
-    installed,
-    enabled,
-    loaded: props['LoadState'] === 'loaded',
-    running: active || props['ActiveState'] === 'active',
-    pid: parsePositiveInt(props['MainPID']),
-    detail: systemdDetail(props),
-    environment: unitFile.environment,
-    execStart: unitFile.execStart,
-  };
 }
 
 async function systemdLingerCheck(

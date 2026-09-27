@@ -43,9 +43,9 @@ export async function loadOrInitConfig(
   providerRegistry: ProviderRegistry;
   plugins: LoadedPlugin[];
 }> {
-  const file = globalConfigFile(overrides);
+  const file = globalConfigFile();
   const providerRegistry = providerRegistryFor(overrides);
-  await assertNoLegacyTomlOnly(overrides);
+  await assertNoLegacyTomlOnly();
 
   const createdOnThisBoot = await publishFileExclusive(
     file,
@@ -69,9 +69,9 @@ export async function loadOrInitConfig(
 export async function loadConfig(
   overrides: ConfigPathOverrides = {},
 ): Promise<LoadConfigResult> {
-  const file = globalConfigFile(overrides);
+  const file = globalConfigFile();
   const providerRegistry = providerRegistryFor(overrides);
-  await assertNoLegacyTomlOnly(overrides);
+  await assertNoLegacyTomlOnly();
   const { config, plugins } = await readConfigFile(
     file,
     providerRegistry,
@@ -169,11 +169,9 @@ export async function resolveConfig(
   return mergeWithDefaults(raw, file, providerRegistry);
 }
 
-export async function assertNoLegacyTomlOnly(
-  overrides: ConfigPathOverrides = {},
-): Promise<void> {
-  const jsonFile = globalConfigFile(overrides);
-  const tomlFile = legacyGlobalConfigFile(overrides);
+export async function assertNoLegacyTomlOnly(): Promise<void> {
+  const jsonFile = globalConfigFile();
+  const tomlFile = legacyGlobalConfigFile();
   if ((await pathExists(jsonFile)) || !(await pathExists(tomlFile))) return;
   throw new Error(
     `legacy dreamux config detected at ${tomlFile}, but ${jsonFile} does not exist.\n` +

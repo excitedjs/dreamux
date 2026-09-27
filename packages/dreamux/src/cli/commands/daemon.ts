@@ -9,11 +9,7 @@ import {
   DEFAULT_RESTART_ANNOUNCE,
   notifyResumedRestart,
 } from '../../service/dispatcher-service/restart-intent.js';
-import {
-  controlUserService,
-  type DaemonVerb,
-} from '../../daemon/service-control.js';
-import { ExecaCommandRunner } from '../../platform/command-runner.js';
+import { controlUserService, type DaemonVerb } from '../../daemon/control.js';
 import { validateDispatcherId } from '../../platform/dispatcher-id.js';
 import { printServiceWarnings } from './service-output.js';
 import { noopHandler, type DreamuxCommand } from './types.js';
@@ -143,9 +139,7 @@ function createDaemonRestartCommand(): CommandModule<{}, DaemonRestartArgv> {
 }
 
 async function runDaemonControl(verb: DaemonVerb): Promise<void> {
-  const result = await controlUserService(verb, {
-    runner: new ExecaCommandRunner(),
-  });
+  const result = await controlUserService(verb, {});
   const issued = result.commands
     .map((cmd) => `${cmd.command} ${cmd.args.join(' ')}`)
     .join('; ');

@@ -4,8 +4,10 @@ This reference owns the current V3 shape, field ownership, trusted-chat and
 `/introduce` meanings, and quiesced edit/`ENOENT` workflow.
 
 The path is fixed at `~/.dreamux/state/<dispatcher-id>/access.json`.
-`DREAMUX_CONFIG_DIR` affects `config.json` only. Never derive this state path
-from `dreamux config path` or a relocated config directory.
+`DREAMUX_ROOT` is the one relocation variable for both `config.json` and
+`access.json`, though they resolve through different builders (`dreamuxRoot()`
+directly vs. `stateRoot()`). Never derive this state path from
+`dreamux config path` or a relocated config directory.
 
 The Channel session holds this file in memory once its first gate decision
 loads it, for the rest of the session — a hand edit made while the channel is

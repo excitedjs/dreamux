@@ -91,9 +91,11 @@ The file path is fixed at:
 ~/.dreamux/state/<dispatcher-id>/access.json
 ```
 
-`DREAMUX_CONFIG_DIR` relocates `config.json` only. The Channel joins
-`access.json` under the host-supplied dispatcher state directory; callers must
-not derive the state path from `dreamux config path`.
+`DREAMUX_ROOT` is the one relocation variable for both `config.json` and
+`access.json`, though they still resolve through different builders
+(`dreamuxRoot()` directly vs. `stateRoot()`). The Channel joins `access.json`
+under the host-supplied dispatcher state directory; callers must not derive
+the state path from `dreamux config path`.
 
 The complete secure default and accepted top-level shape are:
 

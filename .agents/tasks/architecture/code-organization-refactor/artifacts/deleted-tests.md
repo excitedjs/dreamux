@@ -3131,3 +3131,98 @@ ledger's append-only convention — this note is the correction.
   `CronJobStoreOptions` outright (zero reads of `dispatcherId` anywhere in
   `store.ts`) and the constructor now takes the path directly, not an options
   object.
+
+## Stage 8c
+
+Item 2 (`daemon/` owns the managed service end to end) deletes
+`onboard/service.ts` and `onboard/service-node.ts` outright, moving their
+contents to `daemon/environment.ts` and `daemon/unit.ts`. Two whole test
+files import those two modules by path; both were named in the stage's own
+plan (`.workspace/refactor/s8c-host-plan.md`, Item 2's "Test fallout"
+section) before implementation, not discovered after the fact.
+
+### `packages/dreamux/tests/service-node.test.ts` — whole file (5 describe blocks, 17 `it`/`it.each` call sites, 24 generated cases)
+
+**Contract pinned:** managed-service Node-version selection — stable
+candidate search (`stableNodeCandidates`), version-manager detection from a
+path (`versionManagerOfPath`) and from a probe that may need to realpath
+first (`detectServiceNodeVersionManager`), the selection algorithm itself
+(`selectServiceNodeBin`: first executable, non-version-managed,
+version-satisfying candidate, falling back to the current Node when none
+qualifies), and Homebrew Cellar-path stabilization
+(`stabilizeHomebrewCellarNode`, remapping a versioned or unversioned Cellar
+path back to the stable `opt/` symlink that resolves to it, no-op on
+non-darwin, untouched when already stable).
+**Failure:** the file's `import { ... } from '../src/onboard/service.js'`
+(line 10) names a module this item deletes; the import cannot resolve, so
+the whole file fails at module load before any case runs. (Determined by
+reading the source and confirming the import target no longer exists in this
+diff; the dispatch scopes this commit to staged-file eslint only; `vitest`
+itself runs in the final gate pass.)
+**Contract fully holds — restore verbatim.** Diffing the deleted
+`onboard/service-node.ts` against `daemon/environment.ts`'s Node-selection
+section shows only import lines differ; every named export
+(`versionManagerOfPath`, `detectServiceNodeVersionManager`,
+`stableNodeCandidates`, `selectServiceNodeBin`, `stabilizeHomebrewCellarNode`,
+`ServiceNodeProbe`) moved with an unchanged body. Restore by re-pointing the
+file's two import lines (`../src/onboard/service.js` →
+`../src/daemon/environment.js`; `../src/onboard/types.js`'s `CommandRunner`
+import is unused in this file and was already absent — nothing to fix there)
+to the new module; nothing else in the file changes.
+
+### `packages/dreamux/tests/service-claude-path.test.ts` — whole file (1 describe block, 4 cases)
+
+**Contract pinned:** the managed-service PATH includes every
+provider-declared binary check directory and omits them when no provider
+declares one (`managedServiceEnvironment`), and launch validation
+(`validateManagedServiceLaunch`) checks exactly the declared provider
+binaries with their own declared args, not a hardcoded `--help`.
+**Failure:** two independent breaks. (1, pre-existing, not caused by this
+item — noted in the stage plan before implementation) the file's `import
+type { CommandRunner } from '../src/onboard/types.js'` (line 18) names an
+export `onboard/types.ts` has never had — the real `CommandRunner` interface
+has always lived in `platform/command-runner.ts`; this file could not have
+type-checked before this stage either. (2) the file's value import,
+`import { managedServiceEnvironment, validateManagedServiceLaunch, type
+ServiceInstallAnswers } from '../src/onboard/service.js'` (line 17), now
+names a module this item deletes outright, so the whole file fails at
+module load before any case runs.
+**Contract fully holds — restore, with two fixture updates, not just a
+re-point.** `managedServiceEnvironment` and `validateManagedServiceLaunch`
+moved to `daemon/environment.ts` with unchanged PATH-building and
+validation logic; `ServiceInstallAnswers` moved to `daemon/install.ts`.
+Restoring needs three import-line changes, not one: `CommandRunner` from
+`../src/platform/command-runner.js` (fixing the pre-existing break, not
+introduced here), `managedServiceEnvironment`/`validateManagedServiceLaunch`
+from `../src/daemon/environment.js`, and `ServiceInstallAnswers` (type only)
+from `../src/daemon/install.js`. The file's local `answers()` fixture
+builder (line 35) also sets a `configDir: '/home/op/.dreamux'` field that no
+longer exists on `ServiceInstallAnswers` — this stage's Item 1 (R26/R27)
+deleted it — drop that line on restoration; none of the file's 4 assertions
+read `configDir`, so dropping it is not a behavior change to the test
+itself. `providerBinChecks` became a required field on `ServiceInstallAnswers`
+(Item 3) instead of optional; this fixture already sets it in every case
+(both the default and every override), so that type change has no effect on
+restoration either.
+
+### Left for the final gate pass, not touched by this commit
+
+Two items this stage's own plan (`s8c-host-plan.md`, Item 1's "Test
+fallout" subsection) called for deleting were left in place by the diff this
+commit records, per that diff's own prior decision (not this ledger entry's
+call, and not re-litigated here):
+`packages/dreamux/tests/state-schemas.test.ts`'s `'config parser accepts the
+current shape and rejects a dangling agent ref'` describe block and
+`packages/dreamux/tests/plugin-loader.test.ts`'s `'plugins[] through
+loadConfig'` describe block both still pass a `configDir` field to
+`loadConfig`, which no longer reads it (Item 1 deleted
+`ConfigPathOverrides.configDir`) — each block isolates itself against a temp
+directory this way, so once the field is ignored the isolation is gone.
+Separately, `packages/dreamux/tests/feishu-allow-chats-release-contract.test.ts`
+asserts a `packages/dreamux/README.md` excerpt still contains the literal
+string `DREAMUX_CONFIG_DIR`; this item's own README edit (replacing that
+sentence with `DREAMUX_ROOT` wording, R26) makes that assertion false. None
+of these three were deleted or edited in this commit — they surface only
+once the final gate pass runs `vitest`/`typecheck:tests` and finds them, at
+which point R43 applies to them the same way it applied to the two files
+above.

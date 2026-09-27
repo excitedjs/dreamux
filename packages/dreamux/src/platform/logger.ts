@@ -31,9 +31,10 @@
  *   - Credentials are removed by a provider-agnostic recursive key sanitizer.
  *     Message *bodies* are NOT redacted — they are simply never passed to the
  *     logger (callers log ids, never turn `text` / `rawContent` / reply text).
- *   - The factory takes an explicit destination. `paths.ts` `dreamuxRoot()`
- *     hardcodes `homedir()` and does not honor `DREAMUX_CONFIG_DIR`, so tests
- *     inject a tmp `filePath`; they must not expect an env var to move logs.
+ *   - The factory takes an explicit destination. Tests inject a tmp
+ *     `filePath`; they must not expect `createLogger` to honor `DREAMUX_ROOT`
+ *     for log paths either, since the factory takes its destination
+ *     explicitly and never calls `logsRoot()` itself.
  */
 
 import { chmod } from 'node:fs/promises';

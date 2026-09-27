@@ -227,7 +227,7 @@ narrow decisions above. Everything else in this record stands.
 - **A public `dreamux daemon` command group exists**:
   `daemon install|uninstall|start|stop|restart`. `start|stop|restart` are thin
   cross-platform wrappers over the native manager
-  ([`/packages/dreamux/src/daemon/service-control.ts`](/packages/dreamux/src/daemon/service-control.ts));
+  ([`/packages/dreamux/src/daemon/control.ts`](/packages/dreamux/src/daemon/control.ts));
   `install`/`uninstall` reuse the onboard service slice
   ([`/packages/dreamux/src/daemon/install.ts`](/packages/dreamux/src/daemon/install.ts)).
   `daemon uninstall` removes only the service unit; top-level
@@ -236,7 +236,7 @@ narrow decisions above. Everything else in this record stands.
   `restart` verb (which did not exist before).
 - **`loginctl enable-linger` is enabled best-effort** by both `onboard` and
   `daemon install`, single-sourced in
-  [`/packages/dreamux/src/onboard/service.ts`](/packages/dreamux/src/onboard/service.ts)
+  [`/packages/dreamux/src/daemon/install.ts`](/packages/dreamux/src/daemon/install.ts)
   (`enableSystemdLinger`). Failure (strict polkit / non-root) is non-fatal: it
   surfaces a warning with the manual fix. `dreamux doctor` now reports a
   `systemd linger` check.

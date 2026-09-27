@@ -1,6 +1,120 @@
-import { parse as parsePlist, type PlistValue } from 'plist';
+/**
+ * Managed-service unit definitions: render (launchd plist / systemd unit
+ * file) and parse (read an installed unit back into structured fields for
+ * `dreamux doctor` / `daemon/status.ts`). One contract, one file — the render
+ * and parse sides must agree on every field they round-trip.
+ */
 
-import { LAUNCHD_LABEL } from '../onboard/service.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  build as buildPlist,
+  parse as parsePlist,
+  type PlistValue,
+} from 'plist';
+
+import { stateRoot } from '../platform/paths.js';
+import { managedServiceEnvironment } from './environment.js';
+import type { ServiceInstallAnswers } from './install.js';
+
+export type ServicePlatform = 'launchd' | 'systemd';
+
+export const LAUNCHD_LABEL = 'dev.excited.dreamux';
+export const SYSTEMD_UNIT = 'dreamux.service';
+
+export function serviceUnitPath(
+  platform: NodeJS.Platform = process.platform,
+  homeDir = homedir(),
+): { platform: ServicePlatform; path: string } {
+  if (platform === 'darwin') {
+    return {
+      platform: 'launchd',
+      path: join(homeDir, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`),
+    };
+  }
+  if (platform === 'linux') {
+    return {
+      platform: 'systemd',
+      path: join(homeDir, '.config', 'systemd', 'user', SYSTEMD_UNIT),
+    };
+  }
+  throw new Error(
+    `dreamux onboard supports user-level services on macOS and Linux only (got ${platform})`,
+  );
+}
+
+/**
+ * The `gui/<uid>/<label>` launchd service target used by every launchd
+ * operation (register, control, status). `uid` must already be resolved
+ * (e.g. via `createServiceHost`) — this is the one place that validates it,
+ * so registration/control/status share a single failure path instead of each
+ * re-deriving `process.getuid?.()` and throwing its own message.
+ */
+export function launchdTarget(uid: number | undefined): string {
+  if (uid === undefined) {
+    throw new Error('launchd user service requires a numeric uid');
+  }
+  return `gui/${uid}/${LAUNCHD_LABEL}`;
+}
+
+export function renderLaunchdPlist(
+  answers: ServiceInstallAnswers,
+  stdoutLog: string,
+  stderrLog: string,
+): string {
+  return buildPlist({
+    Label: LAUNCHD_LABEL,
+    ProgramArguments: [answers.dreamuxBin, 'serve'],
+    RunAtLoad: true,
+    KeepAlive: true,
+    WorkingDirectory: stateRoot(),
+    EnvironmentVariables: managedServiceEnvironment(answers),
+    StandardOutPath: stdoutLog,
+    StandardErrorPath: stderrLog,
+  });
+}
+
+export function renderSystemdUnit(
+  answers: ServiceInstallAnswers,
+  stdoutLog: string,
+  stderrLog: string,
+): string {
+  return `[Unit]
+Description=dreamux dispatcher daemon
+
+[Service]
+Type=simple
+ExecStart=${systemdEscapeArg(answers.dreamuxBin)} serve
+WorkingDirectory=${systemdEscapeArg(stateRoot())}
+${Object.entries(managedServiceEnvironment(answers))
+  .map(([key, value]) => `Environment=${key}=${systemdEscapeEnv(value)}`)
+  .join('\n')}
+Restart=on-failure
+RestartSec=2s
+StandardOutput=append:${stdoutLog}
+StandardError=append:${stderrLog}
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+function systemdEscapeArg(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
+  return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+}
+
+function systemdEscapeEnv(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll(' ', '\\x20');
+}
+
+// ---------------------------------------------------------------------------
+// Parse side: read an installed unit back into structured fields.
+// ---------------------------------------------------------------------------
 
 export function parseSystemdUnit(content: string): {
   environment: Record<string, string> | null;
@@ -133,14 +247,6 @@ function isPlistRecord(
   value: PlistValue | undefined,
 ): value is Record<string, PlistValue> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function launchdTarget(uid?: number): string {
-  const actualUid = uid ?? process.getuid?.();
-  if (actualUid === undefined) {
-    throw new Error('launchd user service diagnostics require a numeric uid');
-  }
-  return `gui/${actualUid}/${LAUNCHD_LABEL}`;
 }
 
 export function parseLaunchdPid(raw: string): number | null {

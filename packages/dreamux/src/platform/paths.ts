@@ -447,8 +447,9 @@ export function dispatcherPathSegment(id: string): string {
 // resolves them.
 //
 // `buildServicePath` is the single source of truth for that PATH. It lives in
-// platform/ (the neutral path builder) so onboard/service.ts only orchestrates
-// the managed-service environment and never owns the home/PATH contract itself.
+// platform/ (the neutral path builder) so daemon/environment.ts only
+// orchestrates the managed-service environment and never owns the home/PATH
+// contract itself.
 //
 // Order (deduplicated while preserving first occurrence):
 //   1. Stable Dreamux-owned dirs (selected Node bin dir, resolved provider bin
@@ -611,7 +612,7 @@ export function withServicePath(
  * Stable Dreamux-owned dirs (Node bin, provider bin dirs, dreamux bin) are NOT
  * included here: at resolve time the Node bin is not yet selected and the
  * dreamux bin dir is computed separately. Those are added when the service PATH
- * is rendered (see `managedServicePath` in onboard/service.ts). Pass
+ * is rendered (see `managedServicePath` in daemon/environment.ts). Pass
  * `extraDirs` to lead the PATH with explicit actual dirs (e.g. a resolved
  * provider bin dir).
  *
