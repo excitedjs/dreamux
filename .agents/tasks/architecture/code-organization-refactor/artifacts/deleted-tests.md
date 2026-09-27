@@ -3836,8 +3836,9 @@ or was actually deleted/changed (contract does not hold, or holds only after a
 named stage rewrites the fixture). The restored copy was then removed again
 (the actual deletion, already staged before this pass began, is unchanged).
 This traces every file to a concrete, current, re-checkable failure rather
-than a recollection; it does not re-run every one of the ~600 individual `it()`
-cases below one by one; a case-by-case count is given per file, but the
+than a recollection; it does not re-run every one of the roughly 745
+individual `it()` cases below one by one; a case-by-case count is given per
+file, but the
 disposition is verified at the file's shared root cause, not case-by-case,
 except where a file's cases split across causes (called out explicitly below).
 
@@ -3849,11 +3850,15 @@ referenced by letter to avoid repeating the same evidence in every file entry.
 - **Cause A — R7 domain-directory merge.** Stage 6a ("Merge the Agent stores,
   service, and collection into service/agent") collapsed `agent-entity/`,
   `teammate-service/`, and `teammate-collection/` into one flat
-  `service/agent/`, store → service → collection. Stage 6e ("Plan Stage 6e
-  dispatcher and channel: one owner, one close") collapsed
-  `team-collection/` and `team-service/` into one flat `service/team/` and moved
-  `dispatcher-service/team-leader-handle.ts` into `service/team/leader-handle.ts`
-  in the same stage. Verified example mappings: `agent-entity/identity-store.ts`
+  `service/agent/`, store → service → collection. Stage 6b ("Merge the Team
+  store, service, and collection into service/team," "mirroring stage 6a's
+  service/agent/ merge" per its own commit message) collapsed
+  `team-collection/` and `team-service/` into one flat `service/team/` the
+  same way. Stage 6e ("Plan Stage 6e dispatcher and channel: one owner, one
+  close") separately moved `dispatcher-service/team-leader-handle.ts` into
+  `service/team/leader-handle.ts` afterward, "fixing a layering inversion
+  where service/agent/mcp.ts imported a dispatcher-service type that itself
+  depended on service/agent/." Verified example mappings: `agent-entity/identity-store.ts`
   → `service/agent/identity.ts`; `agent-entity/types.ts` →
   `service/agent/types.ts`; `teammate-service/turn-recording.ts` and
   `teammate-service/turn-coordinator.ts` → `service/agent/turn.ts`;
@@ -3898,10 +3903,14 @@ referenced by letter to avoid repeating the same evidence in every file entry.
   change in `createCoreCommandRegistry` (it now derives each domain's narrow
   resolver from the full host itself; the file's own hand-built `CoreCommandHost`
   no longer satisfies the five distinct narrow-resolver parameter types it used
-  to be passed as — five `TS2345` errors). Net effect of this pass: the
-  CoreCommand catalog/registry contract has zero passing test coverage in
-  either package once all three files are gone. This is **flagged for round
-  2's attention**, not a simple three-file restore.
+  to be passed as — five `TS2345` errors). Net effect of this pass: the three
+  files that pinned the `CoreCommandDefinition`/`CoreCommandRegistry` type
+  contract directly are gone from both packages. `tests/
+  core-command-adapters.test.ts`'s 14 surviving cases still cover the catalog
+  end-to-end through the real `admin.sock` and in-process Channel-invoker
+  adapters over one shared registry, so the catalog is not untested — but the
+  type-contract-level pin these three files provided is gone. This is
+  **flagged for round 2's attention**, not a simple three-file restore.
 - **Cause D — R16 (Stage 6a, same commit as Cause A).** Every completion notice now
   words itself by the producer's actual role (Dispatcher agent / Team leader /
   TeamMate) instead of hardcoding TeamMate, adding a required
@@ -4019,15 +4028,25 @@ referenced by letter to avoid repeating the same evidence in every file entry.
   optional `id`, optional `name`), still re-exported from the package root.
   Holds; restore with the import moved to `../src/parse/mentions.js` (or the
   package root).
-- **`tests/transport.test.ts`** — surgical, 11 of 64 cases deleted (kept 53).
-  Already logged in this pass's earlier work (see the file's own diff): the
-  11 removed cases read `result.messageIds` or passed `onMessageCreated`,
-  both retired by R41's outbound redesign (`FeishuSendResult.messageIds:
-  string[]` → `messages: readonly FeishuSentMessage[]`, `onMessageCreated`
-  deleted outright as a read-after-send observer with no remaining reason to
-  exist once `messages` carries the same information up front). Does not
-  hold; changed by R41, no restore of the old fields — a rebuilt case reading
-  `result.messages` covers the same intent.
+- **`tests/transport.test.ts`** — surgical, 11 of 64 cases deleted (kept 53),
+  diffed against the state at the start of this pass to get the exact list:
+  `'sends the authored body as one Markdown card'`, `'threads a reply under
+  the source message'`, `'returns empty messageIds when Feishu omits
+  message_id'`, `'splits an oversized mixed document into ordered cards that
+  lose nothing'`, `'observes each message before sending the next'`,
+  `'reports only created messages before a later send fails'`, `'contains
+  observer failures and continues a multi-part send'`, `'sendCard sends
+  caller-owned interactive card JSON unchanged'`, `'sendCard uses cancellable
+  top-level create with caller-owned signal'`, `'sendCard uses cancellable
+  reply with caller-owned signal'`, `'earlier message ids stay observed when
+  a later part is refused'`. All 11 read `result.messageIds` or passed
+  `onMessageCreated`, both retired by R41's outbound redesign
+  (`FeishuSendResult.messageIds: string[]` → `messages: readonly
+  FeishuSentMessage[]`, `onMessageCreated` deleted outright as a
+  read-after-send observer with no remaining reason to exist once `messages`
+  carries the same information up front). Does not hold; changed by R41, no
+  restore of the old fields — a rebuilt case reading `result.messages` covers
+  the same intent.
 
 ### `@excitedjs/feishu-channel`
 
@@ -4058,6 +4077,16 @@ claim than is true (`.agents/domains/feishu-pairing-access.md`'s "package-root
 package-root/public framing while keeping the (still-true) claim that the
 function's own input shape is unchanged.
 
+- **`tests/public-api.test.ts`** — surgical, 1 of 4 cases deleted (kept 3).
+  `'retains the gate input ABI and requires prior exact-human classification'`
+  did `type PublicGateInput = Parameters<typeof
+  feishuChannel.dreamuxFeishuGate>[1]` — a type-level reference to a
+  package-root export, which is exactly what the barrel narrowing above
+  removed (`TS2339: Property 'dreamuxFeishuGate' does not exist` on the
+  barrel's type). Does not hold in its old package-root form; changed by
+  Stage 8b's already-shipped barrel narrowing, not by this pass. No restore —
+  a rebuilt case, if wanted, would import `dreamuxFeishuGate` from
+  `access/gate.js` directly rather than off the barrel.
 - **`tests/feishu-ask-user.test.ts`** — 25 cases. Imports from
   `../src/feishu-ask-user.js` (→ `ask-user/registry.ts`),
   `../src/feishu-ask-user-card.js` (→ `cards/ask-user.ts`, with the
@@ -4131,15 +4160,20 @@ function's own input shape is unchanged.
   two-mechanisms-into-one merge, not a loss. Does not hold in its old class
   form; changed by Stage 8b Item 9 — a rebuilt case exercises
   `FeishuCotAdapter` directly.
-- **`tests/feishu-slash-commands.test.ts`** — 18 cases, two independent
-  causes. One case (`'never accepts /teams as a group-chat text command'`-
-  adjacent dispatch checks) fails because `CommandContext.messageId` is a
-  required field the shared `dispatch()` test helper's fixture never supplies
-  — not traced to a specific ruling in this refactor's rulings.md; left as an
-  open question rather than an invented one. A second failure is `origin` on
-  a `FeishuBindingView` literal — Cause E (R38), no restore. The rest of the
-  file's cases pass tsc; deleted as a whole file only because the two broken
-  cases sit inside the same file this pass does not re-point.
+- **`tests/feishu-slash-commands.test.ts`** — 18 cases, whole file fails to
+  compile (not a per-case split) from two independent causes. The shared
+  `dispatch()` helper (used by 14 of the 18 cases) builds a `CommandContext`
+  object literal missing `messageId`; that field was added by Stage 8b
+  ("Plan Stage 8b Feishu: session/inbound/outbound split, R37/R38/R41") to
+  carry `announceMessageId` — confirmed absent from `CommandContext` at the
+  `feat/plugin-system-mvp` merge-base, so this is a genuine addition made
+  during this refactor, not a pre-existing gap. Holds; the fixture just
+  predates Stage 8b, restore by adding a placeholder `messageId`. Separately,
+  one case (`'falls back to the chat id when one current-name lookup
+  fails'`) builds a `FeishuBindingView` literal with `origin: 'space'` — Cause
+  E (R38), no restore. Because a single `TS2353`/`TS2345` anywhere in a file
+  fails that file's typecheck as a whole, both defects gate all 18 cases
+  equally; there is no subset of "the other 16 cases already pass tsc."
 - **`tests/feishu-space-policy.test.ts`** — 2 cases. Both read `.generation`
   off a `FeishuSpaceRecord` — Cause E (R38). Does not hold as written; no
   restore.
@@ -4270,12 +4304,17 @@ called out with its own distinct evidence.
 - **`tests/team-plugin-hooks.test.ts`** (1) — imports
   `helpers/dissolve-harness.js` (deleted this pass, see below) and exercises
   `team.service.hooks.beforeTeamLeaderLaunch`, renamed to `leaderLaunch` by
-  R48/R52. `tsc` alone does not flag this file (a module that exists but is
-  itself broken does not cascade a new tsc error to its callers — the
-  documented tsc/esbuild divergence); confirmed instead by running
-  `npx vitest run tests/team-plugin-hooks.test.ts` in isolation, which fails
-  at real ESM module resolution once `dissolve-harness.ts` is gone. Two
-  independent causes, neither a one-line restore.
+  R48/R52. In the shipped, final state (`dissolve-harness.ts` actually
+  deleted) `tsc` does flag this file directly (`TS2307: Cannot find module
+  './helpers/dissolve-harness.js'`), same as every other Cause-A file. It was
+  traced by restoring the file with `dissolve-harness.ts` *also* restored
+  alongside it (matching how every other file in this section was checked),
+  and in that combination `tsc` reports nothing for this file at all — a
+  module that exists on disk but is itself broken does not cascade a new tsc
+  error to its callers (the documented tsc/esbuild divergence); only
+  `npx vitest run tests/team-plugin-hooks.test.ts` in isolation, at real ESM
+  resolution, surfaced the dependency. Both symptoms point at the same
+  disposition: two independent causes, neither a one-line restore.
 - **`tests/team-summary.test.ts`** (2) — Cause A
   (`team-service/team-summary.js`, `team-collection/types.js`).
 - **`tests/teammate-dissolve-members.test.ts`** (5) — Cause A
