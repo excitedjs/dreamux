@@ -3159,16 +3159,23 @@ the whole file fails at module load before any case runs. (Determined by
 reading the source and confirming the import target no longer exists in this
 diff; the dispatch scopes this commit to staged-file eslint only; `vitest`
 itself runs in the final gate pass.)
-**Contract fully holds — restore verbatim.** Diffing the deleted
+**Contract fully holds — restore verbatim, with the same pre-existing
+import fix `service-claude-path.test.ts` below needs.** Diffing the deleted
 `onboard/service-node.ts` against `daemon/environment.ts`'s Node-selection
 section shows only import lines differ; every named export
 (`versionManagerOfPath`, `detectServiceNodeVersionManager`,
 `stableNodeCandidates`, `selectServiceNodeBin`, `stabilizeHomebrewCellarNode`,
-`ServiceNodeProbe`) moved with an unchanged body. Restore by re-pointing the
-file's two import lines (`../src/onboard/service.js` →
-`../src/daemon/environment.js`; `../src/onboard/types.js`'s `CommandRunner`
-import is unused in this file and was already absent — nothing to fix there)
-to the new module; nothing else in the file changes.
+`ServiceNodeProbe`) moved with an unchanged body. This file's line 11,
+`import type { CommandRunner } from '../src/onboard/types.js'`, is the same
+pre-existing, independent break documented below for
+`service-claude-path.test.ts`: `onboard/types.ts` has never exported
+`CommandRunner` (it lives in `platform/command-runner.ts`), yet line 13's
+`class FakeRunner implements CommandRunner` uses the name — `import type` is
+erased by esbuild, so this never surfaced at runtime, only under
+`typecheck:tests`. Restore needs three import-line changes, not two:
+`../src/onboard/service.js` → `../src/daemon/environment.js`, and
+`../src/onboard/types.js` → `../src/platform/command-runner.js` for
+`CommandRunner`; nothing else in the file changes.
 
 ### `packages/dreamux/tests/service-claude-path.test.ts` — whole file (1 describe block, 4 cases)
 
