@@ -31,22 +31,19 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import { repoRequest } from '../worktree/repo-request.js';
-import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
+import {
+  REPO_REQUEST_SCHEMA,
+  repoRequest,
+} from '../worktree/repo-request.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
-  OPEN_OBJECT,
   READ_ONLY_ANNOTATIONS,
-  SUBMISSION_STATUS_SCHEMA,
-  arrayOf,
-  closedObjectSchema,
-  repoInputSchema,
-  toolMetadata,
-  type McpToolAnnotations,
+  tool,
   type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
+import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import type {
   McpDelegateCall,
   McpDelegateDescription,
@@ -57,7 +54,12 @@ import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { TeamsPort } from './teams-port.js';
 import { teamCreatePayloadHash } from './create-request.js';
-import { teamHistoryQuery, teamNameParam, teamSubmitResult } from './requests.js';
+import {
+  teamHistoryQuery,
+  teamNameParam,
+  teamSubmitResult,
+  teamSubmitResultOutput,
+} from './requests.js';
 
 /** Who this delegate serves. Bound once, at runtime construction. */
 export type TeamMcpCaller =
@@ -70,48 +72,43 @@ export type TeamMcpCaller =
 
 export const TEAM_MCP_SERVER_NAME = 'team';
 
-const IDENTITY = { name: 'dreamux-team', version: MCP_IDENTITY_VERSION };
+/** One tool this delegate advertises, paired with the handler that serves it. */
+interface TeamMcpToolRecord {
+  readonly descriptor: McpToolDescriptor;
+  readonly execute: (args: CommandPayload) => Promise<McpToolSuccess>;
+}
 
 export function createTeamMcpDelegate(input: {
   teams: TeamsPort;
   caller: TeamMcpCaller;
 }): McpServerDelegate {
-  const tools = teamToolDescriptors(input.caller.kind);
+  const records = teamToolRecords(input.teams, input.caller);
+  const tools = records.map((record) => record.descriptor);
   return {
     name: TEAM_MCP_SERVER_NAME,
     describe(): McpDelegateDescription {
-      return { identity: IDENTITY, tools };
+      return { tools };
     },
     call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(() => serve(input.teams, input.caller, call));
+      return runDelegateTool(() => callTool(records, call));
     },
   };
 }
 
-async function serve(
-  teams: TeamsPort,
-  caller: TeamMcpCaller,
+async function callTool(
+  records: readonly TeamMcpToolRecord[],
   call: McpDelegateCall,
 ): Promise<McpToolSuccess> {
-  const args = call.arguments as CommandPayload;
-  switch (call.name) {
-    case 'create':
-      return create(teams, args);
-    case 'send':
-      return send(teams, args);
-    case 'list':
-      return list(teams);
-    case 'status':
-      return status(teams, args);
-    case 'history':
-      return history(teams, args);
-    case 'dissolve':
-      return dissolve(teams, caller, args);
-    default:
-      // Unreachable: Core admits a call only against this delegate's own frozen
-      // catalog, so a name that is not one of the above never arrives here.
-      throw new Error(`unknown Team tool '${call.name}'`);
+  const record = records.find(
+    (candidate) => candidate.descriptor.name === call.name,
+  );
+  if (record === undefined) {
+    // Unreachable: Core admits a call only against this delegate's own frozen
+    // catalog, so a name that is not in this delegate's own records never
+    // arrives here.
+    throw new Error(`unknown Team tool '${call.name}'`);
   }
+  return record.execute(call.arguments as CommandPayload);
 }
 
 async function create(
@@ -228,12 +225,14 @@ async function dissolve(
   return { structured: dissolved };
 }
 
-function teamToolDescriptors(
-  callerKind: TeamMcpCaller['kind'],
-): McpToolDescriptor[] {
-  if (callerKind === 'team_leader') {
+function teamToolRecords(
+  teams: TeamsPort,
+  caller: TeamMcpCaller,
+): TeamMcpToolRecord[] {
+  if (caller.kind === 'team_leader') {
     return [
-      tool(
+      {
+        descriptor: tool(
         'dissolve',
         "Call this only when the Team's work is complete. Your system prompt names the Team's workspace and its cleanup mode. Under cleanup: delete-on-close Dreamux removes the managed worktree when the Team dissolves, so first check it for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Under cleanup: keep, and in a reused directory, nothing is removed and nothing blocks the dissolve. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team's Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. A non-forced request checks the managed delete-on-close worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
         {
@@ -261,11 +260,14 @@ function teamToolDescriptors(
           output: dissolveReceiptSchema(),
           annotations: DESTRUCTIVE_ANNOTATIONS,
         },
-      ),
+        ),
+        execute: (args) => dissolve(teams, caller, args),
+      },
     ];
   }
   return [
-    tool(
+    {
+      descriptor: tool(
       'create',
       "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate the Team's work directory by the dispatcher's workspace policy (a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader's first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel's own decision, made with that channel's tools. With `prompt`, returns a receipt at once and the TeamLeader's completion is pushed later as a new message; without it, the Team is created and nothing is submitted.",
       {
@@ -277,7 +279,7 @@ function teamToolDescriptors(
             'Requested label; the concrete team_name comes back in the result.',
         },
         repo: {
-          ...repoInputSchema(),
+          ...REPO_REQUEST_SCHEMA,
           description:
             "Where the Team works; omit for the dispatcher's workspace default: a fresh shared directory, or the dispatcher's own directory when workspace isolation is disabled.",
         },
@@ -317,11 +319,14 @@ function teamToolDescriptors(
       ['name_prefix', 'leader_agent_runtime', 'intent'],
       {
         title: 'Create a Team',
-        output: OPEN_OBJECT,
+        output: OBJECT,
         annotations: MUTATING_ANNOTATIONS,
       },
-    ),
-    tool(
+      ),
+      execute: (args) => create(teams, args),
+    },
+    {
+      descriptor: tool(
       'send',
       "The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Submit a follow-up turn to a Team's TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel. Returns a receipt at once; the completion is pushed later as a new message.",
       {
@@ -347,32 +352,28 @@ function teamToolDescriptors(
       ['team_name', 'prompt'],
       {
         title: 'Send a TeamLeader turn',
-        output: closedObjectSchema(
-          {
-            status: SUBMISSION_STATUS_SCHEMA,
-            turn_id: { type: 'string' },
-            error: closedObjectSchema(
-              { code: { type: 'string' }, message: { type: 'string' } },
-              ['code', 'message'],
-            ),
-          },
-          ['status'],
-        ),
+        output: teamSubmitResultOutput,
         annotations: MUTATING_ANNOTATIONS,
       },
-    ),
-    tool(
+      ),
+      execute: (args) => send(teams, args),
+    },
+    {
+      descriptor: tool(
       'list',
       'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, and member count). Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
       {},
       [],
       {
         title: 'List Teams',
-        output: closedObjectSchema({ teams: arrayOf(OPEN_OBJECT) }, ['teams']),
+        output: objectSchema({ teams: arrayOf(OBJECT) }, ['teams']),
         annotations: READ_ONLY_ANNOTATIONS,
       },
-    ),
-    tool(
+      ),
+      execute: () => list(teams),
+    },
+    {
+      descriptor: tool(
       'status',
       "Read one Team's current summary by its team_name, using the same fields returned by create.",
       {
@@ -386,11 +387,14 @@ function teamToolDescriptors(
       ['team_name'],
       {
         title: 'Read Team status',
-        output: OPEN_OBJECT,
+        output: OBJECT,
         annotations: READ_ONLY_ANNOTATIONS,
       },
-    ),
-    tool(
+      ),
+      execute: (args) => status(teams, args),
+    },
+    {
+      descriptor: tool(
       'history',
       'Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.',
       {
@@ -446,17 +450,20 @@ function teamToolDescriptors(
       [],
       {
         title: 'Search Teams',
-        output: closedObjectSchema(
+        output: objectSchema(
           {
-            items: arrayOf(OPEN_OBJECT),
+            items: arrayOf(OBJECT),
             next_cursor: { type: ['string', 'null'] },
           },
           ['items', 'next_cursor'],
         ),
         annotations: READ_ONLY_ANNOTATIONS,
       },
-    ),
-    tool(
+      ),
+      execute: (args) => history(teams, args),
+    },
+    {
+      descriptor: tool(
       'dissolve',
       "Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team's worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. A non-forced request checks such a worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
       {
@@ -488,12 +495,14 @@ function teamToolDescriptors(
         output: dissolveReceiptSchema(),
         annotations: DESTRUCTIVE_ANNOTATIONS,
       },
-    ),
+      ),
+      execute: (args) => dissolve(teams, caller, args),
+    },
   ];
 }
 
 function dissolveReceiptSchema(): Record<string, unknown> {
-  return closedObjectSchema(
+  return objectSchema(
     {
       accepted: { type: 'boolean' },
       team_name: { type: 'string' },
@@ -501,26 +510,4 @@ function dissolveReceiptSchema(): Record<string, unknown> {
     },
     ['accepted', 'team_name', 'status'],
   );
-}
-
-function tool(
-  name: string,
-  description: string,
-  properties: Record<string, unknown>,
-  required: string[],
-  meta: {
-    title: string;
-    output: Record<string, unknown>;
-    annotations: McpToolAnnotations;
-  },
-): McpToolDescriptor {
-  return toolMetadata({
-    name,
-    title: meta.title,
-    description,
-    properties,
-    required,
-    outputSchema: meta.output,
-    annotations: meta.annotations,
-  });
 }

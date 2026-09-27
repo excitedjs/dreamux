@@ -14,6 +14,7 @@ import {
   decodeCursor,
 } from '../../platform/history-page.js';
 import type { TurnAdmission } from '../agent/admission.js';
+import { SUBMISSION_STATUS_VALUES } from '../agent/requests.js';
 import { validateTeamId, type TeamHistoryQuery } from './types.js';
 
 /** Read an optional Team status filter, in this domain's own vocabulary. */
@@ -99,13 +100,7 @@ export function teamHistoryQuery(params: CommandPayload): TeamHistoryQuery {
  */
 export const teamSubmitResultOutput = objectSchema(
   {
-    status: enumOf([
-      'submitted',
-      'duplicate',
-      'stopped',
-      'failed',
-      'ambiguous',
-    ]),
+    status: enumOf(SUBMISSION_STATUS_VALUES),
     turn_id: STRING,
     error: objectSchema({ code: STRING, message: STRING }, ['code', 'message']),
   },

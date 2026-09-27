@@ -8,19 +8,17 @@ import { createOnboardCommand } from './onboard.js';
 import { createServeCommand } from './serve.js';
 import { createStatusCommand } from './status.js';
 import { createUninstallCommand } from './uninstall.js';
-import type { CliDeps, DreamuxCommand, ExecEntry } from './types.js';
+import type { DreamuxCommand } from './types.js';
 
-export type { CliDeps, ExecEntry };
-
-export function createDreamuxCommands(deps: CliDeps): DreamuxCommand[] {
+export function createDreamuxCommands(): DreamuxCommand[] {
   return [
     createOnboardCommand(),
     createUninstallCommand(),
-    createServeCommand(deps),
-    createStatusCommand(deps),
+    createServeCommand(),
+    createStatusCommand(),
     createDoctorCommand(),
     createDaemonCommand(),
-    createDispatcherCommand(deps),
+    createDispatcherCommand(),
     // One MCP subcommand for every Agent-facing server. Which server it is, and
     // for whom, lives entirely in the lease token it is launched with.
     createMcpCommand(),

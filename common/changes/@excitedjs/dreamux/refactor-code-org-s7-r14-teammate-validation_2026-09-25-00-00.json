@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 7, item 7 (R14): the teammate.spawn and teammate.submit Commands now reject an empty prompt, a blank agent_runtime, or a blank intent with BAD_REQUEST, matching what the equivalent TeamMate MCP tools already reject. The MCP tools' own behavior is unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

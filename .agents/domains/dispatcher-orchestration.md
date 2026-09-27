@@ -372,9 +372,12 @@ a dispatcher-wide key. A delivery-initiating action (`spawn`, `send`, or
 team-create-with-prompt) resolves its initiator before runtime admission and
 attaches one closure to the entity-owned `Turn`. After the winning terminal
 outcome is selected, that Turn invokes the shared stateless
-`CompletionDeliveryPolicy`, which delivers at-most-once per producer, completion
-token, and recipient while preserving provider order — never keyed by native
-ids, completion text, or slot heuristics.
+`CompletionDeliveryPolicy`, which delivers at-most-once per completion token
+while preserving provider order — never keyed by native ids, completion text,
+or slot heuristics. Dedupe keys on the token alone: an entity's initiator is
+fixed for its whole life, so every submission whose native turn can fold into
+the same token already resolves to the same recipient — there is no separate
+per-producer or per-recipient dedupe axis to keep.
 
 - the initiating action retains the target directly; there is no Turn id lookup
   map or terminal registry;

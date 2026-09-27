@@ -7,12 +7,16 @@
  * readers. The Dispatcher and Team TeamMate surfaces both ask the same
  * questions, so they both ask them through this one reader.
  */
+import type { JsonSchema } from '@excitedjs/dreamux-types';
+
 import {
   throwCallerMistake,
   RuleViolation,
   ValidationError,
 } from '../../command/errors.js';
 import {
+  mustNonBlankString,
+  mustNonEmptyString,
   mustString,
   optionalBooleanField,
   optionalInteger,
@@ -20,6 +24,7 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
+import { OBJECT, STRING, enumOf, objectSchema } from '../../command/schema.js';
 import {
   clampHistoryLimit,
   decodeCursor,
@@ -156,3 +161,94 @@ function optionalTeammateStatus(
     `param '${key}' must be starting, running, degraded, closed, or stopped`,
   );
 }
+
+/** One spawn request's scalar fields, as both Command and MCP ask them. */
+export interface AgentSpawnRequest {
+  readonly name: string;
+  readonly prompt: string;
+  readonly intent: string;
+  readonly agentRuntime: string | null;
+  readonly identity: string | null;
+}
+
+/**
+ * Read a spawn request's scalar fields.
+ *
+ * `repo` and `skill_sources` are not read here: MCP's `spawn` resolves `repo`
+ * into a caller-kind-scoped workspace decision the Command surface does not
+ * make, so those two fields stay with the caller that reads them. `prompt`
+ * and `agent_runtime` reject blank the same way on both surfaces: a
+ * caller-supplied but empty first turn, or a caller-supplied but blank
+ * runtime id, is the caller's mistake on either surface, not a value Core
+ * silently treats as absent.
+ */
+export function agentSpawnRequest(params: CommandPayload): AgentSpawnRequest {
+  return {
+    name: mustNonBlankString(params, 'name_prefix'),
+    prompt: mustNonEmptyString(params, 'prompt'),
+    intent: mustNonBlankString(params, 'intent'),
+    agentRuntime: optionalNonBlankString(params, 'agent_runtime'),
+    identity: optionalNonBlankString(params, 'identity'),
+  };
+}
+
+/** One send request, as both Command and MCP ask it. */
+export interface AgentSendRequest {
+  readonly name: string;
+  readonly prompt: string;
+  readonly intent: string | null;
+}
+
+/** Read a send request. `prompt`/`intent` reject blank on both surfaces. */
+export function agentSendRequest(params: CommandPayload): AgentSendRequest {
+  return {
+    name: agentEntityNameParam(params, 'name'),
+    prompt: mustNonEmptyString(params, 'prompt'),
+    intent: optionalNonBlankString(params, 'intent'),
+  };
+}
+
+/** One close request, as both Command and MCP ask it. */
+export interface AgentCloseRequest {
+  readonly name: string;
+  readonly note: string;
+}
+
+export function agentCloseRequest(params: CommandPayload): AgentCloseRequest {
+  return {
+    name: agentEntityNameParam(params, 'name'),
+    note: mustNonBlankString(params, 'note'),
+  };
+}
+
+/**
+ * The external status vocabulary a submission receipt reports.
+ *
+ * Deliberately not the runtime admission ledger's own status union: its
+ * internal `skipped` outcome is normalized to `stopped` at every
+ * caller-facing boundary, so a receipt schema built from the raw union would
+ * advertise a status no caller ever receives. One array instead of the three
+ * independent spellings `teammate.spawn`/`teammate.submit`'s Command schema,
+ * the TeamMate MCP tools' schema, and `team.submit`'s schema each carried.
+ */
+export const SUBMISSION_STATUS_VALUES = [
+  'submitted',
+  'duplicate',
+  'stopped',
+  'failed',
+  'ambiguous',
+] as const;
+
+/**
+ * The declared output of a TeamMate submission receipt: `teammate.spawn`,
+ * `teammate.submit`, and their MCP `spawn`/`send` equivalents all return this
+ * one shape instead of each declaring their own copy.
+ */
+export const teammateReceiptSchema: JsonSchema = objectSchema(
+  {
+    teammate: OBJECT,
+    status: enumOf(SUBMISSION_STATUS_VALUES),
+    error: STRING,
+  },
+  ['teammate', 'status'],
+);

@@ -26,7 +26,7 @@
  */
 import type { AgentRuntimeMcpServer } from '@excitedjs/dreamux-types';
 
-import { dreamuxBinPath } from '../../platform/package-bin.js';
+import { dreamuxBinPath } from '../platform/package-bin.js';
 
 /** The environment variable the generic shim reads its lease token from. */
 export const DREAMUX_MCP_LEASE_ENV = 'DREAMUX_MCP_LEASE';

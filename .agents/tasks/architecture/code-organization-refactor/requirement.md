@@ -142,8 +142,41 @@ what it moves.
 
 ## Open items to settle in the technical solution
 
-- R18: whether every Agent's completions have exactly one possible recipient
-  (decides one layer or two).
+- R18 — resolved, Case A (one layer): every entity's `initiatorFor` is bound
+  once at construction and never varied per submission (the only two
+  definitions, `service/team/service.ts:172` and
+  `service/dispatcher-service/index.ts:215`, are both closed over fixed
+  state — a Team's `TeamLeaderCompletionTargets.recipientKey`
+  (`service/team/completion-targets.ts:27`) is one frozen object for the
+  Team's whole life, and the dispatcher's `mustAgent()`
+  (`service/dispatcher-service/agent.ts:159`) returns the same single
+  `this.service` field for the `DispatcherAgent`'s life, so the dispatcher
+  case falls back to `recipientKey ?? initiator` on that same fixed object).
+  `service/agent/turn.ts`'s `EntityTurn.startDeliveryIfReady()` fires its
+  `deliveryClosure` at most once per `EntityTurn`, and each `EntityTurn` is
+  constructed with one closure fixed at attach time
+  (`EntityTurnCoordinator.attachSubmission`, `turn.ts:121-136`). The only way
+  one `RuntimeCompletion` object reaches the router more than once is
+  `packages/agent-runtime/codex/src/turn-manager.ts`'s `NativeTurnRecord`: a
+  steering `turn/start` that merges into an already-running native turn adds
+  a member to that record instead of opening a new one, and `finalize()`
+  (`turn-manager.ts:324-351`) settles every member with the same
+  `completion` object reference. Every member comes from a submission into
+  the same `TurnManager` (one per `CodexRuntime`, `runtime.ts:241`), and a
+  `CodexRuntime` instance lives inside one entity's own `RuntimeGeneration`
+  (`service/agent/runtime-generation.ts:61`), itself owned by that entity's
+  `AgentService` — "one canonical Agent entity and the sole owner of its
+  live lifecycle" (`service/agent/service.ts:68`) — so no other entity's
+  submissions ever reach that `TurnManager`. Every member that can share a
+  completion object therefore already shares the same fixed `initiatorFor`,
+  hence the same `recipientKey`. No code path produces two different
+  recipients for the same `RuntimeCompletion` object.
+  `CompletionDeliveryPolicy` in `service/completion-router/index.ts` now
+  dedupes on a single `WeakMap<RuntimeCompletion, Promise<void>>` keyed
+  directly on the completion object; the source-string-keyed outer `Map` and
+  the per-recipient `WeakMap` nested inside it are gone. `recipientTails`
+  (per-recipient FIFO ordering) is unrelated to this dedupe and is
+  unchanged.
 - R32: whether unifying the two activity shapes is a net deletion.
 - R22: the inventory of persisted diagnostic-only fields beyond `access.json`.
 - R21: which loader rules change, and the PR #453 plugin `config` block rule.

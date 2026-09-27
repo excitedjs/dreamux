@@ -17,8 +17,8 @@ import type { TeamContainedRole, TeammateStatus } from './teammate.js';
  * A Team's repository policy. It is the complete existing Team-creation
  * capability, not a Channel-shaped subset: `reuse-cwd` reuses a caller-selected
  * or default working directory, and `managed` creates a git worktree with the
- * existing optional path, base ref, branch, slug, and cleanup controls. An
- * omitted request keeps the dispatcher's default shared work directory.
+ * existing optional path, base ref, branch, and cleanup controls. An omitted
+ * request keeps the dispatcher's default shared work directory.
  *
  * A Channel that owns only a narrow policy — Feishu supplies `path`/`base_ref`
  * — maps it into the `managed` branch before invoking the Command, so no
@@ -36,7 +36,6 @@ export type TeamCreateRepoRequest =
       readonly path?: string;
       readonly base_ref?: string;
       readonly branch?: string;
-      readonly slug?: string;
       readonly cleanup?: 'keep' | 'delete-on-close';
     };
 

@@ -35,7 +35,7 @@ import {
   StdioServerTransport,
 } from '@modelcontextprotocol/server/stdio';
 
-import { unclassifiedFailureText } from './failure-text.js';
+import { failureText } from '../command/errors.js';
 
 /**
  * The exact ordered set of official MCP revisions Dreamux serves. Modern
@@ -295,7 +295,7 @@ async function executeTool(
     // reads the code and the message that value already had.
     log(`tool '${tool.name}' failed: ${describeError(err)}`);
     return {
-      content: [{ type: 'text', text: unclassifiedFailureText(err) }],
+      content: [{ type: 'text', text: failureText(err) }],
       isError: true,
     };
   }

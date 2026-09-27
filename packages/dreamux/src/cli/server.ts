@@ -1,9 +1,7 @@
 /**
- * Internal server entry point for `dreamux serve`.
- *
- * Usage:
- *   dreamux serve                  # run in foreground; logs to stderr
- *   dreamux serve --help
+ * `dreamux serve`'s implementation: {@link runServe} runs in-process inside
+ * the `dreamux` CLI process — `cli/commands/serve.ts` calls it directly, no
+ * child process involved. It logs to stderr for a foreground run.
  *
  * Configuration sources:
  *   - ~/.dreamux/config.json — named agents[], dispatcher declarations, and
@@ -41,12 +39,7 @@ import {
 } from '../platform/paths.js';
 import { sweepRuntimeSocketDirs } from '../platform/runtime-sockets.js';
 
-async function main(): Promise<void> {
-  if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    printHelp();
-    return;
-  }
-
+export async function runServe(): Promise<void> {
   // Seed a registry with the builtin provider DESCRIPTORS and hand it to
   // ConfigService.open, which loads every referenced provider implementation —
   // builtin AND npm, both kinds — through the single dynamic loader before
@@ -108,45 +101,3 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => requestShutdown('SIGTERM'));
   process.on('SIGINT', () => requestShutdown('SIGINT'));
 }
-
-function printHelp(): void {
-  console.log(`dreamux serve — local dreamux server
-
-Usage:
-  dreamux serve [--help]
-
-Global config:
-  ~/.dreamux/config.json    Created by 'dreamux onboard'. Override with the
-                            DREAMUX_CONFIG_DIR env var. Edit and restart to
-                            apply. Holds named agents[], dispatcher
-                            declarations (channels[] + agentRuntime), and
-                            channel secrets.
-
-Runtime data:
-  ~/.dreamux/run/           volatile run files: admin socket + lock, one-shot
-                            restart marker, and runtime rendezvous sockets.
-                            Safe to clear while no server is running.
-  ~/.dreamux/state/         durable server state: per-dispatcher status/access
-                            files and TeamMate records.
-  ~/.dreamux/logs/          server, channel, agent runtime, and MCP
-                            shim logs.
-
-Environment overrides:
-  DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
-
-Dispatcher declarations:
-  Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
-  Provider refs load through the registry before config validation.
-  Built-in refs are resolved through the same provider loading path as npm:<package>[#export].
-
-Plugins:
-  plugins[] (builtin:<id> or npm:<package>[#export]) load before provider refs,
-  so a provider a plugin contributes is addressable as builtin:<name>.
-  builtin:bootstrap is opt-in.
-`);
-}
-
-main().catch((err) => {
-  console.error('[server] fatal:', err);
-  process.exit(1);
-});

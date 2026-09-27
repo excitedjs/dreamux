@@ -16,7 +16,6 @@
 import type {
   CoreCommandContext,
   CoreCommandDefinition,
-  JsonSchema,
 } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
@@ -24,14 +23,18 @@ import {
   normalizeSkillSources,
   optionalParsedSkillSources,
 } from '../../agent-runtime/skill-sources.js';
+import { commandPayload } from '../../command/payload.js';
 import {
-  commandPayload,
-  mustNonBlankString,
-  mustString,
-  optionalNonBlankString,
-  optionalString,
-} from '../../command/payload.js';
-import { historyQuery } from './requests.js';
+  agentCloseRequest,
+  agentEntityLastQuery,
+  agentEntityNameParam,
+  agentSendRequest,
+  agentSpawnRequest,
+  historyQuery,
+  teammateReceiptSchema,
+  type AgentCloseRequest,
+  type AgentSendRequest,
+} from './requests.js';
 import {
   REPO_REQUEST_SCHEMA,
   repoRequest,
@@ -59,21 +62,8 @@ import type {
   AgentEntityRuntimeStatus,
   AgentEntitySpawnResult,
 } from './identity.js';
-import {
-  agentEntityLastQuery,
-  agentEntityNameParam,
-} from './requests.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import type { TeammateOps } from './types.js';
-
-/** The shared admission-outcome vocabulary of a prompt submission receipt. */
-const SUBMISSION_STATUS: JsonSchema = enumOf([
-  'submitted',
-  'duplicate',
-  'stopped',
-  'failed',
-  'ambiguous',
-]);
 
 interface SpawnInput {
   name: string;
@@ -83,17 +73,6 @@ interface SpawnInput {
   identity: string | null;
   skillSources: ReturnType<typeof optionalParsedSkillSources>;
   repo: ReturnType<typeof repoRequest>;
-}
-
-interface SendInput {
-  name: string;
-  prompt: string;
-  intent: string | null;
-}
-
-interface CloseInput {
-  name: string;
-  note: string;
 }
 
 interface NameInput {
@@ -130,31 +109,20 @@ export function teammateCommands(
     input: objectSchema(
       {
         name_prefix: STRING,
-        prompt: STRING,
+        prompt: NON_EMPTY_STRING,
         intent: NON_EMPTY_STRING,
-        agent_runtime: STRING,
+        agent_runtime: NON_EMPTY_STRING,
         identity: NON_EMPTY_STRING,
         skill_sources: arrayOf(OBJECT),
         repo: REPO_REQUEST_SCHEMA,
       },
       ['name_prefix', 'prompt', 'intent'],
     ),
-    output: objectSchema(
-      {
-        teammate: OBJECT,
-        status: SUBMISSION_STATUS,
-        error: STRING,
-      },
-      ['teammate', 'status'],
-    ),
+    output: teammateReceiptSchema,
     parse(payload) {
       const params = commandPayload(payload);
       return {
-        name: mustNonBlankString(params, 'name_prefix'),
-        prompt: mustString(params, 'prompt'),
-        intent: mustNonBlankString(params, 'intent'),
-        agentRuntime: optionalString(params, 'agent_runtime'),
-        identity: optionalNonBlankString(params, 'identity'),
+        ...agentSpawnRequest(params),
         skillSources: optionalParsedSkillSources(params),
         repo: repoRequest(params, 'repo'),
       };
@@ -186,26 +154,18 @@ export function teammateCommands(
 
   const submit: CoreCommandDefinition<
     'teammate.submit',
-    SendInput,
+    AgentSendRequest,
     AgentEntitySpawnResult
   > = {
     name: 'teammate.submit',
     version: 1,
-    input: objectSchema({ name: STRING, prompt: STRING, intent: STRING }, [
-      'name',
-      'prompt',
-    ]),
-    output: objectSchema(
-      { teammate: OBJECT, status: SUBMISSION_STATUS, error: STRING },
-      ['teammate', 'status'],
+    input: objectSchema(
+      { name: STRING, prompt: NON_EMPTY_STRING, intent: NON_EMPTY_STRING },
+      ['name', 'prompt'],
     ),
+    output: teammateReceiptSchema,
     parse(payload) {
-      const params = commandPayload(payload);
-      return {
-        name: agentEntityNameParam(params, 'name'),
-        prompt: mustString(params, 'prompt'),
-        intent: optionalString(params, 'intent'),
-      };
+      return agentSendRequest(commandPayload(payload));
     },
     async execute(context, input) {
       return resolveDispatcher(context).teammates.send({
@@ -218,7 +178,7 @@ export function teammateCommands(
 
   const close: CoreCommandDefinition<
     'teammate.close',
-    CloseInput,
+    AgentCloseRequest,
     AgentEntityCloseResult
   > = {
     name: 'teammate.close',
@@ -229,11 +189,7 @@ export function teammateCommands(
     ]),
     output: objectSchema({ teammate: OBJECT }, ['teammate']),
     parse(payload) {
-      const params = commandPayload(payload);
-      return {
-        name: agentEntityNameParam(params, 'name'),
-        note: mustNonBlankString(params, 'note'),
-      };
+      return agentCloseRequest(commandPayload(payload));
     },
     async execute(context, input) {
       return resolveDispatcher(context).teammates.close({

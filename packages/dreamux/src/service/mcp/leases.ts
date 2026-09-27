@@ -57,11 +57,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import {
-  validateMcpToolCatalog,
-  type ValidatedMcpTool,
-} from '../../mcp/catalog.js';
-import { failureText } from '../../mcp/failure-text.js';
+import { validateMcpToolCatalog, type ValidatedMcpTool } from './catalog.js';
+import { failureText } from '../../command/errors.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import { StatedFailure } from '../../platform/errors.js';
 import {
@@ -71,11 +68,14 @@ import {
   JSON_VALUE_UNBOUNDED,
 } from '../../platform/json-value.js';
 import type { AgentRuntimeGenerationLease } from '../agent/runtime-state.js';
+import {
+  mcpDelegateIdentity,
+  type McpDelegateIdentity,
+} from './identity-version.js';
 import { unknownToolResult } from './projection.js';
 import type {
   McpDelegateCall,
   McpDelegateDescription,
-  McpDelegateIdentity,
   McpDelegateResult,
   McpServerDelegate,
 } from './types.js';
@@ -165,10 +165,12 @@ export class McpLeaseRegistry {
    * generation, and return its token.
    *
    * This is where Core proves a catalog, and it runs before the runtime that
-   * would advertise it exists. A malformed identity, a malformed descriptor, a
-   * duplicated tool name, or a schema the official SDK rejects therefore fails
-   * the launch, loudly, in the process that can say which delegate produced it
-   * — instead of surfacing later as a child that will not come up.
+   * would advertise it exists. A malformed descriptor, a duplicated tool name,
+   * or a schema the official SDK rejects therefore fails the launch, loudly,
+   * in the process that can say which delegate produced it — instead of
+   * surfacing later as a child that will not come up. The identity half of the
+   * envelope cannot be malformed: it is computed here, from the delegate's own
+   * `name`, and never read out of the delegate's answer.
    *
    * `null` means the delegate advertises nothing, and its caller must give the
    * runtime no server for it: an Agent is never shown an MCP server with an
@@ -313,7 +315,7 @@ function freezeDelegateCatalog(
   }
   if (tools.length === 0) return null;
   return Object.freeze({
-    identity: frozenIdentity(snapshot['identity'], server),
+    identity: mcpDelegateIdentity(name),
     // Validation rebuilds each descriptor to apply its documented defaults, so
     // those wrappers are new and still mutable; freezing them closes the last
     // gap. Everything nested inside already came frozen out of the snapshot.
@@ -352,28 +354,4 @@ function canonicalDescription(
     throw new Error(`${label} must be an object`);
   }
   return snapshot as Record<string, unknown>;
-}
-
-/**
- * Prove the server identity Core is about to publish, and keep only its two
- * fields.
- *
- * The shim checks this as well, but it is the second reader: an identity that
- * is missing or malformed must fail the launch that composed it rather than the
- * child that was already spawned to advertise it.
- */
-function frozenIdentity(value: unknown, server: string): McpDelegateIdentity {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${server} identity must be an object`);
-  }
-  const identity = value as Record<string, unknown>;
-  const name = identity['name'];
-  const version = identity['version'];
-  if (typeof name !== 'string' || name.trim() === '') {
-    throw new Error(`${server} identity.name must be a non-empty string`);
-  }
-  if (typeof version !== 'string' || version.trim() === '') {
-    throw new Error(`${server} identity.version must be a non-empty string`);
-  }
-  return Object.freeze({ name, version });
 }

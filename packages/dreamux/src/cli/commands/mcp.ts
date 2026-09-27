@@ -1,7 +1,7 @@
 import type { Argv, CommandModule } from 'yargs';
 
 import { runDreamuxMcp } from '../../mcp/shim.js';
-import { DREAMUX_MCP_LEASE_ENV } from '../../service/mcp/descriptor.js';
+import { DREAMUX_MCP_LEASE_ENV } from '../../mcp/launch.js';
 
 interface McpArgv {
   adminSocket?: string;

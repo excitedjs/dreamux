@@ -39,12 +39,8 @@ import type { Readable, Writable } from 'node:stream';
 import type { JsonInvoker, JsonValue } from '@excitedjs/dreamux-types';
 
 import { AdminClientError, adminJsonInvoker } from '../admin/client.js';
-import {
-  codedFailureText,
-  statedFailureText,
-  unclassifiedFailureText,
-} from './failure-text.js';
-import { validateMcpToolCatalog } from './catalog.js';
+import { commandFailureText, failureText } from '../command/errors.js';
+import { validateMcpToolCatalog } from '../service/mcp/catalog.js';
 import {
   PublicToolError,
   runMcpServer,
@@ -174,18 +170,20 @@ async function callTool(
  * or a transport failure this process observed itself — keeps the code and the
  * message it already has. Core does not own those words and does not replace
  * them.
+ *
+ * Shares its rendering with `command/errors.ts` rather than re-deriving the
+ * branch: an `AdminClientError` already carries exactly a `CommandFailure`'s
+ * three fields (it is reconstructed from the server's own error envelope), so
+ * it goes straight to the renderer instead of through `commandFailure`'s
+ * thrown-value classification, which would not recognize it as one of Core's
+ * own known failure classes and would report it as `INTERNAL`. Anything else
+ * reaching this process — a `TransportError` this side observed for itself —
+ * was never wire-classified, so it takes the classifying path.
  */
 function invocationFailureText(error: unknown): string {
-  if (error instanceof AdminClientError) {
-    return error.action !== undefined
-      ? statedFailureText({
-          code: error.code,
-          message: error.message,
-          action: error.action,
-        })
-      : codedFailureText(error.code, error.message);
-  }
-  return unclassifiedFailureText(error);
+  return error instanceof AdminClientError
+    ? commandFailureText(error)
+    : failureText(error);
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

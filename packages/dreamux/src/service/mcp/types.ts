@@ -21,30 +21,21 @@
  * composition roots that already own those objects.
  */
 /**
- * The MCP server identity a delegate advertises for itself.
- *
- * Distinct from {@link McpServerDelegate.name}: this is what the server calls
- * itself in its own initialize response, while the name is the key the runtime
- * registers it under. Core proves both, in different places and against
- * different rules.
- */
-export interface McpDelegateIdentity {
-  readonly name: string;
-  readonly version: string;
-}
-
-/**
  * What a delegate advertises. `tools` is an opaque list of MCP tool descriptors:
  * the infrastructure validates it structurally against the official SDK (see
- * `mcp/catalog.ts`) and never reads a name, description, or schema out of it.
+ * `catalog.ts`) and never reads a name, description, or schema out of it.
  *
  * `unknown` rather than a mirrored descriptor type, because these come from two
  * unrelated worlds — Core-owned builders and whatever an external Channel
  * package publishes — and Core's JSON boundary plus that structural validation
  * are what actually enforce the contract.
+ *
+ * Carries no identity: a delegate's MCP server identity is a pure function of
+ * its own `name` (see `identity-version.ts`'s `mcpDelegateIdentity`), computed
+ * by the registry that mints the catalog rather than stated here, so there is
+ * nothing for a delegate to get wrong about it.
  */
 export interface McpDelegateDescription {
-  readonly identity: McpDelegateIdentity;
   readonly tools: readonly unknown[];
 }
 

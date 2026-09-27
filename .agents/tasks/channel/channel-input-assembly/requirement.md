@@ -89,7 +89,7 @@ text alone.
   provenance envelope every runtime reads:
   [`/packages/dreamux/src/service/channel-submission.ts`](/packages/dreamux/src/service/channel-submission.ts)
   and
-  [`/packages/dreamux/src/service/teammate-service/submission.ts`](/packages/dreamux/src/service/teammate-service/submission.ts).
+  [`/packages/dreamux/src/service/agent/submission.ts`](/packages/dreamux/src/service/agent/submission.ts).
   The current behavior is owned by
   [`channel-routing-and-binding`](/.agents/domains/channel.md);
   this record is kept for the *why* of the routing/display split, not as a

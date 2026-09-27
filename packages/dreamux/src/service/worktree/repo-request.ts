@@ -36,14 +36,13 @@ export const REPO_REQUEST_SCHEMA: JsonSchema = objectSchema(
     path: STRING,
     base_ref: STRING,
     branch: STRING,
-    slug: STRING,
     cleanup: enumOf(['keep', 'delete-on-close']),
   },
   ['mode'],
 );
 
 /** The managed-only controls a `reuse-cwd` request must not carry. */
-const MANAGED_ONLY_KEYS = ['base_ref', 'branch', 'slug', 'cleanup'] as const;
+const MANAGED_ONLY_KEYS = ['base_ref', 'branch', 'cleanup'] as const;
 
 /**
  * Read the canonical repository policy. A reused working directory is never
@@ -85,13 +84,11 @@ export function repoRequest(
   }
   const baseRef = optionalString(obj, 'base_ref');
   const branch = optionalString(obj, 'branch');
-  const slug = optionalString(obj, 'slug');
   return {
     mode,
     ...(path !== null ? { path } : {}),
     ...(baseRef !== null ? { base_ref: baseRef } : {}),
     ...(branch !== null ? { branch } : {}),
-    ...(slug !== null ? { slug } : {}),
     ...(cleanup !== null ? { cleanup } : {}),
   };
 }
@@ -112,7 +109,6 @@ export function repoWorktree(
     cwd,
     worktree: {
       mode: 'managed',
-      slug: repo.slug,
       base_ref: repo.base_ref,
       branch: repo.branch,
       cleanup: repo.cleanup,

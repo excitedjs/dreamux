@@ -24,7 +24,7 @@ import type {
 import {
   assertUniqueMcpServerNames,
   mcpServerDescriptor,
-} from '../mcp/descriptor.js';
+} from '../../mcp/launch.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { reprepareDeletedManagedWorktree } from '../worktree/workspaces.js';
 import {

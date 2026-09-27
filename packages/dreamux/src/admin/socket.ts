@@ -105,7 +105,7 @@ export function createAdminSocketServer(
         });
 
         // PR #3 review #2: chmod is a hard requirement, not best-effort —
-        // a 0666 admin socket exposes server-ctl methods to every local user.
+        // a 0666 admin socket exposes every admin Command to every local user.
         try {
           await chmodFn(socketPath, 0o600);
         } catch (e) {

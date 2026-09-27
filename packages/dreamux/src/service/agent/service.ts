@@ -333,8 +333,10 @@ export class AgentService {
       return { status: 'stopped' };
     }
     // Inside the admission closure, so a deduplicated repeat neither
-    // rewrites the recovery subject nor submits a second turn.
-    if (input.intent !== undefined && input.intent !== '') {
+    // rewrites the recovery subject nor submits a second turn. Every
+    // `TeammateSubmitInput` producer reads `intent` through a non-blank-string
+    // reader, so a defined value here is never empty.
+    if (input.intent !== undefined) {
       await this.state.updateIntent(input.intent);
     }
     const runtime = this.runtimeGeneration.mustRuntime();

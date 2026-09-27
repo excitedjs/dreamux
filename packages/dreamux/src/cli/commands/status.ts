@@ -1,12 +1,11 @@
 import type { CommandModule } from 'yargs';
 
-import { adminEnv, type CliDeps } from './types.js';
+import { runAdminCommand } from './types.js';
 
-export function createStatusCommand(deps: CliDeps): CommandModule {
+export function createStatusCommand(): CommandModule {
   return {
     command: 'status',
     describe: 'Show running server status',
-    handler: async () =>
-      deps.execEntry(deps.serverCtlEntry, ['server', 'status'], adminEnv()),
+    handler: async () => runAdminCommand('server.status'),
   };
 }

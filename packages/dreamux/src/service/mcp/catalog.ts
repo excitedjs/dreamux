@@ -4,8 +4,9 @@
  * Every Agent-facing catalog now crosses a process boundary as plain JSON: a
  * delegate in the server describes its tools, and the stdio shim registers what
  * it is handed. That makes catalog validation a property of the transport, not
- * of any one domain — so it lives here, in front of the official SDK, and both
- * sides of that boundary use it.
+ * of any one domain — so it lives beside the lease registry that runs the
+ * authoritative pass, and the shim (`mcp/shim.ts`, the outermost layer) reaches
+ * it from there for its own defensive re-validation of wire bytes.
  *
  * The authoritative run is in the server, when Core freezes a generation's
  * catalog: it happens before the runtime that would advertise the catalog is
@@ -21,7 +22,10 @@
  * names, that each schema compiles through the same SDK adapter registration
  * uses, and that annotations and icons carry only the keys MCP defines.
  */
-import { validateMcpJsonSchema, type McpToolMetadata } from './server.js';
+import {
+  validateMcpJsonSchema,
+  type McpToolMetadata,
+} from '../../mcp/server.js';
 
 /**
  * A tool descriptor after validation. `inputSchema`/`outputSchema` stay opaque

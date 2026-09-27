@@ -132,9 +132,7 @@ export class WorktreeManager {
     }
     const sourceRepo = await this.repoRoot(sourceCwd);
     const canonicalRepoRoot = await realpath(sourceRepo);
-    const slug = validateWorktreeSlug(
-      input.request?.slug ?? input.teammateName,
-    );
+    const slug = validateWorktreeSlug(input.teammateName);
     const branch =
       input.request?.branch ?? `dreamux/${teamMateNameSegment(slug)}`;
     const baseRef = input.request?.base_ref ?? 'HEAD';

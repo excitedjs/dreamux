@@ -18,19 +18,15 @@
  * renders it.
  */
 import type { CommandPayload } from '../../command/payload.js';
-import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
-  OPEN_OBJECT,
   READ_ONLY_ANNOTATIONS,
-  arrayOf,
-  closedObjectSchema,
-  toolMetadata,
-  type McpToolAnnotations,
+  tool,
   type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
+import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import type {
   McpDelegateCall,
   McpDelegateDescription,
@@ -48,7 +44,14 @@ import type { SchedulerCommands } from './types.js';
 
 export const CRON_MCP_SERVER_NAME = 'cron';
 
-const IDENTITY = { name: 'dreamux-cron', version: MCP_IDENTITY_VERSION };
+/** One tool this delegate advertises, paired with the handler that serves it. */
+interface CronMcpToolRecord {
+  readonly descriptor: McpToolDescriptor;
+  readonly execute: (
+    scheduler: SchedulerCommands,
+    args: CommandPayload,
+  ) => Promise<McpToolSuccess>;
+}
 
 /**
  * Build the cron delegate for one owner.
@@ -60,11 +63,11 @@ const IDENTITY = { name: 'dreamux-cron', version: MCP_IDENTITY_VERSION };
 export function createCronMcpDelegate(input: {
   scheduler: () => Promise<SchedulerCommands>;
 }): McpServerDelegate {
-  const tools = cronToolDescriptors();
+  const tools = CRON_TOOL_RECORDS.map((record) => record.descriptor);
   return {
     name: CRON_MCP_SERVER_NAME,
     describe(): McpDelegateDescription {
-      return { identity: IDENTITY, tools };
+      return { tools };
     },
     call(call: McpDelegateCall): Promise<McpDelegateResult> {
       // Resolving the owner is part of the call: a TeamLeader's scheduler lives
@@ -79,34 +82,21 @@ async function serve(
   scheduler: SchedulerCommands,
   call: McpDelegateCall,
 ): Promise<McpToolSuccess> {
-  const args = call.arguments as CommandPayload;
-  switch (call.name) {
-    case 'cron_create':
-      return {
-        structured: cronJobResult(
-          await scheduler.create(cronCreateRequest(args)),
-        ),
-      };
-    case 'cron_update':
-      return {
-        structured: cronJobResult(
-          await scheduler.update(cronUpdateRequest(args)),
-        ),
-      };
-    case 'cron_list':
-      return { structured: cronListResult(await scheduler.list()) };
-    case 'cron_delete':
-      return { structured: await scheduler.delete(cronJobIdParam(args)) };
-    default:
-      // Unreachable: Core admits a call only against this delegate's own frozen
-      // catalog, so a name that is not one of the above never arrives here.
-      throw new Error(`unknown cron tool '${call.name}'`);
+  const record = CRON_TOOL_RECORDS.find(
+    (candidate) => candidate.descriptor.name === call.name,
+  );
+  if (record === undefined) {
+    // Unreachable: Core admits a call only against this delegate's own frozen
+    // catalog, so a name that is not in this delegate's own records never
+    // arrives here.
+    throw new Error(`unknown cron tool '${call.name}'`);
   }
+  return record.execute(scheduler, call.arguments as CommandPayload);
 }
 
-function cronToolDescriptors(): McpToolDescriptor[] {
-  return [
-    tool(
+const CRON_TOOL_RECORDS: CronMcpToolRecord[] = [
+  {
+    descriptor: tool(
       'cron_create',
       'Create a durable Dreamux cron job for this agent. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into this dispatcher or TeamLeader agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. Cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents. A due job submits its prompt at once, even while a turn is running.',
       {
@@ -149,12 +139,24 @@ function cronToolDescriptors(): McpToolDescriptor[] {
         annotations: MUTATING_ANNOTATIONS,
       },
     ),
-    tool('cron_list', 'List durable cron jobs for this agent.', {}, [], {
-      title: 'List cron jobs',
-      output: closedObjectSchema({ jobs: arrayOf(OPEN_OBJECT) }, ['jobs']),
-      annotations: READ_ONLY_ANNOTATIONS,
-    }),
-    tool(
+    execute: cronCreate,
+  },
+  {
+    descriptor: tool(
+      'cron_list',
+      'List durable cron jobs for this agent.',
+      {},
+      [],
+      {
+        title: 'List cron jobs',
+        output: objectSchema({ jobs: arrayOf(OBJECT) }, ['jobs']),
+        annotations: READ_ONLY_ANNOTATIONS,
+      },
+    ),
+    execute: cronList,
+  },
+  {
+    descriptor: tool(
       'cron_delete',
       'Delete a cron job by id.',
       {
@@ -168,14 +170,17 @@ function cronToolDescriptors(): McpToolDescriptor[] {
       ['id'],
       {
         title: 'Delete a cron job',
-        output: closedObjectSchema(
+        output: objectSchema(
           { id: { type: 'string' }, deleted: { type: 'boolean' } },
           ['id', 'deleted'],
         ),
         annotations: DESTRUCTIVE_ANNOTATIONS,
       },
     ),
-    tool(
+    execute: cronDelete,
+  },
+  {
+    descriptor: tool(
       'cron_update',
       'Update a cron job by id. Same behavior as cron_create: cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents. A due job submits its prompt at once, even while a turn is running.',
       {
@@ -230,18 +235,48 @@ function cronToolDescriptors(): McpToolDescriptor[] {
         annotations: MUTATING_ANNOTATIONS,
       },
     ),
-  ];
+    execute: cronUpdate,
+  },
+];
+
+async function cronCreate(
+  scheduler: SchedulerCommands,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
+  return {
+    structured: cronJobResult(await scheduler.create(cronCreateRequest(args))),
+  };
+}
+
+async function cronUpdate(
+  scheduler: SchedulerCommands,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
+  return {
+    structured: cronJobResult(await scheduler.update(cronUpdateRequest(args))),
+  };
+}
+
+async function cronList(scheduler: SchedulerCommands): Promise<McpToolSuccess> {
+  return { structured: cronListResult(await scheduler.list()) };
+}
+
+async function cronDelete(
+  scheduler: SchedulerCommands,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
+  return { structured: await scheduler.delete(cronJobIdParam(args)) };
 }
 
 function cronJobSchema(): Record<string, unknown> {
-  return closedObjectSchema(
+  return objectSchema(
     {
       id: { type: 'string' },
       title: { type: 'string' },
       cron: { type: 'string' },
       tz: { type: 'string' },
       recurring: { type: 'boolean' },
-      action: OPEN_OBJECT,
+      action: OBJECT,
       enabled: { type: 'boolean' },
       created_at: { type: 'integer' },
       updated_at: { type: 'integer' },
@@ -261,26 +296,4 @@ function cronJobSchema(): Record<string, unknown> {
       'last_fired_at',
     ],
   );
-}
-
-function tool(
-  name: string,
-  description: string,
-  properties: Record<string, unknown>,
-  required: string[],
-  meta: {
-    title: string;
-    output: Record<string, unknown>;
-    annotations: McpToolAnnotations;
-  },
-): McpToolDescriptor {
-  return toolMetadata({
-    name,
-    title: meta.title,
-    description,
-    properties,
-    required,
-    outputSchema: meta.output,
-    annotations: meta.annotations,
-  });
 }

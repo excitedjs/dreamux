@@ -41,13 +41,19 @@
 //     with the directory it's declared in (state/, now this file's only
 //     member - dispatcher-id.ts moved to platform/ as a plain file, not a
 //     special case, since it had no state-tier dependency of its own).
-//   - src/mcp/{catalog,server,failure-text}.ts are the transport-level
-//     protocol/validation primitives service/mcp/leases.ts (a different,
-//     service-domain "mcp" directory) depends on - foundation-tier.
+//   - src/mcp/{server,launch}.ts are foundation-tier: server.ts is the
+//     official-SDK protocol/validation primitive, and launch.ts (the MCP
+//     shim's argv/env launch shape, formerly service/mcp/descriptor.ts) has
+//     only a platform/ dependency of its own, not a service-domain one.
+//     Catalog validation used to live beside them as src/mcp/catalog.ts, but
+//     its only production caller is service/mcp/leases.ts's mint-time pass,
+//     so it now sits beside that caller as service/mcp/catalog.ts
+//     (service-primitives tier); src/mcp/shim.ts, at the composition tier,
+//     reaches it there for its own defensive re-validation of wire bytes.
 //     src/mcp/shim.ts is a distinct file: it bridges a stdio MCP client to
 //     the admin socket (imports src/admin/client.ts) and is consumed only by
 //     cli/commands/mcp.ts, so it sits at the composition tier with admin/
-//     and cli/, not beside catalog.ts.
+//     and cli/, not beside server.ts/launch.ts.
 const LAYERS = [
   {
     name: 'platform',
@@ -65,7 +71,7 @@ const LAYERS = [
       '^src/plugin/',
       '^src/agent-runtime/',
       '^src/channel/',
-      '^src/mcp/(catalog|server|failure-text)\\.ts$',
+      '^src/mcp/(server|launch)\\.ts$',
     ],
   },
   {
@@ -173,7 +179,7 @@ const namedEdgeRules = [
     // which the plan's file map table omitted but which still live in one of
     // the three tiers), each anchored with `\.ts$` so a name never
     // prefix-matches a longer sibling (e.g. `service` must not match
-    // `service-types`, `mcp` must not match `mcp-tool-descriptors`).
+    // `service-types`).
     name: 'service-agent-store-not-to-service-or-collection',
     comment:
       'service/agent/ store-tier files (identity, store, runtime-state, ' +
@@ -184,7 +190,7 @@ const namedEdgeRules = [
       path: '^src/service/agent/(identity|store|runtime-state|activity|records|requests|runtime-id)\\.ts$',
     },
     to: {
-      path: '^src/service/agent/(runtime-generation|turn|admission|submission|completion-renderer|factory|service|service-types|index|commands|mcp|mcp-tool-descriptors|system-prompt|errors|types|dissolve-members)\\.ts$',
+      path: '^src/service/agent/(runtime-generation|turn|admission|submission|completion-renderer|factory|service|service-types|index|commands|mcp|system-prompt|errors|types|dissolve-members)\\.ts$',
     },
   },
   {
@@ -199,7 +205,7 @@ const namedEdgeRules = [
       path: '^src/service/agent/(runtime-generation|turn|admission|submission|completion-renderer|factory|service|service-types)\\.ts$',
     },
     to: {
-      path: '^src/service/agent/(index|commands|mcp|mcp-tool-descriptors|system-prompt|errors|types|dissolve-members)\\.ts$',
+      path: '^src/service/agent/(index|commands|mcp|system-prompt|errors|types|dissolve-members)\\.ts$',
     },
   },
   {
