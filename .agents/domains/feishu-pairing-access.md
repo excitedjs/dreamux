@@ -67,7 +67,10 @@ ordinary processing, passive bot observation, `/introduce`, or the gate:
 - `sender_type: bot | app` plus a non-empty `sender_id` is bot;
 - every other sender combination drops as `sender_unknown`.
 
-The package-root `dreamuxFeishuGate` input ABI remains:
+The `dreamuxFeishuGate` input ABI remains (the function itself is an
+internal, not a package-root, export — the barrel keeps only what a
+cross-package caller or the package's own test suite needs, per
+`feishu-channel/src/index.ts`'s header comment):
 
 ```ts
 interface GateInbound {
@@ -454,16 +457,17 @@ by the maintenance skill:
 > `sender_not_followed` and writes no trust. Under `follow-user`, an `allow_users`
 > sender can still introduce in an unlisted chat.
 
-Focused tests lock the trusted-chat truth table across both policies and every
-`dm_policy`, the unchanged P2P and bot/trusted-bot paths, allow-chat-scoped bot
-observation, the ordinary-delivery versus `/introduce` authority split, V3
-defaults and reader/saver behavior, the token never reaching visible card copy,
-and the package-root gate input ABI:
-
-- `/packages/channel/feishu-channel/tests/feishu-gate.test.ts`
-- `/packages/channel/feishu-channel/tests/feishu-introduce.test.ts`
-- `/packages/channel/feishu-channel/tests/feishu-pairing-card.test.ts`
-- `/packages/channel/feishu-channel/tests/public-api.test.ts`
+The trusted-chat truth table across both policies and every `dm_policy`, the
+unchanged P2P and bot/trusted-bot paths, allow-chat-scoped bot observation, the
+ordinary-delivery versus `/introduce` authority split, V3 defaults and
+reader/saver behavior, and the token never reaching visible card copy were each
+locked by a dedicated test (`feishu-gate.test.ts`, `feishu-introduce.test.ts`,
+`feishu-pairing-card.test.ts`). The code-organization refactor deleted all
+three as broken-by-directory-move (R43; see
+[deleted-tests.md](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)'s
+"Final pass" section) and none has been rebuilt yet; the behavior itself is
+unchanged. `/packages/channel/feishu-channel/tests/public-api.test.ts` still
+locks the never-exported-name list.
 
 Raw inbound classification currently has no dedicated test lock.
 

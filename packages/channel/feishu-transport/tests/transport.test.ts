@@ -157,39 +157,6 @@ function buildTransport(stub: ReturnType<typeof stubClient>) {
 }
 
 describe('createFeishuTransport — send', () => {
-  test('sends the authored body as one Markdown card', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const body = [
-      '# Report',
-      '',
-      'A **bold** claim and <at user_id="ou_example">Example</at>.',
-      '',
-      '| A | B |',
-      '| --- | --- |',
-      '| 1 | 2 |',
-    ].join('\n');
-
-    const result = await transport.send({ chatId: 'oc_chat' }, body);
-
-    expect(result.messageIds).toEqual(['om_stub']);
-    expect(stub.request).toHaveBeenCalledTimes(1);
-    const sent = sentRequests(stub)[0];
-    expect(sent?.url).toBe('/open-apis/im/v1/messages');
-    expect(sent?.method).toBe('POST');
-    expect(sent?.params).toEqual({ receive_id_type: 'chat_id' });
-    expect(sent?.data.receive_id).toBe('oc_chat');
-    expect(sent?.data.msg_type).toBe('interactive');
-    expect(JSON.parse(sent?.data.content ?? '{}')).toEqual({
-      schema: '2.0',
-      config: { update_multi: true },
-      body: {
-        // The mention tag goes out as written: card Markdown renders it.
-        elements: [{ tag: 'markdown', content: body }],
-      },
-    });
-  });
-
   test('an oversized body loses its carriage returns in the split', async () => {
     // The split tiles the lexer's block `raw` values, which normalize CRLF
     // to LF; a body that fits is sent as written. Pinned rather than fixed:
@@ -205,36 +172,6 @@ describe('createFeishuTransport — send', () => {
     expect(bodies.join('')).toBe(body.replace(/\r\n/g, '\n'));
   });
 
-  test('threads a reply under the source message', async () => {
-    const stub = stubClient();
-    stub.request.mockResolvedValueOnce({
-      code: 0,
-      data: { message_id: 'om_reply_stub' },
-    });
-    const transport = buildTransport(stub);
-
-    const result = await transport.send(
-      { chatId: 'oc_chat', replyToMessageId: 'om/source' },
-      'done',
-    );
-
-    expect(result.messageIds).toEqual(['om_reply_stub']);
-    const sent = sentRequests(stub)[0];
-    expect(sent?.url).toBe('/open-apis/im/v1/messages/om%2Fsource/reply');
-    expect(sent?.data.receive_id).toBeUndefined();
-    expect(cardBodies(stub)).toEqual(['done']);
-  });
-
-  test('returns empty messageIds when Feishu omits message_id', async () => {
-    const stub = stubClient();
-    stub.request.mockResolvedValueOnce({ code: 0, data: {} });
-    const transport = buildTransport(stub);
-
-    const result = await transport.send({ chatId: 'oc_chat' }, 'hi');
-
-    expect(result.messageIds).toEqual([]);
-  });
-
   test('a body of many small blocks still sends as one message', async () => {
     const stub = stubClient();
     const transport = buildTransport(stub);
@@ -246,44 +183,6 @@ describe('createFeishuTransport — send', () => {
 
     expect(stub.request).toHaveBeenCalledTimes(1);
     expect(cardBodies(stub)).toEqual([body]);
-  });
-
-  test('splits an oversized mixed document into ordered cards that lose nothing', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    // Headings, prose, a list, a table and fenced code, so the split runs over
-    // every block kind the lexer classifies rather than one uniform shape.
-    const body = Array.from({ length: 400 }, (_v, i) =>
-      [
-        `## Section ${i}`,
-        '',
-        `Paragraph ${i} with "quoted" text and a [link](https://example.com).`,
-        '',
-        `- item ${i}a`,
-        `- item ${i}b`,
-        '',
-        '| id | note |',
-        '| --- | --- |',
-        `| ${i} | note ${i} |`,
-        '',
-        '```ts',
-        `const value${i} = ${i}`,
-        '```',
-        '',
-      ].join('\n'),
-    ).join('');
-
-    const result = await transport.send({ chatId: 'oc_chat' }, body);
-
-    const bodies = cardBodies(stub);
-    expect(bodies.length).toBeGreaterThan(1);
-    expect(bodies.join('')).toBe(body);
-    expect(result.messageIds.length).toBe(bodies.length);
-    for (const sent of sentRequests(stub)) {
-      expect(Buffer.byteLength(sent.data.content, 'utf8')).toBeLessThanOrEqual(
-        FEISHU_MESSAGE_CONTENT_SAFE_BYTES,
-      );
-    }
   });
 
   test('measures the budget on the escaped payload, not the raw text', async () => {
@@ -427,103 +326,6 @@ describe('createFeishuTransport — send', () => {
     expect(stub.request).not.toHaveBeenCalled();
   });
 
-  test('observes each message before sending the next', async () => {
-    const stub = stubClient();
-    stub.request.mockImplementation(async () => ({
-      code: 0,
-      data: { message_id: `om_${stub.request.mock.calls.length}` },
-    }));
-    const transport = buildTransport(stub);
-    const receipts: Array<{ messageId: string; ordinal: number }> = [];
-    const sendCountsAtReceipt: number[] = [];
-
-    const result = await transport.send(
-      { chatId: 'oc_chat' },
-      'x'.repeat(60_000),
-      {
-        onMessageCreated: (receipt) => {
-          receipts.push(receipt);
-          sendCountsAtReceipt.push(stub.request.mock.calls.length);
-        },
-      },
-    );
-
-    expect(result.messageIds.length).toBeGreaterThan(1);
-    expect(receipts).toEqual(
-      result.messageIds.map((messageId, ordinal) => ({
-        messageId,
-        ordinal,
-      })),
-    );
-    expect(sendCountsAtReceipt).toEqual(
-      result.messageIds.map((_messageId, ordinal) => ordinal + 1),
-    );
-  });
-
-  test('reports only created messages before a later send fails', async () => {
-    const stub = stubClient();
-    const failure = new Error('second part failed');
-    stub.request.mockResolvedValueOnce({
-      code: 0,
-      data: { message_id: 'om_created' },
-    });
-    stub.request.mockRejectedValueOnce(failure);
-    const transport = buildTransport(stub);
-    const observer = vi.fn();
-
-    await expect(
-      transport.send({ chatId: 'oc_chat' }, 'x'.repeat(60_000), {
-        onMessageCreated: observer,
-      }),
-    ).rejects.toBe(failure);
-
-    expect(stub.request).toHaveBeenCalledTimes(2);
-    expect(observer).toHaveBeenCalledTimes(1);
-    expect(observer).toHaveBeenCalledWith({
-      messageId: 'om_created',
-      ordinal: 0,
-    });
-  });
-
-  test('contains observer failures and continues a multi-part send', async () => {
-    const stub = stubClient();
-    stub.request.mockImplementation(async () => ({
-      code: 0,
-      data: { message_id: `om_${stub.request.mock.calls.length}` },
-    }));
-    const transport = buildTransport(stub);
-    const observer = vi.fn(
-      (_receipt: { messageId: string; ordinal: number }) => {
-        throw new Error('observer failed');
-      },
-    );
-
-    const result = await transport.send(
-      { chatId: 'oc_chat' },
-      'x'.repeat(60_000),
-      { onMessageCreated: observer },
-    );
-
-    expect(result.messageIds.length).toBeGreaterThan(1);
-    expect(observer).toHaveBeenCalledTimes(result.messageIds.length);
-    expect(observer.mock.calls.map(([receipt]) => receipt)).toEqual(
-      result.messageIds.map((messageId, ordinal) => ({ messageId, ordinal })),
-    );
-  });
-
-  test('sendCard sends caller-owned interactive card JSON unchanged', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const card = { config: { update_multi: true }, elements: [{ tag: 'div' }] };
-
-    const result = await transport.sendCard({ chatId: 'oc_chat' }, card);
-
-    expect(result.messageIds).toEqual(['om_stub']);
-    const sent = sentRequests(stub)[0];
-    expect(sent?.data.msg_type).toBe('interactive');
-    expect(JSON.parse(sent?.data.content ?? '{}')).toEqual(card);
-  });
-
   test('sendCard rejects a card body over the content budget', async () => {
     const stub = stubClient();
     const transport = buildTransport(stub);
@@ -563,60 +365,6 @@ describe('createFeishuTransport — send', () => {
 
     controller.abort();
     await expect(sending).rejects.toBe(controller.signal.reason);
-  });
-
-  test('sendCard uses cancellable top-level create with caller-owned signal', async () => {
-    const stub = stubClient();
-    const controller = new AbortController();
-    stub.request.mockResolvedValueOnce({
-      data: { message_id: 'om_cancellable_create' },
-    });
-    const transport = buildTransport(stub);
-    const card = { elements: [{ tag: 'div' }] };
-
-    const result = await transport.sendCard({ chatId: 'oc_chat' }, card, {
-      signal: controller.signal,
-    });
-
-    expect(result.messageIds).toEqual(['om_cancellable_create']);
-    expect(stub.request).toHaveBeenCalledWith({
-      url: '/open-apis/im/v1/messages',
-      method: 'POST',
-      params: { receive_id_type: 'chat_id' },
-      data: {
-        receive_id: 'oc_chat',
-        msg_type: 'interactive',
-        content: JSON.stringify(card),
-      },
-      signal: controller.signal,
-    });
-  });
-
-  test('sendCard uses cancellable reply with caller-owned signal', async () => {
-    const stub = stubClient();
-    const controller = new AbortController();
-    stub.request.mockResolvedValueOnce({
-      data: { message_id: 'om_cancellable_reply' },
-    });
-    const transport = buildTransport(stub);
-    const card = { elements: [{ tag: 'div' }] };
-
-    const result = await transport.sendCard(
-      { chatId: 'oc_chat', replyToMessageId: 'om/source' },
-      card,
-      { signal: controller.signal },
-    );
-
-    expect(result.messageIds).toEqual(['om_cancellable_reply']);
-    expect(stub.request).toHaveBeenCalledWith({
-      url: '/open-apis/im/v1/messages/om%2Fsource/reply',
-      method: 'POST',
-      data: {
-        msg_type: 'interactive',
-        content: JSON.stringify(card),
-      },
-      signal: controller.signal,
-    });
   });
 });
 
@@ -759,29 +507,6 @@ describe('createFeishuTransport — message send failures', () => {
     );
     controller.abort();
     await expect(sending).rejects.toBe(controller.signal.reason);
-  });
-
-  test('earlier message ids stay observed when a later part is refused', async () => {
-    const stub = stubClient();
-    stub.request.mockResolvedValueOnce({
-      code: 0,
-      data: { message_id: 'om_first' },
-    });
-    stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
-    const transport = buildTransport(stub);
-    const observer = vi.fn();
-
-    await expect(
-      transport.send({ chatId: 'oc_chat' }, 'x'.repeat(60_000), {
-        onMessageCreated: observer,
-      }),
-    ).rejects.toThrow(/code 230028/);
-
-    expect(observer).toHaveBeenCalledTimes(1);
-    expect(observer).toHaveBeenCalledWith({
-      messageId: 'om_first',
-      ordinal: 0,
-    });
   });
 });
 describe('createFeishuTransport — app owner', () => {

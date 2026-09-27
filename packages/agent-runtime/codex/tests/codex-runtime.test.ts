@@ -1475,30 +1475,6 @@ describe('CodexRuntime outputSchema binding', () => {
 });
 
 describe('AgentRuntimeProvider public surface', () => {
-  it('exposes exactly the neutral provider facade, no Codex-native surface', () => {
-    const provider = createCodexAgentRuntimeProvider();
-    expect(typeof provider.getCapabilities).toBe('function');
-    expect(typeof provider.readRecentActivity).toBe('function');
-    expect(typeof provider.createRuntime).toBe('function');
-    // Optional neutral capabilities this provider declares.
-    expect(provider.config).toBeDefined();
-    expect(provider.onboard).toBeDefined();
-    expect(provider.diagnostic).toBeDefined();
-    // No provider-private surface (thread ids, native config, etc.) is exposed
-    // on the facade itself — it holds only the documented neutral keys.
-    const keys = new Set(Object.keys(provider));
-    for (const key of keys) {
-      expect([
-        'getCapabilities',
-        'diagnostic',
-        'onboard',
-        'config',
-        'readRecentActivity',
-        'createRuntime',
-      ]).toContain(key);
-    }
-  });
-
   it('createRuntime() resolves to a handle typed as the neutral AgentRuntime interface', async () => {
     // TypeScript `private` is compile-time only, so a runtime reflection scan
     // of CodexRuntime's prototype would see its many private helpers too; the

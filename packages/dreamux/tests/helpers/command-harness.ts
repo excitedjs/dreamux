@@ -23,14 +23,14 @@ import { createConnection, createServer, type Socket } from 'node:net';
 
 import type {
   ChannelEventSource,
-  CoreCommandContext,
   JsonValue,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
-import { createCoreCommandRegistry } from '../../src/command/catalog.js';
-import type { CoreCommandHost } from '../../src/command/host.js';
-import type { TeamListRow } from '../../src/service/team-collection/types.js';
+import type { CoreCommandContext } from '../../src/command/types.js';
+import { createCoreCommandRegistry } from '../../src/server/command-catalog.js';
+import type { CoreCommandHost } from '../../src/server/command-host.js';
+import type { TeamListRow } from '../../src/service/team/types.js';
 import { CoreCommandPort } from '../../src/command/port.js';
 import { CoreCommands } from '../../src/command/registry.js';
 import {
@@ -38,8 +38,9 @@ import {
   type AdminSocketServer,
 } from '../../src/admin/socket.js';
 import type { AdminResponse } from '../../src/admin/protocol.js';
-import { createChannelCorePort } from '../../src/channel/core-port.js';
+import { createChannelCorePort } from '../../src/service/channel-service/core-port.js';
 import { McpLeaseRegistry } from '../../src/service/mcp/leases.js';
+import type { ConfigService } from '../../src/config/service.js';
 import type {
   McpDelegateCall,
   McpDelegateResult,
@@ -138,7 +139,6 @@ export interface FakeDispatcherOverrides {
   interruptAgent?: () => Promise<unknown>;
   interruptTeamLeader?: (teamId: string) => Promise<unknown>;
   listTeams?: () => Promise<unknown[]>;
-  listChannels?: DispatcherService['listChannels'];
   getTeamStatus?: (teamId: string) => Promise<unknown>;
   getTeamHistory?: (query: unknown) => Promise<unknown>;
   dissolveTeam?: (input: unknown) => Promise<unknown>;
@@ -192,7 +192,6 @@ export function createFakeDispatcher(
     interruptTeamLeader:
       overrides.interruptTeamLeader ?? (async () => ({ status: 'idle' })),
     listTeams: overrides.listTeams ?? (async () => []),
-    listChannels: overrides.listChannels ?? (() => []),
     getTeamStatus:
       overrides.getTeamStatus ?? (async () => harnessTeamSummary()),
     getTeamHistory:
@@ -293,14 +292,23 @@ export function createCommandHarness(
   const host: CoreCommandHost = {
     summarize: options.summarize ?? (async () => []),
     dispatcherRow: (id: string) => (id === row?.dispatcher_id ? row : null),
-    dispatcherRuntimeStatus:
-      options.dispatcherRuntimeStatus ??
-      (async () => ({ status: 'running', sessionId: null, lastError: null })),
+    dispatcherRuntimeStatus: async (_dispatcherId: string) =>
+      (
+        options.dispatcherRuntimeStatus ??
+        (async () => ({
+          status: 'ready' as const,
+          sessionId: null,
+          lastError: null,
+        }))
+      )(),
     dispatcher: (id: string) => {
       dispatcherLookups.push(id);
       return dispatcher;
     },
     mcpLeases,
+    // No surviving harness test exercises `config.agents.*`; the Command
+    // catalog only needs a type-shaped value to construct.
+    config: {} as unknown as ConfigService,
   };
   const registry = createCoreCommandRegistry(host);
   const port = new CoreCommandPort(registry);

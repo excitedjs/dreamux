@@ -285,7 +285,6 @@ Source:
 - `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/codex/src/system-prompt.ts`
-- `/packages/agent-runtime/codex/tests/system-prompt.test.ts`
 - `/packages/agent-runtime/claude-code/src/provider.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 

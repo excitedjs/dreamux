@@ -3818,3 +3818,591 @@ or log tests now; failing tests are deleted per R43 in the final pass"
 instruction is the default for items that only move/rename source; Item 8's
 own instructions are the more specific, controlling ones for this item, and
 they are exactly the deletion-and-logging work R43 describes).
+
+## Final pass
+
+Round 1 of the R53 final pass: make `build`/`lint`/`typecheck:tests`/`test`
+green across the whole tree without repairing or re-pointing any failing test
+(R43). All four gates are green as of this pass. This section logs every test
+file this pass touched.
+
+**Method.** For every file below, the file's pre-deletion content (`git show
+HEAD:<path>`) was written back to disk, `npx tsc -p tsconfig.tests.json
+--noEmit` was run for the owning package (once per package, all of that
+package's deleted files restored together so the dump is complete in one
+pass), and the reported error(s) were traced against current source with
+`grep`/`git log -S` to confirm whether the symbol/shape moved (contract holds)
+or was actually deleted/changed (contract does not hold, or holds only after a
+named stage rewrites the fixture). The restored copy was then removed again
+(the actual deletion, already staged before this pass began, is unchanged).
+This traces every file to a concrete, current, re-checkable failure rather
+than a recollection; it does not re-run every one of the ~600 individual `it()`
+cases below one by one; a case-by-case count is given per file, but the
+disposition is verified at the file's shared root cause, not case-by-case,
+except where a file's cases split across causes (called out explicitly below).
+
+### Shared root causes
+
+These causes each reach many files below. They are stated once here and
+referenced by letter to avoid repeating the same evidence in every file entry.
+
+- **Cause A — R7 domain-directory merge.** Stage 6a ("Merge the Agent stores,
+  service, and collection into service/agent") collapsed `agent-entity/`,
+  `teammate-service/`, and `teammate-collection/` into one flat
+  `service/agent/`, store → service → collection. Stage 6e ("Plan Stage 6e
+  dispatcher and channel: one owner, one close") collapsed
+  `team-collection/` and `team-service/` into one flat `service/team/` and moved
+  `dispatcher-service/team-leader-handle.ts` into `service/team/leader-handle.ts`
+  in the same stage. Verified example mappings: `agent-entity/identity-store.ts`
+  → `service/agent/identity.ts`; `agent-entity/types.ts` →
+  `service/agent/types.ts`; `teammate-service/turn-recording.ts` and
+  `teammate-service/turn-coordinator.ts` → `service/agent/turn.ts`;
+  `agent-entity/activity-reader.ts` → `service/agent/activity.ts`;
+  `teammate-service/admission-ledger.ts` → `service/agent/admission.ts`;
+  `teammate-collection/mcp-tool-descriptors.ts` folded into
+  `service/agent/mcp.ts` + `service/agent/requests.ts`;
+  `team-collection/store.ts` → `service/team/store.ts`;
+  `team-collection/types.ts` → `service/team/types.ts`;
+  `team-service/closing.ts` → `service/team/closing.ts`;
+  `team-service/leader-agent.ts` → `service/team/leader.ts`;
+  `team-service/team-summary.ts` → `service/team/team-summary.ts`;
+  `team-collection/worktree-cleanup.ts` folded into
+  `service/worktree/manager.ts`; `service/serial-queue.ts` →
+  `platform/serial-queue.ts`; `channel/conversation-projection.ts` →
+  `service/dispatcher-core-events/conversation-projection.ts`. Every case
+  reached only by Cause A holds its contract; the one thing wrong is the
+  import specifier. R43 forbids re-pointing a `.test.ts` import, so restoring
+  these at the next test-completion pass means updating each broken specifier
+  to its file's new home and nothing else.
+- **Cause B — R9 built-in-providers-as-plugins (Stage 8a, "Turn built-in
+  runtimes into plugins, share their native-home resolver").**
+  Deleted Core's static builtin-provider registry
+  (`BUILTIN_PROVIDER_PACKAGES`, `BUILTIN_PROVIDERS`,
+  `resolveBuiltinProviderPackage`, `ProviderRegistry.registerImplementation`)
+  in favor of `BUILTIN_PLUGIN_PACKAGES` / `ALWAYS_LOADED_PLUGIN_REFS` /
+  `registerBuiltinProvider()`. A genuine mechanism replacement, not a rename —
+  Stage 9's own ledger entry above (`core-provider-neutrality.test.ts`) already
+  logs this disposition once: not a literal restore, the assertion has to be
+  rebuilt against the new mechanism.
+- **Cause C — R9 also moved Core-only Command types out of dreamux-types
+  (Stage 8a, same commit as Cause B).** `@excitedjs/dreamux-types`'s `command.ts`
+  (`CoreCommandContext`/`CoreCommandDefinition`/`CoreCommandRegistry`/
+  `CoreCommandSource`) is deleted; the four names are declared locally in
+  `packages/dreamux/src/command/types.ts` instead, since every consumer was
+  already inside `@excitedjs/dreamux`. Stage 8a's own commit message named
+  `dreamux-types/tests/command-contract.test.ts` as this pass's job and said
+  its premise "moved into dreamux core, where core-command-registry.test.ts
+  and core-command-errors.test.ts already cover the same behavior." Both of
+  those dreamux-side files are themselves broken this pass, independently, by
+  Cause A; `core-command-registry.test.ts` additionally hits a real signature
+  change in `createCoreCommandRegistry` (it now derives each domain's narrow
+  resolver from the full host itself; the file's own hand-built `CoreCommandHost`
+  no longer satisfies the five distinct narrow-resolver parameter types it used
+  to be passed as — five `TS2345` errors). Net effect of this pass: the
+  CoreCommand catalog/registry contract has zero passing test coverage in
+  either package once all three files are gone. This is **flagged for round
+  2's attention**, not a simple three-file restore.
+- **Cause D — R16 (Stage 6a, same commit as Cause A).** Every completion notice now
+  words itself by the producer's actual role (Dispatcher agent / Team leader /
+  TeamMate) instead of hardcoding TeamMate, adding a required
+  `role: TeammateRole` field to `TeammateCompletionFact`. A fixture literal
+  built before this stage that omits `role` fails `TS2322` against
+  `PreparedCompletionFact`.
+- **Cause E — R38 ("不再写入，注释改正").** The ruling is "stop writing
+  `origin`/`generation`, fix the comments" — not a claim that the mechanism
+  itself was retired. Both fields are dropped from `FeishuBindingRecord` /
+  `FeishuBindingView` / the routing-plan shapes / `FeishuSpaceRecord`. An
+  assertion that constructs a fixture with `origin`/`generation` or reads
+  `.generation` off a `FeishuSpaceRecord` has nothing left to check; there is
+  no restore, per the ruling.
+- **Cause F — R17 / R13 (Stage 6e, same commit as Cause A's second half).** Renamed the two
+  Team-submission failure codes (R17) and replaced `INTERNAL` with
+  `SERVER_SHUTTING_DOWN` for a dispatcher's own admission/workflow-run refusals
+  (R13). Stage 6e's own commit message named `submission-envelope.test.ts` and
+  `mcp-public-failures.test.ts` as needing this pass's attention for exactly
+  this.
+- **Cause G — Stage 6e (same commit) deleted `DispatcherService`'s
+  per-verb pass-throughs.** ~15 Team/Channel/Workflow pass-through methods,
+  including `listChannels()`, are gone; callers reach the owning port directly
+  (`dispatcher.channels.list()`, etc.) through `readonly teams` / `teammates` /
+  `channels` / `scheduler`. The same stage also replaced the three-file
+  `createDispatcherAgent()` factory function with the single `DispatcherAgent`
+  class ("the Dispatcher Agent has one owner").
+
+### `@excitedjs/dreamux-types`
+
+- **`tests/agent-runtime-activity-contract.test.ts`** — 10 cases. Contract:
+  the pinned shape of `AgentActivityError`/`Page`/`Query`/`Record`. Imports all
+  four from `../src/agent-runtime.js`; R32 (Stage 8a) split them into a new
+  `activity.ts` (`agent-runtime.ts` still uses them internally via `import
+  type` but no longer re-exports them). Holds; restore with the import moved
+  to `../src/activity.js`.
+- **`tests/command-contract.test.ts`** — 9 cases. See Cause C. Not a simple
+  restore; flagged above.
+- **`tests/team-teammate-contract.test.ts`** — 20 cases, two independent
+  causes. Most cases import `RuntimeActivity` from `../src/agent-runtime.js`
+  (same R32 move as above — holds, restore via `../src/activity.js`). Three
+  cases (worktree-config fixtures) set/read a `slug` field on
+  `TeamCreateRepoRequest`'s `managed` branch; R20 ("合成一份，去掉 slug",
+  Stage 7, "Plan Stage 7 adapters and schemas: requests, mcp records,
+  R14/R18/R20") deleted `slug` from the type, the schema, and
+  every reader — does not hold, changed by R20, no restore.
+
+### `@excitedjs/dreamux-utils`
+
+- **`tests/config-validate.test.ts`** — 38 cases. Imports
+  `requireNonEmptyString`/`requireStringArray`/`requireStringRecord`/
+  `requirePositiveInt` by name; Stage 8a (same commit as Cause B) renamed all four
+  to `readNonEmptyString`/`readStringArray`/`readStringRecord`/
+  `readPositiveInt` to match the package's existing `readOptional*` naming,
+  "no behavior change" per that stage's own commit message. Holds; restore
+  with the four names updated.
+
+### `@excitedjs/agent-runtime-codex`
+
+- **`tests/system-prompt.test.ts`** — 6 cases. Imports
+  `codexThreadInstructions` from `../src/runtime-support.js`; Stage 8a deleted
+  `runtime-support.ts` and moved the function into a new `system-prompt.ts`
+  verbatim (same stage's commit message: "codexThreadInstructions moved out of
+  runtime-support.ts into a new system-prompt.ts"). Holds; restore with the
+  import moved. Stage 8a's own commit message anticipated this exact file and
+  recorded that "a prior review round reverted an in-flight re-point of this
+  import per R43's 'no re-pointing'" — i.e. the one-line import fix was
+  deliberately left undone for this pass to handle under R43, and R43 treats a
+  one-line import fix inside a `.test.ts` the same as any other re-pointing:
+  deleted, not patched.
+- **`tests/codex-runtime.test.ts`** — 1 case deleted, rest of the file kept
+  (surgical, not a whole-file delete). `'exposes exactly the neutral provider
+  facade, no Codex-native surface'` hand-pins the provider's own key allowlist
+  (`getCapabilities`, `diagnostic`, `onboard`, `config`, `readRecentActivity`,
+  `createRuntime`). R50 (Stage 8a) added a new neutral
+  `operatorStateRoot?(env): string` capability to `AgentRuntimeProvider`, and
+  this provider now implements it (`operatorStateRoot: resolveCodexHomeDir`).
+  The new key is a real, intentional capability, not drift — but adding it to
+  the pinned array would be an assertion edit R43 forbids. Deleted; restore
+  (or better, redesign — a literal facade-key allowlist re-breaks on every new
+  optional capability) at final test completion.
+
+### `@excitedjs/dreamux-plugin-bootstrap`
+
+- **`tests/bootstrap.test.ts`** — 10 cases, whole file, one shared cause.
+  Case titles: "writes the guide and gives it to the Dispatcher while a
+  profile file is missing", "writes the guide and gives it to the Dispatcher
+  while the other profile file is missing", "creates .workspace when nothing
+  created it yet", "removes the guide and injects both files once both
+  exist", "injects both files without ever writing bootstrap.md when both
+  existed from the start", "rejects the Dispatcher beforeLaunch hook when a
+  profile file read fails for a reason other than ENOENT", "rejects the
+  TeamLeader beforeTeamLeaderLaunch hook when a profile file read fails for a
+  reason other than ENOENT", "re-reads the profile files fresh on every
+  beforeLaunch call, with no in-memory caching", "returns a plugin object with
+  only a name and a server hook: no contribute, config, or api", "renders the
+  exact pinned shape, trimming each field". R48/R52 renamed
+  `dispatcher.hooks.beforeLaunch` → `launch` and
+  `team.hooks.beforeTeamLeaderLaunch` → `leaderLaunch` and added
+  `dispatcher.hooks.teammateLaunch`/`createTeam`; R50 added a required
+  `stateDir: string` to `ServerHost`. The file's shared fixture builds a
+  `Team`/`ServerHost` against the pre-rename hook set and without `stateDir`,
+  so every case fails at fixture-construction time
+  (`TS2739`/`TS2741`/`TS2339`). Holds; restore at final test completion with
+  the renamed hooks and the added field, once a replacement `stateDir` fixture
+  value is chosen.
+
+### `@excitedjs/feishu-transport`
+
+- **`tests/card.test.ts`** (14), **`tests/content.test.ts`** (15),
+  **`tests/post.test.ts`** (16) — 45 cases across three files, one shared
+  cause, no messageIds/onMessageCreated exposure in any of the three (checked
+  directly). All three import `Mention` from `../src/contract/types`;
+  `contract/` was dissolved and `Mention` (plus `isBotSenderType`/
+  `isBotMentioned`) now lives in `parse/mentions.ts`, unchanged shape (`key`,
+  optional `id`, optional `name`), still re-exported from the package root.
+  Holds; restore with the import moved to `../src/parse/mentions.js` (or the
+  package root).
+- **`tests/transport.test.ts`** — surgical, 11 of 64 cases deleted (kept 53).
+  Already logged in this pass's earlier work (see the file's own diff): the
+  11 removed cases read `result.messageIds` or passed `onMessageCreated`,
+  both retired by R41's outbound redesign (`FeishuSendResult.messageIds:
+  string[]` → `messages: readonly FeishuSentMessage[]`, `onMessageCreated`
+  deleted outright as a read-after-send observer with no remaining reason to
+  exist once `messages` carries the same information up front). Does not
+  hold; changed by R41, no restore of the old fields — a rebuilt case reading
+  `result.messages` covers the same intent.
+
+### `@excitedjs/feishu-channel`
+
+**The shared fake bot double.** `tests/helpers/fake-feishu-bot.ts` implements
+the pre-R41 `FeishuBot` shape: its `send`/`sendCard` return
+`{ messageIds: string[] }` and its type signature requires an
+`onMessageCreated` option. Both are gone from the real `FeishuBot` interface
+(`src/bot.ts`) after R41. This is a genuine shape break, not an import move —
+the helper needs to be rebuilt against the current `FeishuBot` interface, not
+mechanically repaired, so per this pass's helper-vs-test rule it is deleted
+outright rather than patched. Of the files below, only
+**`feishu-inbound-enrichment.test.ts`** actually imports it
+(`createFakeFeishuBot`, 9 call sites) — every other file's failure is
+independent (module-path moves, listed per file). Round 2 must rebuild
+`fake-feishu-bot.ts` against `src/bot.ts` before rebuilding
+`feishu-inbound-enrichment.test.ts`.
+
+**The barrel narrowing.** `dreamuxFeishuGate` is not exported from
+`src/index.ts` and has not been since Stage 8b's own finishing-pass plan
+(`.workspace/refactor/s8b-feishu-plan.md` Item 12: "index.ts: shrink to the
+plugin entry ... and whatever cross-package consumers actually need,"
+re-derived by grepping the package's own test suite for what it needs kept
+public). This is a deliberate barrel-narrowing already in source before this
+pass started, not something this pass changed. Two KB docs asserted a stronger
+claim than is true (`.agents/domains/feishu-pairing-access.md`'s "package-root
+`dreamuxFeishuGate`" and `feishu-channel/README.md`'s "the public
+`dreamuxFeishuGate` input") and are corrected in this pass to drop the
+package-root/public framing while keeping the (still-true) claim that the
+function's own input shape is unchanged.
+
+- **`tests/feishu-ask-user.test.ts`** — 25 cases. Imports from
+  `../src/feishu-ask-user.js` (→ `ask-user/registry.ts`),
+  `../src/feishu-ask-user-card.js` (→ `cards/ask-user.ts`, with the
+  `DREAMUX_ASK_*` action constants further split into `card-actions.ts`),
+  `../src/feishu-pairing-card.js`'s `DREAMUX_ACTION_KEY` (→
+  `card-actions.ts`), and `FeishuCardActionEvent` from `../src/bot.js` (now
+  sourced from `@excitedjs/feishu-transport`, re-exported at
+  `src/index.ts`, no longer re-declared in `bot.ts`). All four symbols
+  verified present, unchanged shape, at their new homes. Holds; restore with
+  the four import paths updated. (The file's several `TS7006` "implicitly any"
+  errors are cascade noise from the unresolved imports, not independent
+  breaks.)
+- **`tests/feishu-binding-notification-card.test.ts`** — 2 cases. Imports
+  `bindingBoundCard`/`bindingRouteEndedCard`/`bindingUnboundCard`/
+  `teamDissolvedCard` from `../src/feishu-binding-notification-card.js` →
+  `cards/binding-notification.ts`. Holds; restore with the import moved.
+- **`tests/feishu-cot-token-usage.test.ts`** — 3 cases. Imports
+  `tokenUsageSummary` from `../src/feishu-cot-activity.js` → merged into
+  `cot/card.ts`. Holds; restore with the import moved.
+- **`tests/feishu-cot-tool-rows.test.ts`** — 32 cases. Imports
+  `toolCallResultEvents`/`toolResultOutput`/`toolCallStartEvents` from
+  `../src/feishu-cot-events.js` → merged into the same `cot/card.ts`. Holds;
+  restore with the import moved.
+- **`tests/feishu-gate.test.ts`** — 15 cases. Imports from
+  `../src/feishu-gate.js` → `access/gate.ts` (flat `feishu-*.ts` gate file
+  moved under `access/` with the rest of the access/pairing regrouping).
+  Holds; restore with the import moved.
+- **`tests/feishu-inbound-anchor.test.ts`** — 8 cases. Imports
+  `FeishuInboundCorrelations` from `../src/feishu-inbound-anchor.js` →
+  `cot/inbound-correlations.ts`. Holds; restore with the import moved.
+- **`tests/feishu-inbound-enrichment.test.ts`** — 6 cases. Imports
+  `enrichFeishuInbound` from `../src/feishu-inbound-enrichment.js` →
+  `inbound/enrich.ts`, and from `../src/feishu-inbound-work.js` →
+  `inbound/work.ts`, plus `FeishuInboundEvent` from `../src/bot.js` (now
+  `@excitedjs/feishu-transport`, same as above) — all three moves hold. Also
+  depends on `helpers/fake-feishu-bot.ts` (see above) — does not hold until
+  that helper is rebuilt against R41's `FeishuBot`.
+- **`tests/feishu-inbound-work.test.ts`** — 5 cases. Imports
+  `createFeishuInboundWork`/`runFeishuInboundWork`/`FeishuInboundWorkContext`
+  from `../src/feishu-inbound-work.js` → `inbound/work.ts`. Holds; restore
+  with the import moved.
+- **`tests/feishu-introduce.test.ts`** — 38 cases. Imports from
+  `../src/feishu-gate.js` → `access/gate.ts` (same move as
+  `feishu-gate.test.ts`); `../src/introduce.js` itself is unchanged and still
+  resolves. Holds; restore with the one import moved.
+- **`tests/feishu-message-budget.test.ts`** — 27 cases. Imports
+  `FeishuInboundEvent` from `../src/bot.js` (→ `@excitedjs/feishu-transport`,
+  same move as above), from `../src/feishu-inbound-work.js` → `inbound/work.ts`,
+  and `formatFeishuCreateTime`/`formatFeishuMessageForRuntime` from
+  `../src/feishu-message.js` → split into `inbound/render.ts` and
+  `inbound/attachments.ts` respectively. All hold; restore with the three
+  imports moved.
+- **`tests/feishu-pairing-card.test.ts`** — 9 cases. Imports from
+  `../src/feishu-pairing-card.js` → `cards/pairing.ts`. Holds; restore with
+  the import moved.
+- **`tests/feishu-routing-store.test.ts`** — 11 cases. Every failure is
+  `origin` on `FeishuBindingRecord` object literals — Cause E (R38). Does not
+  hold as written; no restore of the field, a rebuilt case simply omits
+  `origin`.
+- **`tests/feishu-routing.test.ts`** — 28 cases. All but one failure are
+  `origin` on the routing-plan object literal — Cause E (R38); one is
+  `.generation` read off a `FeishuSpaceRecord` — same cause. Does not hold as
+  written; no restore of either field.
+- **`tests/feishu-session-bindings.test.ts`** — 12 cases, two independent
+  causes. Imports `FeishuBindingOperations` from
+  `../src/feishu-session-bindings.js` → `routing/operations.ts` (holds,
+  restore via import move) and `FeishuCotSessionSeam` from
+  `../src/feishu-cot-session.js`. `FeishuCotSessionSeam` no longer exists
+  anywhere in source; Stage 8b's own plan (`s8b-feishu-plan.md` §"merge",
+  Item 9) folded it into `FeishuCotAdapter` (`cot/adapter.ts`) as a deliberate
+  two-mechanisms-into-one merge, not a loss. Does not hold in its old class
+  form; changed by Stage 8b Item 9 — a rebuilt case exercises
+  `FeishuCotAdapter` directly.
+- **`tests/feishu-slash-commands.test.ts`** — 18 cases, two independent
+  causes. One case (`'never accepts /teams as a group-chat text command'`-
+  adjacent dispatch checks) fails because `CommandContext.messageId` is a
+  required field the shared `dispatch()` test helper's fixture never supplies
+  — not traced to a specific ruling in this refactor's rulings.md; left as an
+  open question rather than an invented one. A second failure is `origin` on
+  a `FeishuBindingView` literal — Cause E (R38), no restore. The rest of the
+  file's cases pass tsc; deleted as a whole file only because the two broken
+  cases sit inside the same file this pass does not re-point.
+- **`tests/feishu-space-policy.test.ts`** — 2 cases. Both read `.generation`
+  off a `FeishuSpaceRecord` — Cause E (R38). Does not hold as written; no
+  restore.
+
+### `@excitedjs/dreamux`
+
+Every file below is reached by one or more of the shared causes (A–G) unless
+called out with its own distinct evidence.
+
+- **`tests/admission-ledger.test.ts`** (10) — Cause A only
+  (`teammate-service/admission-ledger.js`, `teammate-service/turn-recording.js`).
+- **`tests/channel-input-format.test.ts`** (7) — Cause A only
+  (`service/channel-submission.js` → `service/agent/channel-submission.ts`;
+  `teammate-service/submission.js` → `service/agent/submission.ts`).
+- **`tests/commands.test.ts`** (4) — Cause G: the shared
+  `helpers/command-harness.ts` fixture's `FakeDispatcherOverrides.listChannels`
+  field (deleted from the harness by this same pass, see below) is what this
+  file's own fixture literal sets; same root fact as
+  `core-command-adapters.test.ts`'s surgical deletion.
+- **`tests/completion-renderer.test.ts`** (1) — Cause D
+  (`service/teammate-service/completion-renderer.js` → Cause A path move,
+  plus the `role` field, Cause D, on the one case's fixture).
+- **`tests/completion-router.test.ts`** (10) — Cause D only (no import-path
+  errors reported; every case's fixture is missing `role`).
+- **`tests/completion-token-routing.test.ts`** (17) — Cause D only, same
+  shape.
+- **`tests/core-command-errors.test.ts`** (26) — Cause C
+  (`CoreCommandDefinition` from `@excitedjs/dreamux-types`) plus Cause A
+  (`service/team-collection/errors.js` → `service/team/errors.ts`).
+- **`tests/core-command-registry.test.ts`** (13) — Cause C, Cause A
+  (`team-collection/commands.js`, `teammate-collection/commands.js`), and the
+  `createCoreCommandRegistry` signature change described under Cause C. Does
+  not hold as a simple restore — flagged there.
+- **`tests/dispatcher-plugin-hooks.test.ts`** (1) — Cause A
+  (`channel/conversation-projection.js`, `agent-entity/identity-store.js`,
+  `dispatcher-service/identity.js`, `teammate-service/admission-ledger.js`,
+  `teammate-service/types.js`) plus Cause G's `DispatcherAgent` class change
+  (`createDispatcherAgent` no longer exists as a function; construct
+  `DispatcherAgent` directly). Holds in substance (the hook-firing behavior
+  under test is unrelated to either change) but needs re-authoring against the
+  class constructor, not a one-line restore.
+- **`tests/entity-turn.test.ts`** (11) — Cause A only
+  (`teammate-service/turn-recording.js`, `teammate-service/turn-coordinator.js`).
+- **`tests/failure-classification.test.ts`** (13) — Cause A
+  (`agent-entity/activity-reader.js`, `agent-entity/read-helpers.js`,
+  `agent-entity/types.js`, `service/scheduler/service.js`,
+  `team-collection/types.js`) plus two unrelated renames found by tsc:
+  `parseWorkflowMaxConcurrency` → `assertWorkflowMaxConcurrency` and
+  `workflowRunInput` → `WorkflowRunInput` (a value/type name collision fix, not
+  traced to a specific ruling; both hold, restore with the new names) and a
+  `SchedulerServiceOptions` export that no longer exists on
+  `service/scheduler/types.js` (not traced further; flagged, not invented).
+- **`tests/mcp-protocol-conformance.test.ts`** (13) — Cause A
+  (`mcp/catalog.js` → `service/mcp/catalog.ts` per Stage 7;
+  `team-collection/mcp-delegate.js`, `teammate-collection/mcp-tool-descriptors.js`).
+- **`tests/mcp-public-failures.test.ts`** (41) — **HIGH-RISK**, logged with
+  extra care because this file sits adjacent to the issue #63 non-blocking-
+  inbound live gate (admission/completion-delivery boundary). Causes: C
+  (`CoreCommandContext` from `@excitedjs/dreamux-types`), A
+  (`team-collection/mcp-delegate.js`, `teammate-collection/mcp-delegate.js`,
+  `scheduler/mcp-delegate.js`, `team-collection/errors.js`,
+  `teammate-collection/errors.js`, `team-service/types.js`,
+  `teammate-service/turn-recording.js`, `agent-entity/activity-reader.js`,
+  `agent-entity/activity-errors.js`), and F (the SUBMIT_FAILED/
+  SUBMIT_AMBIGUOUS code rename and INTERNAL→SERVER_SHUTTING_DOWN, per Stage
+  6e's own commit message naming this file explicitly). `codex-live.test.ts`
+  (issue #63's own gate) is untouched by this pass and still passes (3 tests,
+  confirmed in the full `rush test` run); nothing in Causes A/C/F reaches
+  `turn.ts`/`admission.ts`/`runtime-generation.ts`, but this file's own
+  coverage of the admission/completion boundary is gone until round 2 rebuilds
+  it — flagged for priority attention precisely because it, not `codex-live`,
+  is where that boundary's non-#63 cases lived.
+- **`tests/mcp-tool-descriptions.test.ts`** (8) — Cause A
+  (`scheduler/mcp-delegate.js`, `team-collection/mcp-delegate.js`,
+  `teammate-collection/mcp-tool-descriptors.js`).
+- **`tests/plugin-loader.test.ts`** (22) — Cause B
+  (`BUILTIN_PROVIDER_PACKAGES`, `resolveBuiltinProviderPackage`,
+  `ProviderRegistry.registerImplementation`) plus a `loadConfig` export that
+  moved from `config/config.js` to `config/load.js` (Cause A-shaped path move,
+  holds).
+- **`tests/restart-intent.test.ts`** (12) — R11 ("没有这个需求，把打开和关闭都
+  删掉", Stage 6e). `daemon/restart-intent.ts` is deleted outright along with
+  the `dreamux dispatcher start` CLI verb and the stop-then-restart split it
+  served. Does not hold; changed by R11; no restore, per the ruling.
+- **`tests/runnable-channel.test.ts`** (6) — Cause A
+  (`dispatcher-service/runnable-channel.js` — folded into `ChannelService` per
+  Stage 6e's "absorbing the runnable-channel shape guard") plus Cause B
+  (`ProviderRegistry.registerImplementation`).
+- **`tests/state-schemas.test.ts`** (18) — Cause A
+  (`agent-entity/identity-store.js`, `agent-entity/types.js`,
+  `team-collection/store.js`, `team-collection/types.js`), Cause B
+  (`registerImplementation`), and the same `loadConfig` move as
+  `plugin-loader.test.ts`.
+- **`tests/submission-envelope.test.ts`** (45) — Cause A
+  (`daemon/restart-intent.js`, `service/channel-submission.js`,
+  `dispatcher-service/restart-notice.js`, `team-service/types.js`,
+  `teammate-service/index.js`, `teammate-service/submission.js`,
+  `teammate-service/turn-recording.js`) plus Cause F (nine
+  `@ts-expect-error` directives are now unused — the negative-type assertions
+  they guarded no longer produce an error once the R17 code rename and R11's
+  restart-intent deletion changed the checked shapes). Mixed disposition:
+  the parts unrelated to `restart-intent`/R17 hold (restore via the Cause A
+  import moves and the Cause F code names); the restart-intent-specific
+  assertions do not hold (R11, no restore) — matches this refactor's earlier
+  characterization of this file (see the audit note in the R43 rulings
+  context) and is not re-litigated here.
+- **`tests/team-collection-read-path.test.ts`** (1) — Cause A
+  (`teammate-collection/types.js`).
+- **`tests/team-create-reminder.test.ts`** (5) — Cause A
+  (`dispatcher-service/team-leader-handle.js` → `service/team/leader-handle.ts`,
+  `team-collection/mcp-delegate.js`, `teammate-collection/mcp-delegate.js`).
+- **`tests/team-dissolve-recovery.test.ts`** (9) — Cause A
+  (`team-service/closing.js`, `team-service/leader-agent.js`,
+  `agent-entity/types.js`, `scheduler/service.js`, `teammate-collection/index.js`,
+  `teammate-service/index.js`, `team-collection/types.js`).
+- **`tests/team-leader-handle.test.ts`** (4) — Cause A
+  (`dispatcher-service/team-leader-handle.js` → `service/team/leader-handle.ts`,
+  `service/serial-queue.js` → `platform/serial-queue.ts`,
+  `team-service/index.js`).
+- **`tests/team-leader-materialization.test.ts`** (5) — Cause A
+  (`agent-entity/identity-store.js`, `agent-entity/types.js`,
+  `team-service/index.js`, `team-service/types.js`, `teammate-service/index.js`,
+  `team-collection/types.js`).
+- **`tests/team-leader-start-failure.test.ts`** (3) — Cause A
+  (`channel/conversation-projection.js`, `agent-entity/identity-store.js`,
+  `team-service/index.js`, `team-service/types.js`, `team-collection/types.js`,
+  `teammate-service/admission-ledger.js`).
+- **`tests/team-plugin-hooks.test.ts`** (1) — imports
+  `helpers/dissolve-harness.js` (deleted this pass, see below) and exercises
+  `team.service.hooks.beforeTeamLeaderLaunch`, renamed to `leaderLaunch` by
+  R48/R52. `tsc` alone does not flag this file (a module that exists but is
+  itself broken does not cascade a new tsc error to its callers — the
+  documented tsc/esbuild divergence); confirmed instead by running
+  `npx vitest run tests/team-plugin-hooks.test.ts` in isolation, which fails
+  at real ESM module resolution once `dissolve-harness.ts` is gone. Two
+  independent causes, neither a one-line restore.
+- **`tests/team-summary.test.ts`** (2) — Cause A
+  (`team-service/team-summary.js`, `team-collection/types.js`).
+- **`tests/teammate-dissolve-members.test.ts`** (5) — Cause A
+  (`agent-entity/identity-store.js`, `agent-entity/types.js`,
+  `teammate-collection/dissolve-members.js`, `teammate-service/index.js`).
+- **`tests/teammate-name-allocator.test.ts`** (12) — Cause A
+  (`agent-entity/types.js`).
+- **`tests/worktree-manager.test.ts`** (9) — Cause A
+  (`team-collection/store.js`, `team-collection/worktree-cleanup.js` — folded
+  into `service/worktree/manager.ts` — `team-collection/types.js`).
+
+**Surgical (partial-file) edits already made, not whole-file deletions:**
+
+- **`tests/core-command-adapters.test.ts`** — 1 of 15 cases deleted
+  (`'channel.list: identical result via admin.sock and the Channel invoker'`),
+  same Cause G `listChannels()` removal; the `harnessTeamListRow` import that
+  only that case used is removed with it. 14 cases kept, passing.
+- **`tests/feishu-allow-chats-release-contract.test.ts`** — 1 of 5 cases
+  deleted (`'publishes the complete secure V3 default and ownership
+  boundary'`), which pinned a stale `README.md` example containing
+  `observed_chats`/`warnings`/`last_gate` — R22 moved these diagnostic-only
+  fields to logs (no longer written; old files stay readable).
+  `packages/dreamux/README.md`'s own example was already correct; only this
+  test's copy of the example was stale. Does not hold as written; changed by
+  R22, no restore of the fields — the file's own README is the current
+  reference for a rebuilt case.
+- **`tests/mcp-lease-shim.test.ts`** — 2 of 16 cases deleted. See the separate
+  finding below; **flagged for operator attention**, not tied to a named
+  ruling.
+
+**`tests/mcp-lease-shim.test.ts` finding (undocumented behavior change,
+Stage 7).** The two deleted cases
+(`'mint reads describe() exactly once and freezes a canonical copy, immune to
+later mutation'`, `'fails mint loudly, before any token exists, on a malformed
+identity'`) both fail because Stage 7 ("Plan Stage 7
+adapters and schemas: requests, mcp records, R14/R18/R20") rewrote
+`freezeDelegateCatalog` in `service/mcp/leases.ts`. Before Stage 7, a
+delegate's advertised identity was read from its own `describe()` response and
+validated/frozen by a local `frozenIdentity()` helper (`identity.name must be
+a non-empty string`, etc.). Stage 7 replaced this with
+`identity: mcpDelegateIdentity(name)` — deriving the identity purely and
+deterministically from the delegate's own registration `name` string
+(`dreamux-<name>` at the package version), with the rationale, written in the
+current source's own comment, that "a delegate's identity is a pure function
+of its own name: there is nothing for a delegate to state here, so nothing to
+get wrong." That rationale is coherent and the `frozenIdentity` validator's
+failure mode (a delegate lying about its own `describe().identity`) genuinely
+cannot occur anymore — but two things follow from it that Stage 7's own commit
+message does not mention at all (it discusses R14/R18/R20 and an
+unrelated file move, not this): (1) `catalog.identity` is a plain object
+literal, not frozen (`Object.freeze` on the outer catalog is shallow), so
+`Object.isFrozen(catalog.identity)` is now false; (2) there is no longer any
+"malformed identity" input for `mint()` to reject, so the throw-on-malformed-
+identity case has no object left to test. Stage 7's message also states "No
+test cases deleted this stage: deleted-tests.md gains no Stage 7 heading,
+since no test file in this stage's diff changed" — true of the diff, but the
+diff did silently retire a validated/frozen identity model in favor of an
+unvalidated/unfrozen one, and R53 means no test run caught the fallout until
+this pass. This is not tied to R14, R18, or R20, and no other ruling in
+rulings.md covers MCP identity/freeze semantics. Per the task's "stop and
+report a real contradiction rather than invent a requirement" instruction:
+this pass reports it here rather than assigning it a ruling number it does not
+have. The new design is already shipped in source and is internally coherent;
+this pass does not revert it. Deleted, not restored, pending an operator
+decision on whether the new identity model should be a named ruling or
+whether the two properties (frozen identity, malformed-identity rejection)
+should come back.
+
+### Helper import repairs vs. deletions
+
+R43 governs `.test.ts` files. The `tests/helpers/*.ts` files behind them are
+shared test infrastructure, not tests themselves — a currently-passing test
+can depend on one, so blanket-deleting every helper under `tests/` would break
+passing tests by this pass's own action. This pass drew the line as: a helper
+whose only problem is an import path is mechanically repaired (it pins no
+contract of its own); a helper that would need new test-infrastructure logic
+written to keep working is deleted, same as a test file, because writing that
+logic is out of scope for a gate-repair pass (and R43's spirit — do not author
+new test behavior to force a pass — applies to a shared fixture builder just
+as much as to an assertion).
+
+- **`tests/helpers/command-harness.ts`** (repaired, not deleted). Import paths
+  updated for Causes A/C (`command/catalog.js` → `server/command-catalog.js`;
+  `command/host.js` → `server/command-host.js`; `service/team-collection/
+  types.js` → `service/team/types.js`; `channel/core-port.js` →
+  `service/channel-service/core-port.js`; dreamux-types' `CoreCommandContext`
+  → local `command/types.js`). Added the `config: ConfigService` field
+  `CoreCommandHost` gained from the #448 Config Service work (stubbed with a
+  comment — this harness never exercises config behavior). Added the
+  `dispatcherId` parameter `dispatcherRuntimeStatus` gained and updated the
+  default status literal from `'running'` to `'ready'` (Cause matches the
+  current `AgentRuntimeStatus` union, which has no `'running'` member).
+  Removed the `listChannels` field/implementation entirely (Cause G — a real
+  capability removal on `DispatcherService`, not a rename; the field cannot be
+  mechanically repaired forward, so it is deleted from the fixture, and every
+  test case that exercised it through this fixture is handled per-file above).
+- **`tests/helpers/dissolve-harness.ts`**, **`tests/helpers/event-harness.ts`**,
+  **`tests/helpers/team-harness.ts`** — deleted. All three reach Cause A's
+  moved modules through several layers of their own construction logic (not
+  just a bare re-export), so restoring them is writing new fixture-
+  construction code against the merged `service/agent`/`service/team`
+  directories, not a mechanical path edit.
+- **`tests/helpers/workflow-harness.ts`** — deleted. Reaches Cause A
+  (`teammate-collection/index.js`, `teammate-collection/types.js`,
+  `teammate-service/turn-recording.js`, `teammate-service/types.js`) and
+  separately imports `CronJob` from `scheduler/store.js`, which is a
+  `TS2459` local-not-exported error — `CronJob` is declared in
+  `scheduler/types.ts` now (holds, a plain relocation) — but the file's
+  overall construction logic is the same multi-layer case as the other three
+  harnesses, so it is deleted rather than repaired.
+
+### KB prose this pass wrote that round 2 must revert
+
+Three "not rebuilt yet" statements were added to KB/CLAUDE docs in this pass,
+purely to keep `check.sh`'s cited-path check honest against the test
+deletions above. They are temporally true only until a rebuild happens and
+must be corrected (not left as stale history) the moment any of the following
+tests are rebuilt:
+
+- `.agents/domains/feishu-pairing-access.md` — the paragraph naming
+  `feishu-gate.test.ts`/`feishu-introduce.test.ts`/`feishu-pairing-card.test.ts`
+  as deleted-and-not-yet-rebuilt.
+- `.agents/domains/repository-operations-and-release.md` — the paragraph
+  naming `fake-feishu-bot.ts` as deleted-and-not-yet-rebuilt.
+- `packages/channel/feishu-channel/CLAUDE.md` — the pairing-card regression
+  test reference in "Design constraints."
+
+`.agents/domains/provider-runtime.md`'s `system-prompt.test.ts` line was
+removed outright rather than marked temporal, since that section is a plain
+source list, not a test-coverage claim.

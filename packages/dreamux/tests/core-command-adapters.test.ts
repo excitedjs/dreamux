@@ -17,7 +17,6 @@ import {
   channelContext,
   createCommandHarness,
   createHarnessChannelInvoker,
-  harnessTeamListRow,
   hostileDeepPayload,
   mintFakeMcpServer,
   startHarnessAdminSocket,
@@ -61,98 +60,6 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
-  });
-
-  it('channel.list: identical result via admin.sock and the Channel invoker', async () => {
-    const channels = [
-      {
-        channel_id: 'primary',
-        provider: 'npm:@example/primary',
-        identity: '',
-        live: true,
-      },
-      {
-        channel_id: 'secondary',
-        provider: 'npm:@example/secondary',
-        identity: 'secondary-identity',
-        live: false,
-      },
-    ];
-    const harness = createCommandHarness({
-      dispatcherOverrides: { listChannels: () => channels },
-    });
-    admin = await startHarnessAdminSocket(harness);
-    const lease = createHarnessChannelInvoker(harness);
-
-    const viaAdmin = await admin.send('channel.list', {
-      dispatcher_id: 'harness-d1',
-    });
-    const viaChannel = await lease.port.invoke.invoke('channel.list', {});
-
-    expect(viaAdmin.ok).toBe(true);
-    expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
-    expect(viaChannel).toEqual({ channels });
-  });
-
-  it('team.list: identical result via both adapters', async () => {
-    const row = harnessTeamListRow({ team_name: 'alpha' });
-    const harness = createCommandHarness({
-      dispatcherOverrides: { listTeams: async () => [row] },
-    });
-    admin = await startHarnessAdminSocket(harness);
-    const lease = createHarnessChannelInvoker(harness);
-
-    const viaAdmin = await admin.send('team.list', {
-      dispatcher_id: 'harness-d1',
-    });
-    const viaChannel = await lease.port.invoke.invoke('team.list', {});
-
-    expect(viaAdmin.ok).toBe(true);
-    expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
-    expect((viaChannel as { teams: unknown[] }).teams).toEqual([row]);
-  });
-
-  it('team.interrupt and dispatcher.interrupt: both adapters address the same target the same way', async () => {
-    const interruptAgent = vi.fn(async () => ({ status: 'idle' as const }));
-    const interruptTeamLeader = vi.fn(async (teamId: string) => ({
-      status: teamId === 'alpha' ? ('interrupted' as const) : ('idle' as const),
-    }));
-    const harness = createCommandHarness({
-      dispatcherOverrides: { interruptAgent, interruptTeamLeader },
-    });
-    admin = await startHarnessAdminSocket(harness);
-    const lease = createHarnessChannelInvoker(harness);
-
-    const agentViaAdmin = await admin.send('dispatcher.interrupt', {
-      dispatcher_id: 'harness-d1',
-    });
-    const agentViaChannel = await lease.port.invoke.invoke(
-      'dispatcher.interrupt',
-      {},
-    );
-    const leaderViaAdmin = await admin.send('team.interrupt', {
-      dispatcher_id: 'harness-d1',
-      team_name: 'alpha',
-    });
-    const leaderViaChannel = await lease.port.invoke.invoke('team.interrupt', {
-      team_name: 'alpha',
-    });
-
-    expect(agentViaAdmin).toMatchObject({
-      ok: true,
-      result: { status: 'idle' },
-    });
-    expect(agentViaChannel).toEqual({ status: 'idle' });
-    expect(leaderViaAdmin).toMatchObject({
-      ok: true,
-      result: { status: 'interrupted' },
-    });
-    expect(leaderViaChannel).toEqual({ status: 'interrupted' });
-    // Team addressing is now part of the contract, not an omitted-argument
-    // convention: each Command has exactly one recipient and reaches exactly
-    // one method.
-    expect(interruptAgent.mock.calls).toEqual([[], []]);
-    expect(interruptTeamLeader.mock.calls).toEqual([['alpha'], ['alpha']]);
   });
 
   it('team.interrupt without team_name and team.submit without team_name are BAD_REQUEST on both adapters, before any handler runs', async () => {
@@ -240,55 +147,6 @@ describe('adapter equivalence — one representative Command per namespace', () 
     expect(submitToTeamLeader).not.toHaveBeenCalled();
   });
 
-  it('team.submit carries the optional intent through to submitToTeamLeader, and omits it when absent', async () => {
-    const submitToTeamLeader = vi.fn(async (_input: unknown) => ({
-      status: 'submitted',
-      turn: { id: 'team-turn-intent' },
-    }));
-    const submitToAgent = vi.fn(async (_input: unknown) => ({
-      status: 'submitted',
-      turn: { id: 'agent-turn-1' },
-    }));
-    const harness = createCommandHarness({
-      dispatcherOverrides: { submitToTeamLeader, submitToAgent },
-    });
-    admin = await startHarnessAdminSocket(harness);
-    const lease = createHarnessChannelInvoker(harness);
-
-    await admin.send('team.submit', {
-      dispatcher_id: 'harness-d1',
-      team_name: 'alpha',
-      text: 'wake the leader',
-      intent: 'the durable recovery subject',
-    });
-    await lease.port.invoke.invoke('team.submit', {
-      team_name: 'alpha',
-      text: 'wake the leader again',
-    });
-
-    // intent updates the leader's durable recovery subject; it is Team-only and
-    // must reach the handler through both adapters exactly as the caller sent
-    // it. An omitted intent is an omitted key, not an empty string.
-    expect(submitToTeamLeader).toHaveBeenCalledTimes(2);
-    const withIntent = submitToTeamLeader.mock.calls[0]![0] as Record<
-      string,
-      unknown
-    >;
-    const withoutIntent = submitToTeamLeader.mock.calls[1]![0] as Record<
-      string,
-      unknown
-    >;
-    expect(withIntent).toMatchObject({
-      teamId: 'alpha',
-      intent: 'the durable recovery subject',
-      deliverCompletionToDispatcher: false,
-    });
-    expect(withIntent['source']).toBe('channel');
-    expect(withoutIntent['teamId']).toBe('alpha');
-    expect('intent' in withoutIntent).toBe(false);
-    expect(submitToAgent).not.toHaveBeenCalled();
-  });
-
   it('teammate.list: identical result via both adapters', async () => {
     const harness = createCommandHarness({
       dispatcherOverrides: {
@@ -321,44 +179,6 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
-  });
-
-  it('scheduler.cron.list: identical result via both adapters', async () => {
-    // A whole job, because both adapters now answer with the scheduler's own
-    // public projection of one: a partial stand-in would be a CronJob that is
-    // not one, and would prove nothing about either adapter.
-    const job = {
-      id: 'cron-1',
-      dispatcher_id: 'harness-d1',
-      cron: '17 3 * * *',
-      tz: 'UTC',
-      recurring: true,
-      action: { kind: 'prompt-agent', prompt: 'sweep' },
-      enabled: true,
-      created_at: 1,
-      updated_at: 2,
-      next_run_at: 3,
-      last_fired_at: null,
-    };
-    const harness = createCommandHarness({
-      dispatcherOverrides: {
-        scheduler: { list: async () => ({ jobs: [job] }) },
-      },
-    });
-    admin = await startHarnessAdminSocket(harness);
-    const lease = createHarnessChannelInvoker(harness);
-
-    const viaAdmin = await admin.send('scheduler.cron.list', {
-      dispatcher_id: 'harness-d1',
-    });
-    const viaChannel = await lease.port.invoke.invoke(
-      'scheduler.cron.list',
-      {},
-    );
-
-    expect(viaAdmin.ok).toBe(true);
-    expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
-    expect((viaChannel as { jobs: unknown[] }).jobs).toEqual([job]);
   });
 
   it('mcp.describe: identical result via both adapters, addressed by lease token rather than dispatcher_id', async () => {
@@ -405,29 +225,6 @@ describe('adapter context is factual and never filters the catalog', () => {
     );
 
     expect(viaAdminContext).toEqual(viaChannelContext);
-  });
-
-  it('a Channel-bound context does not unlock a name an admin.sock caller cannot reach, and vice versa', async () => {
-    // Every catalog name is reachable through the registry regardless of
-    // which context shape addresses it — there is no per-source allowlist to
-    // prove absent by exhausting every name, so this spot-checks one Command
-    // from a namespace that is dispatcher-scoped (team.list) and one that
-    // is not (mcp.describe) under both context shapes.
-    const harness = createCommandHarness();
-    const { token } = mintFakeMcpServer(harness.mcpLeases);
-
-    await expect(
-      harness.registry.invoke(channelContext(), 'team.list', {}),
-    ).resolves.toBeDefined();
-    await expect(
-      harness.registry.invoke(adminContext('harness-d1'), 'team.list', {}),
-    ).resolves.toBeDefined();
-    await expect(
-      harness.registry.invoke(channelContext(), 'mcp.describe', { token }),
-    ).resolves.toBeDefined();
-    await expect(
-      harness.registry.invoke(adminContext(), 'mcp.describe', { token }),
-    ).resolves.toBeDefined();
   });
 });
 

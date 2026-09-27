@@ -128,51 +128,6 @@ describe('trusted allow_chats release contract', () => {
     expect(feishuReadme).not.toContain('sender_kind` input');
   });
 
-  it('publishes the complete secure V3 default and ownership boundary', () => {
-    const readme = readFileSync(
-      join(repoRoot, 'packages/dreamux/README.md'),
-      'utf8',
-    );
-    const defaultStart = readme.indexOf('The complete secure V3');
-    const defaultEnd = readme.indexOf(
-      '`access.json` remains version 3',
-      defaultStart,
-    );
-    expect(defaultStart).toBeGreaterThanOrEqual(0);
-    expect(defaultEnd).toBeGreaterThan(defaultStart);
-    const secureDefault = readme.slice(defaultStart, defaultEnd);
-    for (const field of [
-      '"version": 3',
-      '"dm_policy": "pairing"',
-      '"policy": "follow-user"',
-      '"allow_chats": []',
-      '"require_mention": true',
-      '"allow_users": []',
-      '"pending": {}',
-      '"observed_chats": []',
-      '"warnings": []',
-      '"last_gate"',
-      '"at": 0',
-    ]) {
-      expect(secureDefault).toContain(field);
-    }
-    expect(secureDefault).not.toMatch(/<CHAT_ID>|<USER_ID>/);
-    expect(readme).toMatch(
-      /secure default grants neither[\s\S]{0,80}authority/,
-    );
-    expect(readme).toMatch(/`version` is Channel\/schema-owned/);
-    expect(readme).toMatch(/`allow_users` is shared authority/);
-    expect(readme).toMatch(
-      /`pending`[\s\S]{0,180}Channel-owned\s+runtime ledger fields/,
-    );
-    expect(readme).toMatch(
-      /DREAMUX_CONFIG_DIR[\s\S]{0,100}dreamux config path` affect `config\.json` only/,
-    );
-    expect(readme).toMatch(/missing state directory at `0700`/);
-    expect(readme).toMatch(/first `0600` file/);
-    expect(readme).toMatch(/dreamux doctor` is not an access-state validator/);
-  });
-
   it('documents every built-in Codex field and the parsed-but-unused timeout', () => {
     const readme = readFileSync(
       join(repoRoot, 'packages/dreamux/README.md'),

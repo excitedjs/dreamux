@@ -200,7 +200,10 @@ Design constraints:
   names come from the
   transport's runtime bot info (`/open-apis/bot/v3/info` `app_name`); if
   missing, the channel falls back to the neutral `Dreamux bot` label.
-- Any change to this flow must update `feishu-pairing-card.test.ts`, the
+- Any change to this flow must update the pairing-card regression test (the
+  code-organization refactor deleted it along with its consuming suite as
+  broken-by-move — see `deleted-tests.md`'s "Final pass" section — and it has
+  not been rebuilt yet; rebuild it before relying on it as a lock), the
   transport tests for new SDK wrappers, and
   `.agents/domains/feishu-pairing-access.md` when the contract changes.
 
