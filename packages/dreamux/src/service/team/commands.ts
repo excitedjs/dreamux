@@ -57,7 +57,7 @@ import {
   CHANNEL_SUBMISSION_PROPERTIES,
   channelSubmitInput,
   parseChannelSubmission,
-} from '../channel-submission.js';
+} from '../agent/channel-submission.js';
 import {
   MAX_REQUEST_ID_LENGTH,
   teamCreatePayloadHash,

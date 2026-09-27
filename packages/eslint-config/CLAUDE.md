@@ -8,7 +8,17 @@ Dreamux monorepo.
 - Own the repository-wide lint rules that packages consume through thin
   `eslint.config.js` files.
 - Keep the synchronous blocking IO ban centralized.
-- Keep the source-file line-count cap centralized.
+- Keep the source-file line-count cap centralized: `max-lines` at 700,
+  counting code only (`skipBlankLines`/`skipComments`), on `src/**/*.ts`.
+- Ban dumping-ground filenames (the patterns `*-helpers.ts / *-support.ts /
+  *-ops.ts / run-support.ts / runtime-session.ts`, none of which name a real
+  file today) package-wide on `src/**/*.ts`, `error` severity.
+- Offer an opt-in package-wide re-export ban
+  (`withPackageEntryOnlyReexports`): a package calls it from its own
+  `eslint.config.js` to forbid `export * from` / `export { X } from` outside
+  its declared entry file(s), `error` severity where adopted.
+- Enforce `prettier --check` on this package's own files via its `"lint"`
+  script (see the R2 waiver note under Boundaries).
 - Enforce reasoned inline disables and report stale disable comments.
 - Stay dependency-light and runtime-free: this package configures linting only.
 

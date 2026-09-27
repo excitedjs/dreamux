@@ -50,9 +50,12 @@ import {
   failedAdmissionReason,
   toSubmissionResult,
   type AdmissionLedger,
-  type TurnAdmission,
 } from './admission.js';
-import { EntityTurnCoordinator, type TurnCompletionDelivery } from './turn.js';
+import {
+  EntityTurnCoordinator,
+  type TurnAdmission,
+  type TurnCompletionDelivery,
+} from './turn.js';
 import {
   agentRoleNoun,
   teammateClosedFact,

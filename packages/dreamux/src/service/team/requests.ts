@@ -13,7 +13,7 @@ import {
   clampHistoryLimit,
   decodeCursor,
 } from '../../platform/history-page.js';
-import type { TurnAdmission } from '../agent/admission.js';
+import type { TurnAdmission } from '../agent/turn.js';
 import { SUBMISSION_STATUS_VALUES } from '../agent/requests.js';
 import { validateTeamId, type TeamHistoryQuery } from './types.js';
 

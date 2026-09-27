@@ -4,7 +4,7 @@ import type {
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
-import type { TurnAdmission } from '../agent/admission.js';
+import type { TurnAdmission } from '../agent/turn.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import type { TeamLeaderHandle } from './leader-handle.js';

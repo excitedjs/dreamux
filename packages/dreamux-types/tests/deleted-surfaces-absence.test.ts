@@ -95,16 +95,4 @@ describe('dreamux-types carries no minimize-provider-boundaries deleted surface'
       expect(hits).toEqual([]);
     });
   }
-
-  it('ChannelSession never grows a reply/react shorthand method call', () => {
-    // Belt-and-suspenders alongside the keyof check in
-    // channel-provider-contract.test.ts: this greps for the call-site shape
-    // specifically, in case a future member is named differently but is
-    // still invoked as `.reply(` / `.react(` somewhere in this package.
-    for (const file of sourceFiles) {
-      const text = readFileSync(file, 'utf8');
-      expect(text).not.toMatch(/\.reply\(/);
-      expect(text).not.toMatch(/\.react\(/);
-    }
-  });
 });

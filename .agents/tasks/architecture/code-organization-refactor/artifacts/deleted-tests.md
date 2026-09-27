@@ -3233,3 +3233,588 @@ of these three were deleted or edited in this commit — they surface only
 once the final gate pass runs `vitest`/`typecheck:tests` and finds them, at
 which point R43 applies to them the same way it applied to the two files
 above.
+
+## Stage 9
+
+### Item 8 — retire the remaining source-text and file-path tests
+
+Per `.workspace/refactor/s9-lock-plan.md` Item 8 and its own worked-out
+per-file evidence table, re-verified against the tree at the start of this
+stage (Stage 8c's completed HEAD) plus this stage's own items 1-7. Two shapes
+of deletion: a handful of individually failing cases in files that otherwise
+still load (the mechanical gates items
+1-7 install now cover what those cases used to grep for), and seven whole
+files that fail to load outright because an earlier stage (6a/6b/6c/6e, or
+Stage 5) moved or deleted a module the file `readFileSync`s/imports by a
+hardcoded relative path — R43's "a test file that no longer compiles is
+deleted, including a one-line import fix" leaves no lesser option for those
+seven.
+
+#### Targeted case deletions (file otherwise loads and passes)
+
+**`packages/dreamux/tests/core-provider-neutrality.test.ts`** — 4 cases
+deleted, 4 kept.
+- Deleted, failing (R43): `'config.ts carve-out is a single fail-loud
+  rejection, not a provider-id branch'` — `config/config.ts`'s
+  `rejectTopLevelCodex` (verified this stage) still has exactly the pinned
+  shape the case checks (one early `if (!('codex' in raw)) return;`, one
+  throw, no `else`), so the contract itself is intact; only the literal
+  regex `/throw new Error/` fails, because Stage 5 ("Plan Stage 5
+  leaf layering") switched `config.ts`'s thrown error from a bare `Error` to
+  the project's typed `RuleViolation` (an `Error` subclass, `platform/errors.ts`)
+  across the file, this call site included — unrelated to this stage's items
+  1-7. Restore at final test completion with the regex updated to
+  `/throw new RuleViolation/`, nothing else.
+- Deleted, failing (R43): `'the builtin id -> package carve-out lists are
+  themselves pinned'` — not a reworded shape: `BUILTIN_PROVIDER_PACKAGES` and
+  `BUILTIN_PROVIDERS` no longer exist as exports of `registry/builtins.ts` at
+  all (verified this stage: `grep -n "^export" registry/builtins.ts` finds
+  neither name). Stage 8a ("Turn built-in runtimes into plugins",
+  R9) deleted Core's static builtin-provider registry outright and collapsed
+  codex/claude-code into the same `ALWAYS_LOADED_PLUGIN_REFS` +
+  `registerBuiltinProvider()` self-contribution path Feishu already used —
+  there is no longer a static id→package map or a `{ id, kind }` spec array
+  for this case's `specMatches` regex to count either. `BUILTIN_PLUGIN_PACKAGES`
+  and `ALWAYS_LOADED_PLUGIN_REFS` (the case's other two assertions) still
+  exist as exports, but their pinned *values* are also stale, not just the
+  two deleted ones: the same Stage 8a commit's own message says it "adds
+  codex and claude-code to ALWAYS_LOADED_PLUGIN_REFS and
+  BUILTIN_PLUGIN_PACKAGES alongside feishu" (verified this stage —
+  `registry/builtins.ts` now pins `BUILTIN_PLUGIN_PACKAGES` to four entries,
+  not the pinned `{ bootstrap, feishu }` two, and `ALWAYS_LOADED_PLUGIN_REFS`
+  to three refs, not the pinned `['builtin:feishu']` one) — both would also
+  fail their own `toEqual`, they just never ran because the deleted
+  `BUILTIN_PROVIDER_PACKAGES` assertion above them threw first. Does not hold
+  in its deleted/stale form for any of its four assertions; changed by Stage
+  8a/R9. Not a literal restore — the final test completion needs to redesign
+  this assertion against the current mechanism (e.g. pin
+  `createBuiltinProviderRegistry()`'s resolved output, or
+  `registerBuiltinProvider`'s call sites) and the now-four-entry
+  maps.
+- Deleted, failing (R43): `'none of the generic MCP transport files switch or
+  string-compare on a tool name'` — `readFileSync(join(coreSrc,
+  'mcp/catalog.ts'))` throws `ENOENT`, `mcp/catalog.ts` having moved to
+  `service/mcp/catalog.ts` in an earlier stage (Stage 5). Contract still
+  holds; restore at final test completion with the read target updated to
+  the moved path.
+- Deleted, still passing but confirmed redundant (per the plan's own
+  Stage-1-verified note, re-confirmed this stage): `'core does not import a
+  provider implementation package outside the loader boundary'`. This is the
+  same fact `packages/eslint-config/index.js`'s `withCoreImportBoundary`
+  already turns into a `no-restricted-imports` ESLint error on
+  `@excitedjs/dreamux`'s `src/**`, itself real-execution-tested by
+  `packages/dreamux/tests/no-sync-io-gate.test.ts`'s `'the core/provider
+  import-boundary rules are wired via the same real eslint.config.js (issue
+  #209)'` block — a second dependency-cruiser rule for the same fact would be
+  the banned two-mechanisms-for-one-fact shape. Logged as superseded, zero
+  coverage loss; not restored.
+- The whole `'generic MCP transport has no tool-name branch'` describe block
+  (only the one case above) and its `mcpFiles` fixture are removed together,
+  since the block is empty once its one case is gone; the
+  `BUILTIN_PROVIDER_PACKAGES`/`BUILTIN_PROVIDERS`/`BUILTIN_PLUGIN_PACKAGES`/
+  `ALWAYS_LOADED_PLUGIN_REFS` import is dropped as the same edit's dead-import
+  cleanup, not a second logged deletion (only the deleted case read them).
+  The file's own header docstring (items 2 and 4 of its four-item invariant
+  list) is corrected in the same edit to stop describing coverage the file no
+  longer has.
+- Kept, no replacement identified this stage: `'the only files naming a
+  concrete builtin provider id are the composition root'`, `'the only file
+  naming a composite builtin:<id> ref literal is the composition root'`,
+  `'core contains no provider-native config/CLI/event syntax'`, `'the neutral
+  RuntimeActivity kinds used in Core are the dreamux-types contract, not
+  provider syntax'`.
+
+**`packages/dreamux/tests/package-boundary-guards.test.ts`** — 1 case
+deleted.
+- Deleted, failing (R43): `'agent-runtime-claude-code index.ts exports
+  exactly the pinned name set'` — the file's own hand-parsed `namedExports()`
+  regex walk over `packages/agent-runtime/claude-code/src/index.ts` finds 9
+  names; the pinned list has 39. Not barrel drift the H5 gate would catch as
+  a mistake: Stage 8a ("Turn built-in runtimes into plugins")
+  deliberately shrank this barrel to the plugin default,
+  `createClaudeCodeAgentRuntimeProvider`, and the `DispatcherClaudeCodeConfig`
+  family, moving the process/RPC internals (`ClaudeCodeStreamRpc`,
+  `TurnAggregator`, `LineBuffer`, the `build*`/`claudeCode*` helpers, etc.) to
+  package-internal-only — that commit's own message names this exact case as
+  known, deferred fallout ("dreamux/tests/package-boundary-guards.test.ts's
+  claude-code pinned-export-list case ... no longer appear in the export
+  list it asserts"), on purpose choosing not to touch `tests/` that stage.
+  Contract (the barrel's export surface is an intentional, reviewed set)
+  still holds; restore at the final test completion with the pinned list
+  re-derived from the current, deliberately-narrower barrel — not the old
+  39-name list. This was the describe block's only remaining row — the
+  `dreamux-utils`/`dreamux-types`/
+  `agent-runtime-codex`/`feishu-transport` rows the plan's Stage-1 evidence
+  named as siblings were already removed from this file by an earlier stage
+  (the file is unmodified in the working tree before this edit, confirming
+  they were gone before Stage 9 began) — nothing left to individually verify
+  for those. The whole `"each package's index.ts re-export set is an
+  intentional, pinned surface"` describe block (this one case) and its
+  `namedExports()` helper are removed together, since the block is empty once
+  its one case is gone.
+
+**`packages/dreamux-types/tests/deleted-surfaces-absence.test.ts`** — 1 case
+deleted, 12 kept.
+- Deleted, still passing but confirmed redundant: `'ChannelSession never
+  grows a reply/react shorthand method call'`. Verified this stage (not
+  assumed): `packages/dreamux-types/src/channel.ts`'s `ChannelSession`
+  interface is exactly `initialize`/`start`/`close`, unchanged, and
+  `packages/dreamux-types/tests/channel-provider-contract.test.ts:37`'s
+  `assertType<Equal<keyof ChannelSession, 'initialize' | 'start' |
+  'close'>>()` still covers it and still excludes `reply`/`react` — the
+  keyof check has not drifted. Logged as superseded, zero coverage loss; not
+  restored.
+- Kept, no replacement identified (recorded guard, audit §9 item 3): the
+  parametrized `'<file> references none of the deleted-surface tokens'`
+  cases (one per `src/*.ts` file, 11 in this package today).
+
+**`packages/channel/feishu-channel/tests/public-api.test.ts`** — 1 case
+deleted, 4 kept.
+- Deleted, failing (R43): `'the routing surface it does export owns only
+  Feishu-local target/document concepts, never a Core Command or event type
+  name'` — asserts `Object.hasOwn(feishuChannel, 'FeishuRouting')` is `true`;
+  the package's public barrel no longer exports a name called
+  `FeishuRouting`. `source-text-tests.md` classifies this specific assertion
+  as **out of scope** for the text-mirror retirement exercise (it is a real
+  `Object.hasOwn` runtime check against the built module, not a source-text
+  scan) — it is deleted here purely because it is currently failing,
+  independent of this stage's source-text-retirement scope. Contract
+  (whatever routing surface the package does export stays Feishu-local, never
+  a Core Command/event name) still holds in principle; restore as a real test
+  against the barrel's current routing export name, not a redesigned one.
+- Kept: `'does not export the test-only fake bot factory'`, `'does not retain
+  automatic inbound reaction constants'`, `'never re-exports a name from the
+  deleted Core binding/routing/Collaboration Space architecture'` (the
+  `NEVER_EXPORTED` recorded-guard list), `'retains the gate input ABI and
+  requires prior exact-human classification'`.
+
+#### Whole-file deletions (the module the file inspects moved or was deleted by an earlier stage)
+
+All seven files below fail at module load, before any case runs — vitest
+reports `[ file ]` with `Failed to load url ... Does the file exist?` for the
+first unresolvable import in each. Every case each file contained is listed
+below (not just describe-block titles, per the item's own instruction), each
+tagged from `source-text-tests.md`'s Stage-1 bucket where that document
+classified it, plus a "does this contract still hold" call. Restoration for
+the whole file starts with fixing every stale import path (listed per file);
+none of the moves changed the underlying logic these files exercise, only
+where it lives.
+
+##### `packages/dreamux/tests/collection-ownership.test.ts` — whole file, 14 cases
+
+**Failure:** `readFileSync(join(src, 'service/team-service/index.ts'))`
+throws `ENOENT` on the file's very first case; `service/team-service/`,
+`service/teammate-service/`, `service/team-collection/`, and
+`service/teammate-collection/` were all merged into `service/team/` and
+`service/agent/` by Stage 6a/6b (R7), before this stage began. 6 of the 14
+cases fail this way; the other 8 "pass" only because they scan a now-empty
+or nonexistent path set, not because the invariant they name is upheld by a
+live check — the plan's own Stage-9 evidence table calls this out explicitly
+and directs the whole file deleted rather than partially repaired.
+
+- `'team-service/** never calls a ".evict(" method (no reach into an owning
+  Collection)'`, `'teammate-service/** never calls a ".evict(" method (no
+  reach into an owning Collection)'` — **behavior**, contract still holds
+  conceptually (eviction stays Collection-owned: `TeamCollection`/
+  `TeammateCollection`, i.e. `service/team/index.ts` /
+  `service/agent/index.ts`, are still the sole evictors) — this text-scan
+  method cannot express it after the R7 directory merge (there is no longer
+  a separate "-service" directory to scan in isolation from its own
+  Collection); restore at final test completion with a constructed-object
+  test.
+- `'team-service/** never imports the Collection cache/materialization
+  owner'`, `'teammate-service/** never imports the teammate-collection
+  module at all'` — **direction**, superseded by the now-error-severity
+  dependency-cruiser rules `service-team-store-not-to-service-or-collection`
+  / `service-team-core-not-to-collection` and
+  `service-agent-store-not-to-service-or-collection` /
+  `service-agent-service-not-to-collection` (Item 6 of this stage), which
+  state R7's declared store→service→collection direction inside the merged
+  `service/team/` and `service/agent/` directories directly — not restored.
+- `'TeamService publishes a close FACT (onClosed) rather than owning
+  eviction'`, `'TeammateService publishes a close FACT (onClosed) rather
+  than owning eviction'` — **behavior**, contract still holds (both still
+  publish `onClosed` and never call back into their Collection); restore at
+  final test completion with a constructed-object test, reading
+  `service/team/service.ts` and `service/agent/service.ts` (both files moved
+  under R7, content unchanged).
+- `'TeamCollection (runtime-registry.ts) both subscribes to onClosed and owns
+  the private evict()'`, `'TeammateCollection (index.ts) both subscribes to
+  onClosed and owns eviction'` — **behavior**, contract still holds (same
+  reasoning); `runtime-registry.ts` folded into `service/team/index.ts` under
+  R7 (per that stage's own commit message), so restoration reads the folded
+  location, not a separate file.
+- `'no file under team-service/** declares a Map keyed to a TeamService (that
+  cache belongs to the Collection alone)'`, `'no file under teammate-service/**
+  declares a Map keyed to a TeammateService (that cache belongs to the
+  Collection alone)'` — **placement**, premise (two separate directories with
+  a boundary to police) no longer exists since the R7 merge; deleted outright,
+  not replaced.
+- `'has no owning WorkflowCollection to reach into, so its own private
+  evict() is the whole story'` — not in `source-text-tests.md`'s original
+  table (the audit did not flag this describe block). Verified this stage:
+  the contract still holds today exactly as stated — `service/workflow-collection`
+  still does not exist, and `service/workflow-service/index.ts:303` still
+  declares `private evict(runId: string, expected: WorkflowRun)`. This is a
+  real, currently-accurate structural fact unrelated to the R7 merge;
+  restore verbatim at final test completion.
+- `'every "team.<x>" Command name is declared in team-collection/commands.ts,
+  nowhere else'`, `'every "teammate.<x>" Command name is declared in
+  teammate-collection/commands.ts, nowhere else'` — **direction/placement**
+  (H4+H6 jointly, per the plan's own note: command-name vocabulary living in
+  one file is made true by construction by H6's re-export ban plus the
+  per-domain `commands.ts` filename convention, not a standalone
+  dependency-cruiser rule); the expected path in both assertions is also
+  stale (`team-collection/commands.ts` / `teammate-collection/commands.ts` →
+  `service/team/commands.ts` / `service/agent/commands.ts` under R7). Not
+  restored as a source-text test; H4+H6 are the superseding mechanism.
+- `'Core Channel modules never import team-service, teammate-service,
+  team-collection, or teammate-collection internals'` — **direction**,
+  superseded by the now-error-severity `channel-not-to-team-or-teammate`
+  dependency-cruiser rule (Item 6), which states the same `channel/` +
+  `service/channel-service/` → `service/team/` + `service/agent/` ban
+  directly; not restored.
+
+##### `packages/dreamux/tests/completion-delivery.test.ts` — whole file, 15 cases
+
+**Failure:** `import { renderSubmission, ... } from
+'../src/service/teammate-service/submission.js'` fails to resolve;
+`teammate-service/` moved to `service/agent/` under Stage 6a, before this
+stage began (the module is now `service/agent/submission.js`, content
+unchanged per that stage's own record). A second stale import in the same
+file, `import type { TurnCompletionDelivery } from
+'../src/service/teammate-service/turn-recording.js'`, would also need fixing
+on restore (now `service/agent/turn-recording.js`).
+
+Per `source-text-tests.md`'s own note, most of this file is a real behavior
+test (constructs `CompletionDeliveryPolicy`/`renderSubmission` and exercises
+them); only 2 of its 15 cases were ever source-text.
+
+- `'the actual delivery call site renders under COMPLETION_SOURCE, not a
+  locally re-derived literal'` — **placement**, source-text-tests.md's own
+  note: redundant with the behavior test two cases down (`'renders
+  identically whether or not a deliverCompletion callback is attached'`,
+  which calls `renderSubmission` and checks the rendered string) — candidate
+  to drop once that equivalence is confirmed, not this stage; still logged
+  here as deleted-with-the-file, not independently resolved.
+- `'never reintroduces an isChannelInvocation-style adapter branch on the
+  completion path'`, `'states deliverCompletionToDispatcher as a
+  caller-supplied literal at both call sites, never a computed adapter
+  check'` — **behavior**, failure-ledger #13's guard; no cheap
+  constructed-object equivalent identified (an absence fact across 10 files,
+  several of which also moved under R7 — `team-service/completion-targets.ts`
+  → `service/team/completion-targets.ts`, `team-collection/commands.ts` →
+  `service/team/commands.ts`, `team-collection/mcp-delegate.ts` →
+  `service/team/mcp.ts`); restoration needs both the file-list update and,
+  per the doc's own recommendation, a positive test design (same delivery
+  path taken for an MCP-originated and an admin-Command-originated call)
+  rather than a literal restore.
+- All other 12 cases — **behavior**, real constructed-object/timer/mock
+  tests unrelated to the audit's source-text inventory, contract fully
+  holds, restore verbatim once the two import paths above are fixed:
+  `'COMPLETION_SOURCE is the fixed provenance name a delivered completion
+  opens under'`, `'renders identically whether or not a deliverCompletion
+  callback is attached'`, `'delivers a failed outcome that carries no native
+  token'`, `'delivers a stopped outcome that carries no native token'`, `'is
+  a distinct path from a successful completion: status and result are not
+  conflated'`, `'never folds two null-token deliveries, even with
+  byte-identical fact content'`, `'does not consume or corrupt the
+  token-keyed dedupe entry a later real completion from the same producer
+  uses'`, `'logs a timeout as reported news rather than silently vanishing'`,
+  `'never rejects the producer-facing delivery when the recipient throws
+  synchronously while preparing'`, `'never rejects the producer-facing
+  delivery after a persistently failing submit exhausts every retry'`,
+  `'EntityTurnCoordinator holds no display code at all, so it cannot hold a
+  role gate'` (reads `service/agent/turn-coordinator.ts` post-move), `'a
+  completion push-back is the ordinary admitted-input path, asking only not
+  to wake'`.
+
+##### `packages/dreamux/tests/team-dissolve-contract.test.ts` — whole file, 18 cases
+
+**Failure:** `import { TeamWorktreeCleanup } from
+'../src/service/team-collection/worktree-cleanup.js'` fails to resolve.
+Unlike the other six whole-file deletions in this stage, this class was not
+renamed-in-place: Stage 6b's commit message states plainly that
+`TeamWorktreeCleanup` "fold[s] into `TeamCollection`" — there is no standalone
+`TeamWorktreeCleanup` class or `worktree-cleanup.ts` file anywhere in current
+`src/` to re-point an import to. Verified this stage: the folded logic is
+`service/team/index.ts`'s private `settleClosedWorktree`/`reclaimTeamWorktree`
+methods (lines ~397-459), which read the same `cleanup_state ===
+'cleanup-pending'` fact and call the same `WorktreeManager.cleanup()` the
+deleted class did. Two more imports in the same file are also stale and
+would need fixing on restore: `TeamStore` from
+`'../src/service/team-collection/store.js'` (now `service/team/store.js`)
+and `TeamRecord` from `'../src/service/team-collection/types.js'` (now
+`service/team/types.js`).
+
+`source-text-tests.md` flagged only two describe blocks in this file (163-177,
+180-204+, by its old line numbers); the remaining 589 lines are real
+behavior tests (dissolve harness spinning up a real git worktree, a real
+`TeamClosing`) the audit never classified as source-text at all.
+
+- `'no file in the dissolve path — TeamClosing, TeamService, member close, or
+  worktree reclaim — ever references waitIdle'` — **behavior** (R10), no
+  cheap constructed-object equivalent identified; restore at final test
+  completion, ideally redesigned per the doc's own suggestion (a fake
+  long-running turn that proves dissolve does not wait for it) rather than
+  restored as a literal grep.
+- `'dissolveTeam and dissolveTeamForLeader both route through the same
+  private submitDissolve, which itself is the only call site that invokes
+  .dissolve('` — **behavior**, same disposition; restore with a spy on
+  `.dissolve()` call count across both entry points, per the doc's own
+  suggestion.
+- All other 16 cases — **behavior**, real constructed-object tests (a real
+  temp git repo + `WorktreeManager` + `TeamClosing`/`TeamService` harness)
+  entirely outside the audit's source-text inventory; contract fully holds,
+  restore verbatim once the three import paths above are fixed: `'a
+  dispatcher-triggered dissolve rechecks the worktree after every runtime
+  stops'`, `'a TeamLeader self-dissolve stops its other children first,
+  checks while it is still alive, then stops itself'`, `'the post-stop
+  recheck catches a dispatcher-triggered race that dirtied the worktree
+  after the preflight passed'`, `'the post-stop recheck catches a
+  self-dissolve race the same way'`, `'force collapses both caller kinds to
+  the identical stop-and-close order, with exactly one (unblockable)
+  recheck'`, `'force never lets a blocked assessment stop the dissolve'`,
+  the `it.each(['dispatcher', 'team_leader'])` pair `'a blocked non-forced %s
+  dissolve rejects before admission and leaves the Team open'` (both
+  entries), `'force discards dirty/untracked work in the managed worktree,
+  but the branch and its history survive in the source repo'`, `'force
+  refuses a worktree identity whose path is not actually registered to the
+  source repo'`, `'force never removes the source repository itself, even
+  when the worktree identity names it as the path'`, `'force never touches a
+  reused cwd — cleanup is a no-op regardless of force'`, `'a job created
+  before dissolve stays gone from disk and from the live scheduler even when
+  the final record write fails'`, `'does nothing when the record has no
+  pending cleanup — no worktree call, no write'`, `'reclaims a pending
+  worktree with the force authorization the pending record carries, then
+  clears it'` (this and the next two cases exercise the folded
+  `settleClosedWorktree` logic directly, so restoration also needs whatever
+  harness seam the pre-fold test used to reach `TeamWorktreeCleanup.settle`
+  directly to instead reach it through `TeamCollection`'s private methods,
+  or a narrower public entry point if one exists by the final pass), `'throws
+  without writing a second fact when the reclaim itself fails, leaving the
+  pending record standing for the next start'`.
+
+##### `packages/dreamux/tests/core-event-catalog.test.ts` — whole file, 15 cases
+
+**Failure:** `import { TeamStore } from
+'../src/service/team-collection/store.js'` fails to resolve; moved to
+`service/team/store.js` under Stage 6b. A second stale import in the same
+file, `import { AgentRuntimeStateStore } from
+'../src/service/agent-entity/runtime-state.js'`, would also need fixing on
+restore — `service/agent-entity/` no longer exists; the class is now
+`service/agent/runtime-state.js` (an earlier stage than 6b, per that
+directory's own disappearance).
+
+- `'the Dispatcher and its dispatcher-scoped TeamMates are wired to the real
+  publisher with role read from team_id, not asserted'` — **behavior**;
+  source-text-tests.md's own note: the test's own comment says
+  `DispatcherService` is "too heavy to construct here" — that is a defect in
+  the test's own construction cost, not a property of the fact under test.
+  Real fix is a lighter constructible seam for `publishAgentState`, then a
+  real call-and-observe test, at final test completion.
+- `'TeammateRuntimeOwner forwards activity to Core only after checking that
+  same lease, fail-open on rejection'` — **behavior**; same shape (an
+  ordering fact, `guardIndex < logIndex < forwardIndex`, proven today by
+  slicing method-body text); restore with a real test that starts a runtime,
+  revokes the lease mid-flight, and asserts activity after revocation never
+  reaches Core while activity before it does.
+- All other 13 cases — **behavior**, real constructed-object tests (a real
+  `AgentRuntimeStateStore`/identity store + a capturing publisher harness)
+  entirely outside the audit's source-text inventory; contract fully holds,
+  restore verbatim once the two import paths above are fixed: `'accepts a
+  schema-valid fixture of every catalog kind'`, `'rejects every deleted or
+  never-added event kind'`, `'rejects a schemaVersion other than 1'`,
+  `'rejects a non-finite occurredAt'`, `'deep-freezes a sealed event so no
+  listener can rewrite a broadcast fact'`, `'publishes the FIRST state fact
+  only after the identity write is durable, and never before'`, `'republishes
+  on a later status transition, but not on an update that leaves status
+  unchanged'`, `'never persists a role field on the identity the store hands
+  to onPersisted'`, `'the TeammateRole vocabulary excludes the deleted
+  team_member kind (issue #63 deleted surface)'`, `'publishes on create()
+  with the roster the owner supplied'`, `'publishes nothing when nobody is
+  listening, and never even asks for a roster'`, `'republishes when the Team
+  lifecycle status changes, but not on a same-status field update'`,
+  `'AgentRuntimeStateStore revokes the prior lease the instant a new
+  generation opens, and revocation never un-happens'`.
+
+##### `packages/dreamux/tests/channel-service.test.ts` — whole file, 8 cases
+
+**Failure:** `import { channelMcpDelegates } from
+'../src/service/channel-service/mcp-delegates.js'` fails to resolve. Unlike
+a simple rename, the standalone `channelMcpDelegates()` function this file
+imports no longer exists anywhere in current `src/` (confirmed by repo-wide
+grep) — Stage 6e folded its composition into `ChannelService.mcpDelegates()`,
+an instance method on the class in `service/channel-service/index.ts`, built
+from `createChannelMcpDelegate` (singular; still present, in
+`service/channel-service/mcp-delegate.ts`, itself exercised directly and
+passing by `mcp-delegate-catalog.test.ts`'s own `createChannelMcpDelegate`
+describe block).
+
+- `'is reached only from the Dispatcher-agent and TeamLeader delegate
+  assemblies, never the ordinary TeamMate one'` — **direction**; the plan's
+  own note pairs this with `mcp-delegate-catalog.test.ts`'s matching case
+  ("same fact, write one rule, drop both tests together"). Verified this
+  stage: no dedicated named-edge rule for this exact fact was added, because
+  the fact is already implied by the general layer order once
+  `channelMcpDelegates` became `ChannelService.mcpDelegates()` — `TeammateCollection`'s
+  own MCP assembly (`service/agent/mcp.ts`, `service-agent-collection` layer)
+  sits strictly before `service-orchestration` (`service/channel-service/` +
+  `service/dispatcher-service/`) in `.dependency-cruiser.cjs`'s `LAYERS`, so
+  `layer-order-service-agent-collection` (now error severity, Item 6) already
+  forbids `service/agent/mcp.ts` from importing `service/channel-service/`
+  at all, structurally. Superseded; not restored.
+- All other 7 cases — **behavior**, real constructed-object tests (a real
+  `ExternalChannelProviderContractError`/registration harness, real
+  `ChannelMcpCall`/`ChannelMcpCallContext` fakes) entirely outside the
+  audit's source-text inventory; contract fully holds, restore verbatim once
+  the import path above is fixed and the call site under test is updated
+  from the free function to `ChannelService.prototype.mcpDelegates`: `'registers
+  a loaded provider that has no ref/descriptor member of its own'`, `'rejects
+  a ref pre-registered under the wrong kind before the module is imported'`,
+  `'rejects a contract failure (missing createSession) without a partial
+  registration'`, `'names each server after the resolved provider, not the
+  configured channel id'`, `'composes a caller-specific catalog for a
+  dispatcher caller'`, `'composes a distinct, Team-scoped catalog for a
+  TeamLeader caller'`, `'yields no delegate for a channel whose provider
+  composes no MCP capability'`.
+
+##### `packages/dreamux/tests/mcp-delegate-catalog.test.ts` — whole file, 28 cases
+
+**Failure:** `import { validateMcpToolCatalog } from
+'../src/mcp/catalog.js'` fails to resolve; moved to
+`service/mcp/catalog.ts` under Stage 5 (confirmed: `mcp/catalog.ts` no
+longer exists, `service/mcp/catalog.ts` exports `validateMcpToolCatalog`).
+
+- `'channelMcpDelegates() is defined once and consumed only by
+  dispatcher-service role assembly'` — **direction**; same fact and same
+  disposition as `channel-service.test.ts`'s `'is reached only from the
+  Dispatcher-agent and TeamLeader delegate assemblies...'` case above
+  (the plan's own note: "one R5 rule retires both tests") — superseded by
+  the layer-order fact described there (`layer-order-service-agent-collection`,
+  error severity), not a dedicated rule; not restored.
+- All other 27 cases — **behavior**, real constructed-object/fixture tests
+  (`validateMcpToolCatalog`, `service/mcp/tool-metadata.ts`,
+  `service/mcp/descriptor.ts`, `service/mcp/commands.ts`,
+  `createChannelMcpDelegate`) entirely outside the audit's source-text
+  inventory; contract fully holds, restore verbatim once the import path
+  above is fixed: `'rejects a non-array and an empty array as distinct
+  failures'`, `'requires a unique, non-empty name per descriptor'`, `'rejects
+  an unknown top-level descriptor key'`, `'compiles inputSchema/outputSchema
+  through the same SDK adapter registration uses'`, `'defaults
+  title/description to the tool name when omitted'`, `'restricts annotations
+  to the MCP-defined key set and value types'`, `'restricts icons to the
+  MCP-defined key set and required src'`, `'rejects a descriptor that would
+  not survive a JSON round trip'`, `'builds a closed inputSchema and passes
+  it straight through validateMcpToolCatalog'`, `'merges inputConstraints
+  into the closed object schema without dropping the closure'`,
+  `'repoInputSchema requires mode and enumerates the canonical mode/cleanup
+  values'`, `'keeps the three standard annotation presets distinct and
+  internally consistent'`, `'assertUniqueMcpServerNames only rejects an
+  actual collision'`, `'carries only the admin-socket location and the
+  opaque lease token — nothing else'`, `'contributes exactly mcp.describe
+  and mcp.toolcall, regardless of what is leased'`, `'never grows a third
+  Command no matter how many delegates a runtime leases'`, `'at the
+  composition root, no individual agent-facing tool name is ever a
+  registered Command'`, `'names its server channel-<provider> and its
+  identity dreamux-channel-<provider>'`, `'drops a session-target
+  registration when no created-instance capability exists'`, `'advertises a
+  session-target tool once a created-instance capability is proven, and
+  routes calls to it'`, `'drops a provider-target registration when the
+  provider composes no sessionless invoke'`, `'routes a provider-target tool
+  to the provider sessionless invoke, working with no live session'`,
+  `'passes %s-owned text alongside the unchanged result object'` (it.each over
+  `'session'`/`'provider'`), `'passes a Channel refusal through verbatim
+  (ok:false is a value, not an exception)'`, `'raises a Team-lease failure
+  for the admission boundary to
+  render, and keeps no list of its own'`, `'caller-scoped catalogs: the same
+  channel id yields two different tool sets for dispatcher vs team_leader
+  callers'`.
+
+##### `packages/dreamux/tests/workflow-service.test.ts` — whole file, 15 cases
+
+**Failure:** `import { WORKFLOW_AGENT_SYSTEM_PROMPT } from
+'../src/service/workflow-service/agent-policy.js'` fails to resolve;
+`agent-policy.ts` folded into `service/workflow-service/run.ts` under Stage
+6c (confirmed: `WORKFLOW_AGENT_SYSTEM_PROMPT` now lives in `run.ts`). A
+second stale import in the same file, `import type { LockedTeammate } from
+'../src/service/teammate-service/types.js'`, would also need fixing on
+restore — `teammate-service/` moved to `service/agent/` under Stage 6a, and
+`LockedTeammate` specifically now lives in `service/agent/service-types.ts`,
+not `service/agent/types.ts`.
+
+- `'never imports team-collection or team-service — the only path to Team
+  ownership is the narrow capability it is handed'` — **direction**,
+  superseded by the now-error-severity `workflow-service-not-to-team`
+  dependency-cruiser rule (Item 6), which states the same
+  `service/workflow-service/` → `service/team/` ban directly (and doubly by
+  the general `layer-order-service-mid` layer-order rule, since
+  `service/workflow-service/` sits strictly before `service/team/` in
+  `LAYERS`); not restored.
+- `'has no per-spawn Team-generation revalidation as a second lifecycle
+  mechanism'` — **placement**, a vocabulary-absence check (no file under
+  `workflow-service/**` contains the word "generation", case-insensitive) —
+  dependency-cruiser cannot express "no file contains this substring"; no
+  cheap mechanical replacement identified this stage. Left for the final
+  test completion to either keep as a cheap, precise source-text test, or
+  redesign as a behavior test asserting workflow spawns are never
+  revalidated against a Team generation counter.
+- (The file no longer contains a `'WorkflowRun itself never calls an
+  eviction callback'` case — that case was already deleted in Stage 6c Item
+  1, logged above under that stage's own heading, when `run-support.ts` was
+  deleted.)
+- All other 13 cases — **behavior**, real constructed-object tests (a real
+  temp-dir `DREAMUX_ROOT`, real `WorkflowRunStore`/`WorkflowJournal`, an
+  in-process fake runner) entirely outside the audit's source-text
+  inventory; contract fully holds, restore verbatim once the two import
+  paths above are fixed: `'converges a running record with no committed
+  terminal journal to stopped, backfilling the journal, without creating a
+  runner'`, `'converges a running record whose journal already committed a
+  terminal event, without creating a runner'`, `'needs no synthesis for an
+  empty scope: start() succeeds and list() is empty, without creating a
+  runner'`, `'ignores a runner message that arrives after the run is already
+  durably terminal'`, `'a stale run instance settling late cannot evict a
+  newer live replacement of the same id'`, `'stop() converges already-accepted
+  work: it waits for a submitted turn to settle before finalizing'`, `'a
+  failed run delivers its failure through the null-completion-token entry
+  point'`, `'keeps completed delivery when its intent wins before explicit
+  stop'`, `'keeps failed delivery when its intent wins before stopAll'`,
+  `'does not retract terminal delivery that already started before stop'`,
+  `'reaches only createLocked on the teammates dependency and holds the lock
+  until terminal cleanup releases it'`, `'contributes the schema and the
+  system-prompt fragment identically across different agentType steps'`,
+  `'resolves only once every live run has reached a terminal record'`.
+
+**Issue #63 note:** `packages/dreamux/tests/codex-live.test.ts` is untouched
+by this item — none of the seven whole-file deletions or four targeted case
+deletions above reaches the Codex submit path or any of
+`turn.ts`/`admission.ts`/`runtime-generation.ts`.
+
+**Left for a later pass, not touched by this item (named, not acted on —
+each is out of this item's named file scope):**
+- `packages/dreamux/tests/helpers/event-harness.ts` is now unreferenced —
+  `core-event-catalog.test.ts` was its only importer. Left in place (it still
+  compiles and is harmless); the final test completion should either delete
+  it or reuse it when `core-event-catalog.test.ts` is rebuilt as a real
+  constructed-object test, since it already builds the identity-store/
+  capturing-publisher fixtures that restoration needs.
+- `packages/dreamux/tests/mcp-lease-shim.test.ts:4`'s docstring names
+  `mcp-delegate-catalog.test.ts` in prose ("the same two pieces
+  mcp-delegate-catalog.test.ts does not [cover]"); the file itself is
+  unaffected (no import), just a now-dangling cross-reference comment.
+- `packages/dreamux/tests/package-boundary-guards.test.ts`'s own `'core
+  source does not import built-in provider implementation packages'` case
+  (in the untouched `'epic #209 package-boundary guards'` describe block) is
+  the same fact, redundant with the same `withCoreImportBoundary` ESLint gate,
+  as the `core-provider-neutrality.test.ts` case this item deletes above —
+  `source-text-tests.md`'s own table already names both as the identical
+  "placement (redundant)" disposition. Not deleted here: the plan's Item 8
+  evidence table scoped this file's targeted deletion to its one failing
+  `index.ts re-export set` case only, and this case is still passing. Named
+  so the final test completion does not have to rediscover the duplication.
+
+This item deletes and logs test cases now (the task's general "do not delete
+or log tests now; failing tests are deleted per R43 in the final pass"
+instruction is the default for items that only move/rename source; Item 8's
+own instructions are the more specific, controlling ones for this item, and
+they are exactly the deletion-and-logging work R43 describes).

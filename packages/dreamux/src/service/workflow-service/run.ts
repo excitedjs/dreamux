@@ -10,10 +10,11 @@ import { InFlightWork } from '../../platform/in-flight-work.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { SpawnTeamMateRequest } from '../agent/types.js';
-import type { CreateLockedTeammateOptions } from '../agent/index.js';
-import type { Turn } from '../agent/turn.js';
-import type { TurnAdmission } from '../agent/admission.js';
-import type { LockedTeammate } from '../agent/service-types.js';
+import type { Turn, TurnAdmission } from '../agent/turn.js';
+import type {
+  CreateLockedTeammateOptions,
+  LockedTeammate,
+} from '../agent/service-types.js';
 import { WorkflowPersistenceError } from './errors.js';
 import {
   WorkflowJournal,

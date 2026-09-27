@@ -122,8 +122,8 @@ the Team.
   surface is reserved for host lifecycle operations. The shared output DTO is
   `ChannelMetadata` in `channel-service/index.ts`.
 - **`team/`** — one directory, files ordered by R7's declared direction: store
-  → service → collection. Two `warn`-severity `.dependency-cruiser.cjs` rules
-  hold that direction — a store-tier file never imports a service- or
+  → service → collection. Two `.dependency-cruiser.cjs` rules enforce that
+  direction at error severity — a store-tier file never imports a service- or
   collection-tier file, and a service-tier file never imports a
   collection-tier file. The store tier (`types.ts`, `requests.ts`,
   `create-request.ts`, `store.ts`, `errors.ts`) is `TeamRecord`'s persisted
@@ -171,33 +171,40 @@ the Team.
   it.
 - **`agent/` + `completion-router/`** — `agent/` is one directory, files
   ordered by R7's declared direction rather than by the class-plus-helpers
-  rule above: store → service → collection. Two `warn`-severity
-  `.dependency-cruiser.cjs` rules hold that direction — a store-tier file
-  never imports a service- or collection-tier file, and a service-tier file
-  never imports a collection-tier file. The store tier (`identity.ts`,
-  `store.ts`, `runtime-state.ts`, `activity.ts`, `records.ts`, `requests.ts`,
-  `runtime-id.ts`) is neutral identity/activity/runtime-state persistence and
-  history-query reading; it is never under a Collection, and it is shared —
+  rule above: store → service → collection. Two
+  `.dependency-cruiser.cjs` rules enforce that direction at error severity —
+  a store-tier file never imports a service- or collection-tier file, and a
+  service-tier file never imports a collection-tier file. The store tier
+  (`identity.ts`, `store.ts`, `runtime-state.ts`, `activity.ts`,
+  `records.ts`, `requests.ts`, `runtime-id.ts`, `types.ts`) is neutral
+  identity/activity/runtime-state persistence, history-query reading, and the
+  directory's data types; it is never under a Collection, and it is shared —
   `team/service.ts` and `dispatcher-service/` read it directly for the Team
   leader and the dispatcher agent, both of which live outside
-  `TeammateCollection`. The service tier (`runtime-generation.ts`, `turn.ts`,
-  `admission.ts`, `submission.ts`, `completion-renderer.ts`, `factory.ts`,
-  `service.ts`) is `AgentService` — named for the entity rather than for
-  `TeammateCollection`, because the same class also serves as the dispatcher
-  agent and a Team's leader. It owns one identity, its process-local Workflow
-  lock, its runtime, its canonical Turn objects, terminal outcome/delivery
-  convergence, and idempotent logical close; its retirement broadcast is the
-  shared `ClosedFactPublisher`, and it is constructed per-entity by
-  `AgentServiceFactory`, the per-dispatcher factory that owns the shared
-  `AdmissionLedger`. The collection tier (`index.ts`, `commands.ts`,
-  `mcp.ts`, `system-prompt.ts`, `errors.ts`, `types.ts`) is
-  `TeammateCollection`: it constructs, subscribes to, caches,
-  resolves, and reads ordinary-TeamMate entities only — never the dispatcher
-  agent or a Team's leader — and owns the Team-scoped bulk close a dissolve
-  needs (`dissolve-members.ts`); it does not own an entity's close state
-  machine. This directory merge and the `AgentService` rename are a
-  code-location and naming change only: `identity.json`'s shape, field
-  meanings, and owner are unchanged, so no
+  `TeammateCollection`. It sits inside `.dependency-cruiser.cjs`'s
+  `service-primitives` layer rather than a separate `service/agent/` layer,
+  alongside `worktree/`/`mcp/`/`dispatcher-core-events/` — it is the same
+  neutral kernel those directories read, not a tier ranked ahead of or behind
+  them. The service tier (`runtime-generation.ts`, `turn.ts`, `admission.ts`,
+  `submission.ts`, `channel-submission.ts`, `completion-renderer.ts`,
+  `factory.ts`, `service.ts`, `service-types.ts`) is `AgentService` — named
+  for the entity rather than for `TeammateCollection`, because the same class
+  also serves as the dispatcher agent and a Team's leader. It owns one
+  identity, its process-local Workflow lock, its runtime, its canonical Turn
+  objects, terminal outcome/delivery convergence, and idempotent logical
+  close; its retirement broadcast is the shared `ClosedFactPublisher`, and it
+  is constructed per-entity by `AgentServiceFactory`, the per-dispatcher
+  factory that owns the shared `AdmissionLedger`. `channel-submission.ts` (the
+  Channel-facing submission reader) sits in this tier because it needs
+  `submission.ts`, not the store or collection tier. The collection tier
+  (`index.ts`, `commands.ts`, `mcp.ts`, `system-prompt.ts`, `errors.ts`,
+  `dissolve-members.ts`, `agent-config.ts`) is `TeammateCollection`: it
+  constructs, subscribes to, caches, resolves, and reads ordinary-TeamMate
+  entities only — never the dispatcher agent or a Team's leader — and owns
+  the Team-scoped bulk close a dissolve needs (`dissolve-members.ts`); it
+  does not own an entity's close state machine. This directory merge and the
+  `AgentService` rename are a code-location and naming change only:
+  `identity.json`'s shape, field meanings, and owner are unchanged, so no
   `packages/dreamux/skills/dispatcher/dreamux-maintenance/` update
   accompanies it. `completion-router/` is the stateless per-dispatcher
   delivery policy; it keeps no Turn registry or terminal cache, and reads
@@ -219,7 +226,9 @@ the Team.
   MCP delegate; `errors.ts` holds `CronJobNotFoundError`. `types.ts` holds the
   domain types (`CronJob`/`CronJobAction`/`CronPromptAgentAction`/
   `CronJobCreateInput`/`CronJobUpdateInput`), the request/result interfaces,
-  `SchedulerServiceOptions`, and `SchedulerCommands` — no codecs. The two
+  and `SchedulerCommands` — no codecs. `SchedulerServiceOptions` (a
+  constructor-options bag naming the concrete `CronJobStore`, not a data type)
+  is declared in `index.ts` beside the `SchedulerService` it configures. The two
   scheduler-specific files: `store.ts` (`CronJobStore` plus
   `detectLegacyCronJobStore` — persistence only, no domain types) and
   `cron-validation.ts` (the shared cron-expression/timezone rule set both
@@ -247,12 +256,13 @@ the Team.
   catalog/lease/projection helpers each delegate builds on.
 - **Root helpers** — `dispatcher-workspace.ts` (the dispatcher-cwd policy
   shared by startup, the dispatcher service, `dreamux doctor`, and
-  `worktree/`), `name-allocator.ts`, `submission-sources.ts`, and
-  `channel-submission.ts` live at the root because no single service owns
-  them. The cross-domain primitives that used to live here too — the closed-fact
-  broadcast, in-flight-work admission counting, deduplication, the keyed serial
-  queue, and shutdown-failure aggregation — carried no service-layer
-  dependency of their own and moved to `platform/`.
+  `worktree/`), `name-allocator.ts`, and `submission-sources.ts` live at the
+  root because no single service owns them. `channel-submission.ts` moved into
+  `agent/` (see the `agent/` bullet above) once it needed `submission.ts`, so
+  it is no longer a root file. The cross-domain primitives that used to live
+  here too — the closed-fact broadcast, in-flight-work admission counting,
+  deduplication, the keyed serial queue, and shutdown-failure aggregation —
+  carried no service-layer dependency of their own and moved to `platform/`.
 
 ## Invariants (why it's shaped this way)
 

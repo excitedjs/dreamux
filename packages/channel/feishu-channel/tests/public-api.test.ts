@@ -46,15 +46,6 @@ describe('@excitedjs/feishu-channel public API', () => {
     }
   });
 
-  it('the routing surface it does export owns only Feishu-local target/document concepts, never a Core Command or event type name', () => {
-    // `FeishuRouting`'s own read/write surface must be the whole story: Core
-    // is asked a `team_name` fact through the generic `invoke` port and never
-    // exposes a binding-shaped Command of its own for this package to import.
-    expect(Object.hasOwn(feishuChannel, 'FeishuRouting')).toBe(true);
-    expect(Object.hasOwn(feishuChannel, 'FeishuBindingOperations')).toBe(false);
-    expect(Object.hasOwn(feishuChannel, 'FeishuProvisioning')).toBe(false);
-  });
-
   it('retains the gate input ABI and requires prior exact-human classification', () => {
     type PublicGateInput = Parameters<
       typeof feishuChannel.dreamuxFeishuGate

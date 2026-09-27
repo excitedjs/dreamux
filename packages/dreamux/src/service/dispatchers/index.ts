@@ -9,10 +9,12 @@ import type { CoreCommandRegistry } from '../../command/types.js';
 import type { SyncHook } from 'tapable';
 import { AgentIdentityStore } from '../agent/store.js';
 import { dispatcherDir } from '../../platform/paths.js';
-import { DispatcherService } from '../dispatcher-service/index.js';
+import {
+  DispatcherService,
+  type DispatcherServiceOptions,
+} from '../dispatcher-service/index.js';
 import type {
   DispatcherRuntimeStatus,
-  DispatcherServiceOptions,
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';

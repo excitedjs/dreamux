@@ -12,9 +12,11 @@ import { deduplicate } from '../../platform/deduplicate.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
-import type { CreateLockedTeammateOptions } from '../agent/index.js';
 import type { SpawnTeamMateRequest } from '../agent/types.js';
-import type { LockedTeammate } from '../agent/service-types.js';
+import type {
+  CreateLockedTeammateOptions,
+  LockedTeammate,
+} from '../agent/service-types.js';
 import {
   canonicalJsonValue,
   JSON_VALUE_UNBOUNDED,

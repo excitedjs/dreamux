@@ -15,8 +15,10 @@ import {
 } from 'plist';
 
 import { stateRoot } from '../platform/paths.js';
-import { managedServiceEnvironment } from './environment.js';
-import type { ServiceInstallAnswers } from './install.js';
+import {
+  managedServiceEnvironment,
+  type ServiceInstallAnswers,
+} from './environment.js';
 
 export type ServicePlatform = 'launchd' | 'systemd';
 

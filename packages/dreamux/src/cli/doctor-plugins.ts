@@ -12,7 +12,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { startPlugins, type StartedPlugins } from '../plugin/host.js';
 import { type LoadedPlugin, PluginLoadError } from '../plugin/loader.js';
-import type { DoctorCheck } from './doctor.js';
+import type { DoctorCheck } from './doctor-types.js';
 
 export function pluginDoctorChecks(
   plugins: readonly LoadedPlugin[],

@@ -1,8 +1,4 @@
-import type {
-  DreamuxLogger,
-  JsonSchema,
-  LaunchDraft,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, LaunchDraft } from '@excitedjs/dreamux-types';
 import type { AsyncSeriesHook } from 'tapable';
 
 import type {
@@ -62,7 +58,10 @@ import {
 import type { AgentServiceFactory } from './factory.js';
 import { AgentService } from './service.js';
 import type { ClosedSubscription } from '../../platform/closed-fact.js';
-import type { LockedTeammate } from './service-types.js';
+import type {
+  CreateLockedTeammateOptions,
+  LockedTeammate,
+} from './service-types.js';
 import { toSubmissionResult } from './admission.js';
 import type { TurnCompletionDelivery } from './turn.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
@@ -145,11 +144,6 @@ export interface TeammateCollectionOptions {
    */
   teammateLaunch: AsyncSeriesHook<[LaunchDraft, Readonly<{ teamId: string | null }>]>;
   log: DreamuxLogger;
-}
-
-export interface CreateLockedTeammateOptions {
-  systemPromptAppend?: readonly string[];
-  outputSchema?: JsonSchema | undefined;
 }
 
 /**

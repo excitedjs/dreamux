@@ -22,12 +22,13 @@ import {
   type ProviderDiagnosticReport,
 } from '../provider-diagnostics.js';
 import type { CommandRunner } from '../platform/command-runner.js';
-import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
   ensureDirectory,
   TransparentFileLedger,
   writeTextFile,
-} from './ledger.js';
+  type FileLedger,
+} from '../platform/file-ledger.js';
+import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
   managedServiceEnvironment,
   resolveManagedServiceAnswers,
@@ -39,7 +40,6 @@ import { installUserService } from '../daemon/install.js';
 import type {
   OnboardAnswers,
   OnboardDoctorResult,
-  OnboardFileLedger,
   OnboardRunResult,
 } from '../onboard/types.js';
 
@@ -52,7 +52,7 @@ type EffectiveOnboardAnswers = OnboardAnswers & {
 export interface RunOnboardOptions {
   answers: OnboardAnswers;
   runner?: CommandRunner;
-  ledger?: OnboardFileLedger;
+  ledger?: FileLedger;
   platform?: NodeJS.Platform;
   homeDir?: string;
   uid?: number;

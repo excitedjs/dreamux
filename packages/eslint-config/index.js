@@ -243,10 +243,9 @@ export function withPackageEntryOnlyReexports(baseConfig, { entryFiles }) {
  * it is a small inline rule (no stock ESLint rule reports on a filename) —
  * package-wide by default via `sharedPlugins`/the base `src/**\/*.ts` block
  * below, not an opt-in helper like the boundary functions above, since it has
- * no per-package parameter to supply. Severity is `warn`: today's tree still
- * has live matches the code-organization refactor schedules for deletion or
- * fold-in across its later stages, not this one; this flips to `error` once
- * that stage lands.
+ * no per-package parameter to supply. Severity is `error`: the
+ * code-organization refactor deleted or folded in every prior match, so a
+ * new one is a regression to reject, not a warning to tolerate.
  */
 const DUMPING_GROUND_FILENAME_PATTERNS = [
   /-helpers\.ts$/,
@@ -333,9 +332,7 @@ export default [
         'error',
         { ignore: [] },
       ],
-      // Stage 9 of the code-organization refactor flips this to 'error' once
-      // the files matching it today are deleted or folded into their owner.
-      'dreamux/no-dumping-ground-filename': 'warn',
+      'dreamux/no-dumping-ground-filename': 'error',
     },
   },
   // Tests: synchronous fs fixtures are fine (not the server event loop). Only

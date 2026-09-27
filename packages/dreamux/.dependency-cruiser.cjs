@@ -2,7 +2,7 @@
 
 /**
  * Import-direction gate for @excitedjs/dreamux's src/ tree. Two rule
- * families, both `severity: 'warn'` for now:
+ * families, both `severity: 'error'`:
  *
  *   1. A coarse layer order (LAYERS below) - a module in an earlier layer
  *      must not import a module from a later layer ("nothing imports
@@ -11,12 +11,14 @@
  *      a generic layer order does not express on its own (see
  *      "namedEdgeRules" below).
  *
- * Warn, not error: a large share of today's real files already cross these
- * boundaries (see the report from a clean run), so failing the build on them
- * now would block unrelated changes on pre-existing code, not on anything a
- * change introduces. Once the codebase actually conforms to this order,
- * raise the affected rules to 'error' so a new violation fails the build
- * instead of only being reported.
+ * Error, not warn: every real file in `src/` conforms to this order, so a
+ * violation this gate reports is always introduced by the change under lint,
+ * never inherited from pre-existing code - failing on it blocks nothing but
+ * that change. `npm run lint` runs depcruise with `&&`, so a violation fails
+ * the whole lint step. An edge that resists a clean fix gets a narrow,
+ * explicitly justified named-edge rule at this same `'error'` severity
+ * scoped to exactly that edge, not a directory-wide ignore and not a
+ * severity drop back to `'warn'`.
  *
  * Two required options, without which this gate would silently miss most of
  * what it exists to catch:
@@ -31,9 +33,9 @@
  *     unresolvable and the report is noise instead of real violations.
  */
 
-// Ordered coarse layers, using the real directory names in src/ today. Two
-// entries below are file-level splits inside a single directory, not
-// whole-directory placements - both were set from a real dependency-cruiser
+// Ordered coarse layers, using the real directory names in src/ today.
+// Several entries below are file-regex splits inside a single directory, not
+// whole-directory placements - all were set from a real dependency-cruiser
 // run against this file's own layer list, not by eyeballing the source tree:
 //
 //   - state/dispatcher-store.ts imports config/config.ts and is consumed
@@ -54,6 +56,37 @@
 //     the admin socket (imports src/admin/client.ts) and is consumed only by
 //     cli/commands/mcp.ts, so it sits at the composition tier with admin/
 //     and cli/, not beside server.ts/launch.ts.
+//   - service/agent/ is one directory holding three real tiers (R7's
+//     declared direction: store -> service -> collection), and a directory
+//     can only be placed by matching one or more file regexes, not by
+//     matching itself once - so it gets three regex-scoped entries instead
+//     of one. The store tier (identity/store/runtime-state/activity/records/
+//     requests/runtime-id/types) is folded directly into service-primitives'
+//     own path list rather than given a separate entry: worktree/, mcp/, and
+//     dispatcher-core-events/ read it, and it reads nothing outside itself,
+//     so same-tier is the accurate relationship, not "earlier". The service
+//     tier (runtime-generation/turn/admission/submission/channel-submission/
+//     completion-renderer/factory/service/service-types) sits in its own
+//     entry between service-primitives and service-mid, because
+//     workflow-service/ and scheduler/ construct and type against it
+//     (SpawnTeamMateRequest, Turn, TurnAdmission, LockedTeammate,
+//     CreateLockedTeammateOptions) - the reverse of what a single merged
+//     entry after service-mid could express. The collection tier
+//     (index/commands/mcp/system-prompt/errors/dissolve-members/
+//     agent-config) keeps the directory's original slot, after service-mid:
+//     nothing before it needs TeammateCollection, and agent/mcp.ts genuinely
+//     needs workflow-service/mcp.ts's WORKFLOW_TOOL_RECORDS (a real,
+//     non-cyclic forward dependency - workflow-service/mcp.ts imports
+//     nothing from service/agent/), which is why the collection tier cannot
+//     also move ahead of service-mid.
+//   - service/scheduler/commands.ts is the one file in that directory
+//     needing a later tier than its siblings: a cron job can be Team-scoped,
+//     so its Command definitions read service/team/'s TeamsPort and
+//     optionalTeamNameParam, which sit at service-team, after service-mid
+//     (where the rest of scheduler/ - store/types/index/mcp/errors/
+//     cron-validation - stays). Nothing in service/team/ imports
+//     scheduler/commands.ts back, so this is a one-directional forward need,
+//     not a cycle.
 const LAYERS = [
   {
     name: 'platform',
@@ -81,24 +114,47 @@ const LAYERS = [
       '^src/service/mcp/',
       '^src/service/completion-router/',
       '^src/service/dispatcher-core-events/',
-      '^src/service/(submission-sources|name-allocator|dispatcher-workspace|channel-submission)\\.ts$',
+      '^src/service/(submission-sources|name-allocator|dispatcher-workspace)\\.ts$',
       '^src/state/dispatcher-store\\.ts$',
+      '^src/service/agent/(identity|store|runtime-state|activity|records|requests|runtime-id|types)\\.ts$',
     ],
   },
   {
-    name: 'service-mid',
-    path: ['^src/service/workflow-service/', '^src/service/scheduler/'],
+    // The middle tier of service/agent/'s own three (see the file-level
+    // comment above LAYERS): AgentService plus the submission/turn/admission
+    // machinery it is built from. Positioned before service-mid, not after,
+    // because workflow-service/ and scheduler/ construct and type against
+    // this tier, not the other way around.
+    name: 'service-agent-service',
+    path: [
+      '^src/service/agent/(runtime-generation|turn|admission|submission|channel-submission|completion-renderer|factory|service|service-types)\\.ts$',
+    ],
   },
   {
-    // service/agent/ holds the neutral identity/activity/runtime-state
-    // stores, the per-entity AgentService, and TeammateCollection in one
-    // directory: one physical directory can only occupy one layer, so it
-    // takes the highest (outermost) rank of the tiers it merges -
-    // service/team/ depends on it (constructing against its outermost file,
-    // index.ts's TeammateCollection), never the reverse, so it must sit
-    // strictly before the reduced service-team layer below.
-    name: 'service-agent',
-    path: ['^src/service/agent/'],
+    // scheduler/commands.ts is listed in its own layer below instead of
+    // here (same "one file needs a different tier than its siblings" reason
+    // as state/dispatcher-store.ts and src/mcp/(server|launch).ts$): a cron
+    // job can be Team-scoped, so it reads service/team/'s TeamsPort and
+    // optionalTeamNameParam, a later-layer need the rest of scheduler/ does
+    // not share.
+    name: 'service-mid',
+    path: [
+      '^src/service/workflow-service/',
+      '^src/service/scheduler/(cron-validation|errors|index|mcp|requests|store|types)\\.ts$',
+    ],
+  },
+  {
+    // The outermost tier of service/agent/'s own three: TeammateCollection
+    // plus its supporting files. Stays after service-mid: agent/mcp.ts
+    // genuinely needs workflow-service/mcp.ts's WORKFLOW_TOOL_RECORDS (see
+    // the file-level comment above LAYERS), and service/team/ depends on
+    // this tier (constructing against its outermost file, index.ts's
+    // TeammateCollection), never the reverse, so it must sit strictly before
+    // the reduced service-team layer below.
+    name: 'service-agent-collection',
+    path: [
+      '^src/service/agent/(index|commands|mcp|system-prompt|errors|dissolve-members|agent-config)\\.ts$',
+    ],
   },
   {
     // service/team/ is the sibling directory-merge to service/agent/ above,
@@ -106,6 +162,14 @@ const LAYERS = [
     // ordered by R7's declared direction: store -> service -> collection.
     name: 'service-team',
     path: ['^src/service/team/'],
+  },
+  {
+    // scheduler/commands.ts's own Command definitions, carved out of the
+    // service-mid entry above: a cron job can be Team-scoped, so this file
+    // (unlike the rest of scheduler/) reads service/team/'s TeamsPort and
+    // optionalTeamNameParam and must sit after service-team, not before it.
+    name: 'service-scheduler-commands',
+    path: ['^src/service/scheduler/commands\\.ts$'],
   },
   {
     name: 'service-orchestration',
@@ -145,26 +209,28 @@ const layerOrderRules = LAYERS.slice(0, -1).map((layer, index) => {
       `'${layer.name}' is an earlier layer than ` +
       `${laterLayers.map((l) => `'${l.name}'`).join(', ')} and must not ` +
       'import from it or them.',
-    severity: 'warn',
+    severity: 'error',
     from: { path: layer.path },
     to: { path: laterLayers.flatMap((l) => l.path) },
   };
 });
 
 // Specific named edges the layer order above does not, on its own, express
-// precisely enough - same-tier bans and a single-importer restriction, not
-// "wrong direction" facts. Each one mirrors an existing behavior test's
-// contract exactly (scope taken from the test, not widened), so a change
-// this gate now reports the same way a change to that test file's source
-// text would have.
+// precisely enough - same-tier bans (the service/agent/ and service/team/
+// store/service/collection direction, R7's declared direction), a
+// cross-domain boundary two rules state directly (channel must reach a Team
+// only by naming it, workflow-service must reach a Team only through the
+// capability it is handed), and a single-file naming convention
+// (types-file-not-to-command) - not "wrong direction" facts a coarse layer
+// order already captures.
 const namedEdgeRules = [
   {
     name: 'channel-not-to-team-or-teammate',
     comment:
       'Channel decides where a message goes by naming a Team; it must not ' +
       "reach into a Team/TeamMate owner's internals to implement lifecycle " +
-      'policy itself (see tests/collection-ownership.test.ts).',
-    severity: 'warn',
+      'policy itself.',
+    severity: 'error',
     from: { path: ['^src/channel/', '^src/service/channel-service/'] },
     to: {
       path: ['^src/service/team/', '^src/service/agent/'],
@@ -175,37 +241,39 @@ const namedEdgeRules = [
     // store <- service <- collection. Store-tier files never reach into the
     // service or collection tier; service-tier files never reach into the
     // collection tier. Regex groups partition every file the directory holds
-    // (the plan's own file map plus service-types.ts and dissolve-members.ts,
-    // which the plan's file map table omitted but which still live in one of
-    // the three tiers), each anchored with `\.ts$` so a name never
-    // prefix-matches a longer sibling (e.g. `service` must not match
-    // `service-types`).
+    // (including service-types.ts, dissolve-members.ts, and agent-config.ts,
+    // none of which a prose file map named), each anchored with `\.ts$` so a
+    // name never prefix-matches a longer sibling (e.g. `service` must not
+    // match `service-types`). `types.ts` is in the store tier's own `from`
+    // group, not either `to` group: it is store-tier data, so service- and
+    // collection-tier files read it freely, the same as any other store-tier
+    // file.
     name: 'service-agent-store-not-to-service-or-collection',
     comment:
       'service/agent/ store-tier files (identity, store, runtime-state, ' +
-      'activity, records, requests, runtime-id) must not import the ' +
-      'service- or collection-tier files in the same directory.',
-    severity: 'warn',
+      'activity, records, requests, runtime-id, types) must not import ' +
+      'the service- or collection-tier files in the same directory.',
+    severity: 'error',
     from: {
-      path: '^src/service/agent/(identity|store|runtime-state|activity|records|requests|runtime-id)\\.ts$',
+      path: '^src/service/agent/(identity|store|runtime-state|activity|records|requests|runtime-id|types)\\.ts$',
     },
     to: {
-      path: '^src/service/agent/(runtime-generation|turn|admission|submission|completion-renderer|factory|service|service-types|index|commands|mcp|system-prompt|errors|types|dissolve-members)\\.ts$',
+      path: '^src/service/agent/(runtime-generation|turn|admission|submission|channel-submission|completion-renderer|factory|service|service-types|index|commands|mcp|system-prompt|errors|dissolve-members|agent-config)\\.ts$',
     },
   },
   {
     name: 'service-agent-service-not-to-collection',
     comment:
       'service/agent/ service-tier files (runtime-generation, turn, ' +
-      'admission, submission, completion-renderer, factory, service, ' +
-      'service-types) must not import the collection-tier files in the ' +
-      'same directory.',
-    severity: 'warn',
+      'admission, submission, channel-submission, completion-renderer, ' +
+      'factory, service, service-types) must not import the ' +
+      'collection-tier files in the same directory.',
+    severity: 'error',
     from: {
-      path: '^src/service/agent/(runtime-generation|turn|admission|submission|completion-renderer|factory|service|service-types)\\.ts$',
+      path: '^src/service/agent/(runtime-generation|turn|admission|submission|channel-submission|completion-renderer|factory|service|service-types)\\.ts$',
     },
     to: {
-      path: '^src/service/agent/(index|commands|mcp|system-prompt|errors|types|dissolve-members)\\.ts$',
+      path: '^src/service/agent/(index|commands|mcp|system-prompt|errors|dissolve-members|agent-config)\\.ts$',
     },
   },
   {
@@ -221,7 +289,7 @@ const namedEdgeRules = [
       'service/team/ store-tier files (types, requests, create-request, ' +
       'store, errors) must not import the service- or collection-tier ' +
       'files in the same directory.',
-    severity: 'warn',
+    severity: 'error',
     from: {
       path: '^src/service/team/(types|requests|create-request|store|errors)\\.ts$',
     },
@@ -237,7 +305,7 @@ const namedEdgeRules = [
       'service/team/ service-tier files (roster, leader, leader-handle, ' +
       'completion-targets, closing, team-summary, service, teams-port) ' +
       'must not import the collection-tier files in the same directory.',
-    severity: 'warn',
+    severity: 'error',
     from: {
       path: '^src/service/team/(roster|leader|leader-handle|completion-targets|closing|team-summary|service|teams-port)\\.ts$',
     },
@@ -250,8 +318,8 @@ const namedEdgeRules = [
     comment:
       'workflow-service/ only ever gets Team access through the narrow ' +
       'capability it is handed at construction, never by importing ' +
-      'service/team/ directly (see tests/workflow-service.test.ts).',
-    severity: 'warn',
+      'service/team/ directly.',
+    severity: 'error',
     from: { path: '^src/service/workflow-service/' },
     to: {
       path: ['^src/service/team/'],
@@ -262,7 +330,7 @@ const namedEdgeRules = [
     comment:
       'A file named types.ts declares data contracts; it must not import ' +
       "command/'s Command-wiring machinery.",
-    severity: 'warn',
+    severity: 'error',
     from: { path: 'types\\.ts$' },
     to: { path: '^src/command/' },
   },
@@ -276,7 +344,7 @@ module.exports = {
         'A real import cycle. Revise the two sides so one owns the ' +
         'dependency direction (dependency inversion, or a shared module ' +
         'both can import instead of importing each other).',
-      severity: 'warn',
+      severity: 'error',
       from: {},
       to: { circular: true },
     },

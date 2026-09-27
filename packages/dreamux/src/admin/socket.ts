@@ -17,10 +17,9 @@ import { createServer, type Server as NetServer, type Socket } from 'node:net';
 import { chmod, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { Server } from '../server.js';
 import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
-import type { JsonValue } from '@excitedjs/dreamux-types';
-import type { CoreCommandContext } from '../command/types.js';
+import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
+import type { CoreCommandContext, CoreCommandRegistry } from '../command/types.js';
 import {
   DreamuxError,
   TransportError,
@@ -35,6 +34,21 @@ import {
   releaseInstanceLock,
 } from '../platform/instance-lock.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
+
+/**
+ * The slice of `Server` this transport actually calls: the admitted Command
+ * port every adapter invokes through, and the log a failure Core never
+ * classified is written to.
+ *
+ * Declared locally instead of taking the concrete `Server` class: `server.ts`
+ * already imports `createAdminSocketServer` from this module to build its
+ * admin socket, so a type import running the other way would make the two
+ * files a cycle.
+ */
+export interface AdminSocketHost {
+  readonly commands: CoreCommandRegistry;
+  readonly logger: DreamuxLogger;
+}
 
 export interface AdminSocketServer {
   start(): Promise<void>;
@@ -63,7 +77,7 @@ export interface AdminSocketOptions {
 }
 
 export function createAdminSocketServer(
-  server: Server,
+  server: AdminSocketHost,
   socketPath: string,
   options: AdminSocketOptions = {},
 ): AdminSocketServer {
@@ -190,7 +204,7 @@ export async function assertNoLegacyAdminServer(
   }
 }
 
-function handleConnection(server: Server, sock: Socket): void {
+function handleConnection(server: AdminSocketHost, sock: Socket): void {
   let buf = '';
   sock.setEncoding('utf8');
   sock.on('data', (chunk) => {
@@ -209,7 +223,7 @@ function handleConnection(server: Server, sock: Socket): void {
 }
 
 async function processLine(
-  server: Server,
+  server: AdminSocketHost,
   sock: Socket,
   line: string,
 ): Promise<void> {
@@ -271,7 +285,7 @@ async function processLine(
  * the server log, because the caller only ever receives its message.
  */
 function reportedFailure(
-  server: Server,
+  server: AdminSocketHost,
   method: string,
   error: unknown,
 ): CommandFailure {

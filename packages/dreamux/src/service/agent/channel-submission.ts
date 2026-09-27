@@ -15,23 +15,20 @@
  */
 import type { JsonSchema, SubmitCommand } from '@excitedjs/dreamux-types';
 
-import { ValidationError } from '../command/errors.js';
+import { ValidationError } from '../../command/errors.js';
 import {
   mustNonEmptyString,
   optionalString,
   type CommandPayload,
-} from '../command/payload.js';
+} from '../../command/payload.js';
 import {
   NON_EMPTY_STRING,
   OBJECT,
   STRING,
   boundedString,
-} from '../command/schema.js';
-import {
-  isSafeTagName,
-  type TeammateSubmitInput,
-} from './agent/submission.js';
-import { CHANNEL_SOURCE } from './submission-sources.js';
+} from '../../command/schema.js';
+import { isSafeTagName, type TeammateSubmitInput } from './submission.js';
+import { CHANNEL_SOURCE } from '../submission-sources.js';
 
 /**
  * The maximum length of a caller-chosen `source_id`. Core deduplicates with it

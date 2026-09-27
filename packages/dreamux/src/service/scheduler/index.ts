@@ -5,6 +5,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import { RuleViolation } from '../../platform/errors.js';
 import { throwCallerMistake } from '../../command/errors.js';
+import type { TurnAdmission } from '../agent/turn.js';
 import { CronJobNotFoundError } from './errors.js';
 
 import { type CronJobStore } from './store.js';
@@ -16,7 +17,6 @@ import type {
   CronJobUpdateInput,
   CronUpdateRequest,
   SchedulerCommands,
-  SchedulerServiceOptions,
 } from './types.js';
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -24,6 +24,33 @@ const MAX_TIMEOUT_MS = 2_147_483_647;
 interface TimerSlot {
   dueAt: number;
   timer: NodeJS.Timeout;
+}
+
+/**
+ * What `SchedulerService` is constructed from.
+ *
+ * Declared here rather than in `types.ts`: it names `CronJobStore`, a
+ * concrete class, so it is a constructor-options bag rather than a data type.
+ */
+export interface SchedulerServiceOptions {
+  ownerId: string;
+  store: CronJobStore;
+  admit<T>(task: () => Promise<T>): Promise<T>;
+  /**
+   * Submit one due fire as an ordinary admitted input.
+   *
+   * No cancellation crosses this call, and no idle question either. The owner
+   * supplies the same submission path any other caller uses; whether the
+   * runtime folds the input into an active turn or starts a new one is the
+   * runtime's decision, made where it is already made.
+   */
+  submitScheduled(input: {
+    jobId: string;
+    prompt: string;
+    sourceId: string;
+  }): Promise<TurnAdmission>;
+  log: DreamuxLogger;
+  now?: () => number;
 }
 
 export class SchedulerService implements SchedulerCommands {

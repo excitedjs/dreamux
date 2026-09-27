@@ -3,10 +3,13 @@
  *
  * One delegate serves both callers, and they are two genuinely different
  * objects rather than one object told who is asking: a Dispatcher Agent's
- * delegate holds the {@link DispatcherService} itself, a TeamLeader's holds
- * that Team's {@link TeamLeaderHandle}. The handle is what carries the Team
- * lease into every mutation, so a leader-scoped call is serialized against a
- * concurrent dissolve without this file knowing that a lease exists.
+ * delegate holds the real `DispatcherService` itself, a TeamLeader's holds
+ * that Team's `TeamLeaderHandle` (each named here only through the narrow
+ * structural interface declared below, so this collection-tier file need not
+ * import the concrete class or interface). The handle is what carries the
+ * Team lease into every mutation, so a leader-scoped call is serialized
+ * against a concurrent dissolve without this file knowing that a lease
+ * exists.
  *
  * The Workflow tools are composed onto this same catalog and call dispatch
  * from `workflow-service/mcp.js`: they are advertised on this server because
@@ -28,8 +31,8 @@ import type { CommandPayload } from '../../command/payload.js';
 import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import { mapAgentActivityCommandError } from './activity.js';
 import type { AgentEntitySpawnResult } from './identity.js';
-import type { DispatcherService } from '../dispatcher-service/index.js';
-import type { TeamLeaderHandle } from '../team/leader-handle.js';
+import type { SpawnTeamMateRequest, TeammateOps } from './types.js';
+import type { WorkflowOps } from '../workflow-service/index.js';
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
@@ -61,15 +64,56 @@ import {
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
 
 /**
+ * Structural stand-in for `DispatcherService`, naming only the members this
+ * delegate calls. `DispatcherService` satisfies this shape without either
+ * file needing to name the other, so this collection-tier file needs no
+ * import from the orchestration tier that owns the concrete class. Exported
+ * so `dispatcher-service/mcp-delegates.ts`, the one caller that passes a
+ * `DispatcherService` in as this scope, can extend it with the few members
+ * it also needs instead of restating these three.
+ */
+export interface TeamMateMcpDispatcherScope {
+  readonly teammates: TeammateOps;
+  readonly workflows: WorkflowOps;
+  workspace(): Promise<string>;
+}
+
+/**
+ * Structural stand-in for `TeamLeaderHandle`, for the same reason: this
+ * collection-tier file needs no import from the team tier that owns the
+ * concrete interface. `teammates` omits `spawn` because a Team TeamMate is
+ * spawned through `spawnTeamMate` into the Team's shared workspace instead.
+ */
+interface TeamMateMcpTeamLeaderScope {
+  readonly teammates: Pick<
+    TeammateOps,
+    | 'send'
+    | 'close'
+    | 'list'
+    | 'status'
+    | 'history'
+    | 'last'
+    | 'getCapabilities'
+  >;
+  readonly workflows: WorkflowOps;
+  spawnTeamMate(
+    input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
+  ): Promise<AgentEntitySpawnResult>;
+}
+
+/**
  * What the two callers actually operate on.
  *
- * The dispatcher scope keeps the real `DispatcherService` because its `spawn`
- * drives the collection directly; the Team scope keeps the handle because a
- * Team TeamMate is spawned into the Team's shared workspace, through the
- * handle's own `spawnTeamMate`.
+ * The dispatcher scope's `teammates` keeps `spawn` because its `spawn`
+ * drives the collection directly; the Team scope's omits it because a Team
+ * TeamMate is spawned into the Team's shared workspace, through the handle's
+ * own `spawnTeamMate`.
  */
 export type TeamMateMcpScope =
-  | { readonly kind: 'dispatcher'; readonly dispatcher: DispatcherService }
+  | {
+      readonly kind: 'dispatcher';
+      readonly dispatcher: TeamMateMcpDispatcherScope;
+    }
   | {
       readonly kind: 'team_leader';
       /**
@@ -77,7 +121,7 @@ export type TeamMateMcpScope =
        * keep answering for a Team object that has since closed, instead of
        * reaching whichever Team currently holds that id.
        */
-      readonly team: () => Promise<TeamLeaderHandle>;
+      readonly team: () => Promise<TeamMateMcpTeamLeaderScope>;
     };
 
 /** One tool this delegate advertises, paired with the handler that serves it. */

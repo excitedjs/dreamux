@@ -1,20 +1,7 @@
 import type { ProviderDiagnosticResult } from '@excitedjs/dreamux-types';
 import type { ServicePlatform } from '../daemon/unit.js';
+import type { FileLedgerEntry } from '../platform/file-ledger.js';
 import type { ProviderDiagnosticReport } from '../provider-diagnostics.js';
-
-export type OnboardFileStatus =
-  'created' | 'modified' | 'unchanged' | 'skipped';
-
-export interface OnboardFileLedgerEntry {
-  path: string;
-  status: OnboardFileStatus;
-  reason: string;
-}
-
-export interface OnboardFileLedger {
-  entries(): OnboardFileLedgerEntry[];
-  record(path: string, status: OnboardFileStatus, reason: string): void;
-}
 
 export interface OnboardAgentRuntimeConfig {
   id: string;
@@ -44,7 +31,7 @@ export interface OnboardDoctorResult extends ProviderDiagnosticResult {
 }
 
 export interface OnboardRunResult {
-  files: OnboardFileLedgerEntry[];
+  files: FileLedgerEntry[];
   doctor: OnboardDoctorResult;
   service: {
     platform: ServicePlatform;

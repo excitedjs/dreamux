@@ -19,6 +19,7 @@ import {
   pluginDoctorChecks,
   pluginLoadFailureCheck,
 } from './doctor-plugins.js';
+import type { DoctorCheck } from './doctor-types.js';
 import {
   providerBinChecksForConfig,
   runDispatcherProviderDiagnostics,
@@ -54,13 +55,6 @@ export interface DoctorOptions {
   uid?: number | undefined;
   nodeProbe?: ServiceNodeProbe;
   userName?: string;
-}
-
-export interface DoctorCheck {
-  name: string;
-  ok: boolean;
-  detail: string;
-  severity?: 'warn';
 }
 
 export interface DispatcherDoctorReport {

@@ -15,12 +15,32 @@ import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
 import type { ChannelService } from '../channel-service/index.js';
 import type { McpServerDelegate } from '../mcp/types.js';
 import { createCronMcpDelegate } from '../scheduler/mcp.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
 import { createTeamMcpDelegate } from '../team/mcp.js';
-import { createTeamMateMcpDelegate } from '../agent/mcp.js';
-import type { DispatcherService } from './index.js';
+import type { TeamsPort } from '../team/teams-port.js';
+import {
+  createTeamMateMcpDelegate,
+  type TeamMateMcpDispatcherScope,
+} from '../agent/mcp.js';
+
+/**
+ * Structural stand-in for `DispatcherService`, naming only the members role
+ * assembly calls beyond the ones `TeamMateMcpDispatcherScope` already names
+ * (`teammates`/`workflows`/`workspace()` — this file passes `dispatcher`
+ * straight through to `createTeamMateMcpDelegate`, so extending that scope
+ * instead of restating it keeps the two in sync). `DispatcherService`
+ * satisfies this shape without this file needing to import the concrete
+ * class from the sibling `index.ts` that owns it — that back-import is what
+ * closed the `index.ts` <-> `mcp-delegates.ts` cycle.
+ */
+interface RoleDelegateDispatcher extends TeamMateMcpDispatcherScope {
+  readonly teams: TeamsPort;
+  readonly scheduler: SchedulerCommands;
+  admitOperation<T>(task: () => Promise<T>): Promise<T>;
+}
 
 interface RoleDelegateInput {
-  dispatcher: DispatcherService;
+  dispatcher: RoleDelegateDispatcher;
   channels: ChannelService;
 }
 
@@ -40,8 +60,8 @@ export function dispatcherAgentMcpDelegates(
     createTeamMateMcpDelegate({
       kind: 'dispatcher',
       // The TeamMate MCP delegate reaches `teammates` and the dispatcher's
-      // own default `workspace()` — a full `DispatcherService`, unlike the
-      // Team delegate above, which needs only `TeamsPort`.
+      // own default `workspace()` too, unlike the Team delegate above, which
+      // needs only `TeamsPort`.
       dispatcher: input.dispatcher,
     }),
     createCronMcpDelegate({

@@ -16,7 +16,8 @@ import type { AgentEntityCloseResult, AgentEntityIdentity } from './identity.js'
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 import type { McpServerDelegate } from '../mcp/types.js';
-import type { AdmissionLedger, TurnAdmission } from './admission.js';
+import type { AdmissionLedger } from './admission.js';
+import type { TurnAdmission } from './turn.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 
 export interface TeammateServiceDeps {
@@ -94,6 +95,11 @@ export interface WorkflowTeammateSubmitInput {
   prompt: string;
   /** The provenance name the Workflow owner submits its step prompts under. */
   source: string;
+}
+
+export interface CreateLockedTeammateOptions {
+  systemPromptAppend?: readonly string[];
+  outputSchema?: JsonSchema | undefined;
 }
 
 export interface LockedTeammate {

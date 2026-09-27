@@ -17,7 +17,7 @@ import {
   bundledTeamLeaderSkillRoot,
 } from '../../platform/paths.js';
 import type { AgentIdentityStore } from '../agent/store.js';
-import type { TeamServiceDeps, TeamRecord } from './types.js';
+import type { TeamCollectionOptions, TeamRecord } from './types.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
@@ -135,11 +135,35 @@ export interface TeamLeaderCreationInput {
 }
 
 /**
+ * The slice of `TeamServiceDeps` (declared at `TeamService`'s construction
+ * site in `service.ts`) this function actually reads.
+ *
+ * Picked from `TeamCollectionOptions` — the wider bag `TeamServiceDeps`
+ * itself composes from — rather than importing `TeamServiceDeps`: `service.ts`
+ * already imports value exports from this file, so a type import running the
+ * other way would make the two files a cycle. Every field below is one
+ * `TeamCollectionOptions` already declares, not one of `TeamServiceDeps`'s own
+ * additions (`teamRoot`, `store`, `settleWorktreeCleanup`), so `Pick` alone
+ * covers it.
+ */
+type TeamLeaderAgentBaseDeps = Pick<
+  TeamCollectionOptions,
+  | 'dispatcherId'
+  | 'leaderMcp'
+  | 'config'
+  | 'agentRuntimeProviders'
+  | 'agentServiceFactory'
+  | 'conversationProjection'
+  | 'worktrees'
+  | 'log'
+>;
+
+/**
  * The Team-owned half of {@link TeamLeaderForTeamDeps}: what every leader a
  * Team creates or restores is built from, spelled once.
  */
 export function teamLeaderAgentBase(input: {
-  deps: TeamServiceDeps;
+  deps: TeamLeaderAgentBaseDeps;
   teamId: string;
   workspace: AgentEntityWorktreeIdentity;
   identities: AgentIdentityStore;

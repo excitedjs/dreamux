@@ -1,9 +1,3 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-
-import type { TurnAdmission } from '../agent/admission.js';
-
-import type { CronJobStore } from './store.js';
-
 export interface CronPromptAgentAction {
   kind: 'prompt-agent';
   prompt: string;
@@ -69,27 +63,6 @@ export interface CronUpdateRequest {
   recurring?: boolean;
   tz?: string;
   enabled?: boolean;
-}
-
-export interface SchedulerServiceOptions {
-  ownerId: string;
-  store: CronJobStore;
-  admit<T>(task: () => Promise<T>): Promise<T>;
-  /**
-   * Submit one due fire as an ordinary admitted input.
-   *
-   * No cancellation crosses this call, and no idle question either. The owner
-   * supplies the same submission path any other caller uses; whether the
-   * runtime folds the input into an active turn or starts a new one is the
-   * runtime's decision, made where it is already made.
-   */
-  submitScheduled(input: {
-    jobId: string;
-    prompt: string;
-    sourceId: string;
-  }): Promise<TurnAdmission>;
-  log: DreamuxLogger;
-  now?: () => number;
 }
 
 export interface SchedulerCommands {

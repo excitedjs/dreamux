@@ -427,7 +427,7 @@ Source:
 - `/packages/channel/feishu-channel/src/session/session.ts`
 - `/packages/channel/feishu-channel/src/inbound/attachments.ts`
 - `/packages/dreamux/src/service/team/commands.ts`
-- `/packages/dreamux/src/service/channel-submission.ts`
+- `/packages/dreamux/src/service/agent/channel-submission.ts`
 - `/packages/dreamux/src/service/submission-sources.ts`
 
 ### Feishu event routes

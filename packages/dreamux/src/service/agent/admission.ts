@@ -23,11 +23,9 @@
  * The ledger is deliberately process-local: it carries no cross-restart
  * delivery guarantee.
  */
-import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
-
 import type { CompletionDeliveryResult } from '../completion-router/index.js';
 import type { AgentEntitySubmissionResult } from './identity.js';
-import type { Turn } from './turn.js';
+import type { TurnAdmission } from './turn.js';
 
 /**
  * Committed keys retained across the whole Dispatcher. Bounded so a long-lived
@@ -132,11 +130,6 @@ export class AdmissionLedger {
   }
 }
 
-export type TurnAdmission =
-  | { status: 'submitted'; turn: Turn }
-  | { status: 'duplicate' | 'stopped' | 'skipped' }
-  | { status: 'failed' | 'ambiguous'; error: Error };
-
 export function toSubmissionResult(
   admission: TurnAdmission,
 ): AgentEntitySubmissionResult {
@@ -207,10 +200,4 @@ export function failedAdmissionReason(result: TurnAdmission): string | null {
     case 'ambiguous':
       return result.error.message;
   }
-}
-
-export function admissionWithoutTurn(
-  admission: Exclude<RuntimeAdmission, { status: 'submitted' }>,
-): TurnAdmission {
-  return admission;
 }

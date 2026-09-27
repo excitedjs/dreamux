@@ -13,7 +13,19 @@
 - Final solution: Not written.
 - Solution review Issue: Not opened.
 - Blockers: None recorded.
-- Next action: Deliver the stacked pull requests in order: PR-0 (open PR #453 defects plus R35, R36, and the R21 plugin-config rule), then requirement stages 1 to 9, then the plugin lifecycle hooks from the PR #453 design handoff, then the test completion on PR #453.
+- Progress: PR-0, requirement stages 1 through 9, and the R52 plugin lifecycle
+  hooks (`dispatcher.hooks.launch`/`.teammateLaunch`/`.createTeam`/`.team`,
+  `team.hooks.leaderLaunch`, in `packages/dreamux/src/plugin/hooks.ts`) are
+  written (each stage travels as commits on PR #453's branch, per the
+  delivery ruling below).
+  Stage 9 locks the harness: `packages/dreamux/.dependency-cruiser.cjs` runs
+  at `error` severity for every rule with an empty exception list (0
+  warnings/errors against the full `src/` tree), `@excitedjs/eslint-config`'s
+  dumping-ground-filename rule is `error`, and the remaining source-text/
+  file-path tests this stage's own scope named are retired — every deletion
+  is logged in the [deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)
+  for the final test completion to restore.
+- Next action: final test completion on PR #453.
 - Related tasks: absorbs the solution of [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md) (issue #448) by operator ruling; builds on the cap ruling recorded in [suppress-owner-close-stop-pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md) and the cap decision in [Repository Guardrail Records](/.agents/tasks/architecture/repository-guardrails/README.md); the survey ran on the branch of [PR #453](https://github.com/excitedjs/dreamux/pull/453) (plugin system).
 
 ## Development approval

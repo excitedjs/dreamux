@@ -30,7 +30,6 @@ import type { ClosedListener } from '../../platform/closed-fact.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { RuleViolation } from '../../platform/errors.js';
-import type { TeamStore } from './store.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -340,44 +339,6 @@ export interface TeamServiceCreateInput {
   skillSources?: readonly AgentRuntimeSkillSource[] | undefined;
   workspace: TeamMateSharedWorkspace;
 }
-
-/**
- * What one Team is built from.
- *
- * Collaborators and shared dispatcher facts only: nothing here reaches back
- * into the collection that constructed the Team. A Team is handed what it
- * needs, does its own work with it, and states what happened by publishing its
- * own terminal fact — so its owner learns of its end without the Team ever
- * calling upward into its owner's lifecycle.
- *
- * Everything but the three fields below is forwarded unchanged from the
- * `TeamCollectionOptions` the owning `TeamCollection` was itself constructed
- * with (`depsBase()` spreads it directly); `root`, `nameSuffixGenerator`, and
- * `applyCreateTeamHook` are collection-only concerns a Team never needs — the
- * `createTeam` hook is applied once, by `createFromRequest` itself, before any
- * `TeamService` for that Team exists to be handed these deps.
- */
-export type TeamServiceDeps = Omit<
-  TeamCollectionOptions,
-  'root' | 'nameSuffixGenerator' | 'applyCreateTeamHook'
-> & {
-  /**
-   * This Team's own root directory, bound by `TeamCollection` when it
-   * constructed this service. The TeamLeader's `identity.json`, the Team
-   * `record.json`, this Team's cron jobs, and its `teammate/` collection all sit
-   * directly under it — the Team never rebuilds the path from ids.
-   */
-  teamRoot: string;
-  store: TeamStore;
-  /**
-   * Finish the physical reclamation a closed Team's record still owes, through
-   * the same record-only path the collection's own startup sweep uses. A
-   * plain constructor-supplied value rather than a collection import: `store`
-   * ← `service` ← `collection` is the declared direction, so the service tier
-   * must not import the collection tier that holds this method.
-   */
-  settleWorktreeCleanup: (teamId: string) => Promise<void>;
-};
 
 /**
  * One Team is over.

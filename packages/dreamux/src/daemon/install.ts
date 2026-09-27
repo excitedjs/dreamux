@@ -17,28 +17,25 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
-
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import { loadConfig } from '../config/load.js';
+import type { CommandRunner } from '../platform/command-runner.js';
 import {
   ensureDirectory,
   ensureTextFile,
   TransparentFileLedger,
   writeTextFile,
-} from '../onboard/ledger.js';
-import type {
-  OnboardFileLedger,
-  OnboardFileLedgerEntry,
-} from '../onboard/types.js';
-import type { CommandRunner } from '../platform/command-runner.js';
+  type FileLedger,
+  type FileLedgerEntry,
+} from '../platform/file-ledger.js';
 import { pathExists } from '../platform/fs-errors.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import { logsRoot, stateRoot, type ExecDirProbe } from '../platform/paths.js';
 import {
   resolveManagedServiceAnswers,
   validateManagedServiceLaunch,
+  type ServiceInstallAnswers,
   type ServiceNodeProbe,
 } from './environment.js';
 import { createServiceHost, type ServiceHost } from './host.js';
@@ -67,30 +64,12 @@ export interface DaemonInstallOptions {
 
 export interface DaemonInstallResult {
   service: ServiceInstallResult;
-  files: OnboardFileLedgerEntry[];
-}
-
-export interface ServiceInstallAnswers {
-  /** Provider-owned binary checks the managed-service PATH must resolve. */
-  providerBinChecks: ProviderBinCheck[];
-  dreamuxBin: string;
-  nodeBin: string;
-  startService: boolean;
-  dryRun: boolean;
-  /** Home directory the service runs under; resolves user-local bin dirs. Defaults to `homedir()`. */
-  homeDir?: string;
-  /** Environment to read XDG_BIN_HOME from; path builders never read process.env. */
-  env?: NodeJS.ProcessEnv;
-  /**
-   * Standard fallback dirs captured once by the async onboard/daemon-install
-   * entry point. Reused for provider resolution and service rendering.
-   */
-  fallbackDirs: string[];
+  files: FileLedgerEntry[];
 }
 
 export interface ServiceInstallOptions {
   answers: ServiceInstallAnswers;
-  ledger: OnboardFileLedger;
+  ledger: FileLedger;
   host: ServiceHost;
 }
 

@@ -13,7 +13,8 @@ import { SchedulerService } from '../scheduler/index.js';
 import { CronJobStore } from '../scheduler/store.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import type { TeamStore } from './store.js';
-import { TeammateCollection, type CreateLockedTeammateOptions } from '../agent/index.js';
+import { TeammateCollection } from '../agent/index.js';
+import type { CreateLockedTeammateOptions } from '../agent/service-types.js';
 import type {
   SpawnTeamMateRequest,
   TeamWorkspaceLoan,
@@ -30,7 +31,8 @@ import {
   type AgentEntityRuntimeStatus,
 } from '../agent/identity.js';
 import type { AgentService } from '../agent/service.js';
-import { toSubmissionResult, type TurnAdmission } from '../agent/admission.js';
+import { toSubmissionResult } from '../agent/admission.js';
+import type { TurnAdmission } from '../agent/turn.js';
 import { TeamClosedError } from './errors.js';
 import {
   alignedWithLeader,
@@ -53,13 +55,54 @@ import {
   teamClosedFact,
   type TeamClosedFact,
   type TeamClosedListener,
+  type TeamCollectionOptions,
   type TeamDissolveCommand,
   type TeamDissolveReceipt,
   type TeamRecord,
   type TeamServiceCreateInput,
-  type TeamServiceDeps,
 } from './types.js';
 import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
+
+/**
+ * What one Team is built from.
+ *
+ * Collaborators and shared dispatcher facts only: nothing here reaches back
+ * into the collection that constructed the Team. A Team is handed what it
+ * needs, does its own work with it, and states what happened by publishing its
+ * own terminal fact — so its owner learns of its end without the Team ever
+ * calling upward into its owner's lifecycle.
+ *
+ * Everything but the three fields below is forwarded unchanged from the
+ * `TeamCollectionOptions` the owning `TeamCollection` was itself constructed
+ * with (`depsBase()` spreads it directly); `root`, `nameSuffixGenerator`, and
+ * `applyCreateTeamHook` are collection-only concerns a Team never needs — the
+ * `createTeam` hook is applied once, by `createFromRequest` itself, before any
+ * `TeamService` for that Team exists to be handed these deps.
+ *
+ * Declared here rather than in `types.ts`: it names `TeamStore`, a concrete
+ * class, so it is a constructor-options bag rather than a data type.
+ */
+export type TeamServiceDeps = Omit<
+  TeamCollectionOptions,
+  'root' | 'nameSuffixGenerator' | 'applyCreateTeamHook'
+> & {
+  /**
+   * This Team's own root directory, bound by `TeamCollection` when it
+   * constructed this service. The TeamLeader's `identity.json`, the Team
+   * `record.json`, this Team's cron jobs, and its `teammate/` collection all sit
+   * directly under it — the Team never rebuilds the path from ids.
+   */
+  teamRoot: string;
+  store: TeamStore;
+  /**
+   * Finish the physical reclamation a closed Team's record still owes, through
+   * the same record-only path the collection's own startup sweep uses. A
+   * plain constructor-supplied value rather than a collection import: `store`
+   * ← `service` ← `collection` is the declared direction, so the service tier
+   * must not import the collection tier that holds this method.
+   */
+  settleWorktreeCleanup: (teamId: string) => Promise<void>;
+};
 
 /**
  * A single team entity (issue #233): holds its own {@link TeamRecord}, *has a*

@@ -2,10 +2,12 @@
  * Managed-service launch environment: Node-binary selection for the pinned
  * service Node, and PATH/launch-environment orchestration (the env vars and
  * effective PATH persisted into the service unit, and the preflight that
- * confirms the service can actually launch under them).
- * `resolveManagedServiceAnswers` is the one install pipeline (fallback exec
- * dirs → provider binary resolution → stable Node selection) `daemon
- * install` and `dreamux onboard` both build a `ServiceInstallAnswers` from.
+ * confirms the service can actually launch under them). Declares
+ * `ServiceInstallAnswers`, the resolved-answers shape both entry points
+ * render a unit from. `resolveManagedServiceAnswers` is the one install
+ * pipeline (fallback exec dirs → provider binary resolution → stable Node
+ * selection) `daemon install` (`daemon/install.ts`) and `dreamux onboard`
+ * (`onboard/run.ts`) both build a `ServiceInstallAnswers` from.
  */
 
 import { constants } from 'node:fs';
@@ -30,7 +32,24 @@ import {
   type ProviderDiagnosticCatalogs,
 } from '../provider-diagnostics.js';
 import type { ServiceHost } from './host.js';
-import type { ServiceInstallAnswers } from './install.js';
+
+export interface ServiceInstallAnswers {
+  /** Provider-owned binary checks the managed-service PATH must resolve. */
+  providerBinChecks: ProviderBinCheck[];
+  dreamuxBin: string;
+  nodeBin: string;
+  startService: boolean;
+  dryRun: boolean;
+  /** Home directory the service runs under; resolves user-local bin dirs. Defaults to `homedir()`. */
+  homeDir?: string;
+  /** Environment to read XDG_BIN_HOME from; path builders never read process.env. */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Standard fallback dirs captured once by the async onboard/daemon-install
+   * entry point. Reused for provider resolution and service rendering.
+   */
+  fallbackDirs: string[];
+}
 
 // ---------------------------------------------------------------------------
 // Service-Node selection

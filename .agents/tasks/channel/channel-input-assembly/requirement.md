@@ -88,7 +88,7 @@ text alone.
   route, or reply-target on them; reply targeting stays a channel-layer concern.
 - **The assembly locus moved.** Core, not each runtime, now renders the one
   provenance envelope every runtime reads:
-  [`/packages/dreamux/src/service/channel-submission.ts`](/packages/dreamux/src/service/channel-submission.ts)
+  [`/packages/dreamux/src/service/agent/channel-submission.ts`](/packages/dreamux/src/service/agent/channel-submission.ts)
   and
   [`/packages/dreamux/src/service/agent/submission.ts`](/packages/dreamux/src/service/agent/submission.ts).
   The current behavior is owned by

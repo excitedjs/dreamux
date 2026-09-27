@@ -9,7 +9,6 @@ import type {
 
 import type { PreparedCompletionFact } from '../completion-router/index.js';
 import type { AgentEntityIdentity } from './identity.js';
-import { admissionWithoutTurn, type TurnAdmission } from './admission.js';
 
 interface EntityTurnCoordinatorOptions {
   identity: () => AgentEntityIdentity;
@@ -65,7 +64,7 @@ export class EntityTurnCoordinator {
         return { status: 'ambiguous', error: result.error };
       }
       if (result.admission.status !== 'submitted') {
-        return admissionWithoutTurn(result.admission);
+        return result.admission;
       }
       const turn = this.attachSubmission(
         result.admission.submission,
@@ -184,6 +183,21 @@ export interface Turn {
   readonly settled: Promise<TurnOutcome>;
   readonly delivery: Promise<void>;
 }
+
+/**
+ * The outcome of trying to get a {@link Turn}: either one, or a reason there
+ * isn't one. `submitRuntimeTurn` is what produces every value of this type.
+ *
+ * Declared here rather than in `admission.ts`: that file's own
+ * `AdmissionLedger` and result-mapping helpers (`toSubmissionResult`,
+ * `failedAdmissionReason`, `asCompletionDeliveryResult`) operate on
+ * `TurnAdmission` values without producing them, so the type belongs with its
+ * producer.
+ */
+export type TurnAdmission =
+  | { status: 'submitted'; turn: Turn }
+  | { status: 'duplicate' | 'stopped' | 'skipped' }
+  | { status: 'failed' | 'ambiguous'; error: Error };
 
 export class EntityTurn implements Turn {
   readonly id = randomUUID();

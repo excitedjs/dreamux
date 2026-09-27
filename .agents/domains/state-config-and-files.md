@@ -603,7 +603,7 @@ Source:
 - `/packages/dreamux/src/daemon/control.ts`
 - `/packages/dreamux/src/daemon/status.ts`
 - `/packages/dreamux/src/daemon/install.ts`
-- `/packages/dreamux/src/onboard/ledger.ts`
+- `/packages/dreamux/src/platform/file-ledger.ts`
 
 ### 0.x Upgrade Policy
 

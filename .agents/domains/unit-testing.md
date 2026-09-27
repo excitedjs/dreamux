@@ -16,27 +16,35 @@ assert on the observable outcome: a returned value, a call made on a
 collaborator, a state change visible through another public method. Never
 assert on source text, file paths, or a slice of a method body.
 
-`/packages/dreamux/tests/completion-delivery.test.ts`'s
+`completion-delivery.test.ts`'s
 `'renders identically whether or not a deliverCompletion callback is attached'`
-case is the template: it builds a real `TeammateSubmitInput`, calls the real
-`renderSubmission`, and asserts the returned string — proving
-`COMPLETION_SOURCE` actually reaches the rendered output, not that some call
-site's text mentions the constant. The same file also still carries two of
+case was the template: it built a real `TeammateSubmitInput`, called the real
+`renderSubmission`, and asserted the returned string — proving
+`COMPLETION_SOURCE` actually reached the rendered output, not that some call
+site's text mentions the constant. The same file also carried two of
 the source-text cases described below (its
 `'the actual delivery call site renders under COMPLETION_SOURCE...'` and
 `'never reintroduces an isChannelInvocation-style adapter branch...'` cases),
-so it is a template for one case in it, not a file to copy wholesale.
+so it was a template for one case in it, not a file to copy wholesale. The
+whole file was deleted under R43 in the code-organization refactor's Stage 9
+(an unrelated earlier-stage directory move — `teammate-service/` into
+`service/agent/` — broke its import, not a fault in the cases themselves);
+its contract is logged in the
+[deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)
+for restoration at the final test completion on PR #453.
 
 If constructing the real owning object looks impractical — "too heavy to
 construct here" — that is the design defect, not a license to fall back to a
-text scan. `/packages/dreamux/tests/core-event-catalog.test.ts`'s
+text scan. `core-event-catalog.test.ts`'s
 `'the Dispatcher and its dispatcher-scoped TeamMates are wired to the real
-publisher with role read from team_id, not asserted'` case documents exactly
+publisher with role read from team_id, not asserted'` case documented exactly
 this: unable to construct a full `DispatcherService` (config, registry,
-catalog, admin socket), the test reads `dispatcher-service/index.ts` as text
+catalog, admin socket), the test read `dispatcher-service/index.ts` as text
 instead. The fix belongs on the production side — extract a lighter,
 independently constructible seam for the fact under test (here, the
-`publishAgentState` call) — not on the test.
+`publishAgentState` call) — not on the test. This file was likewise deleted
+under R43 in Stage 9 (same ledger: an unrelated earlier-stage directory
+move — `team-collection/` into `service/team/` — broke its import).
 
 ## What a source-text/structure test looks like, and why it's banned
 
@@ -52,7 +60,7 @@ propped up with a tsconfig tweak or a re-export. Two examples from this
 refactor's own audit:
 
 - **A "direction" case, retired along with the fact it pinned.**
-  `/packages/dreamux/tests/mcp-delegate-catalog.test.ts` used to prove the
+  `mcp-delegate-catalog.test.ts` used to prove the
   free function `channelMcpDelegates()` was imported only from
   `service/dispatcher-service/mcp-delegates.ts`, with a hand-rolled recursive
   `findImportersOf()` helper that walked `src/` and grepped every file's
@@ -62,16 +70,29 @@ refactor's own audit:
   `/packages/dreamux/.dependency-cruiser.cjs`. Code-organization refactor
   Stage 6e folded `channelMcpDelegates()` into a `ChannelService` method, so
   there is no longer a free function with importers to enumerate — the fact
-  itself is gone, not merely covered by a better gate, so the cruiser rule is
-  deleted in the same stage. Per this refactor's own R43/R53 rule (no stage
-  before the final one repairs or deletes a test case), the hand-rolled test
-  file is left in place mid-refactor and retired in the refactor's final test
-  pass instead — the cruiser rule and the test are still both deleted, just
-  not in the same stage. A future analogous case (a source-text importer scan
+  itself is gone, not merely covered by a better gate, so the cruiser rule was
+  deleted in the same stage. This refactor's own R43 rule deletes a broken
+  test case as soon as it is found — never repairs, re-points, or edits one
+  to pass — and R53 stopped running `vitest`/`typecheck:tests` per stage
+  from stage 2b onward, so a case's failure now surfaces only when something
+  actually runs it. Nothing ran this file between Stage 6e and Stage 9: an
+  earlier stage (Stage 5) had already moved `mcp/catalog.ts` to
+  `service/mcp/catalog.ts`, a change unrelated to `channelMcpDelegates()`,
+  and this file's own `import ... from '../src/mcp/catalog.js'` broke as a
+  result, but nothing surfaced it until Stage 9's item 8 ran a targeted
+  `npx vitest run` sweep over this file (a lighter, per-file check item 8's
+  own plan permits; the repo-wide `rush test` sweep is the separate, later
+  "final test completion on PR #453"). That sweep found the whole file
+  failing to load, so R43's "a test file that no longer compiles is deleted"
+  applied immediately, in Stage 9, not deferred to that later pass. The
+  cruiser rule and the test are still both gone, just not in the same stage
+  and not for the same reason; the case is logged in the
+  [deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)
+  for restoration. A future analogous case (a source-text importer scan
   for a fact dependency-cruiser can express natively) gets the same treatment:
   add the cruiser rule, delete the hand-rolled test.
 - **A "behavior" case that still needs a real test.**
-  `/packages/dreamux/tests/team-dissolve-contract.test.ts` proves "dissolve
+  `team-dissolve-contract.test.ts` proved "dissolve
   never drains a running turn" by reading `closing.ts`, `team/service.ts`,
   and two other files as text and asserting none of them contain the
   identifiers `waitIdle` or `isIdle`. The real fact — dissolve stops and
@@ -81,7 +102,10 @@ refactor's own audit:
   fake long-running turn, call dissolve, and assert dissolve returns (and the
   member is reclaimed) without waiting for that turn to complete — proving the
   behavior by observing it, instead of by grepping for the identifiers a
-  waiting implementation would have used.
+  waiting implementation would have used. This file was also deleted under
+  R43 in Stage 9 (an unrelated earlier-stage fold — `TeamWorktreeCleanup`
+  merged into `TeamCollection` under Stage 6b — broke its import); its
+  contract is logged in the same ledger for restoration.
 
 ## The one legitimate exception
 
@@ -114,5 +138,9 @@ History: [/.agents/tasks/architecture/code-organization-refactor/](/.agents/task
 (`artifacts/audit.md` §3.2, §8, §9) flags which tests are source-text/structure
 tests; the per-test classification behind this page's examples was worked out
 in this task's scratch planning and is not itself a committed KB or
-task-record file — read the tests cited above directly to verify a claim
-against current source, the same way this page's examples were verified.
+task-record file. Several example files above were themselves deleted
+mid-refactor under R43 (an unrelated earlier-stage move, rename, or fold
+broke their import, not a fault in the cited case) — for those, read the
+[deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)
+entry instead of the source file, and verify a still-live citation directly
+against current source the same way this page's examples were verified.

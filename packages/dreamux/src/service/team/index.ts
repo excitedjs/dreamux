@@ -11,7 +11,7 @@ import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { ClosedSubscription } from '../../platform/closed-fact.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
-import type { TurnAdmission } from '../agent/admission.js';
+import type { TurnAdmission } from '../agent/turn.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import {
@@ -30,10 +30,9 @@ import {
   type TeamListRow,
   type TeamRecord,
   type TeamCollectionOptions,
-  type TeamServiceDeps,
 } from './types.js';
 import { allocateConcreteNameAsync } from '../name-allocator.js';
-import { TeamService } from './service.js';
+import { TeamService, type TeamServiceDeps } from './service.js';
 import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
 import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import {

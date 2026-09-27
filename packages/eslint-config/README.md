@@ -35,9 +35,7 @@ responses to a file tripping it.
 - **`dreamux/no-dumping-ground-filename`** (package-wide, always on) — flags a
   filename matching `*-helpers.ts` / `*-support.ts` / `*-ops.ts` /
   `run-support.ts` / `runtime-session.ts`: a name that describes no single
-  responsibility. `warn` while the code-organization refactor's later stages
-  still have live matches scheduled for deletion or fold-in; flips to `error`
-  once they are gone.
+  responsibility. `error`.
 
 It is **focused**: no `eslint:recommended` / typescript-eslint recommended sets,
 and pure-syntactic (the typescript-eslint parser runs without
