@@ -27,6 +27,7 @@ import {
 import {
   FEISHU_ROUTING_DOCUMENT_VERSION,
   emptyRoutingDocument,
+  type FeishuBindingRecord,
   type FeishuRoutingDocument,
 } from './document.js';
 
@@ -190,7 +191,7 @@ function validated(
     version: FEISHU_ROUTING_DOCUMENT_VERSION,
     dispatcher_id: opts.dispatcherId,
     channel_id: opts.channelId,
-    bindings: document.bindings,
+    bindings: document.bindings.map((row) => validatedBinding(row, path)),
     spaces: document.spaces,
     subscriptions: document.subscriptions ?? [],
     updated_at:
@@ -198,4 +199,23 @@ function validated(
         ? document.updated_at
         : Date.now(),
   };
+}
+
+/**
+ * `root_message_id` is the one binding-row field a released build may not
+ * have written. Absent loses no fact — such a row simply predates the
+ * feature and has no persisted root until it is rebound — so it reads as
+ * `null`; present but not a string or `null` is the same corruption every
+ * other field fails on.
+ */
+function validatedBinding(
+  row: FeishuBindingRecord,
+  path: string,
+): FeishuBindingRecord {
+  const raw = (row as { root_message_id?: unknown }).root_message_id;
+  if (raw === undefined) return { ...row, root_message_id: null };
+  if (raw !== null && typeof raw !== 'string') {
+    throw new Error(`${path}: a binding row is malformed. ${INCOMPATIBLE}`);
+  }
+  return row;
 }

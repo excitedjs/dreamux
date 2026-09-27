@@ -24,7 +24,7 @@ import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import type {
   AskUserOption,
   AskUserQuestionSpec,
-} from '../feishu-ask-user-card.js';
+} from '../cards/ask-user.js';
 import {
   asRecord,
   closedObjectSchema,

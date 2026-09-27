@@ -7,10 +7,10 @@ import { leadingTextAfterMentions } from './introduce.js';
 import {
   buildRunningTeamsCard,
   type RunningTeamRow,
-} from './feishu-running-teams-card.js';
+} from './cards/running-teams.js';
 import type { FeishuBindingView, FeishuRoutingPlan } from './routing/index.js';
 import { containingChat, type FeishuTarget } from './routing/target.js';
-import type { FeishuBindingOperations } from './feishu-session-bindings.js';
+import type { FeishuBindingOperations } from './routing/operations.js';
 
 export type FeishuSlashCommandName =
   'bind' | 'dissolve' | 'help' | 'stop' | 'teams';
@@ -21,7 +21,8 @@ export interface FeishuSlashCommandInvocation {
    * The positional arguments, in order.
    *
    * The parser's own result type is `{ _: Array<string | number>; [flag: string]: any }`,
-   * and this seam is crossed by `FeishuInboundDelivery`, a pinned public export.
+   * and this seam is crossed by `FeishuInboundDelivery.command()`, the one call
+   * from `inbound/` into `session/`.
    * Narrowing here keeps the `any` and the library's type out of both, and the
    * narrowing is honest: `parse-positional-numbers` is off, so every positional
    * is already a string. A row that wants a named flag adds a typed field.
@@ -49,6 +50,8 @@ export type FeishuSlashCommandReply =
 interface CommandContext {
   readonly args: readonly string[];
   readonly target: FeishuTarget;
+  /** The message this command was parsed from. */
+  readonly messageId: string;
   readonly bindChannel: FeishuBindingOperations['bindChannel'];
   readonly plan: FeishuRoutingPlan;
   readonly invoke: (command: string, payload: JsonValue) => Promise<JsonValue>;
@@ -75,11 +78,19 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       // closed Team, the chat a Collaboration Space is registered on — is
       // stated by the layer that owns the fact and arrives here as a thrown
       // failure. This row adds no precondition of its own.
+      // `/bind` always routes the containing chat (never a topic directly —
+      // see its summary above), so there is no message id to give the bind
+      // itself: a topic's own root, if any, was set when it was provisioned
+      // and `bindChannel` preserves it on its own. `announceMessageId` is
+      // this command's own message, used only if `/bind` was typed from
+      // inside a topic that has no root of its own yet, so the receipt still
+      // has one to reply under.
       await context.bindChannel({
         target: containingChat(context.target),
         teamName,
         display: null,
         announceIn: context.target,
+        announceMessageId: context.messageId,
       });
       return { kind: 'silent' };
     },

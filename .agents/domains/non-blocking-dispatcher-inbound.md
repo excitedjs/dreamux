@@ -7,9 +7,9 @@
 - **Source:** https://github.com/excitedjs/dreamux/issues/63
 - **Affects:** `/packages/agent-runtime/codex/src/turn-manager.ts`,
   `/packages/agent-runtime/codex/src/events.ts`,
-  `/packages/channel/feishu-channel/src/feishu-channel.ts`,
-  `/packages/channel/feishu-channel/src/feishu-message.ts`,
-  `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`,
+  `/packages/channel/feishu-channel/src/session/session.ts`,
+  `/packages/channel/feishu-channel/src/inbound/attachments.ts`,
+  `/packages/channel/feishu-channel/src/cot/adapter.ts`,
   `/packages/dreamux/src/service/dispatcher-service/index.ts`,
   `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`,
   `/packages/dreamux/tests/codex-live.test.ts`,

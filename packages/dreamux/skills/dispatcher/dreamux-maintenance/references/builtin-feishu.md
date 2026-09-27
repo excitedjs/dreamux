@@ -56,6 +56,12 @@ where the slug and digest are both derived from the configured channel `id`.
 - A document this Dreamux version cannot read fails loud at channel start,
   naming the file. Recreate the bindings through those tools rather than
   editing it.
+- A topic-kind binding also carries the message id that first triggered it,
+  when one was available (always for automatic provisioning; never for a
+  manual bind through `bind_channel` or an extension). The Channel uses it to
+  address its own cards into that topic and never reports or accepts it
+  through a tool; it is not an operator-facing fact and there is nothing to
+  repair if it is absent.
 
 ## Feishu Peer-Bot Trust State
 
@@ -97,12 +103,15 @@ start.
 
 A Collaboration Space's configured `identity` stays exactly as the operator set
 it in the routing document. When the Channel automatically provisions a Team for
-a topic in that space, it creates the Team's leader with that identity plus the
-bound conversation's reply address — the chat and the message that triggered the
-creation — appended after it. An absent space identity creates the Team with the
-reply address alone.
+a topic in that space, it creates the Team's leader with that identity
+unmodified — nothing about the bound chat or a reply address is appended to
+it. An absent space identity creates the Team with no identity at all.
 
-The appended text is generated per Team at creation time and belongs to the
-Team's own server-owned identity. It is not written back to the space policy,
-and an already-created Team is not revisited. To change the configured part, use
-`bind_collaboration_space`; do not hand-edit either document.
+The Channel resolves the reply address itself instead: a `reply` call with no
+`message_id` inside a Collaboration Space chat lands under the caller's own
+bound topic's persisted message id (see "the message id that first triggered
+it" above) when exactly one such topic exists, and is refused with an
+instruction to pass one otherwise. The leader never needs its
+own topic's address baked into its identity to use `reply` correctly. To change
+the configured identity, use `bind_collaboration_space`; do not hand-edit
+either document.

@@ -23,10 +23,10 @@ import type {
   ChannelSessionCreateContext,
 } from '@excitedjs/dreamux-types';
 
-import { FeishuChannelSession } from './feishu-channel.js';
+import { FeishuChannelSession } from './session/session.js';
 import type { FeishuBot } from './bot.js';
 import { FeishuExtensionRegistry } from './feishu-extensions.js';
-import { createFeishuSessionMcp } from './feishu-session-mcp.js';
+import { createFeishuSessionMcp } from './tools/session-mcp.js';
 import { feishuToolRegistrations } from './tools/registry.js';
 
 /** Validated Feishu channel config the neutral session is constructed from. */

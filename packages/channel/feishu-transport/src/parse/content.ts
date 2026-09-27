@@ -9,7 +9,7 @@
  * attachment downloads when it renders.
  */
 
-import type { Mention } from '../contract/types.js';
+import type { Mention } from './mentions.js';
 import {
   createBody,
   type InboundResourceType,

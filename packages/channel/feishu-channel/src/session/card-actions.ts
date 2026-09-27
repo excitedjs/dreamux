@@ -1,0 +1,397 @@
+/**
+ * How this session answers a card click, and how a card's answer reaches
+ * whoever owns the conversation it hangs under.
+ *
+ * A card click resolves to one of three payloads: an extension's own claimed
+ * key, one of the ask-user answer keys, or the pairing-approval key. None of
+ * them are this session's routing decision — each ends by handing the
+ * click's answer text to `deliver`, the same submission path an ordinary
+ * inbound message takes, addressed at the card it was clicked on rather than
+ * at whatever chat the click event names.
+ */
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { errorInfo } from '@excitedjs/dreamux-utils';
+import {
+  FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
+  type FeishuCardActionEvent,
+} from '@excitedjs/feishu-transport';
+
+import type { FeishuAccess } from '../access/index.js';
+import { PAIRING_TOKEN_REGEX } from '../access/state.js';
+import type {
+  AskUserRegistry,
+  AskUserSettlement,
+} from '../ask-user/registry.js';
+import type { FeishuBot } from '../bot.js';
+import {
+  DREAMUX_ACTION_KEY,
+  DREAMUX_PAIRING_TOKEN_KEY,
+  builtinCardAction,
+} from '../card-actions.js';
+import {
+  buildPairingSuccessCard,
+  rawCardActionResponse,
+  type FeishuCardActionResponse,
+} from '../cards/pairing.js';
+import type { FeishuExtensionForward } from '../extension.js';
+import type { FeishuSessionExtensions } from '../feishu-extensions.js';
+import {
+  chatSubmission,
+  describeSubmitOutcome,
+  type FeishuChatSubmission,
+  type FeishuSubmitOutcome,
+  type SubmitOutcomeMessages,
+} from '../feishu-submit.js';
+import type { FeishuInboundTargeting } from '../inbound/target.js';
+import type { FeishuOutbound } from '../outbound/index.js';
+import type { FeishuTarget } from '../routing/target.js';
+
+/** The card-action callback's own answer, or nothing for a key it does not own. */
+export type FeishuCardActionResult =
+  | FeishuCardActionResponse
+  | Record<string, never>;
+
+/** The card-action-forward path's words for each outcome. The classification is shared. */
+const EXTENSION_FORWARD_MESSAGES: SubmitOutcomeMessages = {
+  submitted: '[extension] card forward delivered',
+  not_admitted: '[extension] card forward was not admitted',
+  rejected: '[extension] card forward was rejected before admission',
+  ambiguous: '[extension] card forward admission was ambiguous',
+  failed: '[extension] failed to deliver card forward',
+};
+
+function openIdLogFields(
+  name: string,
+  openId: string,
+): Record<string, unknown> {
+  return { [`${name}_len`]: openId.length };
+}
+
+/**
+ * Build the ordinary inbound submission a card's text becomes, anchored at
+ * the card's own message. Every card-driven delivery goes through this — an
+ * ask-user answer and an extension's forwarded card action alike — so the
+ * address is always read from the card, never guessed or named by the caller.
+ */
+function cardSubmission(input: {
+  target: FeishuTarget;
+  cardMessageId: string;
+  text: string;
+  sourceId: string;
+  attrs?: Readonly<Record<string, string>> | undefined;
+}): FeishuChatSubmission {
+  const { target, cardMessageId } = input;
+  return chatSubmission({
+    attrs: {
+      // Same provenance the inbound envelope carries, in the same place: the
+      // delivery arrives as a channel message and reads like one.
+      source: 'feishu',
+      chat_id: target.chatId,
+      ...(target.threadId !== undefined ? { thread_id: target.threadId } : {}),
+      message_id: cardMessageId,
+      ...(input.attrs ?? {}),
+    },
+    text: input.text,
+    sourceId: input.sourceId,
+    anchor: {
+      chatId: target.chatId,
+      // The card, never `sourceId`: this id is handed to Feishu as a COT
+      // presentation's origin, and a synthetic one would be sent to the API
+      // as if it were real.
+      messageId: cardMessageId,
+      target,
+    },
+  });
+}
+
+export interface FeishuCardActionsOptions {
+  readonly dispatcherId: string;
+  readonly log: DreamuxLogger;
+  readonly bot: FeishuBot;
+  readonly access: FeishuAccess;
+  readonly extensions: FeishuSessionExtensions;
+  readonly askUser: AskUserRegistry;
+  readonly targetRouter: FeishuInboundTargeting;
+  readonly outbound: FeishuOutbound;
+  /** The session's own routing-and-submission decision; this module makes none of its own. */
+  readonly deliver: (input: {
+    target: FeishuTarget;
+    containerChatId: string | null;
+    submission: FeishuChatSubmission;
+  }) => Promise<FeishuSubmitOutcome>;
+}
+
+export class FeishuCardActions {
+  constructor(private readonly opts: FeishuCardActionsOptions) {}
+
+  /**
+   * The card action this channel instance answers: an extension's claimed key
+   * first, then whichever built-in `card-actions.ts` says the key belongs to.
+   * A key that is neither is answered with nothing — some other, unrelated
+   * card. An extension action's `forward`, once its own callback answer is
+   * ready, is delivered the same detached way an ask-user settlement is.
+   */
+  async handle(event: FeishuCardActionEvent): Promise<FeishuCardActionResult> {
+    const key = String(event.actionValue[DREAMUX_ACTION_KEY] ?? '');
+    const extension = this.opts.extensions.action(key);
+    if (extension !== undefined) {
+      const { response, forward } = await extension.invoke(event);
+      if (forward !== undefined) {
+        void this.deliverExtensionForward(
+          extension.extensionName,
+          event.openMessageId,
+          forward,
+        );
+      }
+      return response;
+    }
+
+    switch (builtinCardAction(key)) {
+      case 'ask_user':
+        return this.handleAskUserCardAction(event);
+      case 'pairing':
+        return this.handlePairingCardAction(event);
+      default:
+        return {};
+    }
+  }
+
+  /**
+   * Hand a settled ask-user round to Core as an ordinary inbound submission.
+   *
+   * The answer travels the path a typed reply travels, so nothing downstream has
+   * to learn that a card produced it. A delivery that fails is logged and
+   * dropped, exactly as the inbound path treats a message Core would not take:
+   * re-delivering risks a second turn for one answer, and the user can say it
+   * again. A card that cannot be located fails the same way, for the same reason
+   * — which is rare here: the round's own `activate()` already recorded where
+   * its card landed, so this normally resolves without asking Feishu at all.
+   */
+  async deliverAskUserSettlement(settlement: AskUserSettlement): Promise<void> {
+    const { cardMessageId } = settlement;
+    try {
+      if (cardMessageId === undefined) {
+        throw new Error('the question card reported no message id');
+      }
+      const { target, outcome } = await this.deliverToCardOwner({
+        cardMessageId,
+        text: settlement.text,
+        sourceId: settlement.sourceId,
+        attrs: {
+          // Anyone in the chat may answer the card; this is deliberate, so
+          // there is no check on who clicked. Carrying the clicker keeps the
+          // fact the model would otherwise lose.
+          ...(settlement.operatorOpenId !== undefined
+            ? { sender_id: settlement.operatorOpenId }
+            : {}),
+          ask_user_request_id: settlement.requestId,
+        },
+        knownLanding:
+          settlement.chatId !== undefined
+            ? { chatId: settlement.chatId, threadId: settlement.threadId }
+            : undefined,
+      });
+      // An `unsubmitted` (or `rejected`) outcome here means a `provision` plan
+      // produced no recipient. Unlike the inbound chat path, this settlement
+      // posts no in-place failure notice and takes no Dispatcher fallback: this
+      // log line is the whole handling. A settled card answer is not a queued
+      // human message awaiting delivery — handing it to a different recipient
+      // would risk a second turn for one answer, and the human can send it again
+      // as an ordinary message. `failed`, `ambiguous`, and `error` settle on the
+      // same terms.
+      this.opts.log.info(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          chat_id: target.chatId,
+          ask_user_request_id: settlement.requestId,
+          ask_user_outcome: settlement.outcome,
+          status: outcome.status,
+        },
+        '[ask-user] answer delivered',
+      );
+    } catch (err) {
+      this.opts.log.error(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          message_id: cardMessageId,
+          ask_user_request_id: settlement.requestId,
+          err: errorInfo(err),
+        },
+        '[ask-user] answer delivery failed',
+      );
+    }
+  }
+
+  private async handleAskUserCardAction(
+    event: FeishuCardActionEvent,
+  ): Promise<FeishuCardActionResult> {
+    const applied = this.opts.askUser.apply(event);
+    if (applied.kind === 'settled') {
+      // Detached deliberately. Feishu gives a card callback a few seconds
+      // before it gives up and the click looks dead, and handing the answer to
+      // Core means waking an agent — long enough to lose that window. Delivery
+      // logs its own failure at error level and has nothing to report back
+      // here anyway.
+      void this.deliverAskUserSettlement(applied.settlement);
+    }
+    return applied.response;
+  }
+
+  private async handlePairingCardAction(
+    event: FeishuCardActionEvent,
+  ): Promise<FeishuCardActionResult> {
+    const token = String(event.actionValue[DREAMUX_PAIRING_TOKEN_KEY] ?? '');
+    if (!PAIRING_TOKEN_REGEX.test(token)) {
+      return { toast: { type: 'error', content: '授权请求已失效或格式错误' } };
+    }
+
+    const operatorOpenId = event.operatorOpenId ?? '';
+    if (operatorOpenId === '') {
+      return {
+        toast: { type: 'error', content: '身份解析失败：未获取到你的 open_id' },
+      };
+    }
+
+    let ownerSet: Set<string>;
+    try {
+      const owner = await this.opts.bot.resolveAppOwner();
+      ownerSet = new Set(
+        [
+          owner.creatorOpenId,
+          owner.ownerType === undefined ||
+          owner.ownerType === FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER
+            ? owner.ownerOpenId
+            : undefined,
+        ].filter((id): id is string => id !== undefined && id !== ''),
+      );
+    } catch (err) {
+      this.opts.log.error(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          ...openIdLogFields('operator_open_id', operatorOpenId),
+          err: errorInfo(err),
+        },
+        '[card-action] owner lookup failed',
+      );
+      return { toast: { type: 'error', content: 'Owner 校验失败，请稍后重试' } };
+    }
+
+    if (ownerSet.size === 0) {
+      return {
+        toast: {
+          type: 'error',
+          content: 'Owner 校验配置错误：未解析到 App Owner',
+        },
+      };
+    }
+    if (!ownerSet.has(operatorOpenId)) {
+      return {
+        toast: {
+          type: 'error',
+          content: '只有 App Owner 才有权限点击批准授权',
+        },
+      };
+    }
+
+    const result = await this.opts.access.approvePairingByToken(token);
+    if (result.status !== 'ok') {
+      return {
+        toast: {
+          type: result.status === 'not_found' ? 'warning' : 'error',
+          content: result.message,
+        },
+      };
+    }
+
+    const duplicate = result.details?.['duplicate'] === true;
+    return rawCardActionResponse(buildPairingSuccessCard({ duplicate }), {
+      type: 'success',
+      content: result.message,
+    });
+  }
+
+  /**
+   * Resolve where a card lives and deliver its text to whichever Team or
+   * Dispatcher Agent owns that conversation, as an ordinary inbound submission.
+   * The one mechanism both `deliverAskUserSettlement` and
+   * `deliverExtensionForward` use.
+   *
+   * The address is read from the card, never guessed or named by the caller —
+   * but "read from the card" costs a live `outbound.locate` round trip only when
+   * nothing already knows where that card landed. An ask-user round's own card
+   * names its `knownLanding` (recorded by `activate()` off the send response)
+   * and skips it; `deliverExtensionForward`'s card, sent by code this session
+   * does not own, never has one and always resolves live.
+   */
+  private async deliverToCardOwner(input: {
+    cardMessageId: string;
+    text: string;
+    sourceId: string;
+    attrs?: Readonly<Record<string, string>> | undefined;
+    knownLanding?:
+      | { chatId: string; threadId?: string | undefined }
+      | undefined;
+  }): Promise<{ target: FeishuTarget; outcome: FeishuSubmitOutcome }> {
+    const { knownLanding, ...submission } = input;
+    const route =
+      knownLanding !== undefined
+        ? await this.opts.targetRouter.project(knownLanding)
+        : await this.opts.outbound.locate(input.cardMessageId);
+    const { target } = route;
+    const outcome = await this.opts.deliver({
+      target,
+      containerChatId: route.containerChatId,
+      submission: cardSubmission({ target, ...submission }),
+    });
+    return { target, outcome };
+  }
+
+  /**
+   * Hand an extension card action's forward to whichever Team or Dispatcher
+   * Agent owns the card's conversation, as an ordinary inbound submission.
+   *
+   * The extension names what to say, never where: the card is the only address
+   * it has, so Feishu is always asked where that card landed (unlike an
+   * ask-user answer, which usually already knows). A delivery that fails is
+   * logged and dropped, on the same terms `deliverAskUserSettlement` drops one
+   * — a second attempt risks a second turn for one click, and the failure is
+   * not the caller's to see: the card callback already answered.
+   */
+  private async deliverExtensionForward(
+    extensionName: string,
+    cardMessageId: string | undefined,
+    forward: FeishuExtensionForward,
+  ): Promise<void> {
+    try {
+      if (cardMessageId === undefined) {
+        throw new Error('the card reported no message id');
+      }
+      const { target, outcome } = await this.deliverToCardOwner({
+        cardMessageId,
+        text: forward.text,
+        sourceId: forward.sourceId,
+        attrs: forward.attrs,
+      });
+      const report = describeSubmitOutcome(outcome);
+      const scope = {
+        dispatcher_id: this.opts.dispatcherId,
+        chat_id: target.chatId,
+        feishu_extension: extensionName,
+      };
+      this.opts.log[report.level](
+        { ...scope, ...report.fields },
+        EXTENSION_FORWARD_MESSAGES[report.kind],
+      );
+    } catch (err) {
+      this.opts.log.error(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          message_id: cardMessageId,
+          feishu_extension: extensionName,
+          err: errorInfo(err),
+        },
+        '[extension] card forward delivery failed',
+      );
+    }
+  }
+}

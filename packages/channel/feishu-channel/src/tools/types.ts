@@ -13,7 +13,7 @@ import type {
   JsonValue,
 } from '@excitedjs/dreamux-types';
 
-import type { AskUserQuestionSpec } from '../feishu-ask-user-card.js';
+import type { AskUserQuestionSpec } from '../cards/ask-user.js';
 import type { FeishuSpaceRecord } from '../routing/document.js';
 import type {
   FeishuBindingView,
@@ -55,7 +55,11 @@ export interface FeishuToolSession {
   sendText(
     chatId: string,
     text: string,
-    opts?: { messageId?: string },
+    opts: {
+      messageId?: string;
+      /** The calling Team, or `null` for the Dispatcher Agent. */
+      callerTeamName: string | null;
+    },
   ): Promise<{ message_ids: string[] }>;
   react(
     chatId: string | undefined,

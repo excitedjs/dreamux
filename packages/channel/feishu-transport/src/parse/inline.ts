@@ -11,7 +11,7 @@
  * becomes a resource. A web image stays literal.
  */
 
-import type { Mention } from '../contract/types.js';
+import type { Mention } from './mentions.js';
 import type { BodyBuilder } from './body.js';
 
 const INLINE_RE =

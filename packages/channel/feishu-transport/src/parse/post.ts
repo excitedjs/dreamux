@@ -1,4 +1,4 @@
-import type { Mention } from '../contract/types.js';
+import type { Mention } from './mentions.js';
 import { createBody, type BodyBuilder, type ParsedInbound } from './body.js';
 import { mentionKey, readInlineMarkdown } from './inline.js';
 

@@ -81,7 +81,6 @@ export interface FeishuBindingView {
   readonly thread_id: string | null;
   readonly display: string | null;
   readonly team_name: string;
-  readonly origin: FeishuBindingRecord['origin'];
   readonly space_name: string | null;
   readonly created_at: number;
   readonly updated_at: number;
@@ -90,13 +89,14 @@ export interface FeishuBindingView {
 /**
  * A route that no longer exists, in the terms its removal is announced in.
  *
- * The row is gone from disk, so its display can no longer be read back; it
- * travels with the target because a caller telling a conversation it was
- * released names it the way the bind did.
+ * The row is gone from disk, so its display and root can no longer be read
+ * back; both travel with the target because a caller telling a conversation
+ * it was released names it, and replies under it, the way the bind did.
  */
 export interface FeishuRemovedRoute {
   readonly target: FeishuTarget;
   readonly display: string | null;
+  readonly rootMessageId: string | null;
 }
 
 export class FeishuRouting {
@@ -159,6 +159,25 @@ export class FeishuRouting {
     );
   }
 
+  /**
+   * This Team's own topic-kind bindings inside one Collaboration Space
+   * container — the row a `reply` call with no `message_id` inside that
+   * container may fall back to. A `null` team name — the Dispatcher Agent,
+   * which owns no Team — matches nothing by construction: no row's
+   * `team_name` is ever `null`.
+   */
+  topicBindingsFor(
+    containerChatId: string,
+    teamName: string | null,
+  ): readonly FeishuBindingRecord[] {
+    return this.opts.store.current.bindings.filter(
+      (row) =>
+        row.target.kind === 'topic' &&
+        row.target.chat_id === containerChatId &&
+        row.team_name === teamName,
+    );
+  }
+
   spaceByName(spaceName: string): FeishuSpaceRecord | undefined {
     return this.opts.store.current.spaces.find(
       (row) => row.space_name === spaceName,
@@ -181,8 +200,15 @@ export class FeishuRouting {
     target: FeishuTarget;
     teamName: string;
     display: string | null;
-    origin: FeishuBindingRecord['origin'];
     spaceId: string | null;
+    /**
+     * The visible message this binding's topic conversation should reply
+     * under, or `null` for a `group`/`p2p` target or a topic bound through a
+     * path with no message id. The caller resolves this value, including
+     * never regressing an already-set root on a rebind that happens not to
+     * carry one — this method writes exactly what it is given.
+     */
+    rootMessageId: string | null;
     /**
      * When set, refuse a target another Team currently holds instead of
      * moving it. A Team may claim what is free and keep what is already its
@@ -230,15 +256,15 @@ export class FeishuRouting {
         if (
           existing.team_name === input.teamName &&
           existing.display === input.display &&
-          existing.origin === input.origin &&
-          existing.space_id === input.spaceId
+          existing.space_id === input.spaceId &&
+          existing.root_message_id === input.rootMessageId
         ) {
           return false;
         }
         existing.team_name = input.teamName;
         existing.display = input.display;
-        existing.origin = input.origin;
         existing.space_id = input.spaceId;
+        existing.root_message_id = input.rootMessageId;
         existing.updated_at = now;
         return true;
       }
@@ -246,8 +272,8 @@ export class FeishuRouting {
         target: toRecord(input.target),
         display: input.display,
         team_name: input.teamName,
-        origin: input.origin,
         space_id: input.spaceId,
+        root_message_id: input.rootMessageId,
         created_at: now,
         updated_at: now,
       });
@@ -308,7 +334,11 @@ export class FeishuRouting {
     await this.opts.store.update((document) => {
       const kept = document.bindings.filter((row) => {
         if (row.team_name !== teamName) return true;
-        removed.push({ target: fromRecord(row.target), display: row.display });
+        removed.push({
+          target: fromRecord(row.target),
+          display: row.display,
+          rootMessageId: row.root_message_id,
+        });
         return false;
       });
       const keptSubscriptions = document.subscriptions.filter((row) => {
@@ -340,7 +370,6 @@ export class FeishuRouting {
       thread_id: row.target.thread_id ?? null,
       display: row.display,
       team_name: row.team_name,
-      origin: row.origin,
       space_name:
         row.space_id === null
           ? null
@@ -486,7 +515,6 @@ export class FeishuRouting {
           space_name: input.spaceName,
           container_chat_id: input.containerChatId,
           display: input.display,
-          generation: 1,
           leader_agent_runtime: input.leaderAgentRuntime,
           identity: input.identity,
           repo: input.repo,
@@ -497,21 +525,12 @@ export class FeishuRouting {
         committed.record = created;
         return true;
       }
-      // Only creation facts advance the generation: a rename or a new display
-      // names the same policy snapshot. Either way the update reaches Team
-      // creations that start after it and no others — a creation already under
-      // way holds the record this document replaced.
-      const rebound =
-        existing.leader_agent_runtime !== input.leaderAgentRuntime ||
-        existing.identity !== input.identity ||
-        JSON.stringify(existing.repo) !== JSON.stringify(input.repo);
       existing.space_name = input.spaceName;
       existing.display = input.display;
       existing.leader_agent_runtime = input.leaderAgentRuntime;
       existing.identity = input.identity;
       existing.repo = input.repo;
       existing.updated_at = now;
-      if (rebound) existing.generation += 1;
       committed.record = existing;
       return true;
     });

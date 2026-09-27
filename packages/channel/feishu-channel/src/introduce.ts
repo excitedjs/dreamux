@@ -34,7 +34,7 @@
 
 import type { Mention } from '@excitedjs/feishu-transport';
 
-import type { DispatcherAccessState } from './feishu-gate.js';
+import type { DispatcherAccessState } from './access/state.js';
 import type { PeerBot } from './chat-bots-store.js';
 
 const INTRODUCE_RE = /^\/introduce(?:\s|$)/i;

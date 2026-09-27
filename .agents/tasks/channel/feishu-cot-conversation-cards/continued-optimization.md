@@ -125,7 +125,8 @@ Estimated net reduction on the Claude side: 30 to 40 lines.
 ## 2. Channel-body suppression state
 
 - **Status:** Delivered 2026-09-02 — removed completely.
-- **File:** [`/packages/channel/feishu-channel/src/feishu-cot-state.ts`](/packages/channel/feishu-channel/src/feishu-cot-state.ts)
+- **File:** [`/packages/channel/feishu-channel/src/cot/recipients.ts`](/packages/channel/feishu-channel/src/cot/recipients.ts)
+  (renamed from `feishu-cot-state.ts` in the code-organization refactor)
 
 `suppressedUserTurns` is a per-recipient set with a 64-entry cap and an
 eviction rule, consumed one-shot, whose only job is to hide the copy of the

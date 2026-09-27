@@ -1,8 +1,11 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Readable } from 'node:stream';
 
-import type { OutboundTarget } from '../contract/outbound.js';
-import { sendFeishuMessage } from './outbound-message.js';
+import {
+  sendFeishuMessage,
+  type MessageSendResponse,
+  type OutboundTarget,
+} from './outbound-message.js';
 import { assertMessageContentFits, cardContents } from './message-content.js';
 import {
   connectionErrorLogLine,
@@ -58,37 +61,40 @@ const WS_STARTUP_GRACE_MS = 30_000;
  */
 const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
 
+/** One sent message and where the platform placed it. */
+export interface FeishuSentMessage {
+  readonly messageId: string;
+  readonly chatId: string;
+  readonly threadId: string | undefined;
+}
+
 export interface FeishuSendResult {
-  messageIds: string[];
+  /** One entry per message part sent, in order. Empty if Feishu omitted ids. */
+  readonly messages: readonly FeishuSentMessage[];
 }
 
 export interface FeishuSendOptions {
   signal?: AbortSignal;
-  /**
-   * Synchronous receipt for each message the platform confirms creating.
-   * It fires before the next part is sent, preserving partial-send
-   * ordering for callers that need platform-visible facts as they happen.
-   * Observer failures are non-authoritative and never affect message sends.
-   * Text `send` consumes this field; `sendCard` accepts only `signal`.
-   */
-  readonly onMessageCreated?:
-    | ((receipt: {
-        readonly messageId: string;
-        readonly ordinal: number;
-      }) => void)
-    | undefined;
 }
 
-function notifyMessageCreated(
-  options: Pick<FeishuSendOptions, 'onMessageCreated'> | undefined,
-  messageId: string,
-  ordinal: number,
-): void {
-  try {
-    options?.onMessageCreated?.({ messageId, ordinal });
-  } catch {
-    // Display observers are non-authoritative after platform success.
-  }
+/**
+ * Build the landing place for one sent message from its create/reply
+ * response, or `undefined` when the platform reported no `message_id`.
+ *
+ * `chat_id` is present on every `im/v1/messages` create/reply response
+ * alongside `message_id`, so it is read directly rather than guarded.
+ */
+function sentMessageFrom(
+  data: MessageSendResponse['data'],
+): FeishuSentMessage | undefined {
+  if (data === undefined) return undefined;
+  const messageId = data.message_id;
+  if (messageId === undefined || messageId === '') return undefined;
+  return {
+    messageId,
+    chatId: data.chat_id as string,
+    threadId: data.thread_id,
+  };
 }
 
 export type FeishuChatMode = 'p2p' | 'group' | 'topic';
@@ -220,12 +226,12 @@ export interface FeishuTransport {
   send(
     target: OutboundTarget,
     text: string,
-    options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+    options?: FeishuSendOptions,
   ): Promise<FeishuSendResult>;
   sendCard(
     target: OutboundTarget,
     card: unknown,
-    options?: Pick<FeishuSendOptions, 'signal'>,
+    options?: FeishuSendOptions,
   ): Promise<FeishuSendResult>;
   /** Optional capability for custom transports; callers must fail safe when absent. */
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
@@ -397,25 +403,26 @@ export function createFeishuTransport(
     async send(
       target: OutboundTarget,
       text: string,
-      options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+      options?: FeishuSendOptions,
     ): Promise<FeishuSendResult> {
-      const messageIds: string[] = [];
+      const messages: FeishuSentMessage[] = [];
       for (const content of cardContents(text)) {
-        const res = await sendFeishuMessage(client, target, content);
-        const id = res.data?.message_id;
-        if (id) {
-          const ordinal = messageIds.length;
-          messageIds.push(id);
-          notifyMessageCreated(options, id, ordinal);
-        }
+        const res = await sendFeishuMessage(
+          client,
+          target,
+          content,
+          options?.signal,
+        );
+        const sent = sentMessageFrom(res.data);
+        if (sent !== undefined) messages.push(sent);
       }
-      return { messageIds };
+      return { messages };
     },
 
     async sendCard(
       target: OutboundTarget,
       card: unknown,
-      options?: Pick<FeishuSendOptions, 'signal'>,
+      options?: FeishuSendOptions,
     ): Promise<FeishuSendResult> {
       const content = JSON.stringify(card);
       assertMessageContentFits(content);
@@ -425,8 +432,8 @@ export function createFeishuTransport(
         content,
         options?.signal,
       );
-      const id = res.data?.message_id;
-      return { messageIds: id ? [id] : [] };
+      const sent = sentMessageFrom(res.data);
+      return { messages: sent !== undefined ? [sent] : [] };
     },
 
     async getChatMode(chatId: string): Promise<FeishuChatMode | undefined> {

@@ -347,7 +347,7 @@ Source:
 - `/packages/channel/feishu-channel/src/routing/store.ts`
 - `/packages/channel/feishu-channel/src/routing/document.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
-- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
+- `/packages/channel/feishu-channel/src/access/index.ts`
 
 ### Scheduler And Workflow Records
 
@@ -478,7 +478,7 @@ Source:
 - `/packages/dreamux/src/service/workflow-service/store.ts`
 - `/packages/channel/feishu-channel/src/routing/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
-- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
+- `/packages/channel/feishu-channel/src/access/index.ts`
 
 ### Run Files And Runtime Sockets
 
@@ -514,7 +514,7 @@ Cache files are not durable state and are not recovery records.
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/channel/feishu-channel/src/feishu-message.ts`
+- `/packages/channel/feishu-channel/src/inbound/attachments.ts`
 
 ### Logs
 

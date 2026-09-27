@@ -55,7 +55,7 @@ import {
   escapeXmlText,
   formatFeishuCreateTime,
   renderFeishuMention,
-} from './feishu-message-render.js';
+} from './inbound/render.js';
 import {
   DOC_COMMENT_COLD_OPEN_REMINDER,
   DOC_COMMENT_REMINDER,
@@ -67,6 +67,7 @@ import {
 } from './feishu-submit.js';
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuDocSubscriptionRecord } from './routing/document.js';
+import type { FeishuAccess } from './access/index.js';
 
 /**
  * The budget both inbound enrichment reads share. The route awaits delivery
@@ -109,11 +110,11 @@ export interface FeishuDocumentCommentsOptions {
   /** Best-effort display name for the commenter; may answer `undefined`. */
   resolveUserName(openId: string): Promise<string | undefined>;
   /**
-   * Whether this commenter is one of the Dispatcher's trusted humans. Injected
-   * rather than read here, so this module learns no access-state layout and no
-   * path to it.
+   * The session's one held access-state owner, for the trusted-human check an
+   * unclaimed cold-open mention gates on. Injected rather than constructed
+   * here, so this module learns no access-state layout and no path to it.
    */
-  isTrustedUser(openId: string): Promise<boolean>;
+  readonly access: Pick<FeishuAccess, 'isTrustedDispatcherUser'>;
 }
 
 export class FeishuDocumentComments {
@@ -293,7 +294,7 @@ export class FeishuDocumentComments {
       );
       return;
     }
-    if (!(await this.opts.isTrustedUser(event.commenterId))) {
+    if (!(await this.opts.access.isTrustedDispatcherUser(event.commenterId))) {
       this.opts.log.info(
         { ...this.scope(event), reason: 'commenter_not_trusted' },
         'feishu document comment mentioned the bot in an unfollowed document, ' +

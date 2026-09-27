@@ -1,13 +1,23 @@
 /**
- * Small Feishu inbound helpers that used to live next to the gate.
+ * The `Mention` shape every parser reads, plus small Feishu inbound helpers
+ * that used to live next to the gate.
  *
- * These are deliberately access-control-free: `isBotSenderType` classifies a
- * `sender_type` field, and `isBotMentioned` checks an @-mention list against
- * the bot's own open_id. Both are pure functions with no dependency on
- * persisted access state (which lives in the host's channel layer now).
+ * The helpers are deliberately access-control-free: `isBotSenderType`
+ * classifies a `sender_type` field, and `isBotMentioned` checks an @-mention
+ * list against the bot's own open_id. Both are pure functions with no
+ * dependency on persisted access state (which lives in the host's channel
+ * layer now).
  */
 
-import type { Mention } from '../contract/types.js';
+/** One @-mention inside an inbound Feishu message. */
+export interface Mention {
+  /** The placeholder token (e.g. `@_user_1`) used in the message text. */
+  key: string;
+  /** Resolved identity of the mentioned party. */
+  id?: { open_id?: string; union_id?: string; user_id?: string };
+  /** Display name of the mentioned party. */
+  name?: string;
+}
 
 /**
  * True when `senderType` identifies a Feishu bot or app.

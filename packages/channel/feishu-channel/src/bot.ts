@@ -2,20 +2,27 @@
  * The `FeishuBot` adapter — one per Dispatcher (D3: 1 Dispatcher = 1 Bot).
  *
  * Since issue #25 PR1 this is a thin adapter over `@excitedjs/feishu-transport`
- * (the shared platform-I/O core): all Feishu SDK I/O — the inbound WebSocket,
- * markdown→card render, content parse, the outbound message API — lives in the
- * core, the single importer of `@larksuiteoapi/node-sdk`. This file only shapes
- * the core's surface into the `FeishuBot` interface the server already wires:
+ * (the shared platform-I/O core): all Feishu SDK I/O and event/content
+ * parsing — the inbound WebSocket, markdown→card render, content parse, the
+ * inbound event-envelope decode, the outbound message API — lives in the
+ * core, the single importer of `@larksuiteoapi/node-sdk`. `FeishuBot` is
+ * `FeishuTransport`'s own shape, spread through as-is, with `start` adapted to
+ * this package's typed route table and `selfId`/`selfName` renamed to
+ * `botOpenId`/`botDisplayName`:
  *   - `start(routes)` takes one handler per Feishu event type (issue #62 seam):
- *     `onMessage` for `im.message.receive_v1` (normalized via the core's
- *     `parseInbound` into a `FeishuInboundEvent`) and an optional
- *     `onBotMemberAdded` for `im.chat.member.bot.added_v1`. Each route awaits
- *     its handler, so the server gates and submits accepted inbound before the
- *     SDK acks.
- *   - `send(target, text)` delegates to the core transport, preserving reply
- *     threading / @-back metadata from the in-memory inbound batch.
- *   - `botOpenId` / `botDisplayName` surface the core transport's bot-info
- *     fields, resolved from `/open-apis/bot/v3/info` during startup.
+ *     `onMessage` for `im.message.receive_v1` (decoded via the core's
+ *     `parseFeishuInboundEvent`) and an optional `onBotMemberAdded` for
+ *     `im.chat.member.bot.added_v1`. Each route awaits its handler, so the
+ *     server gates and submits accepted inbound before the SDK acks.
+ *   - Every other member (`send`, `sendCard`, `addReaction`, `editCard`,
+ *     document/message reads, `cot`, `resolveAppOwner`, `close`, …) is the
+ *     core transport's own member, forwarded unchanged; its optionality
+ *     (`getChatMode?`, `readMessage?`, `resolveUserName?`, `resolveChatName?`,
+ *     `cot?`) is `FeishuTransport`'s own and stays genuine here too: the
+ *     provider's public `botFactory` option
+ *     (`CreateFeishuChannelProviderOptions`) lets a caller substitute any
+ *     `FeishuBot`-shaped value, not only one built from
+ *     `createFeishuTransport`, so a supplied bot may omit any of them.
  *
  * Tests supply package-local `FeishuBot` doubles through the provider's
  * `botFactory` seam instead of opening a live connection.
@@ -25,77 +32,21 @@ import {
   BOT_MEMBER_ADDED_EVENT_TYPE,
   DOC_COMMENT_EVENT_TYPE,
   createFeishuTransport,
-  narrowMetaFromEvent,
   normalizeBotMemberAddedEvent,
+  normalizeCardActionAck,
+  normalizeCardActionEvent,
   normalizeCommentEvent,
-  parseInbound,
+  parseFeishuInboundEvent,
   type FeishuBotMemberAddedEvent,
+  type FeishuCardActionEvent,
   type FeishuCommentEvent,
-  type FeishuDocCommentRequest,
-  type FeishuDocCommentText,
-  type FeishuDocMetaResult,
-  type FeishuWikiNode,
-  type FeishuMessageResourceFetcher,
-  type FeishuMessageResourceRequest,
-  type FeishuMessageResourceResponse,
-  type FeishuMessageReadRequest,
-  type FeishuMessageReadResponse,
-  type FeishuSendOptions,
-  type FeishuAppOwnerIdentity,
-  type FeishuChatMode,
-  type FeishuCotClient,
+  type FeishuInboundEvent,
   type FeishuTransport,
-  type InboundResource,
-  type Mention,
-  type OutboundTarget,
   type TransportLogger,
 } from '@excitedjs/feishu-transport';
 
 /** The Feishu event_type carrying inbound chat messages. */
 const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
-
-export interface FeishuInboundEvent {
-  messageId: string;
-  chatId: string;
-  chatType: string; // 'p2p' | 'group' | ...
-  /** Stable Feishu topic identity when the event belongs to a thread/topic. */
-  threadId?: string;
-  /** Diagnostic reply ancestry; never used as a topic identity fallback. */
-  rootId?: string;
-  parentId?: string;
-  /** Post-gate, best-effort type of the actionable reply/quote parent. */
-  parentMessageType?: string;
-  senderId: string;
-  /**
-   * The sender's `union_id`, when Feishu provides it. Diagnostic only — it is
-   * surfaced in inbound-drop logs to help tell "same bot, different app-scoped
-   * open_id" apart from "different entity", and is never used for access
-   * gating. Absent when Feishu omits it.
-   */
-  senderUnionId?: string;
-  senderType: string;
-  /**
-   * Best-effort event display name. Feishu normally omits it, so the accepted
-   * inbound path may later enrich an empty value through the transport seam.
-   */
-  senderName: string;
-  messageType: string;
-  /** Raw JSON-encoded content as Feishu delivered it. */
-  rawContent: string;
-  /**
-   * The message as text. A mention stands as the placeholder its `mentions`
-   * record names; an image or file stands as its resource key.
-   */
-  text: string;
-  /** Every resource the text refers to, once each. */
-  resources: InboundResource[];
-  /** The body omits visible content the parser could not read. */
-  contentIncomplete?: boolean;
-  mentions: Mention[];
-  createTime: string;
-  /** The full original Feishu event payload (for storage / audit). */
-  raw: unknown;
-}
 
 export type InboundHandler = (
   event: FeishuInboundEvent,
@@ -104,21 +55,6 @@ export type InboundHandler = (
 export type BotMemberAddedHandler = (
   event: FeishuBotMemberAddedEvent,
 ) => void | Promise<void>;
-
-export interface FeishuCardActionEvent {
-  operatorOpenId?: string;
-  actionValue: Record<string, unknown>;
-  /**
-   * What the user typed, for an `input` that carries its own callback. Feishu
-   * sends it as `action.input_value`, outside `action.value`, and only a
-   * form-less input ever reports one: inside a `form` the text is withheld
-   * until submit and arrives as `form_value` instead.
-   */
-  inputValue?: string;
-  openChatId?: string;
-  openMessageId?: string;
-  raw: unknown;
-}
 
 export type CardActionHandler = (
   event: FeishuCardActionEvent,
@@ -153,61 +89,14 @@ export interface FeishuInboundRoutes {
   onDocComment?: DocCommentHandler;
 }
 
-export interface FeishuSendResult {
-  /** message_id of each message sent, in order. Empty if Feishu omitted ids. */
-  messageIds: string[];
-}
-
-export interface FeishuBot extends FeishuMessageResourceFetcher {
-  readonly appId: string;
+export type FeishuBot = Omit<
+  FeishuTransport,
+  'start' | 'selfId' | 'selfName'
+> & {
   readonly botOpenId: string | undefined;
   readonly botDisplayName: string | undefined;
   start(routes: FeishuInboundRoutes): Promise<void>;
-  send(
-    target: OutboundTarget,
-    text: string,
-    options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
-  ): Promise<FeishuSendResult>;
-  sendCard(
-    target: OutboundTarget,
-    card: unknown,
-    options?: Pick<FeishuSendOptions, 'signal'>,
-  ): Promise<FeishuSendResult>;
-  /** Optional for externally supplied bots; absence disables topic projection. */
-  getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
-  addReaction(messageId: string, emoji: string): Promise<string>;
-  /** Repaint an already-sent card in place, by message id. */
-  editCard(messageId: string, card: unknown): Promise<void>;
-  fetchMessageResource(
-    request: FeishuMessageResourceRequest,
-  ): Promise<FeishuMessageResourceResponse>;
-  /** Optional for externally supplied bots; absence keeps event-only content. */
-  readMessage?(
-    request: FeishuMessageReadRequest,
-  ): Promise<FeishuMessageReadResponse>;
-  /** Optional contact lookup for an accepted human sender. */
-  resolveUserName?(openId: string): Promise<string | undefined>;
-  /** Optional lookup of a chat's current Feishu name. */
-  resolveChatName?(chatId: string): Promise<string | undefined>;
-  /** Read a document's metadata — the proof that this app can see it. */
-  fetchDocMeta(
-    fileToken: string,
-    fileType: string,
-  ): Promise<FeishuDocMetaResult>;
-  /** Resolve a wiki node to the document it holds, or `null` if unseen. */
-  resolveWikiNode(token: string): Promise<FeishuWikiNode | null>;
-  /** Read the text of one comment, or `null` when the thread does not hold it. */
-  fetchDocCommentText(
-    request: FeishuDocCommentRequest,
-  ): Promise<FeishuDocCommentText | null>;
-  /**
-   * Optional Feishu COT surface. A fake or externally supplied bot that omits
-   * it simply presents no chain-of-thought card; nothing else changes.
-   */
-  readonly cot?: FeishuCotClient | undefined;
-  resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
-  close(): Promise<void>;
-}
+};
 
 export interface CreateBotOptions {
   appId: string;
@@ -227,13 +116,6 @@ export interface CreateFeishuBotDeps {
   createTransport?: (opts: CreateBotOptions) => FeishuTransport;
 }
 
-export interface ChannelOutboundTarget {
-  /** Stable channel-local conversation id. */
-  conversationId: string;
-  /** Optional channel-local source message to thread under. */
-  replyTo?: string;
-}
-
 export function createFeishuBot(
   opts: CreateBotOptions,
   deps: CreateFeishuBotDeps = {},
@@ -251,12 +133,15 @@ export function createFeishuBot(
       // object is safe and keeps the real wiring path explicit.
       { logger: opts.logger },
     );
-  const resolveChatName = transport.resolveChatName;
 
   return {
-    get appId(): string {
-      return transport.appId;
-    },
+    // Spreading a getter captures its current value as a plain property, so
+    // this also copies `transport`'s own `selfId`/`selfName` (unresolved at
+    // construction time) as inert, `FeishuBot`-untyped fields; `botOpenId`/
+    // `botDisplayName` below close over `transport` directly so they always
+    // read the live, later-resolved identity instead.
+    ...transport,
+
     get botOpenId(): string | undefined {
       return transport.selfId;
     },
@@ -271,7 +156,7 @@ export function createFeishuBot(
       // try/catch can fail the dispatcher loudly rather than leave it dark.
       const table: Record<string, (raw: unknown) => Promise<unknown>> = {
         [IM_MESSAGE_EVENT_TYPE]: async (raw: unknown) => {
-          const event = normalizeInboundEvent(raw);
+          const event = parseFeishuInboundEvent(raw);
           if (event === null) return;
           await routes.onMessage(event);
         },
@@ -301,345 +186,6 @@ export function createFeishuBot(
         };
       }
       await transport.start(table);
-    },
-
-    async send(
-      target: OutboundTarget,
-      text: string,
-      options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
-    ): Promise<FeishuSendResult> {
-      const { messageIds } = await transport.send(target, text, options);
-      return { messageIds };
-    },
-
-    async sendCard(
-      target: OutboundTarget,
-      card: unknown,
-      options?: Pick<FeishuSendOptions, 'signal'>,
-    ): Promise<FeishuSendResult> {
-      const { messageIds } = await transport.sendCard(target, card, options);
-      return { messageIds };
-    },
-
-    getChatMode(chatId: string): Promise<FeishuChatMode | undefined> {
-      return transport.getChatMode?.(chatId) ?? Promise.resolve(undefined);
-    },
-
-    editCard(messageId: string, card: unknown): Promise<void> {
-      return transport.editCard(messageId, card);
-    },
-
-    addReaction(messageId: string, emoji: string): Promise<string> {
-      return transport.addReaction(messageId, emoji);
-    },
-
-    fetchMessageResource(
-      request: FeishuMessageResourceRequest,
-    ): Promise<FeishuMessageResourceResponse> {
-      return transport.fetchMessageResource(request);
-    },
-
-    fetchDocMeta(
-      fileToken: string,
-      fileType: string,
-    ): Promise<FeishuDocMetaResult> {
-      return transport.fetchDocMeta(fileToken, fileType);
-    },
-
-    resolveWikiNode(token: string): Promise<FeishuWikiNode | null> {
-      return transport.resolveWikiNode(token);
-    },
-
-    fetchDocCommentText(
-      request: FeishuDocCommentRequest,
-    ): Promise<FeishuDocCommentText | null> {
-      return transport.fetchDocCommentText(request);
-    },
-
-    ...(transport.readMessage !== undefined
-      ? {
-          readMessage(
-            request: FeishuMessageReadRequest,
-          ): Promise<FeishuMessageReadResponse> {
-            return (
-              transport.readMessage?.(request) ?? Promise.resolve({ items: [] })
-            );
-          },
-        }
-      : {}),
-
-    ...(transport.resolveUserName !== undefined
-      ? {
-          resolveUserName(openId: string): Promise<string | undefined> {
-            return (
-              transport.resolveUserName?.(openId) ?? Promise.resolve(undefined)
-            );
-          },
-        }
-      : {}),
-
-    ...(resolveChatName !== undefined
-      ? {
-          resolveChatName(chatId: string): Promise<string | undefined> {
-            return resolveChatName(chatId);
-          },
-        }
-      : {}),
-
-    cot: transport.cot,
-
-    resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
-      return transport.resolveAppOwner();
-    },
-
-    close(): Promise<void> {
-      return transport.close();
-    },
-  };
-}
-
-export function channelOutboundToFeishuTarget(
-  target: ChannelOutboundTarget,
-): OutboundTarget {
-  return {
-    chatId: target.conversationId,
-    ...(target.replyTo !== undefined
-      ? { replyToMessageId: target.replyTo }
-      : {}),
-  };
-}
-
-/**
- * Reshape a raw `im.message.receive_v1` payload into a `FeishuInboundEvent`,
- * using the transport's `parseInbound` + `narrowMetaFromEvent` for the body
- * and the event-envelope metadata. Returns `null` for a payload missing the
- * message_id or chat_id that make it routable.
- */
-function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const root = raw as Record<string, unknown>;
-  const event = (root['event'] ?? root) as Record<string, unknown>;
-  const message = (event['message'] ?? {}) as Record<string, unknown>;
-  const messageType = (message['message_type'] as string) ?? '';
-  const rawContent = (message['content'] as string) ?? '';
-  const mentions = (message['mentions'] as Mention[] | undefined) ?? [];
-  const parsed = parseInbound({
-    message_type: messageType,
-    content: rawContent,
-    mentions,
-  });
-  const meta = narrowMetaFromEvent(raw);
-  const messageId = meta['message_id'] ?? '';
-  const chatId = meta['chat_id'] ?? '';
-  const chatType = meta['chat_type'] ?? '';
-  const threadId = meta['thread_id'] ?? '';
-  const rootId = meta['root_id'] ?? '';
-  const parentId = meta['parent_id'] ?? '';
-  const senderId = meta['sender_id'] ?? '';
-  const senderUnionId = meta['sender_union_id'] ?? '';
-  const senderType = meta['sender_type'] ?? '';
-  const createTime = meta['create_time'] ?? '';
-  const senderName = extractSenderName(raw);
-
-  if (messageId === '' || chatId === '') return null;
-
-  return {
-    messageId,
-    chatId,
-    chatType,
-    ...(threadId !== '' ? { threadId } : {}),
-    ...(rootId !== '' ? { rootId } : {}),
-    ...(parentId !== '' ? { parentId } : {}),
-    senderId,
-    ...(senderUnionId !== '' ? { senderUnionId } : {}),
-    senderType,
-    senderName,
-    messageType,
-    rawContent,
-    text: parsed.text,
-    resources: parsed.resources,
-    ...(parsed.incomplete === true ? { contentIncomplete: true } : {}),
-    mentions,
-    createTime,
-    raw,
-  };
-}
-
-function normalizeCardActionEvent(raw: unknown): FeishuCardActionEvent {
-  const root = asRecord(raw) ?? {};
-  const event = asRecord(root['event']) ?? root;
-  const operator = asRecord(root['operator']) ?? asRecord(event['operator']);
-  const action =
-    asRecord(root['action']) ??
-    asRecord(event['action']) ??
-    asRecord(root['card_action']) ??
-    asRecord(event['card_action']);
-  const context =
-    asRecord(root['context']) ?? asRecord(event['context']) ?? root;
-  const actionValue = asRecord(action?.['value']) ?? {};
-  const inputValue = firstString(
-    action?.['input_value'],
-    action?.['inputValue'],
-  );
-  const operatorOpenId = firstString(
-    operator?.['open_id'],
-    operator?.['openId'],
-  );
-  const openChatId = firstString(
-    context['open_chat_id'],
-    context['openChatId'],
-    root['open_chat_id'],
-    event['open_chat_id'],
-  );
-  const openMessageId = firstString(
-    context['open_message_id'],
-    context['openMessageId'],
-    root['open_message_id'],
-    event['open_message_id'],
-  );
-  return {
-    ...(operatorOpenId !== '' ? { operatorOpenId } : {}),
-    actionValue,
-    ...(inputValue !== '' ? { inputValue } : {}),
-    ...(openChatId !== '' ? { openChatId } : {}),
-    ...(openMessageId !== '' ? { openMessageId } : {}),
-    raw,
-  };
-}
-
-function extractSenderName(raw: unknown): string {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '';
-  const root = raw as Record<string, unknown>;
-  const event = asRecord(root['event']) ?? root;
-  const sender = asRecord(event['sender']);
-  if (sender === undefined) return '';
-  return firstString(
-    sender['sender_name'],
-    sender['display_name'],
-    sender['name'],
-    sender['user_name'],
-  );
-}
-
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value === 'string') return value;
-  }
-  return '';
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-const FEISHU_CARD_TOP_LEVEL_KEYS = new Set([
-  'schema',
-  'config',
-  'card_link',
-  'header',
-  'i18n_header',
-  'elements',
-  'i18n_elements',
-  'fallback',
-  'body',
-]);
-
-function normalizeCardActionAck(
-  value: unknown,
-  logger: TransportLogger | undefined,
-): Record<string, unknown> {
-  if (value === undefined || value === null) return {};
-  const root = asRecord(value);
-  if (root === undefined) {
-    return invalidCardActionAck(logger, { reason: 'non_object' });
-  }
-  const allowed = new Set(['toast', 'card']);
-  const unknownTopLevel = Object.keys(root).filter((key) => !allowed.has(key));
-  const toast = parseCardActionToast(root['toast']);
-  if (root['toast'] !== undefined && toast === null) {
-    return invalidCardActionAck(logger, {
-      reason: 'invalid_toast',
-      unknownTopLevel,
-    });
-  }
-  const card = parseCardActionCard(root['card'], logger);
-  if (root['card'] !== undefined && card === null) {
-    return invalidCardActionAck(logger, {
-      reason: 'invalid_card',
-      unknownTopLevel,
-    });
-  }
-  if (unknownTopLevel.length > 0) {
-    logger?.warn(
-      { unknown_keys: unknownTopLevel },
-      'feishu card action response ignored unknown top-level keys',
-    );
-  }
-  return { toast, card };
-}
-
-function parseCardActionToast(
-  value: unknown,
-):
-  | { type: 'info' | 'success' | 'error' | 'warning'; content: string }
-  | undefined
-  | null {
-  if (value === undefined) return undefined;
-  const toast = asRecord(value);
-  if (toast === undefined) return null;
-  const type = toast['type'];
-  const content = toast['content'];
-  if (
-    (type !== 'info' &&
-      type !== 'success' &&
-      type !== 'error' &&
-      type !== 'warning') ||
-    typeof content !== 'string'
-  ) {
-    return null;
-  }
-  return { type, content };
-}
-
-function parseCardActionCard(
-  value: unknown,
-  logger: TransportLogger | undefined,
-): { type: 'raw'; data: Record<string, unknown> } | undefined | null {
-  if (value === undefined) return undefined;
-  const card = asRecord(value);
-  if (card === undefined || card['type'] !== 'raw') return null;
-  const data = asRecord(card['data']);
-  if (data === undefined) return null;
-  const unknownDataKeys = Object.keys(data).filter(
-    (key) => !FEISHU_CARD_TOP_LEVEL_KEYS.has(key),
-  );
-  if (unknownDataKeys.length > 0) {
-    logger?.warn(
-      { unknown_keys: unknownDataKeys },
-      'feishu raw card action response stripped unknown card data keys',
-    );
-  }
-  return {
-    type: 'raw',
-    data: Object.fromEntries(
-      Object.entries(data).filter(([key]) =>
-        FEISHU_CARD_TOP_LEVEL_KEYS.has(key),
-      ),
-    ),
-  };
-}
-
-function invalidCardActionAck(
-  logger: TransportLogger | undefined,
-  fields: Record<string, unknown>,
-): Record<string, unknown> {
-  logger?.warn(fields, 'invalid feishu card action response');
-  return {
-    toast: {
-      type: 'error',
-      content: '卡片回调响应格式错误',
     },
   };
 }

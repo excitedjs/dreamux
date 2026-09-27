@@ -9,16 +9,10 @@
  * See dreamux#25 for the responsibility model and contract.
  */
 
-// ── contract/ — the pure types (the future `@excitedjs/channel-contract`
-//    extraction point when a second platform lands) ──
-export type { Mention } from './contract/types.js';
-export type { OutboundTarget } from './contract/outbound.js';
-
-// ── parse/ — Feishu content → one text body, plus the comment-event and
-//    document-reference decodes ──
+// ── parse/ — Feishu content → one text body, the event-envelope decodes, and
+//    the document-reference decode ──
 export {
   parseInbound,
-  narrowMetaFromEvent,
   type InboundMessage,
   type ParsedInbound,
   type InboundResource,
@@ -38,9 +32,23 @@ export {
   parseFeishuDocumentRef,
   type FeishuDocumentRef,
 } from './parse/document-ref.js';
-export { isBotMentioned, isBotSenderType } from './parse/mentions.js';
+export {
+  isBotMentioned,
+  isBotSenderType,
+  type Mention,
+} from './parse/mentions.js';
+export {
+  parseFeishuInboundEvent,
+  type FeishuInboundEvent,
+} from './parse/message-event.js';
+export {
+  normalizeCardActionEvent,
+  normalizeCardActionAck,
+  type FeishuCardActionEvent,
+} from './parse/card-action.js';
 
 // ── transport/ — the Feishu SDK boundary (the only lark importer) ──
+export type { OutboundTarget } from './transport/outbound-message.js';
 export {
   createFeishuTransport,
   FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
@@ -50,6 +58,7 @@ export {
   type FeishuAppOwnerIdentity,
   type FeishuSendOptions,
   type FeishuSendResult,
+  type FeishuSentMessage,
   type FeishuChatMode,
   type FeishuCommentAnchor,
   type FeishuCommentSegment,
@@ -61,7 +70,6 @@ export {
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,
   type FeishuMessageResourceType,
-  type FeishuMessageReader,
   type FeishuMessageReadItem,
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,

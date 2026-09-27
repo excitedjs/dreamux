@@ -171,11 +171,23 @@ the same change that touches it.
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
   than a persisted saga. A newly provisioned Feishu topic Team receives its
-  configured identity followed by the bound chat and initial triggering message
-  address. The leader must use that initial message ID when its current context
-  offers no other one, and must never omit the reply message ID. Existing Teams
-  and the shared space policy are unchanged; identity stays a string.
+  configured identity unmodified; no reply address is appended to it, because
+  the Channel itself resolves where an address-less reply lands (see the next
+  bullet). Existing Teams and the shared space policy are unchanged; identity
+  stays a string.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **A `reply` with no message id inside a Collaboration Space chat is guarded
+  by the Channel, not by prompt instruction.** Every other Feishu chat keeps
+  today's behavior — an address-less reply opens a new top-level message. Only
+  inside a chat that carries a Collaboration Space does the Channel step in: the
+  reply lands under the calling Team's own bound topic when exactly one exists
+  with a known root message, and is refused with an instruction to pass a
+  `message_id` otherwise. The check is caller-agnostic — it asks only "does
+  exactly one topic name this caller" — so a Dispatcher Agent call, which never
+  owns a topic binding, is always refused rather than special-cased; that is the
+  mechanism protecting the space from a stray new topic working as designed, not
+  a gap. Nothing else about a Feishu chat's reply behavior changed.
+  (Domain: [channel](/.agents/domains/channel.md).)
 - **A provisioning run that produces no Team answers in place.** When a
   collaboration space cannot provision the Team a message was routed to, the
   Channel replies under that message — `Could not start a Team for this

@@ -8,6 +8,15 @@
  * `@excitedjs/feishu-transport`. Depends on `@excitedjs/dreamux-types` +
  * `@excitedjs/dreamux-utils` + `@excitedjs/feishu-transport` only; never
  * imports `@excitedjs/dreamux` core.
+ *
+ * This barrel is the package's entire public surface (the sole `package.json`
+ * `exports` target): the plugin entry, `createFeishuChannelProvider` (a bare
+ * provider with no extensions, for a test or an embedder outside the plugin
+ * system), the full extension contract another plugin implements against, and
+ * the two names `packages/dreamux/tests/channel-input-format.test.ts` reads as
+ * a cross-package consumer. Every other type below internal modules stays a
+ * relative import inside this package; re-exporting it here would grow the
+ * public contract for no reader.
  */
 
 export { default, createFeishuPlugin } from './plugin.js';
@@ -29,100 +38,19 @@ export type {
   FeishuInstanceApi,
 } from './extension.js';
 
+// The extension contract's own transitive types: what an extension author
+// needs to build a `FeishuExtensionAction`/`FeishuExtensionTool` and drive
+// `FeishuInstanceApi`, and nothing an extension never touches.
+export type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 export {
-  FeishuChannelSession,
-  toWireChatBot,
-  type FeishuChannelSessionOptions,
-  type FeishuListChatBotsResult,
-  type WireChatBot,
-  type ChannelLogger,
-} from './feishu-channel.js';
-
-export { createFeishuSessionMcp } from './feishu-session-mcp.js';
-
-export {
-  CHANNEL_REMINDER,
-  type FeishuChatSubmission,
-  type FeishuInboundDelivery,
-  type FeishuSubmission,
-  type FeishuSubmitOutcome,
-  type FeishuTeamSubmitter,
-} from './feishu-submit.js';
-
-export {
-  FEISHU_TOOLS,
-  feishuToolRegistrations,
-  feishuToolsFor,
-  findFeishuTool,
-  type FeishuToolContext,
-  type FeishuToolDef,
-  type FeishuToolResult,
-  type FeishuToolSession,
-} from './tools/registry.js';
-
-export {
-  FeishuRouting,
-  type FeishuBindingView,
-  type FeishuRoutingPlan,
-} from './routing/index.js';
-export {
-  FeishuRoutingStore,
-  routingDocumentFilename,
-} from './routing/store.js';
-export {
-  FEISHU_ROUTING_DOCUMENT_VERSION,
-  type FeishuBindingRecord,
-  type FeishuRoutingDocument,
-  type FeishuSpaceRecord,
-} from './routing/document.js';
-export {
-  chatTarget,
-  describeTarget,
-  targetKey,
-  topicTarget,
-  type FeishuTarget,
-  type FeishuTargetKind,
-} from './routing/target.js';
-
-export {
-  createFeishuBot,
-  channelOutboundToFeishuTarget,
-  type FeishuBot,
-  type CreateBotOptions,
-  type FeishuInboundEvent,
-  type FeishuCardActionEvent,
-} from './bot.js';
-
-export {
-  DREAMUX_ACTION_KEY,
-  DREAMUX_PAIRING_CARD_ACTION,
-  DREAMUX_PAIRING_TOKEN_KEY,
-  buildPairingApprovalCard,
-  buildPairingSuccessCard,
   rawCardActionResponse,
   type FeishuCardActionResponse,
-} from './feishu-pairing-card.js';
+} from './cards/pairing.js';
+export type { FeishuTarget } from './routing/target.js';
+export type { FeishuToolResult } from './tools/types.js';
+export { DREAMUX_ACTION_KEY } from './card-actions.js';
 
-export {
-  loadChatBots,
-  type PeerBot,
-  type ChatBotsListing,
-} from './chat-bots-store.js';
-
-export {
-  formatFeishuMessageForRuntime,
-  formatFeishuCreateTime,
-  type FormatFeishuMessageOptions,
-  type FormatFeishuMessageResult,
-  type FormattedFeishuAttachment,
-} from './feishu-message.js';
-
-export {
-  dreamuxFeishuGate,
-  defaultDispatcherAccessState,
-  type DispatcherAccessState,
-} from './feishu-gate.js';
-
-export type { VisibleMessageAnchor } from './feishu-cot-state.js';
-
-export { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
+// `packages/dreamux/tests/channel-input-format.test.ts`'s own cross-package
+// need, and nothing else.
+export type { FeishuInboundEvent } from '@excitedjs/feishu-transport';
+export { formatFeishuMessageForRuntime } from './inbound/attachments.js';

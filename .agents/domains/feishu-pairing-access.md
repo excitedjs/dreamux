@@ -18,22 +18,22 @@ Two files under the dispatcher state directory answer two different questions
 and are never conflated: `access.json` authorizes humans and chats,
 `chat-bots.json` records peer-bot awareness and trust.
 
-This page's path is itself load-bearing. `feishu-gate-io.ts` names it in the
+This page's path is itself load-bearing. `access/index.ts` names it in the
 user-visible V3 fail-loud message, and
 `/packages/dreamux/tests/feishu-allow-chats-release-contract.test.ts` reads it
 by path; renaming or moving the page changes user-facing copy and breaks CI.
 
 Source:
 
-- `/packages/channel/feishu-channel/src/feishu-gate.ts`
-- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-ops.ts`
+- `/packages/channel/feishu-channel/src/access/state.ts`
+- `/packages/channel/feishu-channel/src/access/gate.ts`
+- `/packages/channel/feishu-channel/src/access/index.ts`
+- `/packages/channel/feishu-channel/src/inbound/pipeline.ts`
 - `/packages/channel/feishu-channel/src/introduce.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
-- `/packages/channel/feishu-channel/src/feishu-channel.ts`
-- `/packages/channel/feishu-channel/src/feishu-message.ts`
+- `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/inbound/attachments.ts`
 - `/packages/channel/feishu-transport/`
 
 ## Contracts
@@ -131,8 +131,8 @@ interface PendingPairingEntry {
 }
 ```
 
-`readDispatcherAccess` reconstructs the returned value field by field rather
-than casting the parsed JSON as-is: the top-level shape check
+`FeishuAccess`'s access.json loader reconstructs the returned value field by
+field rather than casting the parsed JSON as-is: the top-level shape check
 (`version === 3` plus the presence and container type of each top-level field,
 accepting any string for `dm_policy` and `group.policy`) is deliberately
 shallow, as before, but each `pending` entry is now rebuilt individually —
@@ -344,7 +344,7 @@ A model-facing Feishu MCP tool returns a chat's `known` and `trusted` peer bots
 as two separated arrays of `{ open_id, name? }`, for context recovery after
 compaction. The Feishu channel package owns the tool definition and handler
 (`/packages/channel/feishu-channel/src/tools/messaging-tools.ts`,
-`/packages/channel/feishu-channel/src/feishu-channel.ts`); the generic Channel
+`/packages/channel/feishu-channel/src/session/session.ts`); the generic Channel
 MCP delegate routes the call to the created session's MCP capability, and the
 handler reads `chat-bots.json` for the answer. Same transport shape as `reply` /
 `react`; no operator CLI surface.

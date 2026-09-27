@@ -5,7 +5,7 @@
  * conversation it was bound to and reads who else is in it; deciding what that
  * conversation routes to is a Dispatcher operation and lives elsewhere.
  */
-import type { FeishuToolDef } from './types.js';
+import type { FeishuToolContext, FeishuToolDef } from './types.js';
 import {
   asRecord,
   closedObjectSchema,
@@ -13,6 +13,11 @@ import {
   optionalString,
   requireString,
 } from './schema.js';
+
+/** The Team this call belongs to, or `null` for the Dispatcher Agent. */
+function callerTeamName(ctx: FeishuToolContext): string | null {
+  return ctx.caller.kind === 'team_leader' ? ctx.caller.team_name : null;
+}
 
 const mutating = { readOnlyHint: false, destructiveHint: false } as const;
 const readOnly = {
@@ -79,6 +84,7 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
   async handle(ctx, input) {
     const result = await ctx.session.sendText(input.chatId, input.text, {
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
+      callerTeamName: callerTeamName(ctx),
     });
     return { message_ids: result.message_ids };
   },

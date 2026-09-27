@@ -1,4 +1,4 @@
-import type { Mention } from '../contract/types.js';
+import type { Mention } from '../parse/mentions.js';
 
 export interface FeishuMessageReadRequest {
   messageId: string;

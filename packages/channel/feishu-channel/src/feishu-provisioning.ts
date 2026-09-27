@@ -25,10 +25,11 @@
  */
 import type {
   DreamuxLogger,
-  JsonValue,
+  TeamCreateCommand,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
+import type { FeishuCoreCommands } from './feishu-core-commands.js';
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuSpaceRecord } from './routing/document.js';
 import { targetIntent, teamNamePrefix } from './routing/naming.js';
@@ -40,8 +41,8 @@ import {
 import {
   errorMessage,
   type FeishuChatSubmission,
+  type FeishuSubmission,
   type FeishuSubmitOutcome,
-  type FeishuTeamSubmitter,
 } from './feishu-submit.js';
 
 export interface FeishuProvisioningOptions {
@@ -49,8 +50,20 @@ export interface FeishuProvisioningOptions {
   readonly channelId: string;
   readonly log: DreamuxLogger;
   readonly routing: FeishuRouting;
-  readonly submitter: FeishuTeamSubmitter;
-  invoke(command: string, payload: JsonValue): Promise<JsonValue>;
+  /**
+   * The full session-level submit, including the COT anchor claim on the
+   * triggering message and the lifecycle/rejection handling `team.submit`
+   * needs — not `FeishuCoreCommands.teamSubmit`, which is a bare Command call
+   * with none of that. See `session/session.ts`'s own `submit()`. A plain
+   * function, not a single-method interface: this is the one call site that
+   * needs it, so naming a `FeishuTeamSubmitter` type bought nothing a
+   * function type does not already say.
+   */
+  readonly submit: (
+    teamName: string,
+    submission: FeishuSubmission,
+  ) => Promise<FeishuSubmitOutcome>;
+  readonly commands: FeishuCoreCommands;
   /** Announce a newly installed route in the conversation it now serves. */
   announce(input: {
     target: FeishuTarget;
@@ -170,8 +183,11 @@ export class FeishuProvisioning {
       target: input.target,
       teamName: created.team_name,
       display: input.display,
-      origin: 'space',
       spaceId: input.space.space_id,
+      // Automatic provisioning always has the message that triggered it, and
+      // its target is always a topic (`FeishuRouting.plan` only returns a
+      // `provision` plan for one) — the one path that can always set this.
+      rootMessageId: input.submission.anchor.messageId,
     });
     this.opts.announce({
       target: input.target,
@@ -181,7 +197,7 @@ export class FeishuProvisioning {
       agentRuntime: created.leader_agent_runtime,
       runtimeCwd: created.runtime_cwd,
     });
-    return this.opts.submitter.submit(created.team_name, input.submission);
+    return this.opts.submit(created.team_name, input.submission);
   }
 
   /** A message that arrived while a run was live, delivered once it is done. */
@@ -196,12 +212,12 @@ export class FeishuProvisioning {
         message: `provisioning for ${describeTarget(input.target)} installed no route`,
       };
     }
-    return this.opts.submitter.submit(binding.team_name, input.submission);
+    return this.opts.submit(binding.team_name, input.submission);
   }
 
   private async createTeam(input: ProvisioningRequest): Promise<TeamSummary> {
     const { space, target } = input;
-    return (await this.opts.invoke('team.create', {
+    const command: TeamCreateCommand = {
       // The inbound Feishu message id, used bare: it is globally unique, so it
       // needs no target prefix to stay distinct. Request identity is scoped to
       // the message that triggered provisioning, not to the topic, and that
@@ -237,11 +253,7 @@ export class FeishuProvisioning {
       }),
       leader: {
         agent_runtime: space.leader_agent_runtime,
-        identity: leaderIdentity(
-          space.identity,
-          target.chatId,
-          input.submission.anchor.messageId,
-        ),
+        ...(space.identity !== null ? { identity: space.identity } : {}),
       },
       // Feishu owns a narrow repository policy — a source path and a base ref —
       // and maps it into the Command's full managed-worktree branch here, so
@@ -258,36 +270,7 @@ export class FeishuProvisioning {
             },
           }
         : {}),
-    } as JsonValue)) as unknown as TeamSummary;
+    };
+    return this.opts.commands.teamCreate(command);
   }
-}
-
-/**
- * The identity an auto-provisioned Team's leader is created with.
- *
- * A Team created this way is bound to a conversation it never chose, and the
- * only place its reply address is stated is the message that triggered it —
- * which a compaction can take away. Writing the address into the creation
- * identity puts it where the leader keeps reading it, using the existing
- * identity lifecycle rather than a lookup or an address cache.
- *
- * The configured space identity is preserved in full and this text follows it;
- * the space policy itself is untouched.
- */
-function leaderIdentity(
-  configured: string | null,
-  chatId: string,
-  messageId: string,
-): string {
-  const guidance = [
-    "This Team was automatically created for a topic in the Feishu channel's",
-    'bound collaboration-space chat.',
-    `chat_id: ${chatId}`,
-    `message_id: ${messageId} (the message that initially triggered Team`,
-    'creation)',
-    'When using the reply tool in this bound conversation, use the message_id',
-    'visible in the current context. If no other message_id is visible, you',
-    'MUST pass the initial message_id above. Never omit message_id.',
-  ].join('\n');
-  return configured === null ? guidance : `${configured}\n\n${guidance}`;
 }
