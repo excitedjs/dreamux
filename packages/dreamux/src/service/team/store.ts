@@ -198,9 +198,14 @@ export class TeamStore {
           `Team ${JSON.stringify(teamId)} no longer has a readable record`,
         );
       }
+      // `closed` is terminal. A leader turn admitted before a dissolve can
+      // queue its `starting` → `running` write behind the dissolve's `closed`
+      // write; merging it would reopen a Team the dissolve already destroyed.
+      const status =
+        current.status === 'closed' ? current.status : input.status;
       updated = {
         ...current,
-        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(status !== undefined ? { status } : {}),
         ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
         ...(input.closeNote !== undefined
           ? { close_note: input.closeNote }
