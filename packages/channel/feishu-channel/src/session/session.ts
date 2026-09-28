@@ -35,12 +35,17 @@ import {
   PublicInvokeFailure,
   TransactionalStore,
 } from '@excitedjs/dreamux-utils';
-import type { CreateBotOptions, FeishuBot } from '../bot.js';
+import type {
+  CreateBotOptions,
+  FeishuBot,
+  FeishuInboundRoutes,
+} from '../bot.js';
 import { createFeishuBot } from '../bot.js';
 import {
   CHAT_BOTS_FILENAME,
   listChatBots,
   loadChatBots,
+  recordBotAdded,
   type ChatBotsState,
   type PeerBot,
 } from '../chat-bots-store.js';
@@ -51,8 +56,7 @@ import {
   type FeishuBoundExtensionTool,
 } from '../feishu-extensions.js';
 import { FeishuOutbound } from '../outbound/index.js';
-import { sessionBotRoutes } from '../inbound/routes.js';
-import type { FeishuInboundHandle } from '../inbound/pipeline.js';
+import { onMessage, type FeishuInboundHandle } from '../inbound/pipeline.js';
 import {
   createAskUserRegistry,
   type AskUserExpiry,
@@ -85,7 +89,8 @@ import {
 } from '../feishu-submit.js';
 import { FeishuInboundTargeting } from '../inbound/target.js';
 import { FeishuRouting } from '../routing/index.js';
-import { FeishuRoutingStore } from '../routing/store.js';
+import { readRoutingDocument, routingDocumentPath } from '../routing/store.js';
+import type { FeishuRoutingDocument } from '../routing/document.js';
 import { describeTarget, type FeishuTarget } from '../routing/target.js';
 import { FeishuCardActions } from './card-actions.js';
 import {
@@ -147,7 +152,7 @@ export interface FeishuChannelSessionOptions {
 export class FeishuChannelSession {
   readonly bot: FeishuBot;
   readonly routing: FeishuRouting;
-  private readonly store: FeishuRoutingStore;
+  private readonly store: TransactionalStore<FeishuRoutingDocument>;
   private readonly targetRouter: FeishuInboundTargeting;
   private readonly outbound: FeishuOutbound;
   private readonly cot: FeishuCotAdapter;
@@ -190,10 +195,18 @@ export class FeishuChannelSession {
       chatModes: this.bot,
       log: opts.log,
     });
-    this.store = new FeishuRoutingStore({
-      dispatcherId: opts.dispatcherId,
-      channelId: opts.channelId,
-      stateDir: opts.stateDir,
+    this.store = new TransactionalStore({
+      path: routingDocumentPath({
+        dispatcherId: opts.dispatcherId,
+        channelId: opts.channelId,
+        stateDir: opts.stateDir,
+      }),
+      load: () =>
+        readRoutingDocument({
+          dispatcherId: opts.dispatcherId,
+          channelId: opts.channelId,
+          stateDir: opts.stateDir,
+        }),
     });
     // Loaded at the first peer-bot operation, not here — a corrupt or
     // unreadable file is not security-critical, so nothing about session
@@ -212,6 +225,7 @@ export class FeishuChannelSession {
     this.routing = new FeishuRouting({
       dispatcherId: opts.dispatcherId,
       channelId: opts.channelId,
+      stateDir: opts.stateDir,
       store: this.store,
     });
     this.outbound = new FeishuOutbound({
@@ -255,11 +269,7 @@ export class FeishuChannelSession {
       log: opts.log,
       routing: this.routing,
       submit: (team, submission) => this.submit(team, submission),
-      fetchDocMeta: (token, type) => this.bot.fetchDocMeta(token, type),
-      resolveWikiNode: (token) => this.bot.resolveWikiNode(token),
-      fetchDocCommentText: (request) => this.bot.fetchDocCommentText(request),
-      resolveUserName: (openId) =>
-        this.bot.resolveUserName?.(openId) ?? Promise.resolve(undefined),
+      bot: this.bot,
       access: this.access,
     });
     this.extensions = new FeishuSessionExtensions(opts.extensions, opts.log);
@@ -320,6 +330,7 @@ export class FeishuChannelSession {
         api: buildInstanceApi({
           lifecycle: this.lifecycle,
           outbound: this.outbound,
+          bot: this.bot,
           targetRouter: this.targetRouter,
           track: (work) => this.lifecycle.track(work),
           routing: this.routing,
@@ -342,15 +353,7 @@ export class FeishuChannelSession {
       );
     }
     try {
-      await this.bot.start(
-        sessionBotRoutes({
-          lifecycle: this.lifecycle,
-          chatBotsStore: this._chatBotsStore,
-          inboundHandle: () => this.inboundHandle(),
-          onCardAction: (event) => this.cardActions.handle(event),
-          docComments: this.docComments,
-        }),
-      );
+      await this.bot.start(this.inboundRoutes());
       // Tracked so a close landing mid-start waits, then closes what it opened.
       if (this.lifecycle.isLive()) {
         await this.lifecycle.track(this.extensions.start());
@@ -539,17 +542,9 @@ export class FeishuChannelSession {
         this.addReaction({ messageId, emoji, chatId }),
       listKnownChatBots: async (chatId) => this.readChatBots(chatId),
       askUserQuestion: async (input) => this.askUserQuestion(input),
-      bindChannel: (input) => this.bindings.bindChannel(input),
-      unbindChannel: (input, requireOwner) =>
-        this.bindings.unbindChannel(input, requireOwner),
-      listBindings: () => this.routing.listBindings(),
-      bindSpace: (input) => this.bindings.bindSpace(input),
-      unbindSpace: (spaceName) => this.bindings.unbindSpace(spaceName),
-      getSpace: (spaceName) => this.routing.spaceByName(spaceName),
-      listSpaces: () => this.routing.listSpaces(),
-      subscribeDocument: (input) => this.docComments.subscribe(input),
-      unsubscribeDocument: (input) => this.docComments.unsubscribe(input),
-      listSubscriptions: (teamName) => this.routing.listSubscriptions(teamName),
+      bindings: this.bindings,
+      routing: this.routing,
+      docComments: this.docComments,
     };
   }
 
@@ -676,7 +671,7 @@ export class FeishuChannelSession {
     const messageId = expiry.settlement.cardMessageId;
     if (messageId === undefined) return;
     try {
-      await this.outbound.editCard(messageId, expiry.card);
+      await this.bot.editCard(messageId, expiry.card);
     } catch (err) {
       this.opts.log.warn(
         {
@@ -741,7 +736,36 @@ export class FeishuChannelSession {
     });
   }
 
-  // ── Inbound handle ─────────────────────────────────────────────────────
+  // ── Inbound ────────────────────────────────────────────────────────────
+
+  /**
+   * The inbound route table this session hands its bot.
+   *
+   * Every route checks the lifecycle first and runs its work tracked, so
+   * closing the session refuses new events and waits for the ones in flight.
+   */
+  private inboundRoutes(): FeishuInboundRoutes {
+    return {
+      onBotMemberAdded: async (added) => {
+        if (!this.lifecycle.isLive()) return;
+        await this.lifecycle.track(
+          recordBotAdded(this._chatBotsStore, added.chatId, added.eventId),
+        );
+      },
+      onMessage: async (event) => {
+        if (!this.lifecycle.isLive()) return;
+        await this.lifecycle.track(onMessage(this.inboundHandle(), event));
+      },
+      onCardAction: async (event) => {
+        if (!this.lifecycle.isLive()) return {};
+        return this.lifecycle.track(this.cardActions.handle(event));
+      },
+      onDocComment: async (event) => {
+        if (!this.lifecycle.isLive()) return;
+        await this.lifecycle.track(this.docComments.deliver(event));
+      },
+    };
+  }
 
   /**
    * The narrow view `inbound/pipeline.ts` needs for one accepted event. Built
@@ -756,7 +780,7 @@ export class FeishuChannelSession {
       dispatcherId: this.opts.dispatcherId,
       attachmentCacheDir: this.opts.attachmentCacheDir,
       bot: this.bot,
-      access: this.access,
+      accessStore: this.access.store,
       chatBotsStore: this._chatBotsStore,
       botDisplayName: this.bot.botDisplayName ?? 'Dreamux bot',
       targetRouter: this.targetRouter,

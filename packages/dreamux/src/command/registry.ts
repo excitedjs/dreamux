@@ -92,11 +92,6 @@ export class CoreCommands implements CoreCommandRegistry {
     }
   }
 
-  /** Every registered name, in registration order. Diagnostics only. */
-  names(): readonly string[] {
-    return [...this.commands.keys()];
-  }
-
   async invoke(
     context: CoreCommandContext,
     name: string,

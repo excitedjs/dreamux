@@ -23,11 +23,6 @@ export class CoreCommandPort implements CoreCommandRegistry {
 
   constructor(private readonly registry: CoreCommands) {}
 
-  /** Every registered name, in registration order. Diagnostics only. */
-  names(): readonly string[] {
-    return this.registry.names();
-  }
-
   invoke(
     context: CoreCommandContext,
     name: string,

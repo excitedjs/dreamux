@@ -309,11 +309,11 @@ export class DispatcherService implements Dispatcher {
     });
     // This dispatcher's own Workflow scope: dispatcher-level runs, reporting
     // to the dispatcher's own Agent. Constructed directly, the same shape
-    // `SchedulerService` is built in a few lines above — Team fan-out
-    // (`teams.startWorkflows()`/`recoverWorkflows()`/
-    // `closeWorkflowAdmissions()`) is `DispatcherLifecycle`'s job, called
-    // explicitly beside the equivalent scheduler fan-out, not hidden inside a
-    // wrapper here.
+    // `SchedulerService` is built in a few lines above — starting/stopping
+    // every Team's own Workflow and scheduler admission
+    // (`teams.startAdmissions()`/`stopAdmissions()`) is `DispatcherLifecycle`'s
+    // job, called explicitly beside this dispatcher's own admission, not
+    // hidden inside a wrapper here.
     this.workflowService_ = new WorkflowService({
       dispatcherId: opts.id,
       teamId: null,

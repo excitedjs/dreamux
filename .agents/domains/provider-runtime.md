@@ -746,7 +746,9 @@ cap of its own; a provider's own bounds are the only bound on what it returns.
 
 ### Codex Portable Output Schema
 
-Dreamux core passes the neutral `AgentRuntimeTextInput.outputSchema` unchanged.
+Dreamux core passes the neutral `outputSchema` of the runtime create context
+unchanged; it is bound once to the runtime session and no submission carries
+or changes it.
 `@excitedjs/agent-runtime-codex` privately compiles it for Codex strict
 structured output; no Codex branch, retry loop, or schema validator exists in
 core.
@@ -768,25 +770,20 @@ Compilation validates and clones the input. Open objects, schema-valued
 `additionalProperties`, optional-nullable properties, tuples, missing or
 ambiguous types, non-null unions, references/composition/conditionals,
 unsupported bounds, unknown keywords, and other unsupported shapes return
-`UnsupportedAgentRuntimeFeatureError` with `feature: "outputSchema"` before
-pending submission accounting or `turn/start`. Errors include the schema path;
-constraints are never silently dropped.
+`UnsupportedAgentRuntimeFeatureError` with `feature: "outputSchema"` when the
+provider creates the runtime, before any `turn/start`. Errors include the
+schema path; constraints are never silently dropped.
 
-Each active Codex turn slot owns either no codec or one authoritative private
-codec. Its fingerprint canonically covers both the wire schema and restoration
-plan. Compatible structured followers may fold into the active turn; a different
-fingerprint or structured/unstructured mixing fails before another
-`turn/start`. The codec remains private to the canonical active slot, and every
-accepted native alias converges before the public submission settles.
+The provider compiles the schema once into one private codec per runtime, and
+every `turn/start` on that runtime sends the same wire schema.
 
-Restoration runs once, behind the existing pending-turn mutual-exclusion guard,
-before `onTurnCompleted`. A successful restoration is the only structured text
-seen by `CodexRuntime.recordCollectedTurn()`, so `lastResult` and completed
-settlement use the neutral restored JSON. Parse or shape restoration failure does
-not call `onTurnCompleted` or mutate `lastResult`; it selects one ordinary failed
-runtime outcome with no assistant text. Submission failure, stop, app-server
-teardown/restart, and late completion clear or discard in-memory codecs through
-the same turn lifecycle and never restore or settle twice.
+Restoration runs once per native turn, when `TurnManager` settles the turn's
+submissions. A successful restoration replaces the turn's final assistant JSON
+text with the neutral restored JSON, and that text is the completion's
+`resultText`. A parse or shape restoration failure settles every submission of
+the turn with one ordinary failed completion and no assistant text. Stop and
+app-server teardown settle through the same turn record, so a turn is never
+restored or settled twice.
 
 Each collector owns and unregisters exactly one Codex notification handler. It
 stays subscribed across every native turn on its thread — normal completion
@@ -1064,7 +1061,7 @@ Source:
 - `/packages/dreamux/src/service/agent/activity.ts`
 - `/packages/dreamux/src/service/scheduler/index.ts`
 - `/packages/dreamux/src/service/agent/service.ts`
-- `/packages/dreamux/src/service/team/closing.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 

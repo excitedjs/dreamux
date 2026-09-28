@@ -32,7 +32,7 @@ import type { CoreCommandHost } from './server/command-host.js';
 import { McpLeaseRegistry } from './service/mcp/leases.js';
 import { CoreCommandPort } from './command/port.js';
 import { RestartIntentConsumer } from './service/dispatcher-service/restart-intent.js';
-import { Dispatchers, type DispatcherService } from './service/index.js';
+import { Dispatchers } from './service/index.js';
 import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
 import {
   collectShutdownFailure,
@@ -205,10 +205,10 @@ export class Server {
    */
   private commandHost(): CoreCommandHost {
     return {
-      summarize: () => this.summarize(),
+      summarize: () => this.dispatchers.summarize(),
       dispatcherRow: (id) => this.repos.dispatchers.get(id),
       dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
-      dispatcher: (id) => this.getDispatcher(id),
+      dispatcher: (id) => this.dispatchers.get(id),
       mcpLeases: this.mcpLeases,
       config: this.opts.config,
     };
@@ -288,20 +288,7 @@ export class Server {
       }
     }
 
-    const rows = this.repos.dispatchers.listEnabled();
-    for (const row of rows) {
-      try {
-        await this.getDispatcher(row.dispatcher_id).start();
-      } catch (err) {
-        this.log.error(
-          {
-            dispatcher_id: row.dispatcher_id,
-            err: errorInfo(err),
-          },
-          'dispatcher failed to start',
-        );
-      }
-    }
+    await this.dispatchers.start();
   }
 
   /**
@@ -330,14 +317,6 @@ export class Server {
           failures.map((message) => `  - ${message}`).join('\n'),
       );
     }
-  }
-
-  summarize() {
-    return this.dispatchers.summarize();
-  }
-
-  getDispatcher(id: string): DispatcherService {
-    return this.dispatchers.get(id);
   }
 
   /** Graceful shutdown — drain dispatchers and close the admin socket. */

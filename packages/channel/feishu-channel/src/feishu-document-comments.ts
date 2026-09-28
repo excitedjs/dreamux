@@ -43,10 +43,7 @@ import {
   parseFeishuDocumentRef,
   type FeishuCommentEvent,
   type FeishuCommentSegment,
-  type FeishuDocCommentRequest,
   type FeishuDocCommentText,
-  type FeishuDocMetaResult,
-  type FeishuWikiNode,
 } from '@excitedjs/feishu-transport';
 
 import { runFeishuBoundedOperation } from './feishu-bounded-operation.js';
@@ -68,6 +65,7 @@ import {
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuDocSubscriptionRecord } from './routing/document.js';
 import type { FeishuAccess } from './access/index.js';
+import type { FeishuBot } from './bot.js';
 
 /**
  * The budget both inbound enrichment reads share. The route awaits delivery
@@ -98,17 +96,19 @@ export interface FeishuDocumentCommentsOptions {
     teamName: string | null,
     submission: FeishuSubmission,
   ): Promise<FeishuSubmitOutcome>;
-  fetchDocMeta(
-    fileToken: string,
-    fileType: string,
-  ): Promise<FeishuDocMetaResult>;
-  resolveWikiNode(token: string): Promise<FeishuWikiNode | null>;
-  /** The comment's own text; `null` when Feishu's thread does not hold it. */
-  fetchDocCommentText(
-    request: FeishuDocCommentRequest,
-  ): Promise<FeishuDocCommentText | null>;
-  /** Best-effort display name for the commenter; may answer `undefined`. */
-  resolveUserName(openId: string): Promise<string | undefined>;
+  /**
+   * The held transport, for the reads this module needs: document metadata,
+   * wiki-node resolution, a comment's own text, and best-effort commenter name
+   * lookup. Its siblings `FeishuOutbound` and `FeishuCardActions` take the same
+   * `bot: FeishuBot` directly rather than through per-method closures.
+   */
+  readonly bot: Pick<
+    FeishuBot,
+    | 'fetchDocMeta'
+    | 'resolveWikiNode'
+    | 'fetchDocCommentText'
+    | 'resolveUserName'
+  >;
   /**
    * The session's one held access-state owner, for the trusted-human check an
    * unclaimed cold-open mention gates on. Injected rather than constructed
@@ -150,7 +150,7 @@ export class FeishuDocumentComments {
           '`docx`, `sheet`, `bitable`, `wiki`).',
       );
     }
-    const meta = await this.opts.fetchDocMeta(resolved.token, fileType);
+    const meta = await this.opts.bot.fetchDocMeta(resolved.token, fileType);
     // Only a token Feishu itself reported as unreadable may be answered with
     // "add the bot". A request failure propagates as an ordinary retryable tool
     // failure, and an unsupported type is its own answer.
@@ -219,7 +219,7 @@ export class FeishuDocumentComments {
     }
     const type = ref.type ?? declaredType;
     if (type !== 'wiki') return { token: ref.token, type };
-    const node = await this.opts.resolveWikiNode(ref.token);
+    const node = await this.opts.bot.resolveWikiNode(ref.token);
     if (node === null) {
       throw new PublicInvokeFailure(
         `This bot cannot see wiki node ${ref.token}. Add it as a ` +
@@ -387,7 +387,9 @@ export class FeishuDocumentComments {
       return (
         (await runFeishuBoundedOperation({
           deadlineAt,
-          operation: () => this.opts.resolveUserName(openId),
+          operation: () =>
+            this.opts.bot.resolveUserName?.(openId) ??
+            Promise.resolve(undefined),
         })) ?? ''
       );
     } catch {
@@ -412,7 +414,7 @@ export class FeishuDocumentComments {
       const comment = await runFeishuBoundedOperation({
         deadlineAt,
         operation: () =>
-          this.opts.fetchDocCommentText({
+          this.opts.bot.fetchDocCommentText({
             fileToken: event.fileToken,
             fileType: event.fileType,
             commentId: event.commentId,

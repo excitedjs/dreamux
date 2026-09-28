@@ -360,7 +360,7 @@ sweep to catch it.
 Source:
 
 - `/packages/dreamux/src/service/CLAUDE.md`
-- `/packages/dreamux/src/service/team/closing.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/dreamux/src/service/team/index.ts`
 - `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/worktree/manager.ts`
@@ -395,8 +395,9 @@ read at the moment delivery would start. The producer never learns that its
 owner is going away, and no teardown walks the producer population:
 
 - an entity reports a turn only while it is `active` and not under host
-  release (`AgentService` states this through the coordinator's
-  `owesCompletion`). A turn its own close, host stop, or dissolve ended is
+  release (`AgentService` passes this as a closure into each `EntityTurn`
+  it constructs, read once at the moment delivery would start). A turn its
+  own close, host stop, or dissolve ended is
   settled for convergence and dropped for good, so a later `ensureDelivery()`
   cannot revive it; a delivery already under way is never retracted. Both
   fences are published before the native stop, so a turn admitted ahead of
@@ -425,6 +426,7 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/lifecycle.ts`
 - `/packages/dreamux/src/service/agent/admission.ts`
 - `/packages/dreamux/src/service/agent/turn.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
 - `/packages/dreamux/src/service/workflow-service/run.ts`
 
 ### Workspaces

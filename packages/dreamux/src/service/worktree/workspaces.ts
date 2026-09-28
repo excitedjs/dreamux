@@ -73,7 +73,7 @@ export async function resolveSpawnWorkspace(input: {
  * deleted, or the empty patch when there is nothing to recover.
  *
  * Returns a patch rather than writing it: the caller holds the one write
- * authority over this entity's identity (`AgentRuntimeStateStore.transact`),
+ * authority over this entity's identity (`AgentRuntimeStateStore.update`),
  * and a second writer reaching back into the identity store from inside this
  * function would be the nested `update()` call `TransactionalStore`'s own
  * `change` contract forbids.

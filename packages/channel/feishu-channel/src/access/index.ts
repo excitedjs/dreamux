@@ -6,9 +6,10 @@
  * reuses.
  *
  * The pure decision logic (`dreamuxFeishuGate`, types, constants) lives in
- * `./gate.js` over the shape `./state.js` declares; a gate decision itself
- * still runs through this class's own `load`/`current`/`update` so every
- * access-state mutation is serialized against the same queue, whether it
+ * `./gate.js` over the shape `./state.js` declares; a gate decision reads and
+ * writes the held `store` directly (public on this class, exactly like
+ * `chat-bots-store.ts`'s convention for the sibling peer-bot store), so every
+ * access-state mutation is serialized against the same queue whether it
  * answers a gate decision or a card click.
  */
 
@@ -82,7 +83,13 @@ export interface FeishuAccessOptions {
 }
 
 export class FeishuAccess {
-  private readonly store: TransactionalStore<DispatcherAccessState>;
+  /**
+   * The held access-state store, public exactly like `chat-bots-store.ts`'s
+   * convention for its own `TransactionalStore` — a caller reads/writes it
+   * directly (`load()`, `current`, `update()`) rather than through a
+   * one-line forward re-declared on this class.
+   */
+  readonly store: TransactionalStore<DispatcherAccessState>;
   private readonly dispatcherId: string;
   private readonly log: DreamuxLogger;
 
@@ -97,25 +104,6 @@ export class FeishuAccess {
       load: () => this.readFromDisk(opts.stateDir),
       dirMode: 0o700,
     });
-  }
-
-  /** Read once; concurrent callers share the in-flight read. */
-  load(): Promise<DispatcherAccessState> {
-    return this.store.load();
-  }
-
-  /** The last committed access state. Throws before a successful `load()`. */
-  get current(): DispatcherAccessState {
-    return this.store.current;
-  }
-
-  /** Change the committed access state; see `TransactionalStore.update`. */
-  update(
-    change: (
-      current: DispatcherAccessState,
-    ) => DispatcherAccessState | Promise<DispatcherAccessState>,
-  ): Promise<DispatcherAccessState> {
-    return this.store.update(change);
   }
 
   /**

@@ -5,13 +5,21 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { WorktreeManager } from '../worktree/manager.js';
-import { requireLifecycleText } from '../agent/identity.js';
+import {
+  requireLifecycleText,
+  type AgentEntityIdentity,
+  type AgentEntityIdentityStatus,
+} from '../agent/identity.js';
 import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import type { ClosedSubscription } from '../../platform/closed-fact.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
+import {
+  AgentEntityCollectionStore,
+  AgentIdentityStore,
+} from '../agent/store.js';
+import { toStatus } from '../agent/records.js';
 import type { TurnAdmission } from '../agent/turn.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
@@ -19,6 +27,14 @@ import {
   normalizeSkillSources,
   parseAgentRuntimeSkillSources,
 } from '../../agent-runtime/skill-sources.js';
+import {
+  clampHistoryLimit,
+  decodeCursor,
+  encodeCursor,
+  matchesGrepText,
+  previewText,
+} from '../../platform/history-page.js';
+import { teamMateCollectionDir } from '../../platform/paths.js';
 import { repoWorktree } from '../worktree/repo-request.js';
 import { TeamStore } from './store.js';
 import {
@@ -28,6 +44,8 @@ import {
   type TeamDissolveReceipt,
   type TeamHistoryQuery,
   type TeamHistoryResult,
+  type TeamHistoryRow,
+  type TeamLeaderHandle,
   type TeamListRow,
   type TeamRecord,
   type TeamCollectionOptions,
@@ -35,6 +53,7 @@ import {
 import { allocateConcreteNameAsync } from '../name-allocator.js';
 import { TeamService, type TeamServiceDeps } from './service.js';
 import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
+import { teamSummary } from './team-summary.js';
 import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import {
   IdempotencyConflictError,
@@ -42,8 +61,6 @@ import {
   TeamNotFoundError,
   teamErrorInfo,
 } from './errors.js';
-import { TeamCollectionReadModel } from './read-model.js';
-import { teamLeaderHandle, type TeamLeaderHandle } from './leader-handle.js';
 import type { TeamsPort } from './teams-port.js';
 
 /**
@@ -67,17 +84,13 @@ export class TeamCollection implements TeamsPort {
   private readonly dispatcherId: string;
   private readonly store: TeamStore;
   private readonly worktrees: WorktreeManager;
-  private readonly reads: TeamCollectionReadModel;
   /**
-   * One materialized Team per id: the live service plus the subscription that
-   * evicts it when it closes. An entry here is by definition both cached and
-   * subscribed — the two never exist at different times, since {@link track}
-   * always sets both together — so one map is the whole materialization cache.
+   * One materialized Team per id: the whole materialization cache.
+   * {@link track} sets an entry only once it has also arranged eviction
+   * (`service.closed.then(...)`), so an entry here is by definition a Team
+   * this collection is both caching and watching for its close.
    */
-  private readonly live = new Map<
-    string,
-    { service: TeamService; subscription: ClosedSubscription }
-  >();
+  private readonly live = new Map<string, TeamService>();
   private readonly constructing = new Map<
     string,
     Promise<TeamService | null>
@@ -98,12 +111,6 @@ export class TeamCollection implements TeamsPort {
     this.store = new TeamStore({
       root: opts.root,
       dispatcherId: this.dispatcherId,
-    });
-    this.reads = new TeamCollectionReadModel({
-      dispatcherId: this.dispatcherId,
-      store: this.store,
-      log: opts.log,
-      live: (teamId) => this.live.get(teamId)?.service ?? null,
     });
   }
 
@@ -276,12 +283,12 @@ export class TeamCollection implements TeamsPort {
    * `summary` rather than left observable through a dispatcher stop.
    */
   async list(): Promise<TeamListRow[]> {
-    return this.opts.admitOperation(() => this.reads.list());
+    return this.opts.admitOperation(() => this.listRows());
   }
 
   /** Gated per R12: a read is still per-Team operational access. */
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
-    return this.opts.admitOperation(() => this.reads.history(input));
+    return this.opts.admitOperation(() => this.historyResult(input));
   }
 
   /**
@@ -302,7 +309,7 @@ export class TeamCollection implements TeamsPort {
   private async get(teamId: string): Promise<TeamService> {
     const id = validateTeamId(teamId);
     for (;;) {
-      const cached = this.live.get(id)?.service;
+      const cached = this.live.get(id);
       if (cached !== undefined) return cached;
       const joined = this.constructing.get(id);
       if (joined === undefined) {
@@ -368,9 +375,9 @@ export class TeamCollection implements TeamsPort {
    * Only an open Team this process holds answers for itself.
    */
   private async summaryFromRecord(record: TeamRecord): Promise<TeamSummary> {
-    if (record.status === 'closed') return this.reads.summary(record);
-    const live = this.live.get(record.team_id)?.service ?? null;
-    return live === null ? this.reads.summary(record) : live.status();
+    if (record.status === 'closed') return this.recordSummary(record);
+    const live = this.live.get(record.team_id) ?? null;
+    return live === null ? this.recordSummary(record) : live.status();
   }
 
   /**
@@ -532,14 +539,46 @@ export class TeamCollection implements TeamsPort {
 
   /** This Team's TeamLeader-scoped member/workflow surface. */
   leaderScope(teamId: string): Promise<TeamLeaderHandle> {
-    return this.opts.admitOperation(async () =>
-      teamLeaderHandle({
-        teamId: (await this.open(teamId)).id,
-        withMutationService: (id, task) =>
-          this.opts.admitOperation(() => this.admit(id, task)),
-        withReadService: (id, task) => this.read(id, task),
-      }),
-    );
+    return this.opts.admitOperation(async () => {
+      const id = (await this.open(teamId)).id;
+      const mutate = async <T>(task: (service: TeamService) => Promise<T>) =>
+        this.opts.admitOperation(() => this.admit(id, task));
+      const read = async <T>(task: (service: TeamService) => Promise<T>) =>
+        this.read(id, task);
+      return {
+        teammates: {
+          send: (sendInput) =>
+            mutate((service) => service.teammates.send(sendInput)),
+          close: (closeInput) =>
+            mutate((service) => service.teammates.close(closeInput)),
+          list: () => read((service) => service.teammates.list()),
+          status: (name) => read((service) => service.teammates.status(name)),
+          history: (historyInput) =>
+            read((service) => service.teammates.history(historyInput)),
+          last: (name, query) =>
+            read((service) => service.teammates.last(name, query)),
+          getCapabilities: () =>
+            read(async (service) => service.teammates.getCapabilities()),
+        },
+        // `run`/`stop` route through the same `mutate` closure as every other
+        // mutating op. `TeamService.admit()` (`mutate`'s ultimate target) is a
+        // stateless refusal check, not a lock held across the whole call — so
+        // there is no lease for a long-running Workflow call to hold while it
+        // awaits an agent that re-enters this Team, and nothing to carry out
+        // as data before awaiting.
+        workflows: {
+          run: (workflowInput) =>
+            mutate((service) => service.workflows.run(workflowInput)),
+          status: (statusInput) =>
+            read((service) => service.workflows.status(statusInput)),
+          stop: (stopInput) =>
+            mutate((service) => service.workflows.stop(stopInput)),
+          list: () => read((service) => service.workflows.list()),
+        },
+        spawnTeamMate: (spawnInput) =>
+          mutate((service) => service.spawnTeamMate(spawnInput)),
+      };
+    });
   }
 
   scheduler(teamId: string): Promise<SchedulerCommands> {
@@ -563,12 +602,29 @@ export class TeamCollection implements TeamsPort {
     return this.opts.admitOperation(() => this.admit(teamId, () => task()));
   }
 
-  async startSchedulers(): Promise<void> {
+  /**
+   * Materialize every non-closed Team. Rebuilding a Team reconciles the
+   * Workflow records its previous process left running, so a failure here
+   * fails the dispatcher's start before any channel opens.
+   */
+  async recover(): Promise<void> {
+    for (const team of await this.store.list()) {
+      if (team.status === 'closed') continue;
+      await this.get(team.team_id);
+    }
+  }
+
+  /**
+   * Open every non-closed Team's admissions (Workflow admission and its
+   * scheduler) through {@link TeamService.startAdmissions}. One Team's failure
+   * is logged and does not keep the others closed.
+   */
+  async startAdmissions(): Promise<void> {
     for (const team of await this.store.list()) {
       if (team.status === 'closed') continue;
       try {
         const service = await this.get(team.team_id);
-        await service.startScheduler();
+        await service.startAdmissions();
       } catch (error) {
         this.opts.log.error(
           {
@@ -576,34 +632,15 @@ export class TeamCollection implements TeamsPort {
             team_id: team.team_id,
             err: teamErrorInfo(error),
           },
-          'TeamLeader scheduler start failed',
+          'Team admissions start failed',
         );
       }
     }
   }
 
-  async startWorkflows(): Promise<void> {
-    for (const team of await this.store.list()) {
-      if (team.status === 'closed') continue;
-      await (await this.get(team.team_id)).startWorkflowAdmission();
-    }
-  }
-
-  async recoverWorkflows(): Promise<void> {
-    for (const team of await this.store.list()) {
-      if (team.status === 'closed') continue;
-      await (await this.get(team.team_id)).recoverWorkflows();
-    }
-  }
-
-  closeWorkflowAdmissions(): void {
-    for (const entry of this.live.values()) {
-      entry.service.closeWorkflowAdmission();
-    }
-  }
-
-  stopSchedulers(): void {
-    for (const entry of this.live.values()) entry.service.stopScheduler();
+  /** Close every live Team's admissions (Workflow stop-all and its scheduler). */
+  stopAdmissions(): void {
+    for (const service of this.live.values()) service.stopAdmissions();
   }
 
   /**
@@ -616,10 +653,7 @@ export class TeamCollection implements TeamsPort {
    * done to entities the run never started.
    */
   async stopForHost(): Promise<void> {
-    const services = [
-      ...[...this.live.values()].map((entry) => entry.service),
-      ...this.starting,
-    ];
+    const services = [...this.live.values(), ...this.starting];
     // Nothing is evicted: a stopped Team is still this collection's until it
     // closes, so the dispatcher's second sweep reaches it again if a pre-fence
     // use restarted its leader in between.
@@ -843,13 +877,11 @@ export class TeamCollection implements TeamsPort {
    * for.
    */
   private track(service: TeamService): void {
-    if (this.live.get(service.id)?.service === service) return;
-    this.live.set(service.id, {
-      service,
-      // The exact instance that ended is the exact instance dropped; a Team
-      // rebuilt at the same id afterwards is a different object and stays.
-      subscription: service.onClosed(() => this.evict(service.id, service)),
-    });
+    if (this.live.get(service.id) === service) return;
+    this.live.set(service.id, service);
+    // The exact instance that ended is the exact instance dropped; a Team
+    // rebuilt at the same id afterwards is a different object and stays.
+    void service.closed.then(() => this.evict(service.id, service));
     this.refuseIfClosing(service);
   }
 
@@ -873,9 +905,7 @@ export class TeamCollection implements TeamsPort {
   }
 
   private evict(teamId: string, expectedService: TeamService): void {
-    const entry = this.live.get(teamId);
-    if (entry?.service !== expectedService) return;
-    entry.subscription.unsubscribe();
+    if (this.live.get(teamId) !== expectedService) return;
     this.live.delete(teamId);
   }
 
@@ -888,4 +918,181 @@ export class TeamCollection implements TeamsPort {
       settleWorktreeCleanup: (id) => this.settleClosedWorktree(id),
     };
   }
+
+  // Store-only Team list/summary/history projection; never materializes a
+  // runtime.
+
+  private async listRows(): Promise<TeamListRow[]> {
+    const out: TeamListRow[] = [];
+    for (const team of await this.store.list()) {
+      out.push(await this.listRow(team));
+    }
+    return out;
+  }
+
+  private async historyResult(
+    input: TeamHistoryQuery,
+  ): Promise<TeamHistoryResult> {
+    const rows: TeamHistoryRow[] = [];
+    for (const team of await this.store.list()) {
+      const row = await this.historyRow(team);
+      if (matchesTeamHistoryQuery(row, input)) rows.push(row);
+    }
+    rows.sort(
+      (a, b) =>
+        b.updated_at - a.updated_at ||
+        b.created_at - a.created_at ||
+        a.team_name.localeCompare(b.team_name),
+    );
+    const start = input.cursor !== undefined ? decodeCursor(input.cursor) : 0;
+    const limit = clampHistoryLimit(input.limit);
+    const items = rows.slice(start, start + limit);
+    const next = start + items.length;
+    return {
+      items,
+      next_cursor: next < rows.length ? encodeCursor(next) : null,
+    };
+  }
+
+  /**
+   * One Team's status, read from its records alone.
+   *
+   * How a closed Team is reported: it has no runtime left to ask, and
+   * constructing one to answer a read would resurrect an entity that is over.
+   * The leader's runtime state is `null` because nothing is running, not
+   * because nothing is known.
+   */
+  private async recordSummary(team: TeamRecord): Promise<TeamSummary> {
+    const leader = await this.leaderIdentity(team);
+    return teamSummary(
+      team,
+      leader === null ? null : toStatus(leader, null),
+      await this.memberCount(team),
+    );
+  }
+
+  private async listRow(team: TeamRecord): Promise<TeamListRow> {
+    return {
+      team_name: team.team_id,
+      status: team.status,
+      intent: team.intent,
+      source_repo: team.source_repo,
+      leader_name: team.leader_name,
+      leader_agent_runtime: team.leader_agent_runtime,
+      leader_state: await this.leaderState(team),
+      member_count: await this.memberCount(team),
+      created_at: team.created_at,
+      updated_at: team.updated_at,
+      closed_at: team.closed_at,
+      worktree_cleanup: team.worktree.cleanup_state,
+    };
+  }
+
+  private async historyRow(team: TeamRecord): Promise<TeamHistoryRow> {
+    return {
+      team_name: team.team_id,
+      status: team.status,
+      intent: team.intent,
+      source_repo: team.source_repo,
+      leader_name: team.leader_name,
+      leader_agent_runtime: team.leader_agent_runtime,
+      leader_state: await this.leaderState(team),
+      member_count: await this.memberCount(team),
+      created_at: team.created_at,
+      updated_at: team.updated_at,
+      closed_at: team.closed_at,
+      close_note: team.close_note,
+      close_note_preview:
+        team.close_note === null ? null : previewText(team.close_note),
+      worktree_cleanup: team.worktree.cleanup_state,
+    };
+  }
+
+  /**
+   * The leader's durable status, read from this Team's root and accepted only
+   * when the record names the leader the Team record names. No probing: the
+   * leader has exactly one location and this is it.
+   *
+   * A Team this process already holds live answers from that live entity's
+   * own in-memory identity — the more current copy, and one that needs no
+   * file read — rather than from a second, independently-cached read over
+   * the same `identity.json` a live owner already committed through.
+   */
+  private async leaderState(
+    team: TeamRecord,
+  ): Promise<AgentEntityIdentityStatus | null> {
+    const live = this.live.get(team.team_id) ?? null;
+    if (live !== null) return live.leaderIdentityStatus();
+    return (await this.leaderIdentity(team))?.status ?? null;
+  }
+
+  /**
+   * The store decides what an unreadable leader means, and this read accepts
+   * that decision unchanged: a missing or corrupt record is the `null` the
+   * store already logged, while a record this version refuses to interpret —
+   * old state — is raised. Catching here would turn "this file says something
+   * Dreamux no longer accepts" into "there is no leader", which is the one
+   * answer that is never true.
+   */
+  private async leaderIdentity(
+    team: TeamRecord,
+  ): Promise<AgentEntityIdentity | null> {
+    const leader = await new AgentIdentityStore({
+      dir: this.store.teamRoot(team.team_id),
+      dispatcherId: this.dispatcherId,
+      expectedName: null,
+      log: this.opts.log,
+    }).read();
+    return leader !== null && leader.name === team.leader_name ? leader : null;
+  }
+
+  /** Directory occupancy is the roster fact; an unreadable member still counts. */
+  private async memberCount(team: TeamRecord): Promise<number> {
+    return (
+      await new AgentEntityCollectionStore({
+        root: teamMateCollectionDir(this.store.teamRoot(team.team_id)),
+        dispatcherId: this.dispatcherId,
+        log: this.opts.log,
+      }).names()
+    ).length;
+  }
+}
+
+function matchesTeamHistoryQuery(
+  row: TeamHistoryRow,
+  input: Omit<TeamHistoryQuery, 'dispatcherId'>,
+): boolean {
+  if (
+    input.name !== undefined &&
+    row.team_name !== validateTeamId(input.name)
+  ) {
+    return false;
+  }
+  if (input.status !== undefined && row.status !== input.status) return false;
+  if (input.repo !== undefined) {
+    const needle = input.repo.toLowerCase();
+    const hit =
+      row.source_repo !== null &&
+      row.source_repo.toLowerCase().includes(needle);
+    if (!hit) return false;
+  }
+  if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {
+    return false;
+  }
+  if (input.since !== undefined && row.updated_at < input.since) return false;
+  if (input.until !== undefined && row.updated_at > input.until) return false;
+  return true;
+}
+
+function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
+  return matchesGrepText(
+    [
+      row.team_name,
+      row.intent,
+      row.source_repo,
+      row.leader_name,
+      row.close_note,
+    ],
+    grep,
+  );
 }

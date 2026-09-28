@@ -2,11 +2,9 @@ import type {
   AgentRuntime,
   AgentRuntimeActivitySink,
   AgentRuntimeCreateContext,
-  AgentRuntimeInterruptOutcome,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStartOutcome,
-  AgentRuntimeStatus,
 } from '@excitedjs/dreamux-types';
 
 import {
@@ -95,19 +93,6 @@ export class RuntimeGeneration {
     return this.runtime;
   }
 
-  /**
-   * Interrupt only a runtime this process already owns; never start one.
-   *
-   * A start that failed leaves nothing to interrupt, so it reads as no runtime
-   * the way every other caller of `existingRuntimeAfterStart` reads it. Raising
-   * it here would answer a `/stop` with the spawn's error instead of saying
-   * that nothing is running.
-   */
-  async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
-    const runtime = await this.existingRuntimeAfterStart().catch(() => null);
-    return runtime === null ? { status: 'idle' } : runtime.interrupt();
-  }
-
   hasNoRuntimeAuthority(): boolean {
     return this.runtime === null && this.starting === null;
   }
@@ -119,18 +104,6 @@ export class RuntimeGeneration {
       );
     }
     return this.runtime;
-  }
-
-  /**
-   * The runtime's own last-published status. It is read from the state store the
-   * runtime pushes into, never pulled back out of the handle.
-   */
-  runtimeStatus(): AgentRuntimeStatus | null {
-    return this.state.runtimeStatus();
-  }
-
-  sessionId(): string | null {
-    return this.state.current().session_id;
   }
 
   /**
@@ -219,7 +192,7 @@ export class RuntimeGeneration {
         identity.worktree.mode === 'managed' &&
         identity.worktree.cleanup_state === 'deleted'
       ) {
-        identity = await this.state.transact((current) =>
+        identity = await this.state.update((current) =>
           reprepareDeletedManagedWorktree({
             config: this.deps.config.current(),
             peers: this.deps.peers,

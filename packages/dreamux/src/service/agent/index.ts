@@ -57,7 +57,6 @@ import {
 } from '../../platform/shutdown-errors.js';
 import type { AgentServiceFactory } from './factory.js';
 import { AgentService } from './service.js';
-import type { ClosedSubscription } from '../../platform/closed-fact.js';
 import type {
   CreateLockedTeammateOptions,
   LockedTeammate,
@@ -183,7 +182,6 @@ export class TeammateCollection implements TeammateOps {
   private readonly store: AgentEntityCollectionStore;
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, AgentService>();
-  private readonly subscriptions = new Map<string, ClosedSubscription>();
   private readonly materializations = new Map<
     string,
     Promise<ResolvedTeamMate>
@@ -380,11 +378,11 @@ export class TeammateCollection implements TeammateOps {
    * This collection's own unfenced read of its current members' status.
    *
    * For the owner's internal use — a Team reads its own roster this way while
-   * reconstructing itself (`TeamService.members()`, seeding `roster.ts` during
-   * `rebuild()`) — never for a caller reaching the `TeammateOps.list()` verb
-   * above, which gates on `admitOperation` the same as every other verb. An
-   * owner reading its own children is the same tier as `count()`, not a
-   * caller crossing the collection's admission boundary a second time.
+   * seeding its own aggregate state (`TeamService.seed()`) — never for a
+   * caller reaching the `TeammateOps.list()` verb above, which gates on
+   * `admitOperation` the same as every other verb. An owner reading its own
+   * children does not cross the collection's admission boundary a second
+   * time.
    */
   async memberStatuses(): Promise<AgentEntityRuntimeStatus[]> {
     return (await this.rosterList()).map((identity) => {
@@ -542,6 +540,24 @@ export class TeammateCollection implements TeammateOps {
     );
   }
 
+  /**
+   * Stop every member runtime this collection holds, for a host stop.
+   *
+   * Scope-neutral, unlike {@link stopAllForDissolve}: a host stop releases
+   * runtime authority without closing anything, so it applies the same way to
+   * the dispatcher-root collection and to a Team-scoped one.
+   */
+  async stopAllForHost(): Promise<void> {
+    const failures: unknown[] = [];
+    for (const member of await this.heldMembers()) {
+      await collectShutdownFailure(failures, () => member.stopForHost());
+    }
+    throwShutdownFailures(
+      failures,
+      `${this.scopeLabel()} member runtimes did not stop for host`,
+    );
+  }
+
   /** Close every member of this dissolving Team. Team-scoped only. */
   async closeAllForDissolve(note: string): Promise<void> {
     const teamId = this.mustTeamScope();
@@ -557,7 +573,7 @@ export class TeammateCollection implements TeammateOps {
 
   /**
    * Every member this process holds, once whatever was already building one has
-   * finished. A materialization that started before its Team fenced itself is
+   * finished. A materialization that started before the owner fenced itself is
    * still producing a live Agent, so a sweep that read only the cache would
    * miss the one runtime it most needs to stop. Joining what is already in
    * flight is the whole of it: the fence refuses everything not yet started.
@@ -587,6 +603,13 @@ export class TeammateCollection implements TeammateOps {
       throw new Error('bulk member dissolve is a Team capability');
     }
     return this.teamScope;
+  }
+
+  /** This collection's owner, for a scope-neutral failure message. */
+  private scopeLabel(): string {
+    return this.teamScope === null
+      ? `dispatcher ${JSON.stringify(this.dispatcherId)}`
+      : `Team ${JSON.stringify(this.teamScope)}`;
   }
 
   private async createFreshEntity(
@@ -632,16 +655,14 @@ export class TeammateCollection implements TeammateOps {
     return this.trackMaterialization(name, async () => {
       const { identity, store } = await this.createIdentity(input, allocation);
       const entity = await this.buildEntity(identity, store, options);
-      const subscription = this.subscribeEntity(entity);
       try {
         beforePublish?.(entity);
       } catch (error) {
-        subscription.unsubscribe();
         await this.closeAfterFailedCreation(entity);
         throw error;
       }
       this.entities.set(identity.name, entity);
-      this.subscriptions.set(identity.name, subscription);
+      this.subscribeEntity(entity);
       this.selfCloseIfClosing(entity);
       return entity;
     });
@@ -731,7 +752,7 @@ export class TeammateCollection implements TeammateOps {
     const name = entity.name;
     if (this.entities.get(name) === entity) return entity;
     this.entities.set(name, entity);
-    this.subscriptions.set(name, this.subscribeEntity(entity));
+    this.subscribeEntity(entity);
     return entity;
   }
 
@@ -784,13 +805,16 @@ export class TeammateCollection implements TeammateOps {
     });
   }
 
-  private subscribeEntity(entity: AgentService): ClosedSubscription {
-    const source = entity;
-    return entity.onClosed((fact) => {
-      if (this.entities.get(fact.name) === source && source.isRetired()) {
-        this.entities.delete(fact.name);
-        this.subscriptions.get(fact.name)?.unsubscribe();
-        this.subscriptions.delete(fact.name);
+  /**
+   * Evict this entity once it durably closes. `liveEntity` below is the same
+   * eviction reached synchronously, for a reader that runs before this
+   * promise settles; both agree on the same test, so whichever runs first
+   * evicts and the other finds nothing left to do.
+   */
+  private subscribeEntity(entity: AgentService): void {
+    void entity.closed.then(() => {
+      if (this.entities.get(entity.name) === entity && entity.isRetired()) {
+        this.entities.delete(entity.name);
       }
     });
   }
@@ -799,8 +823,6 @@ export class TeammateCollection implements TeammateOps {
     const entity = this.entities.get(name) ?? null;
     if (entity === null || !entity.isRetired()) return entity;
     this.entities.delete(name);
-    this.subscriptions.get(name)?.unsubscribe();
-    this.subscriptions.delete(name);
     return null;
   }
 

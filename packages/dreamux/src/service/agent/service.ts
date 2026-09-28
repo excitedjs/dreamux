@@ -2,6 +2,8 @@ import type {
   AgentRuntimeInterruptOutcome,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
+  RuntimeAdmission,
+  RuntimeSubmission,
   TeammateInputNotice,
   TeammateRole,
 } from '@excitedjs/dreamux-types';
@@ -21,10 +23,6 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
 } from './identity.js';
-import {
-  ClosedFactPublisher,
-  type ClosedSubscription,
-} from '../../platform/closed-fact.js';
 import type {
   CompletionDeliveryResult,
   PreparedCompletionDelivery,
@@ -52,7 +50,8 @@ import {
   type AdmissionLedger,
 } from './admission.js';
 import {
-  EntityTurnCoordinator,
+  asError,
+  EntityTurn,
   type TurnAdmission,
   type TurnCompletionDelivery,
 } from './turn.js';
@@ -71,7 +70,17 @@ import {
 export class AgentService {
   private state: AgentRuntimeStateStore;
   private readonly runtimeGeneration: RuntimeGeneration;
-  private readonly turns: EntityTurnCoordinator;
+  /**
+   * Entity-owned serialization for provider admission.
+   *
+   * Holds the push-back line and nothing else: which submissions this entity
+   * has outstanding, in what order their admissions are attached, and who is
+   * waiting for each one's result. Display is not here — a live surface is
+   * keyed on the Agent, not on a submission, so it never needed this
+   * bookkeeping to find its subject.
+   */
+  private admissionContinuationTail: Promise<void> = Promise.resolve();
+  private readonly retainedTurns = new Set<EntityTurn>();
   /**
    * Core's own bounded, process-local source dedupe. It reserves a key before
    * runtime admission, so a repeat never reaches the Provider seam — which
@@ -99,7 +108,14 @@ export class AgentService {
    * second release.
    */
   private hostStop: Promise<void> | null = null;
-  private readonly closed: ClosedFactPublisher<TeammateClosedFact>;
+  /**
+   * Resolves once, the moment this entity is durably closed — the same moment
+   * a `publish()` used to fire. A caller that needs to evict a closed entity
+   * attaches with `.then()`; there is no unsubscribe, because a promise
+   * settles once and every derived `.then()` is independent.
+   */
+  readonly closed: Promise<TeammateClosedFact>;
+  private resolveClosed!: (fact: TeammateClosedFact) => void;
   /** The runtime role this entity's owner derived; the display fact carries it. */
   private readonly role: TeammateRole;
 
@@ -121,12 +137,8 @@ export class AgentService {
       deps.onPersisted,
     );
     this.role = options.role;
-    this.closed = new ClosedFactPublisher<TeammateClosedFact>(deps.log);
-    this.turns = new EntityTurnCoordinator({
-      identity: () => this.current(),
-      role: this.role,
-      isActive: () => this.phase === 'active',
-      owesCompletion: () => this.phase === 'active' && this.hostStop === null,
+    this.closed = new Promise<TeammateClosedFact>((resolve) => {
+      this.resolveClosed = resolve;
     });
     this.runtimeGeneration = new RuntimeGeneration(
       deps,
@@ -182,12 +194,6 @@ export class AgentService {
     );
   }
 
-  onClosed(
-    listener: (fact: TeammateClosedFact) => void | Promise<void>,
-  ): ClosedSubscription {
-    return this.closed.subscribe(listener);
-  }
-
   lock(): LockedTeammate {
     if (this.phase !== 'active') {
       throw new Error(`${agentRoleNoun(this.role, this.name)} is not active`);
@@ -202,7 +208,7 @@ export class AgentService {
         `${agentRoleNoun(this.role, this.name)} is being mutated`,
       );
     }
-    if (this.turns.hasUnsettledCurrent()) {
+    if (this.hasUnsettledCurrent()) {
       throw new Error(
         `${agentRoleNoun(this.role, this.name)} has an active Turn`,
       );
@@ -340,18 +346,130 @@ export class AgentService {
     // `TeammateSubmitInput` producer reads `intent` through a non-blank-string
     // reader, so a defined value here is never empty.
     if (input.intent !== undefined) {
-      await this.state.updateIntent(input.intent);
+      await this.state.update({ intent: input.intent });
     }
     const runtime = this.runtimeGeneration.mustRuntime();
-    return this.turns.submitRuntimeTurn(
+    return this.submitRuntimeTurn(
       () => runtime.submit({ text }),
       input.deliverCompletion ?? null,
     );
   }
 
-  /** Interrupt the current turn without waking this Agent. */
-  interrupt(): Promise<AgentRuntimeInterruptOutcome> {
-    return this.runtimeGeneration.interrupt();
+  private hasUnsettledCurrent(): boolean {
+    return [...this.retainedTurns].some((turn) => !turn.isSettled());
+  }
+
+  private submitRuntimeTurn(
+    operation: () => Promise<RuntimeAdmission>,
+    deliverCompletion: TurnCompletionDelivery | null,
+  ): Promise<TurnAdmission> {
+    if (this.phase !== 'active') return Promise.resolve({ status: 'stopped' });
+    let admission: Promise<RuntimeAdmission>;
+    try {
+      admission = operation();
+    } catch (error) {
+      return Promise.resolve({ status: 'ambiguous', error: asError(error) });
+    }
+    const observed = observeRuntimeAdmission(admission);
+    return this.enqueueAdmissionContinuation(async () => {
+      const result = await observed;
+      if (result.status === 'rejected') {
+        return { status: 'ambiguous', error: result.error };
+      }
+      if (result.admission.status !== 'submitted') {
+        return result.admission;
+      }
+      const turn = this.attachSubmission(
+        result.admission.submission,
+        deliverCompletion,
+      );
+      return { status: 'submitted', turn };
+    });
+  }
+
+  /**
+   * Wait for every admission continuation this entity has accepted.
+   *
+   * Admissions run strictly in order, so the tail is the whole queue: awaiting
+   * it awaits everything enqueued before it, and the loop covers work enqueued
+   * while draining.
+   */
+  private async drainAdmissions(): Promise<void> {
+    let tail: Promise<void>;
+    do {
+      tail = this.admissionContinuationTail;
+      await tail;
+    } while (this.admissionContinuationTail !== tail);
+  }
+
+  /**
+   * Prove every retained turn settled, then wait for whatever each one still
+   * delivers. Whether a turn delivers at all is the turn's own decision, made
+   * from the `owed` closure `attachSubmission` gave it when it settled.
+   */
+  private async convergeRetainedTurns(): Promise<void> {
+    await Promise.resolve();
+    const unsettled = [...this.retainedTurns].filter(
+      (turn) => !turn.isSettled(),
+    );
+    if (unsettled.length > 0) {
+      throw new Error(
+        `runtime stop returned with ${unsettled.length} unsettled submission(s) for ` +
+          `${this.current().name}: ${unsettled.map((turn) => turn.id).join(', ')}`,
+      );
+    }
+    for (const turn of [...this.retainedTurns]) await turn.ensureDelivery();
+  }
+
+  private enqueueAdmissionContinuation<T>(task: () => Promise<T>): Promise<T> {
+    const continuation = this.admissionContinuationTail.then(task, task);
+    this.admissionContinuationTail = continuation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return continuation;
+  }
+
+  private attachSubmission(
+    submission: RuntimeSubmission,
+    deliverCompletion: TurnCompletionDelivery | null,
+  ): EntityTurn {
+    const turn = new EntityTurn(
+      submission,
+      this.current().name,
+      this.role,
+      deliverCompletion,
+      // Whether a turn that settles now is news this entity still owes its
+      // owner. False while the entity is closing or being released by its
+      // host: the party that ended the turn is the one that would read the
+      // report.
+      () => this.phase === 'active' && this.hostStop === null,
+    );
+    this.retainedTurns.add(turn);
+    void turn
+      .ensureDelivery()
+      .finally(() => {
+        this.retainedTurns.delete(turn);
+      })
+      .catch(() => undefined);
+    return turn;
+  }
+
+  /**
+   * Interrupt the current turn without waking this Agent.
+   *
+   * Only a runtime this process already owns is interrupted; a runtime is
+   * never started to interrupt it. A start that failed leaves nothing to
+   * interrupt, so it reads as no runtime the way every other caller of
+   * `existingRuntimeAfterStart` reads it — raising it here would answer an
+   * interrupt with the spawn's error instead of saying that nothing is
+   * running.
+   */
+  async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    const runtime = await this.runtimeGeneration
+      .existingRuntimeAfterStart()
+      .catch(() => null);
+    return runtime === null ? { status: 'idle' } : runtime.interrupt();
   }
 
   /**
@@ -379,7 +497,7 @@ export class AgentService {
     this.deps.log.warn(
       {
         teammate: this.name,
-        unsettled_turn: this.turns.hasUnsettledCurrent(),
+        unsettled_turn: this.hasUnsettledCurrent(),
         reason,
       },
       'ending the agent display as failed for an input no runtime accepted',
@@ -484,11 +602,9 @@ export class AgentService {
     await collectShutdownFailure(failures, () =>
       this.runtimeGeneration.stopRuntime(),
     );
-    await this.turns.drainAdmissions();
+    await this.drainAdmissions();
     await this.ordinaryMutations.drain();
-    await collectShutdownFailure(failures, () =>
-      this.turns.convergeRetainedTurns(),
-    );
+    await collectShutdownFailure(failures, () => this.convergeRetainedTurns());
     throwShutdownFailures(
       failures,
       `${agentRoleNoun(this.role, this.name)} did not converge during host stop`,
@@ -540,11 +656,11 @@ export class AgentService {
   }
 
   runtimeStatus(): AgentRuntimeStatus | null {
-    return this.runtimeGeneration.runtimeStatus();
+    return this.state.runtimeStatus();
   }
 
   sessionId(): string | null {
-    return this.runtimeGeneration.sessionId();
+    return this.current().session_id;
   }
 
   /**
@@ -673,7 +789,7 @@ export class AgentService {
       }
       this.phase = 'closed';
       if (token === null)
-        this.closed.publish(teammateClosedFact(this.current(), closedAt));
+        this.resolveClosed(teammateClosedFact(this.current(), closedAt));
       return Promise.resolve({ teammate: this.status() });
     }
     if (this.phase === 'active') this.phase = 'closing';
@@ -686,9 +802,9 @@ export class AgentService {
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
     await this.runtimeGeneration.stopRuntime();
-    await this.turns.drainAdmissions();
+    await this.drainAdmissions();
     await this.ordinaryMutations.drain();
-    await this.turns.convergeRetainedTurns();
+    await this.convergeRetainedTurns();
 
     const identity = this.current();
     const shouldCleanup =
@@ -709,7 +825,7 @@ export class AgentService {
     // that evicted it now would materialize a second live instance for the
     // same name while the holder still has this one.
     if (token === null) {
-      this.closed.publish(teammateClosedFact(this.current(), closedAt));
+      this.resolveClosed(teammateClosedFact(this.current(), closedAt));
     } else {
       this.assertLockToken(token);
     }
@@ -731,7 +847,7 @@ export class AgentService {
           `closed-held ${agentRoleNoun(this.role, this.name)} has no durable closed_at`,
         );
       }
-      this.closed.publish(teammateClosedFact(this.current(), closedAt));
+      this.resolveClosed(teammateClosedFact(this.current(), closedAt));
     }
   }
 
@@ -770,4 +886,17 @@ function unsupportedPreparedCompletion(
   return Object.freeze({
     submit: async () => ({ status: 'unsupported' as const, reason }),
   });
+}
+
+type ObservedRuntimeAdmission =
+  | { status: 'fulfilled'; admission: RuntimeAdmission }
+  | { status: 'rejected'; error: Error };
+
+function observeRuntimeAdmission(
+  admission: Promise<RuntimeAdmission>,
+): Promise<ObservedRuntimeAdmission> {
+  return admission.then(
+    (value) => ({ status: 'fulfilled', admission: value }),
+    (error: unknown) => ({ status: 'rejected', error: asError(error) }),
+  );
 }

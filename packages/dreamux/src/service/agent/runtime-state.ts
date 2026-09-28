@@ -113,24 +113,18 @@ export class AgentRuntimeStateStore {
   }
 
   /**
-   * Update the recorded recovery subject (issue #182 PR-3 `send` intent). Kept
-   * on this store so the live identity snapshot returned by `current()` stays in
-   * sync with the persisted record.
+   * Merge a patch onto the identity, or compute one from the current value —
+   * a lease re-check or a recovered worktree needs the store's own serialized
+   * read to decide what to write, never a snapshot held before calling.
    */
-  async updateIntent(intent: string): Promise<void> {
-    await this.update({ intent });
-  }
-
-  update(input: AgentIdentityUpdateInput): Promise<AgentEntityIdentity> {
-    return this.store.update(input, this.onPersisted);
-  }
-
-  transact(
-    task: (
-      current: AgentEntityIdentity,
-    ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>,
+  update(
+    patch:
+      | AgentIdentityUpdateInput
+      | ((
+          current: AgentEntityIdentity,
+        ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
   ): Promise<AgentEntityIdentity> {
-    return this.store.update(task, this.onPersisted);
+    return this.store.update(patch, this.onPersisted);
   }
 
   /**

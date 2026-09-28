@@ -138,17 +138,12 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   }
 
   /**
-   * A dead child has nothing to interrupt, so this answers false rather than
-   * writing to its stdin. The liveness half matters on its own: a child that
-   * exited between the last stream line and this call still has an `rpc`, and
-   * writing to it surfaces an EPIPE as `Command /stop failed: write EPIPE`
-   * instead of the honest `No turn is running.`
+   * `rpc` is null before the child is up and after teardown, and it answers
+   * false itself once closed (`fail`/`stop` set that in the same tick the
+   * child stops being alive), so no liveness gate is needed here.
    */
   interrupt(reason: string): Promise<boolean> {
-    if (!this.isAlive() || this.stopped || this.rpc === null) {
-      return Promise.resolve(false);
-    }
-    return this.rpc.interrupt(reason);
+    return this.rpc?.interrupt(reason) ?? Promise.resolve(false);
   }
 
   async stop(): Promise<void> {

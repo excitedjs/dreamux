@@ -1,13 +1,15 @@
 /**
  * Every message this Channel sends, in one place.
  *
- * A reply, a card, a reaction, a repaint, a locate-by-message-id, and a
- * best-effort notification are the whole of what this session puts onto the
- * platform. Keeping them on one object is what lets every send read its own
- * landing chat/topic straight off Feishu's create/reply response, instead of
- * a session-local ledger guessing it from whichever message this instance
- * last happened to see in that conversation — a guess that is wrong the
- * moment two conversations interleave.
+ * A reply, a card, a reaction, a locate-by-message-id, and a best-effort
+ * notification are the whole of what this session puts onto the platform.
+ * Keeping them on one object is what lets every send read its own landing
+ * chat/topic straight off Feishu's create/reply response, instead of a
+ * session-local ledger guessing it from whichever message this instance last
+ * happened to see in that conversation — a guess that is wrong the moment two
+ * conversations interleave. A card repaint (`editCard`) is not one of these:
+ * it takes an already-known message id and returns nothing to read a landing
+ * off, so callers that hold a `FeishuBot` reach it there directly.
  *
  * `sendText` alone carries product policy beyond "send it": inside a
  * Collaboration Space chat, a reply with no `message_id` must not silently
@@ -208,10 +210,6 @@ export class FeishuOutbound {
       'feishu reaction added',
     );
     return reactionId;
-  }
-
-  async editCard(messageId: string, card: unknown): Promise<void> {
-    await this.opts.bot.editCard(messageId, card);
   }
 
   /**

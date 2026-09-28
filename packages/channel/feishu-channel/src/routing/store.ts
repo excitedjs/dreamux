@@ -4,9 +4,15 @@
  *
  * One live session owns one file: a configured channel is built once per
  * dispatcher process and the filename carries the channel id, so two sessions
- * never address the same document. Inside the process every change is queued,
- * prepared on an isolated copy of the last committed document, written
- * atomically, and only then published as the value `current` returns.
+ * never address the same document. `FeishuRouting` holds the
+ * `TransactionalStore<FeishuRoutingDocument>` directly — this module owns no
+ * wrapping class, only the `load` callback session builds that store with
+ * (`readRoutingDocument`) and the one real write policy every mutation goes
+ * through (`updateRoutingDocument`: an isolated copy of the last committed
+ * document, an owner-only-dir check, an `updated_at` stamp, and a no-op short
+ * circuit when the mutator reports nothing changed), mirroring
+ * `chat-bots-store.ts`'s free-functions-over-a-held-store convention for the
+ * session's other stores.
  *
  * Disk commit is therefore the authority. What a caller reads is what was
  * persisted, and a change that failed to persist is one nobody ever saw — the
@@ -20,8 +26,8 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import {
-  TransactionalStore,
   ensureOwnerOnlyDir,
+  type TransactionalStore,
 } from '@excitedjs/dreamux-utils';
 
 import {
@@ -55,104 +61,88 @@ export function routingDocumentFilename(channelId: string): string {
   return `feishu-routing.${channelPathSegment(channelId)}.json`;
 }
 
-export interface FeishuRoutingStoreOptions {
+export interface FeishuRoutingDocumentOptions {
   readonly dispatcherId: string;
   readonly channelId: string;
   readonly stateDir: string;
 }
 
-export class FeishuRoutingStore {
-  private readonly held: TransactionalStore<FeishuRoutingDocument>;
+/** The one file this session's routing document lives at. */
+export function routingDocumentPath(
+  opts: FeishuRoutingDocumentOptions,
+): string {
+  return join(opts.stateDir, routingDocumentFilename(opts.channelId));
+}
 
-  constructor(private readonly opts: FeishuRoutingStoreOptions) {
-    this.held = new TransactionalStore({
-      path: this.path,
-      load: () => this.readDocument(),
-    });
-  }
-
-  private get path(): string {
-    return join(
-      this.opts.stateDir,
-      routingDocumentFilename(this.opts.channelId),
-    );
-  }
-
-  /** Read once, at initialize. A malformed or foreign document fails loud. */
-  load(): Promise<FeishuRoutingDocument> {
-    return this.held.load();
-  }
-
-  private async readDocument(): Promise<FeishuRoutingDocument> {
-    let raw: string;
-    try {
-      raw = await readFile(this.path, 'utf8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return emptyRoutingDocument({
-          dispatcherId: this.opts.dispatcherId,
-          channelId: this.opts.channelId,
-          now: Date.now(),
-        });
-      }
-      throw new Error(`failed to read ${this.path}: ${(err as Error).message}`);
+/**
+ * The `load` option session's `TransactionalStore<FeishuRoutingDocument>` is
+ * built with. Read once, at initialize. A malformed or foreign document fails
+ * loud.
+ */
+export async function readRoutingDocument(
+  opts: FeishuRoutingDocumentOptions,
+): Promise<FeishuRoutingDocument> {
+  const path = routingDocumentPath(opts);
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return emptyRoutingDocument({
+        dispatcherId: opts.dispatcherId,
+        channelId: opts.channelId,
+        now: Date.now(),
+      });
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      throw new Error(
-        `failed to parse ${this.path}: ${(err as Error).message}`,
-      );
-    }
-    return validated(parsed, this.opts, this.path);
+    throw new Error(`failed to read ${path}: ${(err as Error).message}`);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`failed to parse ${path}: ${(err as Error).message}`);
+  }
+  return validated(parsed, opts, path);
+}
 
-  /** The last committed document. Callers read it and never mutate it. */
-  get current(): FeishuRoutingDocument {
-    return this.held.current;
-  }
-
-  /**
-   * Prepare a change, persist it, and only then publish it.
-   *
-   * Preparation is serialized for the same reason the write is: two changes
-   * prepared against one base would each persist a document missing the other.
-   * Every step copies the document the step before it actually committed, so a
-   * step whose write failed leaves the next one copying the last good value —
-   * the failed change is gone, exactly as its caller was told.
-   *
-   * The mutator reports whether anything really changed, so an idempotent
-   * repeat costs no write and no false `updated_at` bump. It works on a private
-   * copy, which is also what lets a reader hold a record across a later commit
-   * and keep the snapshot it captured.
-   */
-  update(mutator: (document: FeishuRoutingDocument) => boolean): Promise<void> {
-    return this.held
-      .update(async (committed) => {
-        const next = structuredClone(committed);
-        if (!mutator(next)) return committed; // unchanged reference: no write
-        // The store's own directory creation is a bare recursive `mkdir`: it
-        // neither rejects a symlink at the leaf nor a foreign-uid or
-        // group/other-readable directory, and it sets mode only when it
-        // creates. So the routing document runs its owner-only check itself,
-        // before every commit, as it always has.
-        await ensureOwnerOnlyDir(this.opts.stateDir);
-        next.updated_at = Date.now();
-        return next;
-      })
-      .then(() => undefined);
-  }
-
-  /** Session close awaits this so no queued commit is abandoned. */
-  async drain(): Promise<void> {
-    await this.held.drain();
-  }
+/**
+ * Prepare a change, persist it, and only then publish it.
+ *
+ * Preparation is serialized for the same reason the write is: two changes
+ * prepared against one base would each persist a document missing the other.
+ * Every step copies the document the step before it actually committed, so a
+ * step whose write failed leaves the next one copying the last good value —
+ * the failed change is gone, exactly as its caller was told.
+ *
+ * The mutator reports whether anything really changed, so an idempotent
+ * repeat costs no write and no false `updated_at` bump. It works on a private
+ * copy, which is also what lets a reader hold a record across a later commit
+ * and keep the snapshot it captured.
+ */
+export async function updateRoutingDocument(
+  store: TransactionalStore<FeishuRoutingDocument>,
+  stateDir: string,
+  mutator: (document: FeishuRoutingDocument) => boolean,
+): Promise<void> {
+  await store
+    .update(async (committed) => {
+      const next = structuredClone(committed);
+      if (!mutator(next)) return committed; // unchanged reference: no write
+      // The store's own directory creation is a bare recursive `mkdir`: it
+      // neither rejects a symlink at the leaf nor a foreign-uid or
+      // group/other-readable directory, and it sets mode only when it
+      // creates. So the routing document runs its owner-only check itself,
+      // before every commit, as it always has.
+      await ensureOwnerOnlyDir(stateDir);
+      next.updated_at = Date.now();
+      return next;
+    })
+    .then(() => undefined);
 }
 
 function validated(
   parsed: unknown,
-  opts: FeishuRoutingStoreOptions,
+  opts: FeishuRoutingDocumentOptions,
   path: string,
 ): FeishuRoutingDocument {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {

@@ -30,7 +30,6 @@ import {
 import type { FeishuCoreCommands } from '../feishu-core-commands.js';
 import type { FeishuCotAdapter } from '../cot/adapter.js';
 import { errorMessage } from '../feishu-submit.js';
-import type { FeishuSpacePolicyInput } from '../tools/types.js';
 import type { FeishuSpaceRecord } from './document.js';
 import type { FeishuRemovedRoute, FeishuRouting } from './index.js';
 import {
@@ -42,6 +41,16 @@ import {
 } from './target.js';
 
 export type RouteRemovalNotice = 'team_closed' | 'route_ended' | 'silent';
+
+/** `bindSpace`'s own input — the Collaboration Space policy an operator sets. */
+export interface FeishuSpacePolicyInput {
+  spaceName: string;
+  chatId: string;
+  display: string | null;
+  leaderAgentRuntime: string;
+  identity: string | null;
+  repo: { path: string; base_ref: string | null } | null;
+}
 
 /**
  * What a rejected delivery tells the conversation.

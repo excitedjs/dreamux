@@ -38,7 +38,10 @@ the Team.
   enumeration and status plus the addressed Dispatcher Agent's own
   `dispatcher.submit` / `dispatcher.interrupt`. There is no start/stop Command:
   every configured, enabled Dispatcher starts when the daemon starts, and
-  nothing stops one independently while the process is up. A Team Command names exactly one
+  nothing stops one independently while the process is up. `Dispatchers.start()`
+  is the one call `Server.start()` issues to bring every enabled dispatcher up
+  — sequential, log-and-continue per dispatcher, the counterpart of
+  `Dispatchers.shutdown()`'s aggregate-and-throw. A Team Command names exactly one
   Team; neither namespace addresses the other's recipient. It owns no teammate/team/channel state; each
   `DispatcherService` builds and owns its own object graph. Shutdown closes the
   factory admission before sweeping the existing aggregates, so no dispatcher
@@ -85,12 +88,13 @@ the Team.
   dispatcher-row lookup on, so a shape failure this early (an unrunnable
   channel provider, a missing dispatcher row) closes the same way a failure
   deeper in startup does, instead of leaving the dispatcher stuck admitting
-  work it never finished starting. `lifecycle.ts` fans Workflow start/recover/
-  close-admission out to the Team scope
-  (`teams.startWorkflows()`/`recoverWorkflows()`/`closeWorkflowAdmissions()`)
-  explicitly, right beside the equivalent scheduler fan-out
-  (`teams.startSchedulers()`/`stopSchedulers()`) — neither is hidden inside a
-  wrapper. Closing stops every runtime it can reach, waits for every
+  work it never finished starting. `lifecycle.ts` opens and closes every
+  Team's admissions with one call each — `teams.startAdmissions()` (recover
+  every Team's Workflow records, open Workflow admission, and arm its
+  scheduler) and `teams.stopAdmissions()` (close Workflow admission and
+  disarm the scheduler) — because a Team's own Workflow and scheduler
+  admission always open and close together; `TeamService` composes both
+  behind the one verb instead of a caller sequencing two. Closing stops every runtime it can reach, waits for every
   already-admitted operation to settle, then repeats the same runtime sweep
   once more before releasing channels. The first pass runs before the drain,
   not after: an admitted `send`/`spawn` can be sitting inside a runtime start
@@ -140,42 +144,47 @@ the Team.
   `create-request.ts`, `store.ts`, `errors.ts`) is `TeamRecord`'s persisted
   shape, `team.create` replay bounds, and the durable `TeamStore` itself — one
   `TransactionalStore<TeamRecord | null>` per Team id, holding no
-  event-publish responsibility of its own. The service tier (`roster.ts`,
-  `leader.ts`, `completion-targets.ts`, `closing.ts`, `team-summary.ts`,
-  `service.ts`) is `TeamService`, the single per-Team entity: its constructor
-  builds the contained TeamLeader (`leader.ts`'s factory), its Team-scoped
-  `TeammateCollection`, its Workflows, and its Team scheduler directly — there
-  is no separate collaborators file. A `cron.create`/`.update`/`.delete`
-  crosses this Team's own closing fence before the dispatcher's admission,
-  composed directly into the single `admit` closure `SchedulerService` is
-  built with (`this.admit` first, then `deps.admitOperation`) — there is no
-  second, `SchedulerCommands`-shaped object wrapping the public surface, so a
-  mutation racing an in-flight dissolve is still refused before it reaches the
-  store. It also holds `roster.ts`'s
-  `TeamRosterProjection`, which publishes both `teammate.state` and
-  `team.state` itself on every relevant transition (a Team's aggregate event
-  has no other source to ask). `closing.ts`'s `TeamClosing` owns the
-  stop-and-close dissolve sequence, the abandoned-creation cleanup, and the
-  host sweep, all taking the TeamLeader as a plain argument rather than
-  through a leader-holder callback; its retirement broadcast uses the shared
-  `ClosedFactPublisher`. `leader-handle.ts` (`TeamLeaderHandle`,
-  `TeamLeaderTeammateOps`, the `teamLeaderHandle()` factory) and
-  `teams-port.ts` (the `TeamsPort` interface) sit at this same tier — each
-  depends on `service.ts`'s `TeamService` type and on modules outside
-  `team/`, never on the collection tier below — though neither is part of the
-  `TeamService` class itself. The
-  collection tier (`read-model.ts`, `index.ts`, `commands.ts`, `mcp.ts`) is
+  event-publish responsibility of its own. The service tier (`leader.ts`,
+  `team-summary.ts`, `service.ts`) is `TeamService`, the single per-Team
+  entity: its constructor builds the contained TeamLeader (`leader.ts`'s
+  factory), its Team-scoped `TeammateCollection`, its Workflows, and its Team
+  scheduler directly — there is no separate collaborators file. A
+  `cron.create`/`.update`/`.delete` crosses this Team's own closing fence
+  before the dispatcher's admission, composed directly into the single
+  `admit` closure `SchedulerService` is built with (`this.admit` first, then
+  `deps.admitOperation`) — there is no second, `SchedulerCommands`-shaped
+  object wrapping the public surface, so a mutation racing an in-flight
+  dissolve is still refused before it reaches the store. `TeamService` also
+  owns its roster projection directly, publishing both `teammate.state` and
+  `team.state` on every relevant transition (a Team's aggregate event has no
+  other source to ask); its leader-completion recipient (a stable recipient
+  key plus a fenced `prepareCompletion`, resolved from ownership rather than
+  from the producing record); and its stop-and-close dissolve sequence, the
+  abandoned-creation cleanup, and the host sweep, all taking the TeamLeader as
+  a plain argument rather than through a leader-holder callback — its
+  retirement broadcast is `readonly closed: Promise<TeamClosedFact>`, resolved
+  once on the record's durable `closed` transition; `TeamCollection` awaits it
+  directly (`service.closed.then(() => this.evict(...))`) instead of holding a
+  subscription. `teams-port.ts` (the `TeamsPort` interface) sits at
+  this same tier, depending only on modules outside `team/`, never on the
+  collection tier below. `TeamLeaderHandle` and `TeamLeaderTeammateOps` are
+  plain data types declared in the store-tier `types.ts` (they name no
+  service- or collection-tier type of their own), and `types.ts` is where
+  `teams-port.ts` reads `TeamLeaderHandle` from. The
+  collection tier (`index.ts`, `commands.ts`, `mcp.ts`) is
   `TeamCollection`: one materialization cache (construction dedup,
   live-instance eviction, and the closed-Team worktree reclamation sweep
-  merged into the same class) plus `read-model.ts`'s not-materialized Team
-  projection and the Team Commands and MCP delegate. `TeamCollection`
+  merged into the same class) plus a private not-materialized Team list/
+  summary/history projection and the Team Commands and MCP delegate.
+  `TeamCollection`
   implements `TeamsPort` directly (no `.port`/`.commands` adapter object,
   the same shape `SchedulerService` uses for `SchedulerCommands`): every
   per-Team operation an admin/MCP caller reaches — including `leaderScope()`,
-  which builds the `TeamLeaderHandle` admin/MCP team-leader callers reach
-  through `DispatcherService.teams` (no forwarding method on `DispatcherService`
-  itself) — gates itself on the injected `admitOperation` internally, never the
-  concrete `TeamService`. This
+  which builds the `TeamLeaderHandle` object literal inline, calling
+  `this.admit`/`this.read` directly, for admin/MCP team-leader callers to
+  reach through `DispatcherService.teams` (no forwarding method on
+  `DispatcherService` itself) — gates itself on the injected `admitOperation`
+  internally, never the concrete `TeamService`. This
   directory merge is a code-location, ownership, and internal-API change
   only: `record.json`'s shape, field meanings, and owner are unchanged, so no
   `packages/dreamux/skills/dispatcher/dreamux-maintenance/` update accompanies
@@ -203,7 +212,8 @@ the Team.
   also serves as the dispatcher agent and a Team's leader. It owns one
   identity, its process-local Workflow lock, its runtime, its canonical Turn
   objects, terminal outcome/delivery convergence, and idempotent logical
-  close; its retirement broadcast is the shared `ClosedFactPublisher`, and it
+  close; its retirement broadcast is `readonly closed: Promise<TeammateClosedFact>`,
+  resolved once on close, and it
   is constructed per-entity by `AgentServiceFactory`, the per-dispatcher
   factory that owns the shared `AdmissionLedger`. `channel-submission.ts` (the
   Channel-facing submission reader) sits in this tier because it needs
@@ -229,7 +239,12 @@ the Team.
   timers, `fireSeq` (the per-fire counter feeding `sourceId`) and
   `lifecycleGeneration` (the stop/start epoch a stale timer callback checks
   before acting), the pure `advanceJob` recompute and the one impure `rearm`
-  it feeds, and the lifecycle verbs (`start`/`stop`/`deleteStoreFile`).
+  it feeds, and the lifecycle verbs (`start`/`stop`). Deleting the persisted
+  cron store file is a `team/`-owned dissolve-close step, not a scheduler
+  lifecycle verb: `TeamService` holds the `CronJobStore` instance it hands
+  `SchedulerService` at construction and calls `deleteStoreFile()` on it
+  directly, so `SchedulerService` carries no method whose only job is
+  forwarding to a collaborator its owner already holds.
   `requests.ts` holds the request readers (`cronCreateRequest`,
   `cronUpdateRequest`, `cronJobIdParam`) and the result projections
   (`cronJobResult`, `cronListResult`) shared by `commands.ts` and `mcp.ts`.
@@ -271,9 +286,12 @@ the Team.
   root because no single service owns them. `channel-submission.ts` moved into
   `agent/` (see the `agent/` bullet above) once it needed `submission.ts`, so
   it is no longer a root file. The cross-domain primitives that used to live
-  here too — the closed-fact broadcast, in-flight-work admission counting,
-  deduplication, the keyed serial queue, and shutdown-failure aggregation —
-  carried no service-layer dependency of their own and moved to `platform/`.
+  here too — in-flight-work admission counting, deduplication, the keyed
+  serial queue, and shutdown-failure aggregation — carried no service-layer
+  dependency of their own and moved to `platform/`. There is no shared
+  closed-broadcast primitive: `AgentService.closed` / `TeamService.closed` are
+  each a plain `readonly closed: Promise<...ClosedFact>`, resolved once in
+  place, with no shared publisher/subscriber class behind them.
 
 ## Invariants (why it's shaped this way)
 

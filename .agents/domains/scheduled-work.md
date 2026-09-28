@@ -144,7 +144,6 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/lifecycle.ts`
 - `/packages/dreamux/src/service/team/service.ts`
-- `/packages/dreamux/src/service/team/closing.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 
 ## MCP Surface

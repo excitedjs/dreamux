@@ -18,6 +18,7 @@ import type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 
 import { builtinCardAction } from './card-actions.js';
 import type { FeishuBindingOperations } from './routing/operations.js';
+import type { FeishuBot } from './bot.js';
 import type { FeishuOutbound } from './outbound/index.js';
 import type { FeishuInboundTargeting } from './inbound/target.js';
 import type { FeishuLifecycle } from './session/lifecycle.js';
@@ -304,13 +305,15 @@ export interface FeishuBoundExtensionTool {
 export function buildInstanceApi(input: {
   lifecycle: FeishuLifecycle;
   outbound: FeishuOutbound;
+  /** Card repaint (`editCard`) reaches the bot directly; see `outbound/index.ts`'s header. */
+  bot: Pick<FeishuBot, 'editCard'>;
   targetRouter: Pick<FeishuInboundTargeting, 'project'>;
   routing: FeishuRouting;
   bindings: FeishuBindingOperations;
   /** Closing the instance waits for work passed here before it drains routing. */
   track(work: Promise<unknown>): Promise<unknown>;
 }): FeishuInstanceApi {
-  const { lifecycle, outbound, targetRouter, routing, bindings } = input;
+  const { lifecycle, outbound, bot, targetRouter, routing, bindings } = input;
   return {
     owner(target) {
       const plan = routing.plan(target, null);
@@ -350,7 +353,7 @@ export function buildInstanceApi(input: {
     },
     async editCard(messageId, card) {
       lifecycle.assertLive();
-      await outbound.editCard(messageId, card);
+      await bot.editCard(messageId, card);
     },
   };
 }

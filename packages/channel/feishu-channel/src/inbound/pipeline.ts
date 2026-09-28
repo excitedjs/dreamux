@@ -24,7 +24,6 @@ import {
   type FeishuSendResult,
 } from '@excitedjs/feishu-transport';
 import type { FeishuBot } from '../bot.js';
-import type { FeishuAccess } from '../access/index.js';
 import type { FeishuOutbound } from '../outbound/index.js';
 import type { FeishuLifecycle } from '../session/lifecycle.js';
 import { formatFeishuMessageForRuntime } from './attachments.js';
@@ -59,6 +58,7 @@ import {
 import {
   PAIRING_TTL_MS,
   PAIRING_TOKEN_REGEX,
+  type DispatcherAccessState,
   type PendingPairingEntry,
 } from '../access/state.js';
 import {
@@ -91,7 +91,7 @@ export interface FeishuInboundHandle {
   readonly dispatcherId: string;
   readonly attachmentCacheDir: string;
   readonly bot: FeishuBot;
-  readonly access: FeishuAccess;
+  readonly accessStore: TransactionalStore<DispatcherAccessState>;
   readonly chatBotsStore: TransactionalStore<ChatBotsState>;
   readonly botDisplayName: string;
   readonly targetRouter: FeishuInboundTargeting;
@@ -192,8 +192,8 @@ export async function onMessage(
     return;
   }
 
-  await h.access.load();
-  const access = h.access.current;
+  await h.accessStore.load();
+  const access = h.accessStore.current;
 
   if (
     classification.chatType === 'group' &&
@@ -261,7 +261,7 @@ export async function onMessage(
   // send-before-save, so the store keeps the pre-pair value unchanged here.
   let action!: GateAction;
   let logs!: GateResult['logs'];
-  await h.access.update((current) => {
+  await h.accessStore.update((current) => {
     const result = dreamuxFeishuGate(current, inbound);
     action = result.action;
     logs = result.logs;
@@ -298,7 +298,7 @@ export async function onMessage(
 
   if (action.action === 'pair') {
     // A `let`-bound discriminant loses its narrowed type inside a nested
-    // closure (the `h.access.update` callbacks below), since TS cannot
+    // closure (the `h.accessStore.update` callbacks below), since TS cannot
     // prove those closures run before `action` could be reassigned. Capture
     // the narrowed 'pair' variant in a `const` so the closures see it typed.
     const pairAction = action;
@@ -329,7 +329,7 @@ export async function onMessage(
         );
         return;
       }
-      await h.access.update((current) => {
+      await h.accessStore.update((current) => {
         const existing = current.pending[pairAction.token];
         if (existing === undefined) return current;
         return {
@@ -380,7 +380,7 @@ export async function onMessage(
       return;
     }
     // LOCK-2: merge against latest state (concurrent approval / resend window)
-    await h.access.update((current) => {
+    await h.accessStore.update((current) => {
       // Approved mid-window? Skip entirely.
       if (
         pairAction.kind === 'dm' &&

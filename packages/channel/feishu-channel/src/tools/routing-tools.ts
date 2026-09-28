@@ -133,7 +133,7 @@ async function runBind(
   input: BindInput,
   requireOwner?: string,
 ): Promise<FeishuToolResult> {
-  const result = await ctx.session.bindChannel({
+  const result = await ctx.session.bindings.bindChannel({
     target: bindTarget(input),
     teamName: input.teamName,
     display: input.display,
@@ -152,7 +152,7 @@ async function runUnbind(
   input: TargetInput,
   requireOwner?: string,
 ): Promise<FeishuToolResult> {
-  const result = await ctx.session.unbindChannel(
+  const result = await ctx.session.bindings.unbindChannel(
     bindTarget(input),
     requireOwner,
   );
@@ -388,7 +388,7 @@ export const listBindingsDef: FeishuToolDef<ListBindingsQuery> = {
   async handle(ctx, query) {
     return {
       channel_id: ctx.session.channelId,
-      bindings: ctx.session
+      bindings: ctx.session.routing
         .listBindings()
         .filter((row) => matchesQuery(row, query))
         .map((row) => ({ ...row })),

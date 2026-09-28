@@ -162,10 +162,6 @@ export class SchedulerService implements SchedulerCommands {
     return { id, deleted };
   }
 
-  async deleteStoreFile(): Promise<void> {
-    await this.store.deleteStoreFile();
-  }
-
   private async reconcile(job: CronJob): Promise<CronJob | null> {
     if (!job.enabled) return null;
     const now = this.now();

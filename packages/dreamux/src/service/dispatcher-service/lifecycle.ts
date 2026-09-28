@@ -124,13 +124,13 @@ export class DispatcherLifecycle {
       // one-time admission fence, not a resource to release, so a later retry
       // has nothing further to publish here.
       this.opts.channels.closeAdmission();
-      // Workflows fan out to the Team scope the same way the scheduler does
-      // right below: the dispatcher's own admission closes first, then each
-      // Team's.
+      // The dispatcher's own Workflow and scheduler admission close first;
+      // one call then closes every Team's own (each Team owns composing its
+      // own Workflow-close + scheduler-stop, the same pair `stopChildRuntimes`
+      // already composes for dissolve).
       this.opts.workflows.requestStopAll();
-      this.opts.teams.closeWorkflowAdmissions();
       this.opts.scheduler.stop();
-      this.opts.teams.stopSchedulers();
+      this.opts.teams.stopAdmissions();
     }
     const task = this.doClose().catch((error: unknown) => {
       // The admission fence above stays published forever; only this release
@@ -151,7 +151,9 @@ export class DispatcherLifecycle {
    * Recovery then runs against live event pumps. Channels open their external
    * I/O next, and ordinary Workflow, scheduler, and cron admission opens only
    * after all of them have started — a Channel that is still resuming its own
-   * sagas must not be asked to render an ordinary turn.
+   * sagas must not be asked to render an ordinary turn. Team Workflow
+   * recovery belongs to the recovery half (`teams.recover()`), and Team
+   * admission opens with the dispatcher's own.
    *
    * Every step from the dispatcher-row lookup on is inside the one `try`:
    * whatever this attempt built partially — channels adopted so far, an agent
@@ -193,7 +195,7 @@ export class DispatcherLifecycle {
       this.assertAvailable();
       await this.opts.workflows.recover();
       this.assertAvailable();
-      await this.opts.teams.recoverWorkflows();
+      await this.opts.teams.recover();
       this.assertAvailable();
       await this.opts.dispatcherAgent.activateIfNeeded();
       this.assertAvailable();
@@ -203,11 +205,9 @@ export class DispatcherLifecycle {
       this.assertAvailable();
       await this.opts.workflows.start();
       this.assertAvailable();
-      await this.opts.teams.startWorkflows();
-      this.assertAvailable();
       await this.opts.scheduler.start();
       this.assertAvailable();
-      await this.opts.teams.startSchedulers();
+      await this.opts.teams.startAdmissions();
       this.assertAvailable();
     } catch (error) {
       await this.closeAfterFailedTransition(error);
@@ -301,9 +301,9 @@ export class DispatcherLifecycle {
   private async sweepRuntimes(failures: unknown[]): Promise<void> {
     await collectShutdownFailure(failures, () => this.opts.workflows.stopAll());
     await collectShutdownFailure(failures, () => this.opts.teams.stopForHost());
-    for (const teammate of this.opts.teammates.materializedEntities()) {
-      await collectShutdownFailure(failures, () => teammate.stopForHost());
-    }
+    await collectShutdownFailure(failures, () =>
+      this.opts.teammates.stopAllForHost(),
+    );
     await collectShutdownFailure(failures, async () => {
       await this.opts.dispatcherAgent.current?.stopForHost();
     });

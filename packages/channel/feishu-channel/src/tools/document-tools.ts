@@ -120,7 +120,7 @@ export const subscribeDocumentDef: FeishuToolDef<SubscribeInput> = {
   },
   async handle(ctx, input): Promise<FeishuToolResult> {
     return {
-      ...(await ctx.session.subscribeDocument({
+      ...(await ctx.session.docComments.subscribe({
         document: input.document,
         type: input.type,
         teamName: callerRecipient(ctx),
@@ -153,7 +153,7 @@ export const unsubscribeDocumentDef: FeishuToolDef<{ document: string }> = {
   },
   async handle(ctx, input): Promise<FeishuToolResult> {
     return {
-      ...(await ctx.session.unsubscribeDocument({
+      ...(await ctx.session.docComments.unsubscribe({
         document: input.document,
         teamName: callerRecipient(ctx),
       })),
@@ -199,7 +199,7 @@ export const listSubscriptionsDef: FeishuToolDef<Record<string, never>> = {
   async handle(ctx): Promise<FeishuToolResult> {
     return {
       channel_id: ctx.session.channelId,
-      subscriptions: ctx.session
+      subscriptions: ctx.session.routing
         .listSubscriptions(callerRecipient(ctx))
         .map((row) => ({ ...row })),
     };

@@ -1,6 +1,8 @@
 import {
   assertNotReservedAgentName,
+  type AgentEntityCapabilities,
   type AgentEntityIdentityStatus,
+  type AgentEntitySpawnResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
 import type {
@@ -18,7 +20,11 @@ import type { ConfigReader } from '../../config/service.js';
 import type { AgentNameRegistry } from '../agent/store.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';
-import type { TeamMateSharedWorkspace } from '../agent/types.js';
+import type {
+  SpawnTeamMateRequest,
+  TeamMateSharedWorkspace,
+  TeammateOps,
+} from '../agent/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
@@ -26,9 +32,9 @@ import type {
   CompletionInitiator,
 } from '../completion-router/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
-import type { ClosedListener } from '../../platform/closed-fact.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
+import type { WorkflowOps } from '../workflow-service/index.js';
 import { RuleViolation } from '../../platform/errors.js';
 
 export interface TeamCollectionOptions {
@@ -313,6 +319,24 @@ export interface TeamHistoryResult {
   next_cursor: string | null;
 }
 
+export interface TeamLeaderTeammateOps {
+  send: TeammateOps['send'];
+  close: TeammateOps['close'];
+  list: TeammateOps['list'];
+  status: TeammateOps['status'];
+  history: TeammateOps['history'];
+  last: TeammateOps['last'];
+  getCapabilities(): Promise<AgentEntityCapabilities>;
+}
+
+export interface TeamLeaderHandle {
+  teammates: TeamLeaderTeammateOps;
+  workflows: WorkflowOps;
+  spawnTeamMate(
+    input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
+  ): Promise<AgentEntitySpawnResult>;
+}
+
 export function validateTeamId(id: string): string {
   if (!TEAM_ID_PATTERN.test(id)) {
     throw new RuleViolation(
@@ -345,10 +369,10 @@ export interface TeamServiceCreateInput {
 /**
  * One Team is over.
  *
- * Published once, after that Team's own record is durably `closed` — the only
- * fact that makes it true. Its owner drops the exact instance that published
- * it; nothing else is asked of a listener, and nothing a listener does can
- * change what already happened.
+ * Resolved once, on `TeamService.closed`, after that Team's own record is
+ * durably `closed` — the only fact that makes it true. Its owner
+ * (`TeamCollection`) awaits that promise to drop the exact instance that
+ * resolved it.
  */
 export interface TeamClosedFact {
   readonly schema_version: 1;
@@ -357,8 +381,6 @@ export interface TeamClosedFact {
   readonly team_id: string;
   readonly closed_at: number;
 }
-
-export type TeamClosedListener = ClosedListener<TeamClosedFact>;
 
 /** The fact a Team publishes from the record that made it closed. */
 export function teamClosedFact(record: TeamRecord): TeamClosedFact {

@@ -7,12 +7,12 @@ import type {
 import type { TurnAdmission } from '../agent/turn.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
-import type { TeamLeaderHandle } from './leader-handle.js';
 import type {
   TeamDissolveCommand,
   TeamDissolveReceipt,
   TeamHistoryQuery,
   TeamHistoryResult,
+  TeamLeaderHandle,
   TeamListRow,
 } from './types.js';
 

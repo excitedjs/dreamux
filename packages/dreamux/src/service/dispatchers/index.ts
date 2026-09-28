@@ -20,6 +20,7 @@ import type {
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 import { identityStatusToRuntimeStatus } from '../dispatcher-service/agent.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 
 export interface DispatchersOptions {
   config: ConfigReader;
@@ -166,6 +167,29 @@ export class Dispatchers {
       sessionId: identity?.session_id ?? null,
       lastError: identity?.last_error ?? null,
     };
+  }
+
+  /**
+   * Start every enabled dispatcher — the counterpart to {@link shutdown}.
+   * Sequential and log-and-continue, not aggregate-and-throw: one
+   * dispatcher's start failure must not stop the others from starting or
+   * abort the whole boot (`Server.start()` used to run this exact loop
+   * itself).
+   */
+  async start(): Promise<void> {
+    for (const row of this.dispatcherStore.listEnabled()) {
+      try {
+        await this.get(row.dispatcher_id).start();
+      } catch (err) {
+        this.log.error(
+          {
+            dispatcher_id: row.dispatcher_id,
+            err: errorInfo(err),
+          },
+          'dispatcher failed to start',
+        );
+      }
+    }
   }
 
   /**
