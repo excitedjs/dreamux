@@ -201,8 +201,9 @@ export function dispatcherDir(id: string): string {
  * caller (`plugin/host.ts`) passes only a `loaded.name` that
  * `plugin/loader.ts`'s `constructPlugin` already validated against the safe
  * single-segment `PLUGIN_NAME_PATTERN`, so it is already exactly this
- * directory's name — no two distinct names can collide here, and none can
- * resolve to `.`/`..` and escape `state/plugins/`.
+ * directory's name: distinct names map to distinct segments on a
+ * case-sensitive filesystem, and none can resolve to `.`/`..` and escape
+ * `state/plugins/`.
  */
 export function pluginStateDir(name: string): string {
   return join(stateRoot(), 'plugins', name);

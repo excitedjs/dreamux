@@ -365,8 +365,6 @@ export class DispatcherService implements Dispatcher {
       log: opts.log,
       channels: this.channels,
       dispatcherAgent: this.dispatcherAgent,
-      commands: opts.commands,
-      coreEvents: this.coreEvents,
       scheduler: this.scheduler_,
       teams: this._teams,
       teammates: this._teammates,

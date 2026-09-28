@@ -64,7 +64,6 @@ export type TeamMcpCaller =
   | {
       readonly kind: 'team_leader';
       readonly teamId: string;
-      readonly leaderName: string;
     };
 
 export const TEAM_MCP_SERVER_NAME = 'team';

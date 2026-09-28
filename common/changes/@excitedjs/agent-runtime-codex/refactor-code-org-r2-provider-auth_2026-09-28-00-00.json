@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The Codex home auth check in `dreamux doctor` also accepts a home whose selected `model_provider` authenticates through its own `[model_providers.<id>]` table (a non-empty `experimental_bearer_token`, or an `env_key` whose variable is set). Such a home has no `auth.json` and was reported as missing auth even though the runtime started normally.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

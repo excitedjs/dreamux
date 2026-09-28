@@ -55,8 +55,8 @@ the Team.
   caller (Commands, MCP delegates) reaches the owning port itself instead of a
   forwarding method per verb. `workspace()` is the one surviving pass-through:
   both the TeamMate and Team Command/MCP surfaces resolve a request's default
-  `cwd` from it, and it is a dispatcher-level fact neither domain owns. It *has
-  an* agent: `agent.ts`'s `DispatcherAgent` is its one agent owner, covering
+  `cwd` from it, and it is a dispatcher-level fact neither domain owns. It _has
+  an_ agent: `agent.ts`'s `DispatcherAgent` is its one agent owner, covering
   dispatcher-root identity ensure, construction as a contained `AgentService`
   through the per-dispatcher `AgentServiceFactory`, the one `mustAgent()`
   accessor, lazy activation with resume-notice injection (consuming the
@@ -281,7 +281,7 @@ the Team.
   service resolves a provider from the registry-backed catalog and calls the
   same contract for every runtime; it knows no runtime specifics. The same
   applies to Channels through `ChannelProvider`.
-- **The operation is the fence.** A nullable `Promise` field *is* the state: a
+- **The operation is the fence.** A nullable `Promise` field _is_ the state: a
   dissolve, a host stop, or a start publishes its promise before doing the work
   behind it, and a second caller joins that promise instead of starting a
   second operation. Do not add a boolean beside a task, or a phase enum beside
@@ -305,14 +305,11 @@ the Team.
   path; after the async build for `send`'s reopen, since composing a launch
   draft (`teammateLaunch`) puts an `await` before the entity exists — and
   self-close it (`stopForHost()`) right there, before it is handed back for
-  its first submission. For `TeammateCollection`
-  this preempts the entity's first submission outright — it throws before
-  `spawn` gets to submit anything. For `TeamCollection` it cannot: a Team's
-  leader may already have taken its first submission by the time `track()`
-  runs (`TeamService.createNew` submits it internally, before the collection
-  ever sees the object), so this only stops the runtime as soon as the
-  collection notices, rather than leaving it running until a later sweep
-  reaches it. This closes the gap for a brand-new entity's first submission
+  its first submission, and throws so the caller never submits. A created
+  Team is held in the collection's `starting` set, and checked, before
+  `TeamService.startCreated` submits its initial prompt: `createNew` stops
+  once the record and the leader exist, so the leader's first runtime start
+  always happens inside something a host stop reaches. This closes the gap for a brand-new entity's first submission
   only. It is not a substitute for the dispatcher's own two-pass runtime sweep
   (see the `dispatcher-service/index.ts` bullet above): an
   already-materialized entity's pre-fence admission can still start, or

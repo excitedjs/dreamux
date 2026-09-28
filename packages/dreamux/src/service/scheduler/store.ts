@@ -148,9 +148,9 @@ export class CronJobStore {
    * a missed outcome is projected onto — a stale caller-held snapshot can
    * never overwrite it. `advance` returning `null` means this settlement has
    * nothing to write (the caller decides why, e.g. the row already moved past
-   * the fire being settled); this method returns `null` for that case and
-   * when the job was deleted concurrently — either way, there is nothing left
-   * to report back.
+   * the fire being settled). Either way the row as it now stands is returned,
+   * because arming is a separate question from writing; `null` means only
+   * that the job was deleted concurrently.
    */
   async applyMissed(
     id: string,
@@ -158,19 +158,12 @@ export class CronJobStore {
       current: CronJob,
     ) => { enabled?: boolean; nextRunAt: number | null } | null,
   ): Promise<CronJob | null> {
-    let settled = true;
     const file = await this.store.update((current) => {
       const index = current.jobs.findIndex((job) => job.id === id);
-      if (index === -1) {
-        settled = false;
-        return current;
-      }
+      if (index === -1) return current;
       const existing = current.jobs[index]!;
       const derived = advance(existing);
-      if (derived === null) {
-        settled = false;
-        return current;
-      }
+      if (derived === null) return current;
       const next: CronJob = {
         ...existing,
         next_run_at: derived.nextRunAt,
@@ -181,7 +174,6 @@ export class CronJobStore {
       jobs[index] = next;
       return { version: current.version, jobs };
     });
-    if (!settled) return null;
     const job = file.jobs.find((entry) => entry.id === id);
     return job === undefined ? null : cloneJob(job);
   }

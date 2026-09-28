@@ -188,17 +188,17 @@ export class TeamStore {
       closedAt?: number | null;
       closeNote?: string | null;
       worktree?: TeamRecord['worktree'];
-      intent?: string;
       cleanupForce?: boolean;
     },
   ): Promise<TeamRecord> {
-    const updated = await this.storeFor(teamId).update((current) => {
+    let updated!: TeamRecord;
+    await this.storeFor(teamId).update((current) => {
       if (current === null) {
         throw new TeamNotFoundError(
           `Team ${JSON.stringify(teamId)} no longer has a readable record`,
         );
       }
-      return {
+      updated = {
         ...current,
         ...(input.status !== undefined ? { status: input.status } : {}),
         ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
@@ -206,18 +206,13 @@ export class TeamStore {
           ? { close_note: input.closeNote }
           : {}),
         ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
-        ...(input.intent !== undefined ? { intent: input.intent } : {}),
         ...(input.cleanupForce !== undefined
           ? { worktree_cleanup_force: input.cleanupForce }
           : {}),
         updated_at: Date.now(),
       };
+      return updated;
     });
-    // `change` above always throws on a null current and otherwise returns a
-    // merged, non-null record, so this is never null.
-    if (updated === null) {
-      throw new Error(`Team ${JSON.stringify(teamId)} update lost its result`);
-    }
     return updated;
   }
 }

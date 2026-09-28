@@ -96,7 +96,7 @@ export function teamLeaderMcpDelegates(
     ),
     createTeamMcpDelegate({
       teams: input.dispatcher.teams,
-      caller: { kind: 'team_leader', teamId, leaderName },
+      caller: { kind: 'team_leader', teamId },
     }),
     createTeamMateMcpDelegate({
       kind: 'team_leader',

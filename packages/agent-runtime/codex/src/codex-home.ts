@@ -83,11 +83,14 @@ export async function validateDispatcherCodexHome(
   const context: DispatcherCodexHomeDoctorContext = input;
   const errors: string[] = [];
   const env = options.env;
+  let config: Record<string, unknown> = {};
 
   if (await pathExists(context.configPath)) {
     try {
       const parsed = parseToml(await readFile(context.configPath, 'utf8'));
-      if (!isRecord(parsed)) {
+      if (isRecord(parsed)) {
+        config = parsed;
+      } else {
         errors.push(`Codex config must be a TOML table: ${context.configPath}`);
       }
     } catch (err) {
@@ -117,7 +120,7 @@ export async function validateDispatcherCodexHome(
   // (issue #209 slice 6); core injects it at runtime by role via
   // `skills/extraRoots/set`, so the doctor no longer checks for an on-disk skill.
 
-  if (!(await hasAuth(context.codexHome, env))) {
+  if (!(await hasAuth(context.codexHome, config, env))) {
     errors.push(
       `missing Codex auth state in ${context.codexHome} or a supported auth environment variable`,
     );
@@ -144,15 +147,39 @@ function formatTomlError(err: unknown, file: string): string {
 
 async function hasAuth(
   codexHome: string,
+  config: Record<string, unknown>,
   env: DreamuxEnvironment,
 ): Promise<boolean> {
   if (await pathExists(join(codexHome, 'auth.json'))) return true;
+  if (providerCarriesAuth(config, env)) return true;
   return ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'].some(
-    (name) => {
-      const value = env[name];
-      return value !== undefined && value.trim() !== '';
-    },
+    (name) => isSet(env[name]),
   );
+}
+
+/**
+ * A home whose selected `model_provider` is a `[model_providers.<id>]` table
+ * authenticates through that table: a literal `experimental_bearer_token`, or
+ * the variable its `env_key` names. Such a home has no `auth.json` and needs
+ * none of the OpenAI variables.
+ */
+function providerCarriesAuth(
+  config: Record<string, unknown>,
+  env: DreamuxEnvironment,
+): boolean {
+  const selected = config['model_provider'];
+  const providers = config['model_providers'];
+  if (typeof selected !== 'string' || !isRecord(providers)) return false;
+  const provider = providers[selected];
+  if (!isRecord(provider)) return false;
+  const token = provider['experimental_bearer_token'];
+  if (typeof token === 'string' && token.trim() !== '') return true;
+  const envKey = provider['env_key'];
+  return typeof envKey === 'string' && isSet(env[envKey]);
+}
+
+function isSet(value: string | undefined): boolean {
+  return value !== undefined && value.trim() !== '';
 }
 
 function isTmpPath(path: string): boolean {

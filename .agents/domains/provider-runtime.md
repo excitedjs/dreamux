@@ -19,11 +19,11 @@ The built-in refs are stable aliases. All three are contributed into the
 registry by their own always-loaded plugin — the same mechanism, and the same
 registry, an operator-listed `plugins[]` entry uses:
 
-| Ref | Kind | Package | Registered by |
-|---|---|---|---|
-| `builtin:codex` | `agentRuntime` | `@excitedjs/agent-runtime-codex` | the `codex` plugin's `contribute` |
+| Ref                   | Kind           | Package                                | Registered by                           |
+| --------------------- | -------------- | -------------------------------------- | --------------------------------------- |
+| `builtin:codex`       | `agentRuntime` | `@excitedjs/agent-runtime-codex`       | the `codex` plugin's `contribute`       |
 | `builtin:claude-code` | `agentRuntime` | `@excitedjs/agent-runtime-claude-code` | the `claude-code` plugin's `contribute` |
-| `builtin:feishu` | `channel` | `@excitedjs/feishu-channel` | the `feishu` plugin's `contribute` |
+| `builtin:feishu`      | `channel`      | `@excitedjs/feishu-channel`            | the `feishu` plugin's `contribute`      |
 
 A provider any plugin contributes is addressed as `builtin:<name>`, with the
 same ref grammar and catalogs; the plugin mechanism is owned by
@@ -38,7 +38,7 @@ exports declarations only: provider descriptors, Agent Runtime contracts,
 Channel contracts, turn shapes, diagnostics, and the plugin contract. It does not export host stores, path
 helpers, provider loaders, or runtime implementations.
 
-**Who may depend on it is part of what it is.** It exists for code *outside*
+**Who may depend on it is part of what it is.** It exists for code _outside_
 Dreamux — an external provider compiles against it to be loadable — so a
 dependency on it is a statement that the depending code is provider-facing.
 `@excitedjs/dreamux-utils` therefore depends on it not at all, not even for a
@@ -124,8 +124,8 @@ Current schema:
 - `dispatchers[].channels[]` entries carry dispatcher-local `id`, provider ref,
   and provider-owned config.
 
-Config loading first loads plugins (the always-loaded Feishu plugin, then
-`plugins[]` in order) and runs their `contribute`, then loads the referenced
+Config loading first loads plugins (the always-loaded codex, claude-code, and
+Feishu plugins, then `plugins[]` in order) and runs their `contribute`, then loads the referenced
 Agent Runtime and Channel providers, validates provider-owned config through
 each provider's `readConfig`, and finally runs each plugin's `config.read`.
 Provider config can be sync or async. Core rejects missing `agentRuntime`,
@@ -564,6 +564,7 @@ Each provider maps the neutral call to its own protocol:
   a text-free `turn.interrupted` activity ahead of the end, and the display
   layer puts that sentence on the card. That line, not the card's end status,
   is what an interrupt owes the operator.
+
 - **Codex** sends `turn/interrupt` with `{ threadId, turnId }` and gets an empty
   response. The method is part of the app-server v2 surface at the declared
   minimum `0.137.0`, so this added no version requirement. An accepted interrupt
@@ -823,7 +824,7 @@ emit another usage activity.
   terminal, and clears it both there and on a collector/thread change.
   Input/output come from `total.inputTokens` and `total.outputTokens`; cached
   input and reasoning output are already included. Context is included only
-  when `last.totalTokens` and a *positive* `modelContextWindow` are both
+  when `last.totalTokens` and a _positive_ `modelContextWindow` are both
   present; otherwise the activity carries `context: null` and a display layer
   renders `n/a` — the historical line — rather than a used count that would
   be indistinguishable from a runtime that structurally lacks a window.
@@ -916,12 +917,12 @@ Every member except `turn.ended` carries `occurredAt` and `id`, one shared
 base shape. `id` is the provider's own id for the object the activity reports,
 taken whole — no prefix, suffix, counter, or composition:
 
-| Activity | Claude Code | Codex |
-| --- | --- | --- |
-| `assistant.message` | the assistant line's `uuid` | agent message item id |
-| `tool.call` (start and result) | `tool_use.id` | tool item id (its `call_id`) |
-| `context.compacted` | the `compact_boundary` line's `uuid` | compaction item id |
-| `token.usage`, `turn.interrupted` | the `result` line's own `uuid` | `turnId` |
+| Activity                          | Claude Code                          | Codex                        |
+| --------------------------------- | ------------------------------------ | ---------------------------- |
+| `assistant.message`               | the assistant line's `uuid`          | agent message item id        |
+| `tool.call` (start and result)    | `tool_use.id`                        | tool item id (its `call_id`) |
+| `context.compacted`               | the `compact_boundary` line's `uuid` | compaction item id           |
+| `token.usage`, `turn.interrupted` | the `result` line's own `uuid`       | `turnId`                     |
 
 So an id is not unique per activity: a call's start and result share one, and
 so do one turn's usage and interrupt marker. A consumer that needs one

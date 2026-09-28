@@ -168,9 +168,10 @@ to the plugin at `server()` time (`ServerHost.stateDir`) and never creates it
 or reads inside it. `plugin/loader.ts`'s `constructPlugin` validates a
 factory-returned plugin name against a safe single-segment pattern (1-64 ASCII
 letters/digits/dot/underscore/dash, starting with a letter or digit) and fails
-loading loud otherwise, so `pluginStateDir` uses `<plugin-name>` verbatim: two
-distinct names can never collide on one directory, and none can resolve to
-`.`/`..` and escape `state/plugins/`.
+loading loud otherwise, so `pluginStateDir` uses `<plugin-name>` verbatim: distinct
+names map to distinct segments on a case-sensitive filesystem (on a
+case-insensitive one `Foo` and `foo` share a directory), and none can resolve
+to `.`/`..` and escape `state/plugins/`.
 
 Source:
 
@@ -435,7 +436,7 @@ The primitive owns no paths and no schemas: path builders stay in
 domain methods. `config.json` is on this primitive too, owned by
 `config/service.ts`'s `ConfigService` — a missing file, wrong mode, bad JSON,
 or a rejected shape still exits the `dreamux serve` process exactly as it did
-before this primitive backed the file; its *validation* already tolerated an
+before this primitive backed the file; its _validation_ already tolerated an
 unknown field the same way (see Operator Config above).
 
 Per-owner corrupt-file policy is deliberately not unified; several behaviors
