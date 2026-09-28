@@ -33,7 +33,6 @@ import type {
   ParsedLine,
   ResultEnvelope,
   TurnOutcome,
-  TurnSubmitOptions,
 } from './types.js';
 
 export type {
@@ -302,11 +301,7 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
 // ─── Outbound message builders (stdin) ──────────────────────────────────────
 
 /** One user turn as a stream-json `user` message line (no trailing newline). */
-export function buildUserMessage(
-  text: string,
-  _options: TurnSubmitOptions = {},
-  commandUuid?: string,
-): string {
+export function buildUserMessage(text: string, commandUuid?: string): string {
   const envelope: Record<string, unknown> = {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text }] },

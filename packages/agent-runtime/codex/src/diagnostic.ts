@@ -22,7 +22,6 @@ import type {
   AgentRuntimeDiagnosticResult,
 } from '@excitedjs/dreamux-types';
 
-import { codexArgsFromConfig, codexArgsToCli } from './args.js';
 import { type DispatcherCodexConfig } from './config.js';
 import {
   dispatcherCodexHomeDoctorContext,
@@ -76,7 +75,6 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
       context,
       runner,
     ): Promise<AgentRuntimeDiagnosticResult> {
-      const cliArgs = codexArgsToCli(codexArgsFromConfig(context.config));
       const socketDirs = context.paths.runtimeSocketDirs();
       // Validate against the env this runtime's Codex child actually spawns
       // with (the diagnostic's target env — the managed service's own env for
@@ -89,17 +87,13 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
         context.runtime_id,
         env,
         {
-          codexCliArgs: cliArgs,
           socketPath: representativeCodexSocketPath(
             socketDirs,
             context.runtime_id,
           ),
         },
       );
-      const home = await validateDispatcherCodexHome(homeContext, {
-        env,
-        codexCliArgs: cliArgs,
-      });
+      const home = await validateDispatcherCodexHome(homeContext, { env });
       const errors = [...home.errors];
       const versionError = await checkCodexVersion(context, runner);
       if (versionError !== null) errors.push(versionError);

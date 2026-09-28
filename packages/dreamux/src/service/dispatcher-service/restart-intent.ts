@@ -59,7 +59,7 @@ export interface WriteRestartIntentOptions {
  * Persist the restart marker. Must be called *before* triggering the service
  * manager restart so the marker is durable if the caller is killed.
  */
-export async function writeRestartIntent(
+async function writeRestartIntent(
   options: WriteRestartIntentOptions,
 ): Promise<string> {
   const path = options.path ?? restartIntentPath();
@@ -90,7 +90,7 @@ export async function writeRestartIntent(
  * self-update path where the caller is reaped before reaching here keeps the
  * marker (durability), which is the intended behaviour (issue #78).
  */
-export async function clearRestartIntent(
+async function clearRestartIntent(
   path: string = restartIntentPath(),
 ): Promise<void> {
   try {

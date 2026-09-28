@@ -244,11 +244,7 @@ function isValidPageCursor(value: string | undefined): boolean {
 
 function isNullableTimestamp(value: string | undefined): boolean {
   if (value === undefined) return true;
-  return (
-    typeof value === 'string' &&
-    value.length <= 64 &&
-    !Number.isNaN(Date.parse(value))
-  );
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value));
 }
 
 /**

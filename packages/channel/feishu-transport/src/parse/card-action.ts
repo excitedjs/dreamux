@@ -3,6 +3,7 @@
  * action handler's answer back into Feishu's own callback ACK shape.
  */
 
+import { asRecord, firstString } from '../json.js';
 import type { TransportLogger } from '../transport/diagnostics.js';
 
 export interface FeishuCardActionEvent {
@@ -60,19 +61,6 @@ export function normalizeCardActionEvent(raw: unknown): FeishuCardActionEvent {
     ...(openMessageId !== '' ? { openMessageId } : {}),
     raw,
   };
-}
-
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value === 'string') return value;
-  }
-  return '';
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 const FEISHU_CARD_TOP_LEVEL_KEYS = new Set([

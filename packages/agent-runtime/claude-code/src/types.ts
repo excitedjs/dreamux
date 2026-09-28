@@ -120,9 +120,6 @@ export interface ResultEnvelope {
   };
 }
 
-/** Per-turn stdin delivery options. Currently empty: no delivery variant is submitted. */
-export interface TurnSubmitOptions {}
-
 /** The reduced outcome of one assistant turn, terminated by a `result`. */
 export interface TurnOutcome {
   readonly isError: boolean;
@@ -194,12 +191,6 @@ export type ClaudeProtocolEvent =
       readonly uuid: string | null;
       readonly outcome: TurnOutcome;
     }
-  | {
-      /** Public native observation; lifecycle alone does not supply a completion. */
-      readonly kind: 'command_lifecycle';
-      readonly commandUuid: string;
-      readonly state: CommandLifecycleState;
-    }
   | { readonly kind: 'stream'; readonly line: ClaudeActivityLine }
   | {
       readonly kind: 'result';
@@ -216,11 +207,7 @@ export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
   /** Resolve native admission; the returned submission carries eventual settlement. */
-  submit(
-    prompt: string,
-    options?: TurnSubmitOptions,
-    commandUuid?: string,
-  ): Promise<RuntimeAdmission>;
+  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission>;
   /** Interrupt whatever claude is doing; false when it is doing nothing. */
   interrupt(reason: string): Promise<boolean>;
   /** Whether the child is currently alive. */

@@ -56,7 +56,7 @@ export interface CodexHistoryBase {
 }
 
 export async function resolveCodexRolloutRoots(
-  env: DreamuxEnvironment = process.env,
+  env: DreamuxEnvironment,
 ): Promise<CodexRolloutRoots> {
   const configured = env['CODEX_HOME'];
   if (

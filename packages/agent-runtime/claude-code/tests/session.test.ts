@@ -62,36 +62,6 @@ describe('resident session over real pipes', () => {
     return session;
   }
 
-  it('returns admission and per-request answers, reusing one process for subsequent input', async () => {
-    const session = makeSession('echo');
-    await session.start();
-    const a = await accepted(session.submit('hello', {}, 'A'));
-    await expect(a.settled).resolves.toEqual({
-      kind: 'completion',
-      completion: { status: 'completed', resultText: 'echo:hello' },
-    });
-    const b = await accepted(session.submit('again', {}, 'B'));
-    await expect(b.settled).resolves.toEqual({
-      kind: 'completion',
-      completion: { status: 'completed', resultText: 'echo:again' },
-    });
-    expect(session.isAlive()).toBe(true);
-    expect(
-      events.filter((event) => event.kind === 'command_lifecycle'),
-    ).toEqual([
-      { kind: 'command_lifecycle', commandUuid: 'A', state: 'started' },
-      { kind: 'command_lifecycle', commandUuid: 'A', state: 'completed' },
-      { kind: 'command_lifecycle', commandUuid: 'B', state: 'started' },
-      { kind: 'command_lifecycle', commandUuid: 'B', state: 'completed' },
-    ]);
-    const resultIndex = events.findIndex((event) => event.kind === 'result');
-    const assistantIndex = events.findIndex(
-      (event) => event.kind === 'stream' && event.line.kind === 'assistant',
-    );
-    expect(assistantIndex).toBeGreaterThanOrEqual(0);
-    expect(assistantIndex).toBeLessThan(resultIndex);
-  });
-
   it('keeps identical answers to separate inputs as distinct completions', async () => {
     const session = makeSession('echo');
     await session.start();

@@ -271,19 +271,21 @@ export class WorkflowService implements WorkflowOps {
   private async recoverRunningRecords(): Promise<void> {
     for (const stored of await this.store.list()) {
       if (stored.status !== 'running') continue;
-      // `stored` is the run's committed reference, held by its own
-      // `TransactionalStore` and reused by every later `get`/`list` call for
-      // this run id. Mutating it in place here would make a retry after a
-      // failed `store.write` below see this attempt's already-'stopped'
-      // in-memory draft instead of re-reading the still-'running' file, and
-      // silently skip recovering it. Recover a clone; only a successful
-      // `store.write` may replace the committed value.
+      // `stored` came from a one-shot disk read. Mutating it in place here
+      // would make a retry after a failed `store.write` below see this
+      // attempt's already-'stopped' in-memory draft instead of re-reading
+      // the still-'running' file, and silently skip recovering it. Recover a
+      // clone; only a successful `store.write` may replace the committed
+      // value.
       const record = structuredClone(stored);
       const journal = new WorkflowJournal(
         workflowRunJournalPath({ ...this.scope, runId: record.run_id }),
       );
       const backfilled = await journal.recover(record, this.now());
       await this.store.write(record);
+      // This correction has no `WorkflowRun` owner to settle and release the
+      // store later — the record is already terminal, so release it now.
+      this.store.release(record.run_id);
       this.opts.log.warn(
         { run_id: record.run_id, status: record.status },
         backfilled
@@ -301,7 +303,10 @@ export class WorkflowService implements WorkflowOps {
    * ended must never evict its successor.
    */
   private evict(runId: string, expected: WorkflowRun): void {
-    if (this.runs.get(runId) === expected) this.runs.delete(runId);
+    if (this.runs.get(runId) === expected) {
+      this.runs.delete(runId);
+      this.store.release(runId);
+    }
   }
 
   private now(): number {

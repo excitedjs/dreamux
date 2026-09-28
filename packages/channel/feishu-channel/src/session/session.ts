@@ -473,7 +473,7 @@ export class FeishuChannelSession {
       // nothing. Removing rows here would take the announcement away from
       // both, because the first remover is the only one with anything to
       // announce.
-      invoke: (command, payload) => this.invoke(command, payload),
+      commands: this.commands,
       // The only place that knows a bot may not offer the lookup at all. Below
       // this line a chat name is simply something you ask for and may not get.
       resolveChatName: (chatId) =>

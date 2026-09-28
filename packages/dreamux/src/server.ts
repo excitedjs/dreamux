@@ -13,11 +13,7 @@ import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
 } from './registry/index.js';
-import {
-  BUILT_IN_DEFAULTS,
-  dispatcherAgent,
-  type DreamuxConfig,
-} from './config/config.js';
+import { dispatcherAgent, type DreamuxConfig } from './config/config.js';
 import type { ConfigService } from './config/service.js';
 import { DispatcherStore } from './state/dispatcher-store.js';
 import { resolveHomePathPrefixes } from './platform/home-paths.js';
@@ -45,16 +41,14 @@ import {
 
 export interface ServerOptions {
   /**
-   * `config.json`'s single in-process authority (typically opened by the CLI
-   * entry point). Typed as the concrete `ConfigService`, not the narrower
+   * `config.json`'s single in-process authority (opened by the CLI entry
+   * point and passed in so user edits, and `config.agents.replace` writes,
+   * take effect). Typed as the concrete `ConfigService`, not the narrower
    * `ConfigReader`: `commandHost()` hands this field whole to
    * `CoreCommandHost.config`, which the `config.agents.*` Commands need
-   * `readAgents`/`replaceAgents` from, not just `current()`. When omitted, a
-   * trivial in-memory default is used — convenient for tests, but in
-   * production the CLI always opens the real file-backed service and passes
-   * it in so user edits, and `config.agents.replace` writes, take effect.
+   * `readAgents`/`replaceAgents` from, not just `current()`.
    */
-  config?: ConfigService;
+  config: ConfigService;
   /** Override admin socket path (tests). */
   adminSocketPath?: string;
   /**
@@ -117,21 +111,6 @@ export interface Repos {
   dispatchers: DispatcherStore;
 }
 
-/**
- * `ServerOptions.config`'s default when a test or embedded server omits it.
- * A plain object rather than a real file-backed `ConfigService` — no test
- * needs a config.json on disk just to construct a `Server` — cast through
- * `unknown` because `ConfigService`'s private fields make its declared type
- * nominal, the same pattern already used for other class-typed Deps fakes in
- * this package's tests. Never reached by a running `dreamux serve`: the CLI
- * entry point always opens the real `ConfigService` and passes it in.
- */
-const DEFAULT_CONFIG_SERVICE = {
-  current: () => BUILT_IN_DEFAULTS,
-  readAgents: () => [],
-  replaceAgents: async (agents: readonly Record<string, unknown>[]) => agents,
-} as unknown as ConfigService;
-
 export class Server {
   readonly repos: Repos;
   private dispatchers_: Dispatchers | null = null;
@@ -178,11 +157,11 @@ export class Server {
     return this.dispatchers_;
   }
 
-  constructor(opts: ServerOptions = {}) {
+  constructor(opts: ServerOptions) {
     this.opts = opts;
     this.providerRegistry =
       opts.providerRegistry ?? createBuiltinProviderRegistry();
-    const config = opts.config ?? DEFAULT_CONFIG_SERVICE;
+    const config = opts.config;
     // The catalogs below are pure registry lookups, so when no runtime catalog is
     // injected every referenced provider implementation must already be loaded
     // (production: the ConfigService.open registry; tests: an injected catalog
@@ -231,7 +210,7 @@ export class Server {
       dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
       dispatcher: (id) => this.getDispatcher(id),
       mcpLeases: this.mcpLeases,
-      config: this.opts.config ?? DEFAULT_CONFIG_SERVICE,
+      config: this.opts.config,
     };
   }
 
@@ -251,7 +230,7 @@ export class Server {
       warn: (message) => this.log.warn(message),
     });
     this.dispatchers_ = new Dispatchers({
-      config: this.opts.config ?? DEFAULT_CONFIG_SERVICE,
+      config: this.opts.config,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
@@ -336,7 +315,7 @@ export class Server {
     // a capability holder (config/service.ts's ConfigReader doc); this whole
     // preflight loop runs once at boot, before anything could observe a later
     // config.agents.replace, so one resolved value for the loop is correct.
-    const config = (this.opts.config ?? DEFAULT_CONFIG_SERVICE).current();
+    const config = this.opts.config.current();
     const failures: string[] = [];
     for (const row of this.repos.dispatchers.listEnabled()) {
       try {

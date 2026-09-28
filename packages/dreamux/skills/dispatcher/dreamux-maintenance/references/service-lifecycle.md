@@ -77,11 +77,6 @@ runtime app-server readiness, and same-version restart cautions.
   is not permission to perform an unbounded scan or to build a cache or index.
 - `identity.json` is fully server-owned. Do not edit, copy over, synthesize, or
   delete it as an operational repair.
-- Dreamux never creates, opens, stats, lists, validates, repairs, migrates, or
-  deletes a current-layout entity `turn.jsonl`. Any such file is inert legacy
-  residue. Its contents, version, permissions, parseability, or absence cannot
-  block startup or lifecycle behavior, and no manual cleanup or rebuild is
-  required.
 
 ## Workflow Run State
 
@@ -127,10 +122,10 @@ runtime app-server readiness, and same-version restart cautions.
   no agent and addresses no Channel, and a job carries no delivery target and
   no `dispatcher_id` (the store path already scopes it). A store file
   containing a `spawn-teammate` action is not current state: it fails loud
-  when read, and `dreamux doctor` names the file. Delete that job or the store
-  file and recreate the schedule. A leftover `deliver` or `dispatcher_id`
-  field on an old job is tolerated as an ordinary unknown field: it loads,
-  is ignored, and is dropped the next time that job is rewritten.
+  when read, and `dreamux doctor` names the file. A leftover `deliver` or
+  `dispatcher_id` field on an old job is tolerated as an ordinary unknown
+  field: it loads, is ignored, and is dropped the next time that job is
+  rewritten.
 - A due job is submitted through ordinary admission, so it may fold into a turn
   that is already running. Firing proves submission, not a visible reply.
 

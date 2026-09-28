@@ -16,21 +16,6 @@ export function describeType(v: unknown): string {
   return typeof v;
 }
 
-export function rejectUnknownKeys(
-  obj: Record<string, unknown>,
-  allowed: Set<string>,
-  file: string,
-  prefix: string,
-): void {
-  for (const key of Object.keys(obj)) {
-    if (allowed.has(key)) continue;
-    const name = `${prefix}${key}`;
-    throw new Error(
-      `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema`,
-    );
-  }
-}
-
 function ensureString(v: unknown, key: string, file: string): string {
   if (typeof v !== 'string') {
     throw new Error(

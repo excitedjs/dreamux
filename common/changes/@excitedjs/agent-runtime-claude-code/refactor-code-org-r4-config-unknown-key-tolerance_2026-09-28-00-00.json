@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "An `agents[].config` block for a `builtin:claude-code`/`npm:`-claude-code-runtime provider now follows the same persisted-shape policy (R21) as the rest of config.json: an unrecognized key (`bin`, `model`, `permission_mode`, `remote_control`, `extra_args`, `extra_env`, `turn_timeout_ms`) is tolerated and ignored instead of refusing `dreamux serve`. Wrong types and missing required fields still fail loading.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -16,11 +16,13 @@
  * proven is what gets stored. The shim runs the same rules again on what it
  * received, because bytes off a socket are not the object Core validated.
  *
- * The rules are deliberately structural. This module never learns a tool name,
- * reads a description, or interprets a schema: it proves that the descriptor
- * list is a non-empty array of plain, JSON-representable objects with unique
- * names, that each schema compiles through the same SDK adapter registration
- * uses, and that annotations and icons carry only the keys MCP defines.
+ * JSON-representability itself is each caller's own precondition, not this
+ * module's: the lease registry hands in a value `canonicalJsonValue` already
+ * proved, and the shim hands in `JSON.parse` output, which cannot carry a
+ * function, `NaN`, a cycle, or a foreign prototype in the first place. This
+ * module proves what neither caller already did — that the descriptor list is
+ * non-empty with unique names and only the keys MCP defines, and that each
+ * schema compiles through the same SDK adapter registration uses.
  */
 import {
   validateMcpJsonSchema,
@@ -79,7 +81,6 @@ export function validateMcpToolCatalog(
   if (tools.length === 0) {
     throw new Error(`${label} must not be empty`);
   }
-  assertJsonCompatible(tools, label, new Set<object>());
   const seen = new Set<string>();
   return tools.map((entry, index) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -219,55 +220,4 @@ function validateIcons(value: unknown, name: string): McpToolMetadata['icons'] {
     }
     return icon as NonNullable<McpToolMetadata['icons']>[number];
   });
-}
-
-/**
- * Prove a value survives a JSON round trip unchanged. A catalog that arrived
- * over the wire already did, but the delegate side builds one in memory, and a
- * `undefined`, function, `NaN`, cycle, or class instance in it would either be
- * dropped on serialization or throw at an unhelpful place.
- */
-function assertJsonCompatible(
-  value: unknown,
-  path: string,
-  ancestors: Set<object>,
-): void {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean'
-  ) {
-    return;
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      throw new Error(`${path} contains a non-finite number`);
-    }
-    return;
-  }
-  if (typeof value !== 'object') {
-    throw new Error(`${path} contains a non-JSON ${typeof value} value`);
-  }
-  if (ancestors.has(value)) {
-    throw new Error(`${path} contains a circular reference`);
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (
-    prototype !== Object.prototype &&
-    prototype !== Array.prototype &&
-    prototype !== null
-  ) {
-    throw new Error(`${path} contains a non-plain object`);
-  }
-  ancestors.add(value);
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      assertJsonCompatible(entry, `${path}[${index}]`, ancestors),
-    );
-  } else {
-    for (const [key, entry] of Object.entries(value)) {
-      assertJsonCompatible(entry, `${path}.${key}`, ancestors);
-    }
-  }
-  ancestors.delete(value);
 }

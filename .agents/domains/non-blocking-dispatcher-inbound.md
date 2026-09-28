@@ -12,8 +12,7 @@
   `/packages/channel/feishu-channel/src/cot/adapter.ts`,
   `/packages/dreamux/src/service/dispatcher-service/index.ts`,
   `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`,
-  `/packages/dreamux/tests/codex-live.test.ts`,
-  `/packages/agent-runtime/codex/tests/codex-runtime.test.ts`
+  `/packages/dreamux/tests/codex-live.test.ts`
 
 ## Regression Trap (read before touching codex busy/idle or `turn-manager.ts`)
 

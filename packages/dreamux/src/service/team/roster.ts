@@ -51,7 +51,7 @@ export class TeamRosterProjection {
    */
   publish(identity: AgentEntityIdentity, role: TeamContainedRole): void {
     this.remember(identity.name, role, identity.status);
-    this.deps.coreEvents.publish(identity.dispatcher_id, {
+    this.deps.coreEvents.publish({
       schemaVersion: 1,
       kind: 'teammate.state',
       occurredAt: identity.updated_at,
@@ -79,7 +79,7 @@ export class TeamRosterProjection {
    */
   publishTeamState(occurredAt: number): void {
     const team = this.deps.record();
-    this.deps.coreEvents.publish(team.dispatcher_id, {
+    this.deps.coreEvents.publish({
       schemaVersion: 1,
       kind: 'team.state',
       occurredAt,

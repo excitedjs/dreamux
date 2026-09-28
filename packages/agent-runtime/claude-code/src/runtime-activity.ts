@@ -56,7 +56,6 @@ export function handleProtocolEvent(
   event: ClaudeProtocolEvent,
   context: ProtocolEventContext,
 ): void {
-  if (event.kind === 'command_lifecycle') return;
   if (event.kind === 'result' || event.kind === 'interrupted') {
     const interrupted = event.kind === 'interrupted';
     const id = event.uuid;

@@ -204,8 +204,8 @@ export class AgentIdentityStore {
     // to compare a create against, unlike `update`'s status-change filter.
     await this.store.create(identity, {
       replace: input.replaceExisting === true,
-      afterCommit: afterIdentityCommit(onPersisted),
     });
+    onPersisted?.(identity);
     return identity;
   }
 
@@ -222,7 +222,7 @@ export class AgentIdentityStore {
    * pre-`TransactionalStore` contract — `create`/`upsert` announce
    * unconditionally, `update` does not.
    */
-  update(
+  async update(
     patch:
       | AgentIdentityUpdateInput
       | ((
@@ -230,27 +230,18 @@ export class AgentIdentityStore {
         ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
     onPersisted?: (identity: AgentEntityIdentity) => void,
   ): Promise<AgentEntityIdentity> {
-    return this.store
-      .update(async (current) => {
-        if (current === null) {
-          throw new Error(
-            `agent identity at ${this.path} has no identity to update`,
-          );
-        }
-        const input =
-          typeof patch === 'function' ? await patch(current) : patch;
-        return mergeIdentity(current, input);
-      }, afterIdentityStatusChange(onPersisted))
-      .then((next) => {
-        // `change` above always throws on a null current and otherwise
-        // returns a merged, non-null identity, so this is never null.
-        if (next === null) {
-          throw new Error(
-            `agent identity at ${this.path} update lost its result`,
-          );
-        }
-        return next;
-      });
+    let next!: AgentEntityIdentity;
+    await this.store.update(async (current) => {
+      if (current === null) {
+        throw new Error(
+          `agent identity at ${this.path} has no identity to update`,
+        );
+      }
+      const input = typeof patch === 'function' ? await patch(current) : patch;
+      next = mergeIdentity(current, input);
+      return next;
+    }, afterIdentityStatusChange(onPersisted));
+    return next;
   }
 
   /**
@@ -264,27 +255,10 @@ export class AgentIdentityStore {
     identity: AgentEntityIdentity,
     onPersisted?: (identity: AgentEntityIdentity) => void,
   ): Promise<AgentEntityIdentity> {
-    await this.store.create(identity, {
-      replace: true,
-      afterCommit: afterIdentityCommit(onPersisted),
-    });
+    await this.store.create(identity, { replace: true });
+    onPersisted?.(identity);
     return identity;
   }
-}
-
-/**
- * Adapt a `(identity) => …` publish hook to `TransactionalStore.create`'s
- * `afterCommit` shape. `next` is exactly the value `create`/`upsert` just
- * published, never `null` — the guard exists only because the store's own
- * value type (`AgentEntityIdentity | null`) is shared with a store that may
- * hold no record yet.
- */
-function afterIdentityCommit(
-  onPersisted: ((identity: AgentEntityIdentity) => void) | undefined,
-): (next: AgentEntityIdentity | null) => void {
-  return (next) => {
-    if (next !== null) onPersisted?.(next);
-  };
 }
 
 /**

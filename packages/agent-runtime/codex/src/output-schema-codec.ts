@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import {
   errorMessage,
   unsupportedFeatureError,
@@ -33,7 +31,6 @@ interface CompiledSchema {
 
 export interface CodexOutputSchemaCodec {
   wireSchema: Record<string, unknown>;
-  fingerprint: string;
   restore(text: string): string;
 }
 
@@ -66,17 +63,8 @@ export function compileCodexOutputSchema(
     fail('$.type', 'root schema must have type "object"');
   }
   const compiled = compileSchema(schema, '$', false);
-  const fingerprint = createHash('sha256')
-    .update(
-      canonicalJson({
-        wireSchema: compiled.wireSchema as JsonValue,
-        restorationPlan: compiled.plan as unknown as JsonValue,
-      }),
-    )
-    .digest('hex');
   return {
     wireSchema: compiled.wireSchema,
-    fingerprint,
     restore(text) {
       let parsed: unknown;
       try {

@@ -2,7 +2,7 @@ import type { AgentRuntimeStatus } from '@excitedjs/dreamux-types';
 
 import { matchesGrepText, previewText } from '../../platform/history-page.js';
 import {
-  validateTeamMateName,
+  validateAgentEntityName,
   type AgentEntityHistoryQuery,
   type AgentEntityIdentity,
   type AgentEntityRecordRow,
@@ -68,7 +68,7 @@ export function matchesRecordQuery(
 ): boolean {
   if (
     input.name !== undefined &&
-    row.name !== validateTeamMateName(input.name)
+    row.name !== validateAgentEntityName(input.name)
   ) {
     return false;
   }

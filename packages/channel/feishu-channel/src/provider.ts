@@ -82,17 +82,9 @@ export function buildFeishuChannelProvider(
         // The Feishu channel owns its config validation: the host no longer
         // pre-validates Feishu app credentials. The bot secret is
         // config-sourced, so a non-empty app_secret is required at config-load
-        // time to preserve fail-loud — not deferred to session start.
-        const unknown = Object.keys(obj).filter(
-          (key) => key !== 'app_id' && key !== 'app_secret',
-        );
-        if (unknown.length > 0) {
-          throw new Error(
-            `feishu channel config has unknown key(s): ${unknown
-              .map((key) => `'${key}'`)
-              .join(', ')}. Allowed: app_id, app_secret.`,
-          );
-        }
+        // time to preserve fail-loud — not deferred to session start. Unknown
+        // fields are tolerated, not rejected (R21): only a missing or
+        // wrong-type app_id/app_secret fails loading.
         const appId = obj['app_id'];
         const appSecret = obj['app_secret'];
         if (typeof appId !== 'string' || appId.trim() === '') {

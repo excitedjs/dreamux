@@ -54,8 +54,7 @@ where the slug and digest are both derived from the configured channel `id`.
   changes nothing in this file — adding the commenter to `allow_users` is an
   access-state change, made through the pairing flow, not here.
 - A document this Dreamux version cannot read fails loud at channel start,
-  naming the file. Recreate the bindings through those tools rather than
-  editing it.
+  naming the file.
 - A topic-kind binding also carries the message id that first triggered it,
   when one was available (always for automatic provisioning; never for a
   manual bind through `bind_channel` or an extension). The Channel uses it to

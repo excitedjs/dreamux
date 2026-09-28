@@ -25,7 +25,7 @@ const SCAN_BUDGET_EXCEEDED_MESSAGE =
   'Claude Code activity discovery exceeded its bounded scan limit';
 
 /** The default bounded budget for a Claude Code activity discovery scan. */
-export function createClaudeScanBudget(
+function createClaudeScanBudget(
   input: {
     maxEntries?: number;
     maxElapsedMs?: number;
@@ -44,7 +44,7 @@ export interface ClaudeHistoryRoots {
   projects: string;
 }
 
-export interface ClaudeValidatedHistory {
+interface ClaudeValidatedHistory {
   path: string;
   root: string;
   size: number;
@@ -52,7 +52,7 @@ export interface ClaudeValidatedHistory {
   ino: number | bigint;
 }
 
-export function claudeHistoryRoots(
+function claudeHistoryRoots(
   env: DreamuxEnvironment = process.env,
   runtimeCwd = process.cwd(),
 ): ClaudeHistoryRoots {
@@ -75,7 +75,7 @@ export function claudeHistoryRoots(
   return { configHome, projects: join(configHome, 'projects') };
 }
 
-export async function deriveClaudeHistoryPath(
+async function deriveClaudeHistoryPath(
   sessionId: string,
   cwd: string,
   env: DreamuxEnvironment = process.env,
@@ -94,7 +94,6 @@ export async function deriveClaudeHistoryPath(
 export async function locateClaudeHistory(input: {
   sessionId: string;
   cwd: string;
-  locator?: string | null;
   env?: DreamuxEnvironment;
   budget?: ScanBudget;
   worktreePaths?: readonly string[];
@@ -102,19 +101,6 @@ export async function locateClaudeHistory(input: {
   assertSessionId(input.sessionId);
   const budget = input.budget ?? createClaudeScanBudget();
   const roots = claudeHistoryRoots(input.env, input.cwd);
-  if (input.locator !== null && input.locator !== undefined) {
-    try {
-      return await validateClaudeHistoryPath(
-        input.locator,
-        input.sessionId,
-        roots,
-      );
-    } catch (error) {
-      if (!(error instanceof ActivityError) || error.detail !== 'not_found') {
-        throw error;
-      }
-    }
-  }
   const candidates = await discoveryCandidates({
     roots,
     sessionId: input.sessionId,
@@ -136,7 +122,7 @@ export async function locateClaudeHistory(input: {
   throw new ActivityError('not_found', 'Claude Code activity is unavailable');
 }
 
-export async function validateClaudeHistoryPath(
+async function validateClaudeHistoryPath(
   candidate: string,
   sessionId: string,
   roots: ClaudeHistoryRoots,

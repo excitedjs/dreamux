@@ -47,7 +47,7 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
  * output, and recent Activity reads are mandatory provider behavior, so none of
  * them is advertised here.
  */
-export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
+const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
   { tags: [] };
 
 /**

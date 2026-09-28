@@ -19,7 +19,6 @@ import {
   errorMessage,
   isPlainObject,
   readNonEmptyString,
-  rejectUnknownKeys,
 } from '@excitedjs/dreamux-utils';
 
 import {
@@ -122,7 +121,6 @@ export function readPluginEntries(
     if (typeof item === 'string') {
       entry = { ref: item };
     } else if (isPlainObject(item)) {
-      rejectUnknownKeys(item, new Set(['ref', 'config']), file, `${prefix}.`);
       entry = { ref: readNonEmptyString(item, 'ref', file, `${prefix}.`) };
       if ('config' in item) entry.config = item['config'];
     } else {
@@ -199,9 +197,7 @@ export async function loadPlugins(options: {
 /**
  * Call each plugin's `config.read` with its entry's `config`. A `config` block
  * for a plugin without `config.read` is ignored: a plugin with no reader has
- * nowhere to route the block that would give it effect. This is narrower than
- * general unknown-field tolerance — `rejectUnknownKeys` still applies to
- * `plugins[]` entry keys and elsewhere in `config.ts`.
+ * nowhere to route the block that would give it effect.
  */
 export function readPluginConfigs(
   plugins: readonly LoadedPlugin[],

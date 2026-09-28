@@ -6,9 +6,9 @@
  * depends only on the shared neutral validation primitives
  * (`@excitedjs/dreamux-utils`); it never imports `@excitedjs/dreamux` core.
  * The package's `./config` export subpath (see `package.json`) resolves to
- * this module directly, so a config-only consumer (doctor, tests) never pulls
- * in the runtime engine through the package's main `./index.js`/`plugin.js`
- * chain.
+ * this module directly, kept open for a future config-only consumer that
+ * wants to avoid pulling in the runtime engine through the package's main
+ * `./index.js`/`plugin.js` chain; no such consumer exists yet.
  */
 
 import {
@@ -17,7 +17,6 @@ import {
   readPositiveInt,
   readStringArray,
   readStringRecord,
-  rejectUnknownKeys,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -89,20 +88,6 @@ export function readDispatcherClaudeCodeConfig(
   file: string,
   prefix: string,
 ): DispatcherClaudeCodeConfig {
-  rejectUnknownKeys(
-    rawClaude,
-    new Set([
-      'bin',
-      'model',
-      'permission_mode',
-      'remote_control',
-      'extra_args',
-      'extra_env',
-      'turn_timeout_ms',
-    ]),
-    file,
-    prefix,
-  );
   const defaults = defaultDispatcherClaudeCodeConfig();
   const bin =
     readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;

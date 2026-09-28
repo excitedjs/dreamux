@@ -8,7 +8,7 @@ import {
   parseProviderRef,
   type ProviderRegistry,
 } from '../registry/index.js';
-import { isPlainObject, publishFileExclusive } from '@excitedjs/dreamux-utils';
+import { isPlainObject } from '@excitedjs/dreamux-utils';
 import { createLogger } from '../platform/logger.js';
 import {
   loadPlugins,
@@ -17,7 +17,6 @@ import {
   type LoadedPlugin,
 } from '../plugin/loader.js';
 import {
-  DEFAULT_CONFIG_JSON,
   assertConfigFileMode,
   globalConfigFile,
   legacyGlobalConfigFile,
@@ -34,49 +33,13 @@ export interface LoadConfigResult {
   plugins: LoadedPlugin[];
 }
 
-export async function loadOrInitConfig(
-  overrides: ConfigPathOverrides = {},
-): Promise<{
-  config: DreamuxConfig;
-  configFile: string;
-  createdOnThisBoot: boolean;
-  providerRegistry: ProviderRegistry;
-  plugins: LoadedPlugin[];
-}> {
-  const file = globalConfigFile();
-  const providerRegistry = providerRegistryFor(overrides);
-  await assertNoLegacyTomlOnly();
-
-  const createdOnThisBoot = await publishFileExclusive(
-    file,
-    DEFAULT_CONFIG_JSON,
-    { mode: 0o600 },
-  );
-  const { config, plugins } = await readConfigFile(
-    file,
-    providerRegistry,
-    overrides,
-  );
-  return {
-    config,
-    configFile: file,
-    createdOnThisBoot,
-    providerRegistry,
-    plugins,
-  };
-}
-
 export async function loadConfig(
   overrides: ConfigPathOverrides = {},
 ): Promise<LoadConfigResult> {
   const file = globalConfigFile();
   const providerRegistry = providerRegistryFor(overrides);
   await assertNoLegacyTomlOnly();
-  const { config, plugins } = await readConfigFile(
-    file,
-    providerRegistry,
-    overrides,
-  );
+  const { config, plugins } = await readConfigFile(file, providerRegistry);
   return { config, configFile: file, providerRegistry, plugins };
 }
 
@@ -91,7 +54,6 @@ export async function loadConfig(
 export async function readConfigFile(
   file: string,
   providerRegistry: ProviderRegistry,
-  overrides: ConfigPathOverrides,
 ): Promise<{
   raw: Record<string, unknown>;
   config: DreamuxConfig;
@@ -126,9 +88,8 @@ export async function readConfigFile(
     entries: entries ?? [],
     // The serve file logger does not exist yet; contribute only registers.
     logger: createLogger({ name: 'plugins' }),
-    importModule: overrides.pluginModuleImporter,
   });
-  const config = await resolveConfig(parsed, file, providerRegistry, overrides);
+  const config = await resolveConfig(parsed, file, providerRegistry);
   readPluginConfigs(plugins, file);
   return {
     // resolveConfig's mergeWithDefaults already rejects a non-object top
@@ -154,17 +115,14 @@ export async function resolveConfig(
   raw: unknown,
   file: string,
   providerRegistry: ProviderRegistry,
-  overrides: ConfigPathOverrides,
 ): Promise<DreamuxConfig> {
   await loadAgentRuntimeProviders({
     registry: providerRegistry,
     refs: agentProviderRefs(raw),
-    importModule: overrides.externalAgentRuntimeModuleImporter,
   });
   await loadChannelProviders({
     registry: providerRegistry,
     refs: channelProviderRefs(raw),
-    importModule: overrides.externalChannelModuleImporter,
   });
   return mergeWithDefaults(raw, file, providerRegistry);
 }

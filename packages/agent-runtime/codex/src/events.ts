@@ -177,7 +177,6 @@ export async function submitTurnStart(
   client: CodexWsClient,
   threadId: string,
   texts: string[],
-  cwd: string | null,
   outputSchema?: Record<string, unknown>,
   effort?: string,
 ): Promise<TurnStartResponse> {
@@ -187,7 +186,6 @@ export async function submitTurnStart(
     text_elements: [],
   }));
   const params: Record<string, unknown> = { threadId, input };
-  if (cwd !== null) params.cwd = cwd;
   if (outputSchema !== undefined) params.outputSchema = outputSchema;
   if (effort !== undefined) params.effort = effort;
   return client.request<TurnStartResponse>('turn/start', params);

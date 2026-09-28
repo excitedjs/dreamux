@@ -13,7 +13,6 @@ import {
   readPositiveInt,
   readStringArray,
   readStringRecord,
-  rejectUnknownKeys,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -70,24 +69,11 @@ export function readDispatcherCodexConfig(
   file: string,
   prefix: string,
 ): DispatcherCodexConfig {
-  rejectUnknownKeys(
-    rawCodex,
-    new Set([
-      'bin',
-      // 'approval_policy' and 'turn_timeout_ms' are no longer read (Codex
-      // approval policy is hard-coded to 'never'; turn_timeout_ms was
-      // accepted-and-ignored with no runtime effect) but stay in this
-      // allow-list so a config.json written before this change still loads.
-      'approval_policy',
-      'turn_timeout_ms',
-      'sandbox_mode',
-      'extra_args',
-      'extra_env',
-      'initialize_timeout_ms',
-    ]),
-    file,
-    prefix,
-  );
+  // Unknown fields (including the retired 'approval_policy' and
+  // 'turn_timeout_ms': Codex approval policy is hard-coded to 'never', and
+  // turn_timeout_ms was accepted-and-ignored with no runtime effect) are
+  // tolerated, not rejected — the persisted-shape policy (R21) rejects only
+  // a wrong type or a missing required field.
   // An omitted (or explicitly null) field falls back to the dispatcher-local
   // default. Before the top-level block was removed, `null` meant "inherit the
   // global default"; with no global, it simply means "use the built-in".

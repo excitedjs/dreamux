@@ -9,6 +9,7 @@ import {
   parseInbound,
   type InboundResource,
 } from './content.js';
+import { asRecord, firstString } from '../json.js';
 import type { Mention } from './mentions.js';
 
 export interface FeishuInboundEvent {
@@ -124,17 +125,4 @@ function extractSenderName(raw: unknown): string {
     sender['name'],
     sender['user_name'],
   );
-}
-
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value === 'string') return value;
-  }
-  return '';
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }

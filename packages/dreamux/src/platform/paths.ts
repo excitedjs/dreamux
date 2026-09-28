@@ -86,16 +86,6 @@ function pathIsAtOrUnder(root: string, candidate: string): boolean {
   );
 }
 
-/**
- * True when `path` resolves to, or inside, the dreamux home root (`~/.dreamux`).
- * Lexical only — symlinks are not caught; use {@link isRealPathUnderDreamuxRoot}
- * for the placement guard. Managed worktree creation must fail loud rather than
- * place a worktree under Dreamux's own state/run/cache tree (issue #182 PR-4).
- */
-export function isUnderDreamuxRoot(path: string): boolean {
-  return pathIsAtOrUnder(dreamuxRoot(), path);
-}
-
 /** realpath, falling back to a lexical resolve when the path does not exist. */
 export async function canonicalPath(path: string): Promise<string> {
   try {
@@ -106,9 +96,12 @@ export async function canonicalPath(path: string): Promise<string> {
 }
 
 /**
- * Symlink-safe variant of {@link isUnderDreamuxRoot} (issue #182 PR-4, #186):
- * canonicalizes both the root and `path` with `realpath` before the containment
- * check, so a workspace that symlinks into `~/.dreamux` is still rejected.
+ * True when `path` resolves to, or inside, the dreamux home root
+ * (`~/.dreamux`). Symlink-safe (issue #182 PR-4, #186): canonicalizes both
+ * the root and `path` with `realpath` before the containment check, so a
+ * workspace that symlinks into `~/.dreamux` is still rejected. Managed
+ * worktree creation must fail loud rather than place a worktree under
+ * Dreamux's own state/run/cache tree (issue #182 PR-4).
  */
 export async function isRealPathUnderDreamuxRoot(
   path: string,
@@ -197,10 +190,6 @@ export function legacyAdminSocketPath(): string {
 
 export function dispatcherDir(id: string): string {
   return join(stateRoot(), dispatcherPathSegment(id));
-}
-
-export function defaultDispatcherCwd(id: string): string {
-  return join(dispatcherDir(id), 'cwd');
 }
 
 /**
@@ -601,41 +590,6 @@ export function withServicePath(
   input: ServicePathInput,
 ): NodeJS.ProcessEnv {
   return { ...env, PATH: buildServicePath(input) };
-}
-
-/**
- * Return a copy of `env` with PATH augmented so bare provider/agent binaries
- * resolve against the standard executable dirs during `dreamux onboard` and
- * `dreamux daemon install`. It places the captured session PATH (in original
- * order) ahead of the fresh-install fallback dirs (XDG_BIN_HOME /
- * $HOME/.local/bin + portable platform system dirs), matching the order
- * {@link buildServicePath} persists into the service unit — so the
- * daemon-install preflight and the running service agree.
- *
- * Stable Dreamux-owned dirs (Node bin, provider bin dirs, dreamux bin) are NOT
- * included here: at resolve time the Node bin is not yet selected and the
- * dreamux bin dir is computed separately. Those are added when the service PATH
- * is rendered (see `managedServicePath` in daemon/environment.ts). Pass
- * `extraDirs` to lead the PATH with explicit actual dirs (e.g. a resolved
- * provider bin dir).
- *
- * The caller's env (and process.env) is never mutated; platform/homeDir/env are
- * passed explicitly by the caller and these helpers never read process.env.
- * XDG_BIN_HOME is a widely-followed convention (NOT part of the formal XDG Base
- * Directory spec); it is honored alongside $HOME/.local/bin so binaries in
- * either location resolve.
- */
-export function withStandardExecPath(
-  env: NodeJS.ProcessEnv,
-  options: ExecDirOptions & { extraDirs?: string[] },
-): NodeJS.ProcessEnv {
-  const sessionPath = env['PATH'] ?? '';
-  const fallbackDirs = standardExecDirs(options);
-  return withServicePath(env, {
-    stableDirs: options.extraDirs ?? [],
-    sessionPath,
-    fallbackDirs,
-  });
 }
 
 function homebrewExecDir(platform: NodeJS.Platform): string | null {

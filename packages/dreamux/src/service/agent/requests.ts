@@ -30,7 +30,7 @@ import {
   decodeCursor,
 } from '../../platform/history-page.js';
 import {
-  validateTeamMateName,
+  validateAgentEntityName,
   type AgentEntityHistoryQuery,
   type AgentEntityIdentityStatus,
   type AgentEntityLastQuery,
@@ -62,7 +62,7 @@ export function optionalAgentEntityNameParam(
 
 function assertEntityName(value: string): string {
   try {
-    return validateTeamMateName(value);
+    return validateAgentEntityName(value);
   } catch (error) {
     throwCallerMistake(error);
   }

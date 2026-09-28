@@ -1,10 +1,8 @@
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
-import type { ExternalAgentRuntimeModuleImporter } from '../agent-runtime/external-provider.js';
-import type { ExternalChannelModuleImporter } from '../channel/external-channel-provider.js';
-import type { ChannelProvider } from '@excitedjs/dreamux-types';
+import { asChannelProvider } from '../channel/catalog.js';
 import {
   InvalidProviderRefError,
   ReservedExternalProviderError,
@@ -23,10 +21,7 @@ import {
 import { dreamuxRoot } from '../platform/paths.js';
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { RuleViolation } from '../platform/errors.js';
-import type {
-  PluginConfigEntry,
-  PluginModuleImporter,
-} from '../plugin/loader.js';
+import type { PluginConfigEntry } from '../plugin/loader.js';
 
 export interface DreamuxConfig {
   /**
@@ -143,13 +138,9 @@ export const BUILT_IN_DEFAULTS: DreamuxConfig = {
   agents: {},
   dispatchers: [],
 };
-export const DEFAULT_CONFIG_JSON = stringifyConfig(BUILT_IN_DEFAULTS);
 
 export interface ConfigPathOverrides {
   providerRegistry?: ProviderRegistry;
-  externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
-  externalChannelModuleImporter?: ExternalChannelModuleImporter;
-  pluginModuleImporter?: PluginModuleImporter;
 }
 
 export function globalConfigDir(): string {
@@ -234,7 +225,6 @@ function readOptionalBoolean(
 export function expandHome(path: string): string {
   if (path === '~') return homedir();
   if (path.startsWith('~/')) return join(homedir(), path.slice(2));
-  if (!isAbsolute(path)) return path;
   return path;
 }
 
@@ -272,19 +262,6 @@ function resolveConfigProvider(
     }
     throw err;
   }
-}
-
-/**
- * Structural check for a loaded channel implementation, guarding
- * `mergeWithDefaults`'s config-validation path. `channel/catalog.ts` carries
- * an identical check for its own read path (`asChannelProvider`, guarding
- * `registry.getImplementation()`'s output there too).
- */
-function asChannelProvider(value: unknown): ChannelProvider<unknown> | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as Partial<ChannelProvider<unknown>>;
-  if (typeof candidate.createSession !== 'function') return null;
-  return value as ChannelProvider<unknown>;
 }
 
 /**

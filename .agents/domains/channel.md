@@ -1247,14 +1247,11 @@ terminal, carrying the producer's own reason when it has one. Core publishes
 that same terminal itself for an input no runtime ever accepted, because such
 an input still opened a surface that nothing else would close.
 
-The seal's catalog is declared as a total record over the event union, so a new
-kind that is not listed fails to compile rather than being published and
-silently dropped. Sealing is the one place
-a fact becomes deliverable: an event outside the set, an event whose
-`schemaVersion` is not `1`, or one without a finite `occurredAt` is dropped and
-logged rather than thrown, because producers publish synchronously from inside
-operations whose durable work has already succeeded. A sealed event is deeply
-frozen, so nothing can rewrite it after it has been broadcast.
+Every `ChannelCoreEvent` is built by its producer as a fresh typed object
+literal, so kind, schema version, and shape are already the compiler's to
+guarantee — there is no second, runtime catalog check. Sealing is the one
+place a fact becomes deliverable: it deep-freezes the event so nothing can
+rewrite it after it has been broadcast.
 
 A Channel session receives one read-only `ChannelEventSource` with a single
 `subscribe(listener)` and an idempotent `unsubscribe()`. One subscription receives
@@ -1287,7 +1284,7 @@ synchronous projection bounded; a reaction needing asynchronous persistence fenc
 its in-memory authority synchronously and serializes the durable write on a
 Channel-owned mutation tail that `ChannelSession.close` awaits. The bus does not
 become a new state owner, and providers never receive core service/store instances
-or raw `EventEmitter` management methods.
+or raw listener-management surface.
 
 Core installs the source during `initialize`, before `start` opens external input,
 which is what makes subscribe-before-admission provable. Stop and start-failure

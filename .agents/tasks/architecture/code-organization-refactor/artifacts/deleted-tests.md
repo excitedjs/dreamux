@@ -4735,3 +4735,192 @@ deleted here.
   **Contract still holds for the other three packages.** Restore verbatim
   without the bootstrap line; add the line back when bootstrap publishes again.
 
+
+## PR #455 review round 4
+
+Green-the-tree pass over round 4's fixer diffs (`.workspace/refactor/r4/FINAL.md`).
+Rebuild and lint were already clean; `typecheck:tests` found two collateral
+classes, both caused by completing a fixer's source deletion that a fixer
+report claimed was already fully propagated but was not. Per R43, every
+non-compiling case is deleted here, not repaired; nothing below reflects a
+new design decision.
+
+**Driver 1 — `CodexRuntimeDeps.codexBinPath` made required, completing D4.**
+`supervisor.ts`'s `CodexProcessOptions.binPath` was already required in the
+tree at session start (the "providers" round-4 fixer's own change, reported
+as done). `runtime.ts` forwards `this.deps.codexBinPath` straight into that
+field, but `CodexRuntimeDeps.codexBinPath` itself was left `?: string` — the
+fixer's report ("sole construction site (`runtime.ts`) already passes it")
+was incorrect; `runtime.ts` passes a still-optional value, not a guaranteed
+one. Completing the deletion (`codexBinPath: string`, no fallback — a
+fallback would be restoring the deleted `CODEX_HOST_CODEX_BIN`/`'codex'`
+default `supervisor.ts` intentionally moved to `bin.ts`'s
+`resolveCodexBinPath`, the only non-required alternative) is a plain type
+completion with no production behavior change (`provider.ts:143` already
+supplies `codexBinPath: resolveCodexBinPath(codexConfig.bin)` unconditionally
+at the one real construction site), but it broke every hand-built
+`CodexRuntimeDeps` object literal in the test package, all of which predate
+this requirement.
+
+- **File:** `packages/agent-runtime/codex/tests/codex-runtime.test.ts` (whole
+  file, 48 cases across 9 `describe` blocks: `start() continuity` (3),
+  `developerInstructions re-supply` (4), `state sink ordering and durability`
+  (3), `stop() semantics` (4), `submit() and settlement` (9), `token usage`
+  (6), `native turn end` (13), `outputSchema binding` (3), and
+  `AgentRuntimeProvider public surface` (1)).
+  **Contract pinned:** `CodexRuntime`'s full synthetic-protocol lifecycle —
+  fresh/resumed continuity reporting and the durable-publish-before-resolve
+  fence, `developerInstructions` re-supply across fresh/resume/resume-fallback
+  starts, `stop()` fencing and racing-start rollback, native turn folding and
+  admission ordering for non-blocking mid-turn submits, cumulative token-usage
+  snapshotting, one-end-per-native-turn accounting including the
+  admission-in-flight and stop/protocol-failure teardown paths, and the
+  output-schema codec bound once at create time.
+  **Failure:** every case builds its runtime through the file's shared
+  `makeDeps()` helper (and one case, `AgentRuntimeProvider public surface`,
+  through `makeDeps()` directly too), which returns a `CodexRuntimeDeps`
+  object literal omitting `codexBinPath` — a compile error at the helper's
+  own definition (`tsc -p tsconfig.tests.json`: `Property 'codexBinPath' is
+  missing in type ... but required in type 'CodexRuntimeDeps'`). A second,
+  independent `CodexRuntimeDeps` literal inside the "restarts twice, and
+  every native RPC call after each restart reaches the new client" case
+  (Stage: `stop() semantics`) has the same omission. All 48 cases route
+  through one or the other; no case survives independently.
+  **Contract still holds; restore in the final PR** by adding
+  `codexBinPath: '<any fake path>'` to both object literals (`makeDeps()`
+  and the second inline literal) — production already always supplies a real
+  value, so this is fixture completion, not a design question.
+
+- **File:** `packages/agent-runtime/codex/tests/codex-ultrathink.test.ts`
+  (whole file, 6 cases). **Contract pinned:** effort-hint injection for
+  `ultrathink` submissions — the exact hint sentence is appended once per
+  matching submission, is not duplicated on a folded resume, and is absent
+  for non-matching text. **Failure:** the shared `createRuntime()` helper's
+  `CodexRuntimeDeps` literal omits `codexBinPath`, same class as above; all 6
+  cases construct their runtime through it. **Contract still holds; restore
+  in the final PR** by adding `codexBinPath: '<any fake path>'` to
+  `createRuntime()`'s literal.
+
+- **File:** `packages/agent-runtime/codex/tests/helpers/codex-runtime-fakes.ts`
+  (whole file, 504 lines — fake `CodexProcess`/`CodexWsClient` doubles and
+  fixtures). **Not itself a test case; deleted as an orphan.** Its only two
+  importers were the two files above; with both gone it has zero remaining
+  importers in `tests/`. Restore it verbatim alongside the two files above —
+  it is unmodified, just orphaned by their deletion.
+
+**Driver 2 — the dropped `TurnSubmitOptions` positional param on
+`ClaudeCodeStreamRpc.submit()`/`ClaudeCodeSession.submit()` (D14, already
+applied to `src/rpc.ts`/`src/supervisor.ts`/`src/stream.ts` before this
+round's gate pass).** `TurnSubmitOptions` was an always-empty interface
+threaded as a third positional argument; the fixer report for D14 says this
+was dropped "everywhere," but two test files still called the three-argument
+form, which no longer compiles (`TS2554: Expected 1-2 arguments, but got 3`).
+
+- **File:** `packages/agent-runtime/claude-code/tests/rpc.test.ts` — 26 of 30
+  `it`/`it.each` blocks deleted (21 `it`, 5 `it.each`, one of the five with 3
+  sub-cases, one with 2, one with 1 — the file's shared `harness()` return
+  value's `send(uuid)` helper is `accepted(rpc.submit(uuid, {}, uuid))`, a
+  compile error at its own definition reached by every deleted case). 4
+  cases survive (none call `send`): `'asks claude even with no request
+  outstanding, and stops asking once closed'` (`interrupting outstanding
+  work`), `'reports an ambiguous native write failure through %s'` and
+  `'reports a proven failure before writing to an unavailable child'`
+  (`native failure and transport lifetime`), and `'keeps Remote Control and
+  tool permission replies independent of requests'` (`idle policy and result
+  contract`). Deleted, by describe block:
+  - `native usage boundaries` (whole block, 2 cases): forwards native totals
+    before settlement without extra requests or cross-result accumulation;
+    carries native usage on an interrupted result without creating a
+    completion.
+  - `resident request admission and settlement` (whole block, 7 cases):
+    acknowledges input before its answer / accepts another before late
+    completed; answers consumed background steers regardless of result
+    metadata (`it.each`, 3 sub-cases); retains a completed request until its
+    answer arrives without gating other inputs; accepts an immediate native
+    result before the write callback and ignores its late error; treats
+    native consumption as admission even if the write callback later fails;
+    lets a result callback submit the next request without attributing the
+    previous answer to it; preserves an observed result when its callback
+    stops the session.
+  - `supported compatibility inputs` (whole block, 4 cases): answers a
+    no-start matching UUID independently of B's state (`it.each`, 3
+    sub-cases: queued/refused/discarded); combines a no-start matching UUID
+    with every started fold member; never uses a foreign UUID as
+    sole-request fallback (`it.each`, 1 sub-case); uses the older
+    system-subtype lifecycle as consumption evidence.
+  - `interrupting outstanding work` (5 of 6 cases; `'asks claude even with no
+    request outstanding...'` survives): settles an accepted interrupt as
+    stopped, on the artifact and not as a result; reads the artifact as the
+    answer even when no control response arrives; keeps a turn that died of
+    its own error a failure, ask outstanding or not; answers an outstanding
+    interrupt when the session ends by stop/fail (`it.each`, 2 sub-cases);
+    reads an aborted turn as interrupted even after the ask was already
+    spent.
+  - `native failure and transport lifetime` (5 of 7 cases; the two
+    `it`/`it.each` cases that call `h.rpc.submit('A')` directly, one
+    argument, survive): fails an unconsumed cancelled request without
+    discarding the generating answer; shares the actual failure across
+    initial and folded commands despite their different cancelled order;
+    fails every outstanding request on child loss and settles no completion;
+    stops accepted requests and suppresses late native callbacks; emits no
+    further protocol callback when a lifecycle observer stops the session
+    (this case also fails Driver 3 below).
+  - `idle policy and result contract` (3 of 4 cases; `'keeps Remote Control
+    and tool permission replies independent of requests'` survives): reaps
+    genuinely silent outstanding requests, including queued input; fails
+    completion for a violated result contract (`it.each`, 3 sub-cases);
+    preserves structured null as a successful JSON result.
+  **Contract still holds; restore in the final PR** by changing `send`'s
+  body to `accepted(rpc.submit(uuid, uuid))` (drop the middle argument) and
+  restoring the 26 blocks unchanged. Now-orphaned helpers pruned alongside
+  the deletion (dead-import/dead-export cleanup after the cut, not an edit to
+  keep anything passing, per the Stage 2a — Item 3 precedent above): the
+  `send`/`lifecycle`/`result`/`assistant`/`events`(return field)/`tick`/
+  `accepted`/`completion`/`nativeFailure`/`interruptArtifact` helpers, and the
+  `CommandLifecycleState`/`RuntimeAdmission`/`RuntimeCompletion`/
+  `RuntimeSubmission` imports — restore these alongside the 26 blocks, since
+  the restored cases need them again.
+
+- **File / case:** `packages/agent-runtime/claude-code/tests/session.test.ts`
+  — `describe('resident session over real pipes') > it('returns admission
+  and per-request answers, reusing one process for subsequent input')` (1 of
+  5 cases in the file; the other 4 call `session.submit()` with one argument
+  and are unaffected). **Contract pinned:** a resident session reuses one
+  native process across sequential inputs, each gets its own completion, and
+  `command_lifecycle`/`stream`/`result` protocol events interleave in the
+  expected order (assistant text observed before the matching result).
+  **Failure:** calls `session.submit('hello', {}, 'A')` /
+  `session.submit('again', {}, 'B')`, the three-argument form; also fails
+  Driver 3 below in the same case. **Contract still holds; restore in the
+  final PR** by dropping the middle `{}` argument from both calls (alongside
+  the Driver 3 fix below).
+
+**Driver 3 — the public `command_lifecycle` `ClaudeProtocolEvent` variant
+removed (D14, already applied to `src/rpc.ts`/`src/runtime-activity.ts`/
+`src/types.ts` before this round's gate pass; the internal stream-json
+`command_lifecycle` parsing this deletes is unrelated and untouched).** Two
+cases compared a live `ClaudeProtocolEvent.kind` against the literal
+`'command_lifecycle'`, which is no longer in the type's kind union
+(`'result' | 'interrupted' | 'stream'`) — `TS2367`/`TS2339` (`Property
+'state' does not exist on type 'never'`). Both cases are already counted
+above under Driver 2, since both also called the dropped-argument
+`submit()`/`send()` form in the same body:
+- `rpc.test.ts` — `'emits no further protocol callback when a lifecycle
+  observer stops the session'` (`native failure and transport lifetime`,
+  listed above).
+- `session.test.ts` — `'returns admission and per-request answers, reusing
+  one process for subsequent input'` (listed above).
+No case fails Driver 3 alone. **Restore recipe, folded into the two entries
+above:** the underlying `command_lifecycle` observation these two cases
+asserted no longer has a public surface to assert against post-D14 (the
+runtime's `onProtocolEvent` callback never emits that kind); the final PR
+either drops that assertion from each restored case or restores it against
+whatever replacement surface D14's `rpc.ts` internal `command_lifecycle`
+admission tracking exposes by then.
+
+**Not a Driver-1/2/3 case, noticed in passing:** `codex-runtime.test.ts`'s
+now-deleted `AgentRuntimeProvider public surface` describe block was the
+package's only compile-time check that `CodexRuntime` satisfies the public
+`AgentRuntime` interface with no extra required members. No other file in
+the package currently asserts this; flagging for the final PR's restoration
+pass rather than silently leaving the gap unrecorded.

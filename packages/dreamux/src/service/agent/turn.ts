@@ -173,15 +173,16 @@ export type TurnCompletionDelivery = (
 /**
  * One submission this entity is waiting on.
  *
- * It carries only what the push-back line needs. Provenance, source id, body,
- * intent, and submission time used to live here for the display projection;
- * display is keyed on the Agent now and reads none of them.
+ * It carries only what the push-back line needs: its id and its eventual
+ * outcome. Provenance, source id, body, intent, and submission time used to
+ * live here for the display projection; display is keyed on the Agent now
+ * and reads none of them. The native `RuntimeSubmission` and the delivery
+ * promise are `EntityTurn`'s own bookkeeping — no reader outside this file
+ * needs either, so neither is part of this contract.
  */
 export interface Turn {
   readonly id: string;
-  readonly runtime: RuntimeSubmission;
   readonly settled: Promise<TurnOutcome>;
-  readonly delivery: Promise<void>;
 }
 
 /**
@@ -208,7 +209,7 @@ export class EntityTurn implements Turn {
   private deliveryTask: Promise<void> | null = null;
 
   constructor(
-    readonly runtime: RuntimeSubmission,
+    runtime: RuntimeSubmission,
     private readonly producerName: string,
     private readonly producerRole: TeammateRole,
     private deliveryClosure: TurnCompletionDelivery | null,
@@ -240,10 +241,6 @@ export class EntityTurn implements Turn {
       (error: unknown): TurnOutcome =>
         this.settle({ status: 'failed', error: asError(error) }),
     );
-  }
-
-  get delivery(): Promise<void> {
-    return this.ensureDelivery();
   }
 
   isSettled(): boolean {

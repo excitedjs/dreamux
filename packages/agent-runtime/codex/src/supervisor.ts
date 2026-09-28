@@ -31,8 +31,8 @@ export interface CodexProcessOptions {
   stdoutLogPath: string;
   /** Where to log stderr. */
   stderrLogPath: string;
-  /** Codex binary path. Defaults to `'codex'` on PATH; env `CODEX_HOST_CODEX_BIN` overrides. */
-  binPath?: string | undefined;
+  /** Codex binary path, already resolved by `bin.ts`'s `resolveCodexBinPath`. */
+  binPath: string;
   /** Extra args after `app-server --listen unix://<socket>`. */
   extraArgs?: string[];
   /** Environment for the daemon. */
@@ -89,8 +89,7 @@ export class CodexProcess {
   }
 
   private async startProcess(): Promise<void> {
-    const binPath =
-      this.opts.binPath ?? (process.env['CODEX_HOST_CODEX_BIN'] || 'codex');
+    const binPath = this.opts.binPath;
     const args = [
       'app-server',
       '--listen',

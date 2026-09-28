@@ -1,5 +1,5 @@
-import { pathExists } from '../platform/fs-errors.js';
-import { rm } from 'node:fs/promises';
+import { isNotEmptyDir, pathExists } from '../platform/fs-errors.js';
+import { rm, rmdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, resolve, sep } from 'node:path';
 
@@ -11,6 +11,7 @@ import {
   expandHome,
   globalConfigDir,
   globalConfigFile,
+  legacyGlobalConfigFile,
 } from '../config/config.js';
 import { assertNoLegacyTomlOnly, loadConfig } from '../config/load.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
@@ -105,13 +106,7 @@ export async function runUninstall(
     dryRun,
     protectedRoots,
   );
-  await removeOwnedDirectory(
-    configDir,
-    entries,
-    'dreamux config directory',
-    dryRun,
-    protectedRoots,
-  );
+  await removeConfigDirectory(configDir, entries, dryRun, protectedRoots);
 
   return {
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
@@ -164,6 +159,50 @@ async function removePath(
     });
   }
   entries.push({ path, status: 'removed', reason });
+}
+
+/**
+ * The config directory is `DREAMUX_ROOT` itself (R26): it holds `config.json`
+ * / the legacy `config.toml` directly, alongside the state/run/cache/log
+ * directories already removed above. Unlike those, it must not be `rm -rf`'d
+ * wholesale — for a non-default `DREAMUX_ROOT` that would delete anything
+ * else the operator keeps in that directory. Delete only the owned config
+ * files, then `rmdir` the (now-empty, if nothing foreign was there) root;
+ * a non-empty root is left in place rather than forced away.
+ */
+async function removeConfigDirectory(
+  configDir: string,
+  entries: UninstallEntry[],
+  dryRun: boolean,
+  protectedRoots: readonly string[],
+): Promise<void> {
+  const reason = 'dreamux config directory';
+  assertSafeOwnedDirectory(configDir, reason, protectedRoots);
+  if (!(await pathExists(configDir))) {
+    entries.push({ path: configDir, status: 'missing', reason });
+    return;
+  }
+  if (dryRun) {
+    entries.push({ path: configDir, status: 'removed', reason });
+    return;
+  }
+  for (const file of [globalConfigFile(), legacyGlobalConfigFile()]) {
+    if (await pathExists(file)) await unlink(file);
+  }
+  try {
+    await rmdir(configDir);
+  } catch (err) {
+    if (isNotEmptyDir(err)) {
+      entries.push({
+        path: configDir,
+        status: 'skipped',
+        reason: `${reason} is not empty`,
+      });
+      return;
+    }
+    throw err;
+  }
+  entries.push({ path: configDir, status: 'removed', reason });
 }
 
 function assertSafeOwnedDirectory(

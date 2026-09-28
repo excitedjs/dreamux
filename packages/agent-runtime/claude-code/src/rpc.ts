@@ -9,7 +9,7 @@ import {
   TurnAggregator,
 } from './stream.js';
 import { ClaudeCodeControlRpc } from './control-rpc.js';
-import type { ParsedLine, TurnOutcome, TurnSubmitOptions } from './types.js';
+import type { ParsedLine, TurnOutcome } from './types.js';
 import type {
   RuntimeAdmission,
   RuntimeCompletion,
@@ -83,7 +83,6 @@ export class ClaudeCodeStreamRpc {
 
   submit(
     prompt: string,
-    options: TurnSubmitOptions = {},
     commandUuid: string = randomUUID(),
   ): Promise<RuntimeAdmission> {
     if (this.closed || !this.stdin.writable) {
@@ -107,7 +106,7 @@ export class ClaudeCodeStreamRpc {
       this.armIdleTimer();
       try {
         this.stdin.write(
-          `${buildUserMessage(prompt, options, commandUuid)}\n`,
+          `${buildUserMessage(prompt, commandUuid)}\n`,
           (error) => {
             if (error != null) this.failWrite(commandUuid, request, error);
             else this.acceptRequest(request);
@@ -270,11 +269,6 @@ export class ClaudeCodeStreamRpc {
         // An unconsumed command's cancellation cannot discard generating text.
         if (state === 'cancelled' && this.consumed.has(commandUuid))
           this.aggregator.discard();
-        this.options.onProtocolEvent?.({
-          kind: 'command_lifecycle',
-          commandUuid,
-          state,
-        });
         break;
       }
       case 'result': {

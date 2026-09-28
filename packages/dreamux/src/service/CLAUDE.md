@@ -209,7 +209,7 @@ the Team.
   Channel-facing submission reader) sits in this tier because it needs
   `submission.ts`, not the store or collection tier. The collection tier
   (`index.ts`, `commands.ts`, `mcp.ts`, `system-prompt.ts`, `errors.ts`,
-  `dissolve-members.ts`, `agent-config.ts`) is `TeammateCollection`: it
+  `dissolve-members.ts`) is `TeammateCollection`: it
   constructs, subscribes to, caches, resolves, and reads ordinary-TeamMate
   entities only — never the dispatcher agent or a Team's leader — and owns
   the Team-scoped bulk close a dissolve needs (`dissolve-members.ts`); it

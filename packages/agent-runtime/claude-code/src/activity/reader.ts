@@ -78,7 +78,6 @@ export async function readClaudeRecentActivity(
   const located = await locateClaudeHistory({
     sessionId,
     cwd: context.cwd,
-    locator: null,
     env,
   });
   const opened = await openClaudeRollout(located.path, located.root);

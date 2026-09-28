@@ -33,11 +33,7 @@ import {
 import { throwCallerMistake } from '../command/errors.js';
 import type { LoadedPlugin } from '../plugin/loader.js';
 import type { ProviderRegistry } from '../registry/index.js';
-import {
-  globalConfigFile,
-  type ConfigPathOverrides,
-  type DreamuxConfig,
-} from './config.js';
+import { globalConfigFile, type DreamuxConfig } from './config.js';
 import {
   assertNoLegacyTomlOnly,
   readConfigFile,
@@ -83,7 +79,6 @@ export class ConfigService implements ConfigReader {
   private constructor(
     readonly file: string,
     private readonly providerRegistry: ProviderRegistry,
-    private readonly overrides: ConfigPathOverrides,
   ) {
     this.store = new TransactionalStore<ConfigServiceState>({
       path: file,
@@ -99,14 +94,12 @@ export class ConfigService implements ConfigReader {
    * a `ConfigService` exists. Loading before returning means `current()` and
    * {@link plugins} are never observably pre-load.
    */
-  static async open(
-    options: { providerRegistry: ProviderRegistry } & ConfigPathOverrides,
-  ): Promise<ConfigService> {
-    const { providerRegistry, ...overrides } = options;
+  static async open(options: {
+    providerRegistry: ProviderRegistry;
+  }): Promise<ConfigService> {
     const service = new ConfigService(
       globalConfigFile(),
-      providerRegistry,
-      overrides,
+      options.providerRegistry,
     );
     await service.store.load();
     return service;
@@ -168,7 +161,6 @@ export class ConfigService implements ConfigReader {
           candidateRaw,
           this.file,
           this.providerRegistry,
-          this.overrides,
         );
       } catch (err) {
         throwCallerMistake(err);
@@ -207,7 +199,6 @@ export class ConfigService implements ConfigReader {
     const { raw, config, plugins } = await readConfigFile(
       this.file,
       this.providerRegistry,
-      this.overrides,
     );
     // Runs once per this store (see this method's own doc comment); a future
     // change to TransactionalStore's "load() runs at most once" guarantee

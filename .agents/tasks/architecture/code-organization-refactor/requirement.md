@@ -80,9 +80,17 @@ compiler-based replacements for two type-surface tests (H11).
 
 ### Lifecycle
 
-- Closing is self-contained per Agent and batched upward, layer by layer; the
-  dispatcher-level second sweep and the separate failed-start rollback go
-  (R10).
+- Closing is self-contained per Agent and batched upward, layer by layer,
+  killing every runtime immediately instead of draining it; the separate
+  failed-start rollback goes, folded into the same close path (R10). The
+  dispatcher-level second runtime sweep stays: register-time self-close only
+  preempts a brand-new entity's first submission, not an already-materialized
+  entity whose pre-fence admission reaches, or revives, its runtime start
+  after the first sweep pass already passed it by, since `stopForHost()`
+  fences admission only for its own convergence and never moves the entity's
+  phase. The original inference that self-close made the second sweep
+  unnecessary did not hold and was withdrawn
+  ([rulings](rulings.md#lifecycle), R10).
 - Every Dispatcher starts at daemon start and stops only with the daemon;
   `dispatcher.start`, its CLI verb, and the reopen logic are deleted (R11).
 - While a Dispatcher stops, reads are refused like writes (R12), with one

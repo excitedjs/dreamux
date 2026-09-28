@@ -8,8 +8,7 @@
  * `config.toml`, carries usable auth, and that the representative app-server
  * socket placement is sane. It is codex-specific and carries NO `~/.dreamux`
  * knowledge — the host's socket placement arrives as a neutral sample
- * (`socketPath`) computed from the path context's `runtimeSocketDirs()`, and
- * `dispatcherCwd` is optional (the validation never reads it).
+ * (`socketPath`) computed from the path context's `runtimeSocketDirs()`.
  */
 import { readFile } from 'node:fs/promises';
 import { join, normalize, sep } from 'node:path';
@@ -33,18 +32,12 @@ export interface DispatcherCodexHomeDoctorContext {
   codexHome: string;
   configPath: string;
   /**
-   * The runtime working directory. Optional/empty by default: the validation
-   * never reads it, so a caller that does not have it (e.g. doctor) omits it.
-   */
-  dispatcherCwd: string;
-  /**
    * A representative socket allocation (issue #182: sockets are random per
    * start, so this is a sample of the policy, not the path a runtime will
    * bind). Doctor checks placement (never shared /tmp) and the path budget. An
    * empty string skips the socket checks (no host candidate dirs were supplied).
    */
   socketPath: string;
-  codexCliArgs: string[];
 }
 
 export interface DispatcherCodexHomeDoctorResult {
@@ -54,15 +47,12 @@ export interface DispatcherCodexHomeDoctorResult {
 }
 
 interface DoctorContextOptions {
-  codexCliArgs?: string[] | undefined;
-  dispatcherCwd?: string;
   /** Representative socket sample (from the path context's `runtimeSocketDirs()`). */
   socketPath?: string;
 }
 
 interface DoctorOptions {
-  env?: DreamuxEnvironment;
-  codexCliArgs?: string[];
+  env: DreamuxEnvironment;
 }
 
 /**
@@ -82,22 +72,17 @@ export function dispatcherCodexHomeDoctorContext(
     dispatcherId,
     codexHome,
     configPath: join(codexHome, 'config.toml'),
-    dispatcherCwd: options.dispatcherCwd ?? '',
     socketPath: options.socketPath ?? '',
-    codexCliArgs: options.codexCliArgs ?? [],
   };
 }
 
 export async function validateDispatcherCodexHome(
   input: DispatcherCodexHomeDoctorContext,
-  options: DoctorOptions = {},
+  options: DoctorOptions,
 ): Promise<DispatcherCodexHomeDoctorResult> {
-  const context: DispatcherCodexHomeDoctorContext = {
-    ...input,
-    codexCliArgs: options.codexCliArgs ?? input.codexCliArgs,
-  };
+  const context: DispatcherCodexHomeDoctorContext = input;
   const errors: string[] = [];
-  const env = options.env ?? process.env;
+  const env = options.env;
 
   if (await pathExists(context.configPath)) {
     try {

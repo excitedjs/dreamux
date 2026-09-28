@@ -186,11 +186,9 @@ export class DispatcherService implements Dispatcher {
       accepting: () => !this.inputSources.isClosing(),
     });
     const workflowLog = opts.workflowLoggerFactory?.(opts.id) ?? opts.log;
-    const configuredChannelCount = opts.dispatcher.channels.length;
     this.coreEvents = new DispatcherCoreEventBus({
       dispatcherId: opts.id,
       log: opts.log,
-      maxSources: configuredChannelCount,
     });
 
     const worktrees = new WorktreeManager();
@@ -452,7 +450,7 @@ export class DispatcherService implements Dispatcher {
     identity: AgentEntityIdentity,
     role: 'dispatcher' | 'teammate',
   ): void {
-    this.coreEvents.publisher.publish(identity.dispatcher_id, {
+    this.coreEvents.publisher.publish({
       schemaVersion: 1,
       kind: 'teammate.state',
       occurredAt: identity.updated_at,

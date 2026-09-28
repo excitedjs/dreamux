@@ -35,7 +35,7 @@ export async function resolveSpawnWorkspace(input: {
     (input.request.cwd === undefined || input.request.cwd.trim() === '')
   ) {
     return input.worktrees.prepareDefaultWorkspace({
-      dispatcherWorkspace: await dispatcherWorkspace(
+      dispatcherWorkspace: await ensureDispatcherWorkspace(
         input.config,
         input.dispatcherId,
       ),
@@ -58,7 +58,7 @@ export async function resolveSpawnWorkspace(input: {
     cwd,
     ...(managedMode
       ? {
-          dispatcherWorkspace: await dispatcherWorkspace(
+          dispatcherWorkspace: await ensureDispatcherWorkspace(
             input.config,
             input.dispatcherId,
           ),
@@ -95,15 +95,12 @@ export async function reprepareDeletedManagedWorktree(input: {
     dispatcherId: input.identity.dispatcher_id,
     teammateName: input.identity.name,
     cwd: input.identity.source_cwd,
-    dispatcherWorkspace: await dispatcherWorkspace(
+    dispatcherWorkspace: await ensureDispatcherWorkspace(
       input.config,
       input.identity.dispatcher_id,
     ),
     request: {
       mode: 'managed',
-      ...(input.identity.worktree.slug !== null
-        ? { slug: input.identity.worktree.slug }
-        : {}),
       ...(input.identity.worktree.base_ref !== null
         ? { base_ref: input.identity.worktree.base_ref }
         : {}),
@@ -154,11 +151,4 @@ export async function assertManagedWorktreeAvailable(input: {
         `owned by TeamMate ${JSON.stringify(collision.name)}`,
     );
   }
-}
-
-export function dispatcherWorkspace(
-  config: DreamuxConfig,
-  dispatcherId: string,
-): Promise<string> {
-  return ensureDispatcherWorkspace(config, dispatcherId);
 }

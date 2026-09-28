@@ -71,13 +71,14 @@ export class CronJobStore {
   }
 
   async update(input: CronJobUpdateInput): Promise<CronJob> {
-    const file = await this.store.update((current) => {
+    let next!: CronJob;
+    await this.store.update((current) => {
       const index = current.jobs.findIndex((job) => job.id === input.id);
       if (index === -1) {
         throw new Error(`cron job '${input.id}' does not exist`);
       }
       const existing = current.jobs[index]!;
-      const next: CronJob = { ...existing, updated_at: Date.now() };
+      next = { ...existing, updated_at: Date.now() };
       if (input.title !== undefined) {
         if (input.title === null) delete next.title;
         else next.title = input.title;
@@ -92,14 +93,7 @@ export class CronJobStore {
       jobs[index] = next;
       return { version: current.version, jobs };
     });
-    const updated = file.jobs.find((job) => job.id === input.id);
-    // `change` above always either throws (id not found) or splices a
-    // rebuilt job for this exact id into the returned file, so this is
-    // never undefined.
-    if (updated === undefined) {
-      throw new Error(`cron job '${input.id}' update lost its result`);
-    }
-    return cloneJob(updated);
+    return cloneJob(next);
   }
 
   async delete(id: string): Promise<boolean> {

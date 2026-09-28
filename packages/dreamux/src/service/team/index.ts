@@ -7,7 +7,7 @@ import type {
 import type { WorktreeManager } from '../worktree/manager.js';
 import { requireLifecycleText } from '../agent/identity.js';
 import { defaultWorkspaceEnabled } from '../../config/config.js';
-import { dispatcherWorkspace } from '../worktree/workspaces.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { ClosedSubscription } from '../../platform/closed-fact.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
@@ -709,7 +709,7 @@ export class TeamCollection implements TeamsPort {
     input: TeamCreateAtNameInput,
     teamId: string,
   ): Promise<TeamMateSharedWorkspace> {
-    const workspaceRoot = await dispatcherWorkspace(
+    const workspaceRoot = await ensureDispatcherWorkspace(
       this.opts.config.current(),
       this.dispatcherId,
     );

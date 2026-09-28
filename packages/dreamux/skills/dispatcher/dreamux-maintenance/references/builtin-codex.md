@@ -14,6 +14,4 @@ Accepted `agents[].config` fields, defaults, and meanings:
 
 Codex approval policy is not configurable: the launch always passes
 `approval_policy=never` (issue #2 trust model — the dreamux MVP only ships
-with a fail-fast approval handler). An `approval_policy` or `turn_timeout_ms`
-key in an existing `config.json` is still accepted and silently ignored, so a
-file written before this change does not need editing.
+with a fail-fast approval handler).

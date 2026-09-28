@@ -38,9 +38,11 @@ const CALLER_KINDS = new Set<WorkflowCallerKind>(['dispatcher', 'team_leader']);
 
 /** Scope-local record store. Journal events are owned separately by WorkflowJournal. */
 export class WorkflowRunStore {
-  /** One `TransactionalStore` per run id, built lazily and held for the life
-   * of this scope's collection — a run's record is read once and served from
-   * memory afterward, until this run's own write path replaces it. */
+  /** One `TransactionalStore` per run id with a live in-process owner (a
+   * `WorkflowRun`), built lazily and released by {@link release} once that
+   * owner settles. A run with no live owner — finished, or never started
+   * in this process — has no entry here and is read one-shot from disk
+   * instead. */
   private readonly stores = new Map<
     string,
     TransactionalStore<WorkflowRunRecord | null>
@@ -57,6 +59,15 @@ export class WorkflowRunStore {
    */
   handle(runId: string): TransactionalStore<WorkflowRunRecord | null> {
     return this.storeFor(runId);
+  }
+
+  /**
+   * Drop this run's cached store once its owning `WorkflowRun` has settled.
+   * A later `get`/`list` then reads the terminal record fresh from disk
+   * instead of serving it from memory for the rest of this scope's life.
+   */
+  release(runId: string): void {
+    this.stores.delete(validateWorkflowRunId(runId));
   }
 
   private storeFor(
@@ -85,8 +96,14 @@ export class WorkflowRunStore {
     await this.storeFor(record.run_id).create(structuredClone(record));
   }
 
+  /**
+   * One-shot read straight from disk — never through {@link storeFor}, so
+   * reading a run this scope has no live owner for does not cache it for the
+   * rest of the scope's life. An active run's owner reads through
+   * {@link handle} instead.
+   */
   async get(runId: string): Promise<WorkflowRunRecord | null> {
-    return this.storeFor(runId).load();
+    return this.load(validateWorkflowRunId(runId));
   }
 
   /**

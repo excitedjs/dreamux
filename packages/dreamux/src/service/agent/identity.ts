@@ -263,14 +263,6 @@ export function validateAgentEntityName(name: string): string {
   return name;
 }
 
-/**
- * TeamMate-facing alias of {@link validateAgentEntityName}. Kept so
- * `TeammateCollection`'s request types can express the teammate-specific
- * validation word without the neutral Agent entity layer carrying
- * teammate-only terminology.
- */
-export const validateTeamMateName = validateAgentEntityName;
-
 export function requireLifecycleText(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${label} must be a non-empty string`);

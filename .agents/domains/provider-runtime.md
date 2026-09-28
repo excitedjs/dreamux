@@ -802,7 +802,6 @@ Source:
 - `/packages/agent-runtime/codex/src/rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/codex/tests/codex-runtime.test.ts`
 
 ### Native Turn Usage Activity
 

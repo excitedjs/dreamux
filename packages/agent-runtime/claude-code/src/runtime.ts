@@ -55,7 +55,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly logger: DreamuxLogger;
   private status: AgentRuntimeStatus = 'declared';
   private threadId: string | null;
-  private resumeOnNextSpawn: boolean;
   private readonly resumed: boolean;
   /**
    * The provider-local fatal path for authoritative state writes. Any failure
@@ -94,7 +93,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       `${this.dispatcherId}.stderr.log`,
     );
     this.threadId = priorSessionId;
-    this.resumeOnNextSpawn = priorSessionId !== null;
     this.resumed = priorSessionId !== null;
     this.logger = deps.logger;
   }
@@ -336,10 +334,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       if (this.session === previous) this.session = null;
       this.assertGeneration(generation);
     }
-    const resuming = this.resumeOnNextSpawn;
-    const candidateSessionId = resuming
-      ? this.threadId!
-      : (this.deps.generateSessionId?.() ?? randomUUID());
+    const priorThreadId = this.threadId;
+    const resuming = priorThreadId !== null;
+    const candidateSessionId =
+      priorThreadId ?? this.deps.generateSessionId?.() ?? randomUUID();
     const args = claudeCodeResidentArgs({
       config: this.config,
       mcpConfigJson: this.mcpConfigJson,
@@ -389,7 +387,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       );
       this.assertGeneration(generation);
       this.threadId = candidateSessionId;
-      this.resumeOnNextSpawn = true;
     } catch (error) {
       if (this.stopped) throw error;
       try {

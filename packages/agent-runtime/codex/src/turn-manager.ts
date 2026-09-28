@@ -43,7 +43,6 @@ export interface TurnManagerOptions {
   dispatcherId: string;
   getThreadId(): string | null;
   client: CodexWsClient;
-  turnCwd?: string | null;
   /**
    * The session-bound output schema codec, compiled once when the runtime was
    * created. It is fixed for the life of the session: no submission can change
@@ -53,7 +52,6 @@ export interface TurnManagerOptions {
   reasoning: CodexReasoningEffort;
   activitySink: AgentRuntimeActivitySink;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
-  onTurnCompleted?: (turn: CollectedTurn) => void;
 }
 
 export class TurnManager {
@@ -161,7 +159,6 @@ export class TurnManager {
         this.opts.client,
         threadId,
         asked.hint === undefined ? [text] : [text, asked.hint],
-        this.opts.turnCwd ?? null,
         this.opts.codec?.wireSchema,
         asked.effort,
       );
@@ -340,7 +337,6 @@ export class TurnManager {
         this.releaseRecordIfReady(turnId, record);
         return;
       }
-      this.opts.onTurnCompleted?.(completedTurn);
       completion = Object.freeze({
         status: 'completed',
         resultText: extractAssistantText(completedTurn),

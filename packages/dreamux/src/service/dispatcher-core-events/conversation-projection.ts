@@ -108,7 +108,7 @@ export function createConversationProjection(input: {
           // *shape* would only mangle a legal name.
           notice: admitted.notice,
         };
-        input.coreEvents.publish(identity.dispatcher_id, event);
+        input.coreEvents.publish(event);
       });
     },
     projectActivity(agent, activity) {
@@ -126,7 +126,7 @@ export function createConversationProjection(input: {
             input.homePathPrefixes,
           ),
         };
-        input.coreEvents.publish(identity.dispatcher_id, event);
+        input.coreEvents.publish(event);
       });
     },
   };

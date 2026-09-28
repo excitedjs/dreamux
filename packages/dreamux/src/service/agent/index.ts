@@ -27,7 +27,7 @@ import { readAgentActivity } from './activity.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
-  validateTeamMateName,
+  validateAgentEntityName,
   type AgentEntityCapabilities,
   type AgentEntityCloseResult,
   type AgentEntityHistoryQuery,
@@ -68,9 +68,9 @@ import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
   assertManagedWorktreeAvailable,
-  dispatcherWorkspace,
   resolveSpawnWorkspace,
 } from '../worktree/workspaces.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type {
   CloseTeamMateInput,
   SendTeamMateInput,
@@ -356,7 +356,7 @@ export class TeammateCollection implements TeammateOps {
   private async closeAdmitted(
     input: CloseTeamMateInput,
   ): Promise<AgentEntityCloseResult> {
-    const name = validateTeamMateName(input.name);
+    const name = validateAgentEntityName(input.name);
     const note = requireLifecycleText(input.note, 'TeamMate close note');
     // One record read decides, so a close that lost the race to a concurrent
     // one reads the committed record here and answers from it: closing what is
@@ -400,7 +400,7 @@ export class TeammateCollection implements TeammateOps {
   private async statusAdmitted(
     name: string,
   ): Promise<AgentEntityRuntimeStatus> {
-    const identity = await this.mustIdentity(validateTeamMateName(name));
+    const identity = await this.mustIdentity(validateAgentEntityName(name));
     return this.liveEntity(identity.name)?.status() ?? toStatus(identity, null);
   }
 
@@ -441,7 +441,7 @@ export class TeammateCollection implements TeammateOps {
     name: string,
     query: number | AgentEntityLastQuery,
   ): Promise<AgentEntityLastResult> {
-    const identity = await this.mustIdentity(validateTeamMateName(name));
+    const identity = await this.mustIdentity(validateAgentEntityName(name));
     const entity = this.liveEntity(identity.name);
     const activity = await readAgentActivity({
       config: this.opts.config.current(),
@@ -519,7 +519,10 @@ export class TeammateCollection implements TeammateOps {
   }
 
   async dispatcherWorkspace(): Promise<string> {
-    return dispatcherWorkspace(this.opts.config.current(), this.dispatcherId);
+    return ensureDispatcherWorkspace(
+      this.opts.config.current(),
+      this.dispatcherId,
+    );
   }
 
   /** Narrow containment query; callers invoke entity capabilities themselves. */
@@ -804,7 +807,7 @@ export class TeammateCollection implements TeammateOps {
   private resolveEntity(
     name: string,
   ): ResolvedTeamMate | Promise<ResolvedTeamMate> {
-    const teammateName = validateTeamMateName(name);
+    const teammateName = validateAgentEntityName(name);
     const existing = this.liveEntity(teammateName);
     if (existing !== null) {
       this.assertInCollection(existing.current());

@@ -67,16 +67,6 @@ export class DuplicateProviderRefError extends Error {
   }
 }
 
-/** Thrown when registering a runnable implementation for the same provider twice. */
-export class DuplicateProviderImplementationError extends Error {
-  constructor(readonly id: string) {
-    super(
-      `provider ${JSON.stringify(id)} already has a runnable implementation`,
-    );
-    this.name = 'DuplicateProviderImplementationError';
-  }
-}
-
 /** Thrown when resolving a `builtin:` ref whose id is not registered. */
 export class UnknownBuiltinProviderError extends Error {
   constructor(readonly id: string) {
@@ -111,49 +101,29 @@ export class ProviderRegistry {
   private readonly implementations = new Map<string, unknown>();
 
   /**
-   * Register a provider descriptor, optionally together with its runnable
-   * implementation.
+   * Register a provider descriptor together with its runnable implementation.
+   * Every caller registers both in the same call — a built-in provider from
+   * its plugin's `contribute()`, an `npm:`-ref provider the first time its
+   * package loader resolves it — so there is no descriptor-only, completed-
+   * later registration state to support.
    *
    * Throws {@link DuplicateProviderError} / {@link DuplicateProviderRefError}
-   * on a repeated id/ref — unless `descriptor` is the exact object already
-   * registered under its id, in which case this call only adds
-   * `implementation`. That reuse lets a descriptor registered with no
-   * `implementation` be completed later by whatever resolves the
-   * implementation, without re-registering, as long as the same descriptor
-   * object is passed both times (`registry/provider-loader.ts`'s
-   * `seedDescriptor` would reuse a looked-up descriptor this way rather than
-   * building a new one) — that identity check is what stops this from ever
-   * being mistaken for a second, conflicting registration under the same id.
-   * No caller registers a descriptor without its implementation today: every
-   * built-in provider (`codex`, `claude-code`, `feishu`) registers both
-   * together from its plugin's `contribute()`, and every `npm:`-ref provider
-   * registers both together the first time its package loader resolves it.
-   * This branch is unexercised; it is left in place rather than removed.
-   *
-   * Throws {@link DuplicateProviderImplementationError} if `implementation` is
-   * given for a provider id that already has one.
+   * on a repeated id/ref.
    */
   register(
     descriptor: ProviderDescriptor,
-    implementation?: ProviderImplementation,
+    implementation: ProviderImplementation,
   ): void {
-    const existing = this.providers.get(descriptor.id);
-    if (existing === undefined) {
-      const canonicalRef = formatProviderRef(descriptor.ref);
-      if (this.providersByRef.has(canonicalRef)) {
-        throw new DuplicateProviderRefError(canonicalRef);
-      }
-      this.providers.set(descriptor.id, descriptor);
-      this.providersByRef.set(canonicalRef, descriptor);
-    } else if (existing !== descriptor) {
+    if (this.providers.has(descriptor.id)) {
       throw new DuplicateProviderError(descriptor.id);
     }
-    if (implementation !== undefined) {
-      if (this.implementations.has(descriptor.id)) {
-        throw new DuplicateProviderImplementationError(descriptor.id);
-      }
-      this.implementations.set(descriptor.id, implementation);
+    const canonicalRef = formatProviderRef(descriptor.ref);
+    if (this.providersByRef.has(canonicalRef)) {
+      throw new DuplicateProviderRefError(canonicalRef);
     }
+    this.providers.set(descriptor.id, descriptor);
+    this.providersByRef.set(canonicalRef, descriptor);
+    this.implementations.set(descriptor.id, implementation);
   }
 
   has(id: string): boolean {

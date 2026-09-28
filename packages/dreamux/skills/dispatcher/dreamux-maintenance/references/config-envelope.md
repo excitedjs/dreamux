@@ -23,22 +23,22 @@ The complete current host envelope has independently optional `plugins`,
 normalizes to an empty collection; an omitted `plugins` array means no opt-in
 plugins.
 
-`plugins[]` entries are either a plugin ref string or an object with exactly:
+`plugins[]` entries are either a plugin ref string or an object with:
 
 - non-empty plugin ref `ref`: `builtin:<id>` (the built-in opt-in plugin is
   `bootstrap`) or `npm:<package>` with an optional `#<export>`;
 - optional plugin-owned `config`, validated by that plugin. A `config` block
-  for a plugin that takes no config (no `config.read`) is ignored; this is the
-  one place `plugins[]` tolerates an unrecognized key. `rejectUnknownKeys`
-  still applies to `plugins[]` entry keys (`ref`/`config`); every other key at
-  the host envelope's own levels — the top level, `dispatchers[]`,
-  `channels[]`, `agents[]`, and `dispatchers[].workspace` — tolerates an
-  unrecognized key too. Wrong types and missing required fields are still
-  rejected at every level. This tolerance is about the envelope's own keys
-  only: a provider-owned `config` block (`agents[].config`,
-  `channels[].config`) still follows that provider's own schema, which may
-  reject unknown keys — use the provider's reference as the authority there,
-  not this one.
+  for a plugin that takes no config (no `config.read`) is ignored. Every key at
+  the host envelope's own levels — the top level, `plugins[]` entries
+  (`ref`/`config`), `dispatchers[]`, `channels[]`, `agents[]`, and
+  `dispatchers[].workspace` — tolerates an unrecognized key. Wrong types and
+  missing required fields are still rejected at every level. This tolerance is
+  about the envelope's own keys only; whether it also extends to a
+  provider-owned `config` block (`agents[].config`, `channels[].config`) is
+  that provider's own choice — use the provider's reference as the authority
+  there, not this one. The `builtin:codex`, `builtin:claude-code`, and
+  `builtin:feishu` config readers tolerate an unrecognized key in their own
+  `config` block too, under the same R21 policy.
 
 The built-in Feishu plugin is always loaded and must not be listed. A
 malformed entry fails `dreamux serve` and shows as a failed `config` line in

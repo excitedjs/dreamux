@@ -100,16 +100,14 @@ export interface LoadProviderPackagesOptions {
 /**
  * Load every package-backed provider ref in `refs` into the registry using the
  * kind-specific `spec`. Builtin (`builtin:`) and external (`npm:`) refs both
- * flow through here; refs are de-duplicated by canonical form.
- *
- * The skip condition is implementation-aware, not descriptor-aware: a ref is
- * skipped only once its *implementation* is registered. Every built-in
- * (`codex`, `claude-code`, `feishu`) registers descriptor and implementation
- * together from its plugin's `contribute()`, so this skeleton never sees one
- * of their refs with a descriptor but no implementation — but a caller is
- * free to pre-register a bare descriptor ahead of time (`ProviderRegistry.register`
- * accepts one with no `implementation`), and skipping on descriptor existence
- * alone would then silently leave it without a loaded implementation.
+ * flow through here; refs are de-duplicated by canonical form. A ref already
+ * registered (by an earlier pass, or as an always-loaded built-in) is
+ * skipped — `ProviderRegistry.register()` always registers a descriptor
+ * together with its implementation, so presence of one means presence of
+ * both. A ref registered under the wrong kind (a `channel` ref that turns out
+ * to be an `agentRuntime` provider) is skipped here too and is caught instead
+ * by `config/config.ts`'s `resolveConfigProvider`, which checks every
+ * resolved descriptor's kind against the field that referenced it.
  *
  * `TProvider extends ProviderImplementation` so the loaded value can reach
  * `ProviderRegistry.register()` typed; the skeleton stays kind-agnostic
@@ -124,23 +122,9 @@ export async function loadProviderPackages<
 ): Promise<void> {
   const importModule = options.importModule ?? defaultImportModule;
   for (const ref of uniqueLoadableRefs(options.refs)) {
-    if (isImplementationLoaded(options.registry, ref)) continue;
+    if (options.registry.hasRef(ref.raw)) continue;
     await loadOneProviderPackage(options.registry, ref, importModule, spec);
   }
-}
-
-/**
- * True when `ref` already has both a registered descriptor and a registered
- * implementation. A descriptor registered without an implementation returns
- * false so the loader proceeds to load and register one.
- */
-function isImplementationLoaded(
-  registry: ProviderRegistry,
-  ref: ProviderRef,
-): boolean {
-  if (!registry.hasRef(ref.raw)) return false;
-  const descriptor = registry.resolve(ref.raw);
-  return registry.getImplementation(descriptor.id) !== undefined;
 }
 
 async function loadOneProviderPackage<
@@ -152,18 +136,6 @@ async function loadOneProviderPackage<
   importModule: ProviderModuleImporter,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
-  const existing = registry.hasRef(ref.raw)
-    ? registry.resolve(ref.raw)
-    : undefined;
-  // Core owns the kind of a registered ref. A provider no longer echoes a
-  // descriptor back, so this is the only place a ref listed under the wrong
-  // kind (a channel ref configured as an agentRuntime, say) can fail loud.
-  if (existing !== undefined && existing.kind !== spec.kind) {
-    throw spec.createContractError(
-      ref.raw,
-      `provider ref is registered as kind ${JSON.stringify(existing.kind)}, expected ${JSON.stringify(spec.kind)}`,
-    );
-  }
   const packageName = resolvePackageName(ref, spec);
   const module = await importProviderModule(
     ref,
@@ -172,7 +144,9 @@ async function loadOneProviderPackage<
     spec,
   );
   const factory = selectFactoryExport(ref, module, spec);
-  const seedDescriptor: ProviderDescriptor = existing ?? {
+  // The registered descriptor is Core's own: parsed from the configured ref,
+  // never read back off the loaded implementation.
+  const descriptor: ProviderDescriptor = {
     id: seedDescriptorId(ref),
     kind: spec.kind,
     ref,
@@ -180,9 +154,7 @@ async function loadOneProviderPackage<
 
   let provider: TProvider;
   try {
-    provider = await factory(
-      spec.factoryContext({ ref: ref.raw, descriptor: seedDescriptor }),
-    );
+    provider = await factory(spec.factoryContext({ ref: ref.raw, descriptor }));
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,
@@ -193,21 +165,13 @@ async function loadOneProviderPackage<
 
   spec.assertProvider(provider, {
     ref: ref.raw,
-    descriptor: seedDescriptor,
+    descriptor,
     fail: (message) => {
       throw spec.createContractError(ref.raw, message);
     },
   });
 
-  // The registered descriptor is Core's own: it is parsed from the configured
-  // ref, never read back off the loaded implementation. `seedDescriptor` is
-  // `existing` itself when a caller pre-registered a bare descriptor for this
-  // ref (same object, not a copy), so `register()` recognizes the completion
-  // and only adds the implementation instead of registering the descriptor a
-  // second time — no in-repo caller does this today (see `registry.ts`'s
-  // `register()` doc comment), so in practice every ref registers both in
-  // this one call.
-  registry.register(seedDescriptor, provider);
+  registry.register(descriptor, provider);
 }
 
 function resolvePackageName<TProvider, TFactoryContext>(
