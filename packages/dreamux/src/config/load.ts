@@ -3,11 +3,7 @@ import { pathExists } from '../platform/fs-errors.js';
 import { readFile } from 'node:fs/promises';
 import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js';
 import { loadChannelProviders } from '../channel/external-channel-provider.js';
-import {
-  createBuiltinProviderRegistry,
-  parseProviderRef,
-  type ProviderRegistry,
-} from '../registry/index.js';
+import { parseProviderRef, ProviderRegistry } from '../registry/index.js';
 import { isPlainObject } from '@excitedjs/dreamux-utils';
 import { createLogger } from '../platform/logger.js';
 import {
@@ -37,7 +33,7 @@ export async function loadConfig(
   overrides: ConfigPathOverrides = {},
 ): Promise<LoadConfigResult> {
   const file = globalConfigFile();
-  const providerRegistry = providerRegistryFor(overrides);
+  const providerRegistry = overrides.providerRegistry ?? new ProviderRegistry();
   await assertNoLegacyTomlOnly();
   const { config, plugins } = await readConfigFile(file, providerRegistry);
   return { config, configFile: file, providerRegistry, plugins };
@@ -138,10 +134,6 @@ export async function assertNoLegacyTomlOnly(): Promise<void> {
       `Recreate the config as JSON (run \`dreamux onboard\`, or write ${jsonFile} with a ` +
       `dispatchers array), then move ${tomlFile} aside.`,
   );
-}
-
-function providerRegistryFor(overrides: ConfigPathOverrides): ProviderRegistry {
-  return overrides.providerRegistry ?? createBuiltinProviderRegistry();
 }
 
 /**

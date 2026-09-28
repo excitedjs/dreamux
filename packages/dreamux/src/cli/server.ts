@@ -22,11 +22,12 @@ import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
 import { ConfigService } from '../config/service.js';
-import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { ProviderRegistry } from '../registry/index.js';
 import { startPlugins } from '../plugin/host.js';
 import { createLogger } from '../platform/logger.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import {
+  adminSocketLockPath,
   adminSocketPath,
   channelLogDir,
   channelLogPath,
@@ -47,7 +48,7 @@ export async function runServe(): Promise<void> {
   // entry's config is parsed through its provider's readConfig, so the
   // implementation must be present first). The populated registry then backs
   // the Server's runtime + channel catalogs (Server builds them from it).
-  const providerRegistry = createBuiltinProviderRegistry();
+  const providerRegistry = new ProviderRegistry();
 
   // Open ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
@@ -78,7 +79,7 @@ export async function runServe(): Promise<void> {
     workflowLoggerFactory: (id) =>
       createLogger({ name: `workflow/${id}`, filePath: workflowLogPath(id) }),
     runtimeSocketSweep: () => sweepRuntimeSocketDirs(),
-    legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
+    legacyAdminLockPath: adminSocketLockPath(legacyAdminSocketPath()),
   });
   await server.start();
   logger.info({ admin_socket: adminSocketPath() }, 'server up');

@@ -52,13 +52,19 @@ the Team.
   accepted requests, then shuts down dispatchers and the socket. A request
   racing the fence gets `ServerShuttingDownError`.
 - **`dispatcher-service/index.ts`** — one dispatcher-local aggregate. It has no
-  per-verb Team/Channel pass-through methods: `readonly teams` (`TeamsPort`),
-  `readonly teammates` (`TeammateOps`), `readonly channels` (`ChannelService`),
-  and `readonly scheduler` (`SchedulerCommands`) are exposed directly, and every
-  caller (Commands, MCP delegates) reaches the owning port itself instead of a
-  forwarding method per verb. `workspace()` is the one surviving pass-through:
-  both the TeamMate and Team Command/MCP surfaces resolve a request's default
-  `cwd` from it, and it is a dispatcher-level fact neither domain owns. It _has
+  per-verb Team/Channel/Agent pass-through methods: `readonly teams`
+  (`TeamsPort`), `readonly teammates` (`TeammateOps`), `readonly channels`
+  (`ChannelService`), `readonly scheduler` (`SchedulerCommands`), and
+  `readonly dispatcherAgent` (`DispatcherAgent`) are exposed directly, and
+  every caller (Commands, MCP delegates) reaches the owning port itself
+  instead of a forwarding method per verb — `submitToAgent`/`interruptAgent`
+  compose the dispatcher's own admission around `dispatcherAgent.mustAgent()`
+  rather than hiding it behind a private accessor, and the read-only
+  `dispatcherAgent.status()` (`dispatchers/index.ts`'s `summarize`/`status`)
+  reaches it the same way. `workspace()` resolves the dispatcher's own
+  default cwd directly through `ensureDispatcherWorkspace` — kept on the
+  aggregate, not folded into `teams`/`teammates`, because both the TeamMate
+  and Team Command/MCP surfaces read it. It _has
   an_ agent: `agent.ts`'s `DispatcherAgent` is its one agent owner, covering
   dispatcher-root identity ensure, construction as a contained `AgentService`
   through the per-dispatcher `AgentServiceFactory`, the one `mustAgent()`
@@ -73,8 +79,10 @@ the Team.
   there is no setter). Its dispatcher-scoped Workflow scope is a plain
   `WorkflowService` (`workflow-service/index.ts`) constructed directly in the
   aggregate's own constructor, the same way `SchedulerService` is: there is no
-  separate Workflow-owning wrapper class, and `get workflows()` is the one
-  place that wraps `run`/`stop` with this dispatcher's admission gate.
+  separate Workflow-owning wrapper class, and `get workflows()` exposes it
+  directly — `WorkflowService` takes this dispatcher's own `admit` closure at
+  construction and fences `run`/`status`/`stop`/`list` itself, the same shape
+  `SchedulerService` fences its own verbs.
   `lifecycle.ts`'s `DispatcherLifecycle` is this dispatcher's one
   admission gate and its one terminal close, alongside start
   single-flight (`ChannelService` itself is the one owner of every built
@@ -85,10 +93,12 @@ the Team.
   one terminal close a failed `start()` reuses instead of
   a separate rollback path — there is no restart after it runs. Its prepare
   and start sequencing is one `try` block covering every step from the
-  dispatcher-row lookup on, so a shape failure this early (an unrunnable
-  channel provider, a missing dispatcher row) closes the same way a failure
-  deeper in startup does, instead of leaving the dispatcher stuck admitting
-  work it never finished starting. `lifecycle.ts` opens and closes every
+  channel-runnable assertion on — the constructor already resolved this
+  dispatcher's config, so there is no row lookup left to fail inside
+  `start()` — so a shape failure this early (an unrunnable channel provider)
+  closes the same way a failure deeper in startup does, instead of leaving
+  the dispatcher stuck admitting work it never finished starting.
+  `lifecycle.ts` opens and closes every
   Team's admissions with one call each — `teams.startAdmissions()` (recover
   every Team's Workflow records, open Workflow admission, and arm its
   scheduler) and `teams.stopAdmissions()` (close Workflow admission and
@@ -176,10 +186,13 @@ the Team.
   (`service.closed.then(() => this.evict(...))`) instead of holding a
   subscription. `teams-port.ts` (the `TeamsPort` interface) sits at
   this same tier, depending only on modules outside `team/`, never on the
-  collection tier below. `TeamLeaderHandle` and `TeamLeaderTeammateOps` are
-  plain data types declared in the store-tier `types.ts` (they name no
-  service- or collection-tier type of their own), and `types.ts` is where
-  `teams-port.ts` reads `TeamLeaderHandle` from. The
+  collection tier below. `TeamLeaderHandle` is a plain data type declared in
+  the store-tier `types.ts` (it names no service- or collection-tier type of
+  its own), and `types.ts` is where `teams-port.ts` reads it from; its
+  `teammates` field is typed `TeamLeaderTeammateOps`, a
+  `Pick<TeammateOps, ...>` declared once in `agent/types.ts` and shared with
+  the TeamMate MCP delegate's own team-leader scope (`agent/mcp.ts`) instead
+  of each declaring its own copy. The
   collection tier (`index.ts`, `commands.ts`, `mcp.ts`) is
   `TeamCollection`: one materialization cache (construction dedup,
   live-instance eviction, and the closed-Team worktree reclamation sweep
@@ -189,9 +202,12 @@ the Team.
   implements `TeamsPort` directly (no `.port`/`.commands` adapter object,
   the same shape `SchedulerService` uses for `SchedulerCommands`): every
   per-Team operation an admin/MCP caller reaches — including `leaderScope()`,
-  which builds the `TeamLeaderHandle` object literal inline, calling
-  `this.admit`/`this.read` directly, for admin/MCP team-leader callers to
-  reach through `DispatcherService.teams` (no forwarding method on
+  which fences once, opens the Team, and hands back that `TeamService`'s own
+  `leaderScope()` surface unwrapped (`teammates`/`workflows` exposed
+  directly, each already fencing itself through its own
+  constructor-injected `admit`, plus one real closure for `spawnTeamMate`'s
+  shared-workspace injection) — for admin/MCP team-leader callers to reach
+  through `DispatcherService.teams` (no forwarding method on
   `DispatcherService` itself) — gates itself on the injected `admitOperation`
   internally, never the concrete `TeamService`. This
   directory merge is a code-location, ownership, and internal-API change
@@ -207,9 +223,12 @@ the Team.
   (`identity.ts`, `store.ts`, `runtime-state.ts`, `activity.ts`,
   `records.ts`, `requests.ts`, `runtime-id.ts`, `types.ts`) is neutral
   identity/activity/runtime-state persistence, history-query reading, and the
-  directory's data types; it is never under a Collection, and nothing outside
-  `agent/` constructs it directly (R63: an Agent is a directory to its
-  parents). `team/service.ts` and `dispatcher-service/` reach the Team leader's
+  directory's data types; it is never under a Collection, and its
+  `AgentIdentityStore` / `AgentEntityCollectionStore` are constructed nowhere
+  outside `agent/` (R63: an Agent is a directory to its parents).
+  `AgentNameRegistry`, also declared in this tier, is the one exception: it is
+  dispatcher-global rather than per-entity, so `dispatcher-service/index.ts`
+  builds it directly. `team/service.ts` and `dispatcher-service/` reach the Team leader's
   and the dispatcher agent's identity only through the service tier's
   `AgentServiceFactory` (`create`/`open`/`upsert`, each binding and
   reading/writing its own `AgentIdentityStore` internally and handing back a
@@ -334,6 +353,23 @@ the Team.
   boolean plus a retryable `closing` task is what that external reader
   requires; an operation with no such reader (dissolve, host stop, start)
   keeps the one-field shape.
+- **A public read crosses the same admission fence as a mutation.** R12
+  ruled this for a dispatcher stop: `SchedulerService.list()`,
+  `WorkflowService.status()`/`list()`, and every `TeammateOps`/`TeamsPort`
+  read (`list`/`status`/`history`/`last`) cross their owner's `admit`
+  closure before answering, the same closure their mutating verbs cross —
+  there is one fencing rule per child, not a read exception per domain. The
+  same composition makes a Team dissolve refuse a status read exactly when
+  it refuses the mutation beside it: every `admit` option a child receives is
+  `TeamService`'s own `(task) => this.admit(() => deps.admitOperation(task))`,
+  so a Team's dissolve fence and its dispatcher's fence both sit under a
+  child's read before it can answer — a consequence of that composition, not
+  a separate ruling. Each child
+  owns this crossing itself (an `admit` option taken at construction, the
+  same shape for `SchedulerService` and `WorkflowService`); an owner never
+  re-wraps a child's already-fenced verb. Internal lifecycle calls a close
+  or a recovery makes on its own children (`recover`, `start`, `stopAll`,
+  `requestStopAll`) stay unfenced — they run the close, not around it.
 - **A child under construction checks its parent's close, not the other way
   around.** An admitted `spawn`/`send`/`create` crosses its owner's admission
   fence before `close()` can raise it, but only finishes materializing its

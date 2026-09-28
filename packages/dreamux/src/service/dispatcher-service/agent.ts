@@ -25,6 +25,10 @@ import {
   type AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
 import type {
+  AgentIdentityCreateInput,
+  AgentIdentityUpdateInput,
+} from '../agent/store.js';
+import type {
   TeammateAgentMcp,
   TeammateServiceOptions,
 } from '../agent/service-types.js';
@@ -109,15 +113,16 @@ export class DispatcherAgent {
       conversationProjection: this.opts.conversationProjection,
       log: this.opts.log,
     };
+    const identityInput: DispatcherIdentityEnsureInput = {
+      agentRuntime: this.opts.agentRuntime,
+      cwd,
+      worktree: dispatcherRootWorktreeIdentity(cwd),
+    };
     this.service = await this.opts.agentServiceFactory.upsert({
       location: { dir: dispatcherDir(this.opts.id), expectedName: null },
-      merge: (existing) =>
-        ensureDispatcherIdentity(existing, {
-          dispatcherId: this.opts.id,
-          agentRuntime: this.opts.agentRuntime,
-          cwd,
-          worktree: dispatcherRootWorktreeIdentity(cwd),
-        }),
+      creation: dispatcherIdentityCreation(identityInput),
+      reconcile: (existing) =>
+        dispatcherIdentityReconcile(existing, identityInput),
       // Computed after the identity write settles, matching this method's
       // original ensure-then-compose order: a `launch` tap failure must still
       // leave the dispatcher-root identity durable, the same as every other
@@ -248,7 +253,6 @@ export class DispatcherAgent {
 }
 
 interface DispatcherIdentityEnsureInput {
-  dispatcherId: string;
   agentRuntime: string;
   cwd: string;
   worktree: AgentEntityWorktreeIdentity;
@@ -270,56 +274,53 @@ function dispatcherRootWorktreeIdentity(
 }
 
 /**
+ * The dispatcher root's own creation input, for when `AgentServiceFactory.
+ * upsert()` finds nothing at its bound location yet. Every field default
+ * (version, timestamps, the rest of `AgentEntityIdentity`) is the store's
+ * job, not this module's; a fresh dispatcher-root identity starts `'stopped'`
+ * rather than the store's own `'starting'` default, since building this
+ * Agent is not the same event as activating its runtime.
+ */
+function dispatcherIdentityCreation(
+  input: DispatcherIdentityEnsureInput,
+): AgentIdentityCreateInput {
+  return {
+    name: DISPATCHER_AGENT_NAME,
+    teamId: null,
+    agentRuntime: input.agentRuntime,
+    sourceCwd: input.cwd,
+    sourceRepo: null,
+    cwd: input.cwd,
+    runtimeCwd: input.cwd,
+    worktree: input.worktree,
+    status: 'stopped',
+  };
+}
+
+/**
  * Reconcile the dispatcher-owned root identity against its own live config,
  * preserving compatible runtime recovery state. This policy is dispatcher
- * config compatibility, not a generic Agent entity store rule; the read and
- * the write around it are `AgentServiceFactory.upsert`'s job, not this
+ * config compatibility, not a generic Agent entity store rule; the merge and
+ * the write around it are `AgentServiceFactory.upsert()`'s job, not this
  * function's.
  */
-function ensureDispatcherIdentity(
-  existing: AgentEntityIdentity | null,
+function dispatcherIdentityReconcile(
+  existing: AgentEntityIdentity,
   input: DispatcherIdentityEnsureInput,
-): AgentEntityIdentity {
-  const now = Date.now();
-  if (existing === null) {
-    return {
-      version: 1,
-      dispatcher_id: input.dispatcherId,
-      name: DISPATCHER_AGENT_NAME,
-      team_id: null,
-      agent_runtime: input.agentRuntime,
-      session_id: null,
-      source_cwd: input.cwd,
-      source_repo: null,
-      cwd: input.cwd,
-      runtime_cwd: input.cwd,
-      worktree: input.worktree,
-      intent: null,
-      identity_prompt: null,
-      skill_sources: [],
-      created_at: now,
-      updated_at: now,
-      status: 'stopped',
-      last_error: null,
-      closed_at: null,
-      close_note: null,
-    };
-  }
-
+): AgentIdentityUpdateInput {
   const compatible =
     existing.agent_runtime === input.agentRuntime &&
     existing.cwd === input.cwd &&
     existing.runtime_cwd === input.cwd &&
     worktreeIdentityEquals(existing.worktree, input.worktree);
   return {
-    ...existing,
     name: DISPATCHER_AGENT_NAME,
-    team_id: null,
-    agent_runtime: input.agentRuntime,
-    source_cwd: input.cwd,
-    source_repo: null,
+    teamId: null,
+    agentRuntime: input.agentRuntime,
+    sourceCwd: input.cwd,
+    sourceRepo: null,
     cwd: input.cwd,
-    runtime_cwd: input.cwd,
+    runtimeCwd: input.cwd,
     worktree: input.worktree,
     // Compatible preparation only refreshes configuration-owned fields. The
     // entity owns lifecycle projection and reopens `closed` through its own
@@ -327,13 +328,12 @@ function ensureDispatcherIdentity(
     ...(compatible
       ? {}
       : {
-          session_id: null,
+          sessionId: null,
           status: 'stopped' as const,
-          last_error: null,
-          closed_at: null,
-          close_note: null,
+          lastError: null,
+          closedAt: null,
+          closeNote: null,
         }),
-    updated_at: now,
   };
 }
 

@@ -119,12 +119,13 @@ export class SchedulerService implements SchedulerCommands {
     await this.store.deleteStoreFile();
   }
 
+  /** Gated like every other admitted verb: a read is still operational access on a scope that may be closing. */
   async list(): Promise<{ jobs: CronJob[] }> {
-    return { jobs: await this.store.list() };
+    return this.opts.admit(async () => ({ jobs: await this.store.list() }));
   }
 
   async create(input: CronCreateRequest): Promise<CronJob> {
-    return this.admit(() => this.doCreate(input));
+    return this.opts.admit(() => this.doCreate(input));
   }
 
   private async doCreate(input: CronCreateRequest): Promise<CronJob> {
@@ -143,7 +144,7 @@ export class SchedulerService implements SchedulerCommands {
   }
 
   async update(input: CronUpdateRequest): Promise<CronJob> {
-    return this.admit(() => this.doUpdate(input));
+    return this.opts.admit(() => this.doUpdate(input));
   }
 
   private async doUpdate(input: CronUpdateRequest): Promise<CronJob> {
@@ -170,7 +171,7 @@ export class SchedulerService implements SchedulerCommands {
   }
 
   async delete(id: string): Promise<{ id: string; deleted: boolean }> {
-    return this.admit(() => this.doDelete(id));
+    return this.opts.admit(() => this.doDelete(id));
   }
 
   private async doDelete(
@@ -323,15 +324,11 @@ export class SchedulerService implements SchedulerCommands {
     // fired but before Dispatcher admission starts this async task; that
     // stopped generation must not submit.
     const generation = this.lifecycleGeneration;
-    await this.admit(() =>
+    await this.opts.admit(() =>
       generation === this.lifecycleGeneration
         ? this.dispatch(jobId, generation)
         : Promise.resolve(),
     );
-  }
-
-  private admit<T>(task: () => Promise<T>): Promise<T> {
-    return this.opts.admit(task);
   }
 
   /**

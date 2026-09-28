@@ -176,7 +176,6 @@ to `.`/`..` and escape `state/plugins/`.
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/dreamux/src/state/dispatcher-store.ts`
 
 ### Agent Identity Records
 
@@ -461,7 +460,7 @@ product behavior no one asked for:
 - **Team record:** malformed, wrong-version, and missing all read as the same
   successful `null` ("no Team"). A malformed record does not throw, because
   that would turn a hand-edited or half-written record into a crash instead
-  of "no Team", and would defeat `TeamStore.create()`'s own replace-invalid-
+  of "no Team", and would defeat the Team record handle's own replace-invalid-
   residue path (see Team Records above).
 - **`chat-bots.json`:** the whole-file version/shape check still fails loud,
   but one malformed entry field degrades to that field's default instead of

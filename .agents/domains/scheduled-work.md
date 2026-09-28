@@ -102,8 +102,8 @@ between conversations. The scheduler holds no runtime and applies no
 per-owner missing-runtime policy of its own.
 
 A Team's single `admit` closure composes two fences in order, for every
-operation `SchedulerService` runs through it — `create`/`update`/`delete` and
-a due fire alike: `TeamService.admit` first, then
+operation `SchedulerService` runs through it — `create`/`update`/`delete`/
+`list` and a due fire alike: `TeamService.admit` first, then
 `DispatcherService.admitOperation`. There is no second, `SchedulerCommands`-
 shaped wrapper object around the Team's scheduler; the closure is passed
 directly at construction. A mutation racing an in-flight Team dissolve is

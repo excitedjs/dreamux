@@ -9,18 +9,13 @@
 
 import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
 import { ChannelProviderCatalog } from './channel/catalog.js';
-import {
-  createBuiltinProviderRegistry,
-  type ProviderRegistry,
-} from './registry/index.js';
+import { ProviderRegistry } from './registry/index.js';
 import { dispatcherAgent, type DreamuxConfig } from './config/config.js';
 import type { ConfigService } from './config/service.js';
-import { DispatcherStore } from './state/dispatcher-store.js';
 import { resolveHomePathPrefixes } from './platform/home-paths.js';
 import { adminSocketPath } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
 import { createServerHooks, type ServerHooks } from './plugin/host.js';
-import { errorInfo } from '@excitedjs/dreamux-utils';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
@@ -107,12 +102,7 @@ export interface ServerOptions {
   hooks?: ServerHooks;
 }
 
-export interface Repos {
-  dispatchers: DispatcherStore;
-}
-
 export class Server {
-  readonly repos: Repos;
   private dispatchers_: Dispatchers | null = null;
   /**
    * The admitted Command port every adapter resolves against. The process owns
@@ -159,8 +149,7 @@ export class Server {
 
   constructor(opts: ServerOptions) {
     this.opts = opts;
-    this.providerRegistry =
-      opts.providerRegistry ?? createBuiltinProviderRegistry();
+    this.providerRegistry = opts.providerRegistry ?? new ProviderRegistry();
     const config = opts.config;
     // The catalogs below are pure registry lookups, so when no runtime catalog is
     // injected every referenced provider implementation must already be loaded
@@ -185,9 +174,6 @@ export class Server {
     this.channelProviders =
       opts.channelProviderCatalog ??
       new ChannelProviderCatalog({ registry: this.providerRegistry });
-    this.repos = {
-      dispatchers: new DispatcherStore(config.current()),
-    };
     // The Command port is composed before the dispatchers because they hold it:
     // a Channel session invokes Commands through the same admitted port the
     // admin socket does. The host below resolves its targets lazily, so the
@@ -206,7 +192,10 @@ export class Server {
   private commandHost(): CoreCommandHost {
     return {
       summarize: () => this.dispatchers.summarize(),
-      dispatcherRow: (id) => this.repos.dispatchers.get(id),
+      dispatcherConfig: (id) =>
+        this.opts.config
+          .current()
+          .dispatchers.find((entry) => entry.id === id) ?? null,
       dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
       dispatcher: (id) => this.dispatchers.get(id),
       mcpLeases: this.mcpLeases,
@@ -231,7 +220,6 @@ export class Server {
     });
     this.dispatchers_ = new Dispatchers({
       config: this.opts.config,
-      dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,
@@ -275,17 +263,8 @@ export class Server {
     );
 
     if (this.opts.runtimeSocketSweep !== undefined) {
-      try {
-        const swept = await this.opts.runtimeSocketSweep();
-        this.log.info({ dirs: swept }, 'swept volatile runtime-socket dirs');
-      } catch (err) {
-        this.log.warn(
-          {
-            err: errorInfo(err),
-          },
-          'runtime-socket sweep failed; continuing startup',
-        );
-      }
+      const swept = await this.opts.runtimeSocketSweep();
+      this.log.info({ dirs: swept }, 'swept volatile runtime-socket dirs');
     }
 
     await this.dispatchers.start();
@@ -304,9 +283,9 @@ export class Server {
     // config.agents.replace, so one resolved value for the loop is correct.
     const config = this.opts.config.current();
     const failures: string[] = [];
-    for (const row of this.repos.dispatchers.listEnabled()) {
+    for (const dispatcher of config.dispatchers.filter((d) => d.enabled)) {
       try {
-        await ensureDispatcherWorkspace(config, row.dispatcher_id);
+        await ensureDispatcherWorkspace(config, dispatcher.id);
       } catch (err) {
         failures.push(err instanceof Error ? err.message : String(err));
       }

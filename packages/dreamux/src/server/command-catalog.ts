@@ -34,7 +34,7 @@ import { workflowCommands } from '../service/workflow-service/commands.js';
 import { CoreCommands } from '../command/registry.js';
 import {
   mustDispatcher,
-  mustDispatcherRow,
+  mustDispatcherConfig,
   type CoreCommandHost,
 } from './command-host.js';
 
@@ -54,7 +54,7 @@ export function createCoreCommandRegistry(host: CoreCommandHost): CoreCommands {
     ...dispatcherCommands({
       summarize: () => host.summarize(),
       dispatcherRuntimeStatus: (id) => host.dispatcherRuntimeStatus(id),
-      dispatcherRow: (id) => mustDispatcherRow(host, id),
+      dispatcherConfig: (id) => mustDispatcherConfig(host, id),
       dispatcher,
     }),
     ...channelCommands((context) => dispatcher(context).channels),

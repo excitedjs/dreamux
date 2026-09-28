@@ -214,14 +214,9 @@ export class TeamCollection implements TeamsPort {
           kind: 'team',
           base: resolved.name_prefix,
           accept: async (candidate) => {
-            // A valid record at this candidate belongs to another Team — this
-            // request has not been accepted anywhere — so move on. The probe is
-            // only an optimization: publication answers the same question
-            // authoritatively, and losing that race is the same ordinary
-            // "unavailable candidate", not a persistence failure.
-            if ((await this.store.get(candidate)) !== null) {
-              return false;
-            }
+            // No probe here: `create`'s own early-out against the same
+            // record is the authoritative answer, so a candidate already
+            // owned by another Team is refused there instead of twice.
             outcome.created = await this.createAtCandidate({
               ...options,
               name: candidate,
@@ -278,7 +273,7 @@ export class TeamCollection implements TeamsPort {
   /**
    * Compact rows from records alone; a list never consults a live runtime.
    *
-   * Gated like every other per-Team operational read (R12): an inventory read
+   * Gated like every other per-Team operational read: an inventory read
    * this narrow still names a Team, so it is fenced the same as `history` and
    * `summary` rather than left observable through a dispatcher stop.
    */
@@ -286,7 +281,7 @@ export class TeamCollection implements TeamsPort {
     return this.opts.admitOperation(() => this.listRows());
   }
 
-  /** Gated per R12: a read is still per-Team operational access. */
+  /** Gated because a read is still per-Team operational access. */
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
     return this.opts.admitOperation(() => this.historyResult(input));
   }
@@ -338,14 +333,6 @@ export class TeamCollection implements TeamsPort {
     return service.admit(() => task(service));
   }
 
-  /** Read a live Team without entering its work fence; reads survive closing. */
-  async read<T>(
-    teamId: string,
-    task: (service: TeamService) => Promise<T>,
-  ): Promise<T> {
-    return task(await this.get(validateTeamId(teamId)));
-  }
-
   /**
    * One Team's status.
    *
@@ -355,7 +342,7 @@ export class TeamCollection implements TeamsPort {
    * here, a read must not build an entity — and a Team with no runtime in this
    * process has no runtime state for a projection to be missing.
    *
-   * Gated per R12, same as every other per-Team operational read; the wrap
+   * Gated the same as every other per-Team operational read; the wrap
    * used to sit on the caller (`DispatcherService.getTeamStatus()`) and now
    * sits here instead, on the method itself.
    */
@@ -455,8 +442,11 @@ export class TeamCollection implements TeamsPort {
         cleaned.cleanup_error ?? 'managed worktree cleanup failed',
       );
     }
-    // The authorization goes with the pending work it authorized.
-    await this.store.update(teamId, {
+    // The authorization goes with the pending work it authorized. No
+    // `TeamService` holds this Team's handle open right now (it is closed),
+    // so this mints one just for this write, same as `depsBase` does for a
+    // live Team.
+    await this.store.handle(teamId).update({
       worktree: { ...cleaned, cleanup_error: null },
       cleanupForce: false,
     });
@@ -537,48 +527,19 @@ export class TeamCollection implements TeamsPort {
     );
   }
 
-  /** This Team's TeamLeader-scoped member/workflow surface. */
+  /**
+   * This Team's TeamLeader-scoped member/workflow surface.
+   *
+   * Fence once, open the Team, hand back what it already holds:
+   * `TeamService.leaderScope()` exposes `teammates`/`workflows` directly, and
+   * each of those already fences every verb through its own
+   * constructor-injected `admit` (composing this Team's own closing check
+   * with the dispatcher's), so nothing here re-wraps them a second time.
+   */
   leaderScope(teamId: string): Promise<TeamLeaderHandle> {
-    return this.opts.admitOperation(async () => {
-      const id = (await this.open(teamId)).id;
-      const mutate = async <T>(task: (service: TeamService) => Promise<T>) =>
-        this.opts.admitOperation(() => this.admit(id, task));
-      const read = async <T>(task: (service: TeamService) => Promise<T>) =>
-        this.read(id, task);
-      return {
-        teammates: {
-          send: (sendInput) =>
-            mutate((service) => service.teammates.send(sendInput)),
-          close: (closeInput) =>
-            mutate((service) => service.teammates.close(closeInput)),
-          list: () => read((service) => service.teammates.list()),
-          status: (name) => read((service) => service.teammates.status(name)),
-          history: (historyInput) =>
-            read((service) => service.teammates.history(historyInput)),
-          last: (name, query) =>
-            read((service) => service.teammates.last(name, query)),
-          getCapabilities: () =>
-            read(async (service) => service.teammates.getCapabilities()),
-        },
-        // `run`/`stop` route through the same `mutate` closure as every other
-        // mutating op. `TeamService.admit()` (`mutate`'s ultimate target) is a
-        // stateless refusal check, not a lock held across the whole call — so
-        // there is no lease for a long-running Workflow call to hold while it
-        // awaits an agent that re-enters this Team, and nothing to carry out
-        // as data before awaiting.
-        workflows: {
-          run: (workflowInput) =>
-            mutate((service) => service.workflows.run(workflowInput)),
-          status: (statusInput) =>
-            read((service) => service.workflows.status(statusInput)),
-          stop: (stopInput) =>
-            mutate((service) => service.workflows.stop(stopInput)),
-          list: () => read((service) => service.workflows.list()),
-        },
-        spawnTeamMate: (spawnInput) =>
-          mutate((service) => service.spawnTeamMate(spawnInput)),
-      };
-    });
+    return this.opts.admitOperation(async () =>
+      (await this.open(teamId)).leaderScope(),
+    );
   }
 
   scheduler(teamId: string): Promise<SchedulerCommands> {
@@ -914,7 +875,9 @@ export class TeamCollection implements TeamsPort {
       ...this.opts,
       // Each Team gets its own already-resolved root; nothing below rebuilds it.
       teamRoot: this.store.teamRoot(teamId),
-      store: this.store,
+      // Bound to this Team's own id: the service can publish and merge its
+      // own record but can never address another Team's by id.
+      record: this.store.handle(teamId),
       settleWorktreeCleanup: (id) => this.settleClosedWorktree(id),
     };
   }

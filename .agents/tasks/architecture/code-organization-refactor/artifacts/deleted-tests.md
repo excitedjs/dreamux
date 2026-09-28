@@ -4938,3 +4938,186 @@ package's only compile-time check that `CodexRuntime` satisfies the public
 `AgentRuntime` interface with no extra required members. No other file in
 the package currently asserts this; flagging for the final PR's restoration
 pass rather than silently leaving the gap unrecorded.
+
+## PR #455 round 6
+
+Gate pass for spec round 6 (Items A–G). Every item's own stage report
+verified no test in the repo references any symbol it touched, except spec
+Item F's dispatcher-store removal (`state/dispatcher-store.ts`,
+`DispatcherStore`, `DispatcherRow`, `Repos` deleted;
+`CoreCommandHost.dispatcherRow(id): DispatcherRow | null` renamed to
+`dispatcherConfig(id): DispatcherConfig | null`), which stage F verified and
+explicitly left unrepaired for this pass (`.workspace/refactor/r6/
+stage-F-residue.md`, "Test-harness breakage this stage causes"). `tsc -p
+tsconfig.tests.json` confirmed the same 3 errors stage F recorded (the
+`DispatcherRow` import in `tests/helpers/command-harness.ts`, its
+object-literal `dispatcherRow` key, and one direct assertion in
+`tests/core-command-adapters.test.ts:57`); `rush test` independently
+confirmed exactly the 4 runtime failures stage F named (`host.dispatcherConfig
+is not a function`) and no other failure anywhere in the monorepo — no other
+round-6 item caused any runtime regression.
+
+**On the "Helper import repairs vs. deletions" precedent above (the Final
+Pass section, `tests/helpers/command-harness.ts` "repaired, not deleted"
+entry): this fix is on that policy's delete side, not its repair side.**
+That policy repairs a helper only when its break is import-path-only ("it
+pins no contract of its own") and deletes a helper needing new
+test-infrastructure logic authored to keep working. `DispatcherRow`
+(`dispatcher_id`/`channel_identity`/`status`/`enabled`/`created_at`/
+`updated_at`) and `DispatcherConfig` (`id`/`cwd`/`enabled`/`workspace`/
+`channels`/`agentRuntime`) share no field names; `dispatcher.status` (`service/
+dispatchers/commands.ts`) reads `dispatcher.id` and derives
+`channel_identity` via `dispatcherChannelIdentity(dispatcher)` from
+`channels[0]?.identity`. Making the harness build a valid fake host again
+means authoring a `DispatcherConfig`-shaped fixture (a `DreamuxWorkspaceConfig`
+plus a `channels[]` entry carrying the identity string) — fixture
+construction, not a rename. The command-harness.ts entry's earlier
+"repaired, not deleted" disposition is superseded for this file: it is
+deleted this round.
+
+### `tests/core-command-adapters.test.ts` — deleted whole file (14 of 14 cases)
+
+Every case calls `createCommandHarness()`, so no subset of the file compiles
+independent of the broken shared helper (`whole file if its shared helper is
+what breaks`). 4 cases additionally failed at runtime
+(`host.dispatcherConfig is not a function`); the other 10 passed. Contract
+still holds for all 14 — the dispatcher-store removal changed no output
+(stage F verified `dispatcher.status` byte-identical), it only moved where
+the fake host's data comes from.
+
+- `describe('adapter equivalence — one representative Command per
+  namespace')`:
+  - `server.status: identical result via admin.sock and the Channel invoker`
+    — passed at runtime. **Contract:** `server.status` answers identically
+    through both adapters.
+  - `dispatcher.status: identical result via both adapters, each addressing
+    the dispatcher its own way` — **failed at runtime** (also the file's one
+    direct typecheck error, line 57: `harness.host.dispatcherRow('harness-d1')
+    !.dispatcher_id`). **Contract:** `dispatcher.status` answers identically
+    whether addressed by admin.sock's payload `dispatcher_id` or the Channel
+    invoker's construction-time binding.
+  - `team.interrupt without team_name and team.submit without team_name are
+    BAD_REQUEST on both adapters, before any handler runs` — passed.
+    **Contract:** a missing `team_name` is rejected before any Team-leader or
+    Dispatcher-Agent handler runs, on both adapters.
+  - `dispatcher.submit reaches the Dispatcher Agent through both adapters` —
+    **failed at runtime.** **Contract:** `dispatcher.submit` reaches
+    `submitToAgent` (never `submitToTeamLeader`) through both adapters with
+    the same result.
+  - `teammate.list: identical result via both adapters` — **failed at
+    runtime.** **Contract:** `teammate.list` answers identically through both
+    adapters.
+  - `workflow.list: identical result via both adapters` — **failed at
+    runtime.** **Contract:** `workflow.list` answers identically through both
+    adapters.
+  - `mcp.describe: identical result via both adapters, addressed by lease
+    token rather than dispatcher_id` — passed. **Contract:** `mcp.describe`
+    is addressed by MCP lease token, not `dispatcher_id`, and answers
+    identically through both adapters.
+- `describe('adapter context is factual and never filters the catalog')`:
+  - `the same Command name, called directly with an admin_socket vs a channel
+    context, executes the same handler with the same result` — passed.
+    **Contract:** the registry itself is context-shape-agnostic for a Command
+    (`mcp.describe`) that reads neither `dispatcher_id` nor `channel_id`.
+- `describe('validation runs before the handler, on both adapters')`:
+  - `an invalid payload is rejected as BAD_REQUEST without the handler ever
+    running (admin.sock)` — passed. **Contract:** `team.dissolve` missing
+    required fields is rejected before `dissolveTeam` runs, over admin.sock.
+  - `an invalid payload is rejected as BAD_REQUEST without the handler ever
+    running (Channel invoker)` — passed. Same contract, over the Channel
+    invoker.
+  - `COMMAND_PAYLOAD_BOUNDS.maxDepth rejects a hostile payload the Channel
+    invoker built in-process — it never crossed JSON.parse` — passed.
+    **Contract:** the depth bound applies to an in-process payload, not only
+    one that crossed `JSON.parse`.
+  - `COMMAND_PAYLOAD_BOUNDS.maxDepth rejects the same hostile payload sent as
+    JSON text over admin.sock` — passed. Same bound, over the wire.
+  - `COMMAND_PAYLOAD_BOUNDS.maxEntries rejects an object with more keys than
+    the bound allows` — passed. **Contract:** the entry-count bound is
+    enforced.
+  - `COMMAND_PAYLOAD_BOUNDS.maxBytes rejects a payload larger than the byte
+    budget` — passed. **Contract:** the byte-size bound is enforced.
+
+### `tests/mcp-lease-shim.test.ts` — 8 of 14 cases deleted (one whole
+`describe` block); 6 survive, with two doc-comment edits
+
+Only `describe('runDreamuxMcp — end to end over a real admin socket', ...)`
+(8 cases) uses `createCommandHarness`/`startHarnessAdminSocket`; every case
+in it passed at runtime (the file's only 3 compile errors were all in
+`core-command-adapters.test.ts`/`command-harness.ts`, none in this file's own
+code) and is deleted solely because its one entry point, the shared harness,
+is gone. `describe('McpLeaseRegistry — admission edge', ...)` (6 cases) never
+imports the harness — it exercises `McpLeaseRegistry` directly against
+hand-built spy delegates — and its cases are untouched. Two doc comments were
+edited to stay accurate after the deletion: the file's top docstring, which
+described both halves, now describes only the surviving half; and
+`fakeLease`'s comment, which compared itself to `command-harness.ts`'s
+`mintFakeMcpServer`, dropped that now-dangling comparison.
+
+- `advertises the frozen catalog and returns the delegate structured value
+  plus its text` — **Contract:** the shim's `mcp.describe`/`mcp.toolcall`
+  round trip returns the delegate's structured value and text.
+- `surfaces a delegate-approved refusal verbatim through mcp.toolcall` —
+  **Contract:** a delegate-reported `ok: false` refusal reaches the model
+  verbatim.
+- `carries an unclassified delegate failure to the model under its own
+  message` — **Contract:** an uncaught delegate exception reaches the model
+  under an `INTERNAL:` prefix with the exception's own message.
+- `revokes mid-session: the next call fails before the delegate is dispatched
+  again, and the model reads the revocation as its own fact` — **Contract:**
+  `McpLeaseRegistry.release()` mid-session fails the next call before the
+  delegate runs again, with an `MCP_LEASE_REVOKED:` message.
+- `never comes up for an unknown/revoked token: describe fails before the
+  transport is ever used` — **Contract:** an unknown lease token fails at
+  `mcp.describe`, before any transport is used.
+- `rejects synchronously with no lease token, touching neither the socket nor
+  a transport` — **Contract:** an empty lease token is rejected synchronously,
+  with no socket or transport touched.
+- `reports the transport failure it observed when the admin socket disappears
+  mid-session` — **Contract:** a transport-level failure (admin socket gone)
+  is reported under a `TRANSPORT_ERROR:` prefix carrying Node's own message,
+  not a generic "is the server running" guess.
+- `cannot forge routing identity through tool arguments: token/dispatcher-shaped
+  fields travel as opaque data only` — **Contract:** a tool argument bag that
+  contains fields shaped like routing identity (`token`, `dispatcher_id`,
+  `caller`) is opaque data to the routing layer; it cannot reach a second,
+  unrelated live delegate.
+
+All 8 contracts still hold — none is about the dispatcher store; the block
+only reused the same shared harness `core-command-adapters.test.ts` did to
+stand up a real admin socket.
+
+### Helpers deleted
+
+- **`tests/helpers/command-harness.ts`** — deleted (broken; see the
+  precedent discussion above). Nothing else imports it after the two files
+  above are handled.
+- **`tests/helpers/mcp-client.ts`** — deleted. Not itself broken (no
+  reference to anything round 6 touched); orphaned once
+  `mcp-lease-shim.test.ts`'s harness-dependent block above is gone, since it
+  was that block's only importer. Pure dead-code cleanup, not a repair.
+
+### Restore recipe (for the final test-completion pass)
+
+`tests/helpers/mcp-client.ts` restores verbatim from source control history
+(untouched by this round). `tests/helpers/command-harness.ts` restores from
+the same history with one shape change: replace the `DispatcherRow` import
+with `DispatcherConfig` from `../../src/config/config.js`; replace
+`harnessDispatcherRow()` with a `harnessDispatcherConfig()` literal (`id:
+HARNESS_DISPATCHER_ID`, `cwd`, `enabled: true`, `workspace`, `agentRuntime`,
+and a `channels: [{ id, provider, config: {}, identity: 'harness-identity' }]`
+entry, so `dispatcherChannelIdentity()` still yields `'harness-identity'`);
+rename `HarnessOptions.dispatcherRow` and the `host.dispatcherRow` key to
+`dispatcherConfig`, keeping the same by-id lookup shape (`CoreCommandHost
+.dispatcherConfig(dispatcherId)` still takes an id, per `server/command-host
+.ts`) but comparing against the fixture's `id` field instead of
+`dispatcher_id`. `tests/core-command-adapters.test.ts` restores verbatim
+except the one line matching the old `dispatcherRow` lookup —
+`harness.host.dispatcherRow('harness-d1')!.dispatcher_id` becomes
+`harness.host.dispatcherConfig('harness-d1')!.id`. `tests/mcp-lease-shim
+.test.ts` restores the deleted `describe('runDreamuxMcp — end to end over a
+real admin socket', ...)` block, its `serveShim` helper, and its 5
+now-needed-again imports (`InMemoryTransport`, `AdminClientError`,
+`runDreamuxMcp`, `createCommandHarness`/`startHarnessAdminSocket`, the
+`mcp-client.js` trio) verbatim, plus its docstring's original two-half
+description.

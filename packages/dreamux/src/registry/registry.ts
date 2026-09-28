@@ -91,9 +91,9 @@ export class ReservedExternalProviderError extends Error {
 
 /**
  * In-process registry of provider descriptors. Construct an empty one
- * (`createBuiltinProviderRegistry` is one such empty registry, the one every
- * host entry point starts from before `loadPlugins` contributes the built-in
- * providers) and register providers into it.
+ * (`new ProviderRegistry()` is what every host entry point starts from
+ * before `loadPlugins` contributes the built-in providers) and register
+ * providers into it.
  */
 export class ProviderRegistry {
   private readonly providers = new Map<string, ProviderDescriptor>();

@@ -8,10 +8,7 @@ import {
 import { loadConfig } from '../config/load.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
-import {
-  createBuiltinProviderRegistry,
-  type ProviderRegistry,
-} from '../registry/index.js';
+import { ProviderRegistry } from '../registry/index.js';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { createLogger } from '../platform/logger.js';
 import { type LoadedPlugin, PluginLoadError } from '../plugin/loader.js';
@@ -35,7 +32,7 @@ import {
 } from '../platform/paths.js';
 import { diagnoseDispatcherWorkspace } from '../service/dispatcher-workspace.js';
 import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
-import { TeamStore } from '../service/team/store.js';
+import { readTeamRecords } from '../service/team/store.js';
 import {
   defaultServiceNodeProbe,
   detectServiceNodeVersionManager,
@@ -128,11 +125,11 @@ export async function runDreamuxDoctor(
       ok: cronLegacy === null,
       detail: cronLegacy ?? 'cron job store is current (v1) or absent',
     });
-    const teams = new TeamStore({
+    const teams = await readTeamRecords({
       root: dispatcherTeamDir(dispatcher.id),
       dispatcherId: dispatcher.id,
     });
-    for (const team of await teams.list()) {
+    for (const team of teams) {
       if (team.status === 'closed') continue;
       const teamCronLegacy = await detectLegacyCronJobStore(
         dispatcherTeamCronJobsPath(dispatcher.id, team.team_id),
@@ -253,7 +250,7 @@ async function readConfigForDoctor(checks: DoctorCheck[]): Promise<{
     return {
       config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile(),
-      catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
+      catalogs: catalogsFromRegistry(new ProviderRegistry()),
       plugins: [],
     };
   }

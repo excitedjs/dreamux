@@ -5,8 +5,8 @@
  * This is kernel-safe (no domain type: only `platform/` + a `command/`-local
  * error) because it reads and validates a context field, nothing more —
  * resolving that id to an actual dispatcher requires the concrete
- * `DispatcherService`/`DispatcherRow` types, which is composition-tier work
- * (`server/command-host.ts`'s `mustDispatcher`/`mustDispatcherRow`).
+ * `DispatcherService`/`DispatcherConfig` types, which is composition-tier
+ * work (`server/command-host.ts`'s `mustDispatcher`/`mustDispatcherConfig`).
  *
  * Addressing is caller context, not payload: the admin socket lifts the
  * caller-supplied `dispatcher_id` out of its request envelope, and a Channel

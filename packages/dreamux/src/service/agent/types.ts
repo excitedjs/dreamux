@@ -80,8 +80,9 @@ export type SpawnTeamMateRequest = SpawnTeamMateInput & {
  * collection without the service re-forwarding each verb. `Omit` hides the
  * scope-internal inputs — `sharedWorkspace` (injected by `TeamService.spawnTeamMate`)
  * and the history `teamId` (the scope is baked into the collection) — and the
- * lifecycle methods (`turns` / `stopAll` / `dispatcherWorkspace`) stay off the
- * interface entirely.
+ * collection's own lifecycle verbs (`stop` / `destroy`) and internal entry
+ * points (`createLocked`, `count`, `memberStatuses`, `materializedEntities`)
+ * stay off the interface entirely.
  */
 export interface TeammateOps {
   spawn(
@@ -100,3 +101,17 @@ export interface TeammateOps {
   ): Promise<AgentEntityLastResult>;
   getCapabilities(): Promise<AgentEntityCapabilities>;
 }
+
+/**
+ * The teammate-operations surface a TeamLeader is given (issue #233): every
+ * `TeammateOps` verb except `spawn`, since a Team TeamMate is spawned through
+ * `TeamService.spawnTeamMate`'s shared-workspace injection instead. Declared
+ * once here so the TeamMate MCP delegate's team-leader scope
+ * (`agent/mcp.ts`) and `team/types.ts`'s `TeamLeaderHandle` both type their
+ * `teammates` field against the same derived shape instead of each spelling
+ * out the same omission by hand.
+ */
+export type TeamLeaderTeammateOps = Pick<
+  TeammateOps,
+  'send' | 'close' | 'list' | 'status' | 'history' | 'last' | 'getCapabilities'
+>;

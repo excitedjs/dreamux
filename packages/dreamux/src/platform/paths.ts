@@ -188,6 +188,17 @@ export function legacyAdminSocketPath(): string {
   return join(stateRoot(), 'admin.sock');
 }
 
+/**
+ * The pidfile lock beside a Unix admin socket at `socketPath` — the single-
+ * instance guard `admin/socket.ts` acquires before binding, and the same
+ * convention `assertNoLegacyAdminServer` probes against the legacy socket
+ * path. Takes the socket path rather than deriving it, since a test passes
+ * its own `socketPath`.
+ */
+export function adminSocketLockPath(socketPath: string): string {
+  return `${socketPath}.lock`;
+}
+
 export function dispatcherDir(id: string): string {
   return join(stateRoot(), dispatcherPathSegment(id));
 }

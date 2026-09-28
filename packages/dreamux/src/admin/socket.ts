@@ -36,6 +36,7 @@ import {
   readPidFile,
   releaseInstanceLock,
 } from '../platform/instance-lock.js';
+import { adminSocketLockPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
 
 /**
@@ -87,7 +88,7 @@ export function createAdminSocketServer(
   const chmodFn = options.chmodFn ?? chmod;
   const isAlive = options.isPidAlive ?? defaultIsPidAlive;
   const myPid = options.selfPid ?? process.pid;
-  const lockPath = `${socketPath}.lock`;
+  const lockPath = adminSocketLockPath(socketPath);
   let netServer: NetServer | null = null;
   let holdLock = false;
 

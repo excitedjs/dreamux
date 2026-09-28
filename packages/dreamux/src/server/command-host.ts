@@ -5,12 +5,11 @@
  * they cannot close over one dispatcher at construction: they look their target
  * up per invocation. This narrow port is everything they may look up. It is
  * composition-tier because building one means naming every concrete domain
- * type (`DispatcherService`, `DispatcherRow`, `McpLeaseRegistry`,
- * `ConfigService`) — a domain-owned Command module never imports this file
- * directly; it takes whichever narrower resolver `command-catalog.ts` derives
- * from it instead.
+ * type (`DispatcherService`, `McpLeaseRegistry`, `ConfigService`) — a
+ * domain-owned Command module never imports this file directly; it takes
+ * whichever narrower resolver `command-catalog.ts` derives from it instead.
  */
-import type { DispatcherRow } from '../state/dispatcher-store.js';
+import type { DispatcherConfig } from '../config/config.js';
 import type { DispatcherService } from '../service/dispatcher-service/index.js';
 import type {
   DispatcherRuntimeStatus,
@@ -25,8 +24,8 @@ import type { ConfigService } from '../config/service.js';
 export interface CoreCommandHost {
   /** Configured dispatchers plus their current runtime projection. */
   summarize(): Promise<DispatcherSummary[]>;
-  /** The configured row, or `null` when no dispatcher carries that id. */
-  dispatcherRow(dispatcherId: string): DispatcherRow | null;
+  /** The configured entry, or `null` when no dispatcher carries that id. */
+  dispatcherConfig(dispatcherId: string): DispatcherConfig | null;
   /** The current runtime projection of one dispatcher, live or persisted. */
   dispatcherRuntimeStatus(
     dispatcherId: string,
@@ -66,17 +65,17 @@ export function mustDispatcher(
   context: CoreCommandContext,
 ): DispatcherService {
   const id = mustDispatcherId(context);
-  mustDispatcherRow(host, id);
+  mustDispatcherConfig(host, id);
   return host.dispatcher(id);
 }
 
-export function mustDispatcherRow(
+export function mustDispatcherConfig(
   host: CoreCommandHost,
   dispatcherId: string,
-): DispatcherRow {
-  const row = host.dispatcherRow(dispatcherId);
-  if (row === null) {
+): DispatcherConfig {
+  const dispatcher = host.dispatcherConfig(dispatcherId);
+  if (dispatcher === null) {
     throw new DispatcherNotFoundError(dispatcherId);
   }
-  return row;
+  return dispatcher;
 }

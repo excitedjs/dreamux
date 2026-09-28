@@ -22,6 +22,10 @@ export function clampHistoryLimit(input: number | undefined): number {
   if (!Number.isInteger(input) || input < 1) {
     throw new RuleViolation('history limit must be a positive integer');
   }
+  // Capped, not rejected: an MCP-driven caller asking for "all" history
+  // often just names a large round number, and a page is a bounded read —
+  // this keeps one history call from loading an unbounded record set into
+  // one response instead of failing a caller who only over-asked.
   return Math.min(input, HISTORY_LIMIT_MAX);
 }
 

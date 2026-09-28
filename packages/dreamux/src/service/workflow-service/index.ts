@@ -12,11 +12,6 @@ import { deduplicate } from '../../platform/deduplicate.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
-import type { SpawnTeamMateRequest } from '../agent/types.js';
-import type {
-  CreateLockedTeammateOptions,
-  LockedTeammate,
-} from '../agent/service-types.js';
 import {
   canonicalJsonValue,
   JSON_VALUE_UNBOUNDED,
@@ -49,19 +44,18 @@ import type {
   WorkflowStatusInput,
   WorkflowStopInput,
   WorkflowStopResult,
+  WorkflowTeammateFactory,
 } from './types.js';
-
-export interface WorkflowTeammateFactory {
-  createLocked(
-    input: SpawnTeamMateRequest,
-    options?: CreateLockedTeammateOptions,
-  ): Promise<LockedTeammate>;
-}
 
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {
   teammates: WorkflowTeammateFactory;
   completionDelivery: CompletionDeliveryPolicy;
   completionInitiator: () => CompletionInitiator;
+  /**
+   * The owner's own admission gate, crossed by every public verb below
+   * (`run`/`status`/`stop`/`list`) — the same shape `SchedulerService` takes.
+   */
+  admit<T>(task: () => Promise<T>): Promise<T>;
   log: DreamuxLogger;
   createRunner?: WorkflowRunnerFactory;
   runnerEntryPath?: string;
@@ -111,7 +105,9 @@ export class WorkflowService implements WorkflowOps {
   }
 
   run(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
-    return this.runCreations.track(this.createRun(input));
+    return this.opts.admit(() =>
+      this.runCreations.track(this.createRun(input)),
+    );
   }
 
   private async createRun(
@@ -176,11 +172,7 @@ export class WorkflowService implements WorkflowOps {
     const run = new WorkflowRun({
       record,
       store: this.store,
-      journal: new WorkflowJournal(
-        workflowRunJournalPath({ ...this.scope, runId }),
-      ),
-      createLocked: (spawnInput, options) =>
-        this.opts.teammates.createLocked(spawnInput, options),
+      teammates: this.opts.teammates,
       createRunner,
       deliverTerminal: (fact) =>
         this.opts.completionDelivery.deliver(initiator, fact),
@@ -208,6 +200,12 @@ export class WorkflowService implements WorkflowOps {
   }
 
   async status(input: WorkflowStatusInput): Promise<WorkflowRunRecord> {
+    return this.opts.admit(() => this.doStatus(input));
+  }
+
+  private async doStatus(
+    input: WorkflowStatusInput,
+  ): Promise<WorkflowRunRecord> {
     await this.initialize();
     const runId = validateWorkflowRunId(input.run_id);
     const active = this.runs.get(runId);
@@ -222,17 +220,25 @@ export class WorkflowService implements WorkflowOps {
   }
 
   async stop(input: WorkflowStopInput): Promise<WorkflowStopResult> {
+    return this.opts.admit(() => this.doStop(input));
+  }
+
+  private async doStop(input: WorkflowStopInput): Promise<WorkflowStopResult> {
     await this.initialize();
     const runId = validateWorkflowRunId(input.run_id);
     const active = this.runs.get(runId);
     if (active === undefined) {
-      const record = await this.status({ run_id: runId });
+      const record = await this.doStatus({ run_id: runId });
       return { run_id: runId, status: record.status };
     }
     return { run_id: runId, status: await active.stop() };
   }
 
   async list(): Promise<WorkflowListResult> {
+    return this.opts.admit(() => this.doList());
+  }
+
+  private async doList(): Promise<WorkflowListResult> {
     await this.initialize();
     const records = new Map(
       (await this.store.list()).map((record) => [record.run_id, record]),

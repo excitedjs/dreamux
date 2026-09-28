@@ -15,7 +15,7 @@ import {
 } from '../config/config.js';
 import { assertNoLegacyTomlOnly, loadConfig } from '../config/load.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
-import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { ProviderRegistry } from '../registry/index.js';
 import { loadPlugins } from '../plugin/loader.js';
 import { createLogger } from '../platform/logger.js';
 import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
@@ -162,7 +162,7 @@ async function removePath(
 }
 
 /**
- * The config directory is `DREAMUX_ROOT` itself (R26): it holds `config.json`
+ * The config directory is `DREAMUX_ROOT` itself: it holds `config.json`
  * / the legacy `config.toml` directly, alongside the state/run/cache/log
  * directories already removed above. Unlike those, it must not be `rm -rf`'d
  * wholesale — for a non-default `DREAMUX_ROOT` that would delete anything
@@ -243,7 +243,7 @@ function normalizePath(path: string): string {
  * needs no config file: only the always-loaded plugins register.
  */
 async function resolveOperatorStateRoots(): Promise<string[]> {
-  const registry = createBuiltinProviderRegistry();
+  const registry = new ProviderRegistry();
   await loadPlugins({
     registry,
     entries: [],

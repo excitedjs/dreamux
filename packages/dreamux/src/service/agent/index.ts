@@ -66,7 +66,6 @@ import {
   assertManagedWorktreeAvailable,
   resolveSpawnWorkspace,
 } from '../worktree/workspaces.js';
-import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type {
   CloseTeamMateInput,
   SendTeamMateInput,
@@ -529,13 +528,6 @@ export class TeammateCollection implements TeammateOps {
       tags: capabilities?.tags ?? [],
       public_config: capabilities?.publicConfig ?? null,
     };
-  }
-
-  async dispatcherWorkspace(): Promise<string> {
-    return ensureDispatcherWorkspace(
-      this.opts.config.current(),
-      this.dispatcherId,
-    );
   }
 
   /** Narrow containment query; callers invoke entity capabilities themselves. */

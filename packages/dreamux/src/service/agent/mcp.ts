@@ -6,10 +6,11 @@
  * delegate holds the real `DispatcherService` itself, a TeamLeader's holds
  * that Team's `TeamLeaderHandle` (each named here only through the narrow
  * structural interface declared below, so this collection-tier file need not
- * import the concrete class or interface). The handle is what carries the
- * Team lease into every mutation, so a leader-scoped call is serialized
- * against a concurrent dissolve without this file knowing that a lease
- * exists.
+ * import the concrete class or interface). The handle carries no lease of
+ * its own: each surface it exposes (`teammates`, `workflows`) fences every
+ * verb itself, against a concurrent dissolve, through its own
+ * constructor-injected `admit` — this file only forwards a call to that
+ * surface.
  *
  * The Workflow tools are composed onto this same catalog and call dispatch
  * from `workflow-service/mcp.js`: they are advertised on this server because
@@ -31,7 +32,11 @@ import type { CommandPayload } from '../../command/payload.js';
 import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import { mapAgentActivityCommandError } from './activity.js';
 import type { AgentEntitySpawnResult } from './identity.js';
-import type { SpawnTeamMateRequest, TeammateOps } from './types.js';
+import type {
+  SpawnTeamMateRequest,
+  TeamLeaderTeammateOps,
+  TeammateOps,
+} from './types.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
@@ -85,20 +90,13 @@ export interface TeamMateMcpDispatcherScope {
 /**
  * Structural stand-in for `TeamLeaderHandle`, for the same reason: this
  * collection-tier file needs no import from the team tier that owns the
- * concrete interface. `teammates` omits `spawn` because a Team TeamMate is
- * spawned through `spawnTeamMate` into the Team's shared workspace instead.
+ * concrete interface. `teammates` is `TeamLeaderTeammateOps` (`./types.js`),
+ * the same derived type `TeamLeaderHandle` declares its own `teammates`
+ * field with, so `spawn`'s omission is stated once rather than by two
+ * independent `Pick`s that could drift apart.
  */
 interface TeamMateMcpTeamLeaderScope {
-  readonly teammates: Pick<
-    TeammateOps,
-    | 'send'
-    | 'close'
-    | 'list'
-    | 'status'
-    | 'history'
-    | 'last'
-    | 'getCapabilities'
-  >;
+  readonly teammates: TeamLeaderTeammateOps;
   readonly workflows: WorkflowOps;
   spawnTeamMate(
     input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,

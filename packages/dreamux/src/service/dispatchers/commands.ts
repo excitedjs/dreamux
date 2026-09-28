@@ -40,7 +40,10 @@ import type {
   DispatcherRuntimeStatus,
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
-import type { DispatcherRow } from '../../state/dispatcher-store.js';
+import {
+  dispatcherChannelIdentity,
+  type DispatcherConfig,
+} from '../../config/config.js';
 
 interface DispatcherSubmitInput {
   command: SubmitCommand;
@@ -69,7 +72,7 @@ interface DispatcherCommandsResolver {
     dispatcherId: string,
   ): Promise<DispatcherRuntimeStatus>;
   /** Throws when no dispatcher carries this id. */
-  dispatcherRow(dispatcherId: string): DispatcherRow;
+  dispatcherConfig(dispatcherId: string): DispatcherConfig;
   /** Throws when the addressed dispatcher is not configured. */
   dispatcher(context: CoreCommandContext): DispatcherService;
 }
@@ -123,11 +126,11 @@ export function dispatcherCommands(
     },
     async execute(context) {
       const id = mustDispatcherId(context);
-      const row = resolver.dispatcherRow(id);
+      const dispatcher = resolver.dispatcherConfig(id);
       const runtime = await resolver.dispatcherRuntimeStatus(id);
       return {
-        dispatcher_id: row.dispatcher_id,
-        channel_identity: row.channel_identity,
+        dispatcher_id: dispatcher.id,
+        channel_identity: dispatcherChannelIdentity(dispatcher),
         status: runtime.status,
         session_id: runtime.sessionId,
         last_error: runtime.lastError,

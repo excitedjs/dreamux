@@ -1,6 +1,10 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
+import {
+  dispatcherChannelIdentity,
+  type DispatcherConfig,
+} from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
@@ -8,7 +12,6 @@ import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
-import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { ChannelService } from '../channel-service/index.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { SchedulerService } from '../scheduler/index.js';
@@ -20,7 +23,8 @@ import type { DispatcherAgent } from './agent.js';
 interface DispatcherLifecycleOptions {
   dispatcherId: string;
   config: ConfigReader;
-  dispatchers: DispatcherStore;
+  /** This dispatcher's own config entry, resolved once by `Dispatchers`. */
+  dispatcher: DispatcherConfig;
   log: DreamuxLogger;
   channels: ChannelService;
   /** This dispatcher's own agent, built here once channels are ready. */
@@ -54,8 +58,8 @@ export class DispatcherLifecycle {
    */
   private starting: Promise<void> | null = null;
   /**
-   * The permanent admission fence (R11: no in-process restart, so this never
-   * reverts to `false` once `close()` publishes it). Kept as its own field
+   * The permanent admission fence: there is no in-process restart, so this
+   * never reverts to `false` once `close()` publishes it. Kept as its own field
    * rather than derived from `closing` below: `isClosing()` is a fact
    * `admit()`, `TeammateCollection`, and `TeamCollection` all read directly,
    * and it must hold even during the gap between a failed release and a
@@ -155,20 +159,16 @@ export class DispatcherLifecycle {
    * recovery belongs to the recovery half (`teams.recover()`), and Team
    * admission opens with the dispatcher's own.
    *
-   * Every step from the dispatcher-row lookup on is inside the one `try`:
-   * whatever this attempt built partially — channels adopted so far, an agent
-   * runtime maybe activated — is torn down by `closeAfterFailedTransition`
-   * regardless of which step failed, so a shape failure caught this early
-   * (an unrunnable channel provider, a missing dispatcher row) leaves this
+   * Every step from the channel-runnable assertion on is inside the one
+   * `try`: whatever this attempt built partially — channels adopted so far,
+   * an agent runtime maybe activated — is torn down by
+   * `closeAfterFailedTransition` regardless of which step failed, so a shape
+   * failure caught this early (an unrunnable channel provider) leaves this
    * dispatcher closed rather than stuck forever in neither state.
    */
   private async doStart(): Promise<void> {
     this.assertAvailable();
     try {
-      const row = this.opts.dispatchers.get(this.opts.dispatcherId);
-      if (row === null) {
-        throw new Error(`no dispatcher '${this.opts.dispatcherId}'`);
-      }
       this.opts.channels.assertRunnable();
       const workspaceCwd = await ensureDispatcherWorkspace(
         this.opts.config.current(),
@@ -213,11 +213,10 @@ export class DispatcherLifecycle {
       await this.closeAfterFailedTransition(error);
     }
 
-    const row = this.opts.dispatchers.get(this.opts.dispatcherId);
     this.opts.log.info(
       {
         dispatcher_id: this.opts.dispatcherId,
-        channel_identity: row?.channel_identity ?? '',
+        channel_identity: dispatcherChannelIdentity(this.opts.dispatcher),
         cwd: this.workspaceCwd,
       },
       'dispatcher ready',
@@ -252,7 +251,7 @@ export class DispatcherLifecycle {
     // is one such call), so draining first would wait on exactly the runtime
     // this sweep exists to kill. Stopping first is what makes the runtime's
     // own teardown (which tears down its RPC client and rejects that pending
-    // start) the thing that unblocks the drain, matching R10: kill first,
+    // start) the thing that unblocks the drain: kill first,
     // never wait for a natural end.
     await this.sweepRuntimes(failures);
     // Every admitted task this dispatcher already let in is joined here, now

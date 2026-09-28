@@ -1205,7 +1205,7 @@ Source:
 
 Each `DispatcherService` owns one in-process `DispatcherCoreEventBus`. It is a
 best-effort distribution helper, not a fact owner or store. Existing owners
-publish after their normal write point: `TeamStore` publishes Team status and
+publish after their normal write point: `TeamService` publishes Team status and
 concrete leader changes; `AgentIdentityStore` publishes TeamLeader and TeamMate
 status changes; the conversation projection publishes display-only input and
 activity facts for the dispatcher agent and TeamLeaders. Routing produces no

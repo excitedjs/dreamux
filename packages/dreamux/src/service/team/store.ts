@@ -30,6 +30,36 @@ import {
 import type { TeamStatus } from '@excitedjs/dreamux-types';
 import { validateTeamId, type TeamRecord } from './types.js';
 
+/** The merge {@link TeamRecordHandle.update} accepts. */
+export interface TeamRecordUpdate {
+  status?: TeamStatus;
+  closedAt?: number | null;
+  closeNote?: string | null;
+  worktree?: TeamRecord['worktree'];
+  cleanupForce?: boolean;
+}
+
+/**
+ * The one Team a caller writes and reads through, bound to a concrete Team
+ * id at construction (`TeamStore.handle`). `TeamService` holds this instead
+ * of the whole `TeamStore`, so it can publish and merge only its own record
+ * and never addresses another Team's by id — the record-shape defaults
+ * `create` fills in and the closed-is-terminal merge `update` applies stay
+ * `TeamStore`'s own logic; the handle only narrows which Team they run
+ * against.
+ */
+export interface TeamRecordHandle {
+  /** The last committed value; throws before this Team's first `get`/`create`/`update`. */
+  readonly current: TeamRecord | null;
+  create(
+    input: Omit<
+      TeamRecord,
+      'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
+    >,
+  ): Promise<TeamRecord | null>;
+  update(input: TeamRecordUpdate): Promise<TeamRecord>;
+}
+
 export class TeamStore {
   /** One `TransactionalStore` per Team id, built lazily and held for the life
    * of this collection — a Team's record is read once and then served from
@@ -57,14 +87,24 @@ export class TeamStore {
   }
 
   /**
-   * This Team's own `TransactionalStore`, for an owner (`TeamService`) that
-   * holds a synchronous reference to it across many calls instead of making a
-   * fresh async round trip through {@link get}/{@link update} each time.
-   * Distinct from those two: this hands back the store itself, unloaded on
-   * first mint, rather than awaiting a value.
+   * This Team's own {@link TeamRecordHandle}, for an owner (`TeamService`)
+   * that holds a synchronous reference to it across many calls instead of
+   * making a fresh async round trip through {@link get} each time. `current`
+   * reads the underlying `TransactionalStore` directly (unloaded on first
+   * mint, rather than awaiting a value); `create`/`update` close over this
+   * Team's id so the caller never passes one.
    */
-  handle(teamId: string): TransactionalStore<TeamRecord | null> {
-    return this.storeFor(teamId);
+  handle(teamId: string): TeamRecordHandle {
+    // `storeFor` validates and memoizes; the same call `get`/`create`/`update`
+    // already made, so this throws at the same point they did.
+    const store = this.storeFor(teamId);
+    return {
+      get current(): TeamRecord | null {
+        return store.current;
+      },
+      create: (input) => this.publishRecord(store, input),
+      update: (input) => this.mergeRecord(teamId, input),
+    };
   }
 
   private storeFor(teamId: string): TransactionalStore<TeamRecord | null> {
@@ -86,9 +126,10 @@ export class TeamStore {
    * `null`: only a valid record proves a Team exists, so anything else is
    * nonexistent for lookup, routing, and name allocation and can never
    * receive a turn or reserve a name. A read error other than "file missing"
-   * still resolves to `null` rather than propagating — matching {@link create}'s
-   * own "replace invalid residue" path, which depends on a malformed record
-   * reading back as no Team rather than as a failure.
+   * still resolves to `null` rather than propagating — matching
+   * {@link TeamStore.publishRecord}'s own "replace invalid residue" path,
+   * which depends on a malformed record reading back as no Team rather than
+   * as a failure.
    */
   private async loadTeam(teamId: string): Promise<TeamRecord | null> {
     let raw: string;
@@ -146,9 +187,11 @@ export class TeamStore {
    * candidate. Anything else there — malformed, unreadable, half-written —
    * is not a Team and holds no claim on the name, so the new record
    * atomically replaces it. A real filesystem failure is none of those and
-   * surfaces.
+   * surfaces. Reached only through {@link handle}, whose caller already
+   * resolved `store` for this Team's id.
    */
-  async create(
+  private async publishRecord(
+    store: TransactionalStore<TeamRecord | null>,
     input: Omit<
       TeamRecord,
       'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
@@ -163,7 +206,7 @@ export class TeamStore {
       created_at: now,
       updated_at: now,
     };
-    const result = await this.storeFor(team.team_id).update((current) =>
+    const result = await store.update((current) =>
       current !== null ? current : team,
     );
     // `update`'s own no-op path returns the exact loaded reference when
@@ -179,17 +222,13 @@ export class TeamStore {
    * The merge runs inside this Team's own `change`, against the store's true
    * committed value, never a caller-held snapshot: writing an older snapshot
    * back would resurrect a Team from stale memory and silently reclaim a name
-   * that is free again.
+   * that is free again. Reached only through {@link handle} — including the
+   * collection's own direct write for a Team it does not hold a handle open
+   * for (a closed Team's post-dissolve worktree reclamation).
    */
-  async update(
+  private async mergeRecord(
     teamId: string,
-    input: {
-      status?: TeamStatus;
-      closedAt?: number | null;
-      closeNote?: string | null;
-      worktree?: TeamRecord['worktree'];
-      cleanupForce?: boolean;
-    },
+    input: TeamRecordUpdate,
   ): Promise<TeamRecord> {
     let updated!: TeamRecord;
     await this.storeFor(teamId).update((current) => {
@@ -220,6 +259,20 @@ export class TeamStore {
     });
     return updated;
   }
+}
+
+/**
+ * A read-only snapshot of every Team record under one dispatcher's `team/`
+ * root, for a reader that must answer about Teams without constructing or
+ * holding any of them — `dreamux doctor`'s per-Team cron check. Binds and
+ * discards its own `TeamStore`; a caller that goes on to build or write a
+ * Team uses `TeamCollection` instead, never this.
+ */
+export function readTeamRecords(opts: {
+  root: string;
+  dispatcherId: string;
+}): Promise<TeamRecord[]> {
+  return new TeamStore(opts).list();
 }
 
 /**

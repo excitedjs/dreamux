@@ -54,6 +54,8 @@ export interface AgentIdentityCreateInput {
 }
 
 export interface AgentIdentityUpdateInput {
+  name?: string;
+  teamId?: string | null;
   agentRuntime?: string;
   sessionId?: string | null;
   sourceCwd?: string;
@@ -176,29 +178,7 @@ export class AgentIdentityStore {
     onPersisted?: (identity: AgentEntityIdentity) => void,
   ): Promise<AgentEntityIdentity> {
     validateAgentEntityName(input.name);
-    const now = Date.now();
-    const identity: AgentEntityIdentity = {
-      version: 1,
-      dispatcher_id: this.binding.dispatcherId,
-      name: input.name,
-      team_id: input.teamId ?? null,
-      agent_runtime: input.agentRuntime,
-      session_id: input.sessionId ?? null,
-      source_cwd: input.sourceCwd,
-      source_repo: input.sourceRepo,
-      cwd: input.cwd,
-      runtime_cwd: input.runtimeCwd,
-      worktree: input.worktree,
-      intent: input.intent ?? null,
-      identity_prompt: input.identityPrompt ?? null,
-      skill_sources: [...(input.skillSources ?? [])],
-      created_at: now,
-      updated_at: now,
-      status: input.status ?? 'starting',
-      last_error: null,
-      closed_at: null,
-      close_note: null,
-    };
+    const identity = buildIdentity(this.binding.dispatcherId, input);
     // A freshly published identity always announces — there is no "previous"
     // to compare a create against, unlike `update`'s status-change filter.
     await this.store.create(identity, {
@@ -244,16 +224,26 @@ export class AgentIdentityStore {
   }
 
   /**
-   * Write a whole identity, replacing whatever occupies the bound location.
+   * Reconcile this store's record against a caller-owned policy and write the
+   * result, replacing whatever occupies the bound location.
    *
-   * Recovery uses this: the owner has already decided that what is there is not
-   * a usable record of its own entity, so an atomic replace is the intended
-   * outcome rather than a collision to report.
+   * Nothing exists yet: build a fresh identity from `creation`, sharing this
+   * store's own field defaults with `create()`. A record already exists:
+   * merge `reconcile`'s patch onto it through the same conditional-spread
+   * `update()` uses, so the caller states only its own compatibility
+   * decision — which fields change and whether the session resets — never a
+   * second copy of the record's field defaults.
    */
   async upsert(
-    identity: AgentEntityIdentity,
+    creation: AgentIdentityCreateInput,
+    reconcile: (existing: AgentEntityIdentity) => AgentIdentityUpdateInput,
     onPersisted?: (identity: AgentEntityIdentity) => void,
   ): Promise<AgentEntityIdentity> {
+    const existing = await this.read();
+    const identity =
+      existing === null
+        ? buildIdentity(this.binding.dispatcherId, creation)
+        : mergeIdentity(existing, reconcile(existing));
     await this.store.create(identity, { replace: true });
     onPersisted?.(identity);
     return identity;
@@ -280,9 +270,46 @@ function afterIdentityStatusChange(
 }
 
 /**
+ * The one place a fresh identity's field defaults are assembled — every
+ * version/timestamp/nullable-default a new entity gets, regardless of
+ * whether `create()` was called directly or `upsert()` found nothing at its
+ * bound location. An owner that continuously reconciles its identity against
+ * live config (the dispatcher root) states creation input and a
+ * compatibility decision, never this construction.
+ */
+function buildIdentity(
+  dispatcherId: string,
+  input: AgentIdentityCreateInput,
+): AgentEntityIdentity {
+  const now = Date.now();
+  return {
+    version: 1,
+    dispatcher_id: dispatcherId,
+    name: input.name,
+    team_id: input.teamId ?? null,
+    agent_runtime: input.agentRuntime,
+    session_id: input.sessionId ?? null,
+    source_cwd: input.sourceCwd,
+    source_repo: input.sourceRepo,
+    cwd: input.cwd,
+    runtime_cwd: input.runtimeCwd,
+    worktree: input.worktree,
+    intent: input.intent ?? null,
+    identity_prompt: input.identityPrompt ?? null,
+    skill_sources: [...(input.skillSources ?? [])],
+    created_at: now,
+    updated_at: now,
+    status: input.status ?? 'starting',
+    last_error: null,
+    closed_at: null,
+    close_note: null,
+  };
+}
+
+/**
  * The pre-`TransactionalStore` conditional-spread merge, unchanged, now
  * shared by {@link AgentIdentityStore.update}'s inline `patch` form and its
- * function form.
+ * function form, and by {@link AgentIdentityStore.upsert}'s `reconcile` form.
  */
 function mergeIdentity(
   identity: AgentEntityIdentity,
@@ -290,6 +317,8 @@ function mergeIdentity(
 ): AgentEntityIdentity {
   return {
     ...identity,
+    ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.teamId !== undefined ? { team_id: input.teamId } : {}),
     ...(input.agentRuntime !== undefined
       ? { agent_runtime: input.agentRuntime }
       : {}),

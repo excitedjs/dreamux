@@ -187,6 +187,11 @@ export class CompletionDeliveryPolicy {
       return;
     }
     const prepared = preparation.value;
+    // Only a `failed` outcome loops back here (see the branches below): the
+    // provider seam reserves `failed` for a proven pre-admission failure —
+    // no native command was accepted — so a repeat costs nothing extra,
+    // unlike `ambiguous`, `unsupported`, a timeout, or a throw, none of
+    // which this loop retries.
     for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt += 1) {
       const submission = await settleWithinDeadline(
         () => prepared.submit(),

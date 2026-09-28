@@ -34,9 +34,8 @@ import { expandHome } from '../config/config.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
-  createBuiltinProviderRegistry,
   formatProviderRef,
-  type ProviderRegistry,
+  ProviderRegistry,
 } from '../registry/index.js';
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { createLogger } from '../platform/logger.js';
@@ -385,7 +384,7 @@ function parseJsonObject(
  * resolve during onboard.
  */
 async function onboardProviderRegistry(): Promise<ProviderRegistry> {
-  const registry = createBuiltinProviderRegistry();
+  const registry = new ProviderRegistry();
   await loadPlugins({
     registry,
     entries: [],

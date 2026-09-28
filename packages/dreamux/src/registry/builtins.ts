@@ -79,17 +79,6 @@ function builtinDescriptor(spec: BuiltinRegistration): ProviderDescriptor {
 }
 
 /**
- * Build an empty registry. Every built-in provider (`codex`, `claude-code`,
- * `feishu`) is contributed by an always-loaded plugin during `loadPlugins`,
- * so there is nothing left to pre-populate here; the name is kept because
- * callers across the CLI, server, and onboarding still ask for "the registry
- * a default install starts from."
- */
-export function createBuiltinProviderRegistry(): ProviderRegistry {
-  return new ProviderRegistry();
-}
-
-/**
  * Register a provider addressed as `builtin:<id>`: the descriptor and its
  * implementation together. Used for plugin-contributed providers (and tests).
  */

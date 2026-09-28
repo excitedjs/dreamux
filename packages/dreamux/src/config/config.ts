@@ -83,6 +83,20 @@ export function dispatcherAgent(
 }
 
 /**
+ * A dispatcher's neutral, provider-reported channel identity (issue #209
+ * de-leak): its primary (first) channel's identity, surfaced for status
+ * display. Core never interprets it and never names the channel provider's
+ * config fields. Empty string when the primary channel reports no identity.
+ * Stated once here rather than at each of `dispatcher.list`/`dispatcher.status`/
+ * the dispatcher-ready log, which otherwise each redecide "primary channel".
+ */
+export function dispatcherChannelIdentity(
+  dispatcher: DispatcherConfig,
+): string {
+  return dispatcher.channels[0]?.identity ?? '';
+}
+
+/**
  * A dispatcher's own `agentRuntime` — the id a spawn launches when it names
  * none — looked up by dispatcher id rather than taken as a precomputed field,
  * so a caller that only holds an id still gets it. Throws when `dispatcherId`
@@ -561,6 +575,11 @@ async function readDispatcherChannels(
       })) as DispatcherProviderConfig | undefined) ?? rawConfig;
     let identity = '';
     try {
+      // `config.read` is optional, so `parsed` can still be unvalidated raw
+      // operator input here, and a provider can implement `identity` without
+      // implementing `config`; keep this best-effort so a throwing getter
+      // degrades to an empty display value instead of failing config load —
+      // an unrunnable shape fails loud later, at the dispatcher launch guard.
       identity = channelProvider.identity?.get(parsed) ?? '';
     } catch {
       identity = '';

@@ -1,9 +1,11 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DispatcherConfig } from '../../config/config.js';
+import {
+  dispatcherChannelIdentity,
+  type DispatcherConfig,
+} from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
 import type { RestartIntentConsumer } from '../dispatcher-service/restart-intent.js';
-import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { Dispatcher, DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { CoreCommandRegistry } from '../../command/types.js';
 import type { SyncHook } from 'tapable';
@@ -25,7 +27,6 @@ import { errorInfo } from '@excitedjs/dreamux-utils';
 
 export interface DispatchersOptions {
   config: ConfigReader;
-  dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
   /** The process-wide Agent-facing MCP lease registry every dispatcher mints into. */
@@ -58,7 +59,6 @@ export interface DispatchersOptions {
 export class Dispatchers {
   private readonly services = new Map<string, DispatcherService>();
   private readonly config: ConfigReader;
-  private readonly dispatcherStore: DispatcherStore;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly mcpLeases: McpLeaseRegistry;
@@ -77,7 +77,6 @@ export class Dispatchers {
 
   constructor(opts: DispatchersOptions) {
     this.config = opts.config;
-    this.dispatcherStore = opts.dispatchers;
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.channelProviders = opts.channelProviders;
     this.mcpLeases = opts.mcpLeases;
@@ -127,25 +126,25 @@ export class Dispatchers {
 
   async summarize(): Promise<DispatcherSummary[]> {
     return Promise.all(
-      this.dispatcherStore.list().map(async (row) => {
-        const service = this.services.get(row.dispatcher_id);
-        const live = service?.liveRuntimeStatus() ?? null;
+      this.config.current().dispatchers.map(async (dispatcher) => {
+        const service = this.services.get(dispatcher.id);
+        const live = service?.dispatcherAgent.status() ?? null;
         if (live !== null) {
           return {
-            dispatcher_id: row.dispatcher_id,
-            channel_identity: row.channel_identity,
+            dispatcher_id: dispatcher.id,
+            channel_identity: dispatcherChannelIdentity(dispatcher),
             status: live.status,
             session_id: live.sessionId,
-            enabled: row.enabled === 1,
+            enabled: dispatcher.enabled,
           };
         }
-        const identity = await this.rootIdentity(row.dispatcher_id);
+        const identity = await this.rootIdentity(dispatcher.id);
         return {
-          dispatcher_id: row.dispatcher_id,
-          channel_identity: row.channel_identity,
+          dispatcher_id: dispatcher.id,
+          channel_identity: dispatcherChannelIdentity(dispatcher),
           status: identityStatusToRuntimeStatus(identity?.status ?? null),
           session_id: identity?.session_id ?? null,
-          enabled: row.enabled === 1,
+          enabled: dispatcher.enabled,
         };
       }),
     );
@@ -153,7 +152,7 @@ export class Dispatchers {
 
   async status(id: string): Promise<DispatcherRuntimeStatus> {
     const service = this.services.get(id);
-    const live = service?.liveRuntimeStatus() ?? null;
+    const live = service?.dispatcherAgent.status() ?? null;
     if (live !== null) return live;
     const identity = await this.rootIdentity(id);
     return {
@@ -171,13 +170,15 @@ export class Dispatchers {
    * itself).
    */
   async start(): Promise<void> {
-    for (const row of this.dispatcherStore.listEnabled()) {
+    for (const dispatcher of this.config
+      .current()
+      .dispatchers.filter((d) => d.enabled)) {
       try {
-        await this.get(row.dispatcher_id).start();
+        await this.get(dispatcher.id).start();
       } catch (err) {
         this.log.error(
           {
-            dispatcher_id: row.dispatcher_id,
+            dispatcher_id: dispatcher.id,
             err: errorInfo(err),
           },
           'dispatcher failed to start',
@@ -187,8 +188,8 @@ export class Dispatchers {
   }
 
   /**
-   * Close every already-materialized dispatcher (R10/R11: one terminal close,
-   * no separate begin/end phase). `accepting` is fenced first, synchronously,
+   * Close every already-materialized dispatcher: one terminal close,
+   * no separate begin/end phase. `accepting` is fenced first, synchronously,
    * so nothing new can materialize once this has started; never construct a
    * dispatcher during shutdown.
    */
@@ -223,7 +224,6 @@ export class Dispatchers {
       id,
       dispatcher: this.dispatcherConfig(id),
       config: this.config,
-      dispatchers: this.dispatcherStore,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,

@@ -1,9 +1,13 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import type { AdmissionLedger } from './admission.js';
+import { AdmissionLedger } from './admission.js';
 import type { AgentEntityIdentity } from './identity.js';
 import { AgentService } from './service.js';
-import { AgentIdentityStore, type AgentIdentityCreateInput } from './store.js';
+import {
+  AgentIdentityStore,
+  type AgentIdentityCreateInput,
+  type AgentIdentityUpdateInput,
+} from './store.js';
 import type {
   TeammateServiceDeps,
   TeammateServiceOptions,
@@ -44,11 +48,11 @@ type AgentEntityOptions = (
  * Builds every `AgentService` for one dispatcher — its own Agent, each Team's
  * leader, and every TeamMate a `TeammateCollection` holds.
  *
- * `dispatcherId` and the dispatcher-lifetime `AdmissionLedger` are bound once,
- * at construction, instead of threaded through every call: the ledger has to
- * outlive an entity's service object (rematerialized on reopen, dropped on
- * retire), so one factory instance carries the one ledger for as long as the
- * dispatcher runs.
+ * `dispatcherId` is bound once, at construction, instead of threaded through
+ * every call. `admissions` is this factory's own `AdmissionLedger`, built
+ * here rather than handed in: the ledger has to outlive an entity's service
+ * object (rematerialized on reopen, dropped on retire), so one factory
+ * instance carries the one ledger for as long as the dispatcher runs.
  *
  * This is also the agent module's one entry for `identity.json` itself:
  * `create`/`open`/`upsert` bind and read/write an `AgentIdentityStore`
@@ -60,10 +64,9 @@ type AgentEntityOptions = (
  * own concern.
  */
 export class AgentServiceFactory {
-  constructor(
-    private readonly dispatcherId: string,
-    private readonly admissions: AdmissionLedger,
-  ) {}
+  private readonly admissions = new AdmissionLedger();
+
+  constructor(private readonly dispatcherId: string) {}
 
   private bind(
     location: AgentEntityLocation,
@@ -131,27 +134,31 @@ export class AgentServiceFactory {
   }
 
   /**
-   * Read whatever is at `location.dir`, hand it to `merge` for a caller-owned
-   * reconciliation policy, and overwrite the location with `merge`'s result —
-   * then build the `AgentService` from that written identity.
+   * Read whatever is at `location.dir` and reconcile it against a
+   * caller-owned policy, then overwrite the location with the result — then
+   * build the `AgentService` from that written identity.
    *
    * The one entry for an owner whose identity is not created-once-and-then-
    * restored but continuously reconciled against its own live config (the
-   * dispatcher root's compatible-preparation policy): `merge` states that
-   * policy, and this method owns the bind, the read, and the replace-write
-   * around it, so the policy's own module never constructs a store.
+   * dispatcher root's compatible-preparation policy). The caller states only
+   * `creation` (its input for a fresh identity, when nothing exists yet) and
+   * `reconcile` (its compatibility decision against an existing one — which
+   * fields change, whether the session resets); the store owns every field
+   * default and the bind/read/replace-write around it, so the policy's own
+   * module never constructs a second copy of those defaults.
    */
   async upsert(input: {
     location: AgentEntityLocation;
-    merge: (existing: AgentEntityIdentity | null) => AgentEntityIdentity;
+    creation: AgentIdentityCreateInput;
+    reconcile: (existing: AgentEntityIdentity) => AgentIdentityUpdateInput;
     options: AgentEntityOptions;
     deps: AgentEntityBuildDeps;
     log: DreamuxLogger;
   }): Promise<AgentService> {
     const store = this.bind(input.location, input.log);
-    const existing = await store.read();
     const identity = await store.upsert(
-      input.merge(existing),
+      input.creation,
+      input.reconcile,
       input.deps.onPersisted,
     );
     const options = await input.options(identity);

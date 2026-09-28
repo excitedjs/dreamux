@@ -7,11 +7,7 @@ import type {
   TeamSummary,
   TeammateStatus,
 } from '@excitedjs/dreamux-types';
-import {
-  errorInfo,
-  errorMessage,
-  type TransactionalStore,
-} from '@excitedjs/dreamux-utils';
+import { errorInfo, errorMessage } from '@excitedjs/dreamux-utils';
 import { AsyncSeriesHook } from 'tapable';
 
 import type {
@@ -21,7 +17,7 @@ import type {
 } from '../completion-router/index.js';
 import { SchedulerService } from '../scheduler/index.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
-import type { TeamStore } from './store.js';
+import type { TeamRecordHandle, TeamRecordUpdate } from './store.js';
 import { TeammateCollection } from '../agent/index.js';
 import type { CreateLockedTeammateOptions } from '../agent/service-types.js';
 import type {
@@ -69,6 +65,7 @@ import {
   type TeamCollectionOptions,
   type TeamDissolveCommand,
   type TeamDissolveReceipt,
+  type TeamLeaderHandle,
   type TeamRecord,
   type TeamServiceCreateInput,
 } from './types.js';
@@ -93,8 +90,8 @@ import {
  * `createTeam` hook is applied once, by `createFromRequest` itself, before any
  * `TeamService` for that Team exists to be handed these deps.
  *
- * Declared here rather than in `types.ts`: it names `TeamStore`, a concrete
- * class, so it is a constructor-options bag rather than a data type.
+ * Declared here rather than in `types.ts`: it configures this concrete
+ * `TeamService`, so it is a constructor-options bag rather than a data type.
  */
 export type TeamServiceDeps = Omit<
   TeamCollectionOptions,
@@ -107,7 +104,15 @@ export type TeamServiceDeps = Omit<
    * directly under it — the Team never rebuilds the path from ids.
    */
   teamRoot: string;
-  store: TeamStore;
+  /**
+   * This Team's own record, not the collection's whole `TeamStore`: the
+   * collection is who must read every Team's record (list/status/history, a
+   * closed Team's post-dissolve worktree fact) and probe a candidate name
+   * without materializing a Team, so it keeps the id-addressable store; this
+   * Team writes and reads only through the one record `handle()` bound to
+   * its own id, and can never reach another Team's by id.
+   */
+  record: TeamRecordHandle;
   /**
    * Finish the physical reclamation a closed Team's record still owes, through
    * the same record-only path the collection's own startup sweep uses. A
@@ -123,16 +128,13 @@ export type TeamServiceDeps = Omit<
  * leader {@link AgentService} (Phase 4, at the team root), and OWNS its
  * members' team-scoped {@link TeammateCollection}. It owns every per-team
  * runtime and resource operation, dissolve included, and is the only writer of
- * its own record. Admin `team_leader` target calls are forwarded to this Team's
- * own collection (no team id — scope is baked in); the leader is never a member
- * row.
+ * its own record's lifecycle status. The one exception is the record's
+ * post-close worktree fact: `TeamCollection.settleClosedWorktree` writes that
+ * once the Team is closed, after no `TeamService` instance for it is left to.
+ * Admin `team_leader` target calls are forwarded to this Team's own collection (no
+ * team id — scope is baked in); the leader is never a member row.
  */
 export class TeamService implements Team {
-  /** This Team's own `TransactionalStore` handle, held for the life of this
-   * entity instead of re-fetched per call. `deps.store` owns one such store
-   * per Team id (for the life of the collection), so this is the same
-   * committed value every write through `deps.store` publishes. */
-  private readonly recordHandle: TransactionalStore<TeamRecord | null>;
   /**
    * This Team's leader, held for the Team's whole life once `createNew` or
    * `rebuild` succeeds — there is no lazy rebuild path left that could ever
@@ -198,12 +200,6 @@ export class TeamService implements Team {
     this.id = teamId;
     this.name = init.name;
     this.workspace = init.workspace;
-    // Bound synchronously here so `mustRecord()` has something to read from
-    // the moment an identity persistence hook might call it; loaded by
-    // whichever caller of the static factories reads or publishes this
-    // Team's record first (both `createNew` and `rebuild` do so before any
-    // code path that could read it through `mustRecord()`).
-    this.recordHandle = deps.store.handle(teamId);
     this.hooks = Object.freeze({
       leaderLaunch: launchDraftTaps(
         new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'leaderLaunch'),
@@ -239,14 +235,12 @@ export class TeamService implements Team {
       // Team's — a Team outlives a dispatcher stop and resumes on the next
       // daemon start — so a member op fenced on this Team's own admit alone
       // would still pass while `stopForHost()` kills that member's runtime
-      // underneath it. Gating here also closes a real hole: a read verb
-      // reaching this collection through `TeamCollection.leaderScope()`'s
-      // `read` closure never crosses either fence at that layer
-      // (`TeamCollection.read()` is `task(await this.get(id))`, by design,
-      // so a Team's own status reads survive a dissolve check there) —
-      // composing both fences inside the collection itself is what makes
-      // list/status/history/last refuse uniformly with spawn/send/close
-      // regardless of which path reached them.
+      // underneath it, and one fenced on the dispatcher's admission alone
+      // would ignore a dissolve in progress. Composing both here, at this
+      // collection's own construction, is what makes list/status/history/
+      // last refuse uniformly with spawn/send/close no matter which surface
+      // reaches them — `leaderScope()` hands this collection out directly,
+      // with no fence of its own layered on top.
       admitOperation: (task) => this.admit(() => deps.admitOperation(task)),
       // Composed the same way as `admitOperation` just above: a member's
       // construction path must self-close against either fence, since a
@@ -257,6 +251,10 @@ export class TeamService implements Team {
       log: deps.log,
     });
     // This Team's Workflow scope: team-scoped runs, reporting to its leader.
+    // `admit` composes the same two fences as `teammateCollection` and
+    // `scheduler_` above (`this.admit` outside, `deps.admitOperation`
+    // inside), so `run`/`status`/`stop`/`list` refuse uniformly with every
+    // other Team-admitted verb once this Team starts dissolving.
     this.workflowService = new WorkflowService({
       dispatcherId: deps.dispatcherId,
       teamId,
@@ -268,6 +266,7 @@ export class TeamService implements Team {
       },
       completionDelivery: deps.completionDelivery,
       completionInitiator: () => this.leaderCompletionInitiator(),
+      admit: (task) => this.admit(() => deps.admitOperation(task)),
       log: deps.workflowLog,
     });
     // This Team's cron scheduler. The `admit` closure below composes two
@@ -328,7 +327,7 @@ export class TeamService implements Team {
       teamSlug: input.teamId,
       generateSuffix: deps.agentNameSuffixGenerator,
     });
-    const published = await deps.store.create({
+    const published = await deps.record.create({
       dispatcher_id: deps.dispatcherId,
       team_id: input.teamId,
       name: input.name,
@@ -350,10 +349,10 @@ export class TeamService implements Team {
       create_payload_hash: input.createRequest?.payloadHash ?? null,
     });
     if (published === null) return null;
-    // `deps.store.create` above just published through the same per-Team
-    // `TransactionalStore` `service.recordHandle` holds (both resolve from
-    // `deps.store`'s own id-keyed map), so `service.mustRecord()` already
-    // reflects `published` from this point on with no separate assignment.
+    // `deps.record.create` above just published through this Team's own
+    // `TransactionalStore`, so `service.mustRecord()` (reading `deps.record`
+    // directly) already reflects `published` from this point on with no
+    // separate assignment.
     // A create is `previous === null`, always a transition, so the aggregate
     // is published unconditionally here — nothing is seeded on the roster
     // yet, so this states the same empty-teammates fact a fresh Team always
@@ -509,11 +508,11 @@ export class TeamService implements Team {
       name: record.name,
       workspace: record.runtime_cwd,
     });
-    // `record` was already read through `deps.store.get`/`.list` (every
-    // caller of `rebuild` reads a record before calling it), which loaded
-    // this same Team's `TransactionalStore` — the one `service.recordHandle`
-    // just bound to above — so `service.mustRecord()` already answers `record`
-    // with no separate assignment.
+    // `record` was already read through the collection's `store.get`/`.list`
+    // (every caller of `rebuild` reads a record before calling it), which
+    // loaded this same Team's `TransactionalStore` — the one `deps.record`
+    // wraps — so `service.mustRecord()` (reading `deps.record` directly)
+    // already answers `record` with no separate assignment.
     deps.announceTeam(service, { origin: 'rebuild' });
     // Seed members before a fresh leader is created: creating one publishes
     // the aggregate from this roster through its own persistence hook, and
@@ -554,11 +553,28 @@ export class TeamService implements Team {
     return this.workflowService;
   }
 
-  /** This team's members as concrete internal ops. `TeamLeaderHandle` wraps this
-   * surface before it reaches admin/MCP callers, so raw `spawn` never bypasses
-   * `spawnTeamMate`'s shared-workspace injection there. */
+  /** This team's members as concrete internal ops. `leaderScope()` exposes
+   * this same collection typed narrower, as `TeamLeaderTeammateOps` (which
+   * omits `spawn`), so an admin/MCP TeamLeader caller never bypasses
+   * `spawnTeamMate`'s shared-workspace injection — the type projection is
+   * what keeps `spawn` off that surface, not a wrapper around this one. */
   get teammates(): TeammateOps {
     return this.teammateCollection;
+  }
+
+  /**
+   * This Team's TeamLeader-scoped surface, assembled from what this Team
+   * already holds: `teammates` and `workflows` each fence themselves through
+   * their own constructor-injected `admit`, so nothing here re-wraps them.
+   * `spawnTeamMate` is the one real closure — the shared-workspace injection
+   * a raw `teammates.spawn` would skip.
+   */
+  leaderScope(): TeamLeaderHandle {
+    return {
+      teammates: this.teammates,
+      workflows: this.workflows,
+      spawnTeamMate: (input) => this.spawnTeamMate(input),
+    };
   }
 
   get dispatcherId(): string {
@@ -706,7 +722,7 @@ export class TeamService implements Team {
    */
   private async dissolveRecordPatch(
     input: TeamDissolveCommand,
-  ): Promise<Parameters<TeamStore['update']>[1]> {
+  ): Promise<TeamRecordUpdate> {
     const assessment = await this.assessWorktree();
     const worktree =
       assessment.status === 'terminal'
@@ -1004,12 +1020,9 @@ export class TeamService implements Team {
   private async seedMembers(): Promise<void> {
     // `memberStatuses()` is `teammateCollection`'s own unfenced roster read
     // (members-only; the leader is not a member). Seeding this Team's own
-    // aggregate is this Team building its own state, not a caller reaching in
-    // from outside, so it must still succeed while the dispatcher's own
-    // admission is closed — a `read()` caller reaching this Team through
-    // `TeamCollection.leaderScope()` before it has ever been materialized
-    // must still get an answer, per `TeamCollection.read()`'s "reads survive
-    // closing".
+    // aggregate happens while this Team is still materializing, not through
+    // any caller-facing surface, so it must succeed unconditionally rather
+    // than cross either admission fence.
     for (const member of await this.teammateCollection.memberStatuses()) {
       this.remember(member.name, 'teammate', member.status);
     }
@@ -1045,14 +1058,12 @@ export class TeamService implements Team {
    * dissolve or abandoned creation can destroy its children before anything
    * evicts this Team.
    */
-  private async updateRecord(
-    patch: Parameters<TeamStore['update']>[1],
-  ): Promise<TeamRecord> {
+  private async updateRecord(patch: TeamRecordUpdate): Promise<TeamRecord> {
     const previous = this.mustRecord();
-    const updated = await this.deps.store.update(this.id, patch);
+    const updated = await this.deps.record.update(patch);
     // No separate field to assign: `updated` is already what
-    // `this.recordHandle.current` holds, published through it by the
-    // `TeamStore.update` call above.
+    // `deps.record.current` holds, published through it by the
+    // `TeamRecordHandle.update` call above.
     // The aggregate reports the same status transitions the record itself
     // recognizes — every status write goes through this one method, so this is
     // the whole rule, stated once, for every caller (creation's `running`
@@ -1066,7 +1077,7 @@ export class TeamService implements Team {
   }
 
   private mustRecord(): TeamRecord {
-    const current = this.recordHandle.current;
+    const current = this.deps.record.current;
     if (current === null)
       throw new Error(`Team ${JSON.stringify(this.id)} is not booted`);
     return current;

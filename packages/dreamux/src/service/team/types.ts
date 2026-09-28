@@ -1,6 +1,5 @@
 import {
   assertNotReservedAgentName,
-  type AgentEntityCapabilities,
   type AgentEntityIdentityStatus,
   type AgentEntitySpawnResult,
   type AgentEntityWorktreeIdentity,
@@ -22,8 +21,8 @@ import type { AgentServiceFactory } from '../agent/factory.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';
 import type {
   SpawnTeamMateRequest,
+  TeamLeaderTeammateOps,
   TeamMateSharedWorkspace,
-  TeammateOps,
 } from '../agent/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
@@ -315,16 +314,6 @@ export interface TeamHistoryRow {
 export interface TeamHistoryResult {
   items: TeamHistoryRow[];
   next_cursor: string | null;
-}
-
-export interface TeamLeaderTeammateOps {
-  send: TeammateOps['send'];
-  close: TeammateOps['close'];
-  list: TeammateOps['list'];
-  status: TeammateOps['status'];
-  history: TeammateOps['history'];
-  last: TeammateOps['last'];
-  getCapabilities(): Promise<AgentEntityCapabilities>;
 }
 
 export interface TeamLeaderHandle {

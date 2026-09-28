@@ -9,12 +9,9 @@ import type { WorkflowCompletionFact } from '../completion-router/index.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import type { SpawnTeamMateRequest } from '../agent/types.js';
 import type { Turn, TurnAdmission } from '../agent/turn.js';
-import type {
-  CreateLockedTeammateOptions,
-  LockedTeammate,
-} from '../agent/service-types.js';
+import type { LockedTeammate } from '../agent/service-types.js';
+import { workflowRunJournalPath } from '../../platform/paths.js';
 import { WorkflowPersistenceError } from './errors.js';
 import {
   WorkflowJournal,
@@ -38,6 +35,7 @@ import type {
   WorkflowAgentRecord,
   WorkflowAgentStatus,
   WorkflowRunRecord,
+  WorkflowTeammateFactory,
   WorkflowTerminalStatus,
 } from './types.js';
 
@@ -59,11 +57,7 @@ function nonEmpty(value: string | undefined): string | null {
 export interface WorkflowRunDeps {
   record: WorkflowRunRecord;
   store: WorkflowRunStore;
-  journal: WorkflowJournal;
-  createLocked(
-    input: SpawnTeamMateRequest,
-    options: CreateLockedTeammateOptions,
-  ): Promise<LockedTeammate>;
+  teammates: WorkflowTeammateFactory;
   createRunner: WorkflowRunnerFactory;
   deliverTerminal: (completion: WorkflowCompletionFact) => Promise<void>;
   log: DreamuxLogger;
@@ -92,6 +86,9 @@ interface TerminalIntent {
 /** One live Workflow entity with direct locked TeamMate and Turn ownership. */
 export class WorkflowRun {
   private readonly record: WorkflowRunRecord;
+  /** This run's own durability journal, bound from its own scope and run id
+   * — no owner hands one in. */
+  private readonly journal: WorkflowJournal;
   private readonly runner: WorkflowRunnerHandle;
   private readonly semaphore: WorkflowSemaphore;
   private readonly calls = new Map<number, AgentCall>();
@@ -137,6 +134,13 @@ export class WorkflowRun {
 
   constructor(private readonly deps: WorkflowRunDeps) {
     this.record = deps.record;
+    this.journal = new WorkflowJournal(
+      workflowRunJournalPath({
+        dispatcherId: deps.record.dispatcher_id,
+        teamId: deps.record.team_id,
+        runId: deps.record.run_id,
+      }),
+    );
     this.deliverTerminal = deps.deliverTerminal;
     this.semaphore = new WorkflowSemaphore(deps.record.max_concurrency);
     this.settled = new Promise<void>((resolve) => {
@@ -195,7 +199,7 @@ export class WorkflowRun {
   }
 
   async initialize(): Promise<void> {
-    await this.deps.journal.create({
+    await this.journal.create({
       kind: 'run',
       version: 1,
       run_id: this.record.run_id,
@@ -365,7 +369,7 @@ export class WorkflowRun {
         else this.record.last_log = message.message;
         this.record.updated_at = this.now();
         await this.persist(async () => {
-          await this.deps.journal.append({
+          await this.journal.append({
             kind: message.kind,
             message: message.message,
             created_at: this.record.updated_at,
@@ -473,7 +477,7 @@ export class WorkflowRun {
         return;
       }
 
-      const materialization = this.deps.createLocked(
+      const materialization = this.deps.teammates.createLocked(
         {
           name:
             nonEmpty(call.options.label) ??
@@ -499,7 +503,7 @@ export class WorkflowRun {
       const submittedAt = this.now();
       this.record.updated_at = submittedAt;
       await this.persist(async () => {
-        await this.deps.journal.append({
+        await this.journal.append({
           kind: 'submit',
           index: call.record.index,
           name: handle.name,
@@ -649,7 +653,7 @@ export class WorkflowRun {
     call.record.settled_at = candidate.settled_at;
     this.record.updated_at = candidate.settled_at;
     await this.persist(async () => {
-      await this.deps.journal.ensureAgentResult(candidate);
+      await this.journal.ensureAgentResult(candidate);
       await this.deps.store.write(this.record);
     });
     call.completed = true;
@@ -746,7 +750,7 @@ export class WorkflowRun {
       };
     }
     const candidate = this.terminalCandidate;
-    await this.deps.journal.ensureTerminal({
+    await this.journal.ensureTerminal({
       kind: 'end',
       status: candidate.status as WorkflowTerminalStatus,
       result: candidate.result,

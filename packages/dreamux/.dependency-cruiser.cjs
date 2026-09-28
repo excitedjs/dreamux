@@ -38,11 +38,6 @@
 // whole-directory placements - all were set from a real dependency-cruiser
 // run against this file's own layer list, not by eyeballing the source tree:
 //
-//   - state/dispatcher-store.ts imports config/config.ts and is consumed
-//     starting at the service-primitives tier, so it sits there instead of
-//     with the directory it's declared in (state/, now this file's only
-//     member - dispatcher-id.ts moved to platform/ as a plain file, not a
-//     special case, since it had no state-tier dependency of its own).
 //   - src/mcp/{server,launch}.ts are foundation-tier: server.ts is the
 //     official-SDK protocol/validation primitive, and launch.ts (the MCP
 //     shim's argv/env launch shape, formerly service/mcp/descriptor.ts) has
@@ -115,7 +110,6 @@ const LAYERS = [
       '^src/service/completion-router/',
       '^src/service/dispatcher-core-events/',
       '^src/service/(submission-sources|name-allocator|dispatcher-workspace)\\.ts$',
-      '^src/state/dispatcher-store\\.ts$',
       '^src/service/agent/(identity|store|runtime-state|activity|records|requests|runtime-id|types)\\.ts$',
     ],
   },
@@ -133,10 +127,9 @@ const LAYERS = [
   {
     // scheduler/commands.ts is listed in its own layer below instead of
     // here (same "one file needs a different tier than its siblings" reason
-    // as state/dispatcher-store.ts and src/mcp/(server|launch).ts$): a cron
-    // job can be Team-scoped, so it reads service/team/'s TeamsPort and
-    // optionalTeamNameParam, a later-layer need the rest of scheduler/ does
-    // not share.
+    // as src/mcp/(server|launch).ts$): a cron job can be Team-scoped, so it
+    // reads service/team/'s TeamsPort and optionalTeamNameParam, a
+    // later-layer need the rest of scheduler/ does not share.
     name: 'service-mid',
     path: [
       '^src/service/workflow-service/',

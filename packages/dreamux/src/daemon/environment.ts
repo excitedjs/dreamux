@@ -320,7 +320,7 @@ export async function validateManagedServiceLaunch(
     );
   }
 
-  for (const check of serviceProviderBinChecks(answers)) {
+  for (const check of answers.providerBinChecks) {
     if (!(await runner.check(check.bin, check.args, { env }))) {
       errors.push(
         `managed service cannot execute provider binary '${check.name}' at ${check.bin}`,
@@ -468,9 +468,7 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
   // process.env; platform/homeDir/env passed explicitly.
   const stableDirs = [
     dirname(answers.nodeBin),
-    ...serviceProviderBinChecks(answers).flatMap((check) =>
-      absoluteDir(check.bin),
-    ),
+    ...answers.providerBinChecks.flatMap((check) => absoluteDir(check.bin)),
     ...absoluteDir(answers.dreamuxBin),
   ];
   const sessionPath = answers.env?.['PATH'] ?? '';
@@ -479,16 +477,6 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
     sessionPath,
     fallbackDirs: answers.fallbackDirs,
   });
-}
-
-function serviceProviderBinChecks(
-  answers: ServiceInstallAnswers,
-): ProviderBinCheck[] {
-  const checks = new Map<string, ProviderBinCheck>();
-  for (const check of answers.providerBinChecks) {
-    checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
-  }
-  return [...checks.values()];
 }
 
 function absoluteDir(path: string): string[] {
