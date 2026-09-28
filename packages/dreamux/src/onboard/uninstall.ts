@@ -1,5 +1,5 @@
 import { isNotEmptyDir, pathExists } from '../platform/fs-errors.js';
-import { lstat, rm, rmdir, unlink } from 'node:fs/promises';
+import { rm, rmdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, resolve, sep } from 'node:path';
 
@@ -168,9 +168,7 @@ async function removePath(
  * wholesale — for a non-default `DREAMUX_ROOT` that would delete anything
  * else the operator keeps in that directory. Delete only the owned config
  * files, then `rmdir` the (now-empty, if nothing foreign was there) root;
- * a non-empty root is left in place rather than forced away. A symlinked
- * root is removed as the link itself, the way `rm` treats it: the files
- * behind the link belong to its target, not to Dreamux.
+ * a non-empty root is left in place rather than forced away.
  */
 async function removeConfigDirectory(
   configDir: string,
@@ -185,11 +183,6 @@ async function removeConfigDirectory(
     return;
   }
   if (dryRun) {
-    entries.push({ path: configDir, status: 'removed', reason });
-    return;
-  }
-  if ((await lstat(configDir)).isSymbolicLink()) {
-    await unlink(configDir);
     entries.push({ path: configDir, status: 'removed', reason });
     return;
   }
