@@ -126,9 +126,11 @@ runtime app-server readiness, and same-version restart cautions.
   prompt into the Dispatcher or TeamLeader that owns the schedule. Cron spawns
   no agent and addresses no Channel, and a job carries no delivery target and
   no `dispatcher_id` (the store path already scopes it). A store file
-  containing a `spawn-teammate` action or a `deliver` field is not current
-  state: it fails loud when read, and `dreamux doctor` names the file. Delete
-  that job or the store file and recreate the schedule.
+  containing a `spawn-teammate` action is not current state: it fails loud
+  when read, and `dreamux doctor` names the file. Delete that job or the store
+  file and recreate the schedule. A leftover `deliver` or `dispatcher_id`
+  field on an old job is tolerated as an ordinary unknown field: it loads,
+  is ignored, and is dropped the next time that job is rewritten.
 - A due job is submitted through ordinary admission, so it may fold into a turn
   that is already running. Firing proves submission, not a visible reply.
 

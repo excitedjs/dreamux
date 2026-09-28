@@ -57,6 +57,18 @@ export interface LoadedPlugin {
 export type PluginLoadPhase =
   'import' | 'factory' | 'contribute' | 'config' | 'server' | 'api';
 
+/**
+ * `name` becomes a `state/plugins/<name>` directory segment verbatim
+ * (`pluginStateDir`), so it must already be a safe single path segment.
+ * Anchoring the first character to an ASCII letter or digit rules out `.`
+ * and `..` (which would resolve `state/plugins/<name>` up to `state/plugins`
+ * or `state`), and restricting the whole name to this alphabet makes the
+ * name-to-segment mapping the identity function, so two distinct names can
+ * never land on the same directory the way a lossy sanitizer (mapping both
+ * `@acme/tool` and `_acme_tool` to `_acme_tool`) could.
+ */
+const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
 export class PluginLoadError extends Error {
   constructor(
     /** The plugin name, or its ref when the name is not known yet. */
@@ -261,16 +273,23 @@ async function constructPlugin(
       },
     );
   }
-  // `name` keys the same-name rule and every plugin log line.
-  if (
-    !isPlainObject(plugin) ||
-    typeof plugin['name'] !== 'string' ||
-    plugin['name'] === ''
-  ) {
+  if (!isPlainObject(plugin) || typeof plugin['name'] !== 'string') {
     throw new PluginLoadError(
       ref.raw,
       'factory',
       'plugin factory must return an object with a non-empty string name',
+    );
+  }
+  // `name` keys the same-name rule, every plugin log line, and (via
+  // `pluginStateDir`) a `state/plugins/<name>` directory segment — see
+  // `PLUGIN_NAME_PATTERN`.
+  if (!PLUGIN_NAME_PATTERN.test(plugin['name'])) {
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      'plugin factory must return an object with a name of 1-64 ASCII ' +
+        'letters, digits, dots, underscores, or dashes, starting with a ' +
+        `letter or digit: ${JSON.stringify(plugin['name'])}`,
     );
   }
   return plugin as unknown as DreamuxPlugin;

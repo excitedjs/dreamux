@@ -337,6 +337,32 @@ export class SchedulerService implements SchedulerCommands {
   }
 
   /**
+   * What a missed fire settles the row into, evaluated against the row as it
+   * stands right now — never against the snapshot `dispatch` captured before
+   * submitting.
+   *
+   * `null` means this settlement has nothing to write, mirroring
+   * `reconcile()`'s own two conditions for "nothing to do": a `current` that
+   * is already disabled needs no missed-outcome write (writing a fresh
+   * `next_run_at` onto it would be exactly the misleading value `doUpdate`
+   * already takes care not to persist), and a `current` whose `next_run_at`
+   * already sits in the future has already been rescheduled by whatever
+   * committed since this fire — that commit's own `arm()` call is the one
+   * that should stand, not this stale fire's. Called from inside
+   * `store.applyMissed`'s serialized update, so `current` is read at the
+   * exact moment this settlement is about to write, closing the window a
+   * concurrent `cron.update` could otherwise race.
+   */
+  private missedOutcome(
+    current: CronJob,
+    now: number,
+  ): { enabled?: boolean; nextRunAt: number | null } | null {
+    if (!current.enabled) return null;
+    if (current.next_run_at !== null && current.next_run_at > now) return null;
+    return this.advanceJob(current, now);
+  }
+
+  /**
    * The one durable write a fire produces, plus the re-arm it earns.
    *
    * `generation` is the value `dispatch` captured before submitting: a
@@ -348,6 +374,17 @@ export class SchedulerService implements SchedulerCommands {
    * generation is picked back up by the next `start()`'s `reconcile()`, which
    * re-derives the same schedule from the persisted job — so a stale
    * generation skips the write entirely.
+   *
+   * The `job` parameter is a snapshot from before the fire; the 'missed'
+   * branch never applies it directly. `store.applyMissed` runs
+   * `missedOutcome` against the persisted row inside its own serialized
+   * update, so a `cron.update` the owner committed while the submission was
+   * in flight — a reschedule, a disable, a re-enable — is what the missed
+   * outcome is projected onto or deferred to, never overwritten by a stale
+   * `recurring`/`enabled`/`next_run_at`. `updated` is `null` when there was
+   * nothing to settle (the job was deleted, or `missedOutcome` found the row
+   * already moved past this fire), in which case there is nothing to arm
+   * either — whatever committed since already armed its own outcome.
    */
   private async rearm(
     job: CronJob,
@@ -368,11 +405,10 @@ export class SchedulerService implements SchedulerCommands {
       return;
     }
     if (generation !== this.lifecycleGeneration) return;
-    const updated = await this.store.update({
-      id: job.id,
-      ...this.advanceJob(job, now),
-    });
-    this.arm(updated);
+    const updated = await this.store.applyMissed(job.id, (current) =>
+      this.missedOutcome(current, now),
+    );
+    if (updated !== null) this.arm(updated);
   }
 
   private normalizeCreate(input: CronCreateRequest): {

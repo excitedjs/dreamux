@@ -5,7 +5,8 @@
  * through this package's `eslint.config.js`) against in-memory fixtures so the
  * gate's behaviour is pinned, not just assumed:
  *   - `src/**` is a hard error on any `*Sync` IO (`n/no-sync`);
- *   - `src/**` files over 700 physical lines are a hard error (`max-lines`);
+ *   - `src/**` files over 700 code lines (blank lines and comments excluded)
+ *     are a hard error (`max-lines`);
  *   - `tests/**` exempts `n/no-sync` (sync `fs` fixtures are allowed) but still
  *     bans synchronous `child_process` via `no-restricted-imports`;
  *   - an `eslint-disable` without a reason is itself an error

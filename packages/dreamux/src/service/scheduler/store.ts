@@ -145,6 +145,54 @@ export class CronJobStore {
   }
 
   /**
+   * Settle a missed fire against the row as it stands right now, not against
+   * whatever the caller read before the fire.
+   *
+   * `advance` is evaluated inside this store's own serialized update against
+   * the current persisted job, so a schedule change (or re-enable, or
+   * disable) a concurrent `update()` already committed since the fire is what
+   * a missed outcome is projected onto — a stale caller-held snapshot can
+   * never overwrite it. `advance` returning `null` means this settlement has
+   * nothing to write (the caller decides why, e.g. the row already moved past
+   * the fire being settled); this method returns `null` for that case and
+   * when the job was deleted concurrently — either way, there is nothing left
+   * to report back.
+   */
+  async applyMissed(
+    id: string,
+    advance: (
+      current: CronJob,
+    ) => { enabled?: boolean; nextRunAt: number | null } | null,
+  ): Promise<CronJob | null> {
+    let settled = true;
+    const file = await this.store.update((current) => {
+      const index = current.jobs.findIndex((job) => job.id === id);
+      if (index === -1) {
+        settled = false;
+        return current;
+      }
+      const existing = current.jobs[index]!;
+      const derived = advance(existing);
+      if (derived === null) {
+        settled = false;
+        return current;
+      }
+      const next: CronJob = {
+        ...existing,
+        next_run_at: derived.nextRunAt,
+        updated_at: Date.now(),
+      };
+      if (derived.enabled !== undefined) next.enabled = derived.enabled;
+      const jobs = [...current.jobs];
+      jobs[index] = next;
+      return { version: current.version, jobs };
+    });
+    if (!settled) return null;
+    const job = file.jobs.find((entry) => entry.id === id);
+    return job === undefined ? null : cloneJob(job);
+  }
+
+  /**
    * Remove the store file and commit the empty default as this store's
    * in-memory value, so a `setFired` queued behind this delete on the same
    * store (the store's own tail already serializes the two) finds no job
@@ -242,14 +290,11 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
   // it is ignored, never checked against this store's own dispatcher id.
   const action = parseAction(raw['action'], ctx);
   const title = optionalString(raw, 'title', ctx);
-  if (raw['deliver'] !== undefined) {
-    throw new LegacyStateError(
-      `cron job store ${ctx.path} job '${id}' carries the removed deliver ` +
-        'field. Cron jobs inject a prompt into their owning agent and address ' +
-        'no Channel. Delete the job or the store file and recreate the ' +
-        'schedule.',
-    );
-  }
+  // `deliver` is no longer part of `CronJob`; a leftover value on an old file
+  // is an ordinary unknown field under the persisted-shape policy (tolerate
+  // unknown fields, reject only wrong types and missing fields), same as
+  // `dispatcher_id` above — it is ignored, and the field-by-field object
+  // below already drops it, so the next rewrite stops carrying it forward.
   return {
     id,
     title,

@@ -45,24 +45,46 @@ interface DispatcherLifecycleOptions {
  * terminal close.
  *
  * This is also the dispatcher's one admission gate (folding the former
- * standalone `DispatcherTaskDrain`): a single nullable `closing` fence
- * publishes before any close work runs, `admit()` is the one check every
- * externally-admitted operation crosses, and `isClosing()` is the same fact
+ * standalone `DispatcherTaskDrain`): a single boolean fence publishes before
+ * any close work runs, `admit()` is the one check every externally-admitted
+ * operation crosses, and `isClosing()` is the same fact
  * `TeammateCollection`/`TeamCollection` read at construction so a spawn or a
  * Team create that was already admitted before `close()` ran can close itself
- * the instant it registers, instead of the close path trying to catch it with
- * a second sweep.
+ * the instant it registers, rather than running unstopped until a sweep
+ * reaches it.
  */
 export class DispatcherLifecycle {
   private workspaceCwd: string | null = null;
   /**
-   * The start/close operations are each their own fence: a nullable `Promise`
-   * field is the state, published before the work behind it runs. Neither is
-   * reset once settled — a Dispatcher's channels and workflow/scheduler
-   * admission start at most once per process lifetime, and once `close()` has
-   * run this dispatcher never accepts work again (R11: no in-process restart).
+   * The start operation's own fence: a nullable `Promise` field is the state,
+   * published before the work behind it runs. Never reset once settled — a
+   * Dispatcher's channels and workflow/scheduler admission start at most once
+   * per process lifetime.
    */
   private starting: Promise<void> | null = null;
+  /**
+   * The permanent admission fence (R11: no in-process restart, so this never
+   * reverts to `false` once `close()` publishes it). Kept as its own field
+   * rather than derived from `closing` below: `isClosing()` is a fact
+   * `admit()`, `TeammateCollection`, and `TeamCollection` all read directly,
+   * and it must hold even during the gap between a failed release and a
+   * retried one, which is exactly when `closing` is momentarily `null`.
+   */
+  private closed = false;
+  /**
+   * The current — or last-attempted — release task. A resource release can
+   * fail transiently (a socket blip closing one channel session) with every
+   * other resource released cleanly; caching that rejection forever would
+   * leave the dispatcher fenced against all future work with no way to finish
+   * tearing down. Cleared on rejection so a later `close()` call re-runs the
+   * release sweep; every step it awaits is idempotent, so a retry after
+   * partial success re-releases nothing twice. Never cleared on success —
+   * nothing is left to release twice once every step already returned
+   * cleanly. This is a fence-plus-task pair rather than one nullable
+   * `Promise` field only because `isClosing()` cannot itself revert across a
+   * retry (see `closed` above); an ordinary same-object operation (dissolve,
+   * host stop, start) has no such external reader and stays one field.
+   */
   private closing: Promise<void> | null = null;
   private readonly admittedWork = new InFlightWork();
 
@@ -70,14 +92,14 @@ export class DispatcherLifecycle {
 
   /** Whether `close()` has been called. Never reverts to `false`. */
   isClosing(): boolean {
-    return this.closing !== null;
+    return this.closed;
   }
 
   /**
    * Run one externally-admitted operation. The one check every Channel
    * Command, MCP call, and cron fire crosses before it runs; a task that
    * crossed it before `close()` published the fence is tracked so `close()`
-   * can wait for it to settle before sweeping.
+   * can join it once its own sweep has stopped every runtime it can reach.
    */
   admit<T>(task: () => Promise<T>): Promise<T> {
     this.assertAvailable();
@@ -93,26 +115,39 @@ export class DispatcherLifecycle {
   }
 
   /**
-   * The one terminal close: publish every aggregate fence synchronously, wait
-   * for whatever was already admitted to settle, then release runtime
-   * authority once — a failed `start()` reuses this exact path instead of a
-   * bespoke rollback.
+   * The one terminal close: publish the permanent admission fence
+   * synchronously, then run (or retry) the release sweep — stop every
+   * runtime, wait for whatever was already admitted to settle, sweep once
+   * more, release channels. A failed `start()` reuses this exact path instead
+   * of a bespoke rollback.
    */
   close(): Promise<void> {
     if (this.closing !== null) return this.closing;
-    // Published before any awaited work runs, so a caller reaching this
-    // dispatcher from any angle — an admitted Command, a construction path's
-    // own `isClosing()` read, a second `close()` call — sees the close
-    // already under way rather than starting a second one.
-    this.opts.channels.closeAdmission();
-    // Workflows fan out to the Team scope the same way the scheduler does
-    // right below: the dispatcher's own admission closes first, then each
-    // Team's.
-    this.opts.workflows.requestStopAll();
-    this.opts.teams.closeWorkflowAdmissions();
-    this.opts.scheduler.stop();
-    this.opts.teams.stopSchedulers();
-    const task = this.doClose();
+    if (!this.closed) {
+      this.closed = true;
+      // Published before any awaited work runs, so a caller reaching this
+      // dispatcher from any angle — an admitted Command, a construction
+      // path's own `isClosing()` read, a second `close()` call — sees the
+      // close already under way rather than starting a second one. Guarded by
+      // `closed` rather than repeated on every retry: each of these is a
+      // one-time admission fence, not a resource to release, so a later retry
+      // has nothing further to publish here.
+      this.opts.channels.closeAdmission();
+      // Workflows fan out to the Team scope the same way the scheduler does
+      // right below: the dispatcher's own admission closes first, then each
+      // Team's.
+      this.opts.workflows.requestStopAll();
+      this.opts.teams.closeWorkflowAdmissions();
+      this.opts.scheduler.stop();
+      this.opts.teams.stopSchedulers();
+    }
+    const task = this.doClose().catch((error: unknown) => {
+      // The admission fence above stays published forever; only this release
+      // attempt is retryable, so a later `close()` call re-runs `doClose()`
+      // instead of replaying this same rejection.
+      this.closing = null;
+      throw error;
+    });
     this.closing = task;
     return task;
   }
@@ -220,27 +255,34 @@ export class DispatcherLifecycle {
 
   private async doClose(): Promise<void> {
     const failures: unknown[] = [];
-    // Every admitted task this dispatcher already let in is joined before
-    // anything is swept: an admitted `send`/`spawn`/`createTeam` only awaits
-    // its own admission (issue #63's non-blocking shape), so this converges
-    // quickly rather than waiting on a Turn's natural completion, and every
-    // construction path it can reach already self-closes against `isClosing()`
-    // the moment it registers. That is what makes the one sweep below — run
-    // only after this drain, not before it — provably sufficient: nothing can
-    // still be starting a runtime by the time it runs.
+    // Stop every runtime this dispatcher's containers currently hold before
+    // joining admitted work below: an admitted `send`/`spawn` can be sitting
+    // inside a runtime start with no timeout of its own (codex `thread/start`
+    // is one such call), so draining first would wait on exactly the runtime
+    // this sweep exists to kill. Stopping first is what makes the runtime's
+    // own teardown (which tears down its RPC client and rejects that pending
+    // start) the thing that unblocks the drain, matching R10: kill first,
+    // never wait for a natural end.
+    await this.sweepRuntimes(failures);
+    // Every admitted task this dispatcher already let in is joined here, now
+    // that the sweep above has stopped every runtime it could reach.
     await collectShutdownFailure(failures, () => this.admittedWork.drain());
-    await collectShutdownFailure(failures, () => this.opts.workflows.stopAll());
-    await collectShutdownFailure(failures, () => this.opts.teams.stopForHost());
-    for (const teammate of this.opts.teammates.materializedEntities()) {
-      await collectShutdownFailure(failures, () => teammate.stopForHost());
-    }
-    await collectShutdownFailure(failures, async () => {
-      await this.opts.dispatcherAgent.current?.stopForHost();
-    });
+    // A second, idempotent pass of the same sweep: a pre-fence admission that
+    // had not yet reached its runtime start during the first sweep can still
+    // start — or, since `stopForHost()` fences admission only for its own
+    // convergence and never moves the entity's phase, restart — a runtime
+    // while the drain above was converging. Register-time self-close
+    // (`TeammateCollection`/`TeamCollection`) only covers a brand-new entity's
+    // first submission; it does not cover an already-materialized entity's
+    // pre-fence admission reviving its runtime after the first sweep already
+    // passed it by. Every step this repeats is idempotent (phase checks,
+    // cached tasks, evict-on-success collections), so repeating it costs
+    // nothing when there was nothing left to catch.
+    await this.sweepRuntimes(failures);
     // Channel/session close runs last: it revokes this dispatcher's Core-event
     // subscriptions itself, immediately before it closes the sessions holding
-    // them, and a runtime settling during the sweep above still produces facts
-    // a Channel should see.
+    // them, and a runtime settling during either sweep above still produces
+    // facts a Channel should see.
     await collectShutdownFailure(failures, () => this.opts.channels.closeAll());
     if (failures.length > 0) {
       for (const failure of failures) {
@@ -254,6 +296,23 @@ export class DispatcherLifecycle {
       failures,
       `dispatcher ${JSON.stringify(this.opts.dispatcherId)} failed to close`,
     );
+  }
+
+  /**
+   * Stop every runtime this dispatcher's Workflow, Team, TeamMate, and
+   * dispatcher-agent containers currently hold. Called twice around the
+   * admitted-work drain in {@link doClose}; safe to repeat because every step
+   * is independently idempotent.
+   */
+  private async sweepRuntimes(failures: unknown[]): Promise<void> {
+    await collectShutdownFailure(failures, () => this.opts.workflows.stopAll());
+    await collectShutdownFailure(failures, () => this.opts.teams.stopForHost());
+    for (const teammate of this.opts.teammates.materializedEntities()) {
+      await collectShutdownFailure(failures, () => teammate.stopForHost());
+    }
+    await collectShutdownFailure(failures, async () => {
+      await this.opts.dispatcherAgent.current?.stopForHost();
+    });
   }
 
   private assertAvailable(): void {

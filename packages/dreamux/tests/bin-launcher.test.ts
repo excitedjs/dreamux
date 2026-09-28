@@ -31,7 +31,6 @@ beforeAll(() => {
   const distFiles = [
     join(PACKAGE_ROOT, 'dist', 'cli', 'dreamux.js'),
     join(PACKAGE_ROOT, 'dist', 'cli', 'server.js'),
-    join(PACKAGE_ROOT, 'dist', 'cli', 'server-ctl.js'),
   ];
   for (const distFile of distFiles) {
     if (!existsSync(distFile)) {

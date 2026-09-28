@@ -235,7 +235,7 @@ export class CodexRuntime implements AgentRuntime {
       stderrLogPath: join(codexLogDir, `${this.dispatcherId}.stderr.log`),
       binPath: this.deps.codexBinPath,
       extraArgs,
-      env: codexSpawnEnv(this.deps.extraEnv),
+      env: codexSpawnEnv(globalThis.process.env, this.deps.extraEnv),
     });
     this.process = process;
     process.onExit((exit) => {

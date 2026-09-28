@@ -1,13 +1,17 @@
 /**
  * Codex spawn-env and home-path resolution.
  *
- * The Codex app-server child spawns with the ambient process env (what a
- * vanilla `codex` invocation would see) plus this provider's own
+ * The Codex app-server child spawns with a base env (the ambient process env
+ * for a live runtime or an activity read, or the diagnostic's own target env
+ * for a doctor check against a managed service) plus this provider's own
  * `config.extra_env`. Codex itself resolves its home from that same merged
  * env — an explicit `CODEX_HOME` override, else `$HOME/.codex` — so both the
  * runtime spawn path and anything that needs to know which Codex home a
  * runtime will actually use (the activity reader, the pre-start doctor) share
- * one derivation here. It is codex-engine-specific and carries no
+ * one derivation here. `baseEnv` is an explicit parameter, not `process.env`
+ * read internally, because the doctor's managed-service check must merge
+ * `extra_env` onto the service's own env rather than onto the terminal
+ * process running `doctor`. It is codex-engine-specific and carries no
  * `~/.dreamux` knowledge, so it belongs to this package, not to Dreamux core.
  */
 import { homedir } from 'node:os';
@@ -15,11 +19,12 @@ import { join } from 'node:path';
 
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
 
-/** The process env a Codex app-server child spawns with. */
+/** The process env a Codex app-server child spawns with, given its base env. */
 export function codexSpawnEnv(
+  baseEnv: DreamuxEnvironment,
   extraEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
-  return { ...globalThis.process.env, ...extraEnv };
+  return { ...baseEnv, ...extraEnv };
 }
 
 /**

@@ -305,7 +305,6 @@ export async function mergeWithDefaults(
       `dreamux config error in ${file}: top-level must be an object`,
     );
   }
-  rejectTopLevelCodex(raw, file);
 
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   const dispatchers = await readDispatchers(
@@ -343,16 +342,6 @@ export function defaultWorkspaceEnabled(
   return (
     config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)
       ?.workspace.enabled ?? false
-  );
-}
-
-function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
-  if (!('codex' in raw)) return;
-  throw new RuleViolation(
-    `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
-      'supported. Declare a named agent under agents[] with the selected runtime ' +
-      'provider and a provider-owned config block, then reference it from each ' +
-      'dispatcher via dispatchers[].agentRuntime.',
   );
 }
 
@@ -426,26 +415,6 @@ async function readAgents(
   return out;
 }
 
-function rejectLegacyDispatcherProviderKeys(
-  raw: Record<string, unknown>,
-  prefix: string,
-  file: string,
-): void {
-  // Named rather than left to generic unknown-key tolerance: these two keys
-  // are the pre-v2 config shape's provider blocks, and an operator who still
-  // has one needs the rebuild instructions below, not silent tolerance.
-  for (const key of ['feishu', 'codex']) {
-    if (!(key in raw)) continue;
-    const name = `${prefix}${key}`;
-    throw new RuleViolation(
-      `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
-        'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
-        'dispatchers[].channels[] for the channel and a named agents[] entry referenced via ' +
-        'dispatchers[].agentRuntime for the runtime, then restart.',
-    );
-  }
-}
-
 async function readDispatchers(
   rawDispatchers: unknown,
   file: string,
@@ -468,15 +437,6 @@ async function readDispatchers(
         `dreamux config error in ${file}: dispatchers[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
-    if ('runtime' in raw) {
-      throw new RuleViolation(
-        `dreamux config error in ${file}: ${prefix}runtime is no longer supported.\n` +
-          'Runtime config moved to a named agents[] entry. Declare the runtime ' +
-          'under top-level agents[] (id, provider, config) and reference it here ' +
-          `with ${prefix}agentRuntime = "<agent id>", then rebuild ${file}.`,
-      );
-    }
-    rejectLegacyDispatcherProviderKeys(raw, prefix, file);
     const id = validateDispatcherId(
       readNonEmptyString(raw, 'id', file, prefix),
       `${prefix}id`,
@@ -577,17 +537,6 @@ async function readDispatcherChannels(
     if (!isPlainObject(raw)) {
       throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
-      );
-    }
-    if (raw['collaborationSpace'] !== undefined) {
-      // Named rather than silently tolerated like any other unknown key: this
-      // key used to configure a real Core capability, and an operator who
-      // wrote it needs to be told where that capability went.
-      throw new RuleViolation(
-        `dreamux config error in ${file}: ${channelPrefix}collaborationSpace ` +
-          'was removed. Core no longer owns Collaboration Space policy — the ' +
-          'channel that offers the flow owns it now. Configure it there and ' +
-          'delete this key.',
       );
     }
     const id = readNonEmptyString(raw, 'id', file, channelPrefix);

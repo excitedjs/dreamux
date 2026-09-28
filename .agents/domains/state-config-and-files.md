@@ -78,36 +78,36 @@ It declares:
   to an `agents[].id`.
 - `dispatchers[].channels[]`: dispatcher-local channel id, Channel provider ref,
   and provider-owned channel config. Core owns no routing or Collaboration Space
-  policy here. A leftover `collaborationSpace` block is a loud config error: the
-  Channel that offers the product flow owns that policy, in its own state.
+  policy here. A leftover `collaborationSpace` block is tolerated and ignored,
+  like any other retired key: the Channel that offers the product flow owns
+  that policy, in its own state.
 
 A legacy top-level `workspace` key is not read: `dispatchers[].workspace.enabled`
 is the only place workspace policy is read from, per-dispatcher. Omitted
 dispatcher workspace policy defaults to disabled, including an empty
 `workspace` object. Explicit true/false values are preserved; onboarding seeds
 new policy as false and preserves existing policy. A dispatcher `runtime`
-block is rejected with the rebuild instruction to declare a named `agents[]`
-entry instead.
+block is tolerated and ignored, the same as any other retired key.
 
 Every key `config.json` reads is still checked for the right type, and every
-required key is still checked for presence, at every level. An unrecognized
-key elsewhere in the envelope — the top level, `dispatchers[]`,
+required key is still checked for presence, at every level (R21). An
+unrecognized key anywhere in the envelope — the top level, `dispatchers[]`,
 `dispatchers[].workspace`, `dispatchers[].channels[]`, or `agents[]` — is
-tolerated and ignored rather than rejected: a leftover top-level `workspace`
-key is exactly this case, not a named rejection. Named legacy shapes still
-fail loud with rebuild guidance because the reader can name the fact they
-would otherwise silently discard: a top-level `codex` block, a dispatcher
-`runtime` block, a dispatcher's leftover `feishu`/`codex` provider block (the
-pre-v2 config shape), and a channel's `collaborationSpace` block.
+tolerated and ignored rather than rejected, with no exception for a named
+legacy shape: a leftover top-level `codex` block, a dispatcher `runtime`
+block, a dispatcher's leftover `feishu`/`codex` provider block (the pre-v2
+config shape), a channel's `collaborationSpace` block, and a leftover
+top-level `workspace` key all load the same way — as an ordinary tolerated
+unknown key, with no special-cased rejection or rebuild-instruction error.
 
 `dreamux serve` fails loudly and creates no silent defaults when the config file
 is missing, when its mode is not `0600`, when the JSON does not parse, when the
-shape is rejected (a wrong type or a missing required field at any level, one
-of the named legacy shapes above, a duplicate dispatcher id, a dispatcher entry
-without a non-empty `cwd` (enabled or not; the error names the dispatcher id)),
-or when a providerized entry or a plugin cannot be loaded (including a
-duplicate plugin or provider name, and a `config` block for a plugin that takes
-none). The operator fix path is `dreamux onboard` or a manual rebuild.
+shape is rejected (a wrong type or a missing required field at any level, a
+duplicate dispatcher id, a dispatcher entry without a non-empty `cwd` (enabled
+or not; the error names the dispatcher id)), or when a providerized entry or a
+plugin cannot be loaded (including a duplicate plugin or provider name; a
+`config` block for a plugin with no reader is tolerated and ignored, not
+rejected). The operator fix path is `dreamux onboard` or a manual rebuild.
 
 While `dreamux serve` runs, the Config Service (`config/service.ts`) holds
 `config.json` in memory as this process's single authority over it; a hand
@@ -165,9 +165,12 @@ and its channel state all sit beside the collection, never inside it.
 
 `state/plugins/<plugin-name>/` is plugin-owned: Core hands the directory path
 to the plugin at `server()` time (`ServerHost.stateDir`) and never creates it
-or reads inside it. `<plugin-name>` is sanitized the same way a TeamMate name
-is (`teamMateNameSegment`), since a plugin name is not path-validated at load
-time.
+or reads inside it. `plugin/loader.ts`'s `constructPlugin` validates a
+factory-returned plugin name against a safe single-segment pattern (1-64 ASCII
+letters/digits/dot/underscore/dash, starting with a letter or digit) and fails
+loading loud otherwise, so `pluginStateDir` uses `<plugin-name>` verbatim: two
+distinct names can never collide on one directory, and none can resolve to
+`.`/`..` and escape `state/plugins/`.
 
 Source:
 
@@ -617,8 +620,8 @@ Rules:
 - TeamMate/Team recovery records fail loud rather than infer user-meaningful
   facts;
 - explicitly rebuildable server state may warn and rebuild only when documented;
-- removed layouts may be detected for diagnostics, but not read as source data,
-  rewritten, or deleted;
+- a removed layout, path, or field is ignored, not detected — no reader or
+  doctor check flags it, reads it as source data, rewrites it, or deletes it;
 - an incompatible shape, version, or path change that leaves the upgraded
   reader unable to start needs a Rush change file with `BREAKING:` and concrete
   `Rebuild:` guidance — that upgrade-blocking migration is the only thing

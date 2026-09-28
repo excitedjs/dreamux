@@ -6,7 +6,8 @@ Enable it by listing it in the top-level `plugins[]` of `config.json`:
 { "plugins": ["builtin:bootstrap"] }
 ```
 
-It takes no `config` block; one is rejected. It applies to every Dispatcher.
+It has no `config` reader, so a `config` block on its `plugins[]` entry is
+ignored, not rejected. It applies to every Dispatcher.
 
 ## Files
 

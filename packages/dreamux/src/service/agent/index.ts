@@ -652,13 +652,15 @@ export class TeammateCollection implements TeammateOps {
    * fence, but finish materializing their entity afterward, moments before
    * they would otherwise submit its first input — exactly the "get them
    * stopped as fast as possible" case a Dispatcher close is for. The owner's
-   * own sweep only runs once every admitted call like this one has settled
-   * (so it does not have to catch a runtime this same call could have avoided
-   * starting), which means the sweep has not run yet at this point; without
-   * this check the entity would start a runtime the sweep tears down a moment
-   * later. `stopForHost()` releases runtime authority without durably closing
-   * the entity, so a caller that went on to submit anyway would simply revive
-   * it — throwing here is what actually prevents that continuation.
+   * first runtime-sweep pass reads its live entities before this
+   * materialization finishes, so it never saw this one, and the sweep does
+   * not run again until its second, post-drain pass (after this same admitted
+   * call has settled) — without this check the entity would start a runtime
+   * nothing kills until that later pass reaches it. `stopForHost()` releases
+   * runtime authority without durably closing the entity, so a caller that
+   * went on to submit anyway would simply revive it — throwing here is what
+   * actually prevents that continuation, faster than waiting for the sweep's
+   * second pass.
    */
   private selfCloseIfClosing(entity: AgentService): void {
     if (!this.opts.isClosing()) return;

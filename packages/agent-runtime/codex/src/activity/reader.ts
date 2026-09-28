@@ -74,7 +74,7 @@ export async function readCodexRecentActivity(
   const limit = resolveLimit(query.limit);
   const includeTools = query.includeTools ?? true;
   const roots = await resolveCodexRolloutRoots(
-    codexSpawnEnv(context.config.extra_env),
+    codexSpawnEnv(globalThis.process.env, context.config.extra_env),
   );
   const discoveryBudget = createCodexScanBudget();
   const tail = await locateCodexRollout(

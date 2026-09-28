@@ -257,6 +257,28 @@ the immediate-submit path, whether or not it was deleted.
     **Failure:** same as the group-card case — `expireAskUserQuestion` only,
     typecheck-only failure.
 
+  **PR #455 review round correction — the restoration coordinates above are
+  stale.** `feishu-session-ops.ts` no longer exists: Stage 8b ("Plan Stage 8b
+  Feishu: session/inbound/outbound split, R37/R38/R41") folded it into
+  `session/session.ts` and split card-click answering into a new
+  `session/card-actions.ts` collaborator. The free-function `SessionHandle`
+  bag this suite's `handle()` built, and its `extensionAction` field, have no
+  successor at all — `handleCardAction` is now `FeishuCardActions.handle()`
+  (constructed from `FeishuCardActionsOptions`, `session/card-actions.ts`),
+  and `expireAskUserQuestion` is a private `session/session.ts` method that
+  delegates to the same class's `deliverAskUserSettlement`, so both the
+  click-answer and expiry cases resolve to one envelope builder there (attrs
+  `sender_id`/`ask_user_request_id`, `CHANNEL_REMINDER` from
+  `feishu-submit.ts`). The card's own construction — the "explanation above
+  questions" and reply-vs-new-message cases — is
+  `tools/ask-user-question.ts`'s `askUserQuestionDef.handle`, not this file's
+  `handle()` at all. `tools/messaging-tools.ts` is not the envelope's home
+  either — its `<channel source="feishu">` text is unrelated documentation on
+  the `reply`/`react`/`list_chat_bots` tool inputs. Restoring this suite means
+  constructing `FeishuCardActions` (for card-click cases) and exercising
+  `askUserQuestionDef.handle` (for card-creation cases), not adding a field to
+  a `handle()`/`SessionHandle` helper that no longer exists.
+
 ## Stage 1
 
 - **File / case:** `packages/dreamux/tests/no-sync-io-gate.test.ts` —
@@ -1647,7 +1669,8 @@ below.
 
 - **HIGH-RISK, restore first.** **File / case (compile — import-line failure,
   not a fixture edit):** `packages/channel/feishu-channel/tests/feishu-bot.test.ts`
-  (whole file, all 9 cases).
+  (whole file, all 8 cases — corrected from an earlier miscount of 9; the base
+  file (`origin/feat/plugin-system-mvp`) has exactly 8 `it()` cases).
   **Contract pinned:** `createFeishuBot`'s inbound routing and dispatch —
   per-message creation observer forwarding, `im.message.receive_v1`-only
   registration and raw-event normalization, sender-name fallback,
@@ -1666,11 +1689,17 @@ below.
   (TypeScript allows a class to implement more than an interface requires) —
   it is only the four now-nonexistent type names in the import list that
   break the file.
-  **Still holds?** Yes, verbatim — none of the file's 9 cases assert on
-  `createGroup`/`inviteMembers`; they exist on `FakeTransport` only to satisfy
-  the (then-required) `FeishuTransport` shape. Restore by dropping the two
-  methods from `FakeTransport` and the four dead type names from the import
-  list, then restoring every case unchanged.
+  **Still holds? 7 of 8, not all — corrected.** `'forwards the per-message
+  creation observer to the transport'` exercises `FeishuSendOptions`'s
+  `onMessageCreated` option, which R41's outbound redesign deletes outright
+  (a caller now reads the landing off `FeishuSendResult.messages` instead of
+  a read-after-send observer); it is **not** restorable as written. The other
+  7 cases assert nothing about `createGroup`/`inviteMembers` or
+  `onMessageCreated` — those two `FakeTransport` methods exist only to
+  satisfy the (then-required) `FeishuTransport` shape. Restore by dropping
+  the two methods from `FakeTransport`, the four dead type names from the
+  import list, and the observer-forwarding case, then restoring the
+  remaining 7 cases unchanged.
 
 - **File / case (dies on merit):** `packages/channel/feishu-transport/tests/self-identity.test.ts`
   — `test('a registration that reports no open_id leaves identity
@@ -2049,6 +2078,18 @@ work is stacked on, with that one exception.
   **Contract survives unchanged; restore verbatim in the final PR** (i.e., in
   the state Item 6 already left it in) — only this file's incidental
   `resetRuntimeConfig()` call (1 site) died with the module it imported from.
+  **PR #455 review round correction: "verbatim" needs two more import
+  fixes.** This file also imports `type { ServiceNodeProbe } from
+  '../src/onboard/service.js'` and `CommandRunner` (alongside the
+  still-valid `OnboardAnswers`/`OnboardChannelConfig`) from
+  `'../src/onboard/types.js'`. Stage 5 ("Plan Stage 5 leaf layering: platform,
+  command, config, utils") later deleted `onboard/service.ts` outright,
+  moving `ServiceNodeProbe` to `daemon/environment.ts` (confirmed at head,
+  `daemon/environment.ts:85`), and moved `CommandRunner`/`ExecaCommandRunner`
+  out of `onboard/` into `platform/command-runner.ts` (confirmed at head,
+  `platform/command-runner.ts:9`/`:45`) — `onboard/types.ts` no longer
+  declares `CommandRunner` at all. Restoring this file needs both imports
+  moved, not just the `resetRuntimeConfig()` removal.
 
 - **File:** `packages/dreamux/tests/uninstall.test.ts` (whole file, 4 cases
   under `describe('dreamux uninstall')`).
@@ -2058,6 +2099,12 @@ work is stacked on, with that one exception.
   **Contract survives unchanged; restore verbatim in the final PR** — only
   this file's incidental `resetRuntimeConfig()` `afterEach` (1 call site)
   died with the module it imported from.
+  **PR #455 review round correction: "verbatim" needs one more import fix.**
+  This file also imports `type { CommandRunner } from '../src/onboard/types.js'`;
+  Stage 5 later moved `CommandRunner`/`ExecaCommandRunner` out of `onboard/`
+  into `platform/command-runner.ts` (confirmed at head,
+  `platform/command-runner.ts:9`/`:45`). Restoring this file needs that
+  import moved too.
 
 - **File:** `packages/dreamux/tests/doctor-plugins.test.ts` (whole file, 5
   cases under `describe('pluginDoctorChecks')` and `'runDreamuxDoctor plugin
@@ -2071,6 +2118,11 @@ work is stacked on, with that one exception.
   **Contract survives unchanged; restore verbatim in the final PR** — only
   this file's incidental `resetRuntimeConfig()` call (1 site) died with the
   module it imported from.
+  **PR #455 review round correction: "verbatim" needs one more import fix,
+  same as `uninstall.test.ts` above.** This file also imports
+  `type { CommandRunner } from '../src/onboard/types.js'`, which Stage 5
+  moved to `platform/command-runner.ts`; restoring needs that import moved
+  too.
 
 - **File:** `packages/dreamux/tests/runtime-sockets.test.ts` (whole file, 8
   cases under `describe('runtime socket allocation')`).
@@ -2713,8 +2765,10 @@ satisfy `noUnusedLocals`, not a test repair. Verified with
   `'readDispatcherAccess'`, `'saveDispatcherAccess'`) at the file's own import
   statement — the whole file fails to compile on these three names alone,
   before any individual case is reached.
-  **6 of 8 cases still hold verbatim against the new location; verified
-  against current `feishu-gate-io.ts` source, not assumed:** the "missing
+  **6 of 8 cases still hold verbatim against the new location as of this
+  stage (`feishu-gate-io.ts`); see the PR #455 review round correction below
+  for where the loader lives at head — verified against source at the time,
+  not assumed:** the "missing
   file → default", "v2/v1/missing-version → throws /v3/", and "malformed JSON
   → throws /access\.json/" cases hold unchanged — `readDispatcherAccess`'s
   `V3_FAIL_MSG` (`'access.json must be v3 shape — copy allow_users to v3, add
@@ -2725,8 +2779,9 @@ satisfy `noUnusedLocals`, not a test repair. Verified with
   matches `/access\.json/`. The "v2 file → throws mentioning migration
   guidance" and "typo group policy shallow-loads, gate fails closed" cases
   hold unchanged too (`isV3Shape` still only checks `dm_policy`/`group.policy`
-  are strings, not an enum). Restore all 6 against `readDispatcherAccess`
-  imported from `feishu-gate-io.js` instead of `feishu-gate.js`.
+  are strings, not an enum). Restoring at head means calling `FeishuAccess.load()`
+  (`access/index.ts`), not importing `readDispatcherAccess` from
+  `feishu-gate-io.js` — see the correction below.
   **"save → load round-trips... 0600" holds in substance, moved onto the
   store — restore against a `TransactionalStore<DispatcherAccessState>`
   instance** (`create`/`update` then `.current`), not a free
@@ -2747,6 +2802,25 @@ satisfy `noUnusedLocals`, not a test repair. Verified with
   directly. Flagging as changed rather than silently dropping the fact: if a
   future stage finds a real path to writing a wrong-version state, this is
   where that gap was named.
+
+  **PR #455 review round correction — `feishu-gate-io.ts` does not exist at
+  head either.** Stage 8b ("Plan Stage 8b Feishu: session/inbound/outbound
+  split, R37/R38/R41") dissolved it into the package's new `access/`
+  directory: the pure gate decision and its constants moved to
+  `access/gate.ts`/`access/state.ts` (same split `feishu-gate.js` already had
+  from `feishu-gate-io.js`, one level further), and the v3 loader folded into
+  a `FeishuAccess` class at `access/index.ts` — `readDispatcherAccess` is not
+  even that class's exported surface; the loader is the private method
+  `readFromDisk`, reachable only through the class's own `load()`/`current`
+  (`V3_FAIL_MSG` at `access/index.ts:28` is an unexported `const`). Writes
+  go through the same class's `update()`, backed by a
+  `TransactionalStore<DispatcherAccessState>` exactly as this entry already
+  describes for "save → load round-trips". Restoring the 6 "still holds"
+  loader cases at head means instantiating `FeishuAccess` and calling
+  `load()`, not importing a bare `readDispatcherAccess`/`saveDispatcherAccess`
+  from any file — that free-function shape is gone at every location, not
+  just `feishu-gate.js`. The fail-loud messages and behavior this entry pins
+  are otherwise unchanged, verified against `access/index.ts` at head.
 
 - **`F. Misc constants and helpers` → `pushWarn — FIFO cap at 200`** — whole
   `describe` (1 case).
@@ -3197,12 +3271,17 @@ module load before any case runs.
 **Contract fully holds — restore, with two fixture updates, not just a
 re-point.** `managedServiceEnvironment` and `validateManagedServiceLaunch`
 moved to `daemon/environment.ts` with unchanged PATH-building and
-validation logic; `ServiceInstallAnswers` moved to `daemon/install.ts`.
-Restoring needs three import-line changes, not one: `CommandRunner` from
+validation logic; `ServiceInstallAnswers` moved to `daemon/install.ts` at
+this stage. **PR #455 review round correction: moved again since.** Stage 9
+("Plan Stage 9: dependency-cruiser to error, drop text-mirror tests" — "What
+moved: ServiceInstallAnswers into daemon/environment.ts") relocated the
+interface a second time; at head it is defined at
+`daemon/environment.ts:36`, not `daemon/install.ts`. Restoring needs three
+import-line changes, not one: `CommandRunner` from
 `../src/platform/command-runner.js` (fixing the pre-existing break, not
-introduced here), `managedServiceEnvironment`/`validateManagedServiceLaunch`
-from `../src/daemon/environment.js`, and `ServiceInstallAnswers` (type only)
-from `../src/daemon/install.js`. The file's local `answers()` fixture
+introduced here), and both `managedServiceEnvironment`/
+`validateManagedServiceLaunch`/`ServiceInstallAnswers` (the last type only)
+from `../src/daemon/environment.js`. The file's local `answers()` fixture
 builder (line 35) also sets a `configDir: '/home/op/.dreamux'` field that no
 longer exists on `ServiceInstallAnswers` — this stage's Item 1 (R26/R27)
 deleted it — drop that line on restoration; none of the file's 4 assertions
@@ -3731,6 +3810,17 @@ longer exists, `service/mcp/catalog.ts` exports `validateMcpToolCatalog`).
   channel id yields two different tool sets for dispatcher vs team_leader
   callers'`.
 
+  **PR #455 review round correction:** `service/mcp/descriptor.ts` is gone at
+  head too — Stage 7 ("Plan Stage 7 adapters and schemas: requests, mcp
+  records, R14/R18/R20") deleted it. The descriptor-builder cases
+  above (`assertUniqueMcpServerNames`, the `mcpServerDescriptor` cases
+  covering the admin-socket/lease-token payload) now import from the
+  top-level `mcp/launch.ts` (`packages/dreamux/CLAUDE.md`: "the MCP server
+  launch shape every runtime adapter serializes: subcommand, lease env var,
+  argv/env"), alongside `DREAMUX_MCP_LEASE_ENV`/`DREAMUX_MCP_SUBCOMMAND`.
+  Restore those cases against `mcp/launch.js`, not `service/mcp/descriptor.js`;
+  the rest of this entry's file/import guidance is unaffected.
+
 ##### `packages/dreamux/tests/workflow-service.test.ts` — whole file, 15 cases
 
 **Failure:** `import { WORKFLOW_AGENT_SYSTEM_PROMPT } from
@@ -3825,6 +3915,22 @@ Round 1 of the R53 final pass: make `build`/`lint`/`typecheck:tests`/`test`
 green across the whole tree without repairing or re-pointing any failing test
 (R43). All four gates are green as of this pass. This section logs every test
 file this pass touched.
+
+**PR #455 review round correction: the green claim above did not hold on a
+clean build.** CI run
+[36351179056](https://github.com/excitedjs/dreamux/actions/runs/36351179056)
+was red on both `ubuntu-latest` and `macos-latest` at `tests/bin-launcher.test.ts`:
+its `beforeAll` required `dist/cli/server-ctl.js`, an artefact Stage 7 deleted
+`src/cli/server-ctl.ts` for. This pass's own local "green" came from a stale
+`dist/cli/server-ctl.js` left over from an earlier build — `rush build`
+without a prior `rush rebuild`/clean does not remove a dist file whose source
+was deleted, so the four-gates check above never actually exercised a clean
+`dist/`. Fixed in the PR #455 review round: `bin-launcher.test.ts`'s
+`distFiles` array no longer lists `server-ctl.js` (the file's own cases
+already assert the launcher does *not* mention `server-ctl`, so the
+prerequisite was stale, not the test's intent). This is the one correction to
+the "all four gates are green" claim; no other gate result in this section is
+known to be affected.
 
 **Method.** For every file below, the file's pre-deletion content (`git show
 HEAD:<path>`) was written back to disk, `npx tsc -p tsconfig.tests.json
@@ -4110,10 +4216,23 @@ function's own input shape is unchanged.
   `toolCallResultEvents`/`toolResultOutput`/`toolCallStartEvents` from
   `../src/feishu-cot-events.js` → merged into the same `cot/card.ts`. Holds;
   restore with the import moved.
-- **`tests/feishu-gate.test.ts`** — 15 cases. Imports from
-  `../src/feishu-gate.js` → `access/gate.ts` (flat `feishu-*.ts` gate file
-  moved under `access/` with the rest of the access/pairing regrouping).
-  Holds; restore with the import moved.
+- **`tests/feishu-gate.test.ts`** — **HIGH-RISK** (carried over from the
+  detailed entry above, not dropped — PR #455 review round correction: this
+  row's own "15 cases" underquotes; that is a count of `it()` call sites in
+  the file as it stood right before this stage's deletion, not of actual
+  runtime cases — the `A2. trusted allow_chats truth table` describe loops
+  over policy/dm_policy/require_mention combinations, so its 5 call sites
+  expand to 15 cases by themselves; with `E`'s 4, `F`'s 5
+  (`generatePairingToken`/`generateUniquePairingToken` + 3 of 4 `constant
+  values` cases), and `Export compatibility`'s 1 type-alias case, the file
+  held 25 actual cases at this point — the same 25 the detailed entry above
+  names as survivors of the earlier `A`/`B`/`C`/`D`/`F`/`Export
+  compatibility`/atomic-write passes. Imports from `../src/feishu-gate.js` →
+  `access/gate.ts` (flat `feishu-*.ts` gate file moved under `access/` with
+  the rest of the access/pairing regrouping — see the detailed entry above
+  for `access/state.ts`'s further split of the constants). Holds; restore
+  all 25 with the import moved, per the case-by-case guidance in the detailed
+  entry above (this row is not a substitute for it).
 - **`tests/feishu-inbound-anchor.test.ts`** — 8 cases. Imports
   `FeishuInboundCorrelations` from `../src/feishu-inbound-anchor.js` →
   `cot/inbound-correlations.ts`. Holds; restore with the import moved.
@@ -4254,10 +4373,27 @@ called out with its own distinct evidence.
   `ProviderRegistry.registerImplementation`) plus a `loadConfig` export that
   moved from `config/config.js` to `config/load.js` (Cause A-shaped path move,
   holds).
-- **`tests/restart-intent.test.ts`** (12) — R11 ("没有这个需求，把打开和关闭都
-  删掉", Stage 6e). `daemon/restart-intent.ts` is deleted outright along with
-  the `dreamux dispatcher start` CLI verb and the stop-then-restart split it
-  served. Does not hold; changed by R11; no restore, per the ruling.
+- **`tests/restart-intent.test.ts`** (12) — **PR #455 review round
+  correction: this row's R11 attribution is false.** R11 ("没有这个需求，把
+  打开和关闭都删掉") deletes the `dispatcher.start` Command, its CLI verb, and
+  the reopen-after-stop logic (the "Delete dead mechanisms and rulings
+  R11/R23-25/R28-30/R39/R47" stage) — an unrelated, in-process-restart
+  mechanism with zero shared code or imports. `daemon/restart-intent.ts` is
+  the issue #78 restart-notice marker (`writeRestartIntent`,
+  `RestartIntentConsumer`, `notifyResumedRestart`,
+  `DEFAULT_RESTART_ANNOUNCE`, `DEFAULT_RESTART_INTENT_TTL_MS`) that
+  `dreamux daemon restart --notify-resumed` writes and a resumed dispatcher
+  claims once; it was not deleted, only relocated — Stage 5 ("Plan Stage 5
+  leaf layering: platform, command, config, utils") moved it,
+  logic-unchanged, to `service/dispatcher-service/restart-intent.ts` ("next
+  to the Dispatcher Agent code that reads its marker"), where it still
+  exports all five names this test imports (285 lines, 9 exports total) with
+  6 consumers (`server.ts`, `service/dispatchers/index.ts`,
+  `service/dispatcher-service/index.ts`, `service/dispatcher-service/agent.ts`,
+  `cli/commands/daemon.ts`, `platform/paths.ts`). Contract holds; all 12
+  cases (the TTL once-only claim, rollback, and the issue #98
+  malformed-marker warn-and-drop) are restorable with only the import path
+  updated to `../src/service/dispatcher-service/restart-intent.js`.
 - **`tests/runnable-channel.test.ts`** (6) — Cause A
   (`dispatcher-service/runnable-channel.js` — folded into `ChannelService` per
   Stage 6e's "absorbing the runnable-channel shape guard") plus Cause B
@@ -4273,12 +4409,25 @@ called out with its own distinct evidence.
   `teammate-service/index.js`, `teammate-service/submission.js`,
   `teammate-service/turn-recording.js`) plus Cause F (nine
   `@ts-expect-error` directives are now unused — the negative-type assertions
-  they guarded no longer produce an error once the R17 code rename and R11's
-  restart-intent deletion changed the checked shapes). Mixed disposition:
-  the parts unrelated to `restart-intent`/R17 hold (restore via the Cause A
-  import moves and the Cause F code names); the restart-intent-specific
-  assertions do not hold (R11, no restore) — matches this refactor's earlier
-  characterization of this file (see the audit note in the R43 rulings
+  they guarded no longer produce an error once the R17 code rename changed
+  the checked shapes). **PR #455 review round correction:** the
+  `daemon/restart-intent.js` import (a type-only `RestartIntentConsumer`
+  reference) is an ordinary Cause-A-shaped move to
+  `service/dispatcher-service/restart-intent.js` — R11 never touched this
+  module (see the `restart-intent.test.ts` correction above); it holds like
+  every other Cause A import. The real, unrelated break is
+  `injectRestartNoticeIfNeeded`: `dispatcher-service/restart-notice.ts` is
+  deleted outright and the function became a private method on
+  `DispatcherAgent` (`service/dispatcher-service/agent.ts`). Mixed
+  disposition: the parts unrelated to `injectRestartNoticeIfNeeded`/R17 hold
+  (restore via the Cause A import moves, including `restart-intent.js`, and
+  the Cause F code names); the cases that call `injectRestartNoticeIfNeeded`
+  directly as a free function hold in substance but do not hold as written —
+  they need re-authoring against `DispatcherAgent`'s own surface, the same
+  disposition this ledger gives `dispatcher-plugin-hooks.test.ts` for its
+  `createDispatcherAgent`-to-class change, not a "no restore" — matches this
+  refactor's earlier characterization of this file (see the audit note in the
+  R43 rulings
   context) and is not re-litigated here.
 - **`tests/team-collection-read-path.test.ts`** (1) — Cause A
   (`teammate-collection/types.js`).
@@ -4445,3 +4594,114 @@ tests are rebuilt:
 `.agents/domains/provider-runtime.md`'s `system-prompt.test.ts` line was
 removed outright rather than marked temporal, since that section is a plain
 source list, not a test-coverage claim.
+
+## PR #455 review round
+
+Devbox review round 1 on PR #455 flagged two scheduler defects, fixed in
+this round; no live test in the current tree exercises either path, so
+neither fix deletes or restores a test case on its own. One fix does correct
+a restore recipe this ledger already recorded, logged below.
+
+- **`scheduler/store.ts` — `deliver` field rejection.** `parseCronJob` threw
+  `LegacyStateError` on a leftover `deliver` field, against the persisted-shape
+  policy (tolerate unknown fields, reject only wrong types and missing
+  fields) that the same function already applies to a leftover `dispatcher_id`
+  three lines above. Fixed: the rejection is deleted; `deliver` is now ignored
+  like any other unknown field, and the field-by-field object `parseCronJob`
+  returns already drops it, so the next rewrite of that job stops carrying it
+  forward.
+
+  This retires part of a restore recipe Stage 2a — Item 12 recorded above, in
+  the `describe('CronJobStore rejects the removed cron deliver/spawn-teammate
+  shapes')` block. That entry marked all 4 cases "still holds — restore
+  verbatim in the final PR." One of those four, `fails loud on a job carrying
+  the removed deliver field`, no longer holds: `parseCronJob` does not reject
+  a `deliver` field anymore, so restoring that case would assert behavior the
+  current source does not have. Correction: only 3 of the 4 cases in that
+  block are still restorable verbatim — `accepts a current prompt-agent job as
+  a control`, `fails loud on the removed spawn-teammate action kind`, and
+  `assertCurrent() surfaces the same fail-loud verdict used by the startup
+  doctor path`. `fails loud on a job carrying the removed deliver field` must
+  be dropped from that block's restoration rather than moved verbatim.
+
+- **`scheduler/index.ts` — missed-fire rearm raced a concurrent `cron.update`.**
+  The 'missed' branch of `rearm()` derived its `{ enabled, nextRunAt }` write
+  from the in-memory job `dispatch()` had captured before submitting, so a
+  `cron.update` that committed a reschedule, a disable, or a recurring flip
+  while that submission was in flight could be silently overwritten once the
+  missed outcome landed. Fixed: `CronJobStore.applyMissed` now runs the
+  derivation (`SchedulerService.missedOutcome`) inside the store's own
+  serialized update, against the row as it stands at that moment, and bails
+  out (writes nothing) when the row is already disabled or already carries a
+  future `next_run_at` — mirroring `reconcile()`'s own conditions for "nothing
+  to do." No test file names `scheduler/index.ts` or `CronJobStore` in the
+  current tree (the whole-file deletions logged under Stage 2a — Item 12 and
+  the Final Pass section above removed the last ones), so this fix has no
+  ledger row of its own beyond this note.
+
+- **`tests/bin-launcher.test.ts` — the review's CI blocker.** `beforeAll`'s
+  `distFiles` still required `dist/cli/server-ctl.js`; `src/cli/server-ctl.ts`
+  was deleted in Stage 7, so a clean build produces no such file and
+  `beforeAll` threw before any of the file's cases ran (CI run
+  [36351179056](https://github.com/excitedjs/dreamux/actions/runs/36351179056),
+  red on both `ubuntu-latest` and `macos-latest`). Fixed: the array element is
+  removed; the file's other two `dist` prerequisites and all nine cases are
+  untouched (one of them already asserts the launcher string does not contain
+  `server-ctl`, so the fix aligns the prerequisite with a case the file
+  already had). This is a helper-array repair, not an assertion edit — same
+  R43 disposition this ledger already gives the `command-harness.ts` and
+  `no-sync-io-gate.test.ts` fixture repairs elsewhere in this file. No case is
+  deleted or restored by this fix.
+
+## PR #455 gate round 1
+
+- **`tests/core-provider-neutrality.test.ts` — `'the only files naming a
+  concrete builtin provider id are the composition root'` (1 case, of 4 in
+  the file — the other 3 are unaffected and still pass).**
+  **Contract pinned:** Core (`packages/dreamux/src`) never branches product
+  behavior on a concrete Agent Runtime/Channel provider id; the registry
+  composition root (`src/registry/builtins.ts`) is the one legitimate place a
+  literal `'codex'`/`'claude-code'`/`'feishu'` string may appear. The case's
+  own `allowedCarveOuts` fixture named a second, narrow exception,
+  `src/config/config.ts`, because that file's `rejectTopLevelCodex` and
+  `rejectLegacyDispatcherProviderKeys` fail-loud checks matched a removed
+  top-level `codex` block and the pre-v2 `feishu`/`codex` dispatcher provider
+  keys by literal name — "a single unconditional rejection, not a branch that
+  changes behavior BY provider id" (the case's own comment), so it was
+  asserted as a carve-out rather than silently widening the registry
+  allowance.
+  **Failure:** this gate round's R21 fix (`packages/dreamux/src/config/config.ts`
+  — deleting `rejectTopLevelCodex`, `rejectLegacyDispatcherProviderKeys`, the
+  inline `'runtime' in raw` check, and the `collaborationSpace` rejection, per
+  Devbox review round 1's finding that four `config.json` sites still rejected
+  a removed field by name against R21's "tolerate unknown fields" ruling)
+  removed every literal id string from `config.ts`, so the file no longer
+  appears in the `idPattern` scan's `offenders` list at all. The assertion
+  (`expect(offenderPaths).toEqual([...allowedCarveOuts].sort())`) then fails
+  because the fixture still names a carve-out that no longer exists in
+  source — `offenderPaths` is `['src/registry/builtins.ts']`,
+  `allowedCarveOuts` still names two paths.
+  **Still holds?** The guard's underlying contract holds, and holds more
+  tightly than before: `config.ts` no longer needs a carve-out at all, since
+  it no longer names a provider id by literal string anywhere. This is not a
+  new leak the test caught — the R21 fix deleted the one thing the carve-out
+  existed for. Deleted rather than repaired per R43 (this ledger does not
+  treat an assertion's own expected-value fixture as the same class of thing
+  as the `bin-launcher.test.ts`/`command-harness.ts`/`no-sync-io-gate.test.ts`
+  precondition-array repairs above, since `allowedCarveOuts` is the
+  assertion's expected output, not a setup precondition unrelated to what the
+  case checks). **Restore** by dropping the `src/config/config.ts` carve-out
+  from `allowedCarveOuts` (and the comment explaining it) so the assertion
+  reads `['src/registry/builtins.ts']`, matching the other three cases in this
+  file, which make the same one-file assertion directly.
+
+This round also corrected several `deleted-tests.md` restore recipes the
+Devbox review flagged as pointing at file/symbol locations a later stage
+moved again after the recipe was written (the settlement-envelope,
+`feishu-bot.test.ts`, `feishu-gate.test.ts`, `restart-intent.test.ts`,
+`submission-envelope.test.ts`, `mcp-delegate-catalog.test.ts`,
+`service-claude-path.test.ts`, `onboard.test.ts`, `uninstall.test.ts`, and
+`doctor-plugins.test.ts` entries above) and the "all four gates are green"
+final-pass claim (`bin-launcher.test.ts` was red on a clean build); each
+correction is logged inline at its own entry, marked "PR #455 review round
+correction."

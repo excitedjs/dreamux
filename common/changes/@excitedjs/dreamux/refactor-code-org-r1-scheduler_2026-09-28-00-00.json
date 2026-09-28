@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "PR #455 review round, two scheduler fixes. `CronJobStore.parseCronJob` no longer fails loud on a leftover `deliver` field on an old cron-jobs.json job row: like the existing `dispatcher_id` tolerance, it is now an ordinary unknown field under the persisted-shape policy, ignored on load and dropped the next time that job is rewritten; `dreamux doctor` no longer names a store file for carrying it. Separately, a missed cron fire's rearm write no longer derives its `{ enabled, next_run_at }` write from the in-memory job snapshot `SchedulerService` captured before the fire; `CronJobStore.applyMissed` now derives that write from the row as it stands at write time, inside the store's own serialized update, so a `cron.update` committed while a fire's submission was in flight can no longer be silently overwritten by a stale missed-outcome write.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -1025,8 +1025,8 @@ Source:
 
 A Collaboration Space is a Channel product flow, not a Core entity. Core has no
 Collaboration Space service, no space store, and no `collaboration_space` Command
-namespace; the operator config no longer accepts a `collaborationSpace` block,
-and a leftover one is a loud config error.
+namespace; the operator config no longer reads a `collaborationSpace` block, and
+a leftover one is tolerated and ignored, like any other retired key.
 
 For Feishu a Space is a registered topic group whose child topics are provisioned
 automatically. Its four Dispatcher-only tools register an existing external

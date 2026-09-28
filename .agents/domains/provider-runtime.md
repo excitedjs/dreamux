@@ -128,11 +128,14 @@ Config loading first loads plugins (the always-loaded Feishu plugin, then
 `plugins[]` in order) and runs their `contribute`, then loads the referenced
 Agent Runtime and Channel providers, validates provider-owned config through
 each provider's `readConfig`, and finally runs each plugin's `config.read`.
-Provider config can be sync or async. Core rejects old top-level `codex`,
-inline `dispatchers[].runtime`, missing `agentRuntime`, duplicate
-`agents[].id`, duplicate dispatcher ids, duplicate channel ids, and duplicate
-channel provider refs within one dispatcher. It does not silently migrate old
-shapes.
+Provider config can be sync or async. Core rejects missing `agentRuntime`,
+duplicate `agents[].id`, duplicate dispatcher ids, duplicate channel ids, and
+duplicate channel provider refs within one dispatcher — every one of these is
+a wrong type or a missing/duplicate required field. It does not reject a
+retired shape by name (an old top-level `codex` block, inline
+`dispatchers[].runtime`, and so on load as an ordinary tolerated unknown key;
+see [state-config-and-files.md](state-config-and-files.md)), and it does not
+silently migrate old shapes into the current one.
 
 Off Windows the config file must be mode `0600`. Any other mode is a loud load
 failure that names the offending mode; the file is never repaired in place.

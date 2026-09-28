@@ -246,26 +246,36 @@ export class ChannelService {
    * Close every entry — live or only built — and report every failure
    * instead of swallowing it.
    *
-   * Detach before awaiting provider shutdown: a concurrent stop now observes
-   * an empty map, and a later restart/build cannot be clobbered when this
-   * older close finishes. Admission is fenced synchronously in the same
-   * breath, ahead of any await, whether or not the caller already fenced it.
-   * Subscriptions stay attached through everything above — a runtime settling
-   * during close still produces facts a Channel should see — and are revoked
-   * once, here, immediately before the sessions holding them are closed: any
-   * earlier would drop a fact a stopping runtime was about to settle, and any
-   * later would let a closed session's stale subscription observe something.
+   * An entry is removed only once its own `session.close()` resolves: a
+   * transient close failure (a socket blip) then leaves that entry in the map
+   * rather than losing the only handle a retried `closeAll()` could reach it
+   * through — the dispatcher-level close retry (`DispatcherLifecycle`) relies
+   * on this to converge a channel that failed on a first attempt. No new
+   * session is ever built for an id already in the map (`build()` runs once,
+   * before `initialize`/`start`, and is never called again on a live
+   * dispatcher), so an entry left behind by a failed close is never clobbered
+   * by a concurrent rebuild. Admission is fenced synchronously ahead of any
+   * await, whether or not the caller
+   * already fenced it, and is safe to repeat on a retry (`closeAdmission()`
+   * is idempotent). Subscriptions stay attached through everything above — a
+   * runtime settling during close still produces facts a Channel should see
+   * — and are revoked once, here, immediately before the sessions holding
+   * them are closed: any earlier would drop a fact a stopping runtime was
+   * about to settle, and any later would let a closed session's stale
+   * subscription observe something. `revokeSources()` is safe to repeat on a
+   * retry too — it clears its own set and has nothing left to revoke once a
+   * first attempt already emptied it.
    */
   async closeAll(): Promise<void> {
-    const snapshot = [...this.entries];
-    this.entries.clear();
-    for (const [, entry] of snapshot) entry.portLease?.closeAdmission();
+    for (const entry of this.entries.values())
+      entry.portLease?.closeAdmission();
     this.opts.coreEvents.revokeSources();
     const failures: unknown[] = [];
-    for (const [channelId, entry] of snapshot) {
+    for (const [channelId, entry] of [...this.entries]) {
       await collectShutdownFailure(failures, async () => {
         try {
           await entry.instance.session.close();
+          this.entries.delete(channelId);
         } catch (err) {
           this.opts.log.error(
             {

@@ -90,14 +90,25 @@ the Team.
   (`teams.startWorkflows()`/`recoverWorkflows()`/`closeWorkflowAdmissions()`)
   explicitly, right beside the equivalent scheduler fan-out
   (`teams.startSchedulers()`/`stopSchedulers()`) — neither is hidden inside a
-  wrapper. Closing waits
-  for every already-admitted operation to settle, then sweeps every runtime
-  once: `TeammateCollection`'s and `TeamCollection`'s own entity-construction
-  paths self-close against `isClosing()` the instant they register a new
-  entity, which is what makes that one post-drain sweep sufficient without a
-  second pass. Ordinary start leaves the dispatcher runtime dormant; unbound
-  channel inbound, dispatcher cron, or an explicit resume notice lazy-starts
-  it.
+  wrapper. Closing stops every runtime it can reach, waits for every
+  already-admitted operation to settle, then repeats the same runtime sweep
+  once more before releasing channels. The first pass runs before the drain,
+  not after: an admitted `send`/`spawn` can be sitting inside a runtime start
+  with no timeout of its own (codex `thread/start` is one such call), so a
+  drain that ran first would wait on exactly the runtime the sweep exists to
+  kill — stopping the runtime first is what tears down its RPC client and
+  rejects that pending start, which is what lets the drain converge. The
+  second pass, after the drain, catches a pre-fence admission that only
+  reaches its own runtime start (or, since `stopForHost()` fences an entity's
+  admission only for its own convergence and never moves its phase, a revived
+  runtime) after the first pass already passed it by; every step it repeats is
+  idempotent, so nothing is lost when there was nothing left to catch.
+  `TeammateCollection`'s and `TeamCollection`'s own entity-construction paths
+  separately self-close against `isClosing()` the instant they register a
+  brand-new entity — a different gap (a new entity's first submission) than
+  the one the two-pass runtime sweep covers, not a substitute for it. Ordinary
+  start leaves the dispatcher runtime dormant; unbound channel inbound,
+  dispatcher cron, or an explicit resume notice lazy-starts it.
 - **`channel-service/`** — `index.ts`'s `ChannelService` is the single owner of
   the dispatcher's whole channel lifecycle: the runnable-channel shape guard,
   build, the per-session initialize/start sequencing, the Core-port-lease
@@ -274,7 +285,14 @@ the Team.
   dissolve, a host stop, or a start publishes its promise before doing the work
   behind it, and a second caller joins that promise instead of starting a
   second operation. Do not add a boolean beside a task, or a phase enum beside
-  either.
+  either. The one named exception is `DispatcherLifecycle`'s terminal `close()`:
+  `isClosing()` is a fact `admit()`, `TeammateCollection`, and `TeamCollection`
+  all read directly off this same object, so it must never revert — including
+  during the gap between a failed release and a retried one, when the release
+  task itself is momentarily `null` so the retry can run. A permanent `closed`
+  boolean plus a retryable `closing` task is what that external reader
+  requires; an operation with no such reader (dissolve, host stop, start)
+  keeps the one-field shape.
 - **A child under construction checks its parent's close, not the other way
   around.** An admitted `spawn`/`send`/`create` crosses its owner's admission
   fence before `close()` can raise it, but only finishes materializing its
@@ -294,10 +312,14 @@ the Team.
   runs (`TeamService.createNew` submits it internally, before the collection
   ever sees the object), so this only stops the runtime as soon as the
   collection notices, rather than leaving it running until a later sweep
-  reaches it. Either way, nothing can still be starting a runtime by the time
-  the post-drain sweep runs, which is what makes one sweep, run only after
-  every already-admitted operation has settled, provably sufficient — do not
-  reintroduce a second post-drain sweep as a substitute for this check.
+  reaches it. This closes the gap for a brand-new entity's first submission
+  only. It is not a substitute for the dispatcher's own two-pass runtime sweep
+  (see the `dispatcher-service/index.ts` bullet above): an
+  already-materialized entity's pre-fence admission can still start, or
+  revive, a runtime after the sweep's first pass already reached that entity,
+  because `stopForHost()` fences admission only for its own convergence and
+  never moves the entity's phase — catching that is what the sweep's second,
+  post-drain pass is for.
 - **A closed entity is a record, not a dormant Service.** Terminal facts
   (`team.closed`, `teammate.closed`) evict the exact instance that ended. Read
   models, startup, and physical cleanup answer from records and never

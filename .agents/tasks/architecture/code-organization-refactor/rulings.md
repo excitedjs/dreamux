@@ -84,6 +84,14 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
   Team, Dispatcher, Server) only calls close on its children, layer by layer.
   A child under construction registers with its parent first and closes itself
   if the parent is already closing (inference: this replaces the second sweep).
+  PR #455 review round correction: the inference does not hold — register-time
+  self-close only preempts a brand-new entity's first submission; it does not
+  cover an already-materialized entity whose pre-fence admission reaches (or
+  revives) its runtime start only after the dispatcher's first sweep pass has
+  already read past it, since `stopForHost()` fences admission only for its
+  own convergence and never moves the entity's phase. `DispatcherLifecycle`
+  keeps an idempotent runtime sweep both before and after the admitted-work
+  drain; see `packages/dreamux/src/service/CLAUDE.md`.
 - R11 in-process Dispatcher restart: "没有这个需求，把打开和关闭都删掉", and
   "没有这个诉求，只要 Daemon 启动的时候，Dispatcher 全部都启动。延迟的只是
   Dispatcher 的 Agent Service，或者说，是 Agent Service 延迟拉起 Provider

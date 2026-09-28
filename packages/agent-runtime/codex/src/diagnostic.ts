@@ -5,12 +5,14 @@
  * Declares the codex bin check (deduped + executed by Dreamux core) and runs
  * the codex-home validation plus the codex version gate (#147) itself,
  * against the neutral `@excitedjs/dreamux-types` diagnostic context. The
- * codex-home check runs against the runtime's actual spawn env (ambient env
- * plus its own `config.extra_env`, via `paths.ts`'s `codexSpawnEnv`) rather
- * than the ambient diagnostic env alone, so a per-agent `CODEX_HOME` or auth
- * override is validated where it actually applies. The representative
- * app-server socket sample is derived from the neutral path context's
- * `runtimeSocketDirs()`, so the package never names `~/.dreamux`.
+ * codex-home check runs against the runtime's actual spawn env (the
+ * diagnostic context's own target env — the managed service's env for a
+ * managed-service check — plus this runtime's `config.extra_env`, via
+ * `paths.ts`'s `codexSpawnEnv`) rather than the terminal process running
+ * `doctor`, so a per-agent `CODEX_HOME` or auth override is validated where
+ * it actually applies. The representative app-server socket sample is
+ * derived from the neutral path context's `runtimeSocketDirs()`, so the
+ * package never names `~/.dreamux`.
  */
 import type {
   AgentRuntimeBinCheck,
@@ -77,10 +79,12 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
       const cliArgs = codexArgsToCli(codexArgsFromConfig(context.config));
       const socketDirs = context.paths.runtimeSocketDirs();
       // Validate against the env this runtime's Codex child actually spawns
-      // with (ambient env plus its own `extra_env`), not the ambient
-      // diagnostic env alone — an operator's per-agent `CODEX_HOME` or auth
-      // override in `extra_env` must be honored here too.
-      const env = codexSpawnEnv(context.config.extra_env);
+      // with (the diagnostic's target env — the managed service's own env for
+      // a managed-service check — plus this runtime's own `extra_env`), not
+      // the terminal process running `doctor`: an operator's per-agent
+      // `CODEX_HOME` or auth override in `extra_env`, or in the service's own
+      // env, must be honored here too.
+      const env = codexSpawnEnv(context.env, context.config.extra_env);
       const homeContext = dispatcherCodexHomeDoctorContext(
         context.runtime_id,
         env,

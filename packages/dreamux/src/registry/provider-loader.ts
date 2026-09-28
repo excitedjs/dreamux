@@ -24,11 +24,7 @@
 
 import { errorMessage as errMessage } from '@excitedjs/dreamux-utils';
 import { UnknownBuiltinProviderPackageError } from './builtins.js';
-import {
-  parseProviderRef,
-  type NpmProviderRef,
-  type ProviderRef,
-} from './provider-ref.js';
+import { parseProviderRef, type ProviderRef } from './provider-ref.js';
 import type {
   ProviderDescriptor,
   ProviderImplementation,
@@ -280,7 +276,3 @@ async function defaultImportModule(
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-
-export { errMessage };
-
-export type { NpmProviderRef };

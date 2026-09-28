@@ -160,12 +160,20 @@ file logger does not exist yet); `ServerHost.logger` is serve's logger bound
 with `plugin: <name>`.
 
 `ServerHost.stateDir` (R50) is the plugin's own durable state directory,
-`pluginStateDir(name)` (`state/plugins/<name>/`, sanitized the same way a
-TeamMate name is), handed to every plugin's `server` call alongside `config`
-and `logger`. Core neither creates the directory nor reads inside it — a
-plugin that needs one creates it lazily on its own first write, the same way
-every other Dreamux store does. `contribute`/`config.read` do not get it:
-nothing at that phase does IO.
+`pluginStateDir(name)` (`state/plugins/<name>/`), handed to every plugin's
+`server` call alongside `config` and `logger`. Core neither creates the
+directory nor reads inside it — a plugin that needs one creates it lazily on
+its own first write, the same way every other Dreamux store does.
+`contribute`/`config.read` do not get it: nothing at that phase does IO.
+
+`constructPlugin` (step 2 above) validates the factory-returned `name` against
+a safe single-segment pattern (1-64 ASCII letters/digits/dot/underscore/dash,
+starting with a letter or digit) and fails loading with `PluginLoadError`
+otherwise, so `pluginStateDir` uses it verbatim, with no separate sanitizing
+step: `name` becomes the `state/plugins/<name>` segment directly, so an
+unvalidated name could let two distinct plugins collide on one directory (a
+lossy sanitizer alone maps both `@acme/tool` and `_acme_tool` to
+`_acme_tool`) or resolve to `.`/`..` and escape `state/plugins/`.
 
 ## Failure Semantics
 

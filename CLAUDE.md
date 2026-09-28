@@ -203,7 +203,10 @@ state/cache/run/log file leads with `BREAKING:` and includes `Rebuild:` with
 the exact manual action. `BREAKING:` means upgrade-blocking and nothing else:
 it applies only when the upgraded daemon or CLI cannot start until the operator
 performs that migration by hand. Dreamux 0.x handles those by fail-loud plus
-manual rebuild, never by silent migration.
+manual rebuild, never by silent migration. In practice that means the new
+loader cannot read the old file — a wrong type or a new required field — or
+cannot find it after a path change; a removed or renamed field is ignored,
+not detected, and is never `BREAKING:` on its own.
 
 That policy exists because the Dispatcher reads the changelog at startup and
 migrates configuration itself — not because compatibility is the operator's

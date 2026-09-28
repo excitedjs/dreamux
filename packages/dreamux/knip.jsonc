@@ -1,14 +1,15 @@
 // Unused-export report for @excitedjs/dreamux's src/ tree (code organization
-// refactor, H5). Report-only for this stage: every issue type this config
+// refactor, H5). Report-only, permanently: every issue type this config
 // scopes to is severity "warn" (printed, not counted toward Knip's total
 // error count), so a clean `npm run lint` run still exits 0 no matter how
 // many findings this reports. That is Knip's own fine-grained mechanism for
 // non-failing mode (see "Rules" in Knip's docs), matching the severity-level
 // approach `.dependency-cruiser.cjs` already uses for the R5 layering gate,
-// rather than the blunter `--no-exit-code` CLI flag. Raise these to "error"
-// once stage 2's deletions land and the noise this first pass reports has
-// been triaged (the audit names several dead exports for stage-2 deletion,
-// not this stage).
+// rather than the blunter `--no-exit-code` CLI flag. R46 adopted H5 (add this
+// check); no ruling sets a severity. The report is still non-empty (109
+// unused exports, 48 unused exported types, 1 duplicate export, on this
+// branch), so "error" would fail `rush lint` today; it stays "warn" until a
+// ruling promotes it.
 //
 // `--include` (wired in package.json's lint script via the `--exports`
 // shortcut) already restricts analysis to exactly the issue types listed in

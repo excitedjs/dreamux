@@ -29,6 +29,7 @@ import {
   emptyRoutingDocument,
   type FeishuBindingRecord,
   type FeishuRoutingDocument,
+  type FeishuSpaceRecord,
 } from './document.js';
 
 const INCOMPATIBLE =
@@ -192,7 +193,7 @@ function validated(
     dispatcher_id: opts.dispatcherId,
     channel_id: opts.channelId,
     bindings: document.bindings.map((row) => validatedBinding(row, path)),
-    spaces: document.spaces,
+    spaces: document.spaces.map((row) => validatedSpace(row)),
     subscriptions: document.subscriptions ?? [],
     updated_at:
       typeof document.updated_at === 'number'
@@ -207,15 +208,47 @@ function validated(
  * feature and has no persisted root until it is rebound — so it reads as
  * `null`; present but not a string or `null` is the same corruption every
  * other field fails on.
+ *
+ * This is also the write projection: it copies out only `FeishuBindingRecord`'s
+ * own fields, so a row still carrying a retired field (for example a previous
+ * `origin`) reads fine but stops round-tripping that field forward on the
+ * next rewrite instead of copying it verbatim.
  */
 function validatedBinding(
   row: FeishuBindingRecord,
   path: string,
 ): FeishuBindingRecord {
   const raw = (row as { root_message_id?: unknown }).root_message_id;
-  if (raw === undefined) return { ...row, root_message_id: null };
-  if (raw !== null && typeof raw !== 'string') {
+  if (raw !== undefined && raw !== null && typeof raw !== 'string') {
     throw new Error(`${path}: a binding row is malformed. ${INCOMPATIBLE}`);
   }
-  return row;
+  return {
+    target: row.target,
+    display: row.display,
+    team_name: row.team_name,
+    space_id: row.space_id,
+    root_message_id: raw ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/**
+ * The write projection for a space row: copies out only `FeishuSpaceRecord`'s
+ * own fields, so a row still carrying a retired field (for example a previous
+ * `generation`) reads fine but stops round-tripping that field forward on
+ * the next rewrite instead of copying it verbatim.
+ */
+function validatedSpace(row: FeishuSpaceRecord): FeishuSpaceRecord {
+  return {
+    space_id: row.space_id,
+    space_name: row.space_name,
+    container_chat_id: row.container_chat_id,
+    display: row.display,
+    leader_agent_runtime: row.leader_agent_runtime,
+    identity: row.identity,
+    repo: row.repo,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }

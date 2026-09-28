@@ -63,28 +63,6 @@ function rel(file: string): string {
 const allCoreFiles = walkTs(coreSrc);
 
 describe('core provider-id / channel-id neutrality', () => {
-  it('the only files naming a concrete builtin provider id are the composition root', () => {
-    // `codex`, `claude-code`, and `feishu` are the three builtin ids. The
-    // registry composition root is the sole legitimate place a literal id may
-    // select behavior (it IS the id -> package mapping). `config/config.ts`
-    // also matches because it fail-loud rejects the deleted top-level `codex`
-    // TOML block by key name — a single unconditional rejection, not a branch
-    // that changes behavior BY provider id — so it is asserted as a second,
-    // narrow, explicitly-named carve-out rather than silently widening the
-    // registry allowance.
-    const idPattern =
-      /'codex'|"codex"|'claude-code'|"claude-code"|'feishu'|"feishu"/;
-    const offenders = allCoreFiles.filter((file) =>
-      idPattern.test(stripComments(readFileSync(file, 'utf8'))),
-    );
-    const allowedCarveOuts = new Set([
-      'src/registry/builtins.ts',
-      'src/config/config.ts',
-    ]);
-    const offenderPaths = offenders.map((f) => rel(f)).sort();
-    expect(offenderPaths).toEqual([...allowedCarveOuts].sort());
-  });
-
   it('the only file naming a composite `builtin:<id>` ref literal is the composition root', () => {
     // The bare-id scan above requires the quote adjacent to the id
     // (`'codex'`), so a composite literal like `'builtin:feishu'` would not

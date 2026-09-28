@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Code organization refactor stage 4b item 5: config.json now tolerates unknown top-level, dispatchers[], channels[], agents[], and dispatchers[].workspace keys instead of rejecting them; wrong types and missing required fields are still rejected, and the dispatchers[].feishu/.codex legacy-shape message (now a dedicated pre-check) is unchanged.",
+      "comment": "Code organization refactor stage 4b item 5: config.json now tolerates unknown top-level, dispatchers[], channels[], agents[], and dispatchers[].workspace keys instead of rejecting them; wrong types and missing required fields are still rejected. Per R21's tolerate-unknown-fields policy, this also removes every remaining named rejection of a retired config.json key: the top-level codex block, dispatchers[].runtime, the dispatchers[].feishu/.codex legacy-shape pre-check, and channels[].collaborationSpace are no longer special-cased and now load as ordinary tolerated unknown fields like any other retired key.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

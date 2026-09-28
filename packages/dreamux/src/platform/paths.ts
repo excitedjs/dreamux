@@ -208,12 +208,15 @@ export function defaultDispatcherCwd(id: string): string {
  * not by dispatcher, the way {@link dispatcherDir} is. Core hands this to the
  * plugin at `server()` time and never creates or reads inside it; a plugin
  * that needs per-dispatcher scoping underneath its own directory composes
- * that itself. Reuses `teamMateNameSegment` rather than a near-duplicate
- * sanitizer: a plugin name is not path-validated at load time, so a name
- * containing `/` or `..` must not escape `state/plugins/`.
+ * that itself. `name` is used verbatim, never sanitized: this builder's one
+ * caller (`plugin/host.ts`) passes only a `loaded.name` that
+ * `plugin/loader.ts`'s `constructPlugin` already validated against the safe
+ * single-segment `PLUGIN_NAME_PATTERN`, so it is already exactly this
+ * directory's name — no two distinct names can collide here, and none can
+ * resolve to `.`/`..` and escape `state/plugins/`.
  */
 export function pluginStateDir(name: string): string {
-  return join(stateRoot(), 'plugins', teamMateNameSegment(name));
+  return join(stateRoot(), 'plugins', name);
 }
 
 /** The package-shipped bundled skill root (issue #209). */
@@ -425,8 +428,8 @@ export function dispatcherCronJobsPath(id: string): string {
 
 /**
  * Neutral teammate-name path segment sanitizer. Shared by the neutral
- * teammate-state builders here, by each builtin's teammate log-path builders,
- * and by {@link pluginStateDir} for a plugin name.
+ * teammate-state builders here and by each builtin's teammate log-path
+ * builders.
  */
 export function teamMateNameSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]/g, '_');
