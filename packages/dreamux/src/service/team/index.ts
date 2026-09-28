@@ -16,8 +16,8 @@ import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
 import {
-  AgentEntityCollectionStore,
-  AgentIdentityStore,
+  agentCollectionMemberCount,
+  readAgentIdentity,
 } from '../agent/store.js';
 import { toStatus } from '../agent/records.js';
 import type { TurnAdmission } from '../agent/turn.js';
@@ -1037,24 +1037,20 @@ export class TeamCollection implements TeamsPort {
   private async leaderIdentity(
     team: TeamRecord,
   ): Promise<AgentEntityIdentity | null> {
-    const leader = await new AgentIdentityStore({
+    const leader = await readAgentIdentity({
       dir: this.store.teamRoot(team.team_id),
       dispatcherId: this.dispatcherId,
       expectedName: null,
       log: this.opts.log,
-    }).read();
+    });
     return leader !== null && leader.name === team.leader_name ? leader : null;
   }
 
   /** Directory occupancy is the roster fact; an unreadable member still counts. */
   private async memberCount(team: TeamRecord): Promise<number> {
-    return (
-      await new AgentEntityCollectionStore({
-        root: teamMateCollectionDir(this.store.teamRoot(team.team_id)),
-        dispatcherId: this.dispatcherId,
-        log: this.opts.log,
-      }).names()
-    ).length;
+    return agentCollectionMemberCount(
+      teamMateCollectionDir(this.store.teamRoot(team.team_id)),
+    );
   }
 }
 

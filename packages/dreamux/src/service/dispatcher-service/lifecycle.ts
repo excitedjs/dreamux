@@ -301,9 +301,7 @@ export class DispatcherLifecycle {
   private async sweepRuntimes(failures: unknown[]): Promise<void> {
     await collectShutdownFailure(failures, () => this.opts.workflows.stopAll());
     await collectShutdownFailure(failures, () => this.opts.teams.stopForHost());
-    await collectShutdownFailure(failures, () =>
-      this.opts.teammates.stopAllForHost(),
-    );
+    await collectShutdownFailure(failures, () => this.opts.teammates.stop());
     await collectShutdownFailure(failures, async () => {
       await this.opts.dispatcherAgent.current?.stopForHost();
     });

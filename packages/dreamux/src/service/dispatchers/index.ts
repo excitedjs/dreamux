@@ -7,7 +7,8 @@ import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { Dispatcher, DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { CoreCommandRegistry } from '../../command/types.js';
 import type { SyncHook } from 'tapable';
-import { AgentIdentityStore } from '../agent/store.js';
+import { readAgentIdentity } from '../agent/store.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
 import { dispatcherDir } from '../../platform/paths.js';
 import {
   DispatcherService,
@@ -71,17 +72,6 @@ export class Dispatchers {
     ((dispatcherId: string) => DreamuxLogger) | undefined;
   private readonly dispatcherHook: SyncHook<[Dispatcher]>;
   private readonly log: DreamuxLogger;
-  /**
-   * Each dispatcher's own root Agent identity store, bound to one dispatcher
-   * root here, at this composition boundary, and cached so it is built at
-   * most once per dispatcher. {@link summarize} and {@link status} (issue
-   * #233 / PR #282 review) read through it as a plain fallback when no live
-   * runtime status exists; {@link dispatcherOptions} hands the same instance
-   * to the `DispatcherService` this collection constructs, so the two never
-   * hold independently cached committed values over one `identity.json` —
-   * calling `rootIdentity` itself still starts nothing.
-   */
-  private readonly rootIdentities = new Map<string, AgentIdentityStore>();
   private readonly restartIntent: RestartIntentConsumer;
   private accepting = true;
 
@@ -101,18 +91,22 @@ export class Dispatchers {
     this.log = opts.log;
   }
 
-  private rootIdentity(dispatcherId: string): AgentIdentityStore {
-    let store = this.rootIdentities.get(dispatcherId);
-    if (store === undefined) {
-      store = new AgentIdentityStore({
-        dir: dispatcherDir(dispatcherId),
-        dispatcherId,
-        expectedName: null,
-        log: this.log,
-      });
-      this.rootIdentities.set(dispatcherId, store);
-    }
-    return store;
+  /**
+   * A stateless snapshot read of one dispatcher's own root Agent identity, for
+   * {@link summarize} and {@link status}'s fallback when no live runtime
+   * status exists. Fresh every call rather than cached: `DispatcherService`
+   * owns the writing store once it materializes, so this collection never
+   * needs — and must never hold — its own committed copy of the same file.
+   */
+  private rootIdentity(
+    dispatcherId: string,
+  ): Promise<AgentEntityIdentity | null> {
+    return readAgentIdentity({
+      dir: dispatcherDir(dispatcherId),
+      dispatcherId,
+      expectedName: null,
+      log: this.log,
+    });
   }
 
   get(id: string): DispatcherService {
@@ -145,7 +139,7 @@ export class Dispatchers {
             enabled: row.enabled === 1,
           };
         }
-        const identity = await this.rootIdentity(row.dispatcher_id).read();
+        const identity = await this.rootIdentity(row.dispatcher_id);
         return {
           dispatcher_id: row.dispatcher_id,
           channel_identity: row.channel_identity,
@@ -161,7 +155,7 @@ export class Dispatchers {
     const service = this.services.get(id);
     const live = service?.liveRuntimeStatus() ?? null;
     if (live !== null) return live;
-    const identity = await this.rootIdentity(id).read();
+    const identity = await this.rootIdentity(id);
     return {
       status: identityStatusToRuntimeStatus(identity?.status ?? null),
       sessionId: identity?.session_id ?? null,
@@ -232,10 +226,6 @@ export class Dispatchers {
       dispatchers: this.dispatcherStore,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
-      // Shared with this collection's own read-only fallback reader
-      // (`summarize()`/`status()`), so the two never hold independently
-      // cached committed values over the same dispatcher-root `identity.json`.
-      identities: this.rootIdentity(id),
       mcpLeases: this.mcpLeases,
       restartIntent: this.restartIntent,
       commands: this.commands,

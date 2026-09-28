@@ -229,10 +229,11 @@ the same change that touches it.
   loaded in memory for the life of the daemon, so a hand edit to the file on
   disk is not read until restart.
 - **Dissolve means terminate now and reclaim.** The user pressing dissolve
-  wants processes dead and tokens no longer burning: all member runtimes stop
-  immediately, the receipt says `accepted`/`closed` after the durable logical
-  close, and slow physical cleanup (large worktrees) continues in the
-  background. `force` is the explicit authorization to discard local changes.
+  wants processes dead and tokens no longer burning: the receipt answers
+  `{accepted, status: "submitted"}` as soon as the Team owns the background
+  work, before anything has stopped; all member runtimes then stop and close
+  behind that receipt, and slow physical cleanup (large worktrees) continues
+  after that. `force` is the explicit authorization to discard local changes.
   A TeamLeader dissolving its own Team usually never receives the tool
   response; that connection loss is the expected surface, and delivery failure
   never rolls the dissolve back. Automatic cleanup removes only the worktree
@@ -242,18 +243,24 @@ the same change that touches it.
   `delete-on-close` (operator ruling R31 in the refine-model-facing-surfaces
   record, 2026-09-06: kept worktrees piled up); pass `cleanup: keep` to retain
   one.
-- **A dissolve that cannot reclaim its worktree is refused before it is
-  accepted.** A non-forced dissolve assesses the managed worktree first: if it
-  is dirty or unmerged the caller gets the refusal and its reason, rather than
-  an `accepted` receipt for a dissolve that then quietly stops. `force` remains
-  the authorization to discard that work.
-  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
-- **A failed dissolve leaves a Team that still exists.** Whatever committed
-  before the failure stays committed (closed members stay closed, deleted cron
-  stores stay deleted); the next ordinary use rebuilds the Team from the
-  record its store already has loaded — which equals the file on disk, because
-  the file is always written before that loaded value changes — and the next
-  dissolve retries the same close operations. No rollback product exists.
+- **Dissolve has exactly one reversible step: the worktree precheck, or a
+  failed record write.** A non-forced dissolve assesses the managed worktree
+  first: if it is dirty or unmerged the caller gets the refusal and its
+  reason, rather than an `accepted` receipt for a dissolve that then quietly
+  stops, and the Team is untouched and usable again — `force` remains the
+  authorization to discard that work. Once the precheck passes (or is
+  skipped) and the Team's record says `closed`, the Team is over for good:
+  destroying its children (Workflows, scheduler, members, the leader) and
+  reclaiming its worktree are both best-effort from there — every step is
+  attempted, a failure is logged, and nothing is rolled back, because there is
+  nothing left to roll back to. A member dirtying the worktree after the
+  precheck no longer refuses the dissolve: the Team still closes, and a
+  non-forced cleanup then only keeps the directory instead of removing it.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md);
+  operator ruling R62/R67 in the code-organization-refactor rulings record,
+  2026-09-28: worktree precheck, then write `closed`, then destroy every child
+  service one after another, then worktree cleanup — a failure after `closed`
+  never reopens the Team.)
 - **Creation tools use entity-based worktree names.** The Dispatcher-facing
   `teammate.spawn` and `team.create` MCP tools accept repo mode, path, base ref,
   branch, and cleanup controls, but no custom directory slug. A managed

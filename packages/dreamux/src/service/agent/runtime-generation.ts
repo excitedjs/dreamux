@@ -195,7 +195,10 @@ export class RuntimeGeneration {
         identity = await this.state.update((current) =>
           reprepareDeletedManagedWorktree({
             config: this.deps.config.current(),
-            peers: this.deps.peers,
+            // Asked fresh, not a snapshot taken at construction: a sibling's
+            // managed worktree occupancy can change between construction
+            // and this reopen.
+            findManagedWorktreeOwner: this.deps.findManagedWorktreeOwner,
             worktrees: this.mustWorktrees(),
             identity: current,
           }),

@@ -115,8 +115,6 @@ export interface TeamCollectionOptions {
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-export type TeamDissolveRequesterKind = 'dispatcher' | 'team_leader';
-
 export interface TeamRecord {
   version: 1;
   dispatcher_id: string;
@@ -231,11 +229,12 @@ export interface TeamDissolveInput {
 /**
  * What a dissolve submission reports.
  *
- * Submitted, not settled: the caller is answered as soon as the Team owns the
- * one background operation that will stop it, close it, and reclaim its
- * checkout. Nothing that happens afterwards revises this receipt — a background
- * refusal leaves the Team open and is logged, so a caller learns the outcome by
- * reading the Team, not by waiting here.
+ * Submitted, not settled: the caller is answered as soon as the one refusal
+ * this operation still offers (the worktree precheck) has passed and the Team
+ * owns the background write-closed, destroy, and reclaim. Nothing that
+ * happens afterwards revises this receipt — once the closed record lands the
+ * Team is over regardless of what the background work finds, so a caller
+ * learns the outcome by reading the Team, not by waiting here.
  */
 export interface TeamDissolveReceipt {
   accepted: true;
@@ -243,11 +242,10 @@ export interface TeamDissolveReceipt {
   status: 'submitted';
 }
 
-/** What one Team is asked to dissolve itself with, once the caller is known. */
+/** What one Team is asked to dissolve itself with. */
 export interface TeamDissolveCommand {
   note: string;
   force: boolean;
-  requester: TeamDissolveRequesterKind;
 }
 
 /**

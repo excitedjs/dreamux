@@ -34,11 +34,7 @@ import {
 import { CompletionDeliveryPolicy } from '../completion-router/index.js';
 import { TeammateCollection } from '../agent/index.js';
 import type { TeammateOps } from '../agent/types.js';
-import {
-  AgentEntityCollectionStore,
-  type AgentIdentityStore,
-  AgentNameRegistry,
-} from '../agent/store.js';
+import { AgentNameRegistry } from '../agent/store.js';
 import type { AgentEntityIdentity } from '../agent/identity.js';
 import { AdmissionLedger } from '../agent/admission.js';
 import { AgentServiceFactory } from '../agent/factory.js';
@@ -51,7 +47,6 @@ import { TeamCollection } from '../team/index.js';
 import type { TeamsPort } from '../team/teams-port.js';
 import { SchedulerService } from '../scheduler/index.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
-import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService } from '../channel-service/index.js';
 import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type { TurnAdmission } from '../agent/turn.js';
@@ -67,9 +62,9 @@ import type { RestartIntentConsumer } from './restart-intent.js';
 /**
  * What `DispatcherService` is constructed from.
  *
- * Declared here rather than in `types.ts`: it names `DispatcherStore`,
- * `AgentIdentityStore`, and `McpLeaseRegistry`, all concrete classes, so it is
- * a constructor-options bag rather than a data type.
+ * Declared here rather than in `types.ts`: it names `DispatcherStore` and
+ * `McpLeaseRegistry`, both concrete classes, so it is a constructor-options
+ * bag rather than a data type.
  */
 export interface DispatcherServiceOptions {
   id: string;
@@ -84,13 +79,6 @@ export interface DispatcherServiceOptions {
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
-  /**
-   * The dispatcher-root Agent's own identity store, shared with `Dispatchers`'
-   * read-only fallback reader (`summarize()`/`status()` when no live runtime
-   * status exists) so the two never hold independently cached committed
-   * values over the same `identity.json`.
-   */
-  identities: AgentIdentityStore;
   /** The process-wide Agent-facing MCP lease registry this dispatcher mints into. */
   mcpLeases: McpLeaseRegistry;
   /**
@@ -198,19 +186,8 @@ export class DispatcherService implements Dispatcher {
     const dispatcherRoot = dispatcherDir(opts.id);
     const teamMateRoot = teamMateCollectionDir(dispatcherRoot);
     const teamRoot = teamCollectionDir(dispatcherRoot);
-    // Shared with `Dispatchers`' own read-only fallback reader rather than
-    // built again here: two independently cached `AgentIdentityStore`s over
-    // this one file would each hold their own committed value once this
-    // dispatcher's agent starts writing through its own copy.
-    const identities = opts.identities;
     const onDispatcherAgentPersisted = (identity: AgentEntityIdentity) =>
       this.publishAgentState(identity, 'dispatcher');
-    const teamMateStore = new AgentEntityCollectionStore({
-      root: teamMateRoot,
-      dispatcherId: opts.id,
-      log: opts.log,
-      onPersisted: (identity) => this.publishAgentState(identity, 'teammate'),
-    });
     const names = new AgentNameRegistry({
       teamMateRoot,
       teamRoot,
@@ -242,7 +219,7 @@ export class DispatcherService implements Dispatcher {
 
     this.scheduler_ = new SchedulerService({
       ownerId: opts.id,
-      store: new CronJobStore(dispatcherCronJobsPath(opts.id)),
+      cronJobsPath: dispatcherCronJobsPath(opts.id),
       admit: (task) => this.admitOperation(task),
       submitScheduled: async (input) =>
         this.mustAgent().submitInput({
@@ -259,7 +236,8 @@ export class DispatcherService implements Dispatcher {
       config: opts.config,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
-      store: teamMateStore,
+      root: teamMateRoot,
+      onPersisted: (identity) => this.publishAgentState(identity, 'teammate'),
       names,
       agentServiceFactory,
       conversationProjection,
@@ -350,7 +328,6 @@ export class DispatcherService implements Dispatcher {
           channels: this.channels,
         }),
       }),
-      identities,
       onPersisted: onDispatcherAgentPersisted,
       agentServiceFactory,
       conversationProjection,

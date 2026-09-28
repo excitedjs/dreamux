@@ -72,7 +72,7 @@
 //     (SpawnTeamMateRequest, Turn, TurnAdmission, LockedTeammate,
 //     CreateLockedTeammateOptions) - the reverse of what a single merged
 //     entry after service-mid could express. The collection tier
-//     (index/commands/mcp/system-prompt/errors/dissolve-members) keeps the
+//     (index/commands/mcp/system-prompt/errors) keeps the
 //     directory's original slot, after service-mid: nothing before it needs
 //     TeammateCollection, and agent/mcp.ts genuinely needs
 //     workflow-service/mcp.ts's WORKFLOW_TOOL_RECORDS (a real, non-cyclic
@@ -153,7 +153,7 @@ const LAYERS = [
     // the reduced service-team layer below.
     name: 'service-agent-collection',
     path: [
-      '^src/service/agent/(index|commands|mcp|system-prompt|errors|dissolve-members)\\.ts$',
+      '^src/service/agent/(index|commands|mcp|system-prompt|errors)\\.ts$',
     ],
   },
   {
@@ -241,8 +241,8 @@ const namedEdgeRules = [
     // store <- service <- collection. Store-tier files never reach into the
     // service or collection tier; service-tier files never reach into the
     // collection tier. Regex groups partition every file the directory holds
-    // (including service-types.ts and dissolve-members.ts, neither of which
-    // a prose file map named), each anchored with `\.ts$` so a
+    // (including service-types.ts, which no prose file map named), each
+    // anchored with `\.ts$` so a
     // name never prefix-matches a longer sibling (e.g. `service` must not
     // match `service-types`). `types.ts` is in the store tier's own `from`
     // group, not either `to` group: it is store-tier data, so service- and
@@ -258,7 +258,7 @@ const namedEdgeRules = [
       path: '^src/service/agent/(identity|store|runtime-state|activity|records|requests|runtime-id|types)\\.ts$',
     },
     to: {
-      path: '^src/service/agent/(runtime-generation|turn|admission|submission|channel-submission|completion-renderer|factory|service|service-types|index|commands|mcp|system-prompt|errors|dissolve-members)\\.ts$',
+      path: '^src/service/agent/(runtime-generation|turn|admission|submission|channel-submission|completion-renderer|factory|service|service-types|index|commands|mcp|system-prompt|errors)\\.ts$',
     },
   },
   {
@@ -273,7 +273,7 @@ const namedEdgeRules = [
       path: '^src/service/agent/(runtime-generation|turn|admission|submission|channel-submission|completion-renderer|factory|service|service-types)\\.ts$',
     },
     to: {
-      path: '^src/service/agent/(index|commands|mcp|system-prompt|errors|dissolve-members)\\.ts$',
+      path: '^src/service/agent/(index|commands|mcp|system-prompt|errors)\\.ts$',
     },
   },
   {

@@ -27,16 +27,16 @@ Each `DispatcherService` is one dispatcher-local aggregate and owns:
 - the per-dispatcher `TeamCollection`;
 - one stateless `CompletionDeliveryPolicy`;
 - one `WorktreeManager`;
-- the dispatcher-root Agent's own `AgentIdentityStore`, over its own
-  `identity.json`. `Dispatchers` (`service/dispatchers/index.ts`) builds and
-  caches one per dispatcher root and hands it in as `opts.identities`, rather
-  than `DispatcherService` building a second instance over the same file:
-  `Dispatchers`' own `summarize()`/`status()` fallback reads and this
-  dispatcher agent's own identity writes therefore share one committed value.
-  Every other identity — dispatcher TeamMates, TeamLeaders, and Team members —
-  is a separately built `AgentIdentityStore` or `AgentEntityCollectionStore`
-  bound to its own entity directory, not this shared dispatcher-root instance
-  (see Store Construction Patterns in
+- the dispatcher-root Agent's own identity, built and read through the
+  dispatcher's `AgentServiceFactory` (`create`/`open`/`upsert`) rather than a
+  store any parent holds (R63: an Agent is a directory to its parents).
+  `Dispatchers` (`service/dispatchers/index.ts`) holds no cached identity
+  store of its own either: its `summarize()`/`status()` fallback reads call
+  the stateless `readAgentIdentity()` fresh, on every call. Every other
+  identity — dispatcher TeamMates, TeamLeaders, and Team members — is read or
+  written the same way, through the owning entity's own factory call or a
+  fresh stateless read, never through an instance any parent constructs or
+  caches (see Store Construction Patterns in
   [service-topology](service-topology.md#store-construction-patterns));
 - the dispatcher scheduler.
 
@@ -75,8 +75,9 @@ single-flight, and the committed retirement fact.
 
 The dispatcher *has* an agent; it is not itself an Agent Runtime. Each
 `TeamService` directly builds and holds its TeamLeader `AgentService` through
-`team/leader.ts`, using the identity store, worktree manager, and
-completion-delivery policy its owning `TeamCollection` injects. The per-Team
+`team/leader.ts`, using the `AgentServiceFactory` (R63: no identity store of
+its own), worktree manager, and completion-delivery policy its owning
+`TeamCollection` injects. The per-Team
 `TeammateCollection` is members-only: the TeamLeader lives at the Team root and
 is never cached in the collection's entity map. `TeamsPort.leaderScope()`
 (`DispatcherService.teams.leaderScope()`) returns a `TeamLeaderHandle` to admin
@@ -231,7 +232,7 @@ no separate claim file.
 
 Generated TeamLeader, ordinary TeamMate, and Team-member names use the same 4–8
 character suffix contract. Names stay dispatcher-global:
-`AgentIdentityStore.allocateName()` checks the persisted dispatcher-global
+`AgentNameRegistry.allocate()` checks the persisted dispatcher-global
 entity directory namespace before selection, a directory name stays occupied
 even when its identity is unreadable, identity creation is an atomic no-clobber
 write, and a reserved-name guard blocks names that would recreate a removed
@@ -282,14 +283,18 @@ Source:
 ### Dissolve
 
 A dissolve belongs to the Team, and it is a submission rather than a persisted
-operation. Both caller forms answer `{ accepted, team_name, status: "submitted" }`
-as soon as the Team owns the one background task that will stop it, close it,
-and reclaim its checkout, and neither ever reports how that went — a TeamLeader
-dissolving its own Team should expect to lose the response, because its runtime
-is one of the things being stopped. A second submission joins the first rather
-than dismantling the same Team twice, and a refused dissolve can be asked again.
-Nothing about the operation is written down, so a process that dies mid-dissolve
-simply leaves an open Team whose children reopen lazily.
+operation. It answers `{ accepted, team_name, status: "submitted" }` as soon as
+the Team owns the one background task that will write it closed, destroy every
+child service, and reclaim its checkout, and it never reports how that went —
+a TeamLeader dissolving its own Team should expect to lose the response,
+because its runtime is one of the things being stopped. A second submission
+joins the first rather than dismantling the same Team twice. A precheck
+refusal (below) leaves the Team untouched and can be asked again; once the
+closed record commits, dissolve can no longer fail in a way that undoes
+anything (R62): a process that dies before that commit leaves the Team exactly
+as `dissolve` found it, and one that dies after it leaves the Team durably
+closed with whatever children the destroy pass had not yet reached — inert
+residue nothing revisits, since a closed Team is never rebuilt.
 
 The Team holds the fence, and the fence *is* the operation: it goes up the
 moment a dissolve is submitted, before the first await, and refuses new work
@@ -297,21 +302,34 @@ rather than queueing it — dissolve is a stop-and-reclaim, not a drain. From th
 point every caller operation the Team admits is refused (Dispatcher and Channel
 send, TeamLeader member and Workflow mutation, Team scheduler mutation and fire,
 member-completion injection), and permanently so once the record says closed;
-reads stay available. A failed dissolve lowers the fence again and the Team
-stays open, its children reopening lazily, because nothing durable was written.
+reads stay available. Only a precheck refusal, or a failure to write the closed
+record itself, lowers the fence again and leaves the Team open, exactly as it
+was — the operation's only two reversible outcomes.
 
-Behind the receipt the order is fixed. A Dispatcher-requested dissolve calls the
+Behind the receipt the order is fixed, uniformly for every caller, including a
+TeamLeader dissolving itself (R62, reaffirmed by R67 — there is no longer a
+caller-specific early-stop variant). A non-forced dissolve calls the
 non-destructive `WorktreeManager.assessCleanup()` first, while nothing has
-stopped, so a refusal costs the Team nothing; a TeamLeader cannot ask that
-question about itself, so it stops its members first and then asks while it is
-still alive to be told. `force` overrides the refusal, never the question. Then
-Workflow admission closes, the scheduler stops, members and the leader stop and
-close, and the assessment is repeated now that nothing is running — that second
-answer is the only one a destructive reclaim may act on. The single record write
-that sets `status: "closed"`, `closed_at`, the close note, and the worktree fact
-is the commit boundary; nothing after it may take that back, which is why the
-Team's cron store is discarded only after it and why a failure before it reopens
-admission instead.
+stopped, so a refusal costs the Team nothing; `force` overrides the refusal,
+never the question. Once that precheck passes (or `force` skips it), the Team
+writes its record `status: "closed"`, `closed_at`, the close note, and a
+worktree fact from one more `assessCleanup()` read — this write is the commit
+boundary, and the only step the operation can still take back: a write that
+fails clears the fence and leaves the Team exactly as `dissolve` found it.
+Nothing after this write may take it back. Only then does the Team destroy
+every child service it holds, one after another, trying each and aggregating
+failures rather than stopping at the first: Workflows (`stopAll()`, releasing
+held members' locks and keeping history), the scheduler's own `destroy()`
+(stop, then delete its own cron store file), the member collection's
+`destroy()` (closes every held member through the Agent's own close, marks
+every never-built member closed at rest), and the leader's `close()`. A
+failure destroying any of them is logged, never retried, and never reopens the
+Team — there is nothing left to roll back to. Only the worktree reclaim that
+follows (`WorktreeManager.cleanup()`, via `settleWorktreeCleanup`) re-assesses
+the checkout fresh, after every child has actually stopped, and that read is
+what a destructive reclaim acts on; a member that dirties the worktree after
+the precheck no longer refuses the dissolve — the Team still closes, and a
+non-forced cleanup then only keeps the directory instead of removing it.
 
 Assessment checks only dirty and unmerged state; it enumerates no refs and walks
 no repository history. `cleanup: keep` and non-managed workspaces are terminally

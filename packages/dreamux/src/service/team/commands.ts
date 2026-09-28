@@ -353,7 +353,6 @@ export function teamCommands(
       return teams(context).dissolve(input.teamName, {
         note: input.note,
         force: input.force === true,
-        requester: 'dispatcher',
       });
     },
   };

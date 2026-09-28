@@ -123,9 +123,8 @@ export class AgentIdentityStore {
    * The last committed identity, or `null` for an entity with no record yet.
    * Safe once a `load()`/`create()` has already gone through this store at
    * least once — true for every live-owner caller (a runtime-state store
-   * wrapping this same instance, or `TeamService.leaderIdentityStatus()`
-   * reading its own leader's), since each reaches this store only after its
-   * own construction path already read or created the entity.
+   * wrapping this same instance), since each reaches this store only after
+   * its own construction path already read or created the entity.
    */
   current(): AgentEntityIdentity | null {
     return this.store.current;
@@ -327,12 +326,10 @@ function mergeIdentity(
  */
 export class AgentEntityCollectionStore {
   /**
-   * The collection's own default publish hook, always callable — a plain
-   * copy of `opts.onPersisted`, safe to call even when the collection was
-   * built without one. Held so an owner that hands a bare member store to a
-   * long-lived `AgentRuntimeStateStore` (one that never calls through the
-   * passthrough methods below) can still thread the collection's publish
-   * hook into it explicitly.
+   * The owning Collection's publish hook, bound here — held so an owner that
+   * hands a bare member store to a long-lived `AgentRuntimeStateStore` (one
+   * that never calls through the passthrough methods below) can still thread
+   * the collection's publish hook into it explicitly.
    */
   readonly onPersisted: (identity: AgentEntityIdentity) => void;
 
@@ -341,15 +338,15 @@ export class AgentEntityCollectionStore {
       root: string;
       dispatcherId: string;
       log: DreamuxLogger;
-      onPersisted?: (identity: AgentEntityIdentity) => void;
+      onPersisted: (identity: AgentEntityIdentity) => void;
     },
   ) {
-    this.onPersisted = (identity) => this.opts.onPersisted?.(identity);
+    this.onPersisted = this.opts.onPersisted;
   }
 
-  /** The bound collection root, for owners composing sibling paths. */
-  get root(): string {
-    return this.opts.root;
+  /** One member's own directory under this collection's root. */
+  entityDir(name: string): string {
+    return collectionEntityDir(this.opts.root, name);
   }
 
   /**
@@ -370,25 +367,25 @@ export class AgentEntityCollectionStore {
   }
 
   /**
-   * Update one member, publishing through this collection's own hook.
+   * Mark one member closed at rest, without materializing an Agent for it —
+   * used for a Team member a dissolve never built. There is no runtime to
+   * stop, so building one just to close it would run its launch hook and
+   * risk its worktree-cleanup branch for nothing. The write composes the
+   * closed patch itself and publishes through this collection's own hook, so
+   * the caller states only which member and why, never `identity.json`'s own
+   * field shape.
    *
-   * The only collection-level passthrough kept: its one caller
-   * (`closeMembersForDissolve`) is a genuine one-shot write with no
-   * `AgentRuntimeStateStore` built over the result, unlike `create` — every
-   * fresh entity's creator keeps the `AgentIdentityStore` instance itself
-   * (`TeammateCollection.createIdentity`) so the runtime-state store it
-   * builds next wraps an already-loaded store instead of a fresh, unloaded
-   * one from a second `entity(name)` mint.
+   * The only collection-level write kept: `AgentServiceFactory` keeps the
+   * `AgentIdentityStore` instance its own `create`/`open`/`upsert` already
+   * bound and loaded for every other write, so the `AgentRuntimeStateStore`
+   * it wraps into a built `AgentService` never mints a second, unloaded store
+   * over the same entity.
    */
-  update(
-    name: string,
-    patch:
-      | AgentIdentityUpdateInput
-      | ((
-          current: AgentEntityIdentity,
-        ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
-  ): Promise<AgentEntityIdentity> {
-    return this.entity(name).update(patch, this.onPersisted);
+  closeUnbuilt(name: string, note: string): Promise<AgentEntityIdentity> {
+    return this.entity(name).update(
+      { status: 'closed', closedAt: Date.now(), closeNote: note },
+      this.onPersisted,
+    );
   }
 
   /**
@@ -438,12 +435,12 @@ export class AgentNameRegistry {
     const names = new Set(await listCollectionNames(this.opts.teamMateRoot));
     for (const teamName of await listDirectoryNames(this.opts.teamRoot)) {
       const teamDir = collectionEntityDir(this.opts.teamRoot, teamName);
-      const leader = await new AgentIdentityStore({
+      const leader = await readAgentIdentity({
         dir: teamDir,
         dispatcherId: this.opts.dispatcherId,
         expectedName: null,
         log: this.opts.log,
-      }).read();
+      });
       if (leader !== null) names.add(leader.name);
       for (const name of await listCollectionNames(
         teamMateCollectionDir(teamDir),
@@ -470,6 +467,26 @@ export class AgentNameRegistry {
       generateSuffix: input.generateSuffix,
     });
   }
+}
+
+/**
+ * A read-only snapshot of one agent entity's identity, for a reader that must
+ * answer about an Agent without constructing it — a Team's read-model, a
+ * dispatcher's cold-path status fallback. Binds and discards its own store; a
+ * caller that goes on to build or write the entity uses
+ * `AgentServiceFactory.open`/`.create`/`.upsert` instead, never this.
+ */
+export function readAgentIdentity(
+  binding: AgentIdentityStoreBinding,
+): Promise<AgentEntityIdentity | null> {
+  return new AgentIdentityStore(binding).read();
+}
+
+/** Occupied member count directly under one collection root — a directory listing, no identity read. */
+export async function agentCollectionMemberCount(
+  root: string,
+): Promise<number> {
+  return (await listCollectionNames(root)).length;
 }
 
 /** Valid entity directory names directly under one collection root. */

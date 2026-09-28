@@ -12,8 +12,10 @@ import {
 } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { AgentIdentityStore } from '../agent/store.js';
-import type { AgentServiceFactory } from '../agent/factory.js';
+import type {
+  AgentEntityBuildDeps,
+  AgentServiceFactory,
+} from '../agent/factory.js';
 import { dispatcherRuntimeId } from '../agent/runtime-id.js';
 import type { AgentService } from '../agent/service.js';
 import {
@@ -22,7 +24,10 @@ import {
   type AgentEntityIdentityStatus,
   type AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
-import type { TeammateAgentMcp } from '../agent/service-types.js';
+import type {
+  TeammateAgentMcp,
+  TeammateServiceOptions,
+} from '../agent/service-types.js';
 import { SYSTEM_SOURCE } from '../submission-sources.js';
 import type { RestartIntentConsumer } from './restart-intent.js';
 import {
@@ -32,6 +37,7 @@ import {
 import {
   bundledDispatcherSkillRoot,
   bundledSharedSkillRoot,
+  dispatcherDir,
 } from '../../platform/paths.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
 import type { DispatcherRuntimeStatus } from './types.js';
@@ -41,7 +47,7 @@ export interface DispatcherAgentOptions {
   /** This dispatcher's own configured runtime ref, for identity ensure. */
   agentRuntime: string;
   /**
-   * Forwarded verbatim into {@link AgentServiceFactory.create}'s own `config`
+   * Forwarded verbatim into {@link AgentServiceFactory.upsert}'s own `deps`
    * field: this owner itself never reads a fact off it, only builds the
    * contained `AgentService` that will call `.current()` at each launch
    * (`config/service.ts`'s `ConfigReader` doc).
@@ -57,7 +63,6 @@ export interface DispatcherAgentOptions {
    * it.
    */
   mcp: () => TeammateAgentMcp;
-  identities: AgentIdentityStore;
   onPersisted: (identity: AgentEntityIdentity) => void;
   agentServiceFactory: AgentServiceFactory;
   conversationProjection: ConversationProjection;
@@ -93,22 +98,44 @@ export class DispatcherAgent {
     return this.service;
   }
 
+  /** Ensure the dispatcher-root identity and build the contained AgentService. */
+  async build(cwd: string): Promise<AgentService> {
+    // The dispatcher agent has no worktree — it neither spawns nor closes, so it
+    // never reaches the worktree manager (issue #233 Phase 5).
+    const deps: AgentEntityBuildDeps = {
+      config: this.opts.config,
+      agentRuntimeProviders: this.opts.agentRuntimeProviders,
+      onPersisted: this.opts.onPersisted,
+      conversationProjection: this.opts.conversationProjection,
+      log: this.opts.log,
+    };
+    this.service = await this.opts.agentServiceFactory.upsert({
+      location: { dir: dispatcherDir(this.opts.id), expectedName: null },
+      merge: (existing) =>
+        ensureDispatcherIdentity(existing, {
+          dispatcherId: this.opts.id,
+          agentRuntime: this.opts.agentRuntime,
+          cwd,
+          worktree: dispatcherRootWorktreeIdentity(cwd),
+        }),
+      // Computed after the identity write settles, matching this method's
+      // original ensure-then-compose order: a `launch` tap failure must still
+      // leave the dispatcher-root identity durable, the same as every other
+      // failure past that point.
+      options: () => this.dispatcherOptions(),
+      deps,
+      log: this.opts.log,
+    });
+    return this.service;
+  }
+
   /**
-   * Ensure the dispatcher-root identity and build the contained AgentService.
-   *
    * Plugin launch-draft instructions follow the built-in prompt on both
    * prompt channels, because Codex reads only `replace` and Claude Code only
    * `append`; plugin skill roots follow the bundled roots, fenced against
    * them.
    */
-  async build(cwd: string): Promise<AgentService> {
-    const identity = await ensureDispatcherRootIdentity({
-      identities: this.opts.identities,
-      dispatcherId: this.opts.id,
-      agentRuntime: this.opts.agentRuntime,
-      cwd,
-      onPersisted: this.opts.onPersisted,
-    });
+  private async dispatcherOptions(): Promise<TeammateServiceOptions> {
     const builtinSkills = [
       {
         name: 'dispatcher',
@@ -122,37 +149,22 @@ export class DispatcherAgent {
       },
     ];
     const draft = await composeLaunchDraft(this.opts.launch, builtinSkills);
-    this.service = await this.opts.agentServiceFactory.create({
-      identity,
-      config: this.opts.config,
-      agentRuntimeProviders: this.opts.agentRuntimeProviders,
-      identities: this.opts.identities,
-      onPersisted: this.opts.onPersisted,
-      conversationProjection: this.opts.conversationProjection,
-      // The dispatcher agent has no worktree — it neither spawns nor closes, so it
-      // never reaches the worktree manager (issue #233 Phase 5).
-      log: this.opts.log,
-      options: {
-        mcp: this.opts.mcp(),
-        runtimeId: dispatcherRuntimeId(this.opts.id),
-        // This Agent is the Dispatcher Service's own; the role follows from that.
-        role: 'dispatcher',
-        loggerFields: {},
-        skillSources: [...builtinSkills, ...draft.skillSources],
-        disabledFeatures: [DISABLE_FEATURE_CRON],
-        systemPrompt: {
-          replace: [
-            DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
-            ...draft.instructions,
-          ].join('\n\n'),
-          append: [
-            DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
-            ...draft.instructions,
-          ],
-        },
+    return {
+      mcp: this.opts.mcp(),
+      runtimeId: dispatcherRuntimeId(this.opts.id),
+      // This Agent is the Dispatcher Service's own; the role follows from that.
+      role: 'dispatcher',
+      loggerFields: {},
+      skillSources: [...builtinSkills, ...draft.skillSources],
+      disabledFeatures: [DISABLE_FEATURE_CRON],
+      systemPrompt: {
+        replace: [
+          DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+          ...draft.instructions,
+        ].join('\n\n'),
+        append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS, ...draft.instructions],
       },
-    });
-    return this.service;
+    };
   }
 
   /** Throws when `build()` has not produced an agent yet. */
@@ -240,16 +252,6 @@ interface DispatcherIdentityEnsureInput {
   agentRuntime: string;
   cwd: string;
   worktree: AgentEntityWorktreeIdentity;
-  onPersisted: (identity: AgentEntityIdentity) => void;
-}
-
-interface DispatcherRootIdentityInput {
-  /** The dispatcher root Agent's own bound identity store. */
-  identities: AgentIdentityStore;
-  dispatcherId: string;
-  agentRuntime: string;
-  cwd: string;
-  onPersisted: (identity: AgentEntityIdentity) => void;
 }
 
 function dispatcherRootWorktreeIdentity(
@@ -267,31 +269,20 @@ function dispatcherRootWorktreeIdentity(
   };
 }
 
-function ensureDispatcherRootIdentity(
-  input: DispatcherRootIdentityInput,
-): Promise<AgentEntityIdentity> {
-  return ensureDispatcherIdentity(input.identities, {
-    dispatcherId: input.dispatcherId,
-    agentRuntime: input.agentRuntime,
-    cwd: input.cwd,
-    worktree: dispatcherRootWorktreeIdentity(input.cwd),
-    onPersisted: input.onPersisted,
-  });
-}
-
 /**
- * Upsert the dispatcher-owned root identity while preserving compatible runtime
- * recovery state. This policy is dispatcher config compatibility, not a generic
- * Agent entity store rule.
+ * Reconcile the dispatcher-owned root identity against its own live config,
+ * preserving compatible runtime recovery state. This policy is dispatcher
+ * config compatibility, not a generic Agent entity store rule; the read and
+ * the write around it are `AgentServiceFactory.upsert`'s job, not this
+ * function's.
  */
-async function ensureDispatcherIdentity(
-  identities: AgentIdentityStore,
+function ensureDispatcherIdentity(
+  existing: AgentEntityIdentity | null,
   input: DispatcherIdentityEnsureInput,
-): Promise<AgentEntityIdentity> {
-  const existing = await identities.read();
+): AgentEntityIdentity {
   const now = Date.now();
   if (existing === null) {
-    const identity: AgentEntityIdentity = {
+    return {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: DISPATCHER_AGENT_NAME,
@@ -313,7 +304,6 @@ async function ensureDispatcherIdentity(
       closed_at: null,
       close_note: null,
     };
-    return identities.upsert(identity, input.onPersisted);
   }
 
   const compatible =
@@ -321,7 +311,7 @@ async function ensureDispatcherIdentity(
     existing.cwd === input.cwd &&
     existing.runtime_cwd === input.cwd &&
     worktreeIdentityEquals(existing.worktree, input.worktree);
-  const updated: AgentEntityIdentity = {
+  return {
     ...existing,
     name: DISPATCHER_AGENT_NAME,
     team_id: null,
@@ -345,7 +335,6 @@ async function ensureDispatcherIdentity(
         }),
     updated_at: now,
   };
-  return identities.upsert(updated, input.onPersisted);
 }
 
 function worktreeIdentityEquals(

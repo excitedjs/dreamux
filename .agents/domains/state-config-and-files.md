@@ -269,10 +269,17 @@ There is no separate claim file.
 
 It carries no dissolve operation — no operation id, no phase, no requester
 generation, no handoff ids, no attempt count, no retry time. A dissolve is an
-ordinary submission answered `{ accepted, team_name, status: "submitted" }`, and
-the single record write that sets `closed` is the only durable step. A process
-that dies mid-dissolve therefore leaves an open Team whose children reopen
-lazily, and the dissolve can simply be asked again.
+ordinary submission answered `{ accepted, team_name, status: "submitted" }`,
+before anything has stopped, and the single record write that sets `closed`
+is the durable commit point (R62): a non-forced worktree precheck is the one
+refusal left, and everything after the `closed` write — destroying every
+child service, reclaiming the worktree — is best-effort and never rolled
+back. A process that dies before that write lands leaves the Team exactly as
+`dissolve` found it, untouched, so the dissolve can simply be asked again. One
+that dies after the write lands leaves the Team durably closed, with whatever
+children the destroy pass had not yet reached exactly as they were (a
+member's `identity.json` still open, a cron store file still present) —
+inert residue nothing revisits, since a closed Team is never rebuilt.
 
 Team `status` is `starting | running | closed`. The one thing a close can leave
 behind is physical: a managed `delete-on-close` checkout that could not be

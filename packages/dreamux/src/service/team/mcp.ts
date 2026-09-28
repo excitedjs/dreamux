@@ -216,7 +216,7 @@ async function dissolve(
     caller.kind === 'team_leader'
       ? caller.teamId
       : teamNameParam(args, 'team_name'),
-    { note, force, requester: caller.kind },
+    { note, force },
   );
   return { structured: dissolved };
 }

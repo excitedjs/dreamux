@@ -8,7 +8,7 @@ import { throwCallerMistake } from '../../command/errors.js';
 import type { TurnAdmission } from '../agent/turn.js';
 import { CronJobNotFoundError } from './errors.js';
 
-import { type CronJobStore } from './store.js';
+import { CronJobStore } from './store.js';
 import { validateCronSchedule } from './cron-validation.js';
 import type {
   CronCreateRequest,
@@ -29,12 +29,15 @@ interface TimerSlot {
 /**
  * What `SchedulerService` is constructed from.
  *
- * Declared here rather than in `types.ts`: it names `CronJobStore`, a
- * concrete class, so it is a constructor-options bag rather than a data type.
+ * Declared here rather than in `types.ts`: it configures a concrete
+ * `SchedulerService` (a cron store path, an `admit` closure, a submission
+ * callback) rather than describing a domain value, so it is a
+ * constructor-options bag rather than a data type.
  */
 export interface SchedulerServiceOptions {
   ownerId: string;
-  store: CronJobStore;
+  /** Where this scheduler's own `CronJobStore` reads and writes its file. */
+  cronJobsPath: string;
   admit<T>(task: () => Promise<T>): Promise<T>;
   /**
    * Submit one due fire as an ordinary admitted input.
@@ -64,7 +67,7 @@ export class SchedulerService implements SchedulerCommands {
 
   constructor(private readonly opts: SchedulerServiceOptions) {
     this.ownerId = opts.ownerId;
-    this.store = opts.store;
+    this.store = new CronJobStore(opts.cronJobsPath);
     this.log = opts.log;
     this.now = opts.now ?? (() => Date.now());
   }
@@ -94,6 +97,26 @@ export class SchedulerService implements SchedulerCommands {
     this.lifecycleGeneration += 1;
     for (const slot of this.timers.values()) clearTimeout(slot.timer);
     this.timers.clear();
+  }
+
+  /**
+   * Stop, then remove this scheduler's own persisted cron store.
+   *
+   * `stop()` runs first, clearing every armed timer and bumping the
+   * lifecycle generation so no new fire submits after this call starts. A
+   * fire already past that point (mid-submission, about to `rearm`) is not
+   * blocked by the generation bump — `rearm`'s 'fired' branch writes
+   * unconditionally — but is still resolved correctly: `store.deleteStoreFile`
+   * shares this store's own serialized update queue, so that write and this
+   * delete are ordered against each other rather than racing, and a write
+   * queued behind the delete finds no job and writes nothing (see
+   * `CronJobStore.deleteStoreFile`). A delete that fails throws and leaves
+   * the store file in place; the owner that called this is responsible for
+   * what that means for its own close.
+   */
+  async destroy(): Promise<void> {
+    this.stop();
+    await this.store.deleteStoreFile();
   }
 
   async list(): Promise<{ jobs: CronJob[] }> {

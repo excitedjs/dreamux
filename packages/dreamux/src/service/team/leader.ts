@@ -16,7 +16,6 @@ import {
   bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
 } from '../../platform/paths.js';
-import type { AgentIdentityStore } from '../agent/store.js';
 import type { TeamCollectionOptions, TeamRecord } from './types.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
@@ -26,7 +25,10 @@ import type {
 } from '../agent/identity.js';
 import { childAgentRuntimeId } from '../agent/runtime-id.js';
 import type { AgentService } from '../agent/service.js';
-import type { TeammateAgentMcp } from '../agent/service-types.js';
+import type {
+  TeammateAgentMcp,
+  TeammateServiceOptions,
+} from '../agent/service-types.js';
 import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
 
 /**
@@ -45,73 +47,6 @@ export const TEAM_LEADER_REQUIRED_SKILL_SOURCES = [
     source: 'dreamux-core',
   },
 ] as const;
-
-export interface TeamLeaderAgentDeps {
-  dispatcherId: string;
-  identity: AgentEntityIdentity;
-  mcp: TeammateAgentMcp;
-  skillSources: readonly AgentRuntimeSkillSource[];
-  disabledFeatures: readonly string[];
-  systemPrompt?: AgentRuntimeSystemPrompt;
-  config: ConfigReader;
-  agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  identities: AgentIdentityStore;
-  onPersisted: (identity: AgentEntityIdentity) => void;
-  agentServiceFactory: AgentServiceFactory;
-  conversationProjection: ConversationProjection;
-  worktrees: WorktreeManager;
-  log: DreamuxLogger;
-}
-
-export function createTeamLeaderAgent(deps: TeamLeaderAgentDeps): AgentService {
-  const teamId = deps.identity.team_id;
-  if (teamId === null) {
-    throw new Error('TeamLeader identity must have a team_id');
-  }
-  return deps.agentServiceFactory.create({
-    identity: deps.identity,
-    options: {
-      runtimeId: childAgentRuntimeId(deps.identity),
-      // This Agent is the Team's leader; the role follows from that ownership.
-      role: 'team_leader',
-      loggerFields: { teammate: deps.identity.name },
-      mcp: deps.mcp,
-      skillSources: deps.skillSources,
-      disabledFeatures: deps.disabledFeatures,
-      systemPrompt: deps.systemPrompt,
-    },
-    config: deps.config,
-    agentRuntimeProviders: deps.agentRuntimeProviders,
-    identities: deps.identities,
-    onPersisted: deps.onPersisted,
-    conversationProjection: deps.conversationProjection,
-    worktrees: deps.worktrees,
-    log: deps.log,
-  });
-}
-
-export interface TeamLeaderForTeamDeps extends Omit<
-  TeamLeaderAgentDeps,
-  'mcp' | 'skillSources' | 'disabledFeatures' | 'systemPrompt'
-> {
-  teamId: string;
-  /**
-   * The Team's checkout as its record holds it. The leader's own identity is
-   * always a reuse of the Team directory, so the Team record is the only
-   * place that knows whether that directory is a managed worktree removed on
-   * dissolve; the leader is told so in its prompt because its `dissolve` tool
-   * asks it to act on that fact.
-   */
-  workspace: AgentEntityWorktreeIdentity;
-  /**
-   * This leader's own Agent-facing MCP servers, built by the dispatcher that
-   * owns every object they reach. The Team supplies its identity; it does not
-   * assemble a tool surface.
-   */
-  leaderMcp(input: { teamId: string; leaderName: string }): TeammateAgentMcp;
-  /** This Team's `leaderLaunch` hook, run at each leader construction. */
-  leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
-}
 
 /**
  * The stable, Team-owned inputs needed to create a TeamLeader.
@@ -134,7 +69,7 @@ export interface TeamLeaderCreationInput {
 
 /**
  * The slice of `TeamServiceDeps` (declared at `TeamService`'s construction
- * site in `service.ts`) this function actually reads.
+ * site in `service.ts`) this file actually reads.
  *
  * Picked from `TeamCollectionOptions` — the wider bag `TeamServiceDeps`
  * itself composes from — rather than importing `TeamServiceDeps`: `service.ts`
@@ -146,7 +81,6 @@ export interface TeamLeaderCreationInput {
  */
 type TeamLeaderAgentBaseDeps = Pick<
   TeamCollectionOptions,
-  | 'dispatcherId'
   | 'leaderMcp'
   | 'config'
   | 'agentRuntimeProviders'
@@ -157,27 +91,51 @@ type TeamLeaderAgentBaseDeps = Pick<
 >;
 
 /**
- * The Team-owned half of {@link TeamLeaderForTeamDeps}: what every leader a
- * Team creates or restores is built from, spelled once.
+ * What every leader creation/open/restore entry in this file is built from:
+ * the Team-owned facts plus the collaborators the resulting `AgentService`
+ * needs. `teamRoot` is the one location fact — this Team's own root
+ * directory, where its leader's `identity.json` lives beside `record.json` —
+ * and every store bind in this file goes through
+ * `AgentServiceFactory.create`/`.open` against it, never a store a caller
+ * constructed itself.
+ */
+export interface TeamLeaderOpenDeps {
+  teamId: string;
+  teamRoot: string;
+  workspace: AgentEntityWorktreeIdentity;
+  leaderMcp(input: { teamId: string; leaderName: string }): TeammateAgentMcp;
+  /** This Team's `leaderLaunch` hook, run at each leader construction. */
+  leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
+  config: ConfigReader;
+  agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  onPersisted: (identity: AgentEntityIdentity) => void;
+  agentServiceFactory: AgentServiceFactory;
+  conversationProjection: ConversationProjection;
+  worktrees: WorktreeManager;
+  log: DreamuxLogger;
+}
+
+/**
+ * The Team-owned half of {@link TeamLeaderOpenDeps}: what every leader a
+ * Team creates, opens, or restores is built from, spelled once.
  */
 export function teamLeaderAgentBase(input: {
   deps: TeamLeaderAgentBaseDeps;
   teamId: string;
+  teamRoot: string;
   workspace: AgentEntityWorktreeIdentity;
-  identities: AgentIdentityStore;
   onPersisted: (identity: AgentEntityIdentity) => void;
   leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
-}): Omit<TeamLeaderForTeamDeps, 'identity'> {
+}): TeamLeaderOpenDeps {
   const { deps } = input;
   return {
-    dispatcherId: deps.dispatcherId,
     teamId: input.teamId,
+    teamRoot: input.teamRoot,
     workspace: input.workspace,
     leaderMcp: deps.leaderMcp,
     leaderLaunch: input.leaderLaunch,
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
-    identities: input.identities,
     onPersisted: input.onPersisted,
     agentServiceFactory: deps.agentServiceFactory,
     conversationProjection: deps.conversationProjection,
@@ -187,74 +145,53 @@ export function teamLeaderAgentBase(input: {
 }
 
 /**
- * Create this Team's leader.
- *
- * Identity creation belongs here, with the entity: the TeamMate layer persists
- * the record at the Team root and then builds the runtime from the record it
- * just wrote, so there is one creation path and one writer. Whatever occupied
- * that location is replaced — the Team only reaches this operation after
- * finding no usable aligned identity there, so an orphan left at a reused Team
- * name must not block its own replacement.
+ * The `AgentServiceFactory` collaborators every leader build needs besides
+ * its identity storage and its role-specific options.
  */
-export async function createTeamLeaderAgentForTeam(
-  deps: Omit<TeamLeaderForTeamDeps, 'identity'> & {
-    creation: TeamLeaderCreationInput;
-  },
-): Promise<AgentService> {
-  const { creation, ...rest } = deps;
-  const identity = await deps.identities.create(
-    {
-      name: creation.leaderName,
-      teamId: deps.teamId,
-      agentRuntime: creation.agentRuntime,
-      sourceCwd: creation.sourceCwd,
-      sourceRepo: creation.sourceRepo,
-      cwd: creation.runtimeCwd,
-      runtimeCwd: creation.runtimeCwd,
-      // A leader runs in its Team's directory; the Team's record owns the
-      // checkout underneath it and every cleanup fact about it.
-      worktree: reuseCwdWorktree(creation.runtimeCwd),
-      intent: creation.intent,
-      identityPrompt: creation.identityPrompt,
-      skillSources: creation.skillSources,
-      status: 'starting',
-      replaceExisting: true,
-    },
-    deps.onPersisted,
-  );
-  return await restoreTeamLeaderAgentForTeam({ ...rest, identity });
+function leaderBuildDeps(deps: TeamLeaderOpenDeps) {
+  return {
+    config: deps.config,
+    agentRuntimeProviders: deps.agentRuntimeProviders,
+    onPersisted: deps.onPersisted,
+    conversationProjection: deps.conversationProjection,
+    worktrees: deps.worktrees,
+    log: deps.log,
+  };
 }
 
 /**
- * Build this Team's leader from an identity the Team already proved is its own.
- * The record is used exactly as read — never restamped or regenerated.
+ * This leader's role-specific `AgentService` options, computed from the
+ * identity the factory just created, read, or upserted.
  *
- * Runs the Team's `leaderLaunch` hook first: plugin skill roots
- * follow the built-in and identity roots, fenced against them, and plugin
- * instructions follow the built-in prompt.
+ * Runs the Team's `leaderLaunch` hook first: plugin skill roots follow the
+ * built-in and identity roots, fenced against them, and plugin instructions
+ * follow the built-in prompt.
  */
-export async function restoreTeamLeaderAgentForTeam(
-  deps: TeamLeaderForTeamDeps,
-): Promise<AgentService> {
-  const { teamId, workspace, leaderMcp, leaderLaunch, ...agentDeps } = deps;
-  const leaderName = deps.identity.name;
+async function teamLeaderOptions(
+  deps: TeamLeaderOpenDeps,
+  identity: AgentEntityIdentity,
+): Promise<TeammateServiceOptions> {
+  const leaderName = identity.name;
   const baseSkills = [
     ...TEAM_LEADER_REQUIRED_SKILL_SOURCES,
-    ...deps.identity.skill_sources,
+    ...identity.skill_sources,
   ];
-  const draft = await composeLaunchDraft(leaderLaunch, baseSkills);
-  return createTeamLeaderAgent({
-    ...agentDeps,
-    mcp: leaderMcp({ teamId, leaderName }),
+  const draft = await composeLaunchDraft(deps.leaderLaunch, baseSkills);
+  return {
+    runtimeId: childAgentRuntimeId(identity),
+    // This Agent is the Team's leader; the role follows from that ownership.
+    role: 'team_leader',
+    loggerFields: { teammate: leaderName },
+    mcp: deps.leaderMcp({ teamId: deps.teamId, leaderName }),
     skillSources: [...baseSkills, ...draft.skillSources],
     disabledFeatures: [DISABLE_FEATURE_CRON],
     systemPrompt: teamLeaderSystemPrompt(
-      teamId,
-      workspace,
-      deps.identity.identity_prompt,
+      deps.teamId,
+      deps.workspace,
+      identity.identity_prompt,
       draft.instructions,
     ),
-  });
+  };
 }
 
 /**
@@ -292,26 +229,89 @@ function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
 }
 
 /**
- * Materialize an open Team's leader from the identity at its root.
+ * Create this Team's leader.
  *
- * A Team *has* a leader — the durable identity — and separately holds an object
- * currently speaking for it. When it is holding none, this reads the identity
- * back and proves ownership with the same three facts every other restore uses.
- * The record is taken exactly as stored, closed status included: nothing here
- * rewrites an identity or starts a runtime, because materializing a leader is
- * what a Team does before the ordinary path starts it, not instead of that.
+ * Identity creation belongs here, with the entity: the Team hands over its
+ * own creation inputs and gets back a leader, rather than assembling and
+ * persisting an Agent identity itself. Nothing starts here: the leader's
+ * runtime starts inside the first submission that needs it — the prompt below
+ * when there is one, the first ordinary submission otherwise — so a provider
+ * thread is never opened without the turn that makes it durable. Whatever
+ * occupied `deps.teamRoot` is replaced — the Team only reaches this operation
+ * after finding no usable aligned identity there, so an orphan left at a
+ * reused Team name must not block its own replacement.
  */
-export async function leaderForOpenTeam(
-  deps: Omit<TeamLeaderForTeamDeps, 'identity'> & { record: TeamRecord },
-): Promise<AgentService> {
-  const { record, ...rest } = deps;
-  const identity = await deps.identities.read();
-  if (identity === null || !alignedWithLeader(identity, record)) {
-    throw new Error(
-      `Team ${JSON.stringify(record.team_id)} has no aligned TeamLeader identity`,
-    );
-  }
-  return await restoreTeamLeaderAgentForTeam({ ...rest, identity });
+export async function createTeamLeaderAgentForTeam(input: {
+  deps: TeamLeaderOpenDeps;
+  creation: TeamLeaderCreationInput;
+}): Promise<AgentService> {
+  const { deps, creation } = input;
+  return deps.agentServiceFactory.create({
+    location: { dir: deps.teamRoot, expectedName: null },
+    creation: {
+      name: creation.leaderName,
+      teamId: deps.teamId,
+      agentRuntime: creation.agentRuntime,
+      sourceCwd: creation.sourceCwd,
+      sourceRepo: creation.sourceRepo,
+      cwd: creation.runtimeCwd,
+      runtimeCwd: creation.runtimeCwd,
+      // A leader runs in its Team's directory; the Team's record owns the
+      // checkout underneath it and every cleanup fact about it.
+      worktree: reuseCwdWorktree(creation.runtimeCwd),
+      intent: creation.intent,
+      identityPrompt: creation.identityPrompt,
+      skillSources: creation.skillSources,
+      status: 'starting',
+      replaceExisting: true,
+    },
+    options: (identity) => teamLeaderOptions(deps, identity),
+    deps: leaderBuildDeps(deps),
+    log: deps.log,
+  });
+}
+
+/**
+ * Open this Team's leader if a durable identity at its root already belongs
+ * to it — the one `open` entry `openTeamLeader` (below) uses for its
+ * restore-or-create decision. `null` when there is nothing to adopt: either
+ * no identity was ever written, or what is there is not this Team's.
+ */
+async function adoptTeamLeaderIfAligned(
+  deps: TeamLeaderOpenDeps,
+  record: TeamRecord,
+): Promise<AgentService | null> {
+  return deps.agentServiceFactory.open({
+    location: { dir: deps.teamRoot, expectedName: null },
+    align: (identity) => alignedWithLeader(identity, record),
+    options: (identity) => teamLeaderOptions(deps, identity),
+    deps: leaderBuildDeps(deps),
+    log: deps.log,
+  });
+}
+
+/**
+ * Rebuild this Team's leader: restore the identity already at its root when
+ * it is aligned, or finish what creation began by creating it fresh
+ * otherwise — the restore-or-create decision `TeamService.rebuild` used to
+ * make itself, moved here with the entity it decides about.
+ *
+ * The caller (`TeamService.rebuild`) seeds its member roster before calling
+ * this and remembers the returned leader after: a fresh
+ * `createTeamLeaderAgentForTeam` call publishes this Team's aggregate through
+ * its own persistence hook the moment it runs, so the roster has to be
+ * complete first, and a restored leader raises no such hook (`open` only
+ * reads) so it needs remembering explicitly either way.
+ */
+export async function openTeamLeader(input: {
+  deps: TeamLeaderOpenDeps;
+  record: TeamRecord;
+  creation: TeamLeaderCreationInput;
+}): Promise<AgentService> {
+  const { deps, record, creation } = input;
+  const opened = await adoptTeamLeaderIfAligned(deps, record);
+  if (opened !== null) return opened;
+  return createTeamLeaderAgentForTeam({ deps, creation });
 }
 
 /**
@@ -324,7 +324,7 @@ export async function leaderForOpenTeam(
  * a leader that has since gone `degraded` or `stopped` is still this Team's
  * leader.
  */
-export function alignedWithLeader(
+function alignedWithLeader(
   identity: AgentEntityIdentity,
   record: TeamRecord,
 ): boolean {

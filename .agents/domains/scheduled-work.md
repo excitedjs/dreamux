@@ -107,9 +107,13 @@ a due fire alike: `TeamService.admit` first, then
 `DispatcherService.admitOperation`. There is no second, `SchedulerCommands`-
 shaped wrapper object around the Team's scheduler; the closure is passed
 directly at construction. A mutation racing an in-flight Team dissolve is
-therefore refused by the Team's own closing fence before it ever reaches the
-store, so it cannot recreate a cron store file the close pass already deleted
-on a Team whose closed commit then fails and leaves it open. A fire crosses
+therefore refused by the Team's own closing fence — up from the moment
+dissolve is submitted, not from when the `closed` record lands — before it
+ever reaches the store. That ordering matters because the scheduler's own
+store deletion (`SchedulerService.destroy()`) runs only after the `closed`
+record commits (R62): nothing can recreate a cron store file `destroy()` is
+about to delete, and there is no window where the store is already gone but
+the commit that authorized deleting it might still fail. A fire crosses
 `TeamService.admit` a second time inside `submitToLeader`, which fences every
 leader submission and is not special-cased for cron; `admit` is a stateless
 check, so the second crossing costs one redundant read, not a second gate.
@@ -129,16 +133,23 @@ mid-reconcile IO failure leaves the scheduler fully un-started. Team schedulers
 are resident for non-closed Teams, but TeamLeader runtimes are not started just
 to arm cron, and closed Teams are not armed.
 
-Dissolving a Team stops its scheduler with the rest of its resources and deletes
-that Team's cron store file as part of that same close pass, **before** the
-closed record is durable: a dissolve that stopped the scheduler must not leave
-jobs a later `start()` could rearm, so the jobs stay gone even when the commit
-that follows fails and leaves the Team open. A successful dissolve, for the
-identical reason, cannot let scheduled work reattach to a later same-name Team
-with a fresh leader identity. Deleting the store file loads it first, so a cron
-store that fails its own version/shape check at that exact moment fails the
-delete too — one of the dissolve's ordinary collected cleanup-step failures,
-handled the same way as any other resource that would not close.
+Dissolving a Team writes the record `closed` first (R62); a dissolve that
+fails before that write lands leaves the scheduler exactly as it was, still
+armed — the write is the operation's one reversible step. Only once `closed`
+commits does the Team destroy its children in turn, including the scheduler's
+own `destroy()` (`stop()` plus deleting its own cron store file), alongside
+every other child service; a `destroy()` failure there is logged, never
+retried, and never reopens the Team, the same as any other post-`closed`
+cleanup step. A successful dissolve cannot let scheduled work reattach to a
+later same-name Team with a fresh leader identity: a closed Team's `team_id`
+is never reused by `team.create` (`record.json` permanently occupies the
+name) and a closed Team is never rebuilt, so no `SchedulerService` is ever
+constructed against that directory again — regardless of whether
+`destroy()`'s own store-file deletion succeeded. Deleting the store file
+loads it first, so a cron store that fails its own version/shape check at
+that exact moment fails the delete too — one of the dissolve's ordinary
+collected cleanup-step failures, handled the same way as any other resource
+that would not close.
 
 Source:
 

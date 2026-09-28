@@ -159,12 +159,21 @@ the Team.
   `team.state` on every relevant transition (a Team's aggregate event has no
   other source to ask); its leader-completion recipient (a stable recipient
   key plus a fenced `prepareCompletion`, resolved from ownership rather than
-  from the producing record); and its stop-and-close dissolve sequence, the
-  abandoned-creation cleanup, and the host sweep, all taking the TeamLeader as
-  a plain argument rather than through a leader-holder callback — its
-  retirement broadcast is `readonly closed: Promise<TeamClosedFact>`, resolved
-  once on the record's durable `closed` transition; `TeamCollection` awaits it
-  directly (`service.closed.then(() => this.evict(...))`) instead of holding a
+  from the producing record); and its write-closed-then-destroy-children
+  dissolve sequence (R62: worktree precheck, write `closed`, destroy every
+  child service in turn — Workflows, scheduler, members, leader — aggregating
+  failures, then worktree cleanup; a failure after the `closed` write is
+  logged, never rolled back), the abandoned-creation cleanup (the same
+  destroy routine, reached after abandonment's own `closed` write), and the
+  host sweep, all taking the TeamLeader as a plain argument rather than
+  through a leader-holder callback — the Team holds its leader for its whole
+  life once `createNew`/`rebuild` succeed, so there is no lazy rebuild path.
+  Its retirement broadcast is `readonly closed: Promise<TeamClosedFact>`,
+  resolved once the dissolve's (or abandonment's) destroy pass has run,
+  succeeded or not — not at the moment the `closed` record itself lands — so a
+  host stop racing a dissolve still finds the Team live while its children are
+  mid-destroy; `TeamCollection` awaits it directly
+  (`service.closed.then(() => this.evict(...))`) instead of holding a
   subscription. `teams-port.ts` (the `TeamsPort` interface) sits at
   this same tier, depending only on modules outside `team/`, never on the
   collection tier below. `TeamLeaderHandle` and `TeamLeaderTeammateOps` are
@@ -198,10 +207,16 @@ the Team.
   (`identity.ts`, `store.ts`, `runtime-state.ts`, `activity.ts`,
   `records.ts`, `requests.ts`, `runtime-id.ts`, `types.ts`) is neutral
   identity/activity/runtime-state persistence, history-query reading, and the
-  directory's data types; it is never under a Collection, and it is shared —
-  `team/service.ts` and `dispatcher-service/` read it directly for the Team
-  leader and the dispatcher agent, both of which live outside
-  `TeammateCollection`. It sits inside `.dependency-cruiser.cjs`'s
+  directory's data types; it is never under a Collection, and nothing outside
+  `agent/` constructs it directly (R63: an Agent is a directory to its
+  parents). `team/service.ts` and `dispatcher-service/` reach the Team leader's
+  and the dispatcher agent's identity only through the service tier's
+  `AgentServiceFactory` (`create`/`open`/`upsert`, each binding and
+  reading/writing its own `AgentIdentityStore` internally and handing back a
+  built `AgentService`, never the store) or, for a reader that must answer
+  without constructing an entity, the stateless `readAgentIdentity()` /
+  `agentCollectionMemberCount()` snapshot reads `store.ts` exports for that
+  purpose. It sits inside `.dependency-cruiser.cjs`'s
   `service-primitives` layer rather than a separate `service/agent/` layer,
   alongside `worktree/`/`mcp/`/`dispatcher-core-events/` — it is the same
   neutral kernel those directories read, not a tier ranked ahead of or behind
@@ -218,11 +233,15 @@ the Team.
   factory that owns the shared `AdmissionLedger`. `channel-submission.ts` (the
   Channel-facing submission reader) sits in this tier because it needs
   `submission.ts`, not the store or collection tier. The collection tier
-  (`index.ts`, `commands.ts`, `mcp.ts`, `system-prompt.ts`, `errors.ts`,
-  `dissolve-members.ts`) is `TeammateCollection`: it
+  (`index.ts`, `commands.ts`, `mcp.ts`, `system-prompt.ts`, `errors.ts`) is
+  `TeammateCollection`: it
   constructs, subscribes to, caches, resolves, and reads ordinary-TeamMate
   entities only — never the dispatcher agent or a Team's leader — and owns
-  the Team-scoped bulk close a dissolve needs (`dissolve-members.ts`); it
+  the Team-scoped bulk member shutdown a dissolve needs, one scope-neutral
+  `stop()` shared with a host stop plus a Team-only `destroy(note)` that
+  closes every held member through the Agent's own close and marks every
+  never-built member closed through the store tier's own entry, both declared
+  directly in `index.ts` (no separate bulk-close file); it
   does not own an entity's close state machine. This directory merge and the
   `AgentService` rename are a code-location and naming change only:
   `identity.json`'s shape, field meanings, and owner are unchanged, so no
@@ -239,12 +258,15 @@ the Team.
   timers, `fireSeq` (the per-fire counter feeding `sourceId`) and
   `lifecycleGeneration` (the stop/start epoch a stale timer callback checks
   before acting), the pure `advanceJob` recompute and the one impure `rearm`
-  it feeds, and the lifecycle verbs (`start`/`stop`). Deleting the persisted
-  cron store file is a `team/`-owned dissolve-close step, not a scheduler
-  lifecycle verb: `TeamService` holds the `CronJobStore` instance it hands
-  `SchedulerService` at construction and calls `deleteStoreFile()` on it
-  directly, so `SchedulerService` carries no method whose only job is
-  forwarding to a collaborator its owner already holds.
+  it feeds, and the lifecycle verbs (`start`/`stop`/`destroy`). `SchedulerService`
+  builds its own `CronJobStore` from a `cronJobsPath` its owner passes at
+  construction (R60: a scheduler owns its cron store, the same way an Agent
+  owns its identity); no owner holds that instance. `destroy()` is `stop()`
+  plus deleting its own store file — the one Team-dissolve-driven verb this
+  service exposes to its owner, not a step `team/` reaches into the store to
+  perform itself. Deleting the persisted cron store file is therefore a
+  `SchedulerService` lifecycle verb, never a step another module performs on
+  a `CronJobStore` it was handed.
   `requests.ts` holds the request readers (`cronCreateRequest`,
   `cronUpdateRequest`, `cronJobIdParam`) and the result projections
   (`cronJobResult`, `cronListResult`) shared by `commands.ts` and `mcp.ts`.
@@ -253,8 +275,9 @@ the Team.
   domain types (`CronJob`/`CronJobAction`/`CronPromptAgentAction`/
   `CronJobCreateInput`/`CronJobUpdateInput`), the request/result interfaces,
   and `SchedulerCommands` — no codecs. `SchedulerServiceOptions` (a
-  constructor-options bag naming the concrete `CronJobStore`, not a data type)
-  is declared in `index.ts` beside the `SchedulerService` it configures. The two
+  constructor-options bag configuring one concrete `SchedulerService` — a cron
+  store path, an `admit` closure, a submission callback — not a data type) is
+  declared in `index.ts` beside the `SchedulerService` it configures. The two
   scheduler-specific files: `store.ts` (`CronJobStore` plus
   `detectLegacyCronJobStore` — persistence only, no domain types) and
   `cron-validation.ts` (the shared cron-expression/timezone rule set both
@@ -344,16 +367,21 @@ the Team.
   its object graph is finished, so create and rebuild share one keyed
   construction: a read that arrives mid-create joins it rather than building a
   second owner of the same Team.
-- **Dissolve is a submission, and the durable close is its commit boundary.**
-  The receipt says accepted and nothing more. Live children are stopped and
-  closed before the record says closed. Closing the scheduler deletes its cron
-  store file as part of that same close pass, before the durable commit runs —
-  not after — because a dissolve that stopped the scheduler and then failed to
-  commit must not leave jobs a later `start()` would arm again; that the jobs
-  stay gone from a Team which stayed open is the price of canceling them for
-  real. Any failure before the commit lands — stopping, closing, or the commit
-  itself — gives the reversible admissions (Workflows, scheduler) back.
-  `worktree.cleanup_state`
+- **Dissolve is a submission, and the closed commit is the point of no return
+  (R62).** The receipt says accepted and nothing more, before anything has
+  stopped. A non-forced worktree precheck (existing force rules) is the one
+  refusal this operation still offers; once it passes (or `force` skips it),
+  dissolve writes the record `closed` — the commit boundary, and the only step
+  this operation can still take back: a write that fails clears the fence and
+  leaves the Team exactly as it was, so it can be asked again. Once `closed`
+  lands the Team is over for good: destroying every child service in turn
+  (Workflows' `stopAll()`, the scheduler's own `destroy()` — which deletes its
+  own cron store file — the member collection's `destroy()`, the leader's
+  `close()`) and reclaiming the worktree are both best-effort from there —
+  every step is attempted, a failure is only logged, and none of it is rolled
+  back, because a `closed` Team is never rebuilt. A member that dirties the
+  worktree after the precheck no longer refuses the dissolve; a non-forced
+  cleanup then only keeps the directory. `worktree.cleanup_state`
   plus `worktree_cleanup_force` is the only restart-recovery authority; there
   is no persisted dissolve state machine.
 - **A Team lends its directory, never its checkout.** The Team record is the

@@ -11,11 +11,7 @@ import {
   type ResolvedAgentConfig,
 } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
-import type {
-  AgentEntityCollectionStore,
-  AgentIdentityStore,
-  AgentNameRegistry,
-} from './store.js';
+import { AgentEntityCollectionStore, type AgentNameRegistry } from './store.js';
 import { matchesRecordQuery, toRecordRow, toStatus } from './records.js';
 import {
   clampHistoryLimit,
@@ -46,20 +42,21 @@ import type {
   CompletionInitiator,
 } from '../completion-router/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
-import { closeMembersForDissolve } from './dissolve-members.js';
 import { teamMateNotFound } from './errors.js';
 import { teammateSystemPromptOptions } from './system-prompt.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
-import type { AgentServiceFactory } from './factory.js';
+import type { AgentEntityBuildDeps, AgentServiceFactory } from './factory.js';
 import { AgentService } from './service.js';
 import type {
   CreateLockedTeammateOptions,
   LockedTeammate,
+  TeammateServiceOptions,
 } from './service-types.js';
 import { toSubmissionResult } from './admission.js';
 import type { TurnCompletionDelivery } from './turn.js';
@@ -85,11 +82,19 @@ export interface TeammateCollectionOptions {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   /**
-   * The `teammate/` collection root the owner bound at construction. This
-   * Collection appends only the concrete TeamMate name to it — it never learns
-   * whether that root sits under the dispatcher or under a Team.
+   * The `teammate/` collection root this Collection is bound to. It appends
+   * only the concrete TeamMate name to it — it never learns whether that root
+   * sits under the dispatcher or under a Team — and builds its own
+   * `AgentEntityCollectionStore` from it; nothing outside the agent module
+   * constructs that store.
    */
-  store: AgentEntityCollectionStore;
+  root: string;
+  /**
+   * Fired after a member's identity is created or updated in a way that
+   * changed status, threaded into the `AgentEntityCollectionStore` this
+   * Collection builds around `root`.
+   */
+  onPersisted: (identity: AgentEntityIdentity) => void;
   /** The dispatcher-global name namespace; agent names stay dispatcher-unique. */
   names: AgentNameRegistry;
   agentServiceFactory: AgentServiceFactory;
@@ -148,16 +153,15 @@ export interface TeammateCollectionOptions {
 }
 
 /**
- * A closed record that has not been reopened, paired with the exact
- * `AgentIdentityStore` instance that read it. Reopening (`reopenFrom`) hands
- * both straight to `buildEntity`, so the `AgentRuntimeStateStore` it builds
- * wraps a store whose `TransactionalStore` is already loaded — a fresh
- * `this.store.entity(name)` mint here would hand `AgentRuntimeStateStore` an
- * unloaded store, and `.current()` would throw before any write ever primed it.
+ * A closed record that has not been reopened.
+ *
+ * Reopening (`reopenFrom`) opens a fresh `AgentService` from the same
+ * directory through `AgentServiceFactory.open`, which binds and loads its own
+ * store — there is no store instance to carry forward from the read that
+ * found this record closed.
  */
 interface ClosedTeamMateRecord {
   readonly identity: AgentEntityIdentity;
-  readonly store: AgentIdentityStore;
 }
 
 /**
@@ -167,13 +171,6 @@ interface ClosedTeamMateRecord {
  * caller that turns it back into an entity.
  */
 type ResolvedTeamMate = AgentService | ClosedTeamMateRecord;
-
-interface FreshIdentityAllocation {
-  readonly name: string;
-  readonly teamId: string | undefined;
-  readonly agentRuntime: string;
-  readonly identityPrompt: string | null;
-}
 
 /** Scoped construction, cache, subscription, and read owner for TeamMates. */
 export class TeammateCollection implements TeammateOps {
@@ -189,9 +186,9 @@ export class TeammateCollection implements TeammateOps {
   /**
    * TeamMates being built for a `send` that has not reopened them yet, keyed
    * by name to the in-flight build promise rather than to the entity itself
-   * (`buildEntity` is `async` now that it composes a launch draft, so
-   * building one can no longer register itself into the map synchronously).
-   * An entry is held for its owning `send` call's whole span — the build and
+   * (opening one is `async`, so building one can no longer register itself
+   * into the map synchronously). An entry is held for its owning `send`
+   * call's whole span — the build and
    * the send together, exactly as long as the map held the entity itself
    * before — and is removed by that same call, by promise identity, once it
    * settles either way; see {@link reopenFrom} and {@link sendReopened}.
@@ -201,12 +198,32 @@ export class TeammateCollection implements TeammateOps {
    * reopening rather than start a second runtime for the same Agent.
    */
   private readonly reopening = new Map<string, Promise<AgentService>>();
+  /**
+   * Counts only `createFreshEntity`'s `AgentNameRegistry.allocate()` call —
+   * the one real disk I/O between an admitted `spawn`/`createLocked` and its
+   * build registering into {@link materializations} below. Deliberately not
+   * the whole `spawn`/`send`/`createLocked` call: those go on to start a
+   * runtime with no timeout of its own (a `thread/start` RPC), and a
+   * `stop()` sweep — the thing that would unblock a runtime stuck there — must
+   * never wait on that same call to finish first (see
+   * `dispatcher-service/lifecycle.ts`'s two-pass sweep for the same hazard). A
+   * `destroy()`/`stop()` sweep joins only this narrow window before it
+   * snapshots {@link materializations}, so a call admitted a moment before a
+   * dissolve fenced this collection has always finished registering (never
+   * necessarily finished running) by the time the sweep's snapshot runs.
+   */
+  private readonly inFlight = new InFlightWork();
 
   constructor(private readonly opts: TeammateCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.teamScope = opts.teamScope;
     this.worktrees = opts.worktrees;
-    this.store = opts.store;
+    this.store = new AgentEntityCollectionStore({
+      root: opts.root,
+      dispatcherId: opts.dispatcherId,
+      log: opts.log,
+      onPersisted: opts.onPersisted,
+    });
   }
 
   spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
@@ -310,16 +327,14 @@ export class TeammateCollection implements TeammateOps {
     const name = resolved.identity.name;
     const existing = this.reopening.get(name);
     if (existing !== undefined) return existing;
-    const build = this.buildReopened(resolved.identity, resolved.store);
+    const build = this.buildReopened(name);
     this.reopening.set(name, build);
     return build;
   }
 
-  private async buildReopened(
-    identity: AgentEntityIdentity,
-    store: AgentIdentityStore,
-  ): Promise<AgentService> {
-    const entity = await this.buildEntity(identity, store);
+  private async buildReopened(name: string): Promise<AgentService> {
+    const entity = await this.openEntity(name);
+    if (entity === null) throw teamMateNotFound(name);
     this.selfCloseIfClosing(entity);
     return entity;
   }
@@ -528,57 +543,90 @@ export class TeammateCollection implements TeammateOps {
     return [...this.entities.values()].filter((entity) => !entity.isRetired());
   }
 
-  /** Stop every member runtime this dissolving Team holds. Team-scoped only. */
-  async stopAllForDissolve(): Promise<void> {
+  /**
+   * Stop every member runtime this collection holds, releasing runtime
+   * authority without closing anything.
+   *
+   * Scope-neutral: a host stop and the runtime-release phase of a Team
+   * dissolve want the same thing from this collection, so there is one verb
+   * for both instead of two identical bodies differing only in their error
+   * message.
+   */
+  async stop(): Promise<void> {
     const failures: unknown[] = [];
     for (const member of await this.heldMembers()) {
       await collectShutdownFailure(failures, () => member.stopForHost());
     }
     throwShutdownFailures(
       failures,
-      `Team ${JSON.stringify(this.mustTeamScope())} member runtimes did not stop for dissolve`,
+      `${this.scopeLabel()} member runtimes did not stop`,
     );
   }
 
   /**
-   * Stop every member runtime this collection holds, for a host stop.
+   * Destroy every member of a dissolving Team. Team-scoped only.
    *
-   * Scope-neutral, unlike {@link stopAllForDissolve}: a host stop releases
-   * runtime authority without closing anything, so it applies the same way to
-   * the dispatcher-root collection and to a Team-scoped one.
+   * A member is one of two kinds, and each is destroyed as what it is. One
+   * this process holds is closed through its own entity (`AgentService.close`
+   * already stops its runtime, drains, and converges before it writes closed),
+   * so its terminal is published exactly as in any other close — that is what
+   * keeps a dissolve from leaving a child process burning tokens behind a
+   * Team that no longer exists. One that exists only as a record has no
+   * runtime this process could be holding: it is marked closed at rest
+   * through the store tier's own entry (`closeUnbuilt`) rather than by
+   * building an entity for it, which would start an Agent in order to stop
+   * it.
+   *
+   * Held members are excluded from the record pass by identity rather than by
+   * the status they ended up with, so a member whose close failed surfaces as
+   * that failure instead of being declared closed with a runtime still live.
    */
-  async stopAllForHost(): Promise<void> {
+  async destroy(note: string): Promise<void> {
+    const teamId = this.mustTeamScope();
     const failures: unknown[] = [];
-    for (const member of await this.heldMembers()) {
-      await collectShutdownFailure(failures, () => member.stopForHost());
+    const held = await this.heldMembers();
+    for (const member of held) {
+      await collectShutdownFailure(failures, async () => {
+        await member.close({ note });
+      });
+    }
+    const heldNames = new Set(held.map((member) => member.name));
+    for (const identity of await this.rosterList()) {
+      if (identity.status === 'closed' || heldNames.has(identity.name)) {
+        continue;
+      }
+      await collectShutdownFailure(failures, async () => {
+        await this.store.closeUnbuilt(identity.name, note);
+      });
     }
     throwShutdownFailures(
       failures,
-      `${this.scopeLabel()} member runtimes did not stop for host`,
+      `Team ${JSON.stringify(teamId)} members did not close for dissolve`,
     );
-  }
-
-  /** Close every member of this dissolving Team. Team-scoped only. */
-  async closeAllForDissolve(note: string): Promise<void> {
-    const teamId = this.mustTeamScope();
-    const held = await this.heldMembers();
-    return closeMembersForDissolve({
-      teamId,
-      note,
-      held,
-      roster: await this.rosterList(),
-      store: this.store,
-    });
   }
 
   /**
    * Every member this process holds, once whatever was already building one has
    * finished. A materialization that started before the owner fenced itself is
    * still producing a live Agent, so a sweep that read only the cache would
-   * miss the one runtime it most needs to stop. Joining what is already in
-   * flight is the whole of it: the fence refuses everything not yet started.
+   * miss the one runtime it most needs to stop.
+   *
+   * The fence refuses everything not yet admitted, but an admitted
+   * `spawn`/`createLocked` call has one real disk I/O
+   * (`AgentNameRegistry.allocate`, counted by {@link inFlight}) before it
+   * registers a build into {@link materializations} below — a sweep that
+   * snapshotted that map right after the fence rises could run in that gap
+   * and see neither the pending build nor, once it lands, the entity it
+   * produces. Draining {@link inFlight} first closes exactly that gap: it
+   * guarantees every admitted call has *registered*, not that it has
+   * finished — a call already past its allocate is still joined by the
+   * `materializations`/`reopening` awaits right below, which stop at entity
+   * construction and never wait on a submitted turn or a started runtime, so
+   * this can never block behind the very runtime a `stop()` sweep exists to
+   * kill.
    */
   private async heldMembers(): Promise<readonly AgentService[]> {
+    await this.inFlight.drain();
     await Promise.allSettled([...this.materializations.values()]);
     const held = new Map<string, AgentService>();
     for (const entity of this.materializedEntities()) {
@@ -633,19 +681,22 @@ export class TeammateCollection implements TeammateOps {
       input.agentRuntime ??
       defaultAgentRuntime(this.opts.config.current(), this.dispatcherId);
     // The name prefix follows the collection this Collection was bound to, not
-    // anything read back out of a record.
-    const name = await this.opts.names.allocate({
-      kind: teamId === undefined ? 'dispatcher-teammate' : 'team-teammate',
-      base: input.name,
-      generateSuffix: this.opts.suffixGenerator,
-    });
-
-    const allocation: FreshIdentityAllocation = {
-      name,
-      teamId,
-      agentRuntime,
-      identityPrompt,
-    };
+    // anything read back out of a record. Counted into `inFlight` for exactly
+    // this allocate: it is the one real disk I/O between admission and
+    // registering a build into `materializations` below, and the two run in
+    // the same synchronous continuation once it resolves, so a `drain()`
+    // waiter is never woken before the registration lands.
+    const leaveAllocating = this.inFlight.enter();
+    let name: string;
+    try {
+      name = await this.opts.names.allocate({
+        kind: teamId === undefined ? 'dispatcher-teammate' : 'team-teammate',
+        base: input.name,
+        generateSuffix: this.opts.suffixGenerator,
+      });
+    } finally {
+      leaveAllocating();
+    }
     const existing = this.liveEntity(name);
     if (existing !== null || this.materializations.has(name)) {
       throw new Error(
@@ -653,15 +704,48 @@ export class TeammateCollection implements TeammateOps {
       );
     }
     return this.trackMaterialization(name, async () => {
-      const { identity, store } = await this.createIdentity(input, allocation);
-      const entity = await this.buildEntity(identity, store, options);
+      const workspace = await resolveSpawnWorkspace({
+        config: this.opts.config.current(),
+        worktrees: this.worktrees,
+        dispatcherId: this.dispatcherId,
+        name,
+        request: input,
+      });
+      if (input.sharedWorkspace === undefined) {
+        await assertManagedWorktreeAvailable({
+          findManagedWorktreeOwner: (path, excludingName) =>
+            this.findManagedWorktreeOwner(path, excludingName),
+          name,
+          worktree: workspace.worktree,
+        });
+      }
+      const entity = await this.opts.agentServiceFactory.create({
+        location: { dir: this.store.entityDir(name), expectedName: name },
+        creation: {
+          name,
+          teamId: teamId ?? null,
+          agentRuntime,
+          sourceCwd: workspace.sourceCwd,
+          sourceRepo: workspace.sourceRepo,
+          cwd: workspace.runtimeCwd,
+          runtimeCwd: workspace.runtimeCwd,
+          worktree: workspace.worktree,
+          intent: input.intent,
+          identityPrompt,
+          skillSources: input.skillSources,
+          status: 'stopped',
+        },
+        options: (identity) => this.teammateOptions(identity, options),
+        deps: this.entityBuildDeps(),
+        log: this.opts.log,
+      });
       try {
         beforePublish?.(entity);
       } catch (error) {
         await this.closeAfterFailedCreation(entity);
         throw error;
       }
-      this.entities.set(identity.name, entity);
+      this.entities.set(entity.name, entity);
       this.subscribeEntity(entity);
       this.selfCloseIfClosing(entity);
       return entity;
@@ -694,59 +778,6 @@ export class TeammateCollection implements TeammateOps {
     );
   }
 
-  /**
-   * Create the fresh entity's identity and return the exact
-   * `AgentIdentityStore` instance that created it, so `buildEntity` wraps a
-   * store whose `TransactionalStore` is already loaded — see
-   * {@link ClosedTeamMateRecord}.
-   */
-  private async createIdentity(
-    input: SpawnTeamMateRequest,
-    allocation: FreshIdentityAllocation,
-  ): Promise<{ identity: AgentEntityIdentity; store: AgentIdentityStore }> {
-    const { name, teamId, agentRuntime, identityPrompt } = allocation;
-    const workspace = await resolveSpawnWorkspace({
-      config: this.opts.config.current(),
-      worktrees: this.worktrees,
-      dispatcherId: this.dispatcherId,
-      name,
-      request: input,
-    });
-    if (input.sharedWorkspace === undefined) {
-      await assertManagedWorktreeAvailable({
-        peers: this.store,
-        name,
-        worktree: workspace.worktree,
-      });
-    }
-    const store = this.store.entity(name);
-    const identity = await store.create(
-      {
-        name,
-        teamId: teamId ?? null,
-        agentRuntime,
-        sourceCwd: workspace.sourceCwd,
-        sourceRepo: workspace.sourceRepo,
-        cwd: workspace.runtimeCwd,
-        runtimeCwd: workspace.runtimeCwd,
-        worktree: workspace.worktree,
-        intent: input.intent,
-        identityPrompt,
-        skillSources: input.skillSources,
-        status: 'stopped',
-      },
-      this.store.onPersisted,
-    );
-    return { identity, store };
-  }
-
-  private async publishEntity(
-    identity: AgentEntityIdentity,
-    store: AgentIdentityStore,
-  ): Promise<AgentService> {
-    return this.publish(await this.buildEntity(identity, store));
-  }
-
   /** Hold one live entity, once. */
   private publish(entity: AgentService): AgentService {
     const name = entity.name;
@@ -757,21 +788,70 @@ export class TeammateCollection implements TeammateOps {
   }
 
   /**
-   * `store` must be the exact `AgentIdentityStore` instance that already
-   * read or created `identity` — never a fresh `this.store.entity(name)`
-   * mint here. See {@link ClosedTeamMateRecord}.
-   *
+   * Open the entity already at `name`'s directory, or `null` when its
+   * identity is missing. Used by a reopen (`buildReopened`) and by a
+   * materialize that found a non-closed record (`materializeEntity`) —
+   * both bind and load their own store through the factory, so there is no
+   * store instance to carry forward from an earlier read.
+   */
+  private openEntity(name: string): Promise<AgentService | null> {
+    return this.opts.agentServiceFactory.open({
+      location: { dir: this.store.entityDir(name), expectedName: name },
+      options: (identity) => this.teammateOptions(identity, {}),
+      deps: this.entityBuildDeps(),
+      log: this.opts.log,
+    });
+  }
+
+  /**
+   * Every collaborator an entity this Collection builds needs besides its
+   * identity storage and its role-specific options — the same for a fresh
+   * create and a reopen, so both `createFreshEntity` and `openEntity` share
+   * it.
+   */
+  private entityBuildDeps(): AgentEntityBuildDeps {
+    return {
+      config: this.opts.config,
+      agentRuntimeProviders: this.opts.agentRuntimeProviders,
+      onPersisted: this.opts.onPersisted,
+      findManagedWorktreeOwner: (path, excludingName) =>
+        this.findManagedWorktreeOwner(path, excludingName),
+      worktrees: this.worktrees,
+      conversationProjection: this.opts.conversationProjection,
+      log: this.opts.log,
+    };
+  }
+
+  /**
+   * The name of whichever sibling already owns `path` as its managed
+   * worktree, or `null` when it is free. Asked fresh on each call, never a
+   * snapshot taken at construction: a sibling's managed worktree occupancy
+   * can change between calls.
+   */
+  private async findManagedWorktreeOwner(
+    path: string,
+    excludingName: string,
+  ): Promise<string | null> {
+    const collision = (await this.store.list()).find(
+      (identity) =>
+        identity.name !== excludingName &&
+        identity.worktree.mode === 'managed' &&
+        identity.worktree.path === path,
+    );
+    return collision?.name ?? null;
+  }
+
+  /**
    * Runs the owning Dispatcher's `teammateLaunch` hook first, carrying this
    * collection's own Team scope: plugin skill roots follow `identity`'s own
    * roots, fenced against them, and plugin instructions follow the built-in
    * membership sentence, landing just before `identity_prompt` (see
    * {@link teammateSystemPromptOptions}).
    */
-  private async buildEntity(
+  private async teammateOptions(
     identity: AgentEntityIdentity,
-    store: AgentIdentityStore,
-    options: CreateLockedTeammateOptions = {},
-  ): Promise<AgentService> {
+    options: CreateLockedTeammateOptions,
+  ): Promise<TeammateServiceOptions> {
     const draft = await composeLaunchDraft(
       this.opts.teammateLaunch,
       identity.skill_sources,
@@ -782,27 +862,16 @@ export class TeammateCollection implements TeammateOps {
       options.systemPromptAppend,
       draft.instructions,
     );
-    return this.opts.agentServiceFactory.create({
-      identity,
-      options: {
-        runtimeId: childAgentRuntimeId(identity),
-        // Every Agent a TeammateCollection owns is a TeamMate, Team-scoped or
-        // not; the value comes from being this owner, never from the record.
-        role: 'teammate',
-        loggerFields: { teammate: identity.name },
-        skillSources: [...identity.skill_sources, ...draft.skillSources],
-        outputSchema: options.outputSchema,
-        ...(systemPrompt ?? {}),
-      },
-      config: this.opts.config,
-      agentRuntimeProviders: this.opts.agentRuntimeProviders,
-      identities: store,
-      onPersisted: this.store.onPersisted,
-      peers: this.store,
-      worktrees: this.worktrees,
-      conversationProjection: this.opts.conversationProjection,
-      log: this.opts.log,
-    });
+    return {
+      runtimeId: childAgentRuntimeId(identity),
+      // Every Agent a TeammateCollection owns is a TeamMate, Team-scoped or
+      // not; the value comes from being this owner, never from the record.
+      role: 'teammate',
+      loggerFields: { teammate: identity.name },
+      skillSources: [...identity.skill_sources, ...draft.skillSources],
+      outputSchema: options.outputSchema,
+      ...(systemPrompt ?? {}),
+    };
   }
 
   /**
@@ -855,14 +924,15 @@ export class TeammateCollection implements TeammateOps {
     // moved past what the record says.
     const reopening = this.reopening.get(name);
     if (reopening !== undefined) return reopening;
-    const { identity, store } = await this.readIdentity(name);
+    const identity = await this.readIdentity(name);
     // A materialization elsewhere may have published this entity while the
     // read above was in flight.
     const existing = this.liveEntity(name);
     if (existing !== null) return existing;
-    return identity.status === 'closed'
-      ? { identity, store }
-      : this.publishEntity(identity, store);
+    if (identity.status === 'closed') return { identity };
+    const entity = await this.openEntity(name);
+    if (entity === null) throw teamMateNotFound(name);
+    return this.publish(entity);
   }
 
   // Generic so the flight's starter keeps the narrower result it produced
@@ -896,25 +966,17 @@ export class TeammateCollection implements TeammateOps {
       this.assertInCollection(identity);
       return identity;
     }
-    return (await this.readIdentity(name)).identity;
+    return this.readIdentity(name);
   }
 
-  /**
-   * Read one member's identity, paired with the exact `AgentIdentityStore`
-   * instance that read it — see {@link ClosedTeamMateRecord}. A one-shot
-   * caller (`mustIdentity`) discards the store; `materializeEntity` keeps it
-   * so a later reopen can hand `buildEntity` a store that is already loaded.
-   */
-  private async readIdentity(
-    name: string,
-  ): Promise<{ identity: AgentEntityIdentity; store: AgentIdentityStore }> {
-    const store = this.store.entity(name);
-    const identity = await store.read();
+  /** A read-only snapshot of one member's identity — no store kept. */
+  private async readIdentity(name: string): Promise<AgentEntityIdentity> {
+    const identity = await this.store.entity(name).read();
     if (identity === null) {
       throw teamMateNotFound(name);
     }
     this.assertInCollection(identity);
-    return { identity, store };
+    return identity;
   }
 
   private async rosterList(): Promise<AgentEntityIdentity[]> {
