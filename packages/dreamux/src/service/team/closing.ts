@@ -1,5 +1,3 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -19,7 +17,6 @@ import type { WorkflowService } from '../workflow-service/index.js';
 
 export interface TeamClosingDeps {
   teamId: string;
-  dispatcherId: string;
   workflows: WorkflowService;
   scheduler: SchedulerService;
   members: TeammateCollection;
@@ -38,7 +35,6 @@ export interface TeamClosingDeps {
     worktree?: AgentEntityWorktreeIdentity;
     cleanupForce?: boolean;
   }) => Promise<TeamRecord>;
-  log: DreamuxLogger;
 }
 
 /**

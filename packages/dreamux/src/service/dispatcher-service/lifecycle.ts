@@ -1,6 +1,5 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import type { CoreCommandRegistry } from '../../command/types.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import type { ConfigReader } from '../../config/service.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
@@ -11,7 +10,6 @@ import {
 } from '../../platform/shutdown-errors.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { ChannelService } from '../channel-service/index.js';
-import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { SchedulerService } from '../scheduler/index.js';
 import type { TeamCollection } from '../team/index.js';
@@ -27,13 +25,6 @@ interface DispatcherLifecycleOptions {
   channels: ChannelService;
   /** This dispatcher's own agent, built here once channels are ready. */
   dispatcherAgent: DispatcherAgent;
-  /**
-   * The Server-owned admitted Command port every Channel session invokes
-   * through. It is the same port the admin socket uses; a Channel never reaches
-   * the raw registry.
-   */
-  commands: CoreCommandRegistry;
-  coreEvents: DispatcherCoreEventBus;
   scheduler: SchedulerService;
   teams: TeamCollection;
   teammates: TeammateCollection;
@@ -276,8 +267,11 @@ export class DispatcherLifecycle {
     // first submission; it does not cover an already-materialized entity's
     // pre-fence admission reviving its runtime after the first sweep already
     // passed it by. Every step this repeats is idempotent (phase checks,
-    // cached tasks, evict-on-success collections), so repeating it costs
-    // nothing when there was nothing left to catch.
+    // cached tasks, collections that keep what they stopped), so repeating it
+    // costs nothing when there was nothing left to catch. What this cannot
+    // catch: such an admission whose revived start never returns (codex
+    // `thread/start` has no timeout) holds the drain above, so this pass is
+    // never reached.
     await this.sweepRuntimes(failures);
     // Channel/session close runs last: it revokes this dispatcher's Core-event
     // subscriptions itself, immediately before it closes the sessions holding

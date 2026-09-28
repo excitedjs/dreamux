@@ -45,7 +45,6 @@ export interface SchedulerServiceOptions {
    * runtime's decision, made where it is already made.
    */
   submitScheduled(input: {
-    jobId: string;
     prompt: string;
     sourceId: string;
   }): Promise<TurnAdmission>;
@@ -247,7 +246,6 @@ export class SchedulerService implements SchedulerCommands {
       if (generation !== this.lifecycleGeneration) return;
       if (job === null || !job.enabled) return;
       const result = await this.opts.submitScheduled({
-        jobId: job.id,
         prompt: job.action.prompt,
         sourceId: this.nextFireSourceId(job.id),
       });
@@ -346,9 +344,8 @@ export class SchedulerService implements SchedulerCommands {
    * is already disabled needs no missed-outcome write (writing a fresh
    * `next_run_at` onto it would be exactly the misleading value `doUpdate`
    * already takes care not to persist), and a `current` whose `next_run_at`
-   * already sits in the future has already been rescheduled by whatever
-   * committed since this fire — that commit's own `arm()` call is the one
-   * that should stand, not this stale fire's. Called from inside
+   * already sits in the future is not advanced again by this stale fire.
+   * Arming is decided by the caller, not here. Called from inside
    * `store.applyMissed`'s serialized update, so `current` is read at the
    * exact moment this settlement is about to write, closing the window a
    * concurrent `cron.update` could otherwise race.
@@ -381,10 +378,13 @@ export class SchedulerService implements SchedulerCommands {
    * update, so a `cron.update` the owner committed while the submission was
    * in flight — a reschedule, a disable, a re-enable — is what the missed
    * outcome is projected onto or deferred to, never overwritten by a stale
-   * `recurring`/`enabled`/`next_run_at`. `updated` is `null` when there was
-   * nothing to settle (the job was deleted, or `missedOutcome` found the row
-   * already moved past this fire), in which case there is nothing to arm
-   * either — whatever committed since already armed its own outcome.
+   * `recurring`/`enabled`/`next_run_at`. Whether to write and whether to arm
+   * are decided separately: a row `missedOutcome` left alone is still armed
+   * as it stands, because a future `next_run_at` does not prove anyone armed
+   * it — a wall clock stepped backward while the submission was in flight
+   * leaves this fire's own, already-consumed schedule in the future. `arm()`
+   * clears first, so re-arming a row a concurrent update already armed is
+   * harmless. `updated` is `null` only when the job was deleted.
    */
   private async rearm(
     job: CronJob,

@@ -10,6 +10,7 @@ import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { ClosedSubscription } from '../../platform/closed-fact.js';
 import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import { ServerShuttingDownError } from '../../platform/errors.js';
 import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
 import type { TurnAdmission } from '../agent/turn.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
@@ -81,6 +82,13 @@ export class TeamCollection implements TeamsPort {
     string,
     Promise<TeamService | null>
   >();
+  /**
+   * Created Teams whose initial turn is still being admitted. Not in `live`,
+   * because a Team that is not yet running must not be served; held here,
+   * because that turn starts the leader's runtime and a host stop has to reach
+   * it.
+   */
+  private readonly starting = new Set<TeamService>();
   /** Serializes the whole lookup/create sequence per request id. */
   private readonly createRequestLifecycle = new KeyedAsyncQueue();
 
@@ -96,23 +104,6 @@ export class TeamCollection implements TeamsPort {
       store: this.store,
       log: opts.log,
       live: (teamId) => this.live.get(teamId)?.service ?? null,
-    });
-  }
-
-  /**
-   * Allocate one free concrete Team name.
-   *
-   * Free means only "no valid Team record occupies it". Returning a candidate
-   * reserves nothing: a concrete name is owned exactly while a valid Team
-   * record sits at it, so a caller that loses the race allocates again.
-   */
-  async allocateName(namePrefix: string): Promise<string> {
-    requireLifecycleText(namePrefix, 'Team name prefix');
-    return allocateConcreteNameAsync({
-      kind: 'team',
-      base: namePrefix,
-      accept: async (candidate) => (await this.store.get(candidate)) === null,
-      generateSuffix: this.opts.nameSuffixGenerator,
     });
   }
 
@@ -625,19 +616,20 @@ export class TeamCollection implements TeamsPort {
    * done to entities the run never started.
    */
   async stopForHost(): Promise<void> {
-    const entries = [...this.live.values()];
+    const services = [
+      ...[...this.live.values()].map((entry) => entry.service),
+      ...this.starting,
+    ];
+    // Nothing is evicted: a stopped Team is still this collection's until it
+    // closes, so the dispatcher's second sweep reaches it again if a pre-fence
+    // use restarted its leader in between.
     const results = await Promise.allSettled(
       // The containment root publishes its aggregate admission fence before
       // this sweep. Do not hold a Team route lock while releasing members:
       // their captured completion delivery may resolve the same TeamLeader
       // through that route before the leader itself is released.
-      entries.map((entry) => entry.service.stopForHost()),
+      services.map((service) => service.stopForHost()),
     );
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        this.evict(entries[index]!.service.id, entries[index]!.service);
-      }
-    });
     throwSettledFailures(results, 'multiple Team runtimes failed to stop');
   }
 
@@ -679,20 +671,24 @@ export class TeamCollection implements TeamsPort {
     teamId: string,
   ): Promise<TeamService | null> {
     const workspace = await this.prepareWorkspace(input, teamId);
+    const serviceInput = {
+      teamId,
+      name: input.name,
+      createRequest: input.createRequest,
+      prompt: input.prompt,
+      deliverCompletionToDispatcher: input.deliverCompletionToDispatcher,
+      leaderAgentRuntime: input.leaderAgentRuntime,
+      intent: input.intent,
+      identity: input.identity,
+      skillSources: input.skillSources,
+      workspace,
+    };
     let created: TeamService | null;
     try {
-      created = await TeamService.createNew(this.depsBase(teamId), {
-        teamId,
-        name: input.name,
-        createRequest: input.createRequest,
-        prompt: input.prompt,
-        deliverCompletionToDispatcher: input.deliverCompletionToDispatcher,
-        leaderAgentRuntime: input.leaderAgentRuntime,
-        intent: input.intent,
-        identity: input.identity,
-        skillSources: input.skillSources,
-        workspace,
-      });
+      created = await TeamService.createNew(
+        this.depsBase(teamId),
+        serviceInput,
+      );
     } catch (error) {
       await this.discardUnclaimedCheckout(teamId, workspace);
       throw error;
@@ -700,6 +696,13 @@ export class TeamCollection implements TeamsPort {
     if (created === null) {
       await this.discardUnclaimedCheckout(teamId, workspace);
       return null;
+    }
+    this.starting.add(created);
+    try {
+      this.refuseIfClosing(created);
+      await created.startCreated(serviceInput);
+    } finally {
+      this.starting.delete(created);
     }
     this.track(created);
     return created;
@@ -847,19 +850,26 @@ export class TeamCollection implements TeamsPort {
       // rebuilt at the same id afterwards is a different object and stays.
       subscription: service.onClosed(() => this.evict(service.id, service)),
     });
-    // `create`/`rebuild` can finish registering a Team after the dispatcher's
-    // own `close()` already published its fence (they cross `admitOperation`
-    // or run as part of startup before that fact can change, but finish
-    // constructing afterward). Unlike `TeammateCollection`'s equivalent
-    // check, this Team's leader may already have taken its first submission
-    // by the time this runs (`TeamService.createNew` submits it internally,
-    // before this collection ever sees the object), so this cannot prevent
-    // that — it only stops the runtime as soon as this collection notices,
-    // rather than leaving it running until the dispatcher's own post-drain
-    // sweep reaches it.
-    if (this.opts.isClosing()) {
-      service.stopForHost().catch(() => undefined);
-    }
+    this.refuseIfClosing(service);
+  }
+
+  /**
+   * Stop a just-held Team and refuse to go on, when the dispatcher is already
+   * closing.
+   *
+   * `create`/`rebuild` cross `admitOperation` before `close()` publishes its
+   * fence but finish constructing afterward, after the dispatcher's first
+   * sweep may already have passed. `stopForHost()` gives back runtime
+   * authority without closing anything, so a caller that went on would simply
+   * start the runtime again; throwing is what stops the continuation — for a
+   * created Team, before its initial turn starts the leader's runtime.
+   */
+  private refuseIfClosing(service: TeamService): void {
+    if (!this.opts.isClosing()) return;
+    service.stopForHost().catch(() => undefined);
+    throw new ServerShuttingDownError(
+      `dispatcher '${this.dispatcherId}' is shutting down`,
+    );
   }
 
   private evict(teamId: string, expectedService: TeamService): void {

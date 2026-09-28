@@ -2,7 +2,6 @@ import type {
   AgentRuntimeInterruptOutcome,
   LaunchDraft,
   Team,
-  TeamStateTeammateSummary,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 import { errorInfo, type TransactionalStore } from '@excitedjs/dreamux-utils';
@@ -283,14 +282,12 @@ export class TeamService implements Team {
     });
     this.closing = new TeamClosing({
       teamId,
-      dispatcherId: deps.dispatcherId,
       workflows: this.workflowService,
       scheduler: this.scheduler_,
       members: this.teammateCollection,
       worktrees: deps.worktrees,
       record: () => this.mustRecord(),
       commit: (patch) => this.updateRecord(patch),
-      log: deps.log,
     });
   }
 
@@ -300,6 +297,11 @@ export class TeamService implements Team {
    * `null` means a valid Team record already occupies the candidate: nothing
    * was created and the caller should allocate another name. Every other
    * failure throws.
+   *
+   * This stops once the record and the leader exist, before anything can start
+   * a runtime: the rest of creation is {@link startCreated}, which the owner
+   * calls only after it holds this Team, so a host stop can reach the leader
+   * whose first turn is starting.
    */
   static async createNew(
     deps: TeamServiceDeps,
@@ -354,8 +356,6 @@ export class TeamService implements Team {
     // yet, so this states the same empty-teammates fact a fresh Team always
     // starts with.
     service.roster.publishTeamState(published.updated_at);
-    let team = published;
-    let leader: AgentService | null = null;
     try {
       // The TeamMate layer owns identity creation: the Team hands over its own
       // creation inputs and gets back a leader, rather than assembling and
@@ -365,7 +365,7 @@ export class TeamService implements Team {
       // a provider thread is never opened without the turn that makes it
       // durable. A codex thread started without a turn writes no rollout, and
       // the next start of that leader fails to resume it.
-      leader = await service.createLeader({
+      service.leader_ = await service.createLeader({
         leaderName,
         agentRuntime: input.leaderAgentRuntime,
         sourceCwd: input.workspace.sourceCwd,
@@ -375,7 +375,19 @@ export class TeamService implements Team {
         identityPrompt,
         skillSources: input.skillSources,
       });
-      service.leader_ = leader;
+      return service;
+    } catch (error) {
+      return await service.abandonCreated(error, input);
+    }
+  }
+
+  /**
+   * Finish a creation {@link createNew} published: the initial prompt, the
+   * `running` transition, and Workflow and scheduler admission. A failure
+   * abandons the creation exactly as a failure inside `createNew` does.
+   */
+  async startCreated(input: TeamServiceCreateInput): Promise<void> {
+    try {
       if (input.prompt !== undefined) {
         // Same leader-submission path every other turn takes (`admit` fence,
         // `submitInput`), so the initial turn throws exactly as a later one
@@ -383,10 +395,10 @@ export class TeamService implements Team {
         // for it, extracting the message for `failed`/`ambiguous` and naming
         // the status otherwise.
         const initiator = input.deliverCompletionToDispatcher
-          ? await deps.leaderCompletionInitiator()
+          ? await this.deps.leaderCompletionInitiator()
           : null;
         const submission = toSubmissionResult(
-          await service.submitToLeader({
+          await this.submitToLeader({
             source: AGENT_TASK_SOURCE,
             text: input.prompt,
             ...(initiator !== null ? { initiator } : {}),
@@ -405,59 +417,66 @@ export class TeamService implements Team {
           );
         }
       }
-      team = await service.updateRecord({ status: 'running' });
-      await service.workflowService.start();
-      await service.startScheduler();
-      return service;
+      await this.updateRecord({ status: 'running' });
+      await this.workflowService.start();
+      await this.startScheduler();
     } catch (error) {
-      if (service.leader_ === null) {
-        // Only adopt an identity this Team can prove is its own leader's;
-        // anything else at that location is not ours to close. Attempted
-        // before the close below so `abandonCreation` closes whatever this
-        // creation actually made durable, not just what it built in memory.
-        try {
-          const durable = await service.leaderIdentity.read();
-          if (durable !== null && alignedWithLeader(durable, team)) {
-            service.leader_ = await restoreTeamLeaderAgentForTeam({
-              ...service.leaderAgentBase(),
-              identity: durable,
-            });
-          }
-        } catch (adoptError) {
-          // The original `error` is still what `abandonCreation` reports and
-          // closes against; a leader this Team cannot prove or rebuild is
-          // logged rather than left to replace the reason creation actually
-          // failed.
-          deps.log.error(
-            {
-              dispatcher_id: deps.dispatcherId,
-              team_id: input.teamId,
-              err: errorInfo(adoptError),
-            },
-            'Team creation-failure leader adoption did not converge',
-          );
-        }
-      }
-      return await service.closing.abandonCreation(
-        {
-          cause: error,
-          note: 'Team creation failed',
-          // The Team exists and is being closed, so its record answers for
-          // the checkout — but only for one this creation actually made. A
-          // checkout that was already there was never this attempt's to
-          // reclaim.
-          worktree: input.workspace.createdCheckout
-            ? {
-                ...input.workspace.worktree,
-                cleanup_state: 'cleanup-pending',
-                cleanup_error: null,
-              }
-            : input.workspace.worktree,
-          settleWorktree: () => deps.settleWorktreeCleanup(input.teamId),
-        },
-        service.leader_,
-      );
+      await this.abandonCreated(error, input);
     }
+  }
+
+  /** Close a creation that failed after its record was published. */
+  private async abandonCreated(
+    error: unknown,
+    input: TeamServiceCreateInput,
+  ): Promise<never> {
+    if (this.leader_ === null) {
+      // Only adopt an identity this Team can prove is its own leader's;
+      // anything else at that location is not ours to close. Attempted
+      // before the close below so `abandonCreation` closes whatever this
+      // creation actually made durable, not just what it built in memory.
+      try {
+        const durable = await this.leaderIdentity.read();
+        if (durable !== null && alignedWithLeader(durable, this.mustRecord())) {
+          this.leader_ = await restoreTeamLeaderAgentForTeam({
+            ...this.leaderAgentBase(),
+            identity: durable,
+          });
+        }
+      } catch (adoptError) {
+        // The original `error` is still what `abandonCreation` reports and
+        // closes against; a leader this Team cannot prove or rebuild is
+        // logged rather than left to replace the reason creation actually
+        // failed.
+        this.deps.log.error(
+          {
+            dispatcher_id: this.deps.dispatcherId,
+            team_id: input.teamId,
+            err: errorInfo(adoptError),
+          },
+          'Team creation-failure leader adoption did not converge',
+        );
+      }
+    }
+    return await this.closing.abandonCreation(
+      {
+        cause: error,
+        note: 'Team creation failed',
+        // The Team exists and is being closed, so its record answers for
+        // the checkout — but only for one this creation actually made. A
+        // checkout that was already there was never this attempt's to
+        // reclaim.
+        worktree: input.workspace.createdCheckout
+          ? {
+              ...input.workspace.worktree,
+              cleanup_state: 'cleanup-pending',
+              cleanup_error: null,
+            }
+          : input.workspace.worktree,
+        settleWorktree: () => this.deps.settleWorktreeCleanup(input.teamId),
+      },
+      this.leader_,
+    );
   }
 
   /**
@@ -609,7 +628,9 @@ export class TeamService implements Team {
    */
   private async runDissolve(input: TeamDissolveCommand): Promise<void> {
     try {
-      await this.closing.dissolve(input, this.leader_);
+      // A leader an earlier failed attempt released is no longer held, but its
+      // identity is still open; the retry closes it from disk like any use.
+      await this.closing.dissolve(input, await this.leaderService());
     } catch (error) {
       this.dissolveTask = null;
       this.deps.log.error(
@@ -653,8 +674,13 @@ export class TeamService implements Team {
   }
 
   /** Give back the runtime authority this Team holds, without closing it. */
-  stopForHost(): Promise<void> {
-    return this.closing.stopForHost(this.leader_);
+  async stopForHost(): Promise<void> {
+    // A leader a pre-fence use is still materializing is this Team's leader
+    // the moment it settles, and that use starts its runtime next; a stop that
+    // read only `leader_` would miss exactly that runtime.
+    const building = this.leaderBuild?.catch(() => null) ?? null;
+    const built = building === null ? null : await building;
+    return this.closing.stopForHost(this.leader_ ?? built);
   }
 
   /**
@@ -816,11 +842,6 @@ export class TeamService implements Team {
       onPersisted: (identity) => this.roster.publish(identity, 'team_leader'),
       leaderLaunch: this.hooks.leaderLaunch,
     });
-  }
-
-  /** This Team's contained Agents, as a fresh summary per publication. */
-  teammatesSummary(): readonly TeamStateTeammateSummary[] {
-    return this.roster.summary();
   }
 
   /**
