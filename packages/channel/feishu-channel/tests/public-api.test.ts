@@ -2,10 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import * as feishuChannel from '../src/index.js';
 
-export type RemovedFakeFeishuBotMustStayUnexported =
-  // @ts-expect-error -- test doubles must not return to the published package API.
-  import('../src/index.js').FakeFeishuBot;
-
 /**
  * Every name a prior Core-owned binding/Collaboration Space/target-resolution
  * architecture used, per the frozen "DELETED SURFACES" list this refactor

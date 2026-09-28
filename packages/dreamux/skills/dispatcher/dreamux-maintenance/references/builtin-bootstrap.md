@@ -9,6 +9,11 @@ Enable it by listing it in the top-level `plugins[]` of `config.json`:
 It has no `config` reader, so a `config` block on its `plugins[]` entry is
 ignored, not rejected. It applies to every Dispatcher.
 
+The plugin package is not published to npm in the current release, so an
+installed Dreamux cannot load it: listing `builtin:bootstrap` fails plugin
+loading at `dreamux serve` and `dreamux doctor`. Leave it out of `plugins[]`
+until a release ships the package.
+
 ## Files
 
 All three live in `<dispatcher cwd>/.workspace/`:

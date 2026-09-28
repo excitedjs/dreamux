@@ -208,8 +208,9 @@ loader cannot read the old file — a wrong type or a new required field — or
 cannot find it after a path change; a removed or renamed field is ignored,
 not detected, and is never `BREAKING:` on its own.
 
-That policy exists because the Dispatcher reads the changelog at startup and
-migrates configuration itself — not because compatibility is the operator's
+That policy exists because the Dispatcher reads the changelog during an
+explicit upgrade, before the new version starts, and migrates configuration
+itself — not because compatibility is the operator's
 problem. That mechanism sometimes misses, and a human then repairs the install
 by hand, so do not lean on it: a change must not offload compatibility onto the
 upgrading Dispatcher when it could simply leave existing files readable and

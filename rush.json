@@ -77,7 +77,7 @@
     {
       "packageName": "@excitedjs/dreamux-plugin-bootstrap",
       "projectFolder": "packages/plugins/bootstrap",
-      "shouldPublish": true
+      "shouldPublish": false
     }
   ]
 }

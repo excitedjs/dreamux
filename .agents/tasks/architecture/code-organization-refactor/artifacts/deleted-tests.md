@@ -4705,3 +4705,33 @@ moved again after the recipe was written (the settlement-envelope,
 final-pass claim (`bin-launcher.test.ts` was red on a clean build); each
 correction is logged inline at its own entry, marked "PR #455 review round
 correction."
+
+## PR #455 review round 2 (operator ruling on `@ts-expect-error`)
+
+The operator, on the five `@ts-expect-error` directives Stage 3 relocated
+after prettier rewrapped them: "这些 @ts-expect-error 我感觉能干掉就干掉".
+Four of the five were in `packages/dreamux/tests/submission-envelope.test.ts`,
+which the final pass already deleted whole (logged above). The fifth is
+deleted here.
+
+- **File / case:** `packages/channel/feishu-channel/tests/public-api.test.ts`
+  — the type-level assertion `RemovedFakeFeishuBotMustStayUnexported`
+  (`import('../src/index.js').FakeFeishuBot` under `@ts-expect-error`).
+  **Contract pinned:** the `FakeFeishuBot` test double is not exported from
+  the package entry.
+  **Failure:** none; deleted by operator ruling, not by a failing run.
+  **Contract still holds; do not restore as a `@ts-expect-error`.** If the
+  #453 test pass wants it back, assert it at runtime (for example
+  `expect('FakeFeishuBot' in feishuChannel).toBe(false)`).
+
+- **HIGH-RISK, restore first.** **File / case:**
+  `packages/dreamux/tests/package-boundary-guards.test.ts` —
+  `it('a default @excitedjs/dreamux install bundles the built-in provider packages')`.
+  **Contract pinned:** `@excitedjs/dreamux`'s runtime `dependencies` carry
+  the built-in runtime and channel packages, so a default install keeps
+  `builtin:codex`, `builtin:claude-code` and `builtin:feishu` (issue #209).
+  **Failure:** the case also listed `@excitedjs/dreamux-plugin-bootstrap`,
+  which R56 moved to a dev dependency when the package stopped publishing.
+  **Contract still holds for the other three packages.** Restore verbatim
+  without the bootstrap line; add the line back when bootstrap publishes again.
+

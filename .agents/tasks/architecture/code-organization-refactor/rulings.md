@@ -265,6 +265,10 @@ before the remaining stages run as one orchestration ("后面所有的PR，你�
 
 - R53 gates during the run (2026-09-25 14:24), after two stages each took hours mostly running full gates per work item: "我觉得可以，毕竟是完全重写，你每个阶段都要求类型全过，lint全过，test全过这不现实。应该一次性把代码全部写完，回头再修类型和lint问题，最后再补充单测。" → From stage 2b's review onward, stages are written without running build, lint, typecheck:tests or tests. One final pass after the last stage makes types and lint green and deletes failing tests per R43. Unit tests are still added last on #453. Each stage commit still passes the pre-commit hook, which lints the staged `.ts` files.
 
+- R54 MCP delegate identity (a Stage 7 change no earlier ruling covered): a delegate's MCP server identity is derived from its registration name (`dreamux-<name>` at the package version) instead of being read, validated and frozen from its own `describe()` response. Asked what it affects, the operator was told that all four delegates are Core-owned, `McpDelegate` is not in `dreamux-types`, every previous `describe()` identity already equaled `dreamux-<name>`, and the `serverInfo` a runtime sees is unchanged; asked who consumes `describe()`, the chain was explained (lease mint → `mcp.describe` → shim `serverInfo`). His reply: "那看起来好像没啥影响才对。" → The derivation stays; `describe()` supplies only the tool catalog.
+- R55 `@ts-expect-error` in tests (the five Stage 3 relocated): "这些 @ts-expect-error 我感觉能干掉就干掉". → Deleted with the assertion each guarded, logged in the ledger. Scope is those five; other directives are not covered.
+- R56 publishing the bootstrap plugin: "先给这个包的 shouldpublish 设置成false，这次先不测这个插件". → `@excitedjs/dreamux-plugin-bootstrap` has `shouldPublish: false`, and `@excitedjs/dreamux` takes it as a dev dependency, since a runtime dependency on an unpublished package would make `dreamux` uninstallable. `builtin:bootstrap` is unavailable in published builds until this is reverted.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's

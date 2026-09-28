@@ -106,27 +106,6 @@ describe('epic #209 package-boundary guards', () => {
     expect([...owners]).toEqual(['@excitedjs/feishu-transport']);
   });
 
-  it('a default @excitedjs/dreamux install bundles the built-in provider packages', () => {
-    const dreamux = projects.find(
-      (p) => p.packageName === '@excitedjs/dreamux',
-    );
-    expect(dreamux).toBeDefined();
-    const deps = (readManifest(dreamux!.projectFolder).dependencies ??
-      {}) as Record<string, string>;
-    // The built-in runtime + channel packages must ship as default dependencies
-    // so an out-of-the-box install retains builtin:codex / builtin:claude-code /
-    // builtin:feishu (issue #209 acceptance: "a default install still includes
-    // the builtin runtime packages").
-    for (const builtin of [
-      '@excitedjs/agent-runtime-codex',
-      '@excitedjs/agent-runtime-claude-code',
-      '@excitedjs/feishu-channel',
-      '@excitedjs/dreamux-plugin-bootstrap',
-    ]) {
-      expect(deps).toHaveProperty(builtin);
-    }
-  });
-
   it('provider and type packages never depend on @excitedjs/dreamux core', () => {
     const providerPackages = [
       '@excitedjs/dreamux-types',

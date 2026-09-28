@@ -39,7 +39,6 @@
   "dependencies": {
     "@excitedjs/agent-runtime-claude-code": "workspace:*",
     "@excitedjs/agent-runtime-codex": "workspace:*",
-    "@excitedjs/dreamux-plugin-bootstrap": "workspace:*",
     "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-channel": "workspace:*",
@@ -55,6 +54,7 @@
     "tapable": "~2.3.3"
   },
   "devDependencies": {
+    "@excitedjs/dreamux-plugin-bootstrap": "workspace:*",
     "@excitedjs/eslint-config": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "^22.10.0",
