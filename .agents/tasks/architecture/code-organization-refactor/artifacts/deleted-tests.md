@@ -4768,11 +4768,11 @@ at the one real construction site), but it broke every hand-built
 `CodexRuntimeDeps` object literal in the test package, all of which predate
 this requirement.
 
-- **File:** `packages/agent-runtime/codex/tests/codex-runtime.test.ts` (whole
+- **HIGH-RISK, restore first.** **File:** `packages/agent-runtime/codex/tests/codex-runtime.test.ts` (whole
   file, 48 cases across 9 `describe` blocks: `start() continuity` (3),
   `developerInstructions re-supply` (4), `state sink ordering and durability`
   (3), `stop() semantics` (4), `submit() and settlement` (9), `token usage`
-  (6), `native turn end` (13), `outputSchema binding` (3), and
+  (6), `native turn end` (15), `outputSchema binding` (3), and
   `AgentRuntimeProvider public surface` (1)).
   **Contract pinned:** `CodexRuntime`'s full synthetic-protocol lifecycle —
   fresh/resumed continuity reporting and the durable-publish-before-resolve
@@ -4788,23 +4788,31 @@ this requirement.
   object literal omitting `codexBinPath` — a compile error at the helper's
   own definition (`tsc -p tsconfig.tests.json`: `Property 'codexBinPath' is
   missing in type ... but required in type 'CodexRuntimeDeps'`). A second,
-  independent `CodexRuntimeDeps` literal inside the "restarts twice, and
-  every native RPC call after each restart reaches the new client" case
-  (Stage: `stop() semantics`) has the same omission. All 48 cases route
+  independent `CodexRuntimeDeps` literal inside the "re-sends
+  developerInstructions on the resume-fallback thread/start after a child
+  crash" case (`developerInstructions re-supply`) has the same omission. All 48 cases route
   through one or the other; no case survives independently.
   **Contract still holds; restore in the final PR** by adding
   `codexBinPath: '<any fake path>'` to both object literals (`makeDeps()`
   and the second inline literal) — production already always supplies a real
   value, so this is fixture completion, not a design question.
 
-- **File:** `packages/agent-runtime/codex/tests/codex-ultrathink.test.ts`
-  (whole file, 6 cases). **Contract pinned:** effort-hint injection for
-  `ultrathink` submissions — the exact hint sentence is appended once per
-  matching submission, is not duplicated on a folded resume, and is absent
-  for non-matching text. **Failure:** the shared `createRuntime()` helper's
-  `CodexRuntimeDeps` literal omits `codexBinPath`, same class as above; all 6
-  cases construct their runtime through it. **Contract still holds; restore
-  in the final PR** by adding `codexBinPath: '<any fake path>'` to
+- **HIGH-RISK, restore first.** **File:** `packages/agent-runtime/codex/tests/codex-ultrathink.test.ts`
+  (whole file, 11 blocks: 6 `it` and 5 `it.each`, 20 cases in all).
+  **Contract pinned:** an `ultrathink` submission (whole-word,
+  case-insensitive match) raises that `turn/start` to the selected model's
+  maximum supported effort and appends the effort hint without altering the
+  original text; the next ordinary submission restores the original effort,
+  and a resumed thread left at a temporary high effort restores the
+  configured one. The maximum comes from the model's effort catalog,
+  including a later catalog page; unusable effort metadata is rejected
+  before input is sent; a stop or a failed native session during catalog
+  discovery sends no input. Marked and ordinary busy inputs fold into one
+  native turn without awaiting completion, and no other runtime or global
+  setting changes. **Failure:** the shared `createRuntime()` helper's
+  `CodexRuntimeDeps` literal omits `codexBinPath`, same class as above; all
+  20 cases construct their runtime through it. **Contract still holds;
+  restore in the final PR** by adding `codexBinPath: '<any fake path>'` to
   `createRuntime()`'s literal.
 
 - **File:** `packages/agent-runtime/codex/tests/helpers/codex-runtime-fakes.ts`

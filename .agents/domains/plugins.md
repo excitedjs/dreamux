@@ -134,9 +134,8 @@ Order, all inside `loadConfig` except the last two steps:
    `plugins[]` while config still addresses its provider.
 4. Run each plugin's `config.read` on its entry's `config`. A `config` block
    for a plugin with no `config.read` is ignored: a plugin with no reader has
-   nowhere to route the block that would give it effect. This is narrower than
-   general unknown-field tolerance — `rejectUnknownKeys` still applies to
-   `plugins[]` entry keys and elsewhere in `config.ts`.
+   nowhere to route the block that would give it effect. An unrecognized key
+   on a `plugins[]` entry is ignored, as everywhere else in config.json.
 5. `startPlugins` (serve and doctor only): run every `server`.
 6. For each plugin with an `api`, call the taps on `hooks.plugin.for(name)`.
    This runs last because tapable hooks do not replay: a plugin loaded later
