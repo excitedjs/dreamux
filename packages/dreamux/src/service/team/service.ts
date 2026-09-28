@@ -765,9 +765,9 @@ export class TeamService implements Team {
    *
    * Every step is attempted and its failure collected — a resource that will
    * not close still leaves the Team's own record closed, so nothing here can
-   * undo that. An Agent this fails to close is materialized again from the
-   * identity still at its own location the next time anything reaches it,
-   * exactly as a Team that had never dissolved materializes a dormant one.
+   * undo that. An Agent this fails to close keeps its identity on disk as
+   * inert residue: a closed Team is never rebuilt, so nothing materializes it
+   * again.
    * `this.leader_` is `null` only for a Team whose creation failed before a
    * leader ever existed; dissolve and abandoned-creation cleanup share this
    * one routine.
@@ -1056,8 +1056,10 @@ export class TeamService implements Team {
     // The aggregate reports the same status transitions the record itself
     // recognizes — every status write goes through this one method, so this is
     // the whole rule, stated once, for every caller (creation's `running`
-    // transition and dissolve's `closed` transition included).
-    if (previous.status !== updated.status) {
+    // transition and dissolve's `closed` transition included). A status the
+    // store dropped because the record was already closed is not this write's
+    // transition, even though `previous` was read before the closed write.
+    if (patch.status === updated.status && previous.status !== updated.status) {
       this.publishTeamState(updated.updated_at);
     }
     return updated;
