@@ -238,9 +238,9 @@ supplies the gate's facts this way:
 - the sender is the click's operator, classified as a human;
 - the chat is the click's `open_chat_id`. The callback carries no chat kind, so
   the gate is asked for both `p2p` and `group`; only when the two answers
-  differ is the kind established: a chat listed in `group.allow_chats` is a
-  group, a direct chat an earlier inbound event showed is remembered, and only
-  then is Feishu asked (a topic-mode group is a group). A click whose operator
+  differ is the kind established, from the chat itself and never from the
+  access lists being judged: the kind an earlier inbound event in that chat
+  reported, and only then Feishu (a topic-mode group is a group). A click whose operator
   or chat is missing, or whose kind is needed and cannot be established, is
   refused;
 - the bot counts as mentioned, since a card callback reaches only the app that

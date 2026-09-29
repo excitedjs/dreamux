@@ -14,8 +14,8 @@
  * message to the group binding rather than inventing a topic that may not
  * exist. `chatType` shares this cache and lookup for a card click, which names
  * no chat kind; it does not fail open, because the access decision it feeds has
- * no safe default kind when the two kinds are decided differently. A direct-chat
- * inbound event seeds the cache, so a click in a chat this session has already
+ * no safe default kind when the two kinds are decided differently. Every inbound
+ * event states its chat's kind, so a click in a chat this session has already
  * heard from needs no lookup.
  */
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
@@ -58,6 +58,8 @@ interface FeishuInboundTargetingOptions {
 /** Resolves which target and container an inbound event's place names. */
 export class FeishuInboundTargeting {
   private readonly resolvedChatModes = new Map<string, FeishuChatMode>();
+  /** Chats an inbound event reported as groups, mode (topic or not) unknown. */
+  private readonly knownGroups = new Set<string>();
   private readonly pendingChatModes = new Map<
     string,
     Promise<FeishuChatMode | undefined>
@@ -70,11 +72,14 @@ export class FeishuInboundTargeting {
     signal?: AbortSignal,
   ): Promise<FeishuInboundRoute> {
     assertRoutingActive(signal);
-    // A direct-chat event states its chat's mode exactly. A group event cannot:
-    // it does not say whether the group is in topic mode, and a wrong entry
-    // here would stop topic detection from ever asking.
+    // A direct-chat event states its chat's mode exactly. A group event states
+    // only the kind: it does not say whether the group is in topic mode, so it
+    // is kept apart from the mode cache, where a wrong entry would stop topic
+    // detection from ever asking.
     if (event.chatType === 'p2p') {
       this.resolvedChatModes.set(event.chatId, 'p2p');
+    } else if (event.chatType === 'group') {
+      this.knownGroups.add(event.chatId);
     }
     const route = await this.project(
       {
@@ -124,8 +129,8 @@ export class FeishuInboundTargeting {
   }
 
   /**
-   * Whether a chat is a direct chat or a group: the cached mode (seeded by a
-   * direct-chat inbound event or an earlier lookup) or, failing that, the same
+   * Whether a chat is a direct chat or a group: the kind an inbound event
+   * reported, the cached mode of an earlier lookup, or, failing both, the same
    * platform lookup topic detection uses. A card click names its chat but not
    * the kind, and the access gate can decide differently for the two, so when
    * it does the kind is established rather than assumed: `undefined` when
@@ -136,6 +141,7 @@ export class FeishuInboundTargeting {
     chatId: string,
     signal?: AbortSignal,
   ): Promise<'p2p' | 'group' | undefined> {
+    if (this.knownGroups.has(chatId)) return 'group';
     const mode = await this.chatMode(chatId, signal);
     if (mode === undefined) return undefined;
     return mode === 'p2p' ? 'p2p' : 'group';

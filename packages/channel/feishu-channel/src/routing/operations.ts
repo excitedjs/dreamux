@@ -221,19 +221,14 @@ export class FeishuBindingOperations {
     target: FeishuTarget,
     requireOwner?: string,
   ): Promise<{ team_name: string | null }> {
-    // Read before the row is gone: `unbind` deletes it, and a removal notice
-    // still needs to know where the conversation it names used to reply.
-    const existing = this.opts.routing.bindingFor(target);
-    const display = existing?.display ?? null;
-    const replyTo =
-      target.kind === 'topic' ? (existing?.root_message_id ?? null) : null;
-    const teamName = await this.opts.routing.unbind(target, requireOwner);
-    if (teamName === null) return { team_name: null };
+    const removed = await this.opts.routing.unbind(target, requireOwner);
+    if (removed === null) return { team_name: null };
+    const { teamName, display } = removed;
     this.opts.cot.onRouteReleased({ teamName, target });
     this.opts.outbound.notify(
       target,
       bindingUnboundCard({ target, display, teamName }),
-      replyTo,
+      target.kind === 'topic' ? removed.rootMessageId : null,
     );
     return { team_name: teamName };
   }

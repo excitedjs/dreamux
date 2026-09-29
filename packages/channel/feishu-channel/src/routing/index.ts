@@ -356,8 +356,11 @@ export class FeishuRouting {
   async unbind(
     target: FeishuTarget,
     requireOwner?: string,
-  ): Promise<string | null> {
-    const removed: { teamName: string | null } = { teamName: null };
+  ): Promise<(FeishuRemovedRoute & { teamName: string }) | null> {
+    // The removed row is reported from inside the commit that deletes it, the
+    // way `forgetTeam` reports its routes: a snapshot read before this commit
+    // would miss a root `fillTopicRoot` committed just ahead of it.
+    let removed: (FeishuRemovedRoute & { teamName: string }) | null = null;
     await updateRoutingDocument(this.store, this.opts.stateDir, (document) => {
       const key = targetKey(target);
       const kept = document.bindings.filter((row) => {
@@ -368,14 +371,19 @@ export class FeishuRouting {
               'Dispatcher can release it.',
           );
         }
-        removed.teamName = row.team_name;
+        removed = {
+          target: fromRecord(row.target),
+          display: row.display,
+          rootMessageId: row.root_message_id,
+          teamName: row.team_name,
+        };
         return false;
       });
       if (kept.length === document.bindings.length) return false;
       document.bindings = kept;
       return true;
     });
-    return removed.teamName;
+    return removed;
   }
 
   /**

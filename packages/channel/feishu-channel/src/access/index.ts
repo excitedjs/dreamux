@@ -128,15 +128,6 @@ export class FeishuAccess {
     return dreamuxFeishuGate(this.store.current, inbound).action;
   }
 
-  /**
-   * Whether `group.allow_chats` lists this chat. The operator lists group
-   * chats there, so a listed chat's kind is known without asking Feishu.
-   */
-  async listsChat(chatId: string): Promise<boolean> {
-    await this.store.load();
-    return this.store.current.group.allow_chats.includes(chatId);
-  }
-
   /** Commit deliver/drop; pairing waits until its message has been sent. */
   async gate(inbound: GateInbound): Promise<GateAction> {
     let result!: GateResult;

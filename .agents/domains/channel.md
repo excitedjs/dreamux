@@ -285,12 +285,13 @@ whether a non-asker clicking should be gated ("不需要限制，所有人都可
 on 2026-09-30 the operator ruled "卡片点击应该走和入站消息一样的门禁", and the
 earlier ruling no longer stands. The event carries no chat kind, and the gate's rules differ
 for a direct chat and a group, so the click is decided for both kinds and the
-kind is established only when the two decisions differ. It is taken from what is
-already known before Feishu is asked: a chat the operator lists in
-`group.allow_chats` is a group (which is where a member of a trusted group who
-is not on `allow_users` differs), and a direct chat an inbound event has already
-shown is remembered by the same per-chat mode cache topic detection uses. Only
-when neither says does the click ask Feishu, through the chat-get lookup that
+kind is established only when the two decisions differ. It comes from the chat
+itself, never from the access lists being judged (a direct chat wrongly listed in
+`group.allow_chats` must still be judged as the direct chat it is): the kind an
+inbound event in that chat reported, kept by the same targeting owner as the
+per-chat mode cache topic detection uses (a group event records only the kind,
+apart from the mode, since it does not say whether the group is in topic mode). Only
+when no inbound event has said does the click ask Feishu, through the chat-get lookup that
 cache also fills. A person admitted in both or in neither kind never triggers
 the lookup. When the decision does depend on the kind and none of these can say,
 the click is refused: the lookup needs the same group information read

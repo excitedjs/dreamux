@@ -335,12 +335,11 @@ export class FeishuCardActions {
    *
    * The gate reads a direct chat and a group differently, and the event says
    * which this is only by the chat's id, so the gate is asked for both kinds
-   * and the kind is established only when the two answers differ. It is taken
-   * from what is already known — a chat the operator lists in
-   * `group.allow_chats` is a group, and a direct chat this session has heard
-   * from is remembered — and Feishu is asked last. So the ordinary clicker, a
-   * member of a trusted group or a person in their own direct chat, needs no
-   * lookup and no permission beyond the click itself. When the answer does
+   * and the kind is established only when the two answers differ. It comes
+   * from the chat itself, never from the access lists the gate is judging:
+   * the kind an inbound event in this chat reported, else Feishu. So a click in
+   * a chat this session has heard from needs no lookup and no permission
+   * beyond the click itself. When the answer does
    * depend on the kind and none of those can say, the click is refused rather
    * than admitted on a guess, unlike topic detection, which degrades to an
    * ordinary group when the same read fails. Likewise when the operator or the
@@ -374,9 +373,7 @@ export class FeishuCardActions {
     let decision = asDirect;
     let chatType: 'p2p' | 'group' | undefined;
     if ((asDirect.action === 'deliver') !== (asGroup.action === 'deliver')) {
-      chatType = (await this.opts.access.listsChat(openChatId))
-        ? 'group'
-        : await this.opts.targetRouter.chatType(openChatId);
+      chatType = await this.opts.targetRouter.chatType(openChatId);
       if (chatType === undefined) return this.refuseUnconfirmed(event, true);
       decision = chatType === 'p2p' ? asDirect : asGroup;
     }
