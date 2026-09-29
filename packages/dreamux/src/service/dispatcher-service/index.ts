@@ -6,7 +6,13 @@ import type {
   TeamCreateParams,
 } from '@excitedjs/dreamux-types';
 import { AsyncSeriesHook, AsyncSeriesWaterfallHook, SyncHook } from 'tapable';
+import { WorkFence } from '../../platform/work-fence.js';
 
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { CoreCommandRegistry } from '../../command/types.js';
+import type { DispatcherConfig } from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
 import {
   adminSocketPath as defaultAdminSocketPath,
   dispatcherCronJobsPath,
@@ -19,43 +25,32 @@ import {
   launchDraftTaps,
   waterfallTaps,
 } from '../../plugin/hooks.js';
-import type { CoreCommandRegistry } from '../../command/types.js';
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DispatcherConfig } from '../../config/config.js';
-import type { ConfigReader } from '../../config/service.js';
+import { AgentServiceFactory } from '../agent/factory.js';
+import { TeammateCollection } from '../agent/index.js';
+import { AgentNameRegistry } from '../agent/store.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
+import type { TurnAdmission } from '../agent/turn.js';
+import type { TeammateOps } from '../agent/types.js';
+import { ChannelService } from '../channel-service/index.js';
+import { CompletionDeliveryPolicy } from '../completion-router/index.js';
+import { createConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
+import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import {
   configuredDispatcherCwd,
   ensureDispatcherWorkspace,
 } from '../dispatcher-workspace.js';
-import { DispatcherLifecycle } from './lifecycle.js';
-import {
-  dispatcherAgentMcpDelegates,
-  teamLeaderMcpDelegates,
-} from './mcp-delegates.js';
-import { CompletionDeliveryPolicy } from '../completion-router/index.js';
-import { TeammateCollection } from '../agent/index.js';
-import type { TeammateOps } from '../agent/types.js';
-import { AgentNameRegistry } from '../agent/store.js';
-import type { AgentEntityIdentity } from '../agent/identity.js';
-import { AgentServiceFactory } from '../agent/factory.js';
-import { SCHEDULED_SOURCE } from '../submission-sources.js';
-import { createConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
-import type { TeammateSubmitInput } from '../agent/submission.js';
-import { WorktreeManager } from '../worktree/manager.js';
-import { TeamCollection } from '../team/index.js';
-import type { TeamsPort } from '../team/teams-port.js';
+import type { McpLeaseRegistry } from '../mcp/leases.js';
 import { SchedulerService } from '../scheduler/index.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
-import { ChannelService } from '../channel-service/index.js';
-import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
-import type { TurnAdmission } from '../agent/turn.js';
+import { TeamCollection } from '../team/index.js';
+import type { TeamsPort } from '../team/teams-port.js';
 import {
   WorkflowService,
   type WorkflowOps,
 } from '../workflow-service/index.js';
+import { WorktreeManager } from '../worktree/manager.js';
 import { DispatcherAgent } from './agent.js';
-import type { McpLeaseRegistry } from '../mcp/leases.js';
+import { DispatcherLifecycle } from './lifecycle.js';
 import type { RestartIntentConsumer } from './restart-intent.js';
 
 /**
@@ -97,12 +92,13 @@ export interface DispatcherServiceOptions {
   homePathPrefixes: readonly string[];
   adminSocketPath?: string | undefined;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
-  workflowLoggerFactory?: ((dispatcherId: string) => DreamuxLogger) | undefined;
+  workflowLog: DreamuxLogger;
   log: DreamuxLogger;
 }
 
 export class DispatcherService implements Dispatcher {
   readonly id: string;
+  readonly fence: WorkFence;
   readonly cwd: string;
   readonly hooks: Dispatcher['hooks'];
   private readonly _teammates: TeammateCollection;
@@ -129,6 +125,7 @@ export class DispatcherService implements Dispatcher {
 
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
+    this.fence = new WorkFence(opts.id);
     this.configReader = opts.config;
     // `dispatchers[]` is never touched by `config.agents.replace`, so this
     // construction-time resolve is fixed for the dispatcher's whole
@@ -169,9 +166,9 @@ export class DispatcherService implements Dispatcher {
     const completionDelivery = new CompletionDeliveryPolicy({
       dispatcherId: opts.id,
       log: opts.log,
-      accepting: () => !this.inputSources.isClosing(),
+      fence: this.fence,
     });
-    const workflowLog = opts.workflowLoggerFactory?.(opts.id) ?? opts.log;
+    const workflowLog = opts.workflowLog;
     this.coreEvents = new DispatcherCoreEventBus({
       dispatcherId: opts.id,
       log: opts.log,
@@ -184,8 +181,6 @@ export class DispatcherService implements Dispatcher {
     const dispatcherRoot = dispatcherDir(opts.id);
     const teamMateRoot = teamMateCollectionDir(dispatcherRoot);
     const teamRoot = teamCollectionDir(dispatcherRoot);
-    const onDispatcherAgentPersisted = (identity: AgentEntityIdentity) =>
-      this.publishAgentState(identity, 'dispatcher');
     const names = new AgentNameRegistry({
       teamMateRoot,
       teamRoot,
@@ -201,6 +196,8 @@ export class DispatcherService implements Dispatcher {
       config: opts.config,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       conversationProjection,
+      completionDelivery,
+      coreEvents: this.coreEvents.publisher,
       worktrees,
       log: opts.log,
     });
@@ -215,16 +212,23 @@ export class DispatcherService implements Dispatcher {
       log: opts.log,
     });
 
+    this.dispatcherAgent = new DispatcherAgent({
+      id: opts.id,
+      agentRuntime: opts.dispatcher.agentRuntime,
+      log: opts.log,
+      dispatcher: this,
+      channels: this.channels,
+      mcp: { leases: opts.mcpLeases, adminSocketPath: adminSocket },
+      agentServiceFactory,
+      launch: this.hooks.launch,
+      restartIntent: opts.restartIntent,
+    });
+
     this.scheduler_ = new SchedulerService({
       ownerId: opts.id,
       cronJobsPath: dispatcherCronJobsPath(opts.id),
-      admit: (task) => this.admitOperation(task),
-      submitScheduled: async (input) =>
-        this.dispatcherAgent.mustAgent().submitInput({
-          source: SCHEDULED_SOURCE,
-          text: input.prompt,
-          sourceId: input.sourceId,
-        }),
+      fence: this.fence,
+      recipient: this.dispatcherAgent,
       log: opts.log,
     });
 
@@ -235,15 +239,12 @@ export class DispatcherService implements Dispatcher {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
       root: teamMateRoot,
-      onPersisted: (identity) => this.publishAgentState(identity, 'teammate'),
       names,
       agentServiceFactory,
-      completionDelivery,
       // These TeamMates are the dispatcher's own, so their completions go to
       // the dispatcher's Agent. Ownership decides the recipient.
-      initiatorFor: () => Promise.resolve(this.dispatcherAgent.mustAgent()),
-      admitOperation: (task) => this.admitOperation(task),
-      isClosing: () => this.inputSources.isClosing(),
+      completionOwner: this.dispatcherAgent,
+      fence: this.fence,
       teammateLaunch: this.hooks.teammateLaunch,
       log: opts.log,
     });
@@ -256,28 +257,14 @@ export class DispatcherService implements Dispatcher {
       names,
       agentServiceFactory,
       completionDelivery,
-      teammateLaunch: this.hooks.teammateLaunch,
-      applyCreateTeamHook: (params) => this.hooks.createTeam.promise(params),
-      // A TeamLeader reports back to the dispatcher's own Agent; its Team's
-      // TeamMates report to that leader, which the Team itself supplies.
-      leaderCompletionInitiator: () =>
-        Promise.resolve(this.dispatcherAgent.mustAgent()),
-      admitOperation: (task) => this.admitOperation(task),
-      isClosing: () => this.inputSources.isClosing(),
-      // Every tap and every plugin-added interceptor on `hooks.team` is
-      // isolated at hook construction (`isolatedTaps`), so `call` never
-      // throws.
-      announceTeam: (team, ctx) => this.hooks.team.call(team, ctx),
-      leaderMcp: ({ teamId, leaderName }) => ({
+      dispatcherHooks: this.hooks,
+      completionOwner: this.dispatcherAgent,
+      fence: this.fence,
+      mcp: {
         leases: opts.mcpLeases,
         adminSocketPath: adminSocket,
-        delegates: teamLeaderMcpDelegates({
-          dispatcher: this,
-          channels: this.channels,
-          teamId,
-          leaderName,
-        }),
-      }),
+        channels: this.channels,
+      },
       log: opts.log,
       workflowLog,
       coreEvents: this.coreEvents.publisher,
@@ -285,7 +272,7 @@ export class DispatcherService implements Dispatcher {
     // This dispatcher's own Workflow scope: dispatcher-level runs, reporting
     // to the dispatcher's own Agent. Constructed directly, the same shape
     // `SchedulerService` is built in a few lines above — `admit` composes
-    // this dispatcher's own admission gate, the same closure `scheduler_`
+    // this dispatcher's own admission gate, the same fence `scheduler_`
     // above is given, so `run`/`status`/`stop`/`list` fence themselves.
     // Starting/stopping every Team's own Workflow and scheduler admission
     // (`teams.startAdmissions()`/`stopAdmissions()`) is `DispatcherLifecycle`'s
@@ -296,35 +283,18 @@ export class DispatcherService implements Dispatcher {
       teamId: null,
       teammates: {
         createLocked: (spawnInput, options) =>
-          this.admitOperation(() =>
+          this.fence.admit(() =>
             this._teammates.createLocked(spawnInput, options),
           ),
       },
       completionDelivery,
-      completionInitiator: () => this.dispatcherAgent.mustAgent(),
-      admit: (task) => this.admitOperation(task),
+      completionOwner: this.dispatcherAgent,
+      fence: this.fence,
       log: workflowLog,
     });
 
-    this.dispatcherAgent = new DispatcherAgent({
-      id: opts.id,
-      agentRuntime: opts.dispatcher.agentRuntime,
-      log: opts.log,
-      mcp: () => ({
-        leases: opts.mcpLeases,
-        adminSocketPath: adminSocket,
-        delegates: dispatcherAgentMcpDelegates({
-          dispatcher: this,
-          channels: this.channels,
-        }),
-      }),
-      onPersisted: onDispatcherAgentPersisted,
-      agentServiceFactory,
-      launch: this.hooks.launch,
-      restartIntent: opts.restartIntent,
-    });
-
     this.inputSources = new DispatcherLifecycle({
+      fence: this.fence,
       dispatcherId: opts.id,
       config: opts.config,
       dispatcher: opts.dispatcher,
@@ -344,7 +314,7 @@ export class DispatcherService implements Dispatcher {
 
   /**
    * The dispatcher-facing per-Team surface: every `TeamsPort` verb already
-   * fences itself on this dispatcher's own `admitOperation` internally, so a
+   * fences itself on this dispatcher's own work fence internally, so a
    * caller reaches `TeamCollection` through this one narrow port rather than
    * a forwarding method per verb.
    */
@@ -386,45 +356,15 @@ export class DispatcherService implements Dispatcher {
 
   /** Submit one turn to this dispatcher's own agent, as its caller stated it. */
   submitToAgent(
-    input: Omit<TeammateSubmitInput, 'deliverCompletion'>,
+    input: Omit<TeammateSubmitInput, 'completionRecipient'>,
   ): Promise<TurnAdmission> {
-    return this.admitOperation(() =>
+    return this.fence.admit(() =>
       this.dispatcherAgent.mustAgent().submitInput(input),
     );
   }
 
   /** Interrupt this dispatcher's own agent. */
   interruptAgent() {
-    return this.admitOperation(() =>
-      this.dispatcherAgent.mustAgent().interrupt(),
-    );
-  }
-
-  /**
-   * Publish one dispatcher-scoped Agent's state.
-   *
-   * The role is this dispatcher's fact, not the record's: the Agent at the
-   * dispatcher root *is* the Dispatcher, and everything in its TeamMate
-   * collection is an ordinary TeamMate. Neither belongs to a Team, and
-   * `team_id` is read rather than asserted so a mis-scoped record publishes
-   * what it actually is instead of what this call assumed.
-   */
-  private publishAgentState(
-    identity: AgentEntityIdentity,
-    role: 'dispatcher' | 'teammate',
-  ): void {
-    this.coreEvents.publisher.publish({
-      schemaVersion: 1,
-      kind: 'teammate.state',
-      occurredAt: identity.updated_at,
-      teammateName: identity.name,
-      role,
-      teamName: identity.team_id,
-      status: identity.status,
-    });
-  }
-
-  admitOperation<T>(task: () => Promise<T>): Promise<T> {
-    return this.inputSources.admit(task);
+    return this.fence.admit(() => this.dispatcherAgent.mustAgent().interrupt());
   }
 }

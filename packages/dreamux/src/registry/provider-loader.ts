@@ -29,16 +29,12 @@ import type {
   ProviderDescriptor,
   ProviderImplementation,
   ProviderKind,
+  ProviderRegistry,
 } from './registry.js';
-import type { ProviderRegistry } from './registry.js';
 
 export type ProviderModule = Record<string, unknown> & {
   default?: unknown;
 };
-
-export type ProviderModuleImporter = (
-  packageName: string,
-) => Promise<ProviderModule>;
 
 /**
  * A provider package's factory export.
@@ -94,7 +90,6 @@ export interface ProviderPackageLoaderSpec<TProvider, TFactoryContext> {
 export interface LoadProviderPackagesOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ProviderModuleImporter | undefined;
 }
 
 /**
@@ -120,10 +115,9 @@ export async function loadProviderPackages<
   options: LoadProviderPackagesOptions,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
-  const importModule = options.importModule ?? defaultImportModule;
   for (const ref of uniqueLoadableRefs(options.refs)) {
     if (options.registry.hasRef(ref.raw)) continue;
-    await loadOneProviderPackage(options.registry, ref, importModule, spec);
+    await loadOneProviderPackage(options.registry, ref, spec);
   }
 }
 
@@ -133,16 +127,10 @@ async function loadOneProviderPackage<
 >(
   registry: ProviderRegistry,
   ref: ProviderRef,
-  importModule: ProviderModuleImporter,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
   const packageName = resolvePackageName(ref, spec);
-  const module = await importProviderModule(
-    ref,
-    packageName,
-    importModule,
-    spec,
-  );
+  const module = await importProviderModule(ref, packageName, spec);
   const factory = selectFactoryExport(ref, module, spec);
   // The registered descriptor is Core's own: parsed from the configured ref,
   // never read back off the loaded implementation.
@@ -188,11 +176,10 @@ function resolvePackageName<TProvider, TFactoryContext>(
 async function importProviderModule<TProvider, TFactoryContext>(
   ref: ProviderRef,
   packageName: string,
-  importModule: ProviderModuleImporter,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<ProviderModule> {
   try {
-    return await importModule(packageName);
+    return await defaultImportModule(packageName);
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,

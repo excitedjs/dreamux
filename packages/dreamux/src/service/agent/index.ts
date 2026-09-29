@@ -1,5 +1,7 @@
 import type { DreamuxLogger, LaunchDraft } from '@excitedjs/dreamux-types';
+import { EventEmitter } from 'node:events';
 import type { AsyncSeriesHook } from 'tapable';
+import type { WorkAdmission } from '../../platform/work-fence.js';
 
 import type {
   AgentRuntimeProviderCatalog,
@@ -10,15 +12,29 @@ import {
   type ResolvedAgentConfig,
 } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
-import { AgentEntityCollectionStore, type AgentNameRegistry } from './store.js';
-import { matchesRecordQuery, toRecordRow, toStatus } from './records.js';
+import { ServerShuttingDownError } from '../../platform/errors.js';
 import {
   clampHistoryLimit,
   decodeCursor,
   encodeCursor,
 } from '../../platform/history-page.js';
-import { childAgentRuntimeId } from './runtime-id.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../../platform/shutdown-errors.js';
+import { composeLaunchDraft } from '../../plugin/hooks.js';
+import type { CompletionOwner } from '../completion-router/index.js';
+import { AGENT_TASK_SOURCE } from '../submission-sources.js';
+import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
+import {
+  assertManagedWorktreeAvailable,
+  resolveSpawnWorkspace,
+} from '../worktree/workspaces.js';
 import { readAgentActivity } from './activity.js';
+import { toSubmissionResult } from './admission.js';
+import { teamMateNotFound } from './errors.js';
+import type { AgentServiceFactory } from './factory.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -36,35 +52,16 @@ import {
   type AgentEntitySendResult,
   type AgentEntitySpawnResult,
 } from './identity.js';
-import type {
-  CompletionDeliveryPolicy,
-  CompletionInitiator,
-} from '../completion-router/index.js';
-import type { SuffixGenerator } from '../name-allocator.js';
-import { teamMateNotFound } from './errors.js';
-import { teammateSystemPromptOptions } from './system-prompt.js';
-import { composeLaunchDraft } from '../../plugin/hooks.js';
-import { ServerShuttingDownError } from '../../platform/errors.js';
-import { InFlightWork } from '../../platform/in-flight-work.js';
-import {
-  collectShutdownFailure,
-  throwShutdownFailures,
-} from '../../platform/shutdown-errors.js';
-import type { AgentServiceFactory } from './factory.js';
-import { AgentService } from './service.js';
+import { matchesRecordQuery, toRecordRow, toStatus } from './records.js';
+import { childAgentRuntimeId } from './runtime-id.js';
 import type {
   CreateLockedTeammateOptions,
   LockedTeammate,
   TeammateServiceOptions,
 } from './service-types.js';
-import { toSubmissionResult } from './admission.js';
-import type { TurnCompletionDelivery } from './turn.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
-import {
-  assertManagedWorktreeAvailable,
-  resolveSpawnWorkspace,
-} from '../worktree/workspaces.js';
+import { AgentService } from './service.js';
+import { AgentEntityCollectionStore, type AgentNameRegistry } from './store.js';
+import { teammateSystemPromptOptions } from './system-prompt.js';
 import type {
   CloseTeamMateInput,
   SendTeamMateInput,
@@ -88,60 +85,22 @@ export interface TeammateCollectionOptions {
    * constructs that store.
    */
   root: string;
-  /**
-   * Fired after a member's identity is created or updated in a way that
-   * changed status, threaded into the `AgentEntityCollectionStore` this
-   * Collection builds around `root`.
-   */
-  onPersisted: (identity: AgentEntityIdentity) => void;
   /** The dispatcher-global name namespace; agent names stay dispatcher-unique. */
   names: AgentNameRegistry;
   agentServiceFactory: AgentServiceFactory;
-  completionDelivery?: CompletionDeliveryPolicy;
   /**
-   * The admission fence every `TeammateOps` verb this collection hands out
-   * crosses before it runs, so a spawn/send/close/read alike refuses once the
-   * owner is closing instead of only the three mutations gating themselves.
-   * The dispatcher-root owner passes its own dispatcher fence directly; a
-   * Team passes its own fence composed around the dispatcher's
-   * (`(task) => this.admit(() => dispatcherAdmitOperation(task))`, the same
-   * composition its cron scheduler already uses), because a dispatcher stop
-   * closes only the dispatcher's own admission — a Team outlives it and stays
-   * open to resume on the next daemon start — so a member op fenced on the
-   * Team's own admit alone would still pass while the dispatcher is tearing
-   * that Team's runtimes down underneath it.
+   * Every public verb enters this owner. Dispatcher members receive its work
+   * fence; Team members receive the Team, which checks itself before admitting
+   * dispatcher work. Construction also reads `isClosing` after awaited work
+   * so an already-admitted call cannot launch behind the owner's close.
    */
-  admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
-  /**
-   * Whether the owner this collection was built for is already closing: the
-   * dispatcher's own dispatcher-wide close for the dispatcher-root case, or
-   * that fact composed with the owning Team's own dissolve for a Team-scoped
-   * collection (mirroring `admitOperation`'s own composition). Every
-   * construction path that can start a runtime — `spawn`/`createFreshEntity`,
-   * `send`'s reopen — reads this once its entity exists (`spawn` synchronously
-   * right after registering it; `send`'s reopen after the async build, inside
-   * `buildReopened`, since composing a launch draft puts an `await` before the
-   * entity exists) and closes it immediately instead of proceeding to its
-   * first submission, so an already-admitted call that finishes constructing
-   * after `close()` published its fence never starts a runtime the owner's
-   * own post-drain sweep would only have caught later.
-   */
-  isClosing: () => boolean;
-  /**
-   * Where a completion produced by an Agent in this collection is delivered.
-   *
-   * It takes no producer: the owner that built this collection already knows
-   * the recipient — a dispatcher-owned TeamMate reports to the dispatcher
-   * Agent, a Team's TeamMate reports to that Team's leader — and deriving it
-   * from the producing record instead would have to re-answer a question
-   * ownership already settled.
-   */
-  initiatorFor?: () => Promise<CompletionInitiator | null>;
-  suffixGenerator?: SuffixGenerator | undefined;
+  fence: WorkAdmission;
+  /** The owner supplies the recipient at spawn/send's original query point. */
+  completionOwner: CompletionOwner;
   /**
    * The owning Dispatcher's `teammateLaunch` hook, run once per Agent
    * construction for every TeamMate this collection builds — spawn, reopen,
-   * and `createLocked` alike. Required, matching `admitOperation`/`isClosing`:
+   * and `createLocked` alike. Required, like the fence:
    * every owner already supplies one, dispatcher-root or Team-scoped.
    */
   teammateLaunch: AsyncSeriesHook<
@@ -172,6 +131,7 @@ type ResolvedTeamMate = AgentService | ClosedTeamMateRecord;
 
 /** Scoped construction, cache, subscription, and read owner for TeamMates. */
 export class TeammateCollection implements TeammateOps {
+  readonly events = new EventEmitter<{ state: [AgentEntityIdentity] }>();
   private readonly dispatcherId: string;
   private readonly teamScope: string | null;
   private readonly store: AgentEntityCollectionStore;
@@ -220,12 +180,11 @@ export class TeammateCollection implements TeammateOps {
       root: opts.root,
       dispatcherId: opts.dispatcherId,
       log: opts.log,
-      onPersisted: opts.onPersisted,
     });
   }
 
   spawn(input: SpawnTeamMateInput): Promise<AgentEntitySpawnResult> {
-    return this.opts.admitOperation(() => this.spawnAdmitted(input));
+    return this.opts.fence.admit(() => this.spawnAdmitted(input));
   }
 
   private async spawnAdmitted(
@@ -233,11 +192,11 @@ export class TeammateCollection implements TeammateOps {
   ): Promise<AgentEntitySpawnResult> {
     const entity = await this.createFreshEntity(input);
     try {
-      const delivery = await this.resolveCompletionDelivery();
+      const recipient = this.opts.completionOwner.completionRecipient();
       const submission = await entity.submitInput({
         source: AGENT_TASK_SOURCE,
         text: input.prompt,
-        ...(delivery !== null ? { deliverCompletion: delivery } : {}),
+        ...(recipient !== undefined ? { completionRecipient: recipient } : {}),
       });
       return {
         teammate: entity.status(),
@@ -274,7 +233,7 @@ export class TeammateCollection implements TeammateOps {
    * terminal one.
    */
   send(input: SendTeamMateInput): Promise<AgentEntitySendResult> {
-    return this.opts.admitOperation(() => this.sendAdmitted(input));
+    return this.opts.fence.admit(() => this.sendAdmitted(input));
   }
 
   private async sendAdmitted(
@@ -345,7 +304,7 @@ export class TeammateCollection implements TeammateOps {
       source: AGENT_TASK_SOURCE,
       text: input.prompt,
       intent: input.intent,
-      resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
+      completionRecipient: this.opts.completionOwner.completionRecipient(),
     });
     // Cached only now: a reopen that failed leaves nothing behind, so a
     // closed TeamMate never occupies the live collection as the closed thing
@@ -361,7 +320,7 @@ export class TeammateCollection implements TeammateOps {
    * is already history constructs nothing.
    */
   close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
-    return this.opts.admitOperation(() => this.closeAdmitted(input));
+    return this.opts.fence.admit(() => this.closeAdmitted(input));
   }
 
   private async closeAdmitted(
@@ -384,7 +343,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   list(): Promise<AgentEntityRuntimeStatus[]> {
-    return this.opts.admitOperation(() => this.memberStatuses());
+    return this.opts.fence.admit(() => this.memberStatuses());
   }
 
   /**
@@ -393,7 +352,7 @@ export class TeammateCollection implements TeammateOps {
    * For the owner's internal use — a Team reads its own roster this way while
    * seeding its own aggregate state (`TeamService.seed()`) — never for a
    * caller reaching the `TeammateOps.list()` verb above, which gates on
-   * `admitOperation` the same as every other verb. An owner reading its own
+   * the owner fence the same as every other verb. An owner reading its own
    * children does not cross the collection's admission boundary a second
    * time.
    */
@@ -405,7 +364,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   status(name: string): Promise<AgentEntityRuntimeStatus> {
-    return this.opts.admitOperation(() => this.statusAdmitted(name));
+    return this.opts.fence.admit(() => this.statusAdmitted(name));
   }
 
   private async statusAdmitted(
@@ -416,7 +375,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   history(input: AgentEntityHistoryQuery): Promise<AgentEntityHistoryResult> {
-    return this.opts.admitOperation(() => this.historyAdmitted(input));
+    return this.opts.fence.admit(() => this.historyAdmitted(input));
   }
 
   private async historyAdmitted(
@@ -445,7 +404,7 @@ export class TeammateCollection implements TeammateOps {
     name: string,
     query: number | AgentEntityLastQuery = {},
   ): Promise<AgentEntityLastResult> {
-    return this.opts.admitOperation(() => this.lastAdmitted(name, query));
+    return this.opts.fence.admit(() => this.lastAdmitted(name, query));
   }
 
   private async lastAdmitted(
@@ -472,7 +431,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   getCapabilities(): Promise<AgentEntityCapabilities> {
-    return this.opts.admitOperation(() =>
+    return this.opts.fence.admit(() =>
       Promise.resolve(this.getCapabilitiesAdmitted()),
     );
   }
@@ -564,9 +523,8 @@ export class TeammateCollection implements TeammateOps {
    * keeps a dissolve from leaving a child process burning tokens behind a
    * Team that no longer exists. One that exists only as a record has no
    * runtime this process could be holding: it is marked closed at rest
-   * through the store tier's own entry (`closeUnbuilt`) rather than by
-   * building an entity for it, which would start an Agent in order to stop
-   * it.
+   * through the factory's UnbuiltAgent.close handle without constructing an
+   * AgentService or acquiring runtime resources.
    *
    * Held members are excluded from the record pass by identity rather than by
    * the status they ended up with, so a member whose close failed surfaces as
@@ -587,7 +545,17 @@ export class TeammateCollection implements TeammateOps {
         continue;
       }
       await collectShutdownFailure(failures, async () => {
-        await this.store.closeUnbuilt(identity.name, note);
+        const unbuilt = await this.opts.agentServiceFactory.open({
+          location: {
+            dir: this.store.entityDir(identity.name),
+            expectedName: identity.name,
+          },
+          role: 'teammate',
+        });
+        if (unbuilt === null) throw teamMateNotFound(identity.name);
+        const closed = await unbuilt.close(note);
+        if (closed.status !== unbuilt.identity.status)
+          this.events.emit('state', closed);
       });
     }
     throwShutdownFailures(
@@ -678,7 +646,6 @@ export class TeammateCollection implements TeammateOps {
       name = await this.opts.names.allocate({
         kind: teamId === undefined ? 'dispatcher-teammate' : 'team-teammate',
         base: input.name,
-        generateSuffix: this.opts.suffixGenerator,
       });
     } finally {
       leaveAllocating();
@@ -706,13 +673,12 @@ export class TeammateCollection implements TeammateOps {
             };
       if (scope === null) {
         await assertManagedWorktreeAvailable({
-          findManagedWorktreeOwner: (path, excludingName) =>
-            this.findManagedWorktreeOwner(path, excludingName),
+          siblings: this.store,
           name,
           worktree: workspace.worktree,
         });
       }
-      const entity = await this.opts.agentServiceFactory.create({
+      const unbuilt = await this.opts.agentServiceFactory.create({
         location: { dir: this.store.entityDir(name), expectedName: name },
         creation: {
           name,
@@ -728,11 +694,14 @@ export class TeammateCollection implements TeammateOps {
           skillSources: input.skillSources,
           status: 'stopped',
         },
-        options: (identity) => this.teammateOptions(identity, options),
-        onPersisted: this.opts.onPersisted,
-        findManagedWorktreeOwner: (path, excludingName) =>
-          this.findManagedWorktreeOwner(path, excludingName),
+        role: 'teammate',
       });
+      this.events.emit('state', unbuilt.identity);
+      const entity = unbuilt.build(
+        await this.teammateOptions(unbuilt.identity, options),
+        this.store,
+      );
+      this.subscribeState(entity);
       try {
         beforePublish?.(entity);
       } catch (error) {
@@ -750,7 +719,7 @@ export class TeammateCollection implements TeammateOps {
    * Stop a just-registered entity's runtime immediately, and refuse to
    * proceed, when the owner is already closing.
    *
-   * `spawn`/`send` cross `admitOperation` before `close()` publishes its
+   * `spawn`/`send` cross the owner fence before `close()` publishes its
    * fence, but finish materializing their entity afterward, moments before
    * they would otherwise submit its first input — exactly the "get them
    * stopped as fast as possible" case a Dispatcher close is for. The owner's
@@ -765,7 +734,7 @@ export class TeammateCollection implements TeammateOps {
    * second pass.
    */
   private selfCloseIfClosing(entity: AgentService): void {
-    if (!this.opts.isClosing()) return;
+    if (!this.opts.fence.isClosing()) return;
     entity.stopForHost().catch(() => undefined);
     throw new ServerShuttingDownError(
       `dispatcher '${this.dispatcherId}' is shutting down`,
@@ -788,33 +757,24 @@ export class TeammateCollection implements TeammateOps {
    * both bind and load their own store through the factory, so there is no
    * store instance to carry forward from an earlier read.
    */
-  private openEntity(name: string): Promise<AgentService | null> {
-    return this.opts.agentServiceFactory.open({
+  private async openEntity(name: string): Promise<AgentService | null> {
+    const unbuilt = await this.opts.agentServiceFactory.open({
       location: { dir: this.store.entityDir(name), expectedName: name },
-      options: (identity) => this.teammateOptions(identity, {}),
-      onPersisted: this.opts.onPersisted,
-      findManagedWorktreeOwner: (path, excludingName) =>
-        this.findManagedWorktreeOwner(path, excludingName),
+      role: 'teammate',
     });
+    if (unbuilt === null) return null;
+    const entity = unbuilt.build(
+      await this.teammateOptions(unbuilt.identity, {}),
+      this.store,
+    );
+    this.subscribeState(entity);
+    return entity;
   }
 
-  /**
-   * The name of whichever sibling already owns `path` as its managed
-   * worktree, or `null` when it is free. Asked fresh on each call, never a
-   * snapshot taken at construction: a sibling's managed worktree occupancy
-   * can change between calls.
-   */
-  private async findManagedWorktreeOwner(
-    path: string,
-    excludingName: string,
-  ): Promise<string | null> {
-    const collision = (await this.store.list()).find(
-      (identity) =>
-        identity.name !== excludingName &&
-        identity.worktree.mode === 'managed' &&
-        identity.worktree.path === path,
+  private subscribeState(entity: AgentService): void {
+    entity.events.on('state', (identity) =>
+      this.events.emit('state', identity),
     );
-    return collision?.name ?? null;
   }
 
   /**
@@ -827,7 +787,7 @@ export class TeammateCollection implements TeammateOps {
   private async teammateOptions(
     identity: AgentEntityIdentity,
     options: CreateLockedTeammateOptions,
-  ): Promise<TeammateServiceOptions> {
+  ): Promise<Omit<TeammateServiceOptions, 'role'>> {
     const draft = await composeLaunchDraft(
       this.opts.teammateLaunch,
       identity.skill_sources,
@@ -842,7 +802,6 @@ export class TeammateCollection implements TeammateOps {
       runtimeId: childAgentRuntimeId(identity),
       // Every Agent a TeammateCollection owns is a TeamMate, Team-scoped or
       // not; the value comes from being this owner, never from the record.
-      role: 'teammate',
       loggerFields: { teammate: identity.name },
       skillSources: [...identity.skill_sources, ...draft.skillSources],
       outputSchema: options.outputSchema,
@@ -979,16 +938,6 @@ export class TeammateCollection implements TeammateOps {
       throw teamMateNotFound(identity.name);
     }
     return valid;
-  }
-
-  private async resolveCompletionDelivery(): Promise<TurnCompletionDelivery | null> {
-    const policy = this.opts.completionDelivery;
-    const initiator = await this.opts.initiatorFor?.();
-    if (policy === undefined || initiator === undefined || initiator === null) {
-      return null;
-    }
-    return (completion, fact) =>
-      policy.deliverRuntime(initiator, completion, fact);
   }
 
   private async closeAfterFailedCreation(entity: AgentService): Promise<void> {

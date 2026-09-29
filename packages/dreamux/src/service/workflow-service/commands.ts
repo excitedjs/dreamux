@@ -12,13 +12,11 @@
  * raised. The TeamMate MCP delegate that advertises the Workflow tools reads
  * the same helpers; neither adapter reads the other.
  */
-import type {
-  CoreCommandContext,
-  CoreCommandDefinition,
-} from '../../command/types.js';
+import type { DispatcherCommandHost } from '../../command/host.js';
+import type { CoreCommandDefinition } from '../../command/types.js';
 
-import type { AnyCoreCommand } from '../../command/registry.js';
 import { commandPayload } from '../../command/payload.js';
+import type { AnyCoreCommand } from '../../command/registry.js';
 import {
   ANY,
   INTEGER,
@@ -50,7 +48,7 @@ interface WorkflowRunIdInput {
 }
 
 export function workflowCommands(
-  workflows: (context: CoreCommandContext) => WorkflowOps,
+  host: DispatcherCommandHost<{ workflows: WorkflowOps }>,
 ): readonly AnyCoreCommand[] {
   const run: CoreCommandDefinition<
     'workflow.run',
@@ -70,7 +68,7 @@ export function workflowCommands(
       return { request: workflowRunInput(commandPayload(payload)) };
     },
     async execute(context, input) {
-      return workflows(context).run(input.request);
+      return host.addressedDispatcher(context).workflows.run(input.request);
     },
   };
 
@@ -86,7 +84,7 @@ export function workflowCommands(
     parse: (payload) => runIdInput(payload),
     async execute(context, input) {
       return workflowRunResult(
-        await workflows(context).status({
+        await host.addressedDispatcher(context).workflows.status({
           run_id: input.runId,
         }),
       );
@@ -104,7 +102,7 @@ export function workflowCommands(
     output: OBJECT,
     parse: (payload) => runIdInput(payload),
     async execute(context, input) {
-      return workflows(context).stop({
+      return host.addressedDispatcher(context).workflows.stop({
         run_id: input.runId,
       });
     },
@@ -121,7 +119,7 @@ export function workflowCommands(
     output: OBJECT,
     parse: () => ({}),
     async execute(context) {
-      const result = await workflows(context).list();
+      const result = await host.addressedDispatcher(context).workflows.list();
       return { runs: result.runs.map(workflowRunResult) };
     },
   };

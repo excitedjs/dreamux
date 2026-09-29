@@ -6,40 +6,44 @@
  * Dispatchers. Dispatcher agent lifecycle, channel sessions, Teams, and
  * teammates live under dispatcher-local services.
  */
-
-import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
-import { ChannelProviderCatalog } from './channel/catalog.js';
-import { ProviderRegistry } from './registry/index.js';
-import { dispatcherAgent, type DreamuxConfig } from './config/config.js';
-import type { ConfigService } from './config/service.js';
-import { resolveHomePathPrefixes } from './platform/home-paths.js';
-import { adminSocketPath } from './platform/paths.js';
-import { createLogger } from './platform/logger.js';
-import { createServerHooks, type ServerHooks } from './plugin/host.js';
+import { mustDispatcherId } from './command/host.js';
+import type { CoreCommandContext } from './command/types.js';
+import type { DispatcherConfig } from './config/config.js';
+import type { DispatcherService } from './service/dispatcher-service/index.js';
+import { DispatcherNotFoundError } from './service/dispatchers/errors.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
   createAdminSocketServer,
   type AdminSocketServer,
 } from './admin/socket.js';
-import { createCoreCommandRegistry } from './server/command-catalog.js';
-import type { CoreCommandHost } from './server/command-host.js';
-import { McpLeaseRegistry } from './service/mcp/leases.js';
+import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
+import { ChannelProviderCatalog } from './channel/catalog.js';
 import { CoreCommandPort } from './command/port.js';
-import { RestartIntentConsumer } from './service/dispatcher-service/restart-intent.js';
-import { Dispatchers } from './service/index.js';
-import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
+import { dispatcherAgent, type DreamuxConfig } from './config/config.js';
+import type { ConfigService } from './config/service.js';
+import { resolveHomePathPrefixes } from './platform/home-paths.js';
+import { createLogger } from './platform/logger.js';
+import { adminSocketPath } from './platform/paths.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from './platform/shutdown-errors.js';
+import { createServerHooks, type ServerHooks } from './plugin/host.js';
+import { ProviderRegistry } from './registry/index.js';
+import { createCoreCommandRegistry } from './server/command-catalog.js';
+import type { CoreCommandHost } from './server/command-host.js';
+import { RestartIntentConsumer } from './service/dispatcher-service/restart-intent.js';
+import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
+import { Dispatchers } from './service/index.js';
+import { McpLeaseRegistry } from './service/mcp/leases.js';
 
 export interface ServerOptions {
   /**
    * `config.json`'s single in-process authority (opened by the CLI entry
    * point and passed in so user edits, and `config.agents.replace` writes,
    * take effect). Typed as the concrete `ConfigService`, not the narrower
-   * `ConfigReader`: `commandHost()` hands this field whole to
+   * `ConfigReader`: the Server exposes this field whole as
    * `CoreCommandHost.config`, which the `config.agents.*` Commands need
    * `readAgents`/`replaceAgents` from, not just `current()`.
    */
@@ -51,9 +55,8 @@ export interface ServerOptions {
    * Production hands in the same registry that `ConfigService.open()`
    * (`config/service.js`) already loaded every referenced builtin/npm provider
    * into; tests either inject the catalogs below or pre-load this registry.
-   * Provider-specific construction seams (codex process/client factories, etc.)
-   * belong to the provider package and are injected by pre-loading the
-   * registry, never by Server — core names no provider's internals.
+   * Provider implementations belong to this registry; Server never names a
+   * provider's native process or transport constructors.
    */
   providerRegistry?: ProviderRegistry;
   /** Override runtime provider catalog (tests / future provider composition). */
@@ -72,7 +75,8 @@ export interface ServerOptions {
   logger?: DreamuxLogger;
   /**
    * Per-dispatcher channel logger factory (gate, inbound, outbound, introduce,
-   * dispatcher lifecycle). Defaults to a stderr-only logger per dispatcher; the
+   * dispatcher lifecycle). Called when channel sessions are built, not when a
+   * disabled dispatcher is addressed. Defaults to a stderr-only logger; the
    * CLI injects a factory that writes `logs/channel/<id>.log`.
    */
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
@@ -102,7 +106,7 @@ export interface ServerOptions {
   hooks?: ServerHooks;
 }
 
-export class Server {
+export class Server implements CoreCommandHost {
   private dispatchers_: Dispatchers | null = null;
   /**
    * The admitted Command port every adapter resolves against. The process owns
@@ -128,7 +132,7 @@ export class Server {
    * and the MCP transport Commands resolve those tokens with nothing but the
    * token to go on.
    */
-  private readonly mcpLeases: McpLeaseRegistry;
+  readonly mcpLeases: McpLeaseRegistry;
 
   /**
    * The server log, for the adapters that answer a failure they do not own. A
@@ -178,29 +182,26 @@ export class Server {
     // a Channel session invokes Commands through the same admitted port the
     // admin socket does. The host below resolves its targets lazily, so the
     // aggregate it reaches is the one this collection builds on demand.
-    this.commands = new CoreCommandPort(
-      createCoreCommandRegistry(this.commandHost()),
-    );
+    this.commands = new CoreCommandPort(createCoreCommandRegistry(this));
   }
 
-  /**
-   * The narrow process port `server/command-catalog.ts` resolves every
-   * domain's Command targets through. A domain-owned Command module never
-   * sees this class or this port directly — it takes only the narrower
-   * per-domain resolver the catalog derives from it.
-   */
-  private commandHost(): CoreCommandHost {
-    return {
-      summarize: () => this.dispatchers.summarize(),
-      dispatcherConfig: (id) =>
-        this.opts.config
-          .current()
-          .dispatchers.find((entry) => entry.id === id) ?? null,
-      dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
-      dispatcher: (id) => this.dispatchers.get(id),
-      mcpLeases: this.mcpLeases,
-      config: this.opts.config,
-    };
+  get config(): ConfigService {
+    return this.opts.config;
+  }
+
+  /** Validate the command address before accessing the collection created by start. */
+  addressedDispatcher(context: CoreCommandContext): DispatcherService {
+    const id = mustDispatcherId(context);
+    this.configuredDispatcher(id);
+    return this.dispatchers.get(id);
+  }
+
+  configuredDispatcher(id: string): DispatcherConfig {
+    const entry = this.config
+      .current()
+      .dispatchers.find((entry) => entry.id === id);
+    if (entry === undefined) throw new DispatcherNotFoundError(id);
+    return entry;
   }
 
   /** Bring up admin socket + all enabled dispatchers. */
@@ -216,7 +217,7 @@ export class Server {
     // value (there is no setter to reach a dispatcher materialized earlier).
     const restartIntent = await RestartIntentConsumer.load({
       now: Date.now(),
-      warn: (message) => this.log.warn(message),
+      log: this.log,
     });
     this.dispatchers_ = new Dispatchers({
       config: this.opts.config,

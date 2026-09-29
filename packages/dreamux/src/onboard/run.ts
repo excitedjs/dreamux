@@ -1,6 +1,8 @@
 import { pathExists } from '../platform/fs-errors.js';
 
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
+import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
+import { ChannelProviderCatalog } from '../channel/catalog.js';
 import { globalConfigFile, stringifyConfig } from '../config/config.js';
 import {
   assertNoLegacyTomlOnly,
@@ -8,32 +10,10 @@ import {
   type LoadConfigResult,
 } from '../config/load.js';
 import {
-  dispatcherDir,
-  dreamuxRoot,
-  logsRoot,
-  stateRoot,
-  type ExecDirProbe,
-} from '../platform/paths.js';
-import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
-import { ChannelProviderCatalog } from '../channel/catalog.js';
-import {
-  runDispatcherProviderDiagnostics,
-  type ProviderDiagnosticCatalogs,
-  type ProviderDiagnosticReport,
-} from '../provider-diagnostics.js';
-import type { CommandRunner } from '../platform/command-runner.js';
-import {
-  ensureDirectory,
-  TransparentFileLedger,
-  writeTextFile,
-  type FileLedger,
-} from '../platform/file-ledger.js';
-import { dreamuxConfigFromAnswers } from './config-files.js';
-import {
   managedServiceEnvironment,
   resolveManagedServiceAnswers,
-  type ServiceNodeProbe,
   validateManagedServiceLaunch,
+  type ServiceNodeProbe,
 } from '../daemon/environment.js';
 import { createServiceHost } from '../daemon/host.js';
 import { installUserService } from '../daemon/install.js';
@@ -42,6 +22,25 @@ import type {
   OnboardDoctorResult,
   OnboardRunResult,
 } from '../onboard/types.js';
+import type { CommandRunner } from '../platform/command-runner.js';
+import {
+  ensureDirectory,
+  TransparentFileLedger,
+  writeTextFile,
+  type FileLedger,
+} from '../platform/file-ledger.js';
+import {
+  dispatcherDir,
+  dreamuxRoot,
+  logsRoot,
+  stateRoot,
+} from '../platform/paths.js';
+import {
+  runDispatcherProviderDiagnostics,
+  type ProviderDiagnosticCatalogs,
+  type ProviderDiagnosticReport,
+} from '../provider-diagnostics.js';
+import { dreamuxConfigFromAnswers } from './config-files.js';
 
 type EffectiveOnboardAnswers = OnboardAnswers & {
   nodeBin: string;
@@ -58,8 +57,6 @@ export interface RunOnboardOptions {
   uid?: number;
   env?: NodeJS.ProcessEnv;
   nodeProbe?: ServiceNodeProbe;
-  /** Optional Homebrew-directory presence probe (tests). */
-  execDirProbe?: ExecDirProbe;
 }
 
 export async function runOnboard(
@@ -124,7 +121,6 @@ export async function runOnboard(
         host,
         env,
         nodeProbe: options.nodeProbe,
-        execDirProbe: options.execDirProbe,
       })
     : {
         nodeBin: process.execPath,

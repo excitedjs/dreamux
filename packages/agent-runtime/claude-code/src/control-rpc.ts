@@ -1,6 +1,7 @@
 /** Claude Code stream-json control requests and their one pending reply. */
 import { randomUUID } from 'node:crypto';
 import type { Writable } from 'node:stream';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
   buildCanUseToolAllow,
@@ -23,13 +24,7 @@ export class ClaudeCodeControlRpc {
   constructor(
     private readonly stdin: Writable,
     private readonly options: {
-      log?:
-        | ((
-            level: 'info' | 'warn' | 'error',
-            msg: string,
-            err?: unknown,
-          ) => void)
-        | undefined;
+      logger?: DreamuxLogger | undefined;
       onRemoteControlUrl?: ((url: string) => void) | undefined;
     },
   ) {}
@@ -134,16 +129,16 @@ export class ClaudeCodeControlRpc {
       if (typeof url === 'string') {
         this.options.onRemoteControlUrl?.(url);
       } else {
-        this.options.log?.(
-          'warn',
+        this.options.logger?.warn(
+          {},
           'claude remote control enable succeeded without a URL',
         );
       }
       return;
     }
-    this.options.log?.(
-      'warn',
-      `claude remote control enable failed${error !== null ? `: ${error}` : ''}`,
+    this.options.logger?.warn(
+      error !== null ? { err: error } : {},
+      'claude remote control enable failed',
     );
   }
 }

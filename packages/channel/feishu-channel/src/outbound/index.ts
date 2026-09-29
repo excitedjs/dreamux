@@ -17,6 +17,7 @@
  * caller's own bound topic when exactly one exists, and refused otherwise.
  * Every other method is a thin, logged wrapper over the transport.
  */
+import { describeTarget, type FeishuTarget } from '../routing/target.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo, PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import type {
@@ -56,6 +57,7 @@ export interface FeishuOutboundOptions {
   readonly bot: FeishuBot;
   readonly log: DreamuxLogger;
   readonly dispatcherId: string;
+  readonly channelId: string;
   /** This handle's session lifecycle; a send after it ends aborts. */
   readonly lifecycle: FeishuLifecycle;
   readonly routing: FeishuOutboundRouting;
@@ -64,6 +66,51 @@ export interface FeishuOutboundOptions {
 
 export class FeishuOutbound {
   constructor(private readonly opts: FeishuOutboundOptions) {}
+
+  notify(target: FeishuTarget, card: unknown, replyTo: string | null): void {
+    if (!this.opts.lifecycle.isLive()) return;
+    void this.opts.lifecycle
+      .track(this.sendBindingNotification(target, card, replyTo))
+      .catch(() => undefined);
+  }
+
+  private async sendBindingNotification(
+    target: FeishuTarget,
+    card: unknown,
+    replyTo: string | null,
+  ): Promise<void> {
+    if (target.kind === 'topic' && replyTo === null) {
+      // No persisted root for this topic yet: replying under nothing would
+      // land in the wrong place (a fresh top-level message opens a topic of
+      // its own), so this notice is dropped rather than guessed. A topic
+      // only gets a root when automatic provisioning binds it, from the
+      // message that triggered provisioning; a manual bind carries an
+      // existing root forward but never supplies one, so a topic bound that
+      // way keeps missing its notices until it is provisioned or its row
+      // otherwise gains a root.
+      this.opts.log.info(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          channel_id: this.opts.channelId,
+          target: describeTarget(target),
+        },
+        'Feishu binding notification skipped: topic has no root message yet',
+      );
+      return;
+    }
+    await this.sendNotification({
+      target: {
+        chatId: target.chatId,
+        ...(replyTo !== null ? { replyToMessageId: replyTo } : {}),
+      },
+      card,
+      logFields: {
+        dispatcher_id: this.opts.dispatcherId,
+        channel_id: this.opts.channelId,
+        target: describeTarget(target),
+      },
+    });
+  }
 
   /**
    * Send a reply, or, with no `message_id`, a fresh top-level message —

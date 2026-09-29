@@ -6,62 +6,36 @@
  * adding it to its owning domain module — never to an adapter, and never to a
  * second registry.
  *
- * Every domain's `xCommands` factory takes the narrowest resolver it actually
- * calls, not the full {@link CoreCommandHost}: a `service/*` module importing
- * this file's `CoreCommandHost` would be an upward edge (composition-tier),
- * exactly what the per-domain factories exist to avoid. This is the one place
- * that is allowed to know every domain type, so it is also the one place that
- * resolves `mustDispatcher`'s not-found handling — built once below and handed
- * to every domain that needs it, rather than each domain re-deriving it.
- * `teamCommands`/`channelCommands` narrow straight to `dispatcher(context).teams`/
- * `.channels` (the same pattern `workflowCommands` already uses for
- * `.workflows`); a domain factory that needs no narrower port than
- * `DispatcherService` itself (`teammateCommands`, `schedulerCommands`) is
- * still handed the whole `dispatcher` function, since `DispatcherService`
- * structurally satisfies each of their own narrower parameter types.
+ * Domain factories receive this actual host through structural views naming
+ * only the services they use. `Server.dispatchers` resolves the late startup
+ * edge. Its addressed lookup validates current configuration before touching
+ * that accessor, preserving pre-start missing-id and not-found errors as well
+ * as the configured-id check before a live cache hit. Domain modules import neither Server nor
+ * this composition module.
  */
-import type { CoreCommandContext } from '../command/types.js';
 
-import { serverCommands } from '../server-commands.js';
+import { CoreCommands } from '../command/registry.js';
 import { configCommands } from '../config/commands.js';
+import { serverCommands } from '../server-commands.js';
+import { teammateCommands } from '../service/agent/commands.js';
 import { channelCommands } from '../service/channel-service/commands.js';
 import { dispatcherCommands } from '../service/dispatchers/commands.js';
 import { mcpCommands } from '../service/mcp/commands.js';
 import { schedulerCommands } from '../service/scheduler/commands.js';
 import { teamCommands } from '../service/team/commands.js';
-import { teammateCommands } from '../service/agent/commands.js';
 import { workflowCommands } from '../service/workflow-service/commands.js';
-import { CoreCommands } from '../command/registry.js';
-import {
-  mustDispatcher,
-  mustDispatcherConfig,
-  type CoreCommandHost,
-} from './command-host.js';
+import type { CoreCommandHost } from './command-host.js';
 
 export function createCoreCommandRegistry(host: CoreCommandHost): CoreCommands {
-  // Built once and handed to every domain that resolves a dispatcher through
-  // caller context, so `mustDispatcher`'s not-found handling is not
-  // re-derived per domain. Each domain factory below only ever declares the
-  // narrower shape it actually calls on the result (`DispatcherService`
-  // itself structurally satisfies every one of those narrower parameter
-  // types, so passing this same function to more than one factory needs no
-  // per-domain wrapping).
-  const dispatcher = (context: CoreCommandContext) =>
-    mustDispatcher(host, context);
   return new CoreCommands([
     ...serverCommands(host),
     ...configCommands(host.config),
-    ...dispatcherCommands({
-      summarize: () => host.summarize(),
-      dispatcherRuntimeStatus: (id) => host.dispatcherRuntimeStatus(id),
-      dispatcherConfig: (id) => mustDispatcherConfig(host, id),
-      dispatcher,
-    }),
-    ...channelCommands((context) => dispatcher(context).channels),
-    ...teamCommands((context) => dispatcher(context).teams),
-    ...teammateCommands(dispatcher),
-    ...workflowCommands((context) => dispatcher(context).workflows),
-    ...schedulerCommands(dispatcher),
+    ...dispatcherCommands(host),
+    ...channelCommands(host),
+    ...teamCommands(host),
+    ...teammateCommands(host),
+    ...workflowCommands(host),
+    ...schedulerCommands(host),
     ...mcpCommands(host.mcpLeases),
   ]);
 }

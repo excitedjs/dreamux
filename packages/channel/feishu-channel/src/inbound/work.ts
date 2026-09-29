@@ -10,7 +10,6 @@ export const FEISHU_RESOURCE_TIMEOUT_MS = 20_000;
 
 export interface FeishuInboundWorkOptions {
   timeoutMs?: number;
-  now?: () => number;
 }
 
 export interface FeishuInboundWorkContext {
@@ -27,10 +26,9 @@ export function createFeishuInboundWork(
   fence: FeishuLifecycle,
   options: FeishuInboundWorkOptions = {},
 ): FeishuInboundWorkContext {
-  const now = options.now ?? Date.now;
   const controller = new AbortController();
   const deadlineAt =
-    now() + (options.timeoutMs ?? FEISHU_ENRICHMENT_TIMEOUT_MS);
+    Date.now() + (options.timeoutMs ?? FEISHU_ENRICHMENT_TIMEOUT_MS);
   let stopReason: 'deadline' | 'session_closed' | undefined;
   const stop = (reason: 'deadline' | 'session_closed'): void => {
     if (stopReason !== undefined) return;
@@ -42,7 +40,7 @@ export function createFeishuInboundWork(
   if (fence.signal.aborted || !fence.isLive()) stop('session_closed');
   const timer = setTimeout(
     () => stop('deadline'),
-    Math.max(0, deadlineAt - now()),
+    Math.max(0, deadlineAt - Date.now()),
   );
 
   const sessionActive = (): boolean => !fence.signal.aborted && fence.isLive();
@@ -53,7 +51,7 @@ export function createFeishuInboundWork(
   };
   const assertEnrichmentActive = (): void => {
     assertSessionActive();
-    if (stopReason === 'deadline' || now() >= deadlineAt) {
+    if (stopReason === 'deadline' || Date.now() >= deadlineAt) {
       stop('deadline');
       throw new FeishuOperationError('deadline');
     }
@@ -65,7 +63,7 @@ export function createFeishuInboundWork(
     isSessionActive: sessionActive,
     assertSessionActive,
     assertEnrichmentActive,
-    remainingTimeMs: () => Math.max(0, deadlineAt - now()),
+    remainingTimeMs: () => Math.max(0, deadlineAt - Date.now()),
     dispose(): void {
       clearTimeout(timer);
       fence.signal.removeEventListener('abort', onSessionAbort);

@@ -19,12 +19,12 @@
  *     whose agent runtime only activates long after boot does not claim a
  *     stale notice.
  */
-
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { restartIntentPath } from '../../platform/paths.js';
 import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
+import { restartIntentPath } from '../../platform/paths.js';
 
 /** Default English notice injected into a resumed dispatcher after restart. */
 export const DEFAULT_RESTART_ANNOUNCE = 'Restart completed.';
@@ -156,22 +156,17 @@ export class RestartIntentConsumer {
    * Read the marker (if any), delete it from disk, and return a consumer. A
    * missing or expired marker yields an empty consumer quietly. A malformed or
    * unknown-version marker also yields an empty consumer, but is reported via
-   * `warn` (issue #98): a bad marker is dropped, not silently ignored, because a
+   * the supplied logger (issue #98): a bad marker is dropped, not silently ignored, because a
    * restart notice the operator explicitly requested would otherwise vanish
    * without a trace. The file is removed regardless of validity (single reader,
    * never replays). This is the only reader of the marker file.
    */
-  static async load(
-    options: {
-      now: number;
-      path?: string;
-      warn?: (message: string) => void;
-    } = {
-      now: 0,
-    },
-  ): Promise<RestartIntentConsumer> {
+  static async load(options: {
+    now: number;
+    path?: string;
+    log: DreamuxLogger;
+  }): Promise<RestartIntentConsumer> {
     const path = options.path ?? restartIntentPath();
-    const warn = options.warn ?? ((message) => console.warn(message));
     const empty = new RestartIntentConsumer('', 0, new Set());
 
     let text: string | null = null;
@@ -179,9 +174,12 @@ export class RestartIntentConsumer {
       text = await readFile(path, 'utf8');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        warn(
-          `restart marker ${path} could not be read ` +
-            `(${err instanceof Error ? err.message : String(err)}); dropping it.`,
+        options.log.warn(
+          {
+            path,
+            err: { message: err instanceof Error ? err.message : String(err) },
+          },
+          'restart marker could not be read; dropping it.',
         );
       }
     }
@@ -197,9 +195,12 @@ export class RestartIntentConsumer {
     try {
       parsed = JSON.parse(text) as RestartIntentFile;
     } catch (err) {
-      warn(
-        `restart marker ${path} is not valid JSON ` +
-          `(${err instanceof Error ? err.message : String(err)}); dropped it. ` +
+      options.log.warn(
+        {
+          path,
+          err: { message: err instanceof Error ? err.message : String(err) },
+        },
+        'restart marker is not valid JSON; dropped it. ' +
           'A requested restart notice will not be delivered.',
       );
       return empty;
@@ -209,9 +210,9 @@ export class RestartIntentConsumer {
         parsed === null || parsed.version === undefined
           ? 'missing'
           : JSON.stringify(parsed.version);
-      warn(
-        `restart marker ${path} ignored: unsupported version ` +
-          `(found ${found}, expected 1); dropped it. ` +
+      options.log.warn(
+        { path, found_version: found, expected_version: 1 },
+        'restart marker ignored: unsupported version; dropped it. ' +
           'A requested restart notice will not be delivered.',
       );
       return empty;
@@ -226,8 +227,9 @@ export class RestartIntentConsumer {
       !Array.isArray(parsed.targets) ||
       !parsed.targets.every((target) => typeof target === 'string')
     ) {
-      warn(
-        `restart marker ${path} ignored: malformed fields ` +
+      options.log.warn(
+        { path },
+        'restart marker ignored: malformed fields ' +
           '(created_at_ms/ttl_ms must be finite numbers, targets a string array); ' +
           'dropped it. A requested restart notice will not be delivered.',
       );

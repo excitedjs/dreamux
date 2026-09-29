@@ -1,29 +1,29 @@
+import type { Dispatcher, DreamuxLogger } from '@excitedjs/dreamux-types';
+import { errorInfo } from '@excitedjs/dreamux-utils';
+import type { SyncHook } from 'tapable';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { CoreCommandRegistry } from '../../command/types.js';
 import {
   dispatcherChannelIdentity,
   type DispatcherConfig,
 } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { RestartIntentConsumer } from '../dispatcher-service/restart-intent.js';
-import type { Dispatcher, DreamuxLogger } from '@excitedjs/dreamux-types';
-import type { CoreCommandRegistry } from '../../command/types.js';
-import type { SyncHook } from 'tapable';
-import { readAgentIdentity } from '../agent/store.js';
-import type { AgentEntityIdentity } from '../agent/identity.js';
 import { dispatcherDir } from '../../platform/paths.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
+import { readAgentIdentity } from '../agent/store.js';
+import { identityStatusToRuntimeStatus } from '../dispatcher-service/agent.js';
 import {
   DispatcherService,
   type DispatcherServiceOptions,
 } from '../dispatcher-service/index.js';
+import type { RestartIntentConsumer } from '../dispatcher-service/restart-intent.js';
 import type {
   DispatcherRuntimeStatus,
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
-import { identityStatusToRuntimeStatus } from '../dispatcher-service/agent.js';
-import { throwSettledFailures } from '../../platform/shutdown-errors.js';
-import { errorInfo } from '@excitedjs/dreamux-utils';
 
 export interface DispatchersOptions {
   config: ConfigReader;
@@ -232,7 +232,7 @@ export class Dispatchers {
       homePathPrefixes: this.homePathPrefixes,
       adminSocketPath: this.adminSocketPath,
       channelLoggerFactory: this.channelLoggerFactory,
-      workflowLoggerFactory: this.workflowLoggerFactory,
+      workflowLog: this.workflowLoggerFactory?.(id) ?? this.log,
       log: this.log,
     };
   }

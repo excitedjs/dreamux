@@ -24,6 +24,7 @@
  * The Channel is told who is calling, in the call context, and owns its own
  * access rules.
  */
+import type { WorkAdmission } from '../../platform/work-fence.js';
 import type {
   ChannelMcpCall,
   ChannelMcpCallContext,
@@ -99,12 +100,17 @@ export interface ChannelMcpDelegateInput {
   /**
    * How a call enters the dispatcher.
    *
-   * The dispatcher scope admits the operation against shutdown; a TeamLeader
-   * scope additionally enters that Team's own work fence, so a channel call is
-   * refused once that Team is dissolving. Neither rule belongs in this file
-   * — it is handed the entry it should use.
+   * Dispatcher calls enter this fence directly. TeamLeader calls use their
+   * actual Team's admission: dispatcher first, committed closed next, then
+   * the Team's own work fence. Either entry tracks the full channel operation.
    */
-  dispatch: <T>(task: () => Promise<T>) => Promise<T>;
+  fence: Pick<WorkAdmission, 'admit'>;
+  callerScope?:
+    | {
+        admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
+        assertOpen(): void;
+      }
+    | undefined;
 }
 
 export function createChannelMcpDelegate(
@@ -159,7 +165,13 @@ export function createChannelMcpDelegate(
       // rendered by the admission boundary, exactly like every other delegate's.
       // A Channel's own refusals arrive as results and are passed through
       // untouched: only the Channel can say what is wrong with its own chat.
-      return input.dispatch(() => invoke(input, handler, call));
+      const operation = () => {
+        input.callerScope?.assertOpen();
+        return invoke(input, handler, call);
+      };
+      return input.callerScope === undefined
+        ? input.fence.admit(operation)
+        : input.callerScope.admitLeaderTools(operation);
     },
   };
 }

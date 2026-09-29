@@ -34,9 +34,6 @@ const BASE36 = 'abcdefghijklmnopqrstuvwxyz0123456789';
 export type ConcreteNameKind =
   'team' | 'team-leader' | 'team-teammate' | 'dispatcher-teammate';
 
-/** Random generator hook so tests can force collisions deterministically. */
-export type SuffixGenerator = () => string;
-
 /**
  * Sanitize a model-supplied base into the name charset: lowercased, restricted
  * to the shared Team/TeamMate charset, and guaranteed to start alphanumeric.
@@ -90,7 +87,6 @@ export function allocateConcreteName(input: {
   base: string;
   teamSlug?: string | undefined;
   exists: (name: string) => boolean;
-  generateSuffix?: SuffixGenerator | undefined;
   maxAttempts?: number;
 }): string {
   for (const candidate of concreteNameCandidates(input)) {
@@ -116,7 +112,6 @@ export async function allocateConcreteNameAsync(input: {
   base: string;
   teamSlug?: string;
   accept: (name: string) => Promise<boolean>;
-  generateSuffix?: SuffixGenerator | undefined;
   maxAttempts?: number;
 }): Promise<string> {
   for (const candidate of concreteNameCandidates(input)) {
@@ -133,17 +128,15 @@ function* concreteNameCandidates(input: {
   kind: ConcreteNameKind;
   base: string;
   teamSlug?: string | undefined;
-  generateSuffix?: SuffixGenerator | undefined;
   maxAttempts?: number;
 }): Generator<string> {
-  const generate = input.generateSuffix ?? generateNameSuffix;
   const maxAttempts = input.maxAttempts ?? NAME_ALLOCATION_MAX_ATTEMPTS;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     yield buildConcreteName({
       kind: input.kind,
       base: input.base,
       teamSlug: input.teamSlug,
-      suffix: generate(),
+      suffix: generateNameSuffix(),
     });
   }
 }

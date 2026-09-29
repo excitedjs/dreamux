@@ -5,10 +5,8 @@
  * `claude-code`, which config addresses as `builtin:claude-code`. It
  * constructs the provider on package defaults: `AgentRuntimeProvider` has no
  * `ref`/`descriptor` member (Core owns registration identity in its registry,
- * never echoed back to the provider), and
- * `ClaudeCodeAgentRuntimeProviderOptions`'s bin-resolver/session-factory/
- * session-id fields are test/embedder seams this plugin has no host-supplied
- * value for.
+ * never echoed back to the provider). The provider uses the configured binary
+ * and constructs its resident sessions directly.
  */
 import type { DreamuxPlugin } from '@excitedjs/dreamux-types';
 

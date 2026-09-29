@@ -18,14 +18,8 @@
  *     document/message reads, `cot`, `resolveAppOwner`, `close`, …) is the
  *     core transport's own member, forwarded unchanged; its optionality
  *     (`getChatMode?`, `readMessage?`, `resolveUserName?`, `resolveChatName?`,
- *     `cot?`) is `FeishuTransport`'s own and stays genuine here too: the
- *     provider's public `botFactory` option
- *     (`CreateFeishuChannelProviderOptions`) lets a caller substitute any
- *     `FeishuBot`-shaped value, not only one built from
- *     `createFeishuTransport`, so a supplied bot may omit any of them.
- *
- * Tests supply package-local `FeishuBot` doubles through the provider's
- * `botFactory` seam instead of opening a live connection.
+ *     `cot?`) follows the transport contract. This adapter constructs the
+ *     concrete transport; it has no alternate bot or transport factory.
  */
 
 import {
@@ -112,27 +106,18 @@ export interface CreateBotOptions {
   logger?: TransportLogger;
 }
 
-export interface CreateFeishuBotDeps {
-  createTransport?: (opts: CreateBotOptions) => FeishuTransport;
-}
-
-export function createFeishuBot(
-  opts: CreateBotOptions,
-  deps: CreateFeishuBotDeps = {},
-): FeishuBot {
-  const transport =
-    deps.createTransport?.(opts) ??
-    createFeishuTransport(
-      {
-        appId: opts.appId,
-        appSecret: opts.appSecret,
-      },
-      // Forward the host's logger so the transport's own SDK / connection
-      // diagnostics fold into the per-dispatcher channel log. `undefined` keeps
-      // the transport's default stderr behavior, so always passing the option
-      // object is safe and keeps the real wiring path explicit.
-      { logger: opts.logger },
-    );
+export function createFeishuBot(opts: CreateBotOptions): FeishuBot {
+  const transport = createFeishuTransport(
+    {
+      appId: opts.appId,
+      appSecret: opts.appSecret,
+    },
+    // Forward the host's logger so the transport's own SDK / connection
+    // diagnostics fold into the per-dispatcher channel log. `undefined` keeps
+    // the transport's default stderr behavior, so always passing the option
+    // object is safe and keeps the real wiring path explicit.
+    { logger: opts.logger },
+  );
 
   return {
     // Spreading a getter captures its current value as a plain property, so

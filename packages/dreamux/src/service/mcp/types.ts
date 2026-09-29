@@ -1,3 +1,5 @@
+import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
+import type { WorkAdmission } from '../../platform/work-fence.js';
 /**
  * The one seam between the generic MCP infrastructure and the objects that
  * actually own Agent-facing tools.
@@ -127,4 +129,16 @@ export interface McpServerDelegate {
    * with a tool it never advertised.
    */
   call(call: McpDelegateCall): Promise<McpDelegateResult>;
+}
+
+/** The channel tool owner, without importing its orchestration layer. */
+export interface ChannelMcpDelegates {
+  mcpDelegates(
+    caller: ChannelMcpCaller,
+    fence: Pick<WorkAdmission, 'admit'>,
+    callerScope?: {
+      admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
+      assertOpen(): void;
+    },
+  ): McpServerDelegate[];
 }

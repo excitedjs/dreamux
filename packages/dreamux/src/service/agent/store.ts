@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { readFile, readdir } from 'node:fs/promises';
 
 import type {
@@ -17,7 +18,6 @@ import {
 import {
   allocateConcreteName,
   type ConcreteNameKind,
-  type SuffixGenerator,
 } from '../name-allocator.js';
 import {
   TEAMMATE_NAME_PATTERN,
@@ -105,6 +105,7 @@ export interface AgentIdentityStoreBinding {
  * own storage.
  */
 export class AgentIdentityStore {
+  readonly committed = new EventEmitter<{ committed: [AgentEntityIdentity] }>();
   private readonly path: string;
   private readonly store: TransactionalStore<AgentEntityIdentity | null>;
 
@@ -173,10 +174,7 @@ export class AgentIdentityStore {
     }
   }
 
-  async create(
-    input: AgentIdentityCreateInput,
-    onPersisted?: (identity: AgentEntityIdentity) => void,
-  ): Promise<AgentEntityIdentity> {
+  async create(input: AgentIdentityCreateInput): Promise<AgentEntityIdentity> {
     validateAgentEntityName(input.name);
     const identity = buildIdentity(this.binding.dispatcherId, input);
     // A freshly published identity always announces — there is no "previous"
@@ -184,7 +182,7 @@ export class AgentIdentityStore {
     await this.store.create(identity, {
       replace: input.replaceExisting === true,
     });
-    onPersisted?.(identity);
+    this.committed.emit('committed', identity);
     return identity;
   }
 
@@ -197,7 +195,7 @@ export class AgentIdentityStore {
    * merging against the same stale base would silently lose whichever write
    * settled first; running the merge inside `change` is what prevents that.
    *
-   * `onPersisted` fires only when the merge changed `status`, matching the
+   * `committed` emits only when the merge changed `status`, matching the
    * pre-`TransactionalStore` contract — `create`/`upsert` announce
    * unconditionally, `update` does not.
    */
@@ -207,19 +205,30 @@ export class AgentIdentityStore {
       | ((
           current: AgentEntityIdentity,
         ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
-    onPersisted?: (identity: AgentEntityIdentity) => void,
   ): Promise<AgentEntityIdentity> {
     let next!: AgentEntityIdentity;
-    await this.store.update(async (current) => {
-      if (current === null) {
-        throw new Error(
-          `agent identity at ${this.path} has no identity to update`,
-        );
-      }
-      const input = typeof patch === 'function' ? await patch(current) : patch;
-      next = mergeIdentity(current, input);
-      return next;
-    }, afterIdentityStatusChange(onPersisted));
+    await this.store.update(
+      async (current) => {
+        if (current === null) {
+          throw new Error(
+            `agent identity at ${this.path} has no identity to update`,
+          );
+        }
+        const input =
+          typeof patch === 'function' ? await patch(current) : patch;
+        next = mergeIdentity(current, input);
+        return next;
+      },
+      (next, previous) => {
+        if (
+          next !== null &&
+          previous !== null &&
+          next.status !== previous.status
+        ) {
+          this.committed.emit('committed', next);
+        }
+      },
+    );
     return next;
   }
 
@@ -237,7 +246,6 @@ export class AgentIdentityStore {
   async upsert(
     creation: AgentIdentityCreateInput,
     reconcile: (existing: AgentEntityIdentity) => AgentIdentityUpdateInput,
-    onPersisted?: (identity: AgentEntityIdentity) => void,
   ): Promise<AgentEntityIdentity> {
     const existing = await this.read();
     const identity =
@@ -245,28 +253,9 @@ export class AgentIdentityStore {
         ? buildIdentity(this.binding.dispatcherId, creation)
         : mergeIdentity(existing, reconcile(existing));
     await this.store.create(identity, { replace: true });
-    onPersisted?.(identity);
+    this.committed.emit('committed', identity);
     return identity;
   }
-}
-
-/**
- * Adapt a `(identity) => …` publish hook to `TransactionalStore.update`'s
- * `afterCommit` shape, applying `AgentIdentityStore.update`'s own
- * status-change filter. `next`/`previous` are never `null` here — `update`'s
- * `change` callback above throws before returning if the committed value
- * was `null`, so this only guards the store's shared `T | null` value type.
- */
-function afterIdentityStatusChange(
-  onPersisted: ((identity: AgentEntityIdentity) => void) | undefined,
-): (
-  next: AgentEntityIdentity | null,
-  previous: AgentEntityIdentity | null,
-) => void {
-  return (next, previous) => {
-    if (next === null || previous === null) return;
-    if (next.status !== previous.status) onPersisted?.(next);
-  };
 }
 
 /**
@@ -354,38 +343,20 @@ function mergeIdentity(
  * TeamMate from ever being confused for one another.
  */
 export class AgentEntityCollectionStore {
-  /**
-   * The owning Collection's publish hook, bound here — held so an owner that
-   * hands a bare member store to a long-lived `AgentRuntimeStateStore` (one
-   * that never calls through the passthrough methods below) can still thread
-   * the collection's publish hook into it explicitly.
-   */
-  readonly onPersisted: (identity: AgentEntityIdentity) => void;
-
   constructor(
     private readonly opts: {
       root: string;
       dispatcherId: string;
       log: DreamuxLogger;
-      onPersisted: (identity: AgentEntityIdentity) => void;
     },
-  ) {
-    this.onPersisted = this.opts.onPersisted;
-  }
+  ) {}
 
   /** One member's own directory under this collection's root. */
   entityDir(name: string): string {
     return collectionEntityDir(this.opts.root, name);
   }
 
-  /**
-   * The bound store for one member of this collection: read-only use
-   * (`read()`/`load()`), a one-shot write through `update` below, or —
-   * for a caller that creates or reads a member and then builds a
-   * long-lived `AgentRuntimeStateStore` over it — the instance to keep and
-   * thread `this.onPersisted` through directly, so the same store that did
-   * the I/O is the one the runtime-state store wraps.
-   */
+  /** Snapshot reads bind a store without installing publication listeners. */
   entity(name: string): AgentIdentityStore {
     return new AgentIdentityStore({
       dir: collectionEntityDir(this.opts.root, name),
@@ -396,34 +367,26 @@ export class AgentEntityCollectionStore {
   }
 
   /**
-   * Mark one member closed at rest, without materializing an Agent for it —
-   * used for a Team member a dissolve never built. There is no runtime to
-   * stop, so building one just to close it would run its launch hook and
-   * risk its worktree-cleanup branch for nothing. The write composes the
-   * closed patch itself and publishes through this collection's own hook, so
-   * the caller states only which member and why, never `identity.json`'s own
-   * field shape.
-   *
-   * The only collection-level write kept: `AgentServiceFactory` keeps the
-   * `AgentIdentityStore` instance its own `create`/`open`/`upsert` already
-   * bound and loaded for every other write, so the `AgentRuntimeStateStore`
-   * it wraps into a built `AgentService` never mints a second, unloaded store
-   * over the same entity.
-   */
-  closeUnbuilt(name: string, note: string): Promise<AgentEntityIdentity> {
-    return this.entity(name).update(
-      { status: 'closed', closedAt: Date.now(), closeNote: note },
-      this.onPersisted,
-    );
-  }
-
-  /**
    * Every occupied name in this collection. The entity DIRECTORY is the
    * occupancy fact, so a name stays taken even while its identity file is
    * unreadable — no-clobber discovery happens before any workspace side effect.
    */
   async names(): Promise<string[]> {
     return listCollectionNames(this.opts.root);
+  }
+
+  /** Query current sibling identities, never a construction-time snapshot. */
+  async findManagedWorktreeOwner(
+    path: string,
+    excludingName: string,
+  ): Promise<string | null> {
+    const collision = (await this.list()).find(
+      (identity) =>
+        identity.name !== excludingName &&
+        identity.worktree.mode === 'managed' &&
+        identity.worktree.path === path,
+    );
+    return collision?.name ?? null;
   }
 
   /** Every readable identity in this collection, skipping unreadable entries. */
@@ -485,7 +448,6 @@ export class AgentNameRegistry {
     kind: Exclude<ConcreteNameKind, 'team'>;
     base: string;
     teamSlug?: string;
-    generateSuffix?: SuffixGenerator | undefined;
   }): Promise<string> {
     const occupied = await this.occupied();
     return allocateConcreteName({
@@ -493,7 +455,6 @@ export class AgentNameRegistry {
       base: input.base,
       teamSlug: input.teamSlug,
       exists: (value) => occupied.has(value),
-      generateSuffix: input.generateSuffix,
     });
   }
 }

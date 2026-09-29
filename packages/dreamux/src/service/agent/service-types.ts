@@ -8,17 +8,21 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { AgentIdentityStore } from './store.js';
+import type { CompletionDeliveryPolicy } from '../completion-router/index.js';
+import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
+import type { McpLeaseRegistry } from '../mcp/leases.js';
+import type { McpServerDelegate } from '../mcp/types.js';
+import type { WorktreeManager } from '../worktree/manager.js';
+import type { AdmissionLedger } from './admission.js';
 import type {
   AgentEntityCloseResult,
   AgentEntityIdentity,
 } from './identity.js';
-import type { WorktreeManager } from '../worktree/manager.js';
-import type { McpLeaseRegistry } from '../mcp/leases.js';
-import type { McpServerDelegate } from '../mcp/types.js';
-import type { AdmissionLedger } from './admission.js';
+import type {
+  AgentEntityCollectionStore,
+  AgentIdentityStore,
+} from './store.js';
 import type { TurnAdmission } from './turn.js';
-import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 
 export interface TeammateServiceDeps {
   config: ConfigReader;
@@ -28,26 +32,9 @@ export interface TeammateServiceDeps {
    * `AgentServiceFactory`. The service never composes a path itself.
    */
   identities: AgentIdentityStore;
-  /**
-   * Fired after a create, an upsert, or an update that changed status.
-   * `AgentIdentityStoreBinding` has no construction-time answer for this —
-   * the entity that materialized publishes to a Collection's cache, a Team's
-   * roster projection, or a dispatcher's own state, each a different owner —
-   * so the caller that asked `AgentServiceFactory` to build this entity passes
-   * its own publish hook explicitly instead.
-   */
-  onPersisted: (identity: AgentEntityIdentity) => void;
-  /**
-   * The collection's own occupancy query, asked fresh (never a snapshot
-   * taken at construction) for one candidate path at a time, only to refuse
-   * a managed worktree path a sibling already owns on a reopen. Omitted for
-   * an owner-root Agent (the dispatcher Agent, a TeamLeader), which has no
-   * sibling collection.
-   */
-  findManagedWorktreeOwner?: (
-    path: string,
-    excludingName: string,
-  ) => Promise<string | null>;
+  /** Live sibling occupancy; absent for an Agent at its owner's root. */
+  siblings: Pick<AgentEntityCollectionStore, 'findManagedWorktreeOwner'> | null;
+  completionDelivery: CompletionDeliveryPolicy;
   /**
    * The one dispatcher-lifetime duplicate ledger. Required: dedupe has to
    * outlive an entity's service object, which is rematerialized on reopen and

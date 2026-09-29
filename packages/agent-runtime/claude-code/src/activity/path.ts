@@ -29,7 +29,6 @@ function createClaudeScanBudget(
   input: {
     maxEntries?: number;
     maxElapsedMs?: number;
-    now?: () => number;
   } = {},
 ): ScanBudget {
   return createScanBudget({

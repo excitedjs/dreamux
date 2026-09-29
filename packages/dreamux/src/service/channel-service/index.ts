@@ -16,6 +16,7 @@
  * `DispatcherLifecycle`) drives this class through its lifecycle
  * verbs; it holds no channel state of its own.
  */
+import type { WorkAdmission, WorkFence } from '../../platform/work-fence.js';
 import type {
   ChannelInstance,
   ChannelMcpCaller,
@@ -23,16 +24,16 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import type { CoreCommandRegistry } from '../../command/types.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import type {
   ChannelProviderCatalog,
   RegisteredChannelProvider,
 } from '../../channel/catalog.js';
+import type { CoreCommandRegistry } from '../../command/types.js';
 import type {
   DispatcherChannelConfig,
   DispatcherConfig,
 } from '../../config/config.js';
-import { errorInfo } from '@excitedjs/dreamux-utils';
 import { dispatcherCacheDir, dispatcherDir } from '../../platform/paths.js';
 import {
   collectShutdownFailure,
@@ -65,6 +66,7 @@ export interface ChannelServiceOptions {
    */
   dispatcher: DispatcherConfig;
   channelProviders: ChannelProviderCatalog;
+  /** File-backed loggers are allocated only when channel sessions are built. */
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   /** This dispatcher's live Core-fact bus: every initialized session's event source, and the one place a stop revokes them all. */
   coreEvents: DispatcherCoreEventBus;
@@ -196,7 +198,7 @@ export class ChannelService {
    * calls at all. Sequential and in configuration order, so a mid-loop
    * failure leaves every earlier session's lease already fenceable.
    */
-  async initialize(assertAvailable: () => void): Promise<void> {
+  async initialize(fence: Pick<WorkFence, 'assertOpen'>): Promise<void> {
     for (const [channelId, entry] of this.entries) {
       const events = this.opts.coreEvents.createSource(channelId);
       const lease = createChannelCorePort({
@@ -208,7 +210,7 @@ export class ChannelService {
       });
       entry.portLease = lease;
       await entry.instance.session.initialize(lease.port);
-      assertAvailable();
+      fence.assertOpen();
     }
   }
 
@@ -220,10 +222,10 @@ export class ChannelService {
    * presentation — is the Channel's own. A session is published as live only
    * after its own start returns.
    */
-  async start(assertAvailable: () => void): Promise<void> {
+  async start(fence: Pick<WorkFence, 'assertOpen'>): Promise<void> {
     for (const entry of this.entries.values()) {
       await entry.instance.session.start();
-      assertAvailable();
+      fence.assertOpen();
       entry.live = true;
     }
   }
@@ -315,7 +317,11 @@ export class ChannelService {
    */
   mcpDelegates(
     caller: ChannelMcpCaller,
-    dispatch: <T>(task: () => Promise<T>) => Promise<T>,
+    fence: Pick<WorkAdmission, 'admit'>,
+    callerScope?: {
+      admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
+      assertOpen(): void;
+    },
   ): McpServerDelegate[] {
     const delegates: McpServerDelegate[] = [];
     for (const channelConfig of this.channelConfigs_) {
@@ -331,7 +337,8 @@ export class ChannelService {
           config: channelConfig.config,
           caller,
           sessionMcp: this.sessionMcp(channelConfig.id),
-          dispatch,
+          fence,
+          callerScope,
         }),
       );
     }

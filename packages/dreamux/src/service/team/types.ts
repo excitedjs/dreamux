@@ -1,34 +1,31 @@
+import type {
+  AgentRuntimeSkillSource,
+  Dispatcher,
+  DreamuxLogger,
+  TeamStatus,
+} from '@excitedjs/dreamux-types';
+import type { WorkAdmission } from '../../platform/work-fence.js';
 import {
   assertNotReservedAgentName,
   type AgentEntityIdentityStatus,
   type AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
-import type {
-  AgentRuntimeSkillSource,
-  DreamuxLogger,
-  LaunchDraft,
-  Team,
-  TeamCreateParams,
-  TeamStatus,
-} from '@excitedjs/dreamux-types';
-import type { AsyncSeriesHook } from 'tapable';
+import type { ChannelMcpDelegates } from '../mcp/types.js';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConfigReader } from '../../config/service.js';
-import type { AgentNameRegistry } from '../agent/store.js';
+import { RuleViolation } from '../../platform/errors.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';
-import type { TeammateOps, TeamMateSharedWorkspace } from '../agent/types.js';
-import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import type { AgentNameRegistry } from '../agent/store.js';
+import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import type {
   CompletionDeliveryPolicy,
-  CompletionInitiator,
+  CompletionOwner,
 } from '../completion-router/index.js';
-import type { SuffixGenerator } from '../name-allocator.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
-import type { WorkflowOps } from '../workflow-service/index.js';
-import { RuleViolation } from '../../platform/errors.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -48,61 +45,18 @@ export interface TeamCollectionOptions {
   // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
   // unchanged into each team's own collection so it stays topology-free (#233).
   completionDelivery: CompletionDeliveryPolicy;
-  /**
-   * The dispatcher's own Agent, where a TeamLeader's completions are delivered.
-   * A Team's own TeamMates report to their leader instead; each owner supplies
-   * the recipient it knows rather than deriving one from the producing record.
-   * Named to match `TeamServiceDeps`'s own field for the same fact, so
-   * `TeamCollection.depsBase()` forwards it unchanged instead of remapping it.
-   */
-  leaderCompletionInitiator: () => Promise<CompletionInitiator | null>;
-  admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
-  /**
-   * The owning Dispatcher's `teammateLaunch` hook, forwarded unchanged into
-   * this Team's own Team-scoped `TeammateCollection` (`TeamService`'s own
-   * construction). One hook object on the Dispatcher, not one per Team — a
-   * Team only ever passes its own id as the hook's per-call context.
-   */
-  teammateLaunch: AsyncSeriesHook<
-    [LaunchDraft, Readonly<{ teamId: string | null }>]
+  completionOwner: CompletionOwner;
+  fence: WorkAdmission;
+  dispatcherHooks: Pick<
+    Dispatcher['hooks'],
+    'teammateLaunch' | 'createTeam' | 'team'
   >;
-  /**
-   * The owning Dispatcher's `createTeam` hook. Fired once per `createFromRequest`
-   * call that is not a replay of an already-accepted request, on the caller's
-   * own wire-shaped params, before Core's repo/skill-source translation runs —
-   * so a tap that changes `leader.skill_sources` or `repo` gets the same
-   * mandatory-root injection and repo→worktree mapping an admin-supplied value
-   * gets. Never called for `rebuild` or a replay.
-   */
-  applyCreateTeamHook: (params: TeamCreateParams) => Promise<TeamCreateParams>;
-  /**
-   * Whether the dispatcher this collection belongs to is already closing.
-   * `TeamCollection` reads it the instant a Team registers into its live map
-   * (`create`/`rebuild`) and stops that Team's runtime right away instead of
-   * leaving it running until the dispatcher's own post-drain sweep reaches
-   * it — the same fact `TeammateCollection` composes into its own
-   * `isClosing` for a Team-scoped member.
-   */
-  isClosing: () => boolean;
-  /**
-   * Build one TeamLeader's Agent-facing MCP surface.
-   *
-   * The Team layer supplies the identity and nothing else. Every object those
-   * servers reach — channels, Teams, TeamMates, schedulers — is dispatcher-owned,
-   * so the dispatcher assembles them; a Team that built its own leader's tools
-   * would be re-deciding a role question it does not own.
-   */
-  leaderMcp: (input: {
-    teamId: string;
-    leaderName: string;
-  }) => TeammateAgentMcp;
-  /** Fires the owning Dispatcher's `team` hook for a just-constructed Team; never throws. */
-  announceTeam: (team: Team, ctx: { origin: 'create' | 'rebuild' }) => void;
+  mcp: Pick<TeammateAgentMcp, 'leases' | 'adminSocketPath'> & {
+    channels: ChannelMcpDelegates;
+  };
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;
   coreEvents: DispatcherCoreEventPublisher;
-  nameSuffixGenerator?: SuffixGenerator;
-  agentNameSuffixGenerator?: SuffixGenerator;
 }
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -307,11 +261,6 @@ export interface TeamHistoryRow {
 export interface TeamHistoryResult {
   items: TeamHistoryRow[];
   next_cursor: string | null;
-}
-
-export interface TeamLeaderHandle {
-  teammates: TeammateOps;
-  workflows: WorkflowOps;
 }
 
 export function validateTeamId(id: string): string {

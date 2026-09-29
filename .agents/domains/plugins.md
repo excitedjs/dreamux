@@ -47,8 +47,8 @@ host.hooks.plugin.for(name)      once, with plugin <name>'s api, at the end of l
 | `dispatcher.hooks.launch`         | `DispatcherAgent.build()` (`/packages/dreamux/src/service/dispatcher-service/agent.ts`)                                                                                   | each Dispatcher input-source start                                                                                                                                                                                                                                                           | a runtime process restart inside the same Agent                                                                                       |
 | `dispatcher.hooks.teammateLaunch` | `TeammateCollection.teammateOptions`, run from `createFreshEntity` and from a closed TeamMate's reopen (`/packages/dreamux/src/service/agent/index.ts`) | each construction of any ordinary TeamMate's Agent — Dispatcher-spawned, a Team member, or a Workflow agent, since a Workflow agent's `createLocked` is the same collection path as an ordinary spawn; `context.teamId` is that TeamMate's owning Team id, `null` for a dispatcher-owned one | the Dispatcher's own Agent or a Team's leader (see `launch` / `leaderLaunch`); a runtime process restart inside the same AgentService |
 | `dispatcher.hooks.createTeam`     | `TeamCollection.createFromRequest` (`/packages/dreamux/src/service/team/index.ts`)                                                                                        | once per `team.create` request that is not a replay of an already-accepted one, after the replay check and before the Team's repo/skill-source translation and construction; an `AsyncSeriesWaterfallHook`, so each tap returns the value the next tap (and finally the translation) sees    | `rebuild`; a replayed `request_id` (decided against `payloadHash` alone, before this hook runs)                                       |
-| `dispatcher.hooks.team`           | `TeamService` `createNew` and `rebuild` (`/packages/dreamux/src/service/team/service.ts`), through the `announceTeam` dep                                                 | create (before the Team record is written) and rebuild; `ctx.origin` says which                                                                                                                                                                                                              | a replayed `request_id` (never reaches `createNew`)                                                                                   |
-| `team.hooks.leaderLaunch`         | `teamLeaderOptions`, run by both branches of `openTeamLeader` (`/packages/dreamux/src/service/team/leader.ts`)                                                                                          | `TeamService.createNew` and `.rebuild`, each exactly once — the Team holds the same leader for its whole life once either succeeds, so there is no separate lazy-materialization case                                                                                                                                                                   | a runtime process restart inside the same AgentService; creation-failure cleanup (the leader, if one exists, is simply closed — nothing is adopted or rebuilt to close it)                                                                                |
+| `dispatcher.hooks.team`           | `TeamService` `createNew` and `rebuild` (`/packages/dreamux/src/service/team/service.ts`), by calling the actual `dispatcherHooks.team` object                                                 | create (before the Team record is written) and rebuild; `ctx.origin` says which                                                                                                                                                                                                              | a replayed `request_id` (never reaches `createNew`)                                                                                   |
+| `team.hooks.leaderLaunch`         | `teamLeaderOptions`, reached through `TeamService.buildLeader` after identity preparation (`/packages/dreamux/src/service/team/leader.ts`)                                                                                          | `TeamService.createNew` and `.rebuild`, each exactly once — the Team holds the same leader for its whole life once either succeeds, so there is no separate lazy-materialization case                                                                                                                                                                   | a runtime process restart inside the same AgentService; creation-failure cleanup (the leader, if one exists, is simply closed — nothing is adopted or rebuilt to close it)                                                                                |
 
 `dispatcher.hooks.createTeam` hands a tap the caller's own wire-shaped
 `TeamCreateParams` (`TeamCreateCommand` without `request_id`, since replay
@@ -85,10 +85,12 @@ Semantics that follow from the sites:
   hooks: the discarded object never reaches TeamLeader construction, so its
   taps never fire and no revocation signal is needed.
 - `leaderLaunch` fires exactly once per Team construction attempt — once on
-  `createNew`'s create path, once on `rebuild`'s restore-or-create path
-  (`openTeamLeader`, `/packages/dreamux/src/service/team/leader.ts`) — and
-  never again: the Team holds the same leader for its whole life once either
-  succeeds, so there is no separate lazy-rebuild trigger (R61). A failed
+  `createNew`'s create path, once on `rebuild`'s restore-or-create path.
+  `TeamService.buildLeader` invokes the role options in
+  `/packages/dreamux/src/service/team/leader.ts` after creation or alignment;
+  `openTeamLeader` itself only reads and checks the stored identity. The hook
+  does not run again: the Team holds the same leader for its whole life once
+  construction succeeds, so there is no separate lazy-rebuild trigger (R61). A failed
   creation no longer adopts a durable leader to close it: `abandonCreation`
   simply closes whatever leader construction already produced (or none, if
   creation failed before one existed), so the launch hook never fires as part
@@ -201,11 +203,11 @@ lossy sanitizer alone maps both `@acme/tool` and `_acme_tool` to
   their return value (except `register`'s), so an `async` method's rejection is
   logged at runtime and fails loading under `for(name)`, and an `async`
   `register` leaves the tap unchanged even when it resolves to a modified tap.
-  No call site (`Dispatchers.get`, the `announceTeam`
-  dep, `composeLaunchDraft`, api publication) needs its own catch: every hook
-  runs with plain `hook.call` / `hook.promise`. This keeps the "never throws"
-  contract on `announceTeam`'s caller true regardless of which mechanism — a
-  tap or an interceptor — a plugin used.
+  No call site (`Dispatchers.get`, TeamService announcement,
+  `composeLaunchDraft`, api publication) needs its own catch: every hook runs
+  with plain `hook.call` / `hook.promise`. Isolation belongs to the hook
+  object and covers both taps and interceptors, without a separate
+  announcement callback.
 - Runtime hooks:
   - `SyncHook` taps (`dispatcher`, `team`): a throw is logged with the owning
     plugin and skipped; lower-level taps it registered before throwing stay.

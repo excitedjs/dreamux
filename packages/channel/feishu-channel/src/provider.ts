@@ -23,11 +23,10 @@ import type {
   ChannelSessionCreateContext,
 } from '@excitedjs/dreamux-types';
 
-import { FeishuChannelSession } from './session/session.js';
-import type { FeishuBot } from './bot.js';
 import { FeishuExtensionRegistry } from './feishu-extensions.js';
-import { createFeishuSessionMcp } from './tools/session-mcp.js';
+import { FeishuChannelSession } from './session/session.js';
 import { feishuToolRegistrations } from './tools/registry.js';
+import { createFeishuSessionMcp } from './tools/session-mcp.js';
 
 /** Validated Feishu channel config the neutral session is constructed from. */
 export interface FeishuChannelConfig {
@@ -35,22 +34,9 @@ export interface FeishuChannelConfig {
   appSecret: string;
 }
 
-/** Options for {@link createFeishuChannelProvider}. */
-export interface CreateFeishuChannelProviderOptions {
-  /**
-   * Test seam: build the underlying `FeishuBot` instead of opening a real Lark
-   * connection. Mirrors the agent-runtime provider factories' process/session
-   * seams. Receives the validated channel config so a test can key a bot by its
-   * app identity (e.g. per-channel multi-bot routing). Omitted in production.
-   */
-  botFactory?: (config: FeishuChannelConfig) => FeishuBot;
-}
-
 /** A Feishu channel provider with no extensions (tests and embedders). */
-export function createFeishuChannelProvider(
-  options: CreateFeishuChannelProviderOptions = {},
-): ChannelProvider<FeishuChannelConfig> {
-  return buildFeishuChannelProvider(options, new FeishuExtensionRegistry());
+export function createFeishuChannelProvider(): ChannelProvider<FeishuChannelConfig> {
+  return buildFeishuChannelProvider(new FeishuExtensionRegistry());
 }
 
 /**
@@ -59,7 +45,6 @@ export function createFeishuChannelProvider(
  * registry it passes here.
  */
 export function buildFeishuChannelProvider(
-  options: CreateFeishuChannelProviderOptions,
   extensions: FeishuExtensionRegistry,
 ): ChannelProvider<FeishuChannelConfig> {
   return {
@@ -160,11 +145,16 @@ export function buildFeishuChannelProvider(
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log,
         extensions,
-        ...(options.botFactory !== undefined
-          ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
-          : {}),
       });
-      return { session, mcp: createFeishuSessionMcp(session, log) };
+      return {
+        session,
+        mcp: createFeishuSessionMcp(
+          session.tools,
+          session.extensions,
+          session.lifecycle,
+          log,
+        ),
+      };
     },
   };
 }

@@ -6,7 +6,11 @@ import type {
   TeammateRole,
 } from '@excitedjs/dreamux-types';
 
-import type { PreparedCompletionFact } from '../completion-router/index.js';
+import type {
+  CompletionDeliveryPolicy,
+  CompletionInitiator,
+  PreparedCompletionFact,
+} from '../completion-router/index.js';
 
 export function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
@@ -16,19 +20,6 @@ export type TurnOutcome =
   | { status: 'completed'; resultText: string | null }
   | { status: 'failed'; error: Error }
   | { status: 'stopped' };
-
-/**
- * Report one settled turn to whoever is waiting for it.
- *
- * The fact is what the recipient reads. The provider token is only the identity
- * of the settlement that produced it, used to fold the same completion reported
- * through several paths into one delivery; a turn that ended without a native
- * result has no such identity and passes `null` rather than a fabricated one.
- */
-export type TurnCompletionDelivery = (
-  completion: RuntimeCompletion | null,
-  fact: PreparedCompletionFact,
-) => Promise<void>;
 
 /**
  * One submission this entity is waiting on.
@@ -73,12 +64,9 @@ export class EntityTurn implements Turn {
     runtime: RuntimeSubmission,
     private readonly producerName: string,
     private readonly producerRole: TeammateRole,
-    private deliveryClosure: TurnCompletionDelivery | null,
-    /**
-     * Whether the entity still owes its owner this turn's news, read once, at
-     * the moment delivery would start.
-     */
-    private readonly owed: () => boolean,
+    private recipient: CompletionInitiator | null,
+    private readonly owner: { owesCompletion(): boolean },
+    private readonly delivery: CompletionDeliveryPolicy,
   ) {
     this.settled = runtime.settled.then(
       (settlement): TurnOutcome => {
@@ -132,20 +120,20 @@ export class EntityTurn implements Turn {
    *
    * A turn the entity's own close or host release ended is different news:
    * the party that ended it is the one that would read the report. The
-   * entity says so through {@link owed}, read once here; a negative answer
-   * releases the closure for good, so a later `ensureDelivery()` cannot revive
+   * entity says so through `owner.owesCompletion()`, read once here; a negative answer
+   * releases the recipient for good, so a later `ensureDelivery()` cannot revive
    * the report, while a delivery that already started is never retracted.
    */
   private startDeliveryIfReady(): void {
     if (
       this.deliveryTask !== null ||
-      this.deliveryClosure === null ||
+      this.recipient === null ||
       this.selectedOutcome === null
     ) {
       return;
     }
-    if (!this.owed()) {
-      this.deliveryClosure = null;
+    if (!this.owner.owesCompletion()) {
+      this.recipient = null;
       return;
     }
     const outcome = this.selectedOutcome;
@@ -158,7 +146,7 @@ export class EntityTurn implements Turn {
       result: outcome.status === 'completed' ? outcome.resultText : null,
     };
     this.deliveryTask = Promise.resolve().then(() =>
-      this.deliveryClosure!(completion, fact),
+      this.delivery.deliverRuntime(this.recipient!, completion, fact),
     );
     void this.deliveryTask.catch(() => undefined);
   }

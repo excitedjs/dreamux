@@ -95,10 +95,6 @@ export function isThenable(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
-export type PluginModuleImporter = (
-  packageName: string,
-) => Promise<Record<string, unknown>>;
-
 /**
  * Validate the raw top-level `plugins` value. Runs before any import: unlike
  * provider refs, a malformed plugin entry has no later validation pass that
@@ -147,9 +143,7 @@ export async function loadPlugins(options: {
   registry: ProviderRegistry;
   entries: readonly PluginConfigEntry[];
   logger: DreamuxLogger;
-  importModule?: PluginModuleImporter | undefined;
 }): Promise<LoadedPlugin[]> {
-  const importModule = options.importModule ?? defaultImportModule;
   // Every provider, built-in or plugin-supplied, is contributed by a plugin
   // now, so the first `contribute()` call to claim a name is its source; there
   // is nothing to pre-seed.
@@ -168,7 +162,7 @@ export async function loadPlugins(options: {
   ];
   const loaded: LoadedPlugin[] = [];
   for (const { ref, source, entry } of sources) {
-    const plugin = await constructPlugin(parseProviderRef(ref), importModule);
+    const plugin = await constructPlugin(parseProviderRef(ref));
     const clash = loaded.find((other) => other.name === plugin.name);
     if (clash !== undefined) {
       throw new PluginLoadError(
@@ -221,10 +215,7 @@ export function readPluginConfigs(
   }
 }
 
-async function constructPlugin(
-  ref: ProviderRef,
-  importModule: PluginModuleImporter,
-): Promise<DreamuxPlugin> {
+async function constructPlugin(ref: ProviderRef): Promise<DreamuxPlugin> {
   let packageName: string;
   if (ref.source === 'npm') {
     packageName = ref.package;
@@ -237,7 +228,7 @@ async function constructPlugin(
   }
   let module: Record<string, unknown>;
   try {
-    module = await importModule(packageName);
+    module = await defaultImportModule(packageName);
   } catch (err) {
     throw new PluginLoadError(
       ref.raw,

@@ -31,7 +31,7 @@ import {
 } from '../platform/file-ledger.js';
 import { pathExists } from '../platform/fs-errors.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
-import { logsRoot, stateRoot, type ExecDirProbe } from '../platform/paths.js';
+import { logsRoot, stateRoot } from '../platform/paths.js';
 import {
   resolveManagedServiceAnswers,
   validateManagedServiceLaunch,
@@ -58,8 +58,6 @@ export interface DaemonInstallOptions {
   env?: NodeJS.ProcessEnv;
   /** Stable-Node selection probe (tests). */
   nodeProbe?: ServiceNodeProbe;
-  /** Optional Homebrew-directory presence probe (tests). */
-  execDirProbe?: ExecDirProbe;
 }
 
 export interface DaemonInstallResult {
@@ -131,7 +129,6 @@ export async function runDaemonInstall(
     host,
     env,
     nodeProbe: options.nodeProbe,
-    execDirProbe: options.execDirProbe,
   });
 
   if (!dryRun) {

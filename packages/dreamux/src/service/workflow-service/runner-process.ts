@@ -19,10 +19,6 @@ export interface WorkflowRunnerHandlers {
   onError(error: Error): void;
 }
 
-export type WorkflowRunnerFactory = (
-  handlers: WorkflowRunnerHandlers,
-) => WorkflowRunnerHandle;
-
 /** IPC adapter around the neutral process-group supervisor. */
 export class ForkedWorkflowRunner implements WorkflowRunnerHandle {
   private readonly child: SupervisedChild;

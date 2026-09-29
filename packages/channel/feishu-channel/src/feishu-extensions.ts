@@ -16,20 +16,20 @@ import type {
 } from '@excitedjs/dreamux-types';
 import type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 
-import { builtinCardAction } from './card-actions.js';
-import type { FeishuBindingOperations } from './routing/operations.js';
 import type { FeishuBot } from './bot.js';
-import type { FeishuOutbound } from './outbound/index.js';
-import type { FeishuInboundTargeting } from './inbound/target.js';
-import type { FeishuLifecycle } from './session/lifecycle.js';
+import { builtinCardAction } from './card-actions.js';
 import type {
   FeishuExtension,
   FeishuExtensionActionResult,
   FeishuExtensionTool,
   FeishuInstanceApi,
 } from './extension.js';
+import type { FeishuInboundTargeting } from './inbound/target.js';
+import type { FeishuOutbound } from './outbound/index.js';
 import type { FeishuRouting } from './routing/index.js';
+import type { FeishuBindingOperations } from './routing/operations.js';
 import { channelPathSegment } from './routing/store.js';
+import type { FeishuLifecycle } from './session/lifecycle.js';
 import { findFeishuTool, toolRegistration } from './tools/registry.js';
 import type { FeishuToolResult } from './tools/types.js';
 
@@ -314,8 +314,6 @@ export function buildInstanceApi(input: {
   targetRouter: Pick<FeishuInboundTargeting, 'project'>;
   routing: FeishuRouting;
   bindings: FeishuBindingOperations;
-  /** Closing the instance waits for work passed here before it drains routing. */
-  track(work: Promise<unknown>): Promise<unknown>;
 }): FeishuInstanceApi {
   const { lifecycle, outbound, bot, targetRouter, routing, bindings } = input;
   return {
@@ -332,7 +330,9 @@ export function buildInstanceApi(input: {
       lifecycle.assertLive();
       // Tracked: the bind writes routing after an awaited Core status read,
       // which must not land after the instance closed its routing store.
-      await input.track(bindings.bindChannel({ target, teamName, display }));
+      await lifecycle.track(
+        bindings.bindChannel({ target, teamName, display }),
+      );
     },
     async sendCard({ chatId, replyTo, card }) {
       const sent = await outbound.sendCard({

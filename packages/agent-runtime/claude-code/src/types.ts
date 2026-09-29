@@ -3,7 +3,7 @@
  *
  * These are data contracts only: no IO, no process spawning, no timers.
  */
-import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, RuntimeAdmission } from '@excitedjs/dreamux-types';
 
 /** A parsed JSON object. */
 export type JsonObject = Record<string, unknown>;
@@ -168,7 +168,7 @@ export interface ClaudeCodeSessionSpec {
   /** Surface the local-only Remote Control URL when Claude returns one. */
   onRemoteControlUrl?: ((url: string) => void) | undefined;
   /** Diagnostic logger for protocol-level events (parse errors, control answers). */
-  log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  logger?: DreamuxLogger;
   onProtocolEvent?: (event: ClaudeProtocolEvent) => void;
 }
 
@@ -221,7 +221,3 @@ export interface ClaudeCodeSession {
   /** Reap the child (SIGTERM -> SIGKILL group). Idempotent. */
   stop(): Promise<void>;
 }
-
-export type ClaudeCodeSessionFactory = (
-  spec: ClaudeCodeSessionSpec,
-) => ClaudeCodeSession;

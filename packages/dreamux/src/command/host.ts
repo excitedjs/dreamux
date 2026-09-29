@@ -6,7 +6,7 @@
  * error) because it reads and validates a context field, nothing more —
  * resolving that id to an actual dispatcher requires the concrete
  * `DispatcherService`/`DispatcherConfig` types, which is composition-tier
- * work (`server/command-host.ts`'s `mustDispatcher`/`mustDispatcherConfig`).
+ * work owned by the actual Server command host.
  *
  * Addressing is caller context, not payload: the admin socket lifts the
  * caller-supplied `dispatcher_id` out of its request envelope, and a Channel
@@ -15,8 +15,8 @@
  * closed around domain fields only.
  */
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
-import type { CoreCommandContext } from './types.js';
 import { ValidationError, throwCallerMistake } from './errors.js';
+import type { CoreCommandContext } from './types.js';
 
 export function mustDispatcherId(context: CoreCommandContext): string {
   const id = context.dispatcher_id;
@@ -32,4 +32,9 @@ export function mustDispatcherId(context: CoreCommandContext): string {
     // and anything else raised here is not the caller's fault to begin with.
     throwCallerMistake(err);
   }
+}
+
+/** Domain-local view of the actual process host and its addressed lookup. */
+export interface DispatcherCommandHost<T> {
+  addressedDispatcher(context: CoreCommandContext): T;
 }

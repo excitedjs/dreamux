@@ -3,11 +3,11 @@ import type {
   AgentRuntimeStateUpdate,
   AgentRuntimeStatus,
 } from '@excitedjs/dreamux-types';
-import type { AgentIdentityStore, AgentIdentityUpdateInput } from './store.js';
 import {
   runtimeStatusToIdentityStatus,
   type AgentEntityIdentity,
 } from './identity.js';
+import type { AgentIdentityStore, AgentIdentityUpdateInput } from './store.js';
 
 /**
  * The `Error` a revoked lease rejects with. Providers branch on `error.name`,
@@ -81,14 +81,6 @@ export class AgentRuntimeStateStore {
   constructor(
     private readonly store: AgentIdentityStore,
     identity: AgentEntityIdentity,
-    /**
-     * Fired after a create, an upsert, or an update that changed status.
-     * `AgentIdentityStoreBinding` no longer carries this — it has no
-     * construction-time answer for a store several long-lived owners share
-     * (the dispatcher root, a Team's leader) — so every write this store
-     * makes passes it explicitly instead.
-     */
-    private readonly onPersisted: (identity: AgentEntityIdentity) => void,
   ) {
     this.entityName = identity.name;
   }
@@ -124,7 +116,7 @@ export class AgentRuntimeStateStore {
           current: AgentEntityIdentity,
         ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
   ): Promise<AgentEntityIdentity> {
-    return this.store.update(patch, this.onPersisted);
+    return this.store.update(patch);
   }
 
   /**
@@ -176,7 +168,7 @@ export class AgentRuntimeStateStore {
           throw new AgentRuntimeStateLeaseRevoked(this.entityName);
         }
         return identityPatch(update);
-      }, this.onPersisted)
+      })
       .then(() => {
         if (update.kind === 'status') this.lastRuntimeStatus = update.status;
       });

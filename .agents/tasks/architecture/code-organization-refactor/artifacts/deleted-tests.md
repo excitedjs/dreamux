@@ -5129,3 +5129,45 @@ now-needed-again imports (`InMemoryTransport`, `AdminClientError`,
 `runDreamuxMcp`, `createCommandHarness`/`startHarnessAdminSocket`, the
 `mcp-client.js` trio) verbatim, plus its docstring's original two-half
 description.
+
+
+## Since this was recorded: R71 data-flow construction contracts
+
+The 2026-09-29 continuation changes internal construction interfaces without
+restoring or editing any test in this child PR. Earlier recipes above are
+historical snapshots: preserve their behavioral assertions, but do not
+reintroduce removed callback bags simply to make an old fixture compile.
+The [final solution](/.agents/tasks/architecture/code-organization-refactor/technical-design/data-flow/final.md)
+and [review adjudication](/.agents/tasks/architecture/code-organization-refactor/artifacts/data-flow-review.md)
+own the current construction contracts and preservation decisions.
+
+In particular, the onboard recipe's literal-restoration claim has another
+known exception. Its deleted fixture supplies `execDirProbe` twice to model
+Homebrew directory presence; one case also asserts the probe invocation. R71
+removes `ExecDirProbe` and that option from onboarding and daemon installation.
+The final parent coverage pass must verify the same executable-directory/PATH
+behavior against the actual filesystem lookup boundary, rather than restore
+the deleted public construction option or treat the old invocation count as
+product behavior. This is a fixture adaptation obligation, not permission to
+weaken the selected PATH assertions. No such test work happened in this child.
+
+`ServiceNodeProbe` remains a distinct supported test capability for synthetic
+Node symlink and executable layouts. Its previously recorded import correction
+to `daemon/environment.ts` still applies. The shared activity-scan clock also
+remains, with its four existing deterministic tests unchanged; only unused
+provider adapter clock forwarding was removed.
+
+The recorded `workflow-service.test.ts` fixture also needs adaptation: its
+pre-deletion implementation supplies `createRunner`, which R71 removes, but
+does not supply the removed service-level `runnerEntryPath`. Preserve its
+13 behavioral cases through the supported runner boundary, including recovery
+without execution, late messages, terminal-delivery reservation, lock release,
+and shutdown convergence. The absence of today's fixture does not cancel
+those coverage obligations or justify restoring a callback-only factory.
+
+Command fixtures must implement the current structural host methods rather
+than restore the old resolver bags. Address validation still belongs to Server;
+missing/invalid id, missing configured entry, and pre-start error precedence
+remain behavioral assertions. Ownership-event tests must observe committed
+identity and aggregate facts, including record-only close, rather than inject
+`onPersisted`. No parent fixture was restored or weakened in this child.

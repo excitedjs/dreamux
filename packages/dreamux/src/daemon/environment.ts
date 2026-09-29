@@ -25,7 +25,6 @@ import {
   dreamuxRoot,
   probeStandardExecDirs,
   withServicePath,
-  type ExecDirProbe,
 } from '../platform/paths.js';
 import {
   providerBinChecksForConfig,
@@ -399,8 +398,6 @@ export interface ResolveManagedServiceAnswersInput {
   env: NodeJS.ProcessEnv;
   /** Stable-Node selection probe (tests). */
   nodeProbe?: ServiceNodeProbe | undefined;
-  /** Optional Homebrew-directory presence probe (tests). */
-  execDirProbe?: ExecDirProbe | undefined;
 }
 
 /**
@@ -414,14 +411,11 @@ export interface ResolveManagedServiceAnswersInput {
 export async function resolveManagedServiceAnswers(
   input: ResolveManagedServiceAnswersInput,
 ): Promise<ServiceInstallAnswers> {
-  const fallbackDirs = await probeStandardExecDirs(
-    {
-      platform: input.host.platform,
-      homeDir: input.host.homeDir,
-      env: input.env,
-    },
-    input.execDirProbe,
-  );
+  const fallbackDirs = await probeStandardExecDirs({
+    platform: input.host.platform,
+    homeDir: input.host.homeDir,
+    env: input.env,
+  });
   const resolveEnv = withUserLocalBinPath(input.env, fallbackDirs);
   const providerBinChecks =
     input.config === null || input.catalogs === null

@@ -2,13 +2,16 @@ import {
   defaultWorkspaceEnabled,
   type DreamuxConfig,
 } from '../../config/config.js';
-import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import type { AgentIdentityUpdateInput } from '../agent/store.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
+import type {
+  AgentEntityCollectionStore,
+  AgentIdentityUpdateInput,
+} from '../agent/store.js';
 import type {
   SpawnTeamMateInput,
   TeamMateSharedWorkspace,
 } from '../agent/types.js';
-import type { AgentEntityIdentity } from '../agent/identity.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { WorktreeManager } from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {
@@ -74,9 +77,7 @@ export async function reprepareDeletedManagedWorktree(input: {
    * Absent for an owner-root Agent (the dispatcher Agent, a TeamLeader),
    * which has no sibling collection.
    */
-  findManagedWorktreeOwner?:
-    | ((path: string, excludingName: string) => Promise<string | null>)
-    | undefined;
+  siblings: Pick<AgentEntityCollectionStore, 'findManagedWorktreeOwner'> | null;
   worktrees: WorktreeManager;
   identity: AgentEntityIdentity;
 }): Promise<AgentIdentityUpdateInput> {
@@ -106,7 +107,7 @@ export async function reprepareDeletedManagedWorktree(input: {
     },
   });
   await assertManagedWorktreeAvailable({
-    findManagedWorktreeOwner: input.findManagedWorktreeOwner,
+    siblings: input.siblings,
     name: input.identity.name,
     worktree: workspace.worktree,
   });
@@ -122,26 +123,21 @@ export async function reprepareDeletedManagedWorktree(input: {
 /**
  * Refuse a managed worktree path another Agent in the same collection owns.
  *
- * `findManagedWorktreeOwner` is the caller's own collection-scoped occupancy
+ * `siblings` is the caller's actual collection-scoped occupancy
  * query, asked fresh for this one candidate path rather than handing over
  * every sibling's identity: an owner-root Agent (the dispatcher Agent, a
  * TeamLeader) has no sibling collection and never takes a managed worktree of
- * its own, so an omitted query means there is nothing to collide with.
+ * its own, so a null sibling owner means there is nothing to collide with.
  */
 export async function assertManagedWorktreeAvailable(input: {
-  findManagedWorktreeOwner?:
-    | ((path: string, excludingName: string) => Promise<string | null>)
-    | undefined;
+  siblings: Pick<AgentEntityCollectionStore, 'findManagedWorktreeOwner'> | null;
   name: string;
   worktree: AgentEntityIdentity['worktree'];
 }): Promise<void> {
-  if (
-    input.worktree.mode !== 'managed' ||
-    input.findManagedWorktreeOwner === undefined
-  ) {
+  if (input.worktree.mode !== 'managed' || input.siblings === null) {
     return;
   }
-  const owner = await input.findManagedWorktreeOwner(
+  const owner = await input.siblings.findManagedWorktreeOwner(
     input.worktree.path,
     input.name,
   );

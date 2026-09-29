@@ -16,27 +16,28 @@
  * Card delivery is handed in rather than done here: it needs the session's
  * lifecycle fence and bounded-send policy, and this module needs neither.
  */
+import type { FeishuOutbound } from '../outbound/index.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 
 import {
   bindingBoundCard,
-  bindingUnboundCard,
   bindingRouteEndedCard,
-  teamDissolvedCard,
+  bindingUnboundCard,
   spaceBoundCard,
   spaceUnboundCard,
+  teamDissolvedCard,
 } from '../cards/binding-notification.js';
-import type { FeishuCoreCommands } from '../feishu-core-commands.js';
 import type { FeishuCotAdapter } from '../cot/adapter.js';
+import type { FeishuCoreCommands } from '../feishu-core-commands.js';
 import { errorMessage } from '../feishu-submit.js';
 import type { FeishuSpaceRecord } from './document.js';
 import type { FeishuRemovedRoute, FeishuRouting } from './index.js';
 import {
+  chatTarget,
   describeTarget,
   isBindableTarget,
   sameTarget,
-  chatTarget,
   type FeishuTarget,
 } from './target.js';
 
@@ -83,7 +84,7 @@ export interface FeishuBindingOperationsOptions {
    * root is known for it, which the notifier treats as a skip rather than a
    * guess at where in it to land.
    */
-  notify(target: FeishuTarget, card: unknown, replyTo: string | null): void;
+  readonly outbound: Pick<FeishuOutbound, 'notify'>;
 }
 
 export class FeishuBindingOperations {
@@ -166,7 +167,7 @@ export class FeishuBindingOperations {
       : (this.opts.routing.bindingFor(announce)?.root_message_id ??
         input.announceMessageId ??
         null);
-    this.opts.notify(
+    this.opts.outbound.notify(
       announce,
       bindingBoundCard({
         target,
@@ -195,7 +196,7 @@ export class FeishuBindingOperations {
     const teamName = await this.opts.routing.unbind(target, requireOwner);
     if (teamName === null) return { team_name: null };
     this.opts.cot.onRouteReleased({ teamName, target });
-    this.opts.notify(
+    this.opts.outbound.notify(
       target,
       bindingUnboundCard({ target, display, teamName }),
       replyTo,
@@ -212,7 +213,7 @@ export class FeishuBindingOperations {
       identity: input.identity,
       repo: input.repo,
     });
-    this.opts.notify(
+    this.opts.outbound.notify(
       chatTarget(input.chatId, 'group'),
       spaceBoundCard(space),
       null,
@@ -223,7 +224,7 @@ export class FeishuBindingOperations {
   async unbindSpace(spaceName: string): Promise<FeishuSpaceRecord | null> {
     const space = await this.opts.routing.unbindSpace(spaceName);
     if (space === null) return null;
-    this.opts.notify(
+    this.opts.outbound.notify(
       chatTarget(space.container_chat_id, 'group'),
       spaceUnboundCard(space),
       null,
@@ -251,7 +252,7 @@ export class FeishuBindingOperations {
         teamName: input.teamName,
         target: route.target,
       });
-      this.opts.notify(
+      this.opts.outbound.notify(
         route.target,
         card({
           target: route.target,
@@ -280,7 +281,7 @@ export class FeishuBindingOperations {
     // its root, so the fresh row already carries it.
     const replyTo =
       this.opts.routing.bindingFor(input.target)?.root_message_id ?? null;
-    this.opts.notify(
+    this.opts.outbound.notify(
       input.target,
       bindingBoundCard({
         target: input.target,

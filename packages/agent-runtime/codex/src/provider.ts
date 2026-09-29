@@ -1,23 +1,3 @@
-import { codexMcpServerArgs } from './mcp-config.js';
-import { CodexWsClient } from './rpc.js';
-import { CodexProcess, type CodexProcessOptions } from './supervisor.js';
-import { CodexRuntime } from './runtime.js';
-import type { CodexRuntimeDeps } from './runtime-deps.js';
-import {
-  DEFAULT_CODEX_BIN,
-  readDispatcherCodexConfig,
-  type DispatcherCodexConfig,
-} from './config.js';
-import { codexArgsFromConfig, codexArgsToCli } from './args.js';
-import { resolveCodexBinPath } from './bin.js';
-import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
-import { allocateCodexSocketPath } from './internal/socket.js';
-import { readCodexRecentActivity } from './activity/reader.js';
-import { resolveCodexHomeDir } from './paths.js';
-import {
-  compileCodexOutputSchema,
-  type CodexOutputSchemaCodec,
-} from './output-schema-codec.js';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
@@ -25,6 +5,23 @@ import type {
   AgentRuntimeProviderCapabilities,
   AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
+import { readCodexRecentActivity } from './activity/reader.js';
+import { codexArgsFromConfig, codexArgsToCli } from './args.js';
+import { resolveCodexBinPath } from './bin.js';
+import {
+  DEFAULT_CODEX_BIN,
+  readDispatcherCodexConfig,
+  type DispatcherCodexConfig,
+} from './config.js';
+import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
+import { codexMcpServerArgs } from './mcp-config.js';
+import {
+  compileCodexOutputSchema,
+  type CodexOutputSchemaCodec,
+} from './output-schema-codec.js';
+import { resolveCodexHomeDir } from './paths.js';
+import type { CodexRuntimeDeps } from './runtime-deps.js';
+import { CodexRuntime } from './runtime.js';
 
 /**
  * Construction options for the built-in Codex provider. The runtime's host
@@ -32,15 +29,12 @@ import type {
  * volatile socket placement comes from `context.paths.runtimeSocketDirs()` (this
  * package owns the allocation policy). Role-gated bundled skills arrive as
  * neutral `skillSources`. Registration identity is Core's: the provider
- * carries no descriptor. What remains here are the test/host seams
- * (process/WS factories, restart backoff) that let core and tests wire
- * behavior without changing the provider. The Codex home/auth pre-start check
+ * carries no descriptor. The optional settings here control restart backoff;
+ * this package constructs its native process and WebSocket client directly. The Codex home/auth pre-start check
  * runs unconditionally as part of `diagnostic.ts`'s doctor capability, not as
  * a runtime-start hook.
  */
 export interface CodexAgentRuntimeProviderOptions {
-  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
-  codexClientFactory?: (socketPath: string) => CodexWsClient;
   restartBackoffBaseMs?: number;
   restartBackoffMaxMs?: number;
 }
@@ -136,10 +130,6 @@ export function createCodexAgentRuntimeProvider(
         activitySink: context.activity,
         codec,
         paths,
-        // The package owns socket allocation: pick a fresh name in the first of
-        // the host's preference-ordered candidate dirs that fits the budget.
-        allocateSocketPath: (id) =>
-          allocateCodexSocketPath(paths.runtimeSocketDirs(), id),
         codexBinPath: resolveCodexBinPath(codexConfig.bin),
         extraArgs: runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
@@ -150,8 +140,6 @@ export function createCodexAgentRuntimeProvider(
         systemPromptReplace,
         systemPromptAppend,
         logger: context.logger,
-        codexProcessFactory: options.codexProcessFactory,
-        codexClientFactory: options.codexClientFactory,
         restartBackoffBaseMs: options.restartBackoffBaseMs,
         restartBackoffMaxMs: options.restartBackoffMaxMs,
       };

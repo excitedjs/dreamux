@@ -7,13 +7,33 @@ import type {
   TeammateInputNotice,
   TeammateRole,
 } from '@excitedjs/dreamux-types';
+import { EventEmitter } from 'node:events';
 
 import type { ProjectedAgent } from '../dispatcher-core-events/conversation-projection.js';
 
-import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
 import { errorMessage } from '@excitedjs/dreamux-utils';
-import { toRecordRow, toStatus } from './records.js';
-import { AgentRuntimeStateStore } from './runtime-state.js';
+import { deduplicate } from '../../platform/deduplicate.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
+import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../../platform/shutdown-errors.js';
+import type {
+  CompletionDeliveryResult,
+  CompletionInitiator,
+  PreparedCompletionDelivery,
+  PreparedCompletionFact,
+} from '../completion-router/index.js';
+import { COMPLETION_SOURCE } from '../submission-sources.js';
+import type { AgentEntityLedgerKey } from './admission.js';
+import {
+  asCompletionDeliveryResult,
+  failedAdmissionReason,
+  toSubmissionResult,
+  type AdmissionLedger,
+} from './admission.js';
+import { buildCompletionTurnText } from './completion-renderer.js';
 import {
   requireLifecycleText,
   type AgentEntityCloseResult,
@@ -23,37 +43,12 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
 } from './identity.js';
-import type {
-  CompletionDeliveryResult,
-  PreparedCompletionDelivery,
-  PreparedCompletionFact,
-} from '../completion-router/index.js';
-import { deduplicate } from '../../platform/deduplicate.js';
-import { InFlightWork } from '../../platform/in-flight-work.js';
-import {
-  collectShutdownFailure,
-  throwShutdownFailures,
-} from '../../platform/shutdown-errors.js';
-import { COMPLETION_SOURCE } from '../submission-sources.js';
-import type { AgentEntityLedgerKey } from './admission.js';
-import { buildCompletionTurnText } from './completion-renderer.js';
+import { toRecordRow, toStatus } from './records.js';
 import {
   RuntimeGeneration,
   RuntimeTerminationUnproven,
 } from './runtime-generation.js';
-import { renderSubmission, type TeammateSubmitInput } from './submission.js';
-import {
-  asCompletionDeliveryResult,
-  failedAdmissionReason,
-  toSubmissionResult,
-  type AdmissionLedger,
-} from './admission.js';
-import {
-  asError,
-  EntityTurn,
-  type TurnAdmission,
-  type TurnCompletionDelivery,
-} from './turn.js';
+import { AgentRuntimeStateStore } from './runtime-state.js';
 import {
   agentRoleNoun,
   teammateClosedFact,
@@ -64,9 +59,12 @@ import {
   type TeammateServiceOptions,
   type WorkflowTeammateSubmitInput,
 } from './service-types.js';
+import { renderSubmission, type TeammateSubmitInput } from './submission.js';
+import { asError, EntityTurn, type TurnAdmission } from './turn.js';
 
 /** One canonical Agent entity and the sole owner of its live lifecycle. */
 export class AgentService {
+  readonly events = new EventEmitter<{ state: [AgentEntityIdentity] }>();
   private state: AgentRuntimeStateStore;
   private readonly runtimeGeneration: RuntimeGeneration;
   /**
@@ -130,10 +128,9 @@ export class AgentService {
       teamId: identity.team_id,
       name: identity.name,
     };
-    this.state = new AgentRuntimeStateStore(
-      deps.identities,
-      identity,
-      deps.onPersisted,
+    this.state = new AgentRuntimeStateStore(deps.identities, identity);
+    deps.identities.committed.on('committed', (identity) =>
+      this.events.emit('state', identity),
     );
     this.role = options.role;
     this.closed = new Promise<TeammateClosedFact>((resolve) => {
@@ -210,23 +207,11 @@ export class AgentService {
    * Submit one turn and report the entity's status with the outcome.
    *
    * This is not a second input path: it is `submitInput` plus the roster view
-   * its caller needs, and the lazy completion-delivery resolution that can only
-   * run once the caller has decided to submit.
+   * its caller needs. The collection has already resolved the recipient after
+   * reopening, before this submission begins.
    */
-  async send(
-    input: TeammateSubmitInput & {
-      resolveCompletionDelivery?: () => Promise<TurnCompletionDelivery | null>;
-    },
-  ): Promise<AgentEntitySendResult> {
-    const { resolveCompletionDelivery, ...submission } = input;
-    const delivery =
-      submission.deliverCompletion ??
-      (await resolveCompletionDelivery?.()) ??
-      null;
-    const turn = await this.submitInput({
-      ...submission,
-      ...(delivery !== null ? { deliverCompletion: delivery } : {}),
-    });
+  async send(input: TeammateSubmitInput): Promise<AgentEntitySendResult> {
+    const turn = await this.submitInput(input);
     return {
       teammate: this.status(),
       ...toSubmissionResult(turn),
@@ -323,7 +308,7 @@ export class AgentService {
     const runtime = this.runtimeGeneration.mustRuntime();
     return this.submitRuntimeTurn(
       () => runtime.submit({ text }),
-      input.deliverCompletion ?? null,
+      input.completionRecipient ?? null,
     );
   }
 
@@ -333,7 +318,7 @@ export class AgentService {
 
   private submitRuntimeTurn(
     operation: () => Promise<RuntimeAdmission>,
-    deliverCompletion: TurnCompletionDelivery | null,
+    completionRecipient: CompletionInitiator | null,
   ): Promise<TurnAdmission> {
     if (this.phase !== 'active') return Promise.resolve({ status: 'stopped' });
     let admission: Promise<RuntimeAdmission>;
@@ -353,7 +338,7 @@ export class AgentService {
       }
       const turn = this.attachSubmission(
         result.admission.submission,
-        deliverCompletion,
+        completionRecipient,
       );
       return { status: 'submitted', turn };
     });
@@ -377,7 +362,7 @@ export class AgentService {
   /**
    * Prove every retained turn settled, then wait for whatever each one still
    * delivers. Whether a turn delivers at all is the turn's own decision, made
-   * from the `owed` closure `attachSubmission` gave it when it settled.
+   * by querying its Agent owner when it settled.
    */
   private async convergeRetainedTurns(): Promise<void> {
     await Promise.resolve();
@@ -402,20 +387,22 @@ export class AgentService {
     return continuation;
   }
 
+  /** Read at settlement; owner teardown permanently suppresses an unstarted delivery. */
+  owesCompletion(): boolean {
+    return this.phase === 'active' && this.hostStop === null;
+  }
+
   private attachSubmission(
     submission: RuntimeSubmission,
-    deliverCompletion: TurnCompletionDelivery | null,
+    completionRecipient: CompletionInitiator | null,
   ): EntityTurn {
     const turn = new EntityTurn(
       submission,
       this.current().name,
       this.role,
-      deliverCompletion,
-      // Whether a turn that settles now is news this entity still owes its
-      // owner. False while the entity is closing or being released by its
-      // host: the party that ended the turn is the one that would read the
-      // report.
-      () => this.phase === 'active' && this.hostStop === null,
+      completionRecipient,
+      this,
+      this.deps.completionDelivery,
     );
     this.retainedTurns.add(turn);
     void turn

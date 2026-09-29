@@ -11,6 +11,7 @@ import {
 import { ClaudeCodeControlRpc } from './control-rpc.js';
 import type { ParsedLine, TurnOutcome } from './types.js';
 import type {
+  DreamuxLogger,
   RuntimeAdmission,
   RuntimeCompletion,
   RuntimeSubmission,
@@ -28,9 +29,7 @@ export interface ClaudeCodeStreamRpcOptions {
   sessionId: string | null;
   outputSchemaEnabled?: boolean | undefined;
   turnTimeoutMs: number;
-  log?:
-    | ((level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void)
-    | undefined;
+  logger?: DreamuxLogger | undefined;
   reapOnTimeout: (error: Error) => void;
   onRemoteControlUrl?: ((url: string) => void) | undefined;
   onProtocolEvent?:
@@ -224,7 +223,10 @@ export class ClaudeCodeStreamRpc {
       const error = new Error(
         `claude resident requests stalled: no stream activity for ${this.options.turnTimeoutMs}ms`,
       );
-      this.options.log?.('error', `${error.message}; reaping resident child`);
+      this.options.logger?.error(
+        { err: error, timeout_ms: this.options.turnTimeoutMs },
+        'claude resident requests stalled; reaping resident child',
+      );
       this.fail(error);
       this.options.reapOnTimeout(error);
     }, this.options.turnTimeoutMs);
@@ -343,9 +345,9 @@ export class ClaudeCodeStreamRpc {
         );
         break;
       case 'parse_error':
-        this.options.log?.(
-          'warn',
-          `claude stream-json parse error: ${line.raw}`,
+        this.options.logger?.warn(
+          { raw: line.raw },
+          'claude stream-json parse error',
         );
         break;
       default:

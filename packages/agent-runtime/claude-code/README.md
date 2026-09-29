@@ -38,10 +38,9 @@ through the plugin:
 import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-claude-code';
 ```
 
-The factory accepts the neutral create context plus optional test/embedder
-seams (`resolveBinPath`, `sessionFactory`, `generateSessionId`); the plugin
-(this package's default export) constructs the provider on package defaults
-with none of these set.
+The factory takes no options. Runtime creation uses the neutral create context,
+the configured Claude binary, and the package's native session constructor and
+session id generator.
 
 ## Resident session and request settlement
 
@@ -94,9 +93,9 @@ live process; transcript discovery never controls request settlement.
 It returns neutral assistant/tool activity records and provider-owned opaque
 cursors. It is not a completion source.
 
-## Custom session factories
+## Native session contract
 
-A custom `ClaudeCodeSessionFactory` now implements `submit()` returning
+The native session implements `submit()` returning
 `RuntimeAdmission`; accepted submissions carry their own settlement promises.
 The old `submitTurn()`/`steerTurn()` window interface is removed. Session specs
 provide the pinned `sessionId` and optional `outputSchemaEnabled` result contract;
@@ -125,7 +124,7 @@ that failure for subsequent admission, even after cleanup calls `stop()`.
 `reapOnTimeout(error)` receives the failure `Error`. Protocol callbacks are
 observation only, as described above. Parsed `ResultEnvelope` and `TurnOutcome`
 also expose `terminalReason`, a string or `null`, for native terminal diagnostics.
-These changes break direct RPC consumers as well as custom session factories.
+Direct RPC consumers follow this same request and settlement contract.
 
 The default adapter uses consumption events because the observed background
 folds omit both result UUID echo fields. Claude Code 2.1.263 marks

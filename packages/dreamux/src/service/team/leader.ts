@@ -1,29 +1,36 @@
 import type {
   AgentRuntimeSkillSource,
   AgentRuntimeSystemPrompt,
-  LaunchDraft,
+  Team,
 } from '@excitedjs/dreamux-types';
-import type { AsyncSeriesHook } from 'tapable';
 
 import { DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
-import { composeLaunchDraft } from '../../plugin/hooks.js';
 import {
   bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
 } from '../../platform/paths.js';
-import type { TeamRecord } from './types.js';
-import type { AgentServiceFactory } from '../agent/factory.js';
+import { composeLaunchDraft } from '../../plugin/hooks.js';
+import type { WorkAdmission } from '../../platform/work-fence.js';
+import type { AgentServiceFactory, UnbuiltAgent } from '../agent/factory.js';
+import { createTeamMateMcpDelegate } from '../agent/mcp.js';
 import type {
   AgentEntityIdentity,
   AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
 import { childAgentRuntimeId } from '../agent/runtime-id.js';
-import type { AgentService } from '../agent/service.js';
-import type {
-  TeammateAgentMcp,
-  TeammateServiceOptions,
-} from '../agent/service-types.js';
+import type { TeammateServiceOptions } from '../agent/service-types.js';
+import type { TeammateOps } from '../agent/types.js';
+import { createCronMcpDelegate } from '../scheduler/mcp.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
+import type { WorkflowOps } from '../workflow-service/index.js';
 import { reuseCwdWorktree } from '../worktree/manager.js';
+import { createLeaderTeamMcpDelegate } from './leader-mcp.js';
+import type {
+  TeamCollectionOptions,
+  TeamDissolveCommand,
+  TeamDissolveReceipt,
+  TeamRecord,
+} from './types.js';
 
 /**
  * The TeamLeader skill roots Core always injects. A caller's `skill_sources`
@@ -70,45 +77,72 @@ export interface TeamLeaderCreationInput {
  * `AgentServiceFactory.create`/`.open` against it, never a store a caller
  * constructed itself.
  */
-export interface TeamLeaderOpenDeps {
+interface TeamLeaderLocation {
   teamId: string;
   teamRoot: string;
-  workspace: AgentEntityWorktreeIdentity;
-  leaderMcp(input: { teamId: string; leaderName: string }): TeammateAgentMcp;
-  /** This Team's `leaderLaunch` hook, run at each leader construction. */
-  leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
-  onPersisted: (identity: AgentEntityIdentity) => void;
   agentServiceFactory: AgentServiceFactory;
+}
+
+export interface TeamLeaderOptions {
+  /** The actual Team owns these operations; this view stores no separate state. */
+  team: {
+    readonly id: string;
+    readonly hooks: Team['hooks'];
+    readonly teammates: TeammateOps;
+    readonly workflows: WorkflowOps;
+    readonly scheduler: SchedulerCommands;
+    admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
+    assertOpen(): void;
+    dissolve(input: TeamDissolveCommand): Promise<TeamDissolveReceipt>;
+  };
+  workspace: AgentEntityWorktreeIdentity;
+  mcp: TeamCollectionOptions['mcp'];
+  fence: WorkAdmission;
 }
 
 /**
  * This leader's role-specific `AgentService` options, computed from the
  * identity the factory just created, read, or upserted.
  *
- * Runs the Team's `leaderLaunch` hook first: plugin skill roots follow the
- * built-in and identity roots, fenced against them, and plugin instructions
- * follow the built-in prompt.
+ * Runs the Team's `leaderLaunch` hook before assembling this role's tools
+ * from their actual owners. Plugin skill roots follow the built-in and
+ * identity roots, fenced against them; plugin instructions follow the
+ * built-in prompt.
  */
-async function teamLeaderOptions(
-  deps: TeamLeaderOpenDeps,
+export async function teamLeaderOptions(
+  deps: TeamLeaderOptions,
   identity: AgentEntityIdentity,
-): Promise<TeammateServiceOptions> {
+): Promise<Omit<TeammateServiceOptions, 'role'>> {
   const leaderName = identity.name;
+  const { team, mcp, fence } = deps;
   const baseSkills = [
     ...TEAM_LEADER_REQUIRED_SKILL_SOURCES,
     ...identity.skill_sources,
   ];
-  const draft = await composeLaunchDraft(deps.leaderLaunch, baseSkills);
+  const draft = await composeLaunchDraft(team.hooks.leaderLaunch, baseSkills);
+  const delegates = [
+    ...mcp.channels.mcpDelegates(
+      { kind: 'team_leader', team_name: team.id, leader_name: leaderName },
+      fence,
+      team,
+    ),
+    createLeaderTeamMcpDelegate(team),
+    createTeamMateMcpDelegate({ kind: 'team_leader', team }),
+    createCronMcpDelegate(team),
+  ];
   return {
     runtimeId: childAgentRuntimeId(identity),
     // This Agent is the Team's leader; the role follows from that ownership.
-    role: 'team_leader',
     loggerFields: { teammate: leaderName },
-    mcp: deps.leaderMcp({ teamId: deps.teamId, leaderName }),
+    mcp: {
+      leases: mcp.leases,
+      adminSocketPath: mcp.adminSocketPath,
+      delegates,
+    },
     skillSources: [...baseSkills, ...draft.skillSources],
     disabledFeatures: [DISABLE_FEATURE_CRON],
     systemPrompt: teamLeaderSystemPrompt(
-      deps.teamId,
+      team.id,
       deps.workspace,
       identity.identity_prompt,
       draft.instructions,
@@ -154,8 +188,9 @@ function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
  * Create this Team's leader.
  *
  * Identity creation belongs here, with the entity: the Team hands over its
- * own creation inputs and gets back a leader, rather than assembling and
- * persisting an Agent identity itself. Nothing starts here: the leader's
+ * own creation inputs and gets back the factory's unbuilt identity handle.
+ * TeamService publishes the initial roster fact before computing role options
+ * and building the Agent. Nothing starts here: the leader's
  * runtime starts inside the first submission that needs it — the prompt below
  * when there is one, the first ordinary submission otherwise — so a provider
  * thread is never opened without the turn that makes it durable. Whatever
@@ -164,9 +199,9 @@ function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
  * reused Team name must not block its own replacement.
  */
 export async function createTeamLeaderAgentForTeam(input: {
-  deps: TeamLeaderOpenDeps;
+  deps: TeamLeaderLocation;
   creation: TeamLeaderCreationInput;
-}): Promise<AgentService> {
+}): Promise<UnbuiltAgent> {
   const { deps, creation } = input;
   return deps.agentServiceFactory.create({
     location: { dir: deps.teamRoot, expectedName: null },
@@ -187,51 +222,27 @@ export async function createTeamLeaderAgentForTeam(input: {
       status: 'starting',
       replaceExisting: true,
     },
-    options: (identity) => teamLeaderOptions(deps, identity),
-    onPersisted: deps.onPersisted,
+    role: 'team_leader',
   });
 }
 
 /**
- * Open this Team's leader if a durable identity at its root already belongs
- * to it — the one `open` entry `openTeamLeader` (below) uses for its
- * restore-or-create decision. `null` when there is nothing to adopt: either
+ * Open this Team's leader identity if it already belongs to this Team.
+ * TeamService uses the unbuilt handle for its restore-or-create decision.
+ * `null` when there is nothing to adopt: either
  * no identity was ever written, or what is there is not this Team's.
  */
-async function adoptTeamLeaderIfAligned(
-  deps: TeamLeaderOpenDeps,
+export async function openTeamLeader(
+  deps: TeamLeaderLocation,
   record: TeamRecord,
-): Promise<AgentService | null> {
-  return deps.agentServiceFactory.open({
+): Promise<UnbuiltAgent | null> {
+  const opened = await deps.agentServiceFactory.open({
     location: { dir: deps.teamRoot, expectedName: null },
-    align: (identity) => alignedWithLeader(identity, record),
-    options: (identity) => teamLeaderOptions(deps, identity),
-    onPersisted: deps.onPersisted,
+    role: 'team_leader',
   });
-}
-
-/**
- * Rebuild this Team's leader: restore the identity already at its root when
- * it is aligned, or finish what creation began by creating it fresh
- * otherwise — the restore-or-create decision `TeamService.rebuild` used to
- * make itself, moved here with the entity it decides about.
- *
- * The caller (`TeamService.rebuild`) seeds its member roster before calling
- * this and remembers the returned leader after: a fresh
- * `createTeamLeaderAgentForTeam` call publishes this Team's aggregate through
- * its own persistence hook the moment it runs, so the roster has to be
- * complete first, and a restored leader raises no such hook (`open` only
- * reads) so it needs remembering explicitly either way.
- */
-export async function openTeamLeader(input: {
-  deps: TeamLeaderOpenDeps;
-  record: TeamRecord;
-  creation: TeamLeaderCreationInput;
-}): Promise<AgentService> {
-  const { deps, record, creation } = input;
-  const opened = await adoptTeamLeaderIfAligned(deps, record);
-  if (opened !== null) return opened;
-  return createTeamLeaderAgentForTeam({ deps, creation });
+  return opened !== null && alignedWithLeader(opened.identity, record)
+    ? opened
+    : null;
 }
 
 /**

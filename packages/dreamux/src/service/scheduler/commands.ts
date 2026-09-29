@@ -10,14 +10,11 @@
  * them — each stating its own reason and next step. The cron MCP delegate
  * reads the same `requests.ts` helpers; neither adapter reads the other.
  */
+import type { DispatcherCommandHost } from '../../command/host.js';
 import type { JsonSchema } from '@excitedjs/dreamux-types';
 
-import type {
-  CoreCommandContext,
-  CoreCommandDefinition,
-} from '../../command/types.js';
-import type { AnyCoreCommand } from '../../command/registry.js';
 import { commandPayload, type CommandPayload } from '../../command/payload.js';
+import type { AnyCoreCommand } from '../../command/registry.js';
 import {
   BOOLEAN,
   NON_EMPTY_STRING,
@@ -27,7 +24,12 @@ import {
   arrayOf,
   objectSchema,
 } from '../../command/schema.js';
+import type {
+  CoreCommandContext,
+  CoreCommandDefinition,
+} from '../../command/types.js';
 import { optionalTeamNameParam } from '../team/requests.js';
+import type { TeamsPort } from '../team/teams-port.js';
 import {
   cronCreateRequest,
   cronJobIdParam,
@@ -41,7 +43,6 @@ import type {
   CronUpdateRequest,
   SchedulerCommands,
 } from './types.js';
-import type { TeamsPort } from '../team/teams-port.js';
 
 /** The scheduler owner a cron Command addresses. */
 interface CronOwnerInput {
@@ -67,13 +68,11 @@ interface SchedulerCommandsDispatcher {
 }
 
 async function schedulerFor(
-  resolveDispatcher: (
-    context: CoreCommandContext,
-  ) => SchedulerCommandsDispatcher,
+  host: DispatcherCommandHost<SchedulerCommandsDispatcher>,
   context: CoreCommandContext,
   input: CronOwnerInput,
 ): Promise<SchedulerCommands> {
-  const dispatcher = resolveDispatcher(context);
+  const dispatcher = host.addressedDispatcher(context);
   const { teamId } = input;
   if (teamId === null) return dispatcher.scheduler;
   // Resolving a Team-scoped owner can fail with a fact the Team already states:
@@ -94,7 +93,7 @@ interface CronDeleteInput extends CronOwnerInput {
 }
 
 export function schedulerCommands(
-  dispatcher: (context: CoreCommandContext) => SchedulerCommandsDispatcher,
+  host: DispatcherCommandHost<SchedulerCommandsDispatcher>,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<
     'scheduler.cron.list',
@@ -108,7 +107,7 @@ export function schedulerCommands(
     parse: (payload) => cronOwnerInput(commandPayload(payload)),
     async execute(context, input) {
       return cronListResult(
-        await (await schedulerFor(dispatcher, context, input)).list(),
+        await (await schedulerFor(host, context, input)).list(),
       );
     },
   };
@@ -141,9 +140,7 @@ export function schedulerCommands(
     },
     async execute(context, input) {
       return cronJobResult(
-        await (
-          await schedulerFor(dispatcher, context, input)
-        ).create(input.request),
+        await (await schedulerFor(host, context, input)).create(input.request),
       );
     },
   };
@@ -178,9 +175,7 @@ export function schedulerCommands(
     },
     async execute(context, input) {
       return cronJobResult(
-        await (
-          await schedulerFor(dispatcher, context, input)
-        ).update(input.request),
+        await (await schedulerFor(host, context, input)).update(input.request),
       );
     },
   };
@@ -199,7 +194,7 @@ export function schedulerCommands(
       return { ...cronOwnerInput(params), id: cronJobIdParam(params) };
     },
     async execute(context, input) {
-      return (await schedulerFor(dispatcher, context, input)).delete(input.id);
+      return (await schedulerFor(host, context, input)).delete(input.id);
     },
   };
 

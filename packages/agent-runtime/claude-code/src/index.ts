@@ -10,16 +10,13 @@
 
 export { default } from './plugin.js';
 
-export {
-  createClaudeCodeAgentRuntimeProvider,
-  type ClaudeCodeAgentRuntimeProviderOptions,
-} from './provider.js';
+export { createClaudeCodeAgentRuntimeProvider } from './provider.js';
 
 export {
-  type DispatcherClaudeCodeConfig,
-  readDispatcherClaudeCodeConfig,
-  defaultDispatcherClaudeCodeConfig,
+  ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
   DEFAULT_CLAUDE_CODE_BIN,
   DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
-  ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
+  defaultDispatcherClaudeCodeConfig,
+  readDispatcherClaudeCodeConfig,
+  type DispatcherClaudeCodeConfig,
 } from './config.js';
