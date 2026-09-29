@@ -212,6 +212,7 @@ export class FeishuChannelSession {
     });
     this.extensions = new FeishuSessionExtensions(opts.extensions, opts.log);
     this.router = new FeishuInboundRouter({
+      log: opts.log,
       routing: this.routing,
       bindings: this.bindings,
       provisioning: this.provisioning,

@@ -13,6 +13,7 @@ import {
   readPositiveInt,
   readStringArray,
   readStringRecord,
+  RuleViolation,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -80,7 +81,7 @@ export function readDispatcherCodexConfig(
   const defaults = defaultDispatcherCodexConfig();
   const bin = readOptionalString(rawCodex, 'bin', file, prefix) ?? defaults.bin;
   if (bin.trim() === '') {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
@@ -88,7 +89,7 @@ export function readDispatcherCodexConfig(
     readOptionalString(rawCodex, 'sandbox_mode', file, prefix) ??
     defaults.sandbox_mode;
   if (!ALLOWED_SANDBOX_MODES.has(sandboxMode)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}sandbox_mode='${sandboxMode}' is not one of ${Array.from(ALLOWED_SANDBOX_MODES).join(' | ')}`,
     );
   }

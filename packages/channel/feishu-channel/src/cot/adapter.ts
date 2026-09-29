@@ -19,11 +19,17 @@
  * abandons that one presentation and nothing else: the anchor stays, and the
  * next opening activity tries to open a card there again.
  *
+ * One more thing can give a TeamLeader an anchor, and it initializes without
+ * ever moving one: a bind card that was actually sent, while the leader has
+ * none (`setFallbackAnchorIfAbsent`). Nothing else is durable or restored, so
+ * a leader whose session restarted stays anchorless until a user message.
+ *
  * This is also the whole fail-open seam between the live Feishu session and
  * this state machine: every entry point a session subscription or a routing
- * decision reaches (`handle`, `beginInboundSubmission`, `onRouteReleased`,
- * `onRouteClaimed`) is gated on the session's own liveness and wrapped so a
- * bug here degrades to "no card", never to a failed Reply or a stuck close.
+ * decision reaches (`handle`, `beginInboundSubmission`,
+ * `setFallbackAnchorIfAbsent`, `onRouteReleased`, `onRouteClaimed`) is gated
+ * on the session's own liveness and wrapped so a bug here degrades to "no
+ * card", never to a failed Reply or a stuck close.
  * `start`/`close` are the only two calls a session makes outside that gate.
  */
 import type { FeishuLifecycle } from '../session/lifecycle.js';
@@ -163,6 +169,42 @@ export class FeishuCotAdapter {
       'inbound anchor failed; display only',
       () => this.beginInboundSubmissionUnguarded(input),
       null,
+    );
+  }
+
+  /**
+   * A Team's bind card is on screen, offered as its leader's first anchor.
+   *
+   * It is the one anchor a recipient may take without a Channel user message,
+   * and only while it has none: a leader with no conversation yet has nowhere
+   * else to present, and the card announcing the binding is a visible message
+   * in the chat it will answer. It only ever initializes. A leader that
+   * already holds an anchor keeps it, and that includes an inbound message
+   * that arrived while this card was still being sent, so the offer is judged
+   * here, when the send has finished, and not when the bind committed. A leader
+   * whose Team closed takes nothing. Whether the route still serves the card's
+   * conversation is the caller's to check against the routing document: the
+   * fence remembers a released target only for a leader that already had COT
+   * state. The Dispatcher has no equivalent: its first anchor is always a user
+   * message.
+   */
+  setFallbackAnchorIfAbsent(
+    teamName: string,
+    anchor: VisibleMessageAnchor,
+  ): void {
+    this.guardLive(
+      'binding fallback anchor failed; notification unchanged',
+      () => {
+        const identity = inboundRecipient(teamName);
+        const prepared = prepareVisibleAnchor(anchor);
+        if (identity === null || prepared === null) return;
+        const key = cotRecipientKey(identity);
+        if (this.leaderFence.blocksAnchor(key, prepared)) return;
+        const state = ensureCotState(this.states, identity);
+        if (state.anchor !== null) return;
+        state.anchor = prepared;
+      },
+      undefined,
     );
   }
 

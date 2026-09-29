@@ -12,7 +12,7 @@
  */
 import { Buffer } from 'node:buffer';
 
-import { RuleViolation } from './errors.js';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
 
 const HISTORY_LIMIT_DEFAULT = 20;
 const HISTORY_LIMIT_MAX = 100;

@@ -3,9 +3,10 @@
  *
  * A bind is four things at once — the durable row, the presentation fence for
  * whoever used to own the target, the fence release for whoever owns it now,
- * and the card that tells the conversation. Keeping them in one place is what
- * stops three of them from drifting apart, which is how the Core version of
- * this ended up re-deriving route ownership in two services.
+ * and the card that tells the conversation, which once it is on screen is also
+ * the new Team leader's first COT anchor if it has none. Keeping them in one
+ * place is what stops three of them from drifting apart, which is how the Core
+ * version of this ended up re-deriving route ownership in two services.
  *
  * Route removal is the same authority from its other end: a Team's final
  * closed event and a delivery this Channel already routed coming back
@@ -80,15 +81,42 @@ export interface FeishuBindingOperationsOptions {
   /**
    * Send a card into a target, best effort, replying under `replyTo` when the
    * caller has one. For a `group`/`p2p` target `replyTo` is always `null` — a
-   * fresh top-level message is the only option. For a topic, `null` means no
-   * root is known for it, which the notifier treats as a skip rather than a
-   * guess at where in it to land.
+   * fresh top-level message is the only option. For a topic, `null` means the
+   * caller knows no root for it: the notifier asks the platform, and skips
+   * only when that cannot say either, rather than guess where in the topic to
+   * land. `onSent` runs only once the platform accepted the card.
    */
   readonly outbound: Pick<FeishuOutbound, 'notify'>;
 }
 
 export class FeishuBindingOperations {
   constructor(private readonly opts: FeishuBindingOperationsOptions) {}
+
+  /**
+   * What a bind card does once it is really on screen: it is offered as the
+   * Team leader's first COT anchor, which the leader takes only while it has
+   * none. The card's own message id is the whole offer. The topic root the
+   * card replied under is a reply address, a different fact, and nothing here
+   * reads it back.
+   *
+   * The send is asynchronous, so the row that announced the Team may be gone or
+   * moved by the time the card lands. The offer is judged against the routing
+   * document then, not against the bind that scheduled it: a card in a
+   * conversation the Team no longer serves anchors nothing.
+   */
+  private offerAsFirstAnchor(
+    teamName: string,
+    target: FeishuTarget,
+  ): (messageId: string) => void {
+    return (messageId) => {
+      if (this.opts.routing.bindingFor(target)?.team_name !== teamName) return;
+      this.opts.cot.setFallbackAnchorIfAbsent(teamName, {
+        chatId: target.chatId,
+        messageId,
+        target,
+      });
+    };
+  }
 
   async bindChannel(input: {
     target: FeishuTarget;
@@ -134,18 +162,17 @@ export class FeishuBindingOperations {
     }
     // No manual bind path (this one, MCP `bind_channel`, an extension's
     // `bindTeam`) ever has a message id to give — only automatic provisioning
-    // does, directly through `FeishuRouting.bind`. This only carries an
-    // already-persisted root forward so a later manual rebind of a
-    // provisioned topic (e.g. moving it to another Team) does not erase it.
-    const existing = this.opts.routing.bindingFor(target);
-    const rootMessageId =
-      target.kind === 'topic' ? (existing?.root_message_id ?? null) : null;
-    const { previousTeamName } = await this.opts.routing.bind({
+    // does, directly through `FeishuRouting.bind`, which keeps the root a
+    // provisioned topic already holds when a rebind (e.g. moving it to another
+    // Team) carries none. A topic still without one learns it afterwards: from
+    // the first message accepted in it, or from the platform when a notice
+    // needs it first.
+    const { previousTeamName, rootMessageId } = await this.opts.routing.bind({
       target,
       teamName: input.teamName,
       display: input.display,
       spaceId: null,
-      rootMessageId,
+      rootMessageId: null,
       ...(input.requireOwner !== undefined
         ? { requireOwner: input.requireOwner }
         : {}),
@@ -157,11 +184,12 @@ export class FeishuBindingOperations {
     }
     this.opts.cot.onRouteClaimed({ teamName: input.teamName, target });
     const announce = input.announceIn ?? target;
-    // The bound target's own root when the receipt lands there; otherwise
+    // The bound target's own root when the receipt lands there (`null` for a
+    // topic with none yet; the notifier asks the platform then); otherwise
     // (only `/bind` from inside a topic that binds its parent group) fall
     // back to that topic's own binding, if any, and last to the message
     // `/bind` was typed in reply-chain terms, so the receipt still has a root
-    // to reply under instead of going unsent.
+    // to reply under without a lookup.
     const announceReplyTo = sameTarget(announce, target)
       ? rootMessageId
       : (this.opts.routing.bindingFor(announce)?.root_message_id ??
@@ -179,6 +207,12 @@ export class FeishuBindingOperations {
         ...(displaced ? { previousTeamName } : {}),
       }),
       announceReplyTo,
+      // A receipt announced somewhere else (a `/bind` typed in a topic that
+      // binds its parent group) sits in another conversation, and the Team's
+      // first card must not land inside it.
+      sameTarget(announce, target)
+        ? this.offerAsFirstAnchor(input.teamName, target)
+        : undefined,
     );
     return { team_name: input.teamName, previous_team_name: previousTeamName };
   }
@@ -292,6 +326,7 @@ export class FeishuBindingOperations {
         runtimeCwd: input.runtimeCwd,
       }),
       replyTo,
+      this.offerAsFirstAnchor(input.teamName, input.target),
     );
   }
 

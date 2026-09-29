@@ -19,6 +19,7 @@ import {
   errorMessage,
   isPlainObject,
   readNonEmptyString,
+  RuleViolation,
 } from '@excitedjs/dreamux-utils';
 
 import {
@@ -107,7 +108,7 @@ export function readPluginEntries(
   const value = raw['plugins'];
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: plugins must be an array`,
     );
   }
@@ -120,14 +121,14 @@ export function readPluginEntries(
       entry = { ref: readNonEmptyString(item, 'ref', file, `${prefix}.`) };
       if ('config' in item) entry.config = item['config'];
     } else {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix} must be a plugin ref string or { ref, config }`,
       );
     }
     try {
       parseProviderRef(entry.ref);
     } catch (err) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}.ref ${errorMessage(err)}`,
       );
     }

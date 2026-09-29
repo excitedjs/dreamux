@@ -79,7 +79,8 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       // `/bind` always routes the containing chat (never a topic directly —
       // see its summary above), so there is no message id to give the bind
       // itself: a topic's own root, if any, was set when it was provisioned
-      // and `bindChannel` preserves it on its own. `announceMessageId` is
+      // or learned from a message in it, and `bindChannel` preserves it on its
+      // own. `announceMessageId` is
       // this command's own message, used only if `/bind` was typed from
       // inside a topic that has no root of its own yet, so the receipt still
       // has one to reply under.

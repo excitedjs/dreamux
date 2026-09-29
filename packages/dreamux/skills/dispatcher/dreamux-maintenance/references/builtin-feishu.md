@@ -58,12 +58,14 @@ extensions close.
   access-state change, made through the pairing flow, not here.
 - A document this Dreamux version cannot read fails loud at channel start,
   naming the file.
-- A topic-kind binding also carries the message id that first triggered it,
-  when one was available (always for automatic provisioning; never for a
-  manual bind through `bind_channel` or an extension). The Channel uses it to
-  address its own cards into that topic and never reports or accepts it
-  through a tool; it is not an operator-facing fact and there is nothing to
-  repair if it is absent.
+- A topic-kind binding also carries the message id its cards reply under
+  (`root_message_id`). Automatic provisioning sets it when it binds; a manual
+  bind through `bind_channel` or an extension starts without one, and the
+  Channel fills it in itself — once, from the first message accepted in that
+  topic, or from Feishu when a card needs it first. It never replaces a value
+  that is already there. The Channel never reports or accepts it through a
+  tool; it is not an operator-facing fact and there is nothing to repair if it
+  is absent.
 
 ## Feishu Peer-Bot Trust State
 
@@ -74,11 +76,13 @@ at `~/.dreamux/state/<dispatcher-id>/chat-bots.json`.
 - It is fully server-owned. Do not hand-edit it.
 - Loaded at the session's first peer-bot operation (a passive bot message,
   `/introduce`, or a bot-added membership event), not at channel start, and
-  held in memory for the life of the session from then on — a hand edit made
-  while the channel is running is not read until the next restart, the same as
-  the routing document. An unreadable or corrupt file degrades to an empty
-  store rather than failing the channel's start or any operation, since
-  peer-bot discovery is not security-critical the way `access.json` is.
+  held in memory for the life of the session from then on. A change made to the
+  file while the channel is running is not read, and the session's next write
+  commits the held value to the whole file without re-reading it, so it
+  discards that change; the same holds for the routing document. An unreadable
+  or corrupt file degrades to an empty store rather than failing the channel's
+  start or any operation, since peer-bot discovery is not security-critical the
+  way `access.json` is.
 
 ## Feishu Extension State
 
@@ -107,16 +111,20 @@ start.
 ## Collaboration-Space Identity At Team Creation
 
 A Collaboration Space's configured `identity` stays exactly as the operator set
-it in the routing document. When the Channel automatically provisions a Team for
-a topic in that space, it creates the Team's leader with that identity
-unmodified — nothing about the bound chat or a reply address is appended to
-it. An absent space identity creates the Team with no identity at all.
+it in the routing document; the Channel never rewrites it. When the Channel
+automatically provisions a Team for a topic in that space, it creates the Team's
+leader with that identity followed by guidance that names the bound chat's
+`chat_id` and the `message_id` of the message that triggered the Team, and tells
+the leader to pass that `message_id` to `reply` when no other is visible. An
+absent space identity creates the Team with the guidance alone. The guidance
+belongs to that Team's own leader identity from then on; a Team created or bound
+by hand has none.
 
-The Channel resolves the reply address itself instead: a `reply` call with no
-`message_id` inside a Collaboration Space chat lands under the caller's own
-bound topic's persisted message id (see "the message id that first triggered
-it" above) when exactly one such topic exists, and is refused with an
-instruction to pass one otherwise. The leader never needs its
-own topic's address baked into its identity to use `reply` correctly. To change
-the configured identity, use `bind_collaboration_space`; do not hand-edit
-either document.
+The Channel also resolves an omitted address itself, as a second line: any
+message an agent sends into a Collaboration Space chat with no `message_id` —
+`reply`, `ask_user_question`, or an extension's card sent with its caller —
+lands under the caller's own bound topic's persisted `root_message_id` (see
+the binding row above) when exactly one such topic exists with one, and is
+refused with an instruction to pass a `message_id` otherwise. To change the
+configured identity, use `bind_collaboration_space`; do not hand-edit either
+document.

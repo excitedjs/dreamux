@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Every Feishu send resolves its destination through one path: `reply`, `ask_user_question`, extension cards and system notices. An explicit message address is used as is; in a Collaboration Space chat a send that names no message lands in the caller's bound topic and is refused when the caller does not have exactly one bound topic with a known root message. A binding whose topic root message is unknown (a manual bind, or a topic bound by an earlier build) learns it from the next inbound message in that topic, or by reading the topic's messages, so bind, unbind and dissolve notices reach the topic instead of being dropped. When Feishu auto-provisions a Team, the leader's identity carries the initial chat id and topic root message id. The first CoT card after a manual bind anchors to the binding notice that was sent, when no anchor exists yet. Card clicks (ask-user select, input, submit and cancel, and extension card actions) now pass the same access policy as inbound messages before any side effect: only a person the conversation's inbound policy admits may answer. The click event carries no chat kind, so the policy is applied for both a direct chat and a group, and the kind is established only when the two decisions differ: a chat listed in `group.allow_chats` is a group, and a direct chat this session has already received a message from is remembered, so a trusted-group member or a person in their own direct chat needs no lookup; Feishu is asked last, and a click that still depends on that answer and cannot get it is refused, which needs the group information read permission that topic collaboration already asks for, such as `im:chat:readonly`. Ask-user answers are therefore narrower than before, when any member of the chat could answer.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

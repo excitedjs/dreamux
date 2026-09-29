@@ -32,6 +32,7 @@ export interface FeishuMessageReader {
 // field as possibly explicit `undefined`, not merely absent.
 export interface RawMessageReadItem {
   message_id?: string | undefined;
+  root_id?: string | undefined;
   msg_type?: string | undefined;
   deleted?: boolean | undefined;
   chat_id?: string | undefined;
@@ -45,6 +46,22 @@ export interface RawMessageReadItem {
         name?: string | undefined;
       }>
     | undefined;
+}
+
+/**
+ * The message a topic's replies hang under, read off the earliest message the
+ * topic lists.
+ *
+ * A reply carries its topic's `root_id`; a message that names none is the root
+ * itself, so its own id is the answer. The earliest message is therefore
+ * enough — either it is the root or it points at it.
+ */
+export function threadRootOf(
+  earliest: RawMessageReadItem | undefined,
+): string | undefined {
+  const named = earliest?.root_id ?? '';
+  const root = named !== '' ? named : (earliest?.message_id ?? '');
+  return root === '' ? undefined : root;
 }
 
 export function normalizeMessageReadItem(

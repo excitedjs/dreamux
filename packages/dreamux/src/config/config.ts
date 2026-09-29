@@ -15,12 +15,13 @@ import {
   describeType,
   isPlainObject,
   readNonEmptyString,
+  readOptionalBoolean,
   readProviderConfigObject,
   redactSecretKeyValues,
+  RuleViolation,
 } from '@excitedjs/dreamux-utils';
 import { dreamuxRoot } from '../platform/paths.js';
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
-import { RuleViolation } from '../platform/errors.js';
 import type { PluginConfigEntry } from '../plugin/loader.js';
 
 export interface DreamuxConfig {
@@ -218,21 +219,6 @@ export async function assertConfigFileMode(file: string): Promise<void> {
   if (mode === 0o600) return;
   throw new Error(
     `dreamux config file must be mode 0600: ${file} has mode 0${mode.toString(8)}`,
-  );
-}
-
-function readOptionalBoolean(
-  obj: Record<string, unknown>,
-  key: string,
-  fallback: boolean,
-  file: string,
-  prefix = '',
-): boolean {
-  const v = obj[key];
-  if (v === undefined) return fallback;
-  if (typeof v === 'boolean') return v;
-  throw new RuleViolation(
-    `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
   );
 }
 

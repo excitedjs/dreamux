@@ -157,7 +157,9 @@ the Team.
   collection-tier file. The store tier (`types.ts`, `requests.ts`,
   `create-request.ts`, `store.ts`, `errors.ts`) is `TeamRecord`'s persisted
   shape, `team.create` replay bounds, and the durable `TeamStore` itself — one
-  `TransactionalStore<TeamRecord | null>` per Team id, holding no
+  `TransactionalStore<TeamRecord | null>` per existing or held Team id (an
+  ownerless lookup of a name with no record answers from the file and keeps
+  no store), holding no
   event-publish responsibility of its own. The service tier (`leader.ts`,
   `leader-mcp.ts`, `team-summary.ts`, `service.ts`) is `TeamService`, the single per-Team
   entity: its constructor builds its Team-scoped `TeammateCollection`,

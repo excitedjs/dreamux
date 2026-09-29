@@ -1,4 +1,4 @@
-import { RuleViolation } from '../../platform/errors.js';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
 
 export const DEFAULT_WORKFLOW_MAX_CONCURRENCY = 16;
 export const MIN_WORKFLOW_MAX_CONCURRENCY = 1;

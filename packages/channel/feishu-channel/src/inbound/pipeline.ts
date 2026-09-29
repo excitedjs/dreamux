@@ -23,7 +23,7 @@ import {
   type FeishuSendResult,
 } from '@excitedjs/feishu-transport';
 import type { FeishuBot } from '../bot.js';
-import type { FeishuOutbound } from '../outbound/index.js';
+import { CHANNEL_SENDER, type FeishuOutbound } from '../outbound/index.js';
 import type { FeishuLifecycle } from '../session/lifecycle.js';
 import { formatFeishuMessageForRuntime } from './attachments.js';
 import { isFeishuOperationError } from '../feishu-bounded-operation.js';
@@ -118,8 +118,10 @@ function pairingTokenLogFields(token: string): Record<string, unknown> {
 /**
  * Best-effort acknowledgement that `/introduce` trusted one or more peer
  * bots. Its only caller is `onMessage` below, and every fact it needs
- * (`bot`, `log`, `dispatcherId`) is already on this module's own handle, so
- * it stays inbound-local rather than a session method reached back into.
+ * (`outbound`, `log`, `dispatcherId`) is already on this module's own handle,
+ * so it stays inbound-local rather than a session method reached back into.
+ * It answers the `/introduce` message, so it replies to it: an unaddressed send
+ * into a topic chat would open a topic of its own.
  */
 async function sendIntroduceAck(
   h: FeishuInboundHandle,
@@ -130,7 +132,12 @@ async function sendIntroduceAck(
   if (text === null) return;
   let result: FeishuSendResult;
   try {
-    result = await h.bot.send({ chatId: event.chatId }, text);
+    result = await h.outbound.sendText({
+      chatId: event.chatId,
+      text,
+      messageId: event.messageId,
+      sender: CHANNEL_SENDER,
+    });
   } catch (err) {
     log(h).error(
       {
@@ -276,7 +283,7 @@ export async function onMessage(
             '已有授权卡，请点击已发出的授权卡完成授权。\n' +
             'An approval card already exists. Please use the existing card to authorize access.',
           messageId: pairAction.prompt_message_id,
-          callerTeamName: null,
+          sender: CHANNEL_SENDER,
         });
       } catch (err) {
         log(h).error(
@@ -312,6 +319,7 @@ export async function onMessage(
             ? { replyToMessageId: event.messageId }
             : {}),
         },
+        sender: CHANNEL_SENDER,
         card,
       });
       sentCardMessageId = sendResult.messages[0]?.messageId;
@@ -357,6 +365,12 @@ async function deliverAcceptedMessage(
       h.targetRouter.projectInbound(acceptedEvent, work.signal),
     );
     work.assertSessionActive();
+    await h.delivery.learnTopicRoot({
+      target: route.target,
+      messageId: acceptedEvent.messageId,
+      rootId: acceptedEvent.rootId,
+    });
+    work.assertSessionActive();
     if (command !== null) {
       const reply = await h.delivery.command({
         command,
@@ -373,7 +387,7 @@ async function deliverAcceptedMessage(
             chatId: acceptedEvent.chatId,
             text: reply.text,
             messageId: acceptedEvent.messageId,
-            callerTeamName: null,
+            sender: CHANNEL_SENDER,
           });
           break;
         case 'card':
@@ -382,6 +396,7 @@ async function deliverAcceptedMessage(
               chatId: acceptedEvent.chatId,
               replyToMessageId: acceptedEvent.messageId,
             },
+            sender: CHANNEL_SENDER,
             card: reply.card,
             signal: work.signal,
           });
@@ -413,7 +428,7 @@ async function deliverAcceptedMessage(
           'Could not start a Team for this conversation. ' +
           'The reason is in the Dreamux log.',
         messageId: acceptedEvent.messageId,
-        callerTeamName: null,
+        sender: CHANNEL_SENDER,
       });
       return;
     }

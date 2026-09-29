@@ -34,6 +34,13 @@ already-admitted operations, and releases Channels after runtime cleanup.
 A shutdown refusal means no new operation was accepted; it does not establish
 the outcome of work accepted earlier. Inspect that work's state separately.
 
+`dreamux serve` always exits on SIGTERM or SIGINT. It exits 0 once shutdown
+completes; if shutdown fails, or has not settled within 15 seconds, it logs the
+reason and exits 1. Under systemd a non-zero exit that was not requested through
+`systemctl stop` restarts the service (`Restart=on-failure`). A runtime child
+process can outlive a daemon that was cut off at the 15-second deadline, so
+check for leftover runtime processes after such an exit.
+
 ## Missing Replies And Stuck Turns
 
 - For missing replies, distinguish Channel ingress, Dispatcher acceptance,

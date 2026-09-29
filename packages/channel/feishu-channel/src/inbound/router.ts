@@ -1,4 +1,5 @@
 /** Owns conversation routing for accepted messages and slash commands. */
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { FeishuBot } from '../bot.js';
 import type { FeishuCoreCommands } from '../feishu-core-commands.js';
 import type { FeishuProvisioning } from '../feishu-provisioning.js';
@@ -7,22 +8,24 @@ import {
   type FeishuSlashCommandInvocation,
   type FeishuSlashCommandReply,
 } from '../feishu-slash-commands.js';
-import type {
-  FeishuChatSubmission,
-  FeishuInboundDelivery,
-  FeishuSubmitOutcome,
+import {
+  errorMessage,
+  type FeishuChatSubmission,
+  type FeishuInboundDelivery,
+  type FeishuSubmitOutcome,
 } from '../feishu-submit.js';
 import type { FeishuRouting } from '../routing/index.js';
 import {
   rejectedDeliveryNotice,
   type FeishuBindingOperations,
 } from '../routing/operations.js';
-import type { FeishuTarget } from '../routing/target.js';
+import { describeTarget, type FeishuTarget } from '../routing/target.js';
 import type { FeishuTeamSubmitter } from '../session/submitter.js';
 
 export class FeishuInboundRouter implements FeishuInboundDelivery {
   constructor(
     private readonly opts: {
+      log: DreamuxLogger;
       routing: FeishuRouting;
       bindings: FeishuBindingOperations;
       commands: FeishuCoreCommands;
@@ -31,6 +34,36 @@ export class FeishuInboundRouter implements FeishuInboundDelivery {
       submitter: FeishuTeamSubmitter;
     },
   ) {}
+
+  /**
+   * An accepted message in a topic that has its own route is a message the
+   * Channel can reply under, which a route bound by a tool or written before
+   * roots were persisted does not have. The topic's root is the one the event
+   * names; a message that names none is the topic's first, and is its own
+   * root. A row that already has a root, or a target with no row of its own
+   * (a topic served by its parent group), is left alone.
+   */
+  async learnTopicRoot(input: {
+    target: FeishuTarget;
+    messageId: string;
+    rootId: string | undefined;
+  }): Promise<void> {
+    try {
+      await this.opts.routing.fillTopicRoot(
+        input.target,
+        input.rootId ?? input.messageId,
+      );
+    } catch (error) {
+      this.opts.log.warn(
+        {
+          target: describeTarget(input.target),
+          message_id: input.messageId,
+          err: { message: errorMessage(error) },
+        },
+        'could not record the reply root of a Feishu topic route',
+      );
+    }
+  }
 
   /** Execute a recognized command after route projection, without submission. */
   command(input: {

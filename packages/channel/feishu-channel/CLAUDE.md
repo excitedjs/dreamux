@@ -118,15 +118,22 @@ never on `@excitedjs/dreamux` core.
 
 The session composes and closes its actual owners. `FeishuTeamSubmitter` owns
 liveness, optimistic COT anchor claim, Core admission, and anchor retirement
-and release. `FeishuInboundRouter` owns delivery fallback and slash routing.
+and release. `FeishuInboundRouter` owns delivery fallback, slash routing, and
+the reply root an accepted topic message teaches its route.
 Provisioning retains its first submission inside the guarded per-target run;
 waiters await that submission before reading the new binding.
 
 `FeishuCoreCommands` holds the invoker installed after routing loads. COT holds
 the constructed transport client and the session lifecycle. Outbound owns
-tracked binding notifications and suppression for topics without a root.
+where every send lands, so `reply`, `ask_user_question`, extension cards and the
+Channel's own notices share one address rule, and owns tracked binding
+notifications, including asking Feishu for the root of a topic whose route has
+none and dropping the notice only when that cannot say.
 Card actions own question sends and expiry delivery/repaint, observing the
-ask-user registry's local expiry emitter. Tool handlers use one owner view,
+ask-user registry's local expiry emitter, and admit each ask-user or extension
+click through the access gate (`FeishuAccess.decide`, nothing committed)
+before it changes anything; pairing approval is checked as the App Owner
+instead. Tool handlers use one owner view,
 map their own results, and enter the same MCP lifecycle fence for built-in and
 extension calls. No bot/transport factory override is exposed.
 

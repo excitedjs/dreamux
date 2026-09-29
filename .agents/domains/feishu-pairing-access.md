@@ -226,6 +226,31 @@ An untrusted `follow-user` chat retains the prior sender path:
   `group_pairing_stranger_not_mentioned` when the bot was not mentioned (only
   reachable with `require_mention: false`).
 
+### Card clicks
+
+An ask-user click (select, input, submit, cancel) and an extension's card
+action pass the tables above before they change anything: the card-action
+handler asks `FeishuAccess.decide` for the gate's decision over the held state,
+which commits nothing and stores no pairing token, and admits the click only on
+`deliver`. `pair` and `drop` both refuse it with an error toast. The click
+supplies the gate's facts this way:
+
+- the sender is the click's operator, classified as a human;
+- the chat is the click's `open_chat_id`. The callback carries no chat kind, so
+  the gate is asked for both `p2p` and `group`; only when the two answers
+  differ is the kind established: a chat listed in `group.allow_chats` is a
+  group, a direct chat an earlier inbound event showed is remembered, and only
+  then is Feishu asked (a topic-mode group is a group). A click whose operator
+  or chat is missing, or whose kind is needed and cannot be established, is
+  refused;
+- the bot counts as mentioned, since a card callback reaches only the app that
+  sent the card and so addresses it, so `require_mention` does not refuse every
+  group click. This is an implementation reading, not an operator ruling.
+
+Trusted groups therefore still admit every human by group policy. Pairing
+approval is outside this check and stays the App Owner's
+([Owner approval](#owner-approval)).
+
 ### Peer bots: awareness, trust, and the bot-sender gate
 
 `chat-bots.json` tracks two sets per chat that must never be conflated:
@@ -439,6 +464,10 @@ post-stop re-read → exact atomic patch → shape validation → `daemon start`
 `ENOENT` first-write path, and the field-by-field editability boundary are owned
 by the maintenance skill:
 [`dreamux-maintenance`](/packages/dreamux/skills/dispatcher/dreamux-maintenance/).
+The daemon must be stopped first because the session's next write (a pairing
+request or an approval) replaces the whole file from its held value, so an edit
+made while it runs is discarded
+([state-config-and-files](state-config-and-files.md)).
 
 ## Invariants
 

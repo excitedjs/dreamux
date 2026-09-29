@@ -117,6 +117,26 @@ export class FeishuAccess {
     };
   }
 
+  /**
+   * What the gate would decide for this person, against the held state,
+   * committing nothing. For a caller that is not answering a message and so has
+   * no conversation to send a pairing card into: a `pair` outcome here mints a
+   * token nobody stores, and it means "not admitted" like a drop does.
+   */
+  async decide(inbound: GateInbound): Promise<GateAction> {
+    await this.store.load();
+    return dreamuxFeishuGate(this.store.current, inbound).action;
+  }
+
+  /**
+   * Whether `group.allow_chats` lists this chat. The operator lists group
+   * chats there, so a listed chat's kind is known without asking Feishu.
+   */
+  async listsChat(chatId: string): Promise<boolean> {
+    await this.store.load();
+    return this.store.current.group.allow_chats.includes(chatId);
+  }
+
   /** Commit deliver/drop; pairing waits until its message has been sent. */
   async gate(inbound: GateInbound): Promise<GateAction> {
     let result!: GateResult;

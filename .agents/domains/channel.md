@@ -82,7 +82,7 @@ Core submission, and anchor retirement/release. `FeishuInboundRouter` owns
 delivery/fallback and slash routing. Provisioning holds the submitter and keeps
 the first submission inside its `inFlight` and `guarded` operation: waiters
 must not proceed after route publication but before that submission settles.
-Outbound owns binding notices; card actions observe ask-user registry expiry
+Outbound owns where every send lands and binding notices; card actions observe ask-user registry expiry
 and own settlement IO. Tools hold actual owners rather than session callbacks.
 COT holds the already-created client and lifecycle; Core Commands hold the
 invoker received at initialize. Neither needs a getter back into the session.
@@ -217,7 +217,10 @@ required, because a chat tool needs a destination and AskUserQuestion has no
 such concept; a `message_id` is optional. When supplied, that exact id addresses
 an interactive-card reply, just as it does for `reply`, without an observed-message
 lookup or anchor substitution. Without it the card is created in the named chat;
-in a topic group it opens a topic of its own.
+in a topic group it opens a topic of its own — except in a Collaboration Space
+chat, where the shared address guard sends it under the caller's bound topic or
+refuses it (see *An agent's `chat_id`/`message_id` is trusted* under Team binding and
+authorization).
 
 Question rounds store their sent card id, not a precomputed routing target. On
 submission or cancellation, the card callback identifies the answered card. Feishu
@@ -271,11 +274,33 @@ the selection is visible solely because the whole card is repainted from the
 server's answer map. There is no `form`, because a form batches its inputs until
 submit and would cost each question the ability to settle on its own.
 
-Anyone in the chat may answer the card, and that is a decision rather than an
-oversight: asked whether a non-asker clicking should be gated, the operator
-ruled "不需要限制，所有人都可以点". The answer carries the clicker's open_id as
-`sender_id`, so who answered is never lost — but no authorization check stands
-between a group member and the card.
+Only a person the conversation's inbound access policy admits may answer the
+card. A click is decided by the same gate table an inbound message from that
+person meets, before the round changes state (an extension's card action is
+held to the same check before its handler runs), so trusted groups still admit
+by group policy and nobody has to be in `allow_users` for that. A refused
+click gets an error toast and changes nothing. This replaces the earlier rule
+that anyone in the chat may answer, which the operator had ruled when asked
+whether a non-asker clicking should be gated ("不需要限制，所有人都可以点");
+on 2026-09-30 the operator ruled "卡片点击应该走和入站消息一样的门禁", and the
+earlier ruling no longer stands. The event carries no chat kind, and the gate's rules differ
+for a direct chat and a group, so the click is decided for both kinds and the
+kind is established only when the two decisions differ. It is taken from what is
+already known before Feishu is asked: a chat the operator lists in
+`group.allow_chats` is a group (which is where a member of a trusted group who
+is not on `allow_users` differs), and a direct chat an inbound event has already
+shown is remembered by the same per-chat mode cache topic detection uses. Only
+when neither says does the click ask Feishu, through the chat-get lookup that
+cache also fills. A person admitted in both or in neither kind never triggers
+the lookup. When the decision does depend on the kind and none of these can say,
+the click is refused: the lookup needs the same group information read
+permission topic detection does, but unlike topic detection it does not degrade
+to an ordinary group, because there is no safe default kind once the two
+decisions differ. Counting
+the click as addressing the bot, so that a group requiring mentions does not
+refuse every click, is this implementation's reading and not a ruling. Pairing approval is
+outside this check and stays the App Owner's. The answer carries the clicker's
+open_id as `sender_id`, so who answered is never lost.
 
 A round exists only once its card does. The registry builds the round and the
 card together but puts neither in play until the send lands, so a send that
@@ -361,13 +386,20 @@ Space policy could be registered on. Missing group-information permission, a
 missing or unknown chat mode, a timeout, and an API failure each warn in the
 channel log and fall back to the group route. Operators using Feishu topic
 collaboration must grant the bot a group information read permission accepted by
-the chat-get API, such as `im:chat:readonly`.
+the chat-get API, such as `im:chat:readonly`. A card click uses the same lookup
+only as a last resort: when the access gate decides a direct chat and a group
+differently for the clicker and neither the operator's `group.allow_chats` nor
+an earlier inbound direct-chat event already gives the chat's kind. It fails
+closed there instead; a person the policy treats alike in both kinds never
+triggers it.
 
 Cache and concurrency are precise:
 
 - successfully resolved chat modes are cached for the life of the session, with
   no eviction; unsuccessful lookups are not cached at all, so a later accepted
-  inbound retries;
+  inbound retries. An accepted direct-chat inbound event also enters its chat as
+  `p2p` without a lookup, because the event states it (a group event cannot
+  state topic versus ordinary mode, so it enters nothing);
 - concurrent lookups for one chat share a single in-flight request, which is
   removed once it settles.
 
@@ -596,9 +628,9 @@ The Feishu Channel answers `/bind`, `/dissolve`, `/help`, `/stop`, and `/teams`
 itself. They are one command table, not five special cases, and nothing about
 them reaches a model: a recognized command is consumed, so no submission is
 built, no turn is created, and no COT anchor is opened for it. `/bind` can
-still leave a binding card behind that becomes a Team's fallback anchor, which
-is the binding operation's doing rather than the command's — see *Card
-placement* below.
+still leave a binding card behind that becomes a Team's first COT anchor, which
+is the binding operation's doing rather than the command's — see *Routing
+notification cards*.
 
 A table row is `usage`, `summary`, and `execute`. The first two exist so `/help`
 renders the table rather than a second list that can drift from it: a row the
@@ -861,10 +893,12 @@ The Feishu document lives at
 one file per configured channel id, written `0600`. It holds three sections in
 one consistency domain: `bindings[]`, the target routes actually installed, each
 carrying its Team name, its optional space id, and `root_message_id` — the
-visible message a topic-kind binding's own conversation last had, set once at
-bind time so a Channel-authored card for that topic replies to it instead of
-guessing a landing place, `null` for a `group`/`p2p` binding or a topic bound
-through a path with no message id to hand; `spaces[]`, the registered
+visible message a topic-kind binding's own conversation replies under, so a
+Channel-authored card for that topic lands there instead of at a guess. Automatic
+provisioning sets it at bind time; a topic bound through a path with no message
+id to hand (or written before roots were persisted) starts `null` and is filled
+once, and a rebind that carries no root keeps the one the row holds, decided
+inside the same commit; it is always `null` for a `group`/`p2p` binding; `spaces[]`, the registered
 Collaboration Space policies with their creation facts; and `subscriptions[]`,
 the documents a recipient follows, each a
 `(file_token, file_type, team_name, created_at)` row whose `team_name` is `null`
@@ -903,17 +937,31 @@ Source:
 
 ### Team binding and authorization
 
-**The `reply` tool trusts the `chat_id`/`message_id` it is given, with one
-guard.** Nothing checks that a supplied pair names the conversation the calling
+**An agent's `chat_id`/`message_id` is trusted, with one guard that every send
+shares.** Nothing checks that a supplied pair names the conversation the calling
 Team is actually bound to — the model is expected to echo the ids its own
-inbound `<channel>` envelope carried, and `FeishuOutbound.sendText` sends to
-whatever chat it is given, replying under `message_id` when one is supplied.
-The one exception is address-less: inside a chat that carries a Collaboration
-Space, a `reply` with no `message_id` does not open a fresh top-level message
-(which would seat a new topic on the caller's behalf) — it lands under the
-calling Team's own bound topic's persisted `root_message_id` when exactly one
-topic names that Team, and is refused with an instruction to pass a
-`message_id` otherwise. Every other Feishu chat keeps the no-guard behavior.
+inbound `<channel>` envelope carried, and `FeishuOutbound` sends to whatever
+chat it is given, replying under `message_id` when one is supplied. The one
+exception is address-less: inside a chat that carries a Collaboration Space, a
+message with no `message_id` does not open a fresh top-level message (which
+would seat a new topic on the sender's behalf) — it lands under the calling
+Team's own bound topic's persisted `root_message_id` when exactly one topic
+names that Team, and is refused with an instruction to pass a `message_id`
+otherwise. Every other Feishu chat keeps the no-guard behavior.
+
+That rule is one private step of `FeishuOutbound` (`resolveTarget`), and both
+`sendText` and `sendCard` pass through it, so `reply`, `ask_user_question` and
+an extension's `sendCard` are addressed identically. What varies is the sender:
+an `agent` (a TeamLeader, or the Dispatcher Agent, which owns no Team and is
+always refused an address it did not name) derives; the `channel` never does.
+An MCP caller becomes a sender in one place (`agentSender`), and an extension's
+`sendCard` takes the caller its tool handler received as an optional `caller` —
+a background call has none and so must name its `replyTo` in a Space chat. The
+Channel's own sends (an answer to an inbound message, a `/introduce`
+acknowledgement, a binding, unbinding, dissolution, or space notice) are sent as
+the `channel`, so the `bind_space` receipt stays a chat-level message in the
+container and an unbind or dissolve notice, sent after its route row is gone,
+replies under the root preserved when the row was deleted.
 
 Binding a conversation to a Team is the Channel's own decision, made with that
 Channel's own tools. Team MCP has no `bind_channel` and no `transfer_back`: only
@@ -1166,12 +1214,23 @@ to the members of the bound conversation; the user-visible half of that disclosu
 
 Where a card goes follows the target, except that a bind may say otherwise. A
 route card for a topic replies under that topic's own persisted
-`root_message_id`, read off the binding row rather than guessed; a topic with
-no root yet (never bound or provisioned, so nothing has established one) has
-its notification skipped and logged instead of landing under a guess. A route
-card for a group is sent to the group, where a fresh top-level message is the
-only option. Collaboration Space cards always send a fresh top-level card to
-the container chat, which in a Feishu topic group creates a new topic.
+`root_message_id`, read off the binding row rather than guessed. A topic route
+with no root yet gets one two ways, and neither guesses. First, the first
+message accepted in a bound topic teaches its route: the root the event names,
+else that message, which is then the topic's first and its own root — written by
+`FeishuRouting.fillTopicRoot`, which fills only a null field and touches nothing
+else, so `/bind` or `/dissolve` typed in a pre-existing topic finds its root
+already there. Second, a notice that has no message address at all (a tool bind
+of a topic, a route removed by a Dispatcher-side dissolve before any message
+arrived) asks Feishu for the topic's root by topic id — the earliest message
+the topic lists, or the `root_id` it carries — and remembers it on the row when
+the row still exists. Only when that read is unavailable or fails is the
+notification skipped and logged: it never falls back to the parent chat and
+never opens a new topic, and a bind that was allowed does not start failing
+for it. A route card for a group is sent to the group, where a fresh top-level
+message is the only option. Collaboration Space cards always send a fresh
+top-level card to the container chat, which in a Feishu topic group creates a
+new topic.
 
 `bindChannel` takes an optional `announceIn`, defaulting to the target it bound.
 A `/bind` supplies the conversation the command was typed in, which is how an
@@ -1183,14 +1242,32 @@ the bound target too — only the destination moves. When `announceIn` differs
 from the bound target (only a `/bind` typed inside a topic that binds its
 parent group), the receipt replies under the announce target's own root when
 it already has a binding, else under the message `/bind` was typed in reply-
-chain terms, else it is skipped the same way — it is a receipt about the bind,
-not itself part of the newly bound conversation.
+chain terms, else it follows the same read-or-skip rule — it is a receipt about
+the bind, not itself part of the newly bound conversation.
 
-No card send establishes a chain-of-thought anchor for anyone: the only anchor
-a recipient gets comes from an ordinary inbound submission it makes
-(`beginInboundSubmission`), so a newly bound Team's first COT card waits for
-that Team's first real inbound message rather than hanging off its own binding
-receipt.
+A bind or provisioning card that was actually sent is also its Team's first
+chain-of-thought anchor, under three conditions. The card must be on screen:
+the offer is made from the send's own success, so a skipped, failed, or
+session-cancelled notice offers nothing. The TeamLeader must still have no
+anchor when the send finishes, not merely when the bind committed: the card
+only initializes, so an inbound message that arrived while it was in flight
+keeps the anchor it took, and a leader whose Team closed takes nothing. Nor
+does one whose route no longer serves the card's conversation when it lands:
+the offer is checked against the routing document then, because the leader
+fence remembers a released target only for a leader that already had COT
+state. And the card must have landed in the bound
+target itself, so a receipt announced elsewhere (a `/bind` typed in a topic
+that binds its parent group) anchors nothing, as do unbind, dissolve, and space
+notices. That condition is load-bearing: a topic can hold a binding row of its
+own in an ordinary chat, so without it a `/bind` typed in a topic another Team
+answers would seat the newly bound Team's first card inside that other Team's
+conversation, and the lifecycle fences, which are per leader, would not stop it.
+The Dispatcher never takes an anchor from a card.
+
+That is a different fact from the topic's persisted `root_message_id`: the root
+is where the Channel's own cards reply, the anchor is where a Team's first card
+displays, and nothing restores an anchor from the persisted root. After a
+restart a TeamLeader has none until its first inbound message.
 
 Delivery is best-effort and live-session-only. The send is never awaited by the
 operation that caused it, so a card that does not arrive leaves the routing
@@ -1208,6 +1285,8 @@ Source:
 
 - `/packages/channel/feishu-channel/src/cards/binding-notification.ts`
 - `/packages/channel/feishu-channel/src/routing/operations.ts`
+- `/packages/channel/feishu-channel/src/outbound/index.ts`
+- `/packages/channel/feishu-channel/src/cot/adapter.ts`
 - `/packages/channel/feishu-channel/src/session/session.ts`
 - `/packages/channel/feishu-channel/src/inbound/target.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
@@ -1348,18 +1427,23 @@ anchorless rather than restoring its predecessor, while an ambiguous outcome
 proves nothing and leaves the new anchor standing. A Reply is outbound only: its
 receipt never
 creates, replaces, defers, or retires an anchor and never opens, moves, or closes
-a card. A visible Team bind card may initialize a TeamLeader that has no standing
-anchor and never replaces one, while the Dispatcher has no installation or
-restart anchor and stays anchorless until its first Channel user message.
+a card. A bind card that was sent may initialize a TeamLeader that has no standing
+anchor and never replaces one (see *Routing notification cards*), while the
+Dispatcher has no installation or restart anchor and stays anchorless until its
+first Channel user message.
 
 Anchors consult two bounded fences: a leader-wide fence set by Team close and
 endpoint-scoped route fences set by unbind or replacement, each retaining at most
 512 entries. Team starting/running clears both kinds for that leader, while a
 matching re-bind clears its endpoint route fence. Fence matching and route-driven
-interruption use the anchor's authoritative binding endpoint, not its visible
-target fallbacks. Fencing is the whole of the TeamLeader's extra lifecycle
-policy; the Dispatcher, having no Team, is never fenced. Feishu ignores
-Team-member events explicitly and never routes them through a recipient's state.
+interruption compare the anchor's `target`; for an inbound message that is the
+conversation it arrived in, not the binding row that served it, so a topic
+unbound while its parent group still serves it stays fenced for a leader that
+already had COT state until the fence clears. Fencing is the whole of the
+TeamLeader's extra lifecycle policy; the Dispatcher, having no Team, is never
+fenced. Feishu
+ignores Team-member events explicitly and never routes them through a
+recipient's state.
 
 Once a recipient has an anchor, Core-projected assistant text, tool calls and
 results, the lines the Channel renders itself from text-free activities — the
@@ -1550,7 +1634,10 @@ an empty extension registry.
 - **Tools and card actions.** Extension tools are appended to the caller's
   `channel-feishu` catalog and dispatched when no built-in tool matches. A card
   action is dispatched by the button value's `dreamux_action` key before the
-  built-in handler; the handler may be async but Feishu's callback window is a
+  built-in handler, and only after the click passes the same access policy an
+  inbound message from that person meets (a person the policy does not admit
+  never reaches the handler, so a handler checks no clicker of its own); the
+  handler may be async but Feishu's callback window is a
   few seconds, so long work must be detached — a card action's `handle`
   returns `{ response, forward? }`: `response` is the card callback's own
   answer, and `forward`, when present, is delivered afterwards, detached, to
@@ -1595,7 +1682,9 @@ an empty extension registry.
   the routing plan says owns the conversation, a topic inheriting its group's
   binding, else `null`), `readMessageRoute`, `bindTeam` (the same validation,
   COT fences, and bound notification as the binding tools, without the
-  ownership check), `sendCard` (no idempotency key, no mode; the returned
+  ownership check), `sendCard` (no idempotency key, no mode; an optional
+  `caller` is the MCP caller a tool handler received, which the shared address
+  guard needs to place a card with no `replyTo` in a Space chat; the returned
   target is read back from Feishu because a reply lands in the replied-to
   topic), and `editCard`. The api carries no submit/delivery capability: a
   card action forwards to a Team through its `handle` return, not through the

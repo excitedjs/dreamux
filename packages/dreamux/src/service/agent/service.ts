@@ -61,6 +61,7 @@ import {
 } from './service-types.js';
 import { renderSubmission, type TeammateSubmitInput } from './submission.js';
 import { asError, EntityTurn, type TurnAdmission } from './turn.js';
+import type { RunningLaunch } from './types.js';
 
 /** One canonical Agent entity and the sole owner of its live lifecycle. */
 export class AgentService {
@@ -620,6 +621,11 @@ export class AgentService {
 
   sessionId(): string | null {
     return this.current().session_id;
+  }
+
+  /** The running generation's provider and config, or `null` when none runs. */
+  runningLaunch(): RunningLaunch | null {
+    return this.runtimeGeneration.runningLaunch();
   }
 
   /**

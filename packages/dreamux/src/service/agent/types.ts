@@ -1,4 +1,7 @@
-import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeProvider,
+  AgentRuntimeSkillSource,
+} from '@excitedjs/dreamux-types';
 
 import type {
   AgentEntityCapabilities,
@@ -67,6 +70,16 @@ export interface TeamWorkspaceLoan {
   sourceCwd: string;
   sourceRepo: string | null;
   runtimeCwd: string;
+}
+
+/**
+ * The provider and config one running runtime generation was launched with. It
+ * lives here, below the runtime generation that produces it and the activity
+ * reader that consumes it, so neither has to import the other.
+ */
+export interface RunningLaunch {
+  provider: AgentRuntimeProvider<unknown>;
+  config: unknown;
 }
 
 /** The scoped operations exposed by either member collection. */

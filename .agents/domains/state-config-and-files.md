@@ -110,10 +110,12 @@ plugin cannot be loaded (including a duplicate plugin or provider name; a
 rejected). The operator fix path is `dreamux onboard` or a manual rebuild.
 
 While `dreamux serve` runs, the Config Service (`config/service.ts`) holds
-`config.json` in memory as this process's single authority over it; a hand
-edit made to the file after start is not read until restart, the same
-in-memory-authority rule the routing document and `access.json`/
-`chat-bots.json` already follow (see Durable State Layout below).
+`config.json` in memory as this process's single authority over it, on the same
+`TransactionalStore` the routing document and `access.json`/`chat-bots.json`
+use (see Durable State Layout below). A hand edit made to the file after start
+is not read, and the next `config.agents.replace` commits the held value to the
+whole file without re-reading it, so it discards the edit: hand-edit
+`config.json` with the daemon stopped.
 `agents[]` is additionally readable and replaceable live, without a restart,
 through the `config.agents.get`/`config.agents.replace` Commands (secrets
 returned as `''`, a whole-section replace matched by `id`, a submitted `''`
@@ -301,8 +303,16 @@ Source:
 Three files under the dispatcher state root belong to the Feishu Channel, not to
 Core. Core supplies the per-dispatcher state root and nothing else. Each is
 loaded into memory once — routing at session start, `access.json` and
-`chat-bots.json` at first use — and held for the life of the session; a hand
-edit made while the channel is running is not read until the next restart.
+`chat-bots.json` at first use — and held for the life of the session. Its
+`TransactionalStore` commits the held value to the whole file on every write
+without re-reading the disk, so a hand edit made while the channel is running
+is not read and is discarded by the next write (an access pairing or approval,
+a peer-bot observation, a binding change). A hand edit is therefore only safe
+with the daemon stopped: the maintenance skill owns that quiesced procedure for
+`access.json`, and treats the routing document and `chat-bots.json` as fully
+server-owned. Editing first and restarting afterwards can lose the edit to a
+write that lands before the restart.
+
 Every persisted Dreamux file, this trio included, follows the shape policy the
 code-organization refactor's R21/R22 rulings set: an unknown field is
 tolerated and ignored, and a fact no code reads back is not persisted at all —

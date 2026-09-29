@@ -18,8 +18,10 @@
  * to a package name here: every built-in ships as an always-loaded plugin and
  * registers its descriptor and implementation together before this skeleton
  * runs, so a `builtin:` ref reaching {@link loadProviderPackages} unregistered
- * names an id no loaded plugin contributes and fails loud immediately; only
- * an `npm:` ref resolves to a package and flows through import + factory.
+ * names an id no loaded plugin contributes and fails loud immediately, as a
+ * refused ref (`UnknownBuiltinProviderPackageError`) rather than a load
+ * failure; only an `npm:` ref resolves to a package and flows through import +
+ * factory.
  */
 
 import { errorMessage as errMessage } from '@excitedjs/dreamux-utils';
@@ -129,7 +131,7 @@ async function loadOneProviderPackage<
   ref: ProviderRef,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
-  const packageName = resolvePackageName(ref, spec);
+  const packageName = resolvePackageName(ref);
   const module = await importProviderModule(ref, packageName, spec);
   const factory = selectFactoryExport(ref, module, spec);
   // The registered descriptor is Core's own: parsed from the configured ref,
@@ -162,15 +164,13 @@ async function loadOneProviderPackage<
   registry.register(descriptor, provider);
 }
 
-function resolvePackageName<TProvider, TFactoryContext>(
-  ref: ProviderRef,
-  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
-): string {
+function resolvePackageName(ref: ProviderRef): string {
   if (ref.source === 'npm') return ref.package;
   // A `builtin:` ref only ever reaches here unregistered (see the module
   // comment): there is no package to resolve it to, only the named failure.
-  const err = new UnknownBuiltinProviderPackageError(ref.id);
-  throw spec.createLoadError(ref.raw, errMessage(err), { cause: err });
+  // It is thrown as itself, not wrapped in the kind's load error: it is a
+  // refused ref, not a failed load.
+  throw new UnknownBuiltinProviderPackageError(ref.id);
 }
 
 async function importProviderModule<TProvider, TFactoryContext>(

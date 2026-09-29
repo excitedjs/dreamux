@@ -14,7 +14,7 @@ import type { ChannelMcpDelegates } from '../mcp/types.js';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConfigReader } from '../../config/service.js';
-import { RuleViolation } from '../../platform/errors.js';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';
 import type { AgentNameRegistry } from '../agent/store.js';

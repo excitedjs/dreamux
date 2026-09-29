@@ -260,6 +260,20 @@ export function errorMessage(error: unknown): string {
 }
 
 export interface FeishuInboundDelivery {
+  /**
+   * Tell routing that an accepted message sits in `target`, so a topic route
+   * that has no reply root yet can take one from it.
+   *
+   * `rootId` is the topic root the event names, when it names one; without it
+   * the message itself is the address. Never rejects: a route that cannot
+   * record a root costs a later notice its landing, not this message its
+   * delivery.
+   */
+  learnTopicRoot(input: {
+    target: FeishuTarget;
+    messageId: string;
+    rootId: string | undefined;
+  }): Promise<void>;
   command(input: {
     command: FeishuSlashCommandInvocation;
     target: FeishuTarget;

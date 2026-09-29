@@ -57,9 +57,21 @@ authority for behavioral changes in this pass:
 
 - Live `last`/activity resolves newly edited config instead of the running
   generation's config (#448's next-launch contract needs reconciliation).
+  Resolved 2026-09-30: while a runtime generation runs, `last` reads provider,
+  config and session id from that generation, including a TeamMate still being
+  reopened from a closed record (`last` waits for the reopen's build); with no
+  runtime running it uses the current config.
 - Workflow `createLocked` bypasses collection admission; closing during
   construction can strand a lock before its caller receives the handle.
 - First binding may lose the initial COT anchor. R41 only ruled on restart.
+  Resolved 2026-09-30: the sent bind card is the leader's first anchor again
+  (see the R41 addition in `rulings.md`).
+- A leader that already holds COT state fences a released topic by the
+  anchor's own place, not by the binding row that served it: a topic unbound
+  while its parent group still serves it gets no anchor for that leader until
+  the fence clears. Inherited from the pre-refactor behavior. Making the
+  inbound anchor carry the matched binding endpoint would close it; the review
+  fixes do not name it, so it is left open.
 - An expired pairing token can prevent persisting the newly sent token.
 - Config shape failures may surface as INTERNAL instead of BAD_REQUEST.
 - A plugin without a config reader currently ignores its `config` block.

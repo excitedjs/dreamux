@@ -5,9 +5,8 @@ import { SCHEDULED_SOURCE } from '../submission-sources.js';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import { errorInfo } from '@excitedjs/dreamux-utils';
+import { errorInfo, RuleViolation } from '@excitedjs/dreamux-utils';
 import { throwCallerMistake } from '../../command/errors.js';
-import { RuleViolation } from '../../platform/errors.js';
 import type { TurnAdmission } from '../agent/turn.js';
 import { CronJobNotFoundError } from './errors.js';
 

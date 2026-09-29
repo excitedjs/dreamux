@@ -40,6 +40,16 @@ import {
 } from '../platform/paths.js';
 import { sweepRuntimeSocketDirs } from '../platform/runtime-sockets.js';
 
+/**
+ * Upper bound on a signal-initiated shutdown. A healthy shutdown reaps each
+ * runtime child within a couple of seconds (SIGTERM, then SIGKILL, one second
+ * each), so this only fires for a shutdown that is stuck. It stays below both
+ * service managers' default stop timeouts (launchd's ExitTimeOut is 20s,
+ * systemd's TimeoutStopSec is 90s; the installed units set neither), so the
+ * daemon reports its own hang before the manager kills it.
+ */
+const SHUTDOWN_DEADLINE_MS = 15_000;
+
 export async function runServe(): Promise<void> {
   // Hand an empty registry to ConfigService.open, which loads plugins first —
   // contributing codex/claude-code/feishu, the always-loaded built-ins, each
@@ -84,18 +94,31 @@ export async function runServe(): Promise<void> {
   await server.start();
   logger.info({ admin_socket: adminSocketPath() }, 'server up');
 
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.info({ signal }, 'received signal');
-    await server.shutdown();
-    process.exit(0);
-  };
+  // A termination signal always ends the process, whatever shutdown does: a
+  // rejected shutdown exits non-zero, and a shutdown that never settles (it
+  // drains admitted work, and a runtime start has no timeout of its own) is cut
+  // off by the deadline, which does not depend on the shutdown promise. A
+  // dispatcher's own close retry serves a daemon that keeps running after a
+  // failed start; it is not a reason for the process to outlive a signal.
   const requestShutdown = (signal: string): void => {
-    void shutdown(signal).catch((error: unknown) => {
+    logger.info({ signal }, 'received signal');
+    setTimeout(() => {
       logger.error(
-        { signal, err: errorInfo(error) },
-        'server shutdown failed; process remains fenced for teardown retry',
+        { signal, deadline_ms: SHUTDOWN_DEADLINE_MS },
+        'server shutdown did not settle before its deadline; exiting',
       );
-    });
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS);
+    server.shutdown().then(
+      () => process.exit(0),
+      (error: unknown) => {
+        logger.error(
+          { signal, err: errorInfo(error) },
+          'server shutdown failed; exiting',
+        );
+        process.exit(1);
+      },
+    );
   };
   process.on('SIGTERM', () => requestShutdown('SIGTERM'));
   process.on('SIGINT', () => requestShutdown('SIGINT'));

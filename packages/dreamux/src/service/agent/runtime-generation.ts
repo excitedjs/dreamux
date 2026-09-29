@@ -26,6 +26,7 @@ import {
   type TeammateServiceDeps,
   type TeammateServiceOptions,
 } from './service-types.js';
+import type { RunningLaunch } from './types.js';
 
 interface RuntimeLaunchSpec {
   provider: AgentRuntimeProvider<unknown>;
@@ -52,7 +53,13 @@ export class RuntimeTerminationUnproven extends AggregateError {
 
 /** Raw runtime authority retained exclusively inside one Agent entity. */
 export class RuntimeGeneration {
-  private runtime: AgentRuntime | null = null;
+  /**
+   * The running generation: its runtime and the provider and config it was
+   * launched with. One field, so they are set and cleared together and a
+   * config replace that lands later cannot pair a running runtime with a
+   * provider or config it was not launched with.
+   */
+  private live: ({ runtime: AgentRuntime } & RunningLaunch) | null = null;
   private starting: Promise<void> | null = null;
   /**
    * The MCP lease tokens the current generation's servers were minted with.
@@ -79,7 +86,7 @@ export class RuntimeGeneration {
 
   async ensureStarted(): Promise<void> {
     if (this.starting !== null) return this.starting;
-    if (this.runtime !== null) return;
+    if (this.live !== null) return;
     const promise = this.startFromRecord().finally(() => {
       if (this.starting === promise) this.starting = null;
     });
@@ -89,20 +96,31 @@ export class RuntimeGeneration {
 
   async existingRuntimeAfterStart(): Promise<AgentRuntime | null> {
     await this.starting;
-    return this.runtime;
+    return this.live?.runtime ?? null;
   }
 
   hasNoRuntimeAuthority(): boolean {
-    return this.runtime === null && this.starting === null;
+    return this.live === null && this.starting === null;
   }
 
   mustRuntime(): AgentRuntime {
-    if (this.runtime === null) {
+    if (this.live === null) {
       throw new Error(
         `${agentRoleNoun(this.options.role, this.state.current().name)} is not running`,
       );
     }
-    return this.runtime;
+    return this.live.runtime;
+  }
+
+  /**
+   * The provider and config the running generation was launched with, or `null`
+   * when none is running. A later config replace does not change what a running
+   * runtime uses, so a reader of that runtime's session must use this pair, not
+   * the current config.
+   */
+  runningLaunch(): RunningLaunch | null {
+    if (this.live === null) return null;
+    return { provider: this.live.provider, config: this.live.config };
   }
 
   /**
@@ -165,8 +183,8 @@ export class RuntimeGeneration {
     attempted: Set<AgentRuntime>,
     failures: unknown[],
   ): Promise<void> {
-    const runtime = this.runtime;
-    if (runtime === null || attempted.has(runtime)) return;
+    const runtime = this.live?.runtime;
+    if (runtime === undefined || attempted.has(runtime)) return;
     attempted.add(runtime);
     // Before the first await, and once per runtime rather than once per close:
     // a stop that joined a racing start is about to tear down a *newer*
@@ -180,7 +198,7 @@ export class RuntimeGeneration {
       failures.push(error);
       return;
     }
-    if (this.runtime === runtime) this.runtime = null;
+    if (this.live?.runtime === runtime) this.live = null;
   }
 
   /** Starting a closed Agent reopens it: that is what starting one means. */
@@ -214,13 +232,14 @@ export class RuntimeGeneration {
     // below revokes it, so a start that did not complete leaves no partial
     // write authority behind.
     const lease = this.state.leaseRuntimeGeneration();
+    let launch: RuntimeLaunchSpec;
     let runtime: AgentRuntime;
     try {
       // Resolving the launch mints this generation's MCP servers, and minting
       // validates and freezes each catalog — so a malformed catalog fails here,
       // before any runtime is constructed, and is rolled back the same way a
       // failed construction is.
-      const launch = this.resolveLaunch(lease);
+      launch = this.resolveLaunch(lease);
       runtime = await launch.provider.createRuntime({
         ...launch.context,
         disabledFeatures: [
@@ -236,7 +255,11 @@ export class RuntimeGeneration {
       this.state.revokeRuntimeGeneration();
       throw error;
     }
-    this.runtime = runtime;
+    this.live = {
+      runtime,
+      provider: launch.provider,
+      config: launch.context.config,
+    };
     try {
       // One start path for every provider: recovery is mandatory provider
       // behavior, so Core never branches on a resume capability. The outcome
@@ -256,7 +279,7 @@ export class RuntimeGeneration {
       this.releaseMcpLeases();
       try {
         await runtime.stop();
-        if (this.runtime === runtime) this.runtime = null;
+        if (this.live?.runtime === runtime) this.live = null;
         this.continuity = null;
       } catch (stopError) {
         this.state.revokeRuntimeGeneration();
@@ -305,10 +328,11 @@ export class RuntimeGeneration {
 
   private resolveLaunch(lease: AgentRuntimeGenerationLease): RuntimeLaunchSpec {
     const identity = this.state.current();
-    // Read fresh at the exact launch/resume moment, never cached across two
-    // launches: this entity outlives many runtime restarts, and a
+    // Read fresh at the exact launch/resume moment, never carried from one
+    // launch to the next: this entity outlives many runtime restarts, and a
     // `config.agents.replace` that lands between two of them must be visible
-    // to the next one, not just the one live when this owner was built.
+    // to the next one. The pair is kept only for the generation it launched,
+    // in `live`, and dies with that runtime.
     const agent: ResolvedAgentConfig = resolveAgent(
       this.deps.config.current(),
       this.dispatcherId,

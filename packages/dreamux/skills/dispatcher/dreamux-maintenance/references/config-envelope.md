@@ -9,8 +9,10 @@ path). Do not use `dreamux config show` to inspect provider config; it is not
 a field-targeted secret-safe view.
 
 While `dreamux serve` runs, the Config Service holds `config.json` in memory
-as the running process's single authority over it; a hand edit made to the
-file after start is not read until restart. `agents[]` is additionally
+as the running process's single authority over it. A hand edit made to the
+file after start is not read, and the next `config.agents.replace` commits the
+held value to the whole file without re-reading it, so it discards the edit:
+stop the daemon before hand-editing `config.json`. `agents[]` is additionally
 readable and replaceable live through the `config.agents.get`/
 `config.agents.replace` Commands (secrets returned as `''`, a whole-section
 replace matched by `id`, a submitted `''` for a secret-named key keeping the
@@ -81,7 +83,8 @@ authority; do not infer fields from a built-in provider.
 1. Confirm explicit operator intent for the target Dispatcher, config file, and
    exact fields. When the change is only to `agents[]` and the daemon is
    running, prefer `config.agents.get`/`config.agents.replace` over a hand
-   edit: a hand edit made while the daemon runs is not read until restart.
+   edit: a hand edit made while the daemon runs is not read and is discarded by
+   the next replace. Any other hand edit is made with the daemon stopped.
 2. Resolve the file with `dreamux config path` without printing its contents.
 3. Load the separate provider reference for each affected built-in provider
    or built-in plugin; for an external provider or plugin, including a

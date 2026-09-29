@@ -6,6 +6,7 @@
  * conversation routes to is a Dispatcher operation and lives elsewhere.
  */
 import { listChatBots, type PeerBot } from '../chat-bots-store.js';
+import { agentSender } from '../outbound/index.js';
 import {
   asRecord,
   closedObjectSchema,
@@ -13,12 +14,7 @@ import {
   optionalString,
   requireString,
 } from './schema.js';
-import type { FeishuToolContext, FeishuToolDef } from './types.js';
-
-/** The Team this call belongs to, or `null` for the Dispatcher Agent. */
-function callerTeamName(ctx: FeishuToolContext): string | null {
-  return ctx.caller.kind === 'team_leader' ? ctx.caller.team_name : null;
-}
+import type { FeishuToolDef } from './types.js';
 
 const mutating = { readOnlyHint: false, destructiveHint: false } as const;
 const readOnly = {
@@ -87,7 +83,7 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
       chatId: input.chatId,
       text: input.text,
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
-      callerTeamName: callerTeamName(ctx),
+      sender: agentSender(ctx.caller),
     });
     return { message_ids: result.messages.map((message) => message.messageId) };
   },
