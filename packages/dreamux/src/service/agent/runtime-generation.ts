@@ -20,7 +20,6 @@ import {
   assertUniqueMcpServerNames,
   mcpServerDescriptor,
 } from '../../mcp/launch.js';
-import type { WorktreeManager } from '../worktree/manager.js';
 import { reprepareDeletedManagedWorktree } from '../worktree/workspaces.js';
 import {
   agentRoleNoun,
@@ -199,7 +198,7 @@ export class RuntimeGeneration {
             // managed worktree occupancy can change between construction
             // and this reopen.
             findManagedWorktreeOwner: this.deps.findManagedWorktreeOwner,
-            worktrees: this.mustWorktrees(),
+            worktrees: this.deps.worktrees,
             identity: current,
           }),
         );
@@ -410,14 +409,5 @@ export class RuntimeGeneration {
     const tokens = this.mcpTokens;
     this.mcpTokens = [];
     this.options.mcp?.leases.release(tokens);
-  }
-
-  private mustWorktrees(): WorktreeManager {
-    if (this.deps.worktrees === undefined) {
-      throw new Error(
-        `agent ${JSON.stringify(this.state.current().name)} has no worktree manager`,
-      );
-    }
-    return this.deps.worktrees;
   }
 }

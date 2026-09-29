@@ -192,11 +192,17 @@ export class DispatcherService implements Dispatcher {
       dispatcherId: opts.id,
       log: opts.log,
     });
-    const agentServiceFactory = new AgentServiceFactory(opts.id);
     const conversationProjection = createConversationProjection({
       coreEvents: this.coreEvents.publisher,
       log: opts.log,
       homePathPrefixes: opts.homePathPrefixes,
+    });
+    const agentServiceFactory = new AgentServiceFactory(opts.id, {
+      config: opts.config,
+      agentRuntimeProviders: opts.agentRuntimeProviders,
+      conversationProjection,
+      worktrees,
+      log: opts.log,
     });
 
     this.channels = new ChannelService({
@@ -232,7 +238,6 @@ export class DispatcherService implements Dispatcher {
       onPersisted: (identity) => this.publishAgentState(identity, 'teammate'),
       names,
       agentServiceFactory,
-      conversationProjection,
       completionDelivery,
       // These TeamMates are the dispatcher's own, so their completions go to
       // the dispatcher's Agent. Ownership decides the recipient.
@@ -250,7 +255,6 @@ export class DispatcherService implements Dispatcher {
       root: teamRoot,
       names,
       agentServiceFactory,
-      conversationProjection,
       completionDelivery,
       teammateLaunch: this.hooks.teammateLaunch,
       applyCreateTeamHook: (params) => this.hooks.createTeam.promise(params),
@@ -305,8 +309,6 @@ export class DispatcherService implements Dispatcher {
     this.dispatcherAgent = new DispatcherAgent({
       id: opts.id,
       agentRuntime: opts.dispatcher.agentRuntime,
-      config: opts.config,
-      agentRuntimeProviders: opts.agentRuntimeProviders,
       log: opts.log,
       mcp: () => ({
         leases: opts.mcpLeases,
@@ -318,7 +320,6 @@ export class DispatcherService implements Dispatcher {
       }),
       onPersisted: onDispatcherAgentPersisted,
       agentServiceFactory,
-      conversationProjection,
       launch: this.hooks.launch,
       restartIntent: opts.restartIntent,
     });

@@ -31,9 +31,12 @@ contract; see
 
 ## Logger
 
-The package logs through the optional `DreamuxLogger` the host passes in. With
-no logger it falls back to a minimal `console.error`-backed sink for standalone
-use and tests.
+The package logs through the required `DreamuxLogger` in the neutral runtime
+create context. The provider binds that logger, skill sources, and extra CLI
+arguments when it constructs the runtime. Each successful thread start/resume
+constructs a TurnManager bound to that thread id; socket allocation remains
+per process start. Optional process/client factories remain available for
+embedders.
 
 ## Ultrathink
 

@@ -325,7 +325,7 @@ held members' locks and keeping history), the scheduler's own `destroy()`
 every never-built member closed at rest), and the leader's `close()`. A
 failure destroying any of them is logged, never retried, and never reopens the
 Team — there is nothing left to roll back to. Only the worktree reclaim that
-follows (`WorktreeManager.cleanup()`, via `settleWorktreeCleanup`) re-assesses
+follows (`WorktreeManager.cleanup()`, via `settleTeamWorktreeCleanup` in `team/service.ts`) re-assesses
 the checkout fresh, after every child has actually stopped, and that read is
 what a destructive reclaim acts on; a member that dirties the worktree after
 the precheck no longer refuses the dissolve — the Team still closes, and a

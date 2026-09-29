@@ -114,6 +114,18 @@ never on `@excitedjs/dreamux` core.
   exists, render `status="not_downloaded"` with the escaped key; retain the
   short reason in structured diagnostics, not inline XML.
 
+## Session Resource Ownership
+
+`FeishuRouting` constructs its own store from dispatcher/channel identity and
+state directory. The session initializes routing before installing its Core
+invoker, event subscription, or extensions, and closes routing after extension
+teardown so outstanding route commits have drained. Routing owns the same
+owner-only directory check, no-op update policy, and document schema.
+
+`FeishuAccess` privately holds the access store. Gate decisions, pairing writes,
+approvals, pre-gate policy reads, and document-comment trusted-user checks all
+use that same authority; message transport remains inbound-owned.
+
 ## Feishu Extensions
 
 The plugin publishes `FeishuApi` as its plugin `api`; other plugins register
@@ -138,7 +150,8 @@ the instance api).
   `<this plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension>/<channel segment>`,
   where the channel segment is the same slug and digest the routing document
   filename carries (`channelPathSegment`). The plugin's own state dir comes
-  from `ServerHost.stateDir`, captured in `plugin.ts`'s `server()` — not the
+  from `ServerHost.stateDir`, bound to the shared extension registry by
+  `plugin.ts`'s `server()` before any session initializes — not the
   channel instance's `state_root` that `access.json`/`chat-bots.json`/the
   routing document sit under, so an extension cannot reach those files even
   by construction, structurally rather than by naming convention alone.
@@ -165,7 +178,7 @@ Requirements:
   `只有 App Owner 才有权限点击批准授权`. They must not mutate `access.json` or
   update the card.
 - Owner clicks approve the hidden token through the session's held access
-  store's serialized update queue. Approval adds the pending requester to
+  owner's serialized update queue. Approval adds the pending requester to
   `allow_users` and removes the pending entry.
 - A successful click must respond through the official card callback ACK shape:
   `{ toast, card: { type: "raw", data: <green success card> } }`. Do not use
@@ -191,8 +204,12 @@ Design constraints:
   sender-gated pairing path. An exact-human Owner in a trusted chat delivers
   directly under that chat's authority and does not pair.
 - Keep card rendering in `cards/pairing.ts`, gate state transitions in
-  `access/gate.ts`, and IO/mutation orchestration in `access/index.ts`'s
-  `FeishuAccess`. Turning an approved token into an `allow_users` entry is
+  `access/gate.ts`, and access-state transitions in `access/index.ts`'s
+  `FeishuAccess`. Inbound asks for policy and gate decisions, sends the card or
+  existing-card reference outside the store queue, and records the successful
+  send through `recordPairingPrompt` or `refreshPairing`. The owner loads lazily
+  and merges against its latest committed state. Turning an approved token
+  into an `allow_users` entry is
   `FeishuAccess.approvePairingByToken`, beside the loader the class builds its
   own held `TransactionalStore` with — the one access-state mutation that
   answers a card click rather than a gate decision. Transport code owns only

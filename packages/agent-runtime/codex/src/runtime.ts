@@ -117,14 +117,8 @@ export class CodexRuntime implements AgentRuntime {
     private readonly deps: CodexRuntimeDeps,
   ) {
     const logger = deps.logger;
-    this.log =
-      logger !== undefined
-        ? (lvl, msg, err) => logger[lvl](err !== undefined ? { err } : {}, msg)
-        : (lvl, msg, err) => {
-            const prefix = `[dispatcher ${identity.runtimeId}] ${lvl}`;
-            if (err !== undefined) console.error(prefix, msg, err);
-            else console.error(prefix, msg);
-          };
+    this.log = (level, message, error) =>
+      logger[level](error !== undefined ? { err: error } : {}, message);
     this.threadId = identity.sessionId;
     this.state = deps.state;
     this.paths = deps.paths;
@@ -224,7 +218,6 @@ export class CodexRuntime implements AgentRuntime {
     }
     const cwd = this.deps.cwd;
     const socketPath = this.deps.allocateSocketPath(this.dispatcherId);
-    const extraArgs = this.deps.resolveExtraArgs?.() ?? [];
     const codexLogDir = join(this.paths.logsDir(), 'codex-app-server');
     const factory =
       this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
@@ -234,7 +227,7 @@ export class CodexRuntime implements AgentRuntime {
       stdoutLogPath: join(codexLogDir, `${this.dispatcherId}.log`),
       stderrLogPath: join(codexLogDir, `${this.dispatcherId}.stderr.log`),
       binPath: this.deps.codexBinPath,
-      extraArgs,
+      extraArgs: this.deps.extraArgs,
       env: codexSpawnEnv(globalThis.process.env, this.deps.extraEnv),
     });
     this.process = process;
@@ -281,8 +274,7 @@ export class CodexRuntime implements AgentRuntime {
     this.assertGeneration(generation);
 
     this.turnManager = new TurnManager({
-      dispatcherId: this.dispatcherId,
-      getThreadId: () => this.threadId,
+      threadId: thread.thread.id,
       client: this.client,
       codec: this.deps.codec,
       log: this.log,
@@ -300,7 +292,7 @@ export class CodexRuntime implements AgentRuntime {
     if (this.client === null) throw new Error('client not initialized');
     await applyCodexSkillExtraRoots({
       client: this.client,
-      sources: this.deps.skillSources ?? [],
+      sources: this.deps.skillSources,
       log: this.log,
     });
   }

@@ -6,16 +6,8 @@ import type {
 import type { AsyncSeriesHook } from 'tapable';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
-import {
-  DISABLE_FEATURE_CRON,
-  type AgentRuntimeProviderCatalog,
-} from '../../agent-runtime/index.js';
-import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
-import type { ConfigReader } from '../../config/service.js';
-import type {
-  AgentEntityBuildDeps,
-  AgentServiceFactory,
-} from '../agent/factory.js';
+import { DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
+import type { AgentServiceFactory } from '../agent/factory.js';
 import { dispatcherRuntimeId } from '../agent/runtime-id.js';
 import type { AgentService } from '../agent/service.js';
 import {
@@ -50,14 +42,6 @@ export interface DispatcherAgentOptions {
   id: string;
   /** This dispatcher's own configured runtime ref, for identity ensure. */
   agentRuntime: string;
-  /**
-   * Forwarded verbatim into {@link AgentServiceFactory.upsert}'s own `deps`
-   * field: this owner itself never reads a fact off it, only builds the
-   * contained `AgentService` that will call `.current()` at each launch
-   * (`config/service.ts`'s `ConfigReader` doc).
-   */
-  config: ConfigReader;
-  agentRuntimeProviders: AgentRuntimeProviderCatalog;
   log: DreamuxLogger;
   /**
    * The dispatcher Agent's own MCP surface, built fresh per launch by the
@@ -69,7 +53,6 @@ export interface DispatcherAgentOptions {
   mcp: () => TeammateAgentMcp;
   onPersisted: (identity: AgentEntityIdentity) => void;
   agentServiceFactory: AgentServiceFactory;
-  conversationProjection: ConversationProjection;
   /** This Dispatcher's `launch` hook, run once per Agent construction. */
   launch: AsyncSeriesHook<[LaunchDraft]>;
   /** The one restart marker this process loaded at boot; a constructor value, never reassigned. */
@@ -104,15 +87,6 @@ export class DispatcherAgent {
 
   /** Ensure the dispatcher-root identity and build the contained AgentService. */
   async build(cwd: string): Promise<AgentService> {
-    // The dispatcher agent has no worktree — it neither spawns nor closes, so it
-    // never reaches the worktree manager (issue #233 Phase 5).
-    const deps: AgentEntityBuildDeps = {
-      config: this.opts.config,
-      agentRuntimeProviders: this.opts.agentRuntimeProviders,
-      onPersisted: this.opts.onPersisted,
-      conversationProjection: this.opts.conversationProjection,
-      log: this.opts.log,
-    };
     const identityInput: DispatcherIdentityEnsureInput = {
       agentRuntime: this.opts.agentRuntime,
       cwd,
@@ -128,8 +102,7 @@ export class DispatcherAgent {
       // leave the dispatcher-root identity durable, the same as every other
       // failure past that point.
       options: () => this.dispatcherOptions(),
-      deps,
-      log: this.opts.log,
+      onPersisted: this.opts.onPersisted,
     });
     return this.service;
   }

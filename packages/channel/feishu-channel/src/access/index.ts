@@ -1,16 +1,8 @@
 /**
- * `FeishuAccess` — the session's one held access-state store and every IO or
- * mutation that answers something other than a gate decision: the v3
- * fail-loud loader, turning an approved pairing token into an `allow_users`
- * entry, and the trusted-human check a subscribed-document comment gate
- * reuses.
- *
- * The pure decision logic (`dreamuxFeishuGate`, types, constants) lives in
- * `./gate.js` over the shape `./state.js` declares; a gate decision reads and
- * writes the held `store` directly (public on this class, exactly like
- * `chat-bots-store.ts`'s convention for the sibling peer-bot store), so every
- * access-state mutation is serialized against the same queue whether it
- * answers a gate decision or a card click.
+ * Owns the session's access state and every gate, pairing, and approval
+ * transition. Inbound owns message IO: it asks for a gate decision, sends the
+ * card or reference outside the store queue, then records successful delivery.
+ * Access is loaded lazily, so a malformed file fails the operation that reads it.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -19,12 +11,23 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo, TransactionalStore } from '@excitedjs/dreamux-utils';
 import {
   ACCESS_STATE_VERSION,
+  PAIRING_TTL_MS,
   PAIRING_TOKEN_REGEX,
   defaultDispatcherAccessState,
   type DispatcherAccessState,
   type DispatcherAccessStateV3,
   type PendingPairingEntry,
 } from './state.js';
+
+import {
+  dreamuxFeishuGate,
+  type GateAction,
+  type GateInbound,
+  type GateResult,
+} from './gate.js';
+import { introduceDenyReason } from '../introduce.js';
+
+type PairingAction = Extract<GateAction, { action: 'pair' }>;
 
 const V3_FAIL_MSG =
   'access.json must be v3 shape — copy allow_users to v3, add dm_policy + pending fields, then restart. See CHANGELOG.md and /.agents/domains/feishu-pairing-access.md.';
@@ -83,13 +86,7 @@ export interface FeishuAccessOptions {
 }
 
 export class FeishuAccess {
-  /**
-   * The held access-state store, public exactly like `chat-bots-store.ts`'s
-   * convention for its own `TransactionalStore` — a caller reads/writes it
-   * directly (`load()`, `current`, `update()`) rather than through a
-   * one-line forward re-declared on this class.
-   */
-  readonly store: TransactionalStore<DispatcherAccessState>;
+  private readonly store: TransactionalStore<DispatcherAccessState>;
   private readonly dispatcherId: string;
   private readonly log: DreamuxLogger;
 
@@ -103,6 +100,112 @@ export class FeishuAccess {
       path: join(opts.stateDir, 'access.json'),
       load: () => this.readFromDisk(opts.stateDir),
       dirMode: 0o700,
+    });
+  }
+
+  /** Snapshot the policy used before bot observation or /introduce. */
+  async inboundPolicy(input: {
+    chatType: 'p2p' | 'group';
+    chatId: string;
+    senderId: string;
+  }) {
+    await this.store.load();
+    const state = this.store.current;
+    return {
+      observeBots: state.group.allow_chats.includes(input.chatId),
+      introduceDenyReason: introduceDenyReason(state, input),
+    };
+  }
+
+  /** Commit deliver/drop; pairing waits until its message has been sent. */
+  async gate(inbound: GateInbound): Promise<GateAction> {
+    let result!: GateResult;
+    await this.store.update((current) => {
+      result = dreamuxFeishuGate(current, inbound);
+      return result.action.action === 'pair' ? current : result.nextState;
+    });
+    for (const entry of result.logs) {
+      const level =
+        entry.level === 'error' || entry.level === 'warn'
+          ? entry.level
+          : 'debug';
+      this.log[level](entry.ctx ?? {}, `[feishu-gate] ${entry.msg}`);
+    }
+    return result.action;
+  }
+
+  /** Refresh an existing prompt only after inbound successfully references it. */
+  async refreshPairing(action: PairingAction): Promise<void> {
+    await this.store.update((current) => {
+      const existing = current.pending[action.token];
+      if (existing === undefined) return current;
+      return {
+        ...current,
+        pending: {
+          ...current.pending,
+          [action.token]: {
+            ...existing,
+            expires_at: Date.now() + PAIRING_TTL_MS,
+            prompt_message_id:
+              existing.prompt_message_id ?? action.prompt_message_id,
+          },
+        },
+      };
+    });
+  }
+
+  /** Merge a sent card into the latest state, including any concurrent approval. */
+  async recordPairingPrompt(
+    inbound: GateInbound,
+    action: PairingAction,
+    messageId: string | undefined,
+  ): Promise<void> {
+    await this.store.update((current) => {
+      // Approved mid-window? Skip entirely.
+      if (
+        action.kind === 'dm' &&
+        current.allow_users.includes(inbound.sender_id)
+      ) {
+        return current;
+      }
+      if (
+        action.kind === 'group' &&
+        current.group.allow_chats.includes(inbound.chat_id)
+      ) {
+        return current;
+      }
+      // Another pending entry for the same sender exists? For a resend from
+      // an older entry without a prompt message id, attach the newly-sent
+      // card id and refresh the TTL. Otherwise do not clobber a concurrent
+      // sender's already-recorded token.
+      const existingKey = Object.entries(current.pending).find(
+        ([, e]) => e.sender_id === inbound.sender_id,
+      );
+      if (existingKey !== undefined) {
+        if (!action.is_resend) return current;
+        const [token, existing] = existingKey;
+        const bumped: PendingPairingEntry = {
+          ...existing,
+          expires_at: Date.now() + PAIRING_TTL_MS,
+          prompt_message_id: existing.prompt_message_id ?? messageId,
+        };
+        return {
+          ...current,
+          pending: { ...current.pending, [token]: bumped },
+        };
+      }
+      // Merge with fresh TTL (send succeeded right now).
+      const entry: PendingPairingEntry = {
+        sender_id: inbound.sender_id,
+        chat_id: inbound.chat_id,
+        created_at: Date.now(),
+        expires_at: Date.now() + PAIRING_TTL_MS,
+        prompt_message_id: messageId,
+      };
+      return {
+        ...current,
+        pending: { ...current.pending, [action.token]: entry },
+      };
     });
   }
 

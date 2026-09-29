@@ -154,7 +154,10 @@ runtime app-server readiness, and same-version restart cautions.
   Team is never rebuilt, so its `SchedulerService` is never constructed and no
   timer is ever armed from that leftover file.
 - A Team can be durably `closed` while `worktree.cleanup_state` is still
-  `cleanup-pending`. That state, plus `worktree_cleanup_force`, is the whole
+  `cleanup-pending`. The Team module owns the same record-only settlement
+  operation for live dissolve, failed creation, and background startup recovery;
+  recovery never constructs a closed Team. A cleanup error leaves the pending
+  record unchanged. That state, plus `worktree_cleanup_force`, is the whole
   recovery input: dispatcher startup finishes the pending reclamation from the
   record alone, without materializing the closed Team. Do not delete the Team
   record or the managed worktree to clear the visible state.

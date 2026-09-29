@@ -284,6 +284,12 @@ before the remaining stages run as one orchestration ("后面所有的PR，你�
 - R67 dissolve, final for this round (2026-09-28 20:24): "先不调整了，按照当前的策略做完吧，就是预检通过就先设置成 closed，然后串行清理，worktree 暂时由 teamservice 持有。" → R62's order stands for this round: precheck → write `closed` → destroy child services one after another → worktree cleanup; the managed worktree stays owned by the Team. R66's alternative (leader-owned worktree, dirty handed to the leader) is not implemented now.
 - R68 final anti-pattern review (2026-09-29): asked "拉一个新的 codex-ultra ，mimo ，deepseek ，对最终的代码进行 review ，重点找出我们最后修复的这几种架构反模式". Shown the verified findings (items 1–6 on this branch's patterns, plus pre-branch items: the config-only dispatcher store, the double Team-name probe, and defensive code with no named scenario), with the recommendation to fix 1–6 now and defer the rest, he ruled: "全部修了。起一个 ultracode". → Every verified finding, pre-branch items included, is fixed in PR #455 in one orchestration. The anti-pattern list the review used is the [final review brief](artifacts/final-review-brief.md).
 
+## PR #453 architecture continuation (2026-09-29)
+
+- R69 architecture first: "ok ，开始搞吧，主要还是以架构为主。然后我们再讨论最终的产品行为问题". Continue the reviewed architecture cleanup; discuss the remaining product behavior questions afterwards. The implementation boundary and deferred findings are recorded in the [ownership follow-up](artifacts/ownership-follow-up.md).
+- R70 review staffing: "评审的话不要老是拉 codex，你这台机器上，mimo、deepseek、claude 都是可用的异构模型。" Use heterogeneous reviewers. TeamLeader staffing choice: MiMo reviews ownership and architecture; DeepSeek reviews cross-module behavior preservation, alongside the already-started Codex/Claude review.
+- Communication cadence: "降低你的汇报频率，只有关键节点才用 reply 工具同步". Channel updates are limited to meaningful milestones, blockers, review outcomes, and delivery.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's

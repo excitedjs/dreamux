@@ -6,7 +6,7 @@
  * dispatcher process and the filename carries the channel id, so two sessions
  * never address the same document. `FeishuRouting` holds the
  * `TransactionalStore<FeishuRoutingDocument>` directly — this module owns no
- * wrapping class, only the `load` callback session builds that store with
+ * wrapping class, only the `load` callback `FeishuRouting` builds that store with
  * (`readRoutingDocument`) and the one real write policy every mutation goes
  * through (`updateRoutingDocument`: an isolated copy of the last committed
  * document, an owner-only-dir check, an `updated_at` stamp, and a no-op short
@@ -75,7 +75,7 @@ export function routingDocumentPath(
 }
 
 /**
- * The `load` option session's `TransactionalStore<FeishuRoutingDocument>` is
+ * The `load` option `FeishuRouting`'s `TransactionalStore<FeishuRoutingDocument>` is
  * built with. Read once, at initialize. A malformed or foreign document fails
  * loud.
  */

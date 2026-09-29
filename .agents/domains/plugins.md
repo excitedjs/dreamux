@@ -281,5 +281,10 @@ contributes the `feishu` channel provider (so `builtin:feishu` resolves as
 before) and publishes an api whose `extensions.register` lets another plugin
 add tools, card actions, and a per-instance lifecycle to every Feishu channel.
 The extension surface is owned by [channel](channel.md#feishu-extensions).
+Its shared `FeishuExtensionRegistry` receives the plugin state directory during
+`server` and derives each extension's state root. The directory no longer
+travels through provider and session constructors as a nullable supplier.
+The registry and provider still exist at contribution time, before `server`;
+sessions consume the directory only when initializing a registered extension.
 
 History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md)

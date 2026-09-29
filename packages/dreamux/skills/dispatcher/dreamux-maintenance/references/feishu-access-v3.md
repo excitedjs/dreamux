@@ -9,11 +9,15 @@ The path is fixed at `~/.dreamux/state/<dispatcher-id>/access.json`.
 directly vs. `stateRoot()`). Never derive this state path from
 `dreamux config path` or a relocated config directory.
 
-The Channel session holds this file in memory once its first gate decision
-loads it, for the rest of the session — a hand edit made while the channel is
-running is not read until the next restart, the same as the routing document
+The Channel's `FeishuAccess` owns the held store and every access transition.
+It loads the file on the first policy read, gate, approval, or trusted-user
+check and holds it for the rest of the session — a hand edit made while the
+channel is running is not read until the next restart, the same as the routing document
 and `chat-bots.json`. This is exactly why the quiesced edit procedure below
-requires a confirmed process exit before patching the file.
+requires a confirmed process exit before patching the file. A malformed file
+fails that operation; channel startup does not eagerly load access state.
+Pairing messages are sent outside the store transaction, then the access owner
+merges a successful send against the latest committed approval state.
 
 The complete secure default is:
 

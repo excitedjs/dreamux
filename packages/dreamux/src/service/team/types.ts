@@ -1,7 +1,6 @@
 import {
   assertNotReservedAgentName,
   type AgentEntityIdentityStatus,
-  type AgentEntitySpawnResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
 import type {
@@ -19,13 +18,8 @@ import type { ConfigReader } from '../../config/service.js';
 import type { AgentNameRegistry } from '../agent/store.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
 import type { TeammateAgentMcp } from '../agent/service-types.js';
-import type {
-  SpawnTeamMateRequest,
-  TeamLeaderTeammateOps,
-  TeamMateSharedWorkspace,
-} from '../agent/types.js';
+import type { TeammateOps, TeamMateSharedWorkspace } from '../agent/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
@@ -107,7 +101,6 @@ export interface TeamCollectionOptions {
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;
   coreEvents: DispatcherCoreEventPublisher;
-  conversationProjection: ConversationProjection;
   nameSuffixGenerator?: SuffixGenerator;
   agentNameSuffixGenerator?: SuffixGenerator;
 }
@@ -317,11 +310,8 @@ export interface TeamHistoryResult {
 }
 
 export interface TeamLeaderHandle {
-  teammates: TeamLeaderTeammateOps;
+  teammates: TeammateOps;
   workflows: WorkflowOps;
-  spawnTeamMate(
-    input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
-  ): Promise<AgentEntitySpawnResult>;
 }
 
 export function validateTeamId(id: string): string {

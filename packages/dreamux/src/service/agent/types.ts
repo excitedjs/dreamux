@@ -69,25 +69,9 @@ export interface TeamWorkspaceLoan {
   runtimeCwd: string;
 }
 
-export type SpawnTeamMateRequest = SpawnTeamMateInput & {
-  sharedWorkspace?: TeamWorkspaceLoan;
-};
-
-/**
- * The narrow teammate-operations surface a dispatcher or team exposes to the
- * admin layer (issue #233). `TeammateCollection` implements it; the owning
- * service hands it out via a `get teammates()` so callers can drive the
- * collection without the service re-forwarding each verb. `Omit` hides the
- * scope-internal inputs — `sharedWorkspace` (injected by `TeamService.spawnTeamMate`)
- * and the history `teamId` (the scope is baked into the collection) — and the
- * collection's own lifecycle verbs (`stop` / `destroy`) and internal entry
- * points (`createLocked`, `count`, `memberStatuses`, `materializedEntities`)
- * stay off the interface entirely.
- */
+/** The scoped operations exposed by either member collection. */
 export interface TeammateOps {
-  spawn(
-    input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
-  ): Promise<AgentEntitySpawnResult>;
+  spawn(input: SpawnTeamMateInput): Promise<AgentEntitySpawnResult>;
   send(input: SendTeamMateInput): Promise<AgentEntitySendResult>;
   close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult>;
   list(): Promise<AgentEntityRuntimeStatus[]>;
@@ -101,17 +85,3 @@ export interface TeammateOps {
   ): Promise<AgentEntityLastResult>;
   getCapabilities(): Promise<AgentEntityCapabilities>;
 }
-
-/**
- * The teammate-operations surface a TeamLeader is given (issue #233): every
- * `TeammateOps` verb except `spawn`, since a Team TeamMate is spawned through
- * `TeamService.spawnTeamMate`'s shared-workspace injection instead. Declared
- * once here so the TeamMate MCP delegate's team-leader scope
- * (`agent/mcp.ts`) and `team/types.ts`'s `TeamLeaderHandle` both type their
- * `teammates` field against the same derived shape instead of each spelling
- * out the same omission by hand.
- */
-export type TeamLeaderTeammateOps = Pick<
-  TeammateOps,
-  'send' | 'close' | 'list' | 'status' | 'history' | 'last' | 'getCapabilities'
->;

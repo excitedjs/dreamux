@@ -37,6 +37,26 @@ type AnyExtension = FeishuExtension<unknown>;
 
 export class FeishuExtensionRegistry {
   private readonly extensions: AnyExtension[] = [];
+  // Bound by the plugin's server hook before any extension session is initialized.
+  private stateDir!: string;
+
+  initialize(stateDir: string): void {
+    this.stateDir = stateDir;
+  }
+
+  stateRoot(
+    dispatcherId: string,
+    extensionName: string,
+    channelId: string,
+  ): string {
+    return join(
+      this.stateDir,
+      dispatcherId,
+      'feishu-extensions',
+      extensionName,
+      channelPathSegment(channelId),
+    );
+  }
 
   register<S>(extension: FeishuExtension<S>): void {
     const ext = extension as unknown as AnyExtension;
@@ -145,15 +165,6 @@ export interface FeishuExtensionActionHandler {
 export interface FeishuExtensionInitializeInput {
   readonly dispatcherId: string;
   readonly channelId: string;
-  /**
-   * The Feishu plugin's own state directory (`ServerHost.stateDir`) — not
-   * the channel instance's `state_root` that `access.json`/`chat-bots.json`/
-   * the routing document sit under. `undefined` only for a session built
-   * with no plugin host at all (`createFeishuChannelProvider` directly),
-   * whose registry can never hold an extension, so `initialize` below never
-   * reads it in that case.
-   */
-  readonly pluginStateDir: string | undefined;
   readonly signal: AbortSignal;
   readonly api: FeishuInstanceApi;
 }
@@ -180,17 +191,10 @@ export class FeishuSessionExtensions {
         ext.initialize({
           dispatcherId: input.dispatcherId,
           channelId: input.channelId,
-          // Non-null: the plugin host runs every plugin's `server()` (which
-          // sets this) before the first Dispatcher, and so the first channel
-          // session, exists; the one caller with no plugin host at all
-          // (`createFeishuChannelProvider`) has an empty registry, so this
-          // loop body never runs for it.
-          stateRoot: join(
-            input.pluginStateDir!,
+          stateRoot: this.registry.stateRoot(
             input.dispatcherId,
-            'feishu-extensions',
             ext.name,
-            channelPathSegment(input.channelId),
+            input.channelId,
           ),
           signal: input.signal,
           log: this.log.child({ feishu_extension: ext.name }),

@@ -89,8 +89,6 @@ import {
 } from '../feishu-submit.js';
 import { FeishuInboundTargeting } from '../inbound/target.js';
 import { FeishuRouting } from '../routing/index.js';
-import { readRoutingDocument, routingDocumentPath } from '../routing/store.js';
-import type { FeishuRoutingDocument } from '../routing/document.js';
 import { describeTarget, type FeishuTarget } from '../routing/target.js';
 import { FeishuCardActions } from './card-actions.js';
 import {
@@ -138,21 +136,11 @@ export interface FeishuChannelSessionOptions {
   botFactory?: () => FeishuBot;
   /** The Feishu extensions this session runs; none when omitted. */
   extensions?: FeishuExtensionRegistry;
-  /**
-   * The Feishu plugin's own state directory, read only when an extension
-   * actually initializes (`FeishuSessionExtensions.initialize`). A supplier
-   * because `plugin.ts` builds this session's provider before its own
-   * `server()` call sets the value; by the time any session is constructed
-   * `server()` has already run, but the supplier shape carries through
-   * unchanged rather than resolving early for no reason.
-   */
-  pluginStateDir: () => string | undefined;
 }
 
 export class FeishuChannelSession {
   readonly bot: FeishuBot;
   readonly routing: FeishuRouting;
-  private readonly store: TransactionalStore<FeishuRoutingDocument>;
   private readonly targetRouter: FeishuInboundTargeting;
   private readonly outbound: FeishuOutbound;
   private readonly cot: FeishuCotAdapter;
@@ -195,19 +183,6 @@ export class FeishuChannelSession {
       chatModes: this.bot,
       log: opts.log,
     });
-    this.store = new TransactionalStore({
-      path: routingDocumentPath({
-        dispatcherId: opts.dispatcherId,
-        channelId: opts.channelId,
-        stateDir: opts.stateDir,
-      }),
-      load: () =>
-        readRoutingDocument({
-          dispatcherId: opts.dispatcherId,
-          channelId: opts.channelId,
-          stateDir: opts.stateDir,
-        }),
-    });
     // Loaded at the first peer-bot operation, not here — a corrupt or
     // unreadable file is not security-critical, so nothing about session
     // start depends on this store's first read.
@@ -226,7 +201,6 @@ export class FeishuChannelSession {
       dispatcherId: opts.dispatcherId,
       channelId: opts.channelId,
       stateDir: opts.stateDir,
-      store: this.store,
     });
     this.outbound = new FeishuOutbound({
       bot: this.bot,
@@ -293,7 +267,7 @@ export class FeishuChannelSession {
       throw new Error('Feishu channel session is already initialized');
     }
     this.initialized = true;
-    await this.store.load();
+    await this.routing.initialize();
     this.invoker = port.invoke;
     this.cot.start(() => this.lifecycle.isLive());
     // The single subscription, demultiplexed here because this session owns
@@ -325,7 +299,6 @@ export class FeishuChannelSession {
       await this.extensions.initialize({
         dispatcherId: this.opts.dispatcherId,
         channelId: this.opts.channelId,
-        pluginStateDir: this.opts.pluginStateDir(),
         signal: this.lifecycle.signal,
         api: buildInstanceApi({
           lifecycle: this.lifecycle,
@@ -396,7 +369,7 @@ export class FeishuChannelSession {
     await this.extensions.close();
     // Only now is the Channel's own commit queue empty: a listener that
     // removed a binding queued its commit without awaiting it.
-    await this.store.drain();
+    await this.routing.close();
   }
 
   private invoke(command: string, payload: JsonValue): Promise<JsonValue> {
@@ -780,7 +753,7 @@ export class FeishuChannelSession {
       dispatcherId: this.opts.dispatcherId,
       attachmentCacheDir: this.opts.attachmentCacheDir,
       bot: this.bot,
-      accessStore: this.access.store,
+      access: this.access,
       chatBotsStore: this._chatBotsStore,
       botDisplayName: this.bot.botDisplayName ?? 'Dreamux bot',
       targetRouter: this.targetRouter,

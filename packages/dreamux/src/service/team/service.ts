@@ -19,12 +19,7 @@ import { SchedulerService } from '../scheduler/index.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import type { TeamRecordHandle, TeamRecordUpdate } from './store.js';
 import { TeammateCollection } from '../agent/index.js';
-import type { CreateLockedTeammateOptions } from '../agent/service-types.js';
-import type {
-  SpawnTeamMateRequest,
-  TeamWorkspaceLoan,
-  TeammateOps,
-} from '../agent/types.js';
+import type { TeamWorkspaceLoan, TeammateOps } from '../agent/types.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import { AGENT_TASK_SOURCE, SCHEDULED_SOURCE } from '../submission-sources.js';
 import {
@@ -50,14 +45,17 @@ import {
 import {
   createTeamLeaderAgentForTeam,
   openTeamLeader,
-  teamLeaderAgentBase,
+  type TeamLeaderOpenDeps,
 } from './leader.js';
 import { launchDraftTaps } from '../../plugin/hooks.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
-import type { WorktreeCleanupAssessment } from '../worktree/manager.js';
+import type {
+  WorktreeCleanupAssessment,
+  WorktreeManager,
+} from '../worktree/manager.js';
 import { teamSummary } from './team-summary.js';
 import {
   teamClosedFact,
@@ -83,7 +81,7 @@ import {
  * own terminal fact — so its owner learns of its end without the Team ever
  * calling upward into its owner's lifecycle.
  *
- * Everything but the three fields below is forwarded unchanged from the
+ * Everything but the two fields below is forwarded unchanged from the
  * `TeamCollectionOptions` the owning `TeamCollection` was itself constructed
  * with (`depsBase()` spreads it directly); `root`, `nameSuffixGenerator`, and
  * `applyCreateTeamHook` are collection-only concerns a Team never needs — the
@@ -113,14 +111,6 @@ export type TeamServiceDeps = Omit<
    * its own id, and can never reach another Team's by id.
    */
   record: TeamRecordHandle;
-  /**
-   * Finish the physical reclamation a closed Team's record still owes, through
-   * the same record-only path the collection's own startup sweep uses. A
-   * plain constructor-supplied value rather than a collection import: `store`
-   * ← `service` ← `collection` is the declared direction, so the service tier
-   * must not import the collection tier that holds this method.
-   */
-  settleWorktreeCleanup: (teamId: string) => Promise<void>;
 };
 
 /**
@@ -129,7 +119,7 @@ export type TeamServiceDeps = Omit<
  * members' team-scoped {@link TeammateCollection}. It owns every per-team
  * runtime and resource operation, dissolve included, and is the only writer of
  * its own record's lifecycle status. The one exception is the record's
- * post-close worktree fact: `TeamCollection.settleClosedWorktree` writes that
+ * post-close worktree fact: `settleTeamWorktreeCleanup` writes that
  * once the Team is closed, after no `TeamService` instance for it is left to.
  * Admin `team_leader` target calls are forwarded to this Team's own collection (no
  * team id — scope is baked in); the leader is never a member row.
@@ -160,7 +150,7 @@ export class TeamService implements Team {
   readonly name: string;
   readonly workspace: string;
   readonly hooks: Team['hooks'];
-  /** The team's OWN members collection (`teamScope: team_id`, issue #233).
+  /** The team's OWN members collection (bound to its Team id and workspace).
    * Its concrete class owns the lifecycle methods driven by the team; the PUBLIC
    * surface stays the narrow `teammates` admin ops — never expose internal verbs. */
   private readonly teammateCollection: TeammateCollection;
@@ -194,12 +184,12 @@ export class TeamService implements Team {
 
   private constructor(
     private readonly deps: TeamServiceDeps,
-    init: { teamId: string; name: string; workspace: string },
+    init: { teamId: string; name: string; workspace: TeamWorkspaceLoan },
   ) {
     const { teamId } = init;
     this.id = teamId;
     this.name = init.name;
-    this.workspace = init.workspace;
+    this.workspace = init.workspace.runtimeCwd;
     this.hooks = Object.freeze({
       leaderLaunch: launchDraftTaps(
         new AsyncSeriesHook<[LaunchDraft]>(['draft'], 'leaderLaunch'),
@@ -217,7 +207,7 @@ export class TeamService implements Team {
     // record.
     this.teammateCollection = new TeammateCollection({
       dispatcherId: deps.dispatcherId,
-      teamScope: teamId,
+      teamScope: { id: teamId, workspace: init.workspace },
       config: deps.config,
       agentRuntimeProviders: deps.agentRuntimeProviders,
       worktrees: deps.worktrees,
@@ -225,7 +215,6 @@ export class TeamService implements Team {
       onPersisted: (identity) => this.publish(identity, 'teammate'),
       names: deps.names,
       agentServiceFactory: deps.agentServiceFactory,
-      conversationProjection: deps.conversationProjection,
       completionDelivery: deps.completionDelivery,
       initiatorFor: async () => this.leaderCompletionInitiator(),
       suffixGenerator: deps.agentNameSuffixGenerator,
@@ -258,12 +247,7 @@ export class TeamService implements Team {
     this.workflowService = new WorkflowService({
       dispatcherId: deps.dispatcherId,
       teamId,
-      // This Team owns its Workflow scope, so a Workflow's TeamMate is created
-      // by this Team directly rather than by asking its owner for a way back in.
-      teammates: {
-        createLocked: (input, options) =>
-          this.createLockedWorkflowTeammate(input, options ?? {}),
-      },
+      teammates: this.teammateCollection,
       completionDelivery: deps.completionDelivery,
       completionInitiator: () => this.leaderCompletionInitiator(),
       admit: (task) => this.admit(() => deps.admitOperation(task)),
@@ -312,7 +296,7 @@ export class TeamService implements Team {
     const service = new TeamService(deps, {
       teamId: input.teamId,
       name: input.name,
-      workspace: input.workspace.runtimeCwd,
+      workspace: input.workspace,
     });
     // Before the record is written: plugins tap this Team's own hooks here. A
     // taken name discards this object before its leader is ever built.
@@ -481,7 +465,7 @@ export class TeamService implements Team {
     if (closed) {
       this.closeFromRecord();
       await collectShutdownFailure(failures, () =>
-        this.deps.settleWorktreeCleanup(input.teamId),
+        settleTeamWorktreeCleanup(this.deps.record, this.deps.worktrees),
       );
     }
     if (failures.length === 1) throw error;
@@ -506,7 +490,11 @@ export class TeamService implements Team {
     const service = new TeamService(deps, {
       teamId: record.team_id,
       name: record.name,
-      workspace: record.runtime_cwd,
+      workspace: {
+        sourceCwd: record.repo_cwd,
+        sourceRepo: record.source_repo,
+        runtimeCwd: record.runtime_cwd,
+      },
     });
     // `record` was already read through the collection's `store.get`/`.list`
     // (every caller of `rebuild` reads a record before calling it), which
@@ -553,11 +541,7 @@ export class TeamService implements Team {
     return this.workflowService;
   }
 
-  /** This team's members as concrete internal ops. `leaderScope()` exposes
-   * this same collection typed narrower, as `TeamLeaderTeammateOps` (which
-   * omits `spawn`), so an admin/MCP TeamLeader caller never bypasses
-   * `spawnTeamMate`'s shared-workspace injection — the type projection is
-   * what keeps `spawn` off that surface, not a wrapper around this one. */
+  /** This Team's members, including spawn into its fixed shared workspace. */
   get teammates(): TeammateOps {
     return this.teammateCollection;
   }
@@ -566,14 +550,11 @@ export class TeamService implements Team {
    * This Team's TeamLeader-scoped surface, assembled from what this Team
    * already holds: `teammates` and `workflows` each fence themselves through
    * their own constructor-injected `admit`, so nothing here re-wraps them.
-   * `spawnTeamMate` is the one real closure — the shared-workspace injection
-   * a raw `teammates.spawn` would skip.
    */
   leaderScope(): TeamLeaderHandle {
     return {
       teammates: this.teammates,
       workflows: this.workflows,
-      spawnTeamMate: (input) => this.spawnTeamMate(input),
     };
   }
 
@@ -694,7 +675,7 @@ export class TeamService implements Team {
     // leaves the pending fact standing for the next start to finish, so it is
     // reported rather than raised.
     try {
-      await this.deps.settleWorktreeCleanup(this.id);
+      await settleTeamWorktreeCleanup(this.deps.record, this.deps.worktrees);
     } catch (error) {
       this.deps.log.error(
         {
@@ -709,7 +690,7 @@ export class TeamService implements Team {
 
   /**
    * The closed record a dissolve commits: the worktree/`cleanupForce` fact
-   * `settleWorktreeCleanup`'s later, real reclaim reads its authorization
+   * `settleTeamWorktreeCleanup`'s later, real reclaim reads its authorization
    * from. Reads through {@link assessWorktree} again rather than reusing the
    * pre-admission precheck's answer, because a forced dissolve never ran that
    * precheck at all (`dissolve()` skips it when `input.force` is set) and a
@@ -895,46 +876,6 @@ export class TeamService implements Team {
   }
 
   /**
-   * The directory this Team's Agents run in — lent, not transferred.
-   *
-   * The Team's record keeps the managed checkout and everything that happens to
-   * it. What a member gets is where to run, which is the only part of the
-   * Team's workspace that is any of its business.
-   */
-  private sharedWorkspace(): TeamWorkspaceLoan {
-    const record = this.mustRecord();
-    return {
-      sourceCwd: record.repo_cwd,
-      sourceRepo: record.source_repo,
-      runtimeCwd: record.runtime_cwd,
-    };
-  }
-
-  async spawnTeamMate(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>) {
-    // The owned collection is team-scoped; still pass the shared workspace
-    // (issue #233). This stays a real method — injecting the shared workspace is
-    // the Team's job — unlike the pure teammate forwards that now go through
-    // `.teammates`.
-    return this.teammateCollection.spawn({
-      ...input,
-      sharedWorkspace: this.sharedWorkspace(),
-    });
-  }
-
-  async createLockedWorkflowTeammate(
-    input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
-    options: CreateLockedTeammateOptions,
-  ) {
-    return this.teammateCollection.createLocked(
-      {
-        ...input,
-        sharedWorkspace: this.sharedWorkspace(),
-      },
-      options,
-    );
-  }
-
-  /**
    * Open this Team's admissions: resume accepting Workflow runs and arm the
    * scheduler. Both steps are idempotent.
    *
@@ -1036,15 +977,16 @@ export class TeamService implements Team {
     this.rosterMembers.set(name, { teammateName: name, role, status });
   }
 
-  private leaderAgentBase() {
-    return teamLeaderAgentBase({
-      deps: this.deps,
+  private leaderAgentBase(): TeamLeaderOpenDeps {
+    return {
       teamId: this.id,
       teamRoot: this.deps.teamRoot,
       workspace: this.mustRecord().worktree,
+      leaderMcp: this.deps.leaderMcp,
+      agentServiceFactory: this.deps.agentServiceFactory,
       onPersisted: (identity) => this.publish(identity, 'team_leader'),
       leaderLaunch: this.hooks.leaderLaunch,
-    });
+    };
   }
 
   /**
@@ -1170,4 +1112,34 @@ export class TeamService implements Team {
       }),
     });
   }
+}
+
+/**
+ * Finish a closed Team's pending worktree cleanup using its loaded record.
+ * Live dissolve, abandoned creation, and startup recovery share this operation;
+ * recovery never constructs a Team. A cleanup failure leaves the pending fact
+ * and its force authorization unchanged for the next start.
+ */
+export async function settleTeamWorktreeCleanup(
+  handle: TeamRecordHandle,
+  worktrees: WorktreeManager,
+): Promise<void> {
+  const record = handle.current;
+  if (record === null || record.worktree.cleanup_state !== 'cleanup-pending')
+    return;
+  const cleaned = await worktrees.cleanup(
+    {
+      source_cwd: record.repo_cwd,
+      source_repo: record.source_repo,
+      worktree: record.worktree,
+    },
+    { force: record.worktree_cleanup_force },
+  );
+  if (cleaned.cleanup_state === 'retained-error') {
+    throw new Error(cleaned.cleanup_error ?? 'managed worktree cleanup failed');
+  }
+  await handle.update({
+    worktree: { ...cleaned, cleanup_error: null },
+    cleanupForce: false,
+  });
 }
