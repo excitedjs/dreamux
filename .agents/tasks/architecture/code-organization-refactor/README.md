@@ -10,6 +10,7 @@
 - Requirement: [Current requirement](/.agents/tasks/architecture/code-organization-refactor/requirement.md)
 - Rulings: [Operator rulings ledger](/.agents/tasks/architecture/code-organization-refactor/rulings.md) (verbatim)
 - Survey: [Code organization audit](/.agents/tasks/architecture/code-organization-refactor/artifacts/audit.md) — read-only, 14 slices with adversarial verification; most of its §9 questions are answered in the rulings, and the rest are open items in the requirement
+- Final review brief: [Anti-pattern review brief](/.agents/tasks/architecture/code-organization-refactor/artifacts/final-review-brief.md) — the seven architecture anti-patterns the PR #455 follow-up rounds removed, as given to the final three-reviewer pass (R68)
 - Final solution: Not written.
 - Solution review Issue: Not opened.
 - Blockers: None recorded.
