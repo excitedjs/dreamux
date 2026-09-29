@@ -66,10 +66,10 @@ through the plugin:
 import { createCodexAgentRuntimeProvider } from '@excitedjs/agent-runtime-codex';
 ```
 
-The factory accepts the neutral create context plus optional test/embedder
-seams (`codexProcessFactory`, `codexClientFactory`, `restartBackoffBaseMs`,
-`restartBackoffMaxMs`); the plugin (this package's default export) constructs
-the provider on package defaults with none of these set.
+The provider accepts `restartBackoffBaseMs` and `restartBackoffMaxMs` options.
+It constructs the native process and WebSocket client directly. Each runtime
+start allocates a fresh socket from the neutral path capability; restart never
+reuses a construction-time socket allocation.
 
 ## Portable Structured Output
 

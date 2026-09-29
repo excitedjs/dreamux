@@ -1,45 +1,25 @@
-import { ClaudeCodeRuntime } from './runtime.js';
-import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
-import {
-  DEFAULT_CLAUDE_CODE_BIN,
-  readDispatcherClaudeCodeConfig,
-  type DispatcherClaudeCodeConfig,
-} from './config.js';
-import {
-  createDefaultClaudeCodeSession,
-  type ClaudeCodeSessionFactory,
-} from './supervisor.js';
-import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
-import { readClaudeRecentActivity } from './activity/reader.js';
-import { resolveClaudeConfigHomeDir } from './paths.js';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
   AgentRuntimeProviderCapabilities,
 } from '@excitedjs/dreamux-types';
+import { readClaudeRecentActivity } from './activity/reader.js';
+import {
+  DEFAULT_CLAUDE_CODE_BIN,
+  readDispatcherClaudeCodeConfig,
+  type DispatcherClaudeCodeConfig,
+} from './config.js';
+import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
+import { resolveClaudeConfigHomeDir } from './paths.js';
+import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
+import { ClaudeCodeRuntime } from './runtime.js';
 
 function normalizedSystemPromptAppend(
   append: readonly string[] | undefined,
 ): readonly string[] | undefined {
   const normalized = (append ?? []).filter((prompt) => prompt !== '');
   return normalized.length > 0 ? normalized : undefined;
-}
-
-/**
- * Construction options for the built-in Claude Code provider. Registration
- * identity is Core's: the provider carries no descriptor. What remains here
- * are the test/host seams (the resident-session factory, an optional host bin
- * resolver) that let core and tests wire behavior without changing the
- * provider.
- */
-export interface ClaudeCodeAgentRuntimeProviderOptions {
-  /** Optional host-level bin resolver (default: identity on the config bin). */
-  resolveBinPath?: (bin: string) => string;
-  /** Override the resident-session factory (tests inject a fake). */
-  sessionFactory?: ClaudeCodeSessionFactory;
-  /** Override native session UUID generation for deterministic tests. */
-  generateSessionId?: ClaudeCodeRuntimeDeps['generateSessionId'];
 }
 
 /**
@@ -55,17 +35,12 @@ const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
  * neutral `@excitedjs/dreamux-types` contract: `config.read` parses Claude Code
  * runtime config, `readRecentActivity` serves neutral Activity Records for any
  * session, and `createRuntime` builds a {@link ClaudeCodeRuntime} from the
- * neutral create context plus the host-supplied options.
+ * neutral create context and the configured Claude binary.
  *
  * Claude Code resumes from its native session id alone, which it publishes as
  * the neutral opaque session id.
  */
-export function createClaudeCodeAgentRuntimeProvider(
-  options: ClaudeCodeAgentRuntimeProviderOptions = {},
-): AgentRuntimeProvider<DispatcherClaudeCodeConfig> {
-  const sessionFactory =
-    options.sessionFactory ?? createDefaultClaudeCodeSession;
-  const resolveBinPath = options.resolveBinPath ?? ((bin: string) => bin);
+export function createClaudeCodeAgentRuntimeProvider(): AgentRuntimeProvider<DispatcherClaudeCodeConfig> {
   return {
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: claudeCodeAgentRuntimeDiagnostic,
@@ -104,14 +79,11 @@ export function createClaudeCodeAgentRuntimeProvider(
         activitySink: context.activity,
         paths: context.paths,
         mcpServers: context.mcpServers,
-        sessionFactory,
-        resolveBinPath,
         skillSources: context.skillSources,
         // Neutral seam name in, provider-native name out: `disableFeatures` is
         // this package's own internal wording and stops at the adapter.
         disableFeatures: context.disabledFeatures,
         outputSchema: context.outputSchema,
-        generateSessionId: options.generateSessionId,
         systemPromptAppend,
         logger: context.logger,
       };

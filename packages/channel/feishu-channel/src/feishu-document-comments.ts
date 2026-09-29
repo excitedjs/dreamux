@@ -37,6 +37,7 @@
  * A Dispatcher delivery of an unclaimed mention writes no row, so a rejection
  * on it has nothing to remove.
  */
+import type { FeishuTeamSubmitter } from './session/submitter.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import {
@@ -46,13 +47,9 @@ import {
   type FeishuDocCommentText,
 } from '@excitedjs/feishu-transport';
 
+import type { FeishuAccess } from './access/index.js';
+import type { FeishuBot } from './bot.js';
 import { runFeishuBoundedOperation } from './feishu-bounded-operation.js';
-import {
-  escapeXmlAttribute,
-  escapeXmlText,
-  formatFeishuCreateTime,
-  renderFeishuMention,
-} from './inbound/render.js';
 import {
   DOC_COMMENT_COLD_OPEN_REMINDER,
   DOC_COMMENT_REMINDER,
@@ -62,10 +59,14 @@ import {
   type FeishuSubmitOutcome,
   type SubmitOutcomeMessages,
 } from './feishu-submit.js';
-import type { FeishuRouting } from './routing/index.js';
+import {
+  escapeXmlAttribute,
+  escapeXmlText,
+  formatFeishuCreateTime,
+  renderFeishuMention,
+} from './inbound/render.js';
 import type { FeishuDocSubscriptionRecord } from './routing/document.js';
-import type { FeishuAccess } from './access/index.js';
-import type { FeishuBot } from './bot.js';
+import type { FeishuRouting } from './routing/index.js';
 
 /**
  * The budget both inbound enrichment reads share. The route awaits delivery
@@ -91,11 +92,7 @@ export interface FeishuDocumentCommentsOptions {
   readonly channelId: string;
   readonly log: DreamuxLogger;
   readonly routing: FeishuRouting;
-  /** `null` reaches the Dispatcher Agent, exactly as it does for a chat. */
-  submit(
-    teamName: string | null,
-    submission: FeishuSubmission,
-  ): Promise<FeishuSubmitOutcome>;
+  readonly submitter: FeishuTeamSubmitter;
   /**
    * The held transport, for the reads this module needs: document metadata,
    * wiki-node resolution, a comment's own text, and best-effort commenter name
@@ -308,7 +305,7 @@ export class FeishuDocumentComments {
     });
     // No row is written and none is removed: this delivery is a cold open, not
     // a subscription, so a rejection on it has nothing to reconcile.
-    const outcome = await this.opts.submit(null, submission);
+    const outcome = await this.opts.submitter.submit(null, submission);
     this.reportDelivery({ ...this.scope(event), team_name: null }, outcome);
   }
 
@@ -318,7 +315,7 @@ export class FeishuDocumentComments {
     submission: FeishuSubmission,
   ): Promise<void> {
     const scope = { ...this.scope(event), team_name: row.team_name };
-    const outcome = await this.opts.submit(row.team_name, submission);
+    const outcome = await this.opts.submitter.submit(row.team_name, submission);
     if (outcome.status !== 'rejected') {
       this.reportDelivery(scope, outcome);
       return;

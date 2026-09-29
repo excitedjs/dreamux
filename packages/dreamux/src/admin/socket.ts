@@ -13,16 +13,12 @@
  * schema validation, and shutdown admission happen for both.
  */
 
-import { createServer, type Server as NetServer, type Socket } from 'node:net';
 import { chmod, rm } from 'node:fs/promises';
+import { createServer, type Server as NetServer, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 
-import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
 import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
-import type {
-  CoreCommandContext,
-  CoreCommandRegistry,
-} from '../command/types.js';
+import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
 import {
   DreamuxError,
   TransportError,
@@ -30,6 +26,10 @@ import {
   commandFailure,
   type CommandFailure,
 } from '../command/errors.js';
+import type {
+  CoreCommandContext,
+  CoreCommandRegistry,
+} from '../command/types.js';
 import {
   acquireInstanceLock,
   defaultIsPidAlive,
@@ -62,11 +62,6 @@ export interface AdminSocketServer {
 
 export interface AdminSocketOptions {
   /**
-   * Override the chmod implementation. Tests inject a throwing fn to assert
-   * the fail-fast cleanup path (PR #3 review #2). Default: `fs/promises.chmod`.
-   */
-  chmodFn?: (path: string, mode: number) => void | Promise<void>;
-  /**
    * Override the liveness probe for the lockfile holder PID. Production uses
    * `process.kill(pid, 0)`; tests inject a stub so they can assert behavior
    * for "stale lock pid is dead" vs "lock pid is live" without spawning real
@@ -85,7 +80,6 @@ export function createAdminSocketServer(
   socketPath: string,
   options: AdminSocketOptions = {},
 ): AdminSocketServer {
-  const chmodFn = options.chmodFn ?? chmod;
   const isAlive = options.isPidAlive ?? defaultIsPidAlive;
   const myPid = options.selfPid ?? process.pid;
   const lockPath = adminSocketLockPath(socketPath);
@@ -126,7 +120,7 @@ export function createAdminSocketServer(
         // PR #3 review #2: chmod is a hard requirement, not best-effort —
         // a 0666 admin socket exposes every admin Command to every local user.
         try {
-          await chmodFn(socketPath, 0o600);
+          await chmod(socketPath, 0o600);
         } catch (e) {
           const chmodErr = e instanceof Error ? e.message : String(e);
           throw new Error(

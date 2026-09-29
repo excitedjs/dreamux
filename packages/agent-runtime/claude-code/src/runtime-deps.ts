@@ -8,7 +8,6 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { DispatcherClaudeCodeConfig } from './config.js';
-import type { ClaudeCodeSessionFactory } from './supervisor.js';
 
 /** Neutral host capabilities required by one resident Claude Code runtime. */
 export interface ClaudeCodeRuntimeDeps {
@@ -17,8 +16,6 @@ export interface ClaudeCodeRuntimeDeps {
   state: AgentRuntimeStateSink;
   paths: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];
-  sessionFactory: ClaudeCodeSessionFactory;
-  resolveBinPath: (bin: string) => string;
   systemPromptAppend?: readonly string[] | undefined;
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
@@ -27,7 +24,6 @@ export interface ClaudeCodeRuntimeDeps {
    * fixed for the life of this runtime; no submission can change it.
    */
   outputSchema?: Record<string, unknown> | undefined;
-  generateSessionId?: (() => string) | undefined;
   logger: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
 }

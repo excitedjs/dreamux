@@ -1,15 +1,18 @@
 import { Cron } from 'croner';
+import type { WorkAdmission } from '../../platform/work-fence.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
+import { SCHEDULED_SOURCE } from '../submission-sources.js';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
-import { RuleViolation } from '../../platform/errors.js';
 import { throwCallerMistake } from '../../command/errors.js';
+import { RuleViolation } from '../../platform/errors.js';
 import type { TurnAdmission } from '../agent/turn.js';
 import { CronJobNotFoundError } from './errors.js';
 
-import { CronJobStore } from './store.js';
 import { validateCronSchedule } from './cron-validation.js';
+import { CronJobStore } from './store.js';
 import type {
   CronCreateRequest,
   CronJob,
@@ -30,15 +33,15 @@ interface TimerSlot {
  * What `SchedulerService` is constructed from.
  *
  * Declared here rather than in `types.ts`: it configures a concrete
- * `SchedulerService` (a cron store path, an `admit` closure, a submission
- * callback) rather than describing a domain value, so it is a
+ * `SchedulerService` (a cron store path, an owner fence, and a submission
+ * recipient) rather than describing a domain value, so it is a
  * constructor-options bag rather than a data type.
  */
 export interface SchedulerServiceOptions {
   ownerId: string;
   /** Where this scheduler's own `CronJobStore` reads and writes its file. */
   cronJobsPath: string;
-  admit<T>(task: () => Promise<T>): Promise<T>;
+  fence: WorkAdmission;
   /**
    * Submit one due fire as an ordinary admitted input.
    *
@@ -47,19 +50,16 @@ export interface SchedulerServiceOptions {
    * runtime folds the input into an active turn or starts a new one is the
    * runtime's decision, made where it is already made.
    */
-  submitScheduled(input: {
-    prompt: string;
-    sourceId: string;
-  }): Promise<TurnAdmission>;
+  recipient: {
+    submitInput(input: TeammateSubmitInput): Promise<TurnAdmission>;
+  };
   log: DreamuxLogger;
-  now?: () => number;
 }
 
 export class SchedulerService implements SchedulerCommands {
   private readonly ownerId: string;
   private readonly store: CronJobStore;
   private readonly log: DreamuxLogger;
-  private readonly now: () => number;
   private readonly timers = new Map<string, TimerSlot>();
   private fireSeq = 0;
   private running = false;
@@ -69,7 +69,6 @@ export class SchedulerService implements SchedulerCommands {
     this.ownerId = opts.ownerId;
     this.store = new CronJobStore(opts.cronJobsPath);
     this.log = opts.log;
-    this.now = opts.now ?? (() => Date.now());
   }
 
   async start(): Promise<void> {
@@ -121,16 +120,18 @@ export class SchedulerService implements SchedulerCommands {
 
   /** Gated like every other admitted verb: a read is still operational access on a scope that may be closing. */
   async list(): Promise<{ jobs: CronJob[] }> {
-    return this.opts.admit(async () => ({ jobs: await this.store.list() }));
+    return this.opts.fence.admit(async () => ({
+      jobs: await this.store.list(),
+    }));
   }
 
   async create(input: CronCreateRequest): Promise<CronJob> {
-    return this.opts.admit(() => this.doCreate(input));
+    return this.opts.fence.admit(() => this.doCreate(input));
   }
 
   private async doCreate(input: CronCreateRequest): Promise<CronJob> {
     const normalized = this.normalizeCreate(input);
-    const nextRunAt = nextRunAfter(normalized.cron, normalized.tz, this.now());
+    const nextRunAt = nextRunAfter(normalized.cron, normalized.tz, Date.now());
     const job = await this.store.create({
       ...normalized,
       nextRunAt,
@@ -144,7 +145,7 @@ export class SchedulerService implements SchedulerCommands {
   }
 
   async update(input: CronUpdateRequest): Promise<CronJob> {
-    return this.opts.admit(() => this.doUpdate(input));
+    return this.opts.fence.admit(() => this.doUpdate(input));
   }
 
   private async doUpdate(input: CronUpdateRequest): Promise<CronJob> {
@@ -155,7 +156,7 @@ export class SchedulerService implements SchedulerCommands {
     // a misleading next_run_at for a job that will never fire.
     const effectiveEnabled = input.enabled ?? current.enabled;
     const nextRunAt = effectiveEnabled
-      ? nextRunAfter(normalized.cron, normalized.tz, this.now())
+      ? nextRunAfter(normalized.cron, normalized.tz, Date.now())
       : null;
     const job = await this.store.update({
       ...normalized,
@@ -171,7 +172,7 @@ export class SchedulerService implements SchedulerCommands {
   }
 
   async delete(id: string): Promise<{ id: string; deleted: boolean }> {
-    return this.opts.admit(() => this.doDelete(id));
+    return this.opts.fence.admit(() => this.doDelete(id));
   }
 
   private async doDelete(
@@ -188,7 +189,7 @@ export class SchedulerService implements SchedulerCommands {
 
   private async reconcile(job: CronJob): Promise<CronJob | null> {
     if (!job.enabled) return null;
-    const now = this.now();
+    const now = Date.now();
     if (!job.recurring && job.next_run_at !== null && job.next_run_at <= now) {
       this.log.warn(
         { owner_id: this.ownerId, job_id: job.id },
@@ -217,10 +218,10 @@ export class SchedulerService implements SchedulerCommands {
 
   private armSegment(jobId: string, dueAt: number): void {
     if (!this.running) return;
-    const delay = Math.max(0, dueAt - this.now());
+    const delay = Math.max(0, dueAt - Date.now());
     const segment = Math.min(delay, MAX_TIMEOUT_MS);
     const timer = setTimeout(() => {
-      if (dueAt - this.now() > 0) {
+      if (dueAt - Date.now() > 0) {
         this.armSegment(jobId, dueAt);
         return;
       }
@@ -265,11 +266,12 @@ export class SchedulerService implements SchedulerCommands {
       job = await this.store.get(jobId);
       if (generation !== this.lifecycleGeneration) return;
       if (job === null || !job.enabled) return;
-      const result = await this.opts.submitScheduled({
-        prompt: job.action.prompt,
+      const result = await this.opts.recipient.submitInput({
+        source: SCHEDULED_SOURCE,
+        text: job.action.prompt,
         sourceId: this.nextFireSourceId(job.id),
       });
-      const now = this.now();
+      const now = Date.now();
       if (result.status !== 'submitted' && result.status !== 'ambiguous') {
         this.log.warn(
           {
@@ -309,7 +311,7 @@ export class SchedulerService implements SchedulerCommands {
       // rearm from, so there is no second read to retry it with either.
       if (job === null) return;
       try {
-        await this.rearm(job, 'missed', this.now(), generation);
+        await this.rearm(job, 'missed', Date.now(), generation);
       } catch (rearmErr) {
         this.log.error(
           { owner_id: this.ownerId, job_id: jobId, err: errorInfo(rearmErr) },
@@ -324,7 +326,7 @@ export class SchedulerService implements SchedulerCommands {
     // fired but before Dispatcher admission starts this async task; that
     // stopped generation must not submit.
     const generation = this.lifecycleGeneration;
-    await this.opts.admit(() =>
+    await this.opts.fence.admit(() =>
       generation === this.lifecycleGeneration
         ? this.dispatch(jobId, generation)
         : Promise.resolve(),

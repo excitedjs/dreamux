@@ -23,6 +23,8 @@
  * operator who rebinds or removes the space meanwhile changes what the next
  * creation sees and nothing about one already under way.
  */
+import type { FeishuBindingOperations } from './routing/operations.js';
+import type { FeishuTeamSubmitter } from './session/submitter.js';
 import type {
   DreamuxLogger,
   TeamCreateCommand,
@@ -30,49 +32,28 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { FeishuCoreCommands } from './feishu-core-commands.js';
-import type { FeishuRouting } from './routing/index.js';
+import {
+  errorMessage,
+  type FeishuChatSubmission,
+  type FeishuSubmitOutcome,
+} from './feishu-submit.js';
 import type { FeishuSpaceRecord } from './routing/document.js';
+import type { FeishuRouting } from './routing/index.js';
 import { targetIntent, teamNamePrefix } from './routing/naming.js';
 import {
   describeTarget,
   targetKey,
   type FeishuTarget,
 } from './routing/target.js';
-import {
-  errorMessage,
-  type FeishuChatSubmission,
-  type FeishuSubmission,
-  type FeishuSubmitOutcome,
-} from './feishu-submit.js';
 
 export interface FeishuProvisioningOptions {
   readonly dispatcherId: string;
   readonly channelId: string;
   readonly log: DreamuxLogger;
   readonly routing: FeishuRouting;
-  /**
-   * The full session-level submit, including the COT anchor claim on the
-   * triggering message and the lifecycle/rejection handling `team.submit`
-   * needs — not `FeishuCoreCommands.teamSubmit`, which is a bare Command call
-   * with none of that. See `session/session.ts`'s own `submit()`. A plain
-   * function, not a single-method interface: this is the one call site that
-   * needs it, so naming a `FeishuTeamSubmitter` type bought nothing a
-   * function type does not already say.
-   */
-  readonly submit: (
-    teamName: string,
-    submission: FeishuSubmission,
-  ) => Promise<FeishuSubmitOutcome>;
+  readonly submitter: FeishuTeamSubmitter;
   readonly commands: FeishuCoreCommands;
-  /** Announce a newly installed route in the conversation it now serves. */
-  announce(input: {
-    target: FeishuTarget;
-    display: string | null;
-    teamName: string;
-    leaderName: string;
-    agentRuntime: string;
-    runtimeCwd: string;
-  }): void;
+  readonly bindings: Pick<FeishuBindingOperations, 'announceProvisioned'>;
 }
 
 /** One target, one policy snapshot, and the message that discovered both. */
@@ -189,7 +170,7 @@ export class FeishuProvisioning {
       // `provision` plan for one) — the one path that can always set this.
       rootMessageId: input.submission.anchor.messageId,
     });
-    this.opts.announce({
+    this.opts.bindings.announceProvisioned({
       target: input.target,
       display: input.display,
       teamName: created.team_name,
@@ -197,7 +178,7 @@ export class FeishuProvisioning {
       agentRuntime: created.leader_agent_runtime,
       runtimeCwd: created.runtime_cwd,
     });
-    return this.opts.submit(created.team_name, input.submission);
+    return this.opts.submitter.submit(created.team_name, input.submission);
   }
 
   /** A message that arrived while a run was live, delivered once it is done. */
@@ -212,7 +193,7 @@ export class FeishuProvisioning {
         message: `provisioning for ${describeTarget(input.target)} installed no route`,
       };
     }
-    return this.opts.submit(binding.team_name, input.submission);
+    return this.opts.submitter.submit(binding.team_name, input.submission);
   }
 
   private async createTeam(input: ProvisioningRequest): Promise<TeamSummary> {

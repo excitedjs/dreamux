@@ -225,7 +225,7 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
     };
   },
   async handle(ctx, input) {
-    const result = await ctx.session.askUserQuestion({
+    const result = await ctx.session.cardActions.askUserQuestion({
       chatId: input.chatId,
       questions: input.questions,
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),

@@ -26,6 +26,7 @@
  * bug here degrades to "no card", never to a failed Reply or a stuck close.
  * `start`/`close` are the only two calls a session makes outside that gate.
  */
+import type { FeishuLifecycle } from '../session/lifecycle.js';
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -84,7 +85,8 @@ export interface FeishuCotAdapterOptions {
   readonly dispatcherId: string;
   readonly channelId: string | undefined;
   readonly log: DreamuxLogger;
-  readonly cotClient: () => FeishuCotClient | undefined;
+  readonly cotClient: FeishuCotClient | undefined;
+  readonly lifecycle: FeishuLifecycle;
 }
 
 /** One optimistic anchor transition, scoped to the generation it created. */
@@ -103,8 +105,6 @@ export class FeishuCotAdapter {
   private readonly controller = new AbortController();
   private readonly io: FeishuCotIo;
   private closed = false;
-  /** Set once by `start`; gates every entry point a live session reaches. */
-  private isLive: (() => boolean) | undefined;
 
   constructor(private readonly opts: FeishuCotAdapterOptions) {
     this.io = new FeishuCotIo({
@@ -112,11 +112,6 @@ export class FeishuCotAdapter {
       cotClient: opts.cotClient,
       signal: this.controller.signal,
     });
-  }
-
-  /** A session calls this exactly once, when its own lifecycle exists. */
-  start(isLive: () => boolean): void {
-    this.isLive = isLive;
   }
 
   /**
@@ -190,8 +185,6 @@ export class FeishuCotAdapter {
   }
 
   async close(): Promise<void> {
-    if (this.isLive === undefined) return;
-    this.isLive = undefined;
     if (this.closed) return;
     try {
       this.closed = true;
@@ -227,7 +220,7 @@ export class FeishuCotAdapter {
    * rather than a failed Reply or a stuck close.
    */
   private guardLive<T>(what: string, run: () => T, fallback: T): T {
-    if (this.isLive === undefined || !this.isLive()) return fallback;
+    if (this.closed || !this.opts.lifecycle.isLive()) return fallback;
     try {
       return run();
     } catch (err) {

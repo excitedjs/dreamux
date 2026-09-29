@@ -16,20 +16,15 @@
  * Channel-facing submission fields both submit Commands share live in
  * `channel-submission.ts`, and `team.submit` composes them with `team_name`.
  */
+import type { DispatcherCommandHost } from '../../command/host.js';
 import type {
   AgentRuntimeInterruptOutcome,
   TeamCreateCommand,
-  TeamSummary,
   TeamSubmitCommand,
   TeamSubmitResult,
+  TeamSummary,
 } from '@excitedjs/dreamux-types';
 
-import type {
-  CoreCommandContext,
-  CoreCommandDefinition,
-} from '../../command/types.js';
-import type { AnyCoreCommand } from '../../command/registry.js';
-import type { TeamsPort } from './teams-port.js';
 import { optionalParsedSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
   commandPayload,
@@ -40,7 +35,7 @@ import {
   optionalNonBlankString,
   optionalString,
 } from '../../command/payload.js';
-import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
+import type { AnyCoreCommand } from '../../command/registry.js';
 import {
   BOOLEAN,
   INTEGER,
@@ -53,27 +48,30 @@ import {
   enumOf,
   objectSchema,
 } from '../../command/schema.js';
+import type { CoreCommandDefinition } from '../../command/types.js';
 import {
   CHANNEL_SUBMISSION_PROPERTIES,
   channelSubmitInput,
   parseChannelSubmission,
 } from '../agent/channel-submission.js';
+import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import {
   MAX_REQUEST_ID_LENGTH,
   teamCreatePayloadHash,
 } from './create-request.js';
-import type {
-  TeamDissolveReceipt,
-  TeamHistoryQuery,
-  TeamHistoryResult,
-  TeamListRow,
-} from './types.js';
 import {
   teamHistoryQuery,
   teamNameParam,
   teamSubmitResult,
   teamSubmitResultOutput,
 } from './requests.js';
+import type { TeamsPort } from './teams-port.js';
+import type {
+  TeamDissolveReceipt,
+  TeamHistoryQuery,
+  TeamHistoryResult,
+  TeamListRow,
+} from './types.js';
 
 interface TeamCreateInput {
   command: TeamCreateCommand;
@@ -103,7 +101,7 @@ interface TeamDissolveInput {
 }
 
 export function teamCommands(
-  teams: (context: CoreCommandContext) => TeamsPort,
+  host: DispatcherCommandHost<{ teams: TeamsPort }>,
 ): readonly AnyCoreCommand[] {
   const create: CoreCommandDefinition<
     'team.create',
@@ -168,7 +166,7 @@ export function teamCommands(
       // idempotency conflict, a closed Team, and a missing Team already state
       // themselves, and anything else must reach the boundary that logs it
       // with its stack, name, and cause intact.
-      return teams(context).createFromRequest({
+      return host.addressedDispatcher(context).teams.createFromRequest({
         requestId: input.command.request_id,
         payloadHash: input.payloadHash,
         command: input.command,
@@ -207,9 +205,9 @@ export function teamCommands(
       return { command };
     },
     async execute(context, input) {
-      const admission = await teams(context).submitToLeader(
-        input.command.team_name,
-        {
+      const admission = await host
+        .addressedDispatcher(context)
+        .teams.submitToLeader(input.command.team_name, {
           ...channelSubmitInput(input.command),
           // `intent` is Team-Command-only: it updates the leader's durable
           // recovery subject, and `dispatcher.submit` has no such field, so
@@ -228,8 +226,7 @@ export function teamCommands(
           // caller — Channel or `admin.sock` — is answered by the TeamLeader
           // on its own Channel.
           deliverCompletionToDispatcher: false,
-        },
-      );
+        });
       return teamSubmitResult(admission);
     },
   };
@@ -251,7 +248,9 @@ export function teamCommands(
       };
     },
     async execute(context, input) {
-      return teams(context).interruptLeader(input.teamName);
+      return host
+        .addressedDispatcher(context)
+        .teams.interruptLeader(input.teamName);
     },
   };
 
@@ -268,7 +267,7 @@ export function teamCommands(
       commandPayload(payload);
     },
     async execute(context) {
-      return { teams: await teams(context).list() };
+      return { teams: await host.addressedDispatcher(context).teams.list() };
     },
   };
 
@@ -285,7 +284,7 @@ export function teamCommands(
       return { teamName: teamNameParam(commandPayload(payload), 'team_name') };
     },
     async execute(context, input) {
-      return teams(context).summary(input.teamName);
+      return host.addressedDispatcher(context).teams.summary(input.teamName);
     },
   };
 
@@ -314,7 +313,7 @@ export function teamCommands(
       return { query: teamHistoryQuery(commandPayload(payload)) };
     },
     async execute(context, input) {
-      return teams(context).history(input.query);
+      return host.addressedDispatcher(context).teams.history(input.query);
     },
   };
 
@@ -350,7 +349,7 @@ export function teamCommands(
       };
     },
     async execute(context, input) {
-      return teams(context).dissolve(input.teamName, {
+      return host.addressedDispatcher(context).teams.dissolve(input.teamName, {
         note: input.note,
         force: input.force === true,
       });

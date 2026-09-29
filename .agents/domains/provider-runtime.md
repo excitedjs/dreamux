@@ -202,6 +202,17 @@ Core should not call provider-specific factories, classes, or package imports
 directly. The package-boundary guard rejects provider implementation imports and
 provider-specific factory calls from core source.
 
+The built-in packages construct their native process/client/session directly.
+Codex's named provider factory retains numeric restart backoff options, but no
+process/client factory overrides; Claude's named provider factory takes no
+options. These removed overrides had no repository supplier; outside embedding
+usage is unknown; embedding callers cannot supply these removed overrides.
+Claude session and RPC diagnostic inputs accept an optional `DreamuxLogger`
+object through `logger`, rather than a positional `log` callback.
+Core still supplies only the neutral context above. Native protocol callbacks,
+leased activity/state sinks, and actual deterministic test seams are distinct
+from the removed construction overrides.
+
 Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`

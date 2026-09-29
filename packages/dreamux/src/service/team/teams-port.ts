@@ -4,15 +4,14 @@ import type {
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
-import type { TurnAdmission } from '../agent/turn.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
+import type { TurnAdmission } from '../agent/turn.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import type {
   TeamDissolveCommand,
   TeamDissolveReceipt,
   TeamHistoryQuery,
   TeamHistoryResult,
-  TeamLeaderHandle,
   TeamListRow,
 } from './types.js';
 
@@ -28,7 +27,7 @@ import type {
  * `deliverCompletionToDispatcher` rather than a resolved `CompletionInitiator`:
  * a caller outside `team/` (a Command adapter, an MCP delegate) knows only
  * whether a Core-side initiator is waiting, never the dispatcher Agent itself,
- * so resolving `leaderCompletionInitiator()` stays inside the port's own
+ * so querying the completion owner stays inside the port's own
  * implementation.
  */
 export interface TeamsPort {
@@ -41,11 +40,7 @@ export interface TeamsPort {
     teamId: string,
     input: TeamDissolveCommand,
   ): Promise<TeamDissolveReceipt>;
-  /** This Team's TeamLeader-scoped member/workflow surface. */
-  leaderScope(teamId: string): Promise<TeamLeaderHandle>;
   scheduler(teamId: string): Promise<SchedulerCommands>;
-  /** Run one caller operation inside this Team's own work fence. */
-  runForLeader<T>(teamId: string, task: () => Promise<T>): Promise<T>;
   history(input: TeamHistoryQuery): Promise<TeamHistoryResult>;
   summary(teamId: string): Promise<TeamSummary>;
   list(): Promise<TeamListRow[]>;

@@ -146,3 +146,15 @@ export function teamSubmitResult(admission: TurnAdmission): TeamSubmitResult {
       };
   }
 }
+
+/** The accepted dissolve receipt shared by both Team roles. */
+export function dissolveReceiptSchema(): Record<string, unknown> {
+  return objectSchema(
+    {
+      accepted: { type: 'boolean' },
+      team_name: { type: 'string' },
+      status: { type: 'string' },
+    },
+    ['accepted', 'team_name', 'status'],
+  );
+}

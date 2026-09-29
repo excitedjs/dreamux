@@ -24,7 +24,7 @@
  */
 import type { TeammateInputNotice } from '@excitedjs/dreamux-types';
 
-import type { TurnCompletionDelivery } from './turn.js';
+import type { CompletionInitiator } from '../completion-router/index.js';
 
 /**
  * One admitted submission, as `AgentService` accepts it.
@@ -33,7 +33,7 @@ import type { TurnCompletionDelivery } from './turn.js';
  * Core-only facts that are never rendered: `notice` says which producer an
  * automated push-back reports, `sourceId` is the key of the bounded duplicate
  * ledger, `intent` is the durable recovery subject of the turn Core actually
- * admits, and `deliverCompletion` is the optional callback for a Core-side
+ * admits, and `completionRecipient` is the optional recipient for a Core-side
  * initiator awaiting this turn's completion.
  */
 export interface TeammateSubmitInput {
@@ -55,8 +55,8 @@ export interface TeammateSubmitInput {
   readonly sourceId?: string;
   /** Recovery subject for a newly admitted turn. Never rendered. */
   readonly intent?: string | undefined;
-  /** Optional Core completion callback. Never rendered. */
-  readonly deliverCompletion?: TurnCompletionDelivery | undefined;
+  /** Optional Core completion recipient. Never rendered. */
+  readonly completionRecipient?: CompletionInitiator | undefined;
 }
 
 /**

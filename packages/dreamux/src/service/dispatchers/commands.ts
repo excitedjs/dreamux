@@ -7,19 +7,19 @@
  * addresses its target through the caller context; only `dispatcher.list` is
  * process-wide.
  */
+import type { DispatcherCommandHost as AddressedDispatcherHost } from '../../command/host.js';
+import type { DispatcherConfig } from '../../config/config.js';
+import type { DispatcherService } from '../dispatcher-service/index.js';
+import type { Dispatchers } from './index.js';
 import type {
   AgentRuntimeInterruptOutcome,
   SubmitCommand,
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
-import type {
-  CoreCommandContext,
-  CoreCommandDefinition,
-} from '../../command/types.js';
-import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcherId } from '../../command/host.js';
 import { commandPayload } from '../../command/payload.js';
+import type { AnyCoreCommand } from '../../command/registry.js';
 import {
   NO_INPUT,
   NULLABLE_STRING,
@@ -29,21 +29,15 @@ import {
   enumOf,
   objectSchema,
 } from '../../command/schema.js';
+import type { CoreCommandDefinition } from '../../command/types.js';
+import { dispatcherChannelIdentity } from '../../config/config.js';
 import {
   CHANNEL_SUBMISSION_PROPERTIES,
   channelSubmitInput,
   parseChannelSubmission,
 } from '../agent/channel-submission.js';
+import type { DispatcherSummary } from '../dispatcher-service/types.js';
 import { teamSubmitResult, teamSubmitResultOutput } from '../team/requests.js';
-import type { DispatcherService } from '../dispatcher-service/index.js';
-import type {
-  DispatcherRuntimeStatus,
-  DispatcherSummary,
-} from '../dispatcher-service/types.js';
-import {
-  dispatcherChannelIdentity,
-  type DispatcherConfig,
-} from '../../config/config.js';
 
 interface DispatcherSubmitInput {
   command: SubmitCommand;
@@ -66,19 +60,13 @@ interface DispatcherStatusResult {
  * `server/command-host.ts`'s full `CoreCommandHost`: only the members this
  * namespace's four definitions actually call.
  */
-interface DispatcherCommandsResolver {
-  summarize(): Promise<DispatcherSummary[]>;
-  dispatcherRuntimeStatus(
-    dispatcherId: string,
-  ): Promise<DispatcherRuntimeStatus>;
-  /** Throws when no dispatcher carries this id. */
-  dispatcherConfig(dispatcherId: string): DispatcherConfig;
-  /** Throws when the addressed dispatcher is not configured. */
-  dispatcher(context: CoreCommandContext): DispatcherService;
+interface DispatcherCommandHost extends AddressedDispatcherHost<DispatcherService> {
+  readonly dispatchers: Pick<Dispatchers, 'summarize' | 'status'>;
+  configuredDispatcher(id: string): DispatcherConfig;
 }
 
 export function dispatcherCommands(
-  resolver: DispatcherCommandsResolver,
+  host: DispatcherCommandHost,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<
     'dispatcher.list',
@@ -93,7 +81,7 @@ export function dispatcherCommands(
       commandPayload(payload);
     },
     async execute() {
-      return { dispatchers: await resolver.summarize() };
+      return { dispatchers: await host.dispatchers.summarize() };
     },
   };
 
@@ -126,8 +114,8 @@ export function dispatcherCommands(
     },
     async execute(context) {
       const id = mustDispatcherId(context);
-      const dispatcher = resolver.dispatcherConfig(id);
-      const runtime = await resolver.dispatcherRuntimeStatus(id);
+      const dispatcher = host.configuredDispatcher(id);
+      const runtime = await host.dispatchers.status(id);
       return {
         dispatcher_id: dispatcher.id,
         channel_identity: dispatcherChannelIdentity(dispatcher),
@@ -152,8 +140,8 @@ export function dispatcherCommands(
     },
     async execute(context, input) {
       return teamSubmitResult(
-        await resolver
-          .dispatcher(context)
+        await host
+          .addressedDispatcher(context)
           .submitToAgent(channelSubmitInput(input.command)),
       );
     },
@@ -174,7 +162,7 @@ export function dispatcherCommands(
       commandPayload(payload);
     },
     async execute(context) {
-      return resolver.dispatcher(context).interruptAgent();
+      return host.addressedDispatcher(context).interruptAgent();
     },
   };
 

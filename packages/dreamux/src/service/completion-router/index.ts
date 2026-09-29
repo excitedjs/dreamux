@@ -3,6 +3,7 @@ import type {
   RuntimeCompletion,
   TeammateRole,
 } from '@excitedjs/dreamux-types';
+import type { WorkAdmission } from '../../platform/work-fence.js';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
 
@@ -38,11 +39,14 @@ export interface PreparedCompletionDelivery {
 }
 
 export interface CompletionInitiator {
-  /** Stable process-local identity preserved by availability wrappers. */
-  readonly recipientKey?: object;
   prepareCompletion(
     completion: PreparedCompletionFact,
   ): Promise<PreparedCompletionDelivery>;
+}
+
+/** Query the actual current recipient at the operation's ownership boundary. */
+export interface CompletionOwner {
+  completionRecipient(): CompletionInitiator;
 }
 
 const MAX_DELIVERY_ATTEMPTS = 3;
@@ -76,7 +80,7 @@ export class CompletionDeliveryPolicy {
        * recipient that will refuse or, worse, accept it into a runtime that
        * stops moments later.
        */
-      accepting: () => boolean;
+      fence: Pick<WorkAdmission, 'isClosing'>;
       /** Deterministic test seam for the internal delivery-operation bound. */
       attemptTimeoutMs?: number | undefined;
     },
@@ -101,9 +105,8 @@ export class CompletionDeliveryPolicy {
    *
    * A native completion is a value several paths can report; the token is its
    * identity, so the same settlement reaches a recipient once. Every submitter
-   * whose delivery closure is fixed to the same entity already resolves to the
-   * same recipient (an entity's `deliverCompletion` never varies across its
-   * turns), so folding on the token alone — with no per-recipient nesting — is
+   * carrying the same recipient reports to that actual owner, so folding on the
+   * token alone — with no per-recipient nesting — is
    * enough: no code path produces two different recipients for the same
    * `RuntimeCompletion` object. A turn that failed or was stopped produced no
    * such value — there is nothing to fold, and a fabricated identity would
@@ -120,7 +123,7 @@ export class CompletionDeliveryPolicy {
     token: RuntimeCompletion | null,
     completion: PreparedCompletionFact,
   ): Promise<void> {
-    if (!this.deps.accepting()) {
+    if (this.deps.fence.isClosing()) {
       this.deps.log.info(
         {
           dispatcher_id: this.deps.dispatcherId,
@@ -131,28 +134,26 @@ export class CompletionDeliveryPolicy {
       );
       return Promise.resolve();
     }
-    const recipientKey = initiator.recipientKey ?? initiator;
     if (token === null) {
-      return this.enqueue(recipientKey, initiator, completion);
+      return this.enqueue(initiator, completion);
     }
     const existing = this.completions.get(token);
     if (existing !== undefined) return existing;
 
-    const delivery = this.enqueue(recipientKey, initiator, completion);
+    const delivery = this.enqueue(initiator, completion);
     this.completions.set(token, delivery);
     return delivery;
   }
 
   private enqueue(
-    recipientKey: object,
     initiator: CompletionInitiator,
     completion: PreparedCompletionFact,
   ): Promise<void> {
-    const previous = this.recipientTails.get(recipientKey) ?? Promise.resolve();
+    const previous = this.recipientTails.get(initiator) ?? Promise.resolve();
     const delivery = previous
       .catch(() => undefined)
       .then(() => this.deliverPrepared(initiator, completion));
-    this.recipientTails.set(recipientKey, delivery);
+    this.recipientTails.set(initiator, delivery);
     return delivery;
   }
 

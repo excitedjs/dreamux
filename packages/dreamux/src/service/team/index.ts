@@ -4,29 +4,12 @@ import type {
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
-import type { WorktreeManager } from '../worktree/manager.js';
-import {
-  requireLifecycleText,
-  type AgentEntityIdentity,
-  type AgentEntityIdentityStatus,
-} from '../agent/identity.js';
-import { defaultWorkspaceEnabled } from '../../config/config.js';
-import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import { throwSettledFailures } from '../../platform/shutdown-errors.js';
-import { ServerShuttingDownError } from '../../platform/errors.js';
-import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
-import {
-  agentCollectionMemberCount,
-  readAgentIdentity,
-} from '../agent/store.js';
-import { toStatus } from '../agent/records.js';
-import type { TurnAdmission } from '../agent/turn.js';
-import type { TeammateSubmitInput } from '../agent/submission.js';
-import type { SchedulerCommands } from '../scheduler/types.js';
 import {
   normalizeSkillSources,
   parseAgentRuntimeSkillSources,
 } from '../../agent-runtime/skill-sources.js';
+import { defaultWorkspaceEnabled } from '../../config/config.js';
+import { ServerShuttingDownError } from '../../platform/errors.js';
 import {
   clampHistoryLimit,
   decodeCursor,
@@ -35,37 +18,53 @@ import {
   previewText,
 } from '../../platform/history-page.js';
 import { teamMateCollectionDir } from '../../platform/paths.js';
+import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import {
+  requireLifecycleText,
+  type AgentEntityIdentity,
+  type AgentEntityIdentityStatus,
+} from '../agent/identity.js';
+import { toStatus } from '../agent/records.js';
+import {
+  agentCollectionMemberCount,
+  readAgentIdentity,
+} from '../agent/store.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
+import type { TurnAdmission } from '../agent/turn.js';
+import type { TeamMateSharedWorkspace } from '../agent/types.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
+import { allocateConcreteNameAsync } from '../name-allocator.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
+import type { WorktreeManager } from '../worktree/manager.js';
 import { repoWorktree } from '../worktree/repo-request.js';
+import {
+  IdempotencyConflictError,
+  TeamClosedError,
+  teamErrorInfo,
+  TeamNotFoundError,
+} from './errors.js';
+import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
+import {
+  settleTeamWorktreeCleanup,
+  TeamService,
+  type TeamServiceDeps,
+} from './service.js';
 import { TeamStore } from './store.js';
+import { teamSummary } from './team-summary.js';
+import type { TeamsPort } from './teams-port.js';
 import {
   validateTeamId,
+  type TeamCollectionOptions,
   type TeamCreateAtNameInput,
   type TeamDissolveCommand,
   type TeamDissolveReceipt,
   type TeamHistoryQuery,
   type TeamHistoryResult,
   type TeamHistoryRow,
-  type TeamLeaderHandle,
   type TeamListRow,
   type TeamRecord,
-  type TeamCollectionOptions,
 } from './types.js';
-import { allocateConcreteNameAsync } from '../name-allocator.js';
-import {
-  settleTeamWorktreeCleanup,
-  TeamService,
-  type TeamServiceDeps,
-} from './service.js';
-import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
-import { teamSummary } from './team-summary.js';
-import type { TeamMateSharedWorkspace } from '../agent/types.js';
-import {
-  IdempotencyConflictError,
-  TeamClosedError,
-  TeamNotFoundError,
-  teamErrorInfo,
-} from './errors.js';
-import type { TeamsPort } from './teams-port.js';
 
 /**
  * The dispatcher's team collection (issue #233): one per dispatcher, owned by
@@ -80,7 +79,7 @@ import type { TeamsPort } from './teams-port.js';
  * construction from the shared dependencies forwarded here.
  *
  * Implements {@link TeamsPort} directly: every dispatcher-facing per-Team
- * operation gates itself on the injected `admitOperation` internally, so a
+ * operation gates itself on the injected the dispatcher fence internally, so a
  * caller reaches a Team through exactly one surface instead of an
  * open/admit/read triple it must fence itself.
  */
@@ -133,7 +132,7 @@ export class TeamCollection implements TeamsPort {
    * including once it is closed; the same id with a different payload is an
    * idempotency conflict.
    *
-   * Gated by `admitOperation` like every other `TeamsPort` method: a create
+   * Gated by the dispatcher fence like every other `TeamsPort` method: a create
    * admitted right as the dispatcher starts closing still crosses the fence
    * before doing any work, rather than building a workspace and a leader only
    * to self-close in `track()` the moment it registers.
@@ -154,7 +153,7 @@ export class TeamCollection implements TeamsPort {
     command: TeamCreateCommand;
     deliverCompletionToDispatcher: boolean;
   }): Promise<TeamSummary> {
-    return this.opts.admitOperation(() =>
+    return this.opts.fence.admit(() =>
       this.createRequestLifecycle.run(input.requestId, async () => {
         const accepted = await this.acceptedRequest(input.requestId);
         if (accepted !== null) {
@@ -176,7 +175,7 @@ export class TeamCollection implements TeamsPort {
           leader,
           repo: requestedRepo,
         } = input.command;
-        const resolved = await this.opts.applyCreateTeamHook({
+        const resolved = await this.opts.dispatcherHooks.createTeam.promise({
           name_prefix,
           intent,
           leader,
@@ -233,7 +232,6 @@ export class TeamCollection implements TeamsPort {
             });
             return outcome.created !== null;
           },
-          generateSuffix: this.opts.nameSuffixGenerator,
         });
         const created = outcome.created;
         if (created === null) {
@@ -282,12 +280,12 @@ export class TeamCollection implements TeamsPort {
    * `summary` rather than left observable through a dispatcher stop.
    */
   async list(): Promise<TeamListRow[]> {
-    return this.opts.admitOperation(() => this.listRows());
+    return this.opts.fence.admit(() => this.listRows());
   }
 
   /** Gated because a read is still per-Team operational access. */
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
-    return this.opts.admitOperation(() => this.historyResult(input));
+    return this.opts.fence.admit(() => this.historyResult(input));
   }
 
   /**
@@ -322,22 +320,6 @@ export class TeamCollection implements TeamsPort {
   }
 
   /**
-   * Run one TeamLeader operation inside its own Team's work fence.
-   *
-   * A TeamLeader reaches its Team by naming it, and the Team it names is
-   * whichever Team currently holds that id: there is no second identity to
-   * prove, because a Team has exactly one leader for its whole life and a
-   * leader has no existence apart from the Team that owns it.
-   */
-  async admit<T>(
-    teamId: string,
-    task: (service: TeamService) => Promise<T>,
-  ): Promise<T> {
-    const service = await this.open(teamId);
-    return service.admit(() => task(service));
-  }
-
-  /**
    * One Team's status.
    *
    * An open Team this process already holds answers for itself, because its
@@ -351,7 +333,7 @@ export class TeamCollection implements TeamsPort {
    * sits here instead, on the method itself.
    */
   async summary(teamId: string): Promise<TeamSummary> {
-    return this.opts.admitOperation(async () => {
+    return this.opts.fence.admit(async () => {
       const record = await this.mustTeam(validateTeamId(teamId));
       return this.summaryFromRecord(record);
     });
@@ -440,7 +422,7 @@ export class TeamCollection implements TeamsPort {
   /**
    * Submit one turn to a Team's TeamLeader.
    *
-   * `deliverCompletionToDispatcher` is resolved to an `initiator` here, inside
+   * `deliverCompletionToDispatcher` is resolved to a `completionRecipient` here, inside
    * the fence, rather than accepted as one directly: a caller outside `team/`
    * knows only whether a Core-side initiator is waiting for the leader's
    * completion, never the dispatcher Agent itself. A Channel-originated turn
@@ -450,21 +432,21 @@ export class TeamCollection implements TeamsPort {
     teamId: string,
     input: TeammateSubmitInput & { deliverCompletionToDispatcher: boolean },
   ): Promise<TurnAdmission> {
-    return this.opts.admitOperation(async () => {
+    return this.opts.fence.admit(async () => {
       const { deliverCompletionToDispatcher, ...submission } = input;
-      const initiator = deliverCompletionToDispatcher
-        ? await this.opts.leaderCompletionInitiator()
+      const completionRecipient = deliverCompletionToDispatcher
+        ? this.opts.completionOwner.completionRecipient()
         : null;
-      return (await this.open(teamId)).submitToLeader({
+      return (await this.open(teamId)).submitInput({
         ...submission,
-        ...(initiator !== null ? { initiator } : {}),
+        ...(completionRecipient !== null ? { completionRecipient } : {}),
       });
     });
   }
 
   /** Interrupt one Team's leader. */
   interruptLeader(teamId: string): Promise<AgentRuntimeInterruptOutcome> {
-    return this.opts.admitOperation(async () =>
+    return this.opts.fence.admit(async () =>
       (await this.open(teamId)).interruptLeader(),
     );
   }
@@ -480,45 +462,15 @@ export class TeamCollection implements TeamsPort {
     teamId: string,
     input: TeamDissolveCommand,
   ): Promise<TeamDissolveReceipt> {
-    return this.opts.admitOperation(async () =>
+    return this.opts.fence.admit(async () =>
       (await this.open(teamId)).dissolve(input),
     );
   }
 
-  /**
-   * This Team's TeamLeader-scoped member/workflow surface.
-   *
-   * Fence once, open the Team, hand back what it already holds:
-   * `TeamService.leaderScope()` exposes `teammates`/`workflows` directly, and
-   * each of those already fences every verb through its own
-   * constructor-injected `admit` (composing this Team's own closing check
-   * with the dispatcher's), so nothing here re-wraps them a second time.
-   */
-  leaderScope(teamId: string): Promise<TeamLeaderHandle> {
-    return this.opts.admitOperation(async () =>
-      (await this.open(teamId)).leaderScope(),
-    );
-  }
-
   scheduler(teamId: string): Promise<SchedulerCommands> {
-    return this.opts.admitOperation(
+    return this.opts.fence.admit(
       async () => (await this.open(teamId)).scheduler,
     );
-  }
-
-  /**
-   * Run one task on behalf of a named TeamLeader.
-   *
-   * This is the entry a TeamLeader's own MCP delegates dispatch through, and it
-   * layers the two fences that matter for that caller: the dispatcher admission
-   * gate, and the named Team's own work fence. The runtime-generation lease
-   * behind the MCP token already fences a *replaced runtime*, but only the
-   * Team's fence refuses a leader's work once that Team is dissolving — so a
-   * delegate that reaches a Team object enters it, and one that merely reaches
-   * the dispatcher does not.
-   */
-  runForLeader<T>(teamId: string, task: () => Promise<T>): Promise<T> {
-    return this.opts.admitOperation(() => this.admit(teamId, () => task()));
   }
 
   /**
@@ -808,7 +760,7 @@ export class TeamCollection implements TeamsPort {
    * Stop a just-held Team and refuse to go on, when the dispatcher is already
    * closing.
    *
-   * `create`/`rebuild` cross `admitOperation` before `close()` publishes its
+   * `create`/`rebuild` cross the dispatcher fence before `close()` publishes its
    * fence but finish constructing afterward, after the dispatcher's first
    * sweep may already have passed. `stopForHost()` gives back runtime
    * authority without closing anything, so a caller that went on would simply
@@ -816,7 +768,7 @@ export class TeamCollection implements TeamsPort {
    * created Team, before its initial turn starts the leader's runtime.
    */
   private refuseIfClosing(service: TeamService): void {
-    if (!this.opts.isClosing()) return;
+    if (!this.opts.fence.isClosing()) return;
     service.stopForHost().catch(() => undefined);
     throw new ServerShuttingDownError(
       `dispatcher '${this.dispatcherId}' is shutting down`,

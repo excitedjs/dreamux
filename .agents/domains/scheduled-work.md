@@ -93,7 +93,8 @@ Source:
 `SchedulerService implements SchedulerCommands` directly — there is no
 `.commands` adapter object standing between the class and its `list`/`create`/
 `update`/`delete` methods. It is generalized over an owner and takes that
-owner's admission gate plus its scheduled-submit callback. `AgentService`
+owner's actual work fence and input recipient. It constructs `SCHEDULED_SOURCE`
+input itself and invokes the recipient's `submitInput`. `AgentService`
 carries no scheduler, so "only the dispatcher and each TeamLeader have cron"
 is structural rather than a per-instance capability policy. The dispatcher
 scheduler submits into the dispatcher agent; a Team's scheduler submits into
@@ -101,12 +102,11 @@ its TeamLeader, whose lazy-start path is the normal state after a restart or
 between conversations. The scheduler holds no runtime and applies no
 per-owner missing-runtime policy of its own.
 
-A Team's single `admit` closure composes two fences in order, for every
-operation `SchedulerService` runs through it — `create`/`update`/`delete`/
-`list` and a due fire alike: `TeamService.admit` first, then
-`DispatcherService.admitOperation`. There is no second, `SchedulerCommands`-
-shaped wrapper object around the Team's scheduler; the closure is passed
-directly at construction. A mutation racing an in-flight Team dissolve is
+A Team's scheduler holds the actual TeamService as its fence. For every
+operation — `create`/`update`/`delete`/`list` and a due fire alike —
+`TeamService.admit` checks the Team and then enters the dispatcher's WorkFence.
+There is no second SchedulerCommands wrapper or admission closure.
+A mutation racing an in-flight Team dissolve is
 therefore refused by the Team's own closing fence — up from the moment
 dissolve is submitted, not from when the `closed` record lands — before it
 ever reaches the store. That ordering matters because the scheduler's own
@@ -114,9 +114,10 @@ store deletion (`SchedulerService.destroy()`) runs only after the `closed`
 record commits (R62): nothing can recreate a cron store file `destroy()` is
 about to delete, and there is no window where the store is already gone but
 the commit that authorized deleting it might still fail. A fire crosses
-`TeamService.admit` a second time inside `submitToLeader`, which fences every
-leader submission and is not special-cased for cron; `admit` is a stateless
-check, so the second crossing costs one redundant read, not a second gate.
+the Team-only check again inside `submitInput`, which fences every leader
+submission and is not special-cased for cron. It does not enter dispatcher
+admission again; this same Team-only boundary preserves queued completion
+delivery when the dispatcher starts closing.
 
 Source:
 
@@ -178,7 +179,8 @@ Source:
 - `/packages/dreamux/src/service/scheduler/commands.ts`
 - `/packages/dreamux/src/service/scheduler/mcp.ts`
 - `/packages/dreamux/src/service/scheduler/requests.ts`
-- `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/dreamux/src/agent-runtime/host-context.ts`
 
 History: [/.agents/tasks/mcp/README.md](/.agents/tasks/mcp/README.md) — the

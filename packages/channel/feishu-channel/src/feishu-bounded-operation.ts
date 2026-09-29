@@ -22,7 +22,6 @@ interface FeishuBoundedOperationOptions<T> extends FeishuOperationScope {
   operation(): Promise<T>;
   beforeStart?(): void;
   onLateValue?: ((value: T) => void | Promise<void>) | undefined;
-  now?: () => number;
 }
 
 /**
@@ -34,11 +33,10 @@ interface FeishuBoundedOperationOptions<T> extends FeishuOperationScope {
 export function runFeishuBoundedOperation<T>(
   options: FeishuBoundedOperationOptions<T>,
 ): Promise<T> {
-  const now = options.now ?? Date.now;
   if (options.signal?.aborted === true) {
     return Promise.reject(new FeishuOperationError('aborted'));
   }
-  const remaining = Math.max(0, options.deadlineAt - now());
+  const remaining = Math.max(0, options.deadlineAt - Date.now());
   if (remaining === 0) {
     return Promise.reject(new FeishuOperationError('deadline'));
   }

@@ -76,10 +76,16 @@ external input, `start()` opens external I/O, and `close()` stops it and awaits
 the Channel-owned mutation tail. That split is what makes
 subscribe-before-admission provable.
 
-For Feishu, the session owns long-connection event handling through `FeishuBot`,
-access and mention gating, `/introduce` trust changes, known/trusted peer-bot
-state, inbound formatting and attachment normalization, channel-owned
-conversation display state, and the Feishu MCP tool backing.
+For Feishu, the session composes and closes the bot, access, routing, outbound,
+display, and tool owners. `FeishuTeamSubmitter` owns liveness, the COT anchor,
+Core submission, and anchor retirement/release. `FeishuInboundRouter` owns
+delivery/fallback and slash routing. Provisioning holds the submitter and keeps
+the first submission inside its `inFlight` and `guarded` operation: waiters
+must not proceed after route publication but before that submission settles.
+Outbound owns binding notices; card actions observe ask-user registry expiry
+and own settlement IO. Tools hold actual owners rather than session callbacks.
+COT holds the already-created client and lifecycle; Core Commands hold the
+invoker received at initialize. Neither needs a getter back into the session.
 
 Everything a Channel reaches Core through is the `ChannelCorePort`: the shared
 Command invoker and one read-only, dispatcher-scoped event source. A Channel
@@ -91,6 +97,8 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/session/submitter.ts`
+- `/packages/channel/feishu-channel/src/inbound/router.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`
 

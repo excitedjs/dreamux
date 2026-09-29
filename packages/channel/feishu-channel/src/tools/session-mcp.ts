@@ -19,20 +19,27 @@
  */
 import type {
   ChannelMcpCall,
-  ChannelMcpCaller,
   ChannelMcpCallContext,
+  ChannelMcpCaller,
   ChannelMcpToolOutcome,
   ChannelSessionMcpCapability,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
-import { errorInfo, settleJsonInvoke } from '@excitedjs/dreamux-utils';
+import {
+  errorInfo,
+  PublicInvokeFailure,
+  settleJsonInvoke,
+} from '@excitedjs/dreamux-utils';
 
-import type { FeishuChannelSession } from '../session/session.js';
+import type { FeishuSessionExtensions } from '../feishu-extensions.js';
+import type { FeishuLifecycle } from '../session/lifecycle.js';
 import { findFeishuTool } from './registry.js';
-import type { FeishuToolResult } from './types.js';
+import type { FeishuToolResult, FeishuToolSession } from './types.js';
 
 export function createFeishuSessionMcp(
-  session: FeishuChannelSession,
+  session: FeishuToolSession,
+  extensions: FeishuSessionExtensions,
+  lifecycle: FeishuLifecycle,
   log: DreamuxLogger,
 ): ChannelSessionMcpCapability {
   return {
@@ -46,7 +53,7 @@ export function createFeishuSessionMcp(
         caller: context.caller.kind,
         tool: call.name,
       };
-      const tool = resolveTool(session, call, context.caller);
+      const tool = resolveTool(session, extensions, call, context.caller);
       // Unreachable through Core, which admits only names this caller's own
       // frozen catalog advertises. A direct embedder is told the same thing
       // rather than getting a silent no-op.
@@ -59,7 +66,13 @@ export function createFeishuSessionMcp(
         };
       }
       try {
-        const outcome = await settleJsonInvoke(tool.run);
+        const outcome = await settleJsonInvoke(() => {
+          if (!lifecycle.isLive())
+            throw new PublicInvokeFailure(
+              'The Feishu channel is not accepting tool calls',
+            );
+          return lifecycle.track(tool.run());
+        });
         if (!outcome.ok) {
           log.info(
             { ...scope, reason: outcome.message },
@@ -80,13 +93,13 @@ export function createFeishuSessionMcp(
 /**
  * The tool this caller means by the call's name: a built-in one first, else
  * one a Feishu extension registered for this caller kind. Both branches run
- * through `session.fencedToolCall`, so a call of either kind reaching the
- * session after it began tearing down is refused the same way — a built-in
- * tool call used to reach `builtin.handle` with no fence at all, which an
- * extension call never could.
+ * through the same lifecycle check and tracking in `invoke`, before parsing
+ * arguments or running an extension. Closing drains both kinds before the
+ * extension session releases its state.
  */
 function resolveTool(
-  session: FeishuChannelSession,
+  session: FeishuToolSession,
+  extensions: FeishuSessionExtensions,
   call: ChannelMcpCall,
   caller: ChannelMcpCaller,
 ):
@@ -99,16 +112,11 @@ function resolveTool(
   if (builtin !== undefined) {
     return {
       run: () =>
-        session.fencedToolCall(() =>
-          builtin.handle(
-            { caller, session: session.toolSession() },
-            builtin.parse(call.arguments),
-          ),
-        ),
+        builtin.handle({ caller, session }, builtin.parse(call.arguments)),
       successText: (result) => builtin.successText?.(result),
     };
   }
-  const extension = session.extensionTool(call.name, caller.kind);
+  const extension = extensions.tool(call.name, caller.kind);
   if (extension === undefined) return undefined;
   return {
     run: () => extension.invoke(caller, call.arguments),

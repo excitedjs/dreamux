@@ -9,6 +9,9 @@
  * inbound message takes, addressed at the card it was clicked on rather than
  * at whatever chat the click event names.
  */
+import type { AskUserExpiry } from '../ask-user/registry.js';
+import type { AskUserQuestionSpec } from '../cards/ask-user.js';
+import type { FeishuInboundRouter } from '../inbound/router.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import {
@@ -112,16 +115,80 @@ export interface FeishuCardActionsOptions {
   readonly askUser: AskUserRegistry;
   readonly targetRouter: FeishuInboundTargeting;
   readonly outbound: FeishuOutbound;
-  /** The session's own routing-and-submission decision; this module makes none of its own. */
-  readonly deliver: (input: {
-    target: FeishuTarget;
-    containerChatId: string | null;
-    submission: FeishuChatSubmission;
-  }) => Promise<FeishuSubmitOutcome>;
+  readonly router: FeishuInboundRouter;
 }
 
 export class FeishuCardActions {
-  constructor(private readonly opts: FeishuCardActionsOptions) {}
+  constructor(private readonly opts: FeishuCardActionsOptions) {
+    opts.askUser.events.on('expired', (expiry) => {
+      void this.expireAskUserQuestion(expiry);
+    });
+  }
+
+  /**
+   * Send a question card and return the round's id.
+   *
+   * Nothing is awaited beyond the send. The click that answers arrives on the
+   * card-action route, and the answer reaches Core as an inbound submission, so
+   * the tool that called this is long finished by the time the user decides.
+   *
+   * `messageId` addresses the card the way `reply` addresses a message: the card
+   * is sent as a reply to it, which is what puts it in that message's topic.
+   * Without one the card is a new message in the chat, and in a topic group that
+   * opens a topic of its own — right for a question that belongs to no particular
+   * message, wrong for one that does. Where the answer goes is not decided here;
+   * it is read back from the card that was actually sent.
+   *
+   * The round is put in play only once the card is really sent, so a send that
+   * throws leaves no question behind and fails where the model can see it.
+   */
+  async askUserQuestion(input: {
+    chatId: string;
+    text?: string;
+    questions: readonly AskUserQuestionSpec[];
+    messageId?: string;
+  }): Promise<{ request_id: string }> {
+    const opened = this.opts.askUser.open(input);
+    const sent = await this.opts.outbound.sendCard({
+      target: {
+        chatId: input.chatId,
+        ...(input.messageId !== undefined
+          ? { replyToMessageId: input.messageId }
+          : {}),
+      },
+      card: opened.card,
+      mode: 'inbound',
+    });
+    opened.activate(sent.messages[0]);
+    return { request_id: opened.requestId };
+  }
+
+  /**
+   * Close out a round that ran out of time.
+   *
+   * Both halves are best-effort and independent: the model is told there is no
+   * answer, and the card is repainted so the user is not left looking at a
+   * question that silently stopped working. A failed repaint must not cost the
+   * model its notification, which is why the patch is awaited separately.
+   */
+  private async expireAskUserQuestion(expiry: AskUserExpiry): Promise<void> {
+    await this.deliverAskUserSettlement(expiry.settlement);
+    const messageId = expiry.settlement.cardMessageId;
+    if (messageId === undefined) return;
+    try {
+      await this.opts.bot.editCard(messageId, expiry.card);
+    } catch (err) {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          message_id: messageId,
+          ask_user_request_id: expiry.settlement.requestId,
+          err: errorInfo(err),
+        },
+        '[ask-user] expired card repaint failed',
+      );
+    }
+  }
 
   /**
    * The card action this channel instance answers: an extension's claimed key
@@ -338,7 +405,7 @@ export class FeishuCardActions {
         ? await this.opts.targetRouter.project(knownLanding)
         : await this.opts.outbound.locate(input.cardMessageId);
     const { target } = route;
-    const outcome = await this.opts.deliver({
+    const outcome = await this.opts.router.deliver({
       target,
       containerChatId: route.containerChatId,
       submission: cardSubmission({ target, ...submission }),

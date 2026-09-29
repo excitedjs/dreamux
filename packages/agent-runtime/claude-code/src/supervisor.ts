@@ -11,9 +11,9 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
 import { removeEmptyLogFile, SupervisedChild } from '@excitedjs/dreamux-utils';
 import { ClaudeCodeStreamRpc } from './rpc.js';
-import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
 import type { ClaudeCodeSession, ClaudeCodeSessionSpec } from './types.js';
 
 /** The live session: spawns and supervises the real `claude` child. */
@@ -81,7 +81,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
       },
     });
     supervisor.onError((error) => {
-      this.spec.log?.('warn', 'claude resident child error', error);
+      this.spec.logger?.warn({ err: error }, 'claude resident child error');
     });
     supervisor.onExit(() =>
       this.onChildExit(new Error('claude resident child exited')),
@@ -105,7 +105,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
       sessionId: this.spec.sessionId,
       outputSchemaEnabled: this.spec.outputSchemaEnabled,
       turnTimeoutMs: this.spec.turnTimeoutMs,
-      log: this.spec.log,
+      logger: this.spec.logger,
       reapOnTimeout: (error) => {
         this.onChildExit(error);
         void this.stop().catch(() => {
@@ -212,7 +212,6 @@ export function createDefaultClaudeCodeSession(
 
 export type {
   ClaudeCodeSession,
-  ClaudeCodeSessionFactory,
   ClaudeCodeSessionSpec,
   TurnOutcome,
 } from './types.js';

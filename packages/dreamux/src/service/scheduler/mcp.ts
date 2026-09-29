@@ -2,8 +2,8 @@
  * The cron MCP server, implemented by the scheduler that owns the jobs.
  *
  * A cron job belongs to exactly one conversational agent — the Dispatcher Agent
- * or one Team's TeamLeader — and this delegate holds that agent's own
- * {@link SchedulerCommands} directly. That is what makes the old defensive
+ * or one Team's TeamLeader — and this delegate holds the scheduler or its
+ * actual admitting owner. That is what makes the old defensive
  * scrubbing unnecessary: the shim used to strip a `dispatcher_id`/`team_id` a
  * model might have injected before re-applying the descriptor-bound scope,
  * because the target was a Command parameter. Here the target is not a
@@ -18,6 +18,7 @@
  * renders it.
  */
 import type { CommandPayload } from '../../command/payload.js';
+import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -26,7 +27,6 @@ import {
   tool,
   type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
-import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import type {
   McpDelegateCall,
   McpDelegateDescription,
@@ -56,13 +56,18 @@ interface CronMcpToolRecord {
 /**
  * Build the cron delegate for one owner.
  *
- * `scheduler` is resolved lazily rather than captured: a Team's scheduler is
- * created with the Team and a Dispatcher's with its agent, and the delegate is
- * built at runtime-launch time, which may precede either.
+ * Both schedulers already exist when delegates are built. A Team must still
+ * admit access before argument parsing: its leader's runtime lease can remain
+ * valid while dispatcher or Team teardown is waiting on other children.
  */
-export function createCronMcpDelegate(input: {
-  scheduler: () => Promise<SchedulerCommands>;
-}): McpServerDelegate {
+export function createCronMcpDelegate(
+  owner:
+    | SchedulerCommands
+    | {
+        readonly scheduler: SchedulerCommands;
+        admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
+      },
+): McpServerDelegate {
   const tools = CRON_TOOL_RECORDS.map((record) => record.descriptor);
   return {
     name: CRON_MCP_SERVER_NAME,
@@ -70,10 +75,15 @@ export function createCronMcpDelegate(input: {
       return { tools };
     },
     call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      // Resolving the owner is part of the call: a TeamLeader's scheduler lives
-      // with a Team that may already be gone, and that Team states the fact —
-      // missing or closed — in its own words.
-      return runDelegateTool(async () => serve(await input.scheduler(), call));
+      return runDelegateTool(async () => {
+        if ('admitLeaderTools' in owner) {
+          const scheduler = await owner.admitLeaderTools(
+            async () => owner.scheduler,
+          );
+          return serve(scheduler, call);
+        }
+        return serve(owner, call);
+      });
     },
   };
 }

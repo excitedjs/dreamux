@@ -287,7 +287,7 @@ const namedEdgeRules = [
       path: '^src/service/team/(types|requests|create-request|store|errors)\\.ts$',
     },
     to: {
-      path: '^src/service/team/(leader|team-summary|service|teams-port|index|commands|mcp)\\.ts$',
+      path: '^src/service/team/(leader|leader-mcp|team-summary|service|teams-port|index|commands|mcp)\\.ts$',
     },
   },
   {
@@ -295,12 +295,12 @@ const namedEdgeRules = [
     // reference to the old team-service/ directory this merge deleted.
     name: 'service-team-core-not-to-collection',
     comment:
-      'service/team/ service-tier files (leader, team-summary, service, ' +
+      'service/team/ service-tier files (leader, leader-mcp, team-summary, service, ' +
       'teams-port) must not import the collection-tier files in the same ' +
       'directory.',
     severity: 'error',
     from: {
-      path: '^src/service/team/(leader|team-summary|service|teams-port)\\.ts$',
+      path: '^src/service/team/(leader|leader-mcp|team-summary|service|teams-port)\\.ts$',
     },
     to: {
       path: '^src/service/team/(index|commands|mcp)\\.ts$',

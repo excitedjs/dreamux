@@ -27,28 +27,6 @@ import {
   type FeishuSubmitOutcome,
 } from './feishu-submit.js';
 
-export interface FeishuCoreCommands {
-  teamCreate(command: TeamCreateCommand): Promise<TeamSummary>;
-  teamStatus(teamName: string): Promise<TeamSummary>;
-  /**
-   * Submit to a Team's TeamLeader. Both submit Commands share one wire shape
-   * and one outcome — including a thrown pre-admission rejection — so one
-   * function reads Core's answer into the `FeishuSubmitOutcome` every
-   * delivery path already branches on.
-   */
-  teamSubmit(
-    teamName: string,
-    submission: FeishuSubmission,
-  ): Promise<FeishuSubmitOutcome>;
-  /** Submit to the addressed Dispatcher's own Agent; no Team is named. */
-  dispatcherSubmit(submission: FeishuSubmission): Promise<FeishuSubmitOutcome>;
-  /** The submitted dissolve receipt is never read; nothing is returned. */
-  teamDissolve(input: { teamName: string; note: string }): Promise<void>;
-  teamInterrupt(teamName: string): Promise<AgentRuntimeInterruptOutcome>;
-  dispatcherInterrupt(): Promise<AgentRuntimeInterruptOutcome>;
-  teamList(): Promise<readonly RunningTeamRow[]>;
-}
-
 /**
  * The wire payload one submit Command shares: attrs, faithful text, an
  * optional trailing reminder (an empty string is exactly an omitted one), and
@@ -71,12 +49,12 @@ function chatSubmission(submission: FeishuSubmission): SubmitCommand {
  * once, here, not once per delivery path.
  */
 async function submitOutcomeFor(
-  invoke: JsonInvoker['invoke'],
+  invoker: JsonInvoker,
   command: 'team.submit' | 'dispatcher.submit',
   payload: SubmitCommand & { team_name?: string },
 ): Promise<FeishuSubmitOutcome> {
   try {
-    const raw = await invoke(command, payload as unknown as JsonValue);
+    const raw = await invoker.invoke(command, payload as unknown as JsonValue);
     return submitOutcome(raw as unknown as TeamSubmitResult);
   } catch (err) {
     const code = commandErrorCode(err);
@@ -86,56 +64,70 @@ async function submitOutcomeFor(
   }
 }
 
-export function createFeishuCoreCommands(
-  invoke: JsonInvoker['invoke'],
-): FeishuCoreCommands {
-  return {
-    async teamCreate(command) {
-      return (await invoke(
-        'team.create',
-        command as unknown as JsonValue,
-      )) as unknown as TeamSummary;
-    },
-    async teamStatus(teamName) {
-      return (await invoke('team.status', {
-        team_name: teamName,
-      })) as unknown as TeamSummary;
-    },
-    teamSubmit(teamName, submission) {
-      return submitOutcomeFor(invoke, 'team.submit', {
-        team_name: teamName,
-        ...chatSubmission(submission),
-      });
-    },
-    dispatcherSubmit(submission) {
-      return submitOutcomeFor(
-        invoke,
-        'dispatcher.submit',
-        chatSubmission(submission),
+export class FeishuCoreCommands implements JsonInvoker {
+  private invoker: JsonInvoker | undefined;
+
+  initialize(invoker: JsonInvoker): void {
+    this.invoker = invoker;
+  }
+
+  invoke(command: string, payload: JsonValue): Promise<JsonValue> {
+    if (this.invoker === undefined) {
+      return Promise.reject(
+        new Error('Feishu channel session has no Core port'),
       );
-    },
-    async teamDissolve(input) {
-      await invoke('team.dissolve', {
-        team_name: input.teamName,
-        note: input.note,
-      });
-    },
-    async teamInterrupt(teamName) {
-      return (await invoke('team.interrupt', {
-        team_name: teamName,
-      })) as unknown as AgentRuntimeInterruptOutcome;
-    },
-    async dispatcherInterrupt() {
-      return (await invoke(
-        'dispatcher.interrupt',
-        {},
-      )) as unknown as AgentRuntimeInterruptOutcome;
-    },
-    async teamList() {
-      const raw = (await invoke('team.list', {})) as unknown as {
-        teams: RunningTeamRow[];
-      };
-      return raw.teams;
-    },
-  };
+    }
+    return this.invoker.invoke(command, payload);
+  }
+
+  async teamCreate(command: TeamCreateCommand): Promise<TeamSummary> {
+    return (await this.invoke(
+      'team.create',
+      command as unknown as JsonValue,
+    )) as unknown as TeamSummary;
+  }
+  async teamStatus(teamName: string): Promise<TeamSummary> {
+    return (await this.invoke('team.status', {
+      team_name: teamName,
+    })) as unknown as TeamSummary;
+  }
+  teamSubmit(
+    teamName: string,
+    submission: FeishuSubmission,
+  ): Promise<FeishuSubmitOutcome> {
+    return submitOutcomeFor(this, 'team.submit', {
+      team_name: teamName,
+      ...chatSubmission(submission),
+    });
+  }
+  dispatcherSubmit(submission: FeishuSubmission): Promise<FeishuSubmitOutcome> {
+    return submitOutcomeFor(
+      this,
+      'dispatcher.submit',
+      chatSubmission(submission),
+    );
+  }
+  async teamDissolve(input: { teamName: string; note: string }): Promise<void> {
+    await this.invoke('team.dissolve', {
+      team_name: input.teamName,
+      note: input.note,
+    });
+  }
+  async teamInterrupt(teamName: string): Promise<AgentRuntimeInterruptOutcome> {
+    return (await this.invoke('team.interrupt', {
+      team_name: teamName,
+    })) as unknown as AgentRuntimeInterruptOutcome;
+  }
+  async dispatcherInterrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    return (await this.invoke(
+      'dispatcher.interrupt',
+      {},
+    )) as unknown as AgentRuntimeInterruptOutcome;
+  }
+  async teamList(): Promise<readonly RunningTeamRow[]> {
+    const raw = (await this.invoke('team.list', {})) as unknown as {
+      teams: RunningTeamRow[];
+    };
+    return raw.teams;
+  }
 }

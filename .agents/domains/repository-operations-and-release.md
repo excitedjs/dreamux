@@ -311,20 +311,13 @@ The `files` allowlist ships `bin`, `dist`, `skills`, `README.md`, `LICENSE`,
 Dreamux-managed MCP descriptors and the internal `dreamux mcp` subcommand; it is
 not a separate public npm bin.
 
-Test doubles are not package surface. `createFakeFeishuBot` / `FakeFeishuBot`
-were removed from published package API as a breaking cleanup; a replacement
-double belongs under `/packages/channel/feishu-channel/tests/helpers/` (the
-package that owns the production `FeishuBot` seam it implements), injected
-through `createFeishuChannelProvider({ botFactory })` so the real channel,
-gate, routing, and MCP tool code still runs unmodified. The code-organization
-refactor deleted the prior double (`fake-feishu-bot.ts`) along with every test
-that used it (R43; see
-[deleted-tests.md](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)'s
-"Final pass" section); no replacement exists yet, so the seam is currently
-untested, but its production side (`botFactory` on `FeishuChannelConfig` in
-`provider.ts` and `session.ts`) is unchanged.
-A new test double belongs in `tests/` and must implement a production seam, not
-be exported from a package.
+Test doubles are not package surface. Feishu's provider constructs its bot
+directly; no public `botFactory` option or exported fake bot remains. The
+code-organization refactor's final parent test work must restore the contracts
+in [deleted-tests.md](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md),
+using current production owners and test-owned doubles where needed. Do not
+reintroduce a dormant public construction override merely to reproduce deleted
+test wiring. A new double belongs in `tests/`, not a published package export.
 
 `builtin:codex`, `builtin:claude-code`, and `builtin:feishu` load whether or
 not `plugins[]` lists them. `builtin:bootstrap` is imported only when

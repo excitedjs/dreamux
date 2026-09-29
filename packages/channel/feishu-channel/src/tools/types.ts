@@ -7,16 +7,19 @@
  * advertises, so a tool a TeamLeader is not offered is a tool a TeamLeader
  * cannot name — there is no second check at invoke time to keep in step.
  */
+import type { TransactionalStore } from '@excitedjs/dreamux-utils';
+import type { ChatBotsState } from '../chat-bots-store.js';
+import type { FeishuOutbound } from '../outbound/index.js';
+import type { FeishuCardActions } from '../session/card-actions.js';
 import type {
   ChannelMcpCaller,
   ChannelMcpToolAnnotations,
   JsonValue,
 } from '@excitedjs/dreamux-types';
 
-import type { AskUserQuestionSpec } from '../cards/ask-user.js';
-import type { FeishuBindingOperations } from '../routing/operations.js';
-import type { FeishuRouting } from '../routing/index.js';
 import type { FeishuDocumentComments } from '../feishu-document-comments.js';
+import type { FeishuRouting } from '../routing/index.js';
+import type { FeishuBindingOperations } from '../routing/operations.js';
 
 /** Logger shape used by the Feishu session — pino-style, fields-first. */
 export type ChannelLogger = import('@excitedjs/dreamux-types').DreamuxLogger;
@@ -35,44 +38,16 @@ export interface FeishuListChatBotsResult {
 /**
  * The live session capability tool handlers run against.
  *
- * `sendText`/`react`/`listKnownChatBots`/`askUserQuestion` carry session-owned
- * logic (mapping the outbound result to the tool's own wire shape, reading the
- * chat-bots store) and stay methods here. Routing, binding, and document-
- * subscription tools instead reach their real owners directly through the
- * narrow `Pick<>`s below — there is nothing for a re-declared forwarding
- * method to add between a tool handler and `FeishuBindingOperations` /
- * `FeishuRouting` / `FeishuDocumentComments`, which each already validate and
- * own their own state.
+ * This view is built once from actual session owners. Tool handlers map their
+ * results to the tool wire shape; outbound, card actions, routing, bindings,
+ * document subscriptions, and chat-bot state remain with their own objects.
  */
 export interface FeishuToolSession {
   readonly logger: ChannelLogger;
   readonly channelId: string;
-  sendText(
-    chatId: string,
-    text: string,
-    opts: {
-      messageId?: string;
-      /** The calling Team, or `null` for the Dispatcher Agent. */
-      callerTeamName: string | null;
-    },
-  ): Promise<{ message_ids: string[] }>;
-  react(
-    chatId: string | undefined,
-    messageId: string,
-    emoji: string,
-  ): Promise<{ reaction_id: string }>;
-  listKnownChatBots(chatId: string): Promise<FeishuListChatBotsResult>;
-  /**
-   * Send a question card and return once it is sent. The answer is not awaited:
-   * it reaches the model later as an inbound submission, so this resolves with
-   * the round's identity rather than with what the user chose.
-   */
-  askUserQuestion(input: {
-    chatId: string;
-    text?: string;
-    questions: readonly AskUserQuestionSpec[];
-    messageId?: string;
-  }): Promise<{ request_id: string }>;
+  readonly outbound: Pick<FeishuOutbound, 'sendText' | 'react'>;
+  readonly cardActions: Pick<FeishuCardActions, 'askUserQuestion'>;
+  readonly chatBotsStore: TransactionalStore<ChatBotsState>;
   readonly bindings: Pick<
     FeishuBindingOperations,
     'bindChannel' | 'unbindChannel' | 'bindSpace' | 'unbindSpace'

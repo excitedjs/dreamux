@@ -1,13 +1,14 @@
 import type { Mention } from '@excitedjs/feishu-transport';
 import parser from 'yargs-parser';
+import type { FeishuBot } from './bot.js';
 
+import { buildRunningTeamsCard } from './cards/running-teams.js';
 import type { FeishuCoreCommands } from './feishu-core-commands.js';
 import { errorMessage } from './feishu-submit.js';
 import { leadingTextAfterMentions } from './introduce.js';
-import { buildRunningTeamsCard } from './cards/running-teams.js';
 import type { FeishuBindingView, FeishuRoutingPlan } from './routing/index.js';
-import { containingChat, type FeishuTarget } from './routing/target.js';
 import type { FeishuBindingOperations } from './routing/operations.js';
+import { containingChat, type FeishuTarget } from './routing/target.js';
 
 export type FeishuSlashCommandName =
   'bind' | 'dissolve' | 'help' | 'stop' | 'teams';
@@ -49,11 +50,11 @@ interface CommandContext {
   readonly target: FeishuTarget;
   /** The message this command was parsed from. */
   readonly messageId: string;
-  readonly bindChannel: FeishuBindingOperations['bindChannel'];
+  readonly bindingOperations: Pick<FeishuBindingOperations, 'bindChannel'>;
   readonly plan: FeishuRoutingPlan;
   readonly commands: FeishuCoreCommands;
   readonly bindings: readonly FeishuBindingView[];
-  readonly resolveChatName: (chatId: string) => Promise<string | undefined>;
+  readonly bot: Pick<FeishuBot, 'resolveChatName'>;
 }
 
 interface CommandDefinition {
@@ -82,7 +83,7 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       // this command's own message, used only if `/bind` was typed from
       // inside a topic that has no root of its own yet, so the receipt still
       // has one to reply under.
-      await context.bindChannel({
+      await context.bindingOperations.bindChannel({
         target: containingChat(context.target),
         teamName,
         display: null,
@@ -154,7 +155,8 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
         card: await buildRunningTeamsCard({
           teams: rows,
           bindings: context.bindings,
-          resolveChatName: context.resolveChatName,
+          resolveChatName: (chatId) =>
+            context.bot.resolveChatName?.(chatId) ?? Promise.resolve(undefined),
         }),
       };
     },

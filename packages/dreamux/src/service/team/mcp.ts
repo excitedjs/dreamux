@@ -1,18 +1,15 @@
 /**
  * The Team MCP server, implemented by the Team collection that owns it.
  *
- * Two callers see two catalogs from one delegate: the Dispatcher Agent gets the
- * full Team surface, a TeamLeader gets only what it may do to its own Team. The
- * caller is bound at construction, never sent by the model and never carried in
- * a payload — which is why the leader-scoped tools take no `team_name` at all
- * and cannot be pointed at another Team.
+ * The Dispatcher Agent's catalog operates on addressed Teams. A TeamLeader's
+ * bound dissolve tool belongs to its actual Team in `leader-mcp.ts`.
  *
  * Every tool reaches {@link TeamsPort} directly. `team.create` /
  * `team.submit` / … remain the shared `admin.sock` and Channel-to-Core surface
  * and are untouched by this file; both surfaces call the same port, and what
  * they share — reading a `team_name`, reading a history query, and the one
  * submission receipt that is more than a copy — belongs to the Team and lives in
- * its own `types.ts`. What stays here is this surface's: the caller binding, the
+ * its own `requests.ts`. What stays here is this surface's:
  * Agent provenance, the advertised catalog, and the model-facing text a tool
  * chooses to say.
  *
@@ -31,7 +28,8 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
+import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
+import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -40,31 +38,23 @@ import {
   tool,
   type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
-import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import type {
   McpDelegateCall,
   McpDelegateDescription,
   McpDelegateResult,
   McpServerDelegate,
 } from '../mcp/types.js';
-import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import type { TeamsPort } from './teams-port.js';
+import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import {
+  dissolveReceiptSchema,
   teamHistoryQuery,
   teamNameParam,
   teamSubmitResult,
   teamSubmitResultOutput,
 } from './requests.js';
-
-/** Who this delegate serves. Bound once, at runtime construction. */
-export type TeamMcpCaller =
-  | { readonly kind: 'dispatcher' }
-  | {
-      readonly kind: 'team_leader';
-      readonly teamId: string;
-    };
+import type { TeamsPort } from './teams-port.js';
 
 export const TEAM_MCP_SERVER_NAME = 'team';
 
@@ -76,9 +66,8 @@ interface TeamMcpToolRecord {
 
 export function createTeamMcpDelegate(input: {
   teams: TeamsPort;
-  caller: TeamMcpCaller;
 }): McpServerDelegate {
-  const records = teamToolRecords(input.teams, input.caller);
+  const records = teamToolRecords(input.teams);
   const tools = records.map((record) => record.descriptor);
   return {
     name: TEAM_MCP_SERVER_NAME,
@@ -205,62 +194,18 @@ async function history(
 
 async function dissolve(
   teams: TeamsPort,
-  caller: TeamMcpCaller,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const note = mustNonBlankString(args, 'note');
   const force = args['force'] === true;
-  const dissolved = await teams.dissolve(
-    // The Team is the caller's own, from the descriptor that launched this
-    // server, when a TeamLeader calls — never a name the model supplied.
-    caller.kind === 'team_leader'
-      ? caller.teamId
-      : teamNameParam(args, 'team_name'),
-    { note, force },
-  );
+  const dissolved = await teams.dissolve(teamNameParam(args, 'team_name'), {
+    note,
+    force,
+  });
   return { structured: dissolved };
 }
 
-function teamToolRecords(
-  teams: TeamsPort,
-  caller: TeamMcpCaller,
-): TeamMcpToolRecord[] {
-  if (caller.kind === 'team_leader') {
-    return [
-      {
-        descriptor: tool(
-          'dissolve',
-          "Call this only when the Team's work is complete. Your system prompt names the Team's workspace and its cleanup mode. Under cleanup: delete-on-close Dreamux removes the managed worktree when the Team dissolves, so first check it for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Under cleanup: keep, and in a reused directory, nothing is removed and nothing blocks the dissolve. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team's Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. A non-forced request checks the managed delete-on-close worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
-          {
-            note: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 2000,
-              pattern: '\\S',
-              description: 'Why the Team stops; recorded on it.',
-            },
-            force: {
-              type: 'boolean',
-              description:
-                "Only with the user's explicit confirmation in this conversation. " +
-                'It only overrides a delete-on-close removal blocked by ' +
-                'uncommitted, untracked, or unmerged work, by discarding that ' +
-                'work; under cleanup: keep the checkout and its changes are ' +
-                'retained; never the branch, its commits, a reused directory, or ' +
-                'the source repository.',
-            },
-          },
-          ['note'],
-          {
-            title: 'Dissolve this Team',
-            output: dissolveReceiptSchema(),
-            annotations: DESTRUCTIVE_ANNOTATIONS,
-          },
-        ),
-        execute: (args) => dissolve(teams, caller, args),
-      },
-    ];
-  }
+function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
   return [
     {
       descriptor: tool(
@@ -493,18 +438,7 @@ function teamToolRecords(
           annotations: DESTRUCTIVE_ANNOTATIONS,
         },
       ),
-      execute: (args) => dissolve(teams, caller, args),
+      execute: (args) => dissolve(teams, args),
     },
   ];
-}
-
-function dissolveReceiptSchema(): Record<string, unknown> {
-  return objectSchema(
-    {
-      accepted: { type: 'boolean' },
-      team_name: { type: 'string' },
-      status: { type: 'string' },
-    },
-    ['accepted', 'team_name', 'status'],
-  );
 }

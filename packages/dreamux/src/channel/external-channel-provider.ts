@@ -27,26 +27,23 @@
  * key, so there is deliberately no sanitizer and no id change here: the first
  * external channel provider is what settles the id shape.
  */
+import type {
+  ChannelProvider,
+  ChannelProviderFactory,
+  ProviderFactoryContext,
+} from '@excitedjs/dreamux-types';
 import { type ProviderRegistry } from '../registry/index.js';
 import {
   isRecord,
   loadProviderPackages,
   type ProviderContractContext,
   type ProviderModule,
-  type ProviderModuleImporter,
   type ProviderPackageLoaderSpec,
 } from '../registry/provider-loader.js';
-import type {
-  ChannelProvider,
-  ChannelProviderFactory,
-  ProviderFactoryContext,
-} from '@excitedjs/dreamux-types';
 
 export type ExternalChannelProviderFactory = ChannelProviderFactory<unknown>;
 
 export type ExternalChannelModule = ProviderModule;
-
-export type ExternalChannelModuleImporter = ProviderModuleImporter;
 
 export class ExternalChannelProviderLoadError extends Error {
   constructor(
@@ -77,7 +74,6 @@ export class ExternalChannelProviderContractError extends Error {
 export interface LoadChannelProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ExternalChannelModuleImporter | undefined;
 }
 
 const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<

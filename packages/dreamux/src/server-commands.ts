@@ -7,9 +7,8 @@
  */
 import type { CoreCommandDefinition } from './command/types.js';
 
-import type { AnyCoreCommand } from './command/registry.js';
-import type { CoreCommandHost } from './server/command-host.js';
 import { commandPayload } from './command/payload.js';
+import type { AnyCoreCommand } from './command/registry.js';
 import {
   INTEGER,
   NO_INPUT,
@@ -17,6 +16,7 @@ import {
   arrayOf,
   objectSchema,
 } from './command/schema.js';
+import type { CoreCommandHost } from './server/command-host.js';
 import type { DispatcherSummary } from './service/dispatcher-service/types.js';
 
 interface ServerStatus {
@@ -47,7 +47,7 @@ export function serverCommands(
       return {
         pid: process.pid,
         uptimeSec: Math.floor(process.uptime()),
-        dispatchers: await host.summarize(),
+        dispatchers: await host.dispatchers.summarize(),
       };
     },
   };

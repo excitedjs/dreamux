@@ -19,11 +19,10 @@
  * public contract for no reader.
  */
 
-export { default, createFeishuPlugin } from './plugin.js';
+export { createFeishuPlugin, default } from './plugin.js';
 
 export {
   createFeishuChannelProvider,
-  type CreateFeishuChannelProviderOptions,
   type FeishuChannelConfig,
 } from './provider.js';
 
@@ -42,13 +41,13 @@ export type {
 // needs to build a `FeishuExtensionAction`/`FeishuExtensionTool` and drive
 // `FeishuInstanceApi`, and nothing an extension never touches.
 export type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
+export { DREAMUX_ACTION_KEY } from './card-actions.js';
 export {
   rawCardActionResponse,
   type FeishuCardActionResponse,
 } from './cards/pairing.js';
 export type { FeishuTarget } from './routing/target.js';
 export type { FeishuToolResult } from './tools/types.js';
-export { DREAMUX_ACTION_KEY } from './card-actions.js';
 
 // `packages/dreamux/tests/channel-input-format.test.ts`'s own cross-package
 // need, and nothing else.

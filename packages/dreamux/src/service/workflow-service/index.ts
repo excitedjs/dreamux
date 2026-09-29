@@ -1,17 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
+import type { WorkAdmission } from '../../platform/work-fence.js';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { RuleViolation, throwCallerMistake } from '../../command/errors.js';
-import {
-  type CompletionDeliveryPolicy,
-  type CompletionInitiator,
-} from '../completion-router/index.js';
 import { deduplicate } from '../../platform/deduplicate.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
-import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import {
   canonicalJsonValue,
   JSON_VALUE_UNBOUNDED,
@@ -22,6 +18,11 @@ import {
   workflowRunnerEntryPath,
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import {
+  type CompletionDeliveryPolicy,
+  type CompletionOwner,
+} from '../completion-router/index.js';
 import { WorkflowRunNotFoundError } from './errors.js';
 import { WorkflowJournal } from './journal.js';
 import {
@@ -30,10 +31,6 @@ import {
   MAX_SCRIPT_BYTES,
 } from './limits.js';
 import { WorkflowRun } from './run.js';
-import {
-  ForkedWorkflowRunner,
-  type WorkflowRunnerFactory,
-} from './runner-process.js';
 import { WorkflowRunStore } from './store.js';
 import type {
   WorkflowCallerKind,
@@ -50,17 +47,13 @@ import type {
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {
   teammates: WorkflowTeammateFactory;
   completionDelivery: CompletionDeliveryPolicy;
-  completionInitiator: () => CompletionInitiator;
+  completionOwner: CompletionOwner;
   /**
    * The owner's own admission gate, crossed by every public verb below
    * (`run`/`status`/`stop`/`list`) — the same shape `SchedulerService` takes.
    */
-  admit<T>(task: () => Promise<T>): Promise<T>;
+  fence: WorkAdmission;
   log: DreamuxLogger;
-  createRunner?: WorkflowRunnerFactory;
-  runnerEntryPath?: string;
-  generateRunId?: () => string;
-  now?: () => number;
 }
 
 export interface WorkflowOps {
@@ -105,7 +98,7 @@ export class WorkflowService implements WorkflowOps {
   }
 
   run(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
-    return this.opts.admit(() =>
+    return this.opts.fence.admit(() =>
       this.runCreations.track(this.createRun(input)),
     );
   }
@@ -139,11 +132,9 @@ export class WorkflowService implements WorkflowOps {
       throwCallerMistake(error);
     }
 
-    const runId = validateWorkflowRunId(
-      this.opts.generateRunId?.() ?? `run-${randomUUID()}`,
-    );
-    const initiator = this.opts.completionInitiator();
-    const now = this.now();
+    const runId = validateWorkflowRunId(`run-${randomUUID()}`);
+    const initiator = this.opts.completionOwner.completionRecipient();
+    const now = Date.now();
     const record: WorkflowRunRecord = {
       version: 1,
       run_id: runId,
@@ -162,22 +153,14 @@ export class WorkflowService implements WorkflowOps {
       updated_at: now,
       ended_at: null,
     };
-    const createRunner =
-      this.opts.createRunner ??
-      ((handlers) =>
-        new ForkedWorkflowRunner(
-          this.opts.runnerEntryPath ?? workflowRunnerEntryPath(),
-          handlers,
-        ));
     const run = new WorkflowRun({
       record,
       store: this.store,
       teammates: this.opts.teammates,
-      createRunner,
-      deliverTerminal: (fact) =>
-        this.opts.completionDelivery.deliver(initiator, fact),
+      runnerEntryPath: workflowRunnerEntryPath(),
+      recipient: initiator,
+      completionDelivery: this.opts.completionDelivery,
       log: this.opts.log,
-      now: this.opts.now,
     });
     await run.initialize();
     this.runs.set(runId, run);
@@ -200,7 +183,7 @@ export class WorkflowService implements WorkflowOps {
   }
 
   async status(input: WorkflowStatusInput): Promise<WorkflowRunRecord> {
-    return this.opts.admit(() => this.doStatus(input));
+    return this.opts.fence.admit(() => this.doStatus(input));
   }
 
   private async doStatus(
@@ -220,7 +203,7 @@ export class WorkflowService implements WorkflowOps {
   }
 
   async stop(input: WorkflowStopInput): Promise<WorkflowStopResult> {
-    return this.opts.admit(() => this.doStop(input));
+    return this.opts.fence.admit(() => this.doStop(input));
   }
 
   private async doStop(input: WorkflowStopInput): Promise<WorkflowStopResult> {
@@ -235,7 +218,7 @@ export class WorkflowService implements WorkflowOps {
   }
 
   async list(): Promise<WorkflowListResult> {
-    return this.opts.admit(() => this.doList());
+    return this.opts.fence.admit(() => this.doList());
   }
 
   private async doList(): Promise<WorkflowListResult> {
@@ -287,7 +270,7 @@ export class WorkflowService implements WorkflowOps {
       const journal = new WorkflowJournal(
         workflowRunJournalPath({ ...this.scope, runId: record.run_id }),
       );
-      const backfilled = await journal.recover(record, this.now());
+      const backfilled = await journal.recover(record, Date.now());
       await this.store.write(record);
       // This correction has no `WorkflowRun` owner to settle and release the
       // store later — the record is already terminal, so release it now.
@@ -313,10 +296,6 @@ export class WorkflowService implements WorkflowOps {
       this.runs.delete(runId);
       this.store.release(runId);
     }
-  }
-
-  private now(): number {
-    return this.opts.now?.() ?? Date.now();
   }
 }
 

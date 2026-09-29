@@ -105,3 +105,115 @@ R43 keeps new unit tests and restoration of the deleted-test ledger for the
 final PR #453 completion. This child change must not be presented as satisfying
 that gate. A source-preservation review and passing surviving tests do not
 establish live Codex or Feishu acceptance.
+
+## Data-flow continuation: implementation and TeamLeader pre-review
+
+The R71 implementation follows the [final solution](technical-design/data-flow/final.md)
+and supersedes the earlier callback topology. Its pre-review executable revision
+passed the four Rush commands above: build (2.39 s), lint (4.95 s), test
+(9.82 s; 64 files and 710 cases), and typecheck:tests (3.79 s). The TeamLeader
+read the final logs and checked the complete change inventory, construction
+and observation paths, new operation owners, and preserved failure boundaries.
+The test diff is empty; no tests were added, repaired, removed, or skipped.
+No live Feishu/Codex validation was performed. Existing test warnings remain
+non-fatal and do not represent a skipped new check.
+
+| Pre-review item | Disposition | Evidence / correction | Ruling conflict |
+| --- | --- | --- | --- |
+| Address lookup stays on Server instead of moving to Dispatchers | Accept placement adjustment | Server validates id and current configuration before accessing the collection created by start; moving the lookup behind that accessor changes public embedding error precedence. Actual owner methods replace the former callback bag. Final solution section 5 records this. | None; preserves behavior. |
+| TeamService.submitInput only forwards to submitToLeader | Fixed before independent review | The implementation now lives directly in submitInput, preserving initiator and Team-only admission. TeamCollection keeps its distinct addressed API. | R58 and the selected solution prohibit the redundant surface. |
+| Removed chmod override left an orphaned JSDoc | Fixed before independent review | Deleted the comment; the actual chmod operation and isPidAlive test seam remain. | None. |
+
+The complete old onPersisted chain, recipient/delivery suppliers, Team lookup
+suppliers, catalog resolver bags, and session operation forwarding are removed.
+The new WorkFence carries the existing dispatcher close/drain state;
+UnbuiltAgent privately owns the prepared identity/store until build or
+record-only close. Feishu's submitter and router own moved operation bodies;
+the old session copies are deleted. Actual protocol, transactional, plugin,
+and CLI extension callbacks remain with named suppliers and consumers.
+
+The developer's first test run exposed unstructured restart-intent logging.
+Source was corrected to constant messages with structured fields; the existing
+log-hygiene assertion was not changed. All four final gates ran after the two
+TeamLeader pre-review corrections.
+
+The preliminary KB check caught stale deleted-module links and task commit
+citations; those were corrected. Its in-flight task-state refusal is expected
+until delivery closeout.
+
+## Data-flow continuation: independent review
+
+Claude, MiMo, and DeepSeek completed seven finder angles, source-location
+verification, and one bounded sweep. The initial workflow's partial result
+was not treated as a pass: three failed verifier outputs, three missing
+verdict fields, and the sweep output were recovered. The new shared-clock
+accounting candidate also received independent verification. The
+[adjudication](artifacts/data-flow-review.md) records every retained finding,
+its disposition, the rejected premises, and the correction boundary.
+
+One actual behavior difference was confirmed: early channel logger creation
+allocates a channel log when a disabled dispatcher is only materialized by an
+addressed Command. Workflow logging was already eager and is not a regression.
+The correction preserves the channel-build allocation boundary. Other accepted
+items remove residual log transports, unused entrances and variability,
+duplicate contracts, and stale documentation. Internal alias and role-assembly
+cleanup is accepted for its current maintenance cost, not as a claim that an
+imagined future caller already loses notifications.
+
+The original source developer applied the accepted corrections. The final
+executable revision passed the four Rush gates: build (1.45 s), lint (6.95 s),
+test (11.03 s), and typecheck:tests (6.53 s). The TeamLeader inspected their
+successful logs and the empty test diff. The test inventory remains 64 files
+and 710 tests; no test was added, repaired, deleted, renamed, or skipped.
+`git diff --check` passed. No live Feishu/Codex acceptance is claimed.
+
+The correction also resolved an omission exposed by the old cron lookup:
+all leader tools must retain Dispatcher admission followed by the committed
+Team-closed check. Child adapters admit only the lookup; dissolve and channel
+calls retain admission over their full request. Channel then checks closing,
+and dissolve joins an existing task only after access has succeeded.
+A live leader MCP lease can survive both boundaries while earlier teardown
+waits. The actual Team supplies one call-scoped admitted-operation method;
+no stored lookup supplier, wrapper owner, or new gate state was introduced.
+Leader launch hooks again finish before delegate construction, and the Team
+MCP header describes its actual Dispatcher-only catalog. The
+[review adjudication](artifacts/data-flow-review.md)
+records the reachable source paths and the focused independent correction
+verification boundary. MiMo completed that final bounded verification with no
+remaining behavior finding; the complete initial review and recovered coverage
+remain the evidence for the unchanged remainder of the diff.
+
+## Data-flow continuation: structure and remaining coverage
+
+The final change removes the full persistence callback chain, completion
+suppliers, delayed Team lookup suppliers, command resolver bags, provider
+logger callback transports, dormant construction overrides, duplicate dissolve
+schema, dead Team admission method, and Team recipient alias. It introduces
+four named owners: WorkFence contains the existing dispatcher admission state;
+UnbuiltAgent privately holds prepared identity construction; FeishuTeamSubmitter
+and FeishuInboundRouter contain operations moved out of Session. Existing
+operation bodies were removed from their former owners. No persisted fact,
+global event router, proxy logger, or generic gate combinator was added.
+
+Files with at least 600 lines under the existing ESLint rule (blank lines and
+comments excluded):
+
+| Source file | Code / physical lines | Ownership finding |
+| --- | ---: | --- |
+| `service/workflow-service/run.ts` | 694 / 822 | One run's IPC, locks, terminal record, and owed delivery. Closest to the cap; a pressure point for future run-protocol changes, not evidence for an arbitrary helper extraction. |
+| `service/team/service.ts` | 675 / 1118 | Team aggregate composition, roster, admission, completion, and teardown. Split leader-role assembly was corrected in the existing leader module. |
+| `service/agent/index.ts` | 651 / 958 | Member collection naming, materialization/reopen, live queries, Workflow locks, and shutdown. |
+| `service/team/index.ts` | 614 / 966 | Team collection creation, workspace publication, dedupe, materialization, queries, and recovery. |
+| `channel/feishu-channel/src/cot/adapter.ts` | 667 / 823 | One presentation state machine with anchor/route fences and card retirement. |
+
+The first four paths are under `packages/dreamux/src`; the fifth is under
+`packages`. No limit was weakened or comments removed to reduce the count.
+These are review candidates when their responsibilities grow; being below
+700 is not an architectural acceptance proof.
+
+Public runtime construction overrides and Feishu bot overrides are explicitly
+contracted. Claude session/RPC diagnostic inputs now take optional logger
+objects instead of positional logging callbacks. Configuration and persisted
+formats remain readable without migration. Rush generated ordinary minor
+change notes for dreamux, Codex, Claude, and Feishu. The parent deleted-test ledger records fixture
+adaptations and retains its full behavioral coverage obligations under R43.

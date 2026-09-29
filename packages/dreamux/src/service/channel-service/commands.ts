@@ -8,10 +8,8 @@
  * (`channel.invoke_tool` / `channel.mcp.*`): provider tools remain behind the
  * runtime-bound MCP delegates and the generic `mcp.*` transport Commands.
  */
-import type {
-  CoreCommandContext,
-  CoreCommandDefinition,
-} from '../../command/types.js';
+import type { DispatcherCommandHost } from '../../command/host.js';
+import type { CoreCommandDefinition } from '../../command/types.js';
 
 import { commandPayload } from '../../command/payload.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
@@ -34,7 +32,7 @@ interface ChannelCommandsDispatcher {
 }
 
 export function channelCommands(
-  channels: (context: CoreCommandContext) => ChannelCommandsDispatcher,
+  host: DispatcherCommandHost<{ channels: ChannelCommandsDispatcher }>,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<'channel.list', void, ChannelListResult> = {
     name: 'channel.list',
@@ -60,7 +58,7 @@ export function channelCommands(
       commandPayload(payload);
     },
     async execute(context) {
-      return { channels: channels(context).list() };
+      return { channels: host.addressedDispatcher(context).channels.list() };
     },
   };
 

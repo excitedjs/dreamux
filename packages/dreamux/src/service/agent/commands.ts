@@ -13,33 +13,15 @@
  * step where the rule is. The TeamMate MCP delegate reads the same helpers;
  * neither adapter reads the other.
  */
-import type {
-  CoreCommandContext,
-  CoreCommandDefinition,
-} from '../../command/types.js';
+import type { DispatcherCommandHost } from '../../command/host.js';
+import type { CoreCommandDefinition } from '../../command/types.js';
 
-import type { AnyCoreCommand } from '../../command/registry.js';
 import {
   normalizeSkillSources,
   optionalParsedSkillSources,
 } from '../../agent-runtime/skill-sources.js';
 import { commandPayload } from '../../command/payload.js';
-import {
-  agentCloseRequest,
-  agentEntityLastQuery,
-  agentEntityNameParam,
-  agentSendRequest,
-  agentSpawnRequest,
-  historyQuery,
-  teammateReceiptSchema,
-  type AgentCloseRequest,
-  type AgentSendRequest,
-} from './requests.js';
-import {
-  REPO_REQUEST_SCHEMA,
-  repoRequest,
-  repoWorktree,
-} from '../worktree/repo-request.js';
+import type { AnyCoreCommand } from '../../command/registry.js';
 import {
   BOOLEAN,
   INTEGER,
@@ -51,6 +33,12 @@ import {
   enumOf,
   objectSchema,
 } from '../../command/schema.js';
+import {
+  REPO_REQUEST_SCHEMA,
+  repoRequest,
+  repoWorktree,
+} from '../worktree/repo-request.js';
+import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { mapAgentActivityCommandError } from './activity.js';
 import type {
   AgentEntityCapabilities,
@@ -62,7 +50,17 @@ import type {
   AgentEntityRuntimeStatus,
   AgentEntitySpawnResult,
 } from './identity.js';
-import type { TeamMateWorktreeRequest } from '../worktree/types.js';
+import {
+  agentCloseRequest,
+  agentEntityLastQuery,
+  agentEntityNameParam,
+  agentSendRequest,
+  agentSpawnRequest,
+  historyQuery,
+  teammateReceiptSchema,
+  type AgentCloseRequest,
+  type AgentSendRequest,
+} from './requests.js';
 import type { TeammateOps } from './types.js';
 
 interface SpawnInput {
@@ -95,9 +93,7 @@ interface TeammateCommandsDispatcher {
 }
 
 export function teammateCommands(
-  resolveDispatcher: (
-    context: CoreCommandContext,
-  ) => TeammateCommandsDispatcher,
+  host: DispatcherCommandHost<TeammateCommandsDispatcher>,
 ): readonly AnyCoreCommand[] {
   const spawn: CoreCommandDefinition<
     'teammate.spawn',
@@ -128,7 +124,7 @@ export function teammateCommands(
       };
     },
     async execute(context, input) {
-      const dispatcher = resolveDispatcher(context);
+      const dispatcher = host.addressedDispatcher(context);
       const skillSources = await normalizeSkillSources(input.skillSources);
       const repo = repoWorktree(input.repo);
       const cwd =
@@ -168,7 +164,7 @@ export function teammateCommands(
       return agentSendRequest(commandPayload(payload));
     },
     async execute(context, input) {
-      return resolveDispatcher(context).teammates.send({
+      return host.addressedDispatcher(context).teammates.send({
         name: input.name,
         prompt: input.prompt,
         ...(input.intent !== null ? { intent: input.intent } : {}),
@@ -192,7 +188,7 @@ export function teammateCommands(
       return agentCloseRequest(commandPayload(payload));
     },
     async execute(context, input) {
-      return resolveDispatcher(context).teammates.close({
+      return host.addressedDispatcher(context).teammates.close({
         name: input.name,
         note: input.note,
       });
@@ -225,7 +221,9 @@ export function teammateCommands(
       return { query: historyQuery(commandPayload(payload)) };
     },
     async execute(context, input) {
-      return await resolveDispatcher(context).teammates.history(input.query);
+      return await host
+        .addressedDispatcher(context)
+        .teammates.history(input.query);
     },
   };
 
@@ -241,7 +239,7 @@ export function teammateCommands(
     parse: () => ({}),
     async execute(context) {
       return {
-        teammates: await resolveDispatcher(context).teammates.list(),
+        teammates: await host.addressedDispatcher(context).teammates.list(),
       };
     },
   };
@@ -260,7 +258,9 @@ export function teammateCommands(
     },
     async execute(context, input) {
       return {
-        teammate: await resolveDispatcher(context).teammates.status(input.name),
+        teammate: await host
+          .addressedDispatcher(context)
+          .teammates.status(input.name),
       };
     },
   };
@@ -308,10 +308,9 @@ export function teammateCommands(
     },
     async execute(context, input) {
       try {
-        return await resolveDispatcher(context).teammates.last(
-          input.name,
-          input.query,
-        );
+        return await host
+          .addressedDispatcher(context)
+          .teammates.last(input.name, input.query);
       } catch (error) {
         return mapAgentActivityCommandError(error);
       }
@@ -332,7 +331,9 @@ export function teammateCommands(
     ),
     parse: () => ({}),
     async execute(context) {
-      return await resolveDispatcher(context).teammates.getCapabilities();
+      return await host
+        .addressedDispatcher(context)
+        .teammates.getCapabilities();
     },
   };
 

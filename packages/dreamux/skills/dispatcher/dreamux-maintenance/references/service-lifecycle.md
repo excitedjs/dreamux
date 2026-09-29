@@ -29,6 +29,11 @@ runtime app-server readiness, and same-version restart cautions.
   subtree. It is that plugin's concern, not something this skill's generic
   inspection/repair procedures cover.
 
+Dispatcher shutdown refuses new work before stopping children, waits for
+already-admitted operations, and releases Channels after runtime cleanup.
+A shutdown refusal means no new operation was accepted; it does not establish
+the outcome of work accepted earlier. Inspect that work's state separately.
+
 ## Missing Replies And Stuck Turns
 
 - For missing replies, distinguish Channel ingress, Dispatcher acceptance,
@@ -75,6 +80,8 @@ runtime app-server readiness, and same-version restart cautions.
   raw native lines are never surfaced.
 - Activity reads are bounded. Follow `next_cursor` for older pages; that bound
   is not permission to perform an unbounded scan or to build a cache or index.
+- Agent and Team state events report committed identity/lifecycle facts, not
+  proof of native execution. Check runtime activity and delivery separately.
 - `identity.json` is fully server-owned. Do not edit, copy over, synthesize, or
   delete it as an operational repair.
 

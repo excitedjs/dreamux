@@ -4,39 +4,58 @@ import type {
   LaunchDraft,
 } from '@excitedjs/dreamux-types';
 import type { AsyncSeriesHook } from 'tapable';
+import type { WorkAdmission } from '../../platform/work-fence.js';
+import {
+  createTeamMateMcpDelegate,
+  type TeamMateMcpDispatcherScope,
+} from '../agent/mcp.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
+import type { TurnAdmission } from '../agent/turn.js';
+import type { CompletionInitiator } from '../completion-router/index.js';
+import type { ChannelMcpDelegates } from '../mcp/types.js';
+import { createCronMcpDelegate } from '../scheduler/mcp.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
+import { createTeamMcpDelegate } from '../team/mcp.js';
+import type { TeamsPort } from '../team/teams-port.js';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import { DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
-import type { AgentServiceFactory } from '../agent/factory.js';
-import { dispatcherRuntimeId } from '../agent/runtime-id.js';
-import type { AgentService } from '../agent/service.js';
-import {
-  DISPATCHER_AGENT_NAME,
-  type AgentEntityIdentity,
-  type AgentEntityIdentityStatus,
-  type AgentEntityWorktreeIdentity,
-} from '../agent/identity.js';
-import type {
-  AgentIdentityCreateInput,
-  AgentIdentityUpdateInput,
-} from '../agent/store.js';
-import type {
-  TeammateAgentMcp,
-  TeammateServiceOptions,
-} from '../agent/service-types.js';
-import { SYSTEM_SOURCE } from '../submission-sources.js';
-import type { RestartIntentConsumer } from './restart-intent.js';
-import {
-  DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
-  DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
-} from './base-prompt.js';
 import {
   bundledDispatcherSkillRoot,
   bundledSharedSkillRoot,
   dispatcherDir,
 } from '../../platform/paths.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
+import type { AgentServiceFactory } from '../agent/factory.js';
+import {
+  DISPATCHER_AGENT_NAME,
+  type AgentEntityIdentity,
+  type AgentEntityIdentityStatus,
+  type AgentEntityWorktreeIdentity,
+} from '../agent/identity.js';
+import { dispatcherRuntimeId } from '../agent/runtime-id.js';
+import type {
+  TeammateAgentMcp,
+  TeammateServiceOptions,
+} from '../agent/service-types.js';
+import type { AgentService } from '../agent/service.js';
+import type {
+  AgentIdentityCreateInput,
+  AgentIdentityUpdateInput,
+} from '../agent/store.js';
+import { SYSTEM_SOURCE } from '../submission-sources.js';
+import {
+  DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
+  DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+} from './base-prompt.js';
+import type { RestartIntentConsumer } from './restart-intent.js';
 import type { DispatcherRuntimeStatus } from './types.js';
+
+interface DispatcherAgentOwner extends TeamMateMcpDispatcherScope {
+  readonly teams: TeamsPort;
+  readonly scheduler: SchedulerCommands;
+  readonly fence: WorkAdmission;
+}
 
 export interface DispatcherAgentOptions {
   id: string;
@@ -44,14 +63,12 @@ export interface DispatcherAgentOptions {
   agentRuntime: string;
   log: DreamuxLogger;
   /**
-   * The dispatcher Agent's own MCP surface, built fresh per launch by the
-   * dispatcher that owns the objects behind it. A supplier rather than a
-   * value because the delegates close over live services (this dispatcher's
-   * `ChannelService`) that must already be built by the time `build()` calls
-   * it.
+   * Fixed MCP infrastructure and actual collaborators. Tool delegates are
+   * assembled in `build`, after channel initialization and launch hooks.
    */
-  mcp: () => TeammateAgentMcp;
-  onPersisted: (identity: AgentEntityIdentity) => void;
+  mcp: Pick<TeammateAgentMcp, 'leases' | 'adminSocketPath'>;
+  dispatcher: DispatcherAgentOwner;
+  channels: ChannelMcpDelegates;
   agentServiceFactory: AgentServiceFactory;
   /** This Dispatcher's `launch` hook, run once per Agent construction. */
   launch: AsyncSeriesHook<[LaunchDraft]>;
@@ -69,7 +86,7 @@ export interface DispatcherAgentOptions {
  * owns the runtime lifecycle (start/resume/stop), the in-process Turn
  * lifecycle and `completionInput` as a delivery target, while
  * `DispatcherService` keeps the dispatcher-only concerns (channel sessions,
- * cross-service orchestration, MCP delegate assembly).
+ * cross-service orchestration). The holder assembles its own MCP delegates.
  *
  * The agent's runtime is resolved through the same `identity.agent_runtime ->
  * agents[]` path used by TeamLeader and TeamMate. Its `identity.json` is the
@@ -92,18 +109,14 @@ export class DispatcherAgent {
       cwd,
       worktree: dispatcherRootWorktreeIdentity(cwd),
     };
-    this.service = await this.opts.agentServiceFactory.upsert({
+    const unbuilt = await this.opts.agentServiceFactory.upsert({
       location: { dir: dispatcherDir(this.opts.id), expectedName: null },
       creation: dispatcherIdentityCreation(identityInput),
       reconcile: (existing) =>
         dispatcherIdentityReconcile(existing, identityInput),
-      // Computed after the identity write settles, matching this method's
-      // original ensure-then-compose order: a `launch` tap failure must still
-      // leave the dispatcher-root identity durable, the same as every other
-      // failure past that point.
-      options: () => this.dispatcherOptions(),
-      onPersisted: this.opts.onPersisted,
+      role: 'dispatcher',
     });
+    this.service = unbuilt.build(await this.dispatcherOptions());
     return this.service;
   }
 
@@ -113,7 +126,9 @@ export class DispatcherAgent {
    * `append`; plugin skill roots follow the bundled roots, fenced against
    * them.
    */
-  private async dispatcherOptions(): Promise<TeammateServiceOptions> {
+  private async dispatcherOptions(): Promise<
+    Omit<TeammateServiceOptions, 'role'>
+  > {
     const builtinSkills = [
       {
         name: 'dispatcher',
@@ -128,10 +143,23 @@ export class DispatcherAgent {
     ];
     const draft = await composeLaunchDraft(this.opts.launch, builtinSkills);
     return {
-      mcp: this.opts.mcp(),
+      mcp: {
+        ...this.opts.mcp,
+        delegates: [
+          ...this.opts.channels.mcpDelegates(
+            { kind: 'dispatcher' },
+            this.opts.dispatcher.fence,
+          ),
+          createTeamMcpDelegate({ teams: this.opts.dispatcher.teams }),
+          createTeamMateMcpDelegate({
+            kind: 'dispatcher',
+            dispatcher: this.opts.dispatcher,
+          }),
+          createCronMcpDelegate(this.opts.dispatcher.scheduler),
+        ],
+      },
       runtimeId: dispatcherRuntimeId(this.opts.id),
       // This Agent is the Dispatcher Service's own; the role follows from that.
-      role: 'dispatcher',
       loggerFields: {},
       skillSources: [...builtinSkills, ...draft.skillSources],
       disabledFeatures: [DISABLE_FEATURE_CRON],
@@ -152,6 +180,14 @@ export class DispatcherAgent {
       throw new Error(`dispatcher '${this.opts.id}' agent is not prepared`);
     }
     return agent;
+  }
+
+  completionRecipient(): CompletionInitiator {
+    return this.mustAgent();
+  }
+
+  submitInput(input: TeammateSubmitInput): Promise<TurnAdmission> {
+    return this.mustAgent().submitInput(input);
   }
 
   /**

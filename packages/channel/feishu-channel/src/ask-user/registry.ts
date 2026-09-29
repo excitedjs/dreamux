@@ -16,6 +16,7 @@
  * layer performs the delivery, matching how the access gate splits from its IO.
  */
 import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 import type {
   FeishuCardActionEvent,
@@ -28,10 +29,10 @@ import {
   DREAMUX_ASK_SUBMIT_ACTION,
 } from '../card-actions.js';
 import {
+  ASK_USER_CANCEL_LABEL,
   DREAMUX_ASK_OPTION_KEY,
   DREAMUX_ASK_QUESTION_KEY,
   DREAMUX_ASK_REQUEST_KEY,
-  ASK_USER_CANCEL_LABEL,
   answerLabel,
   buildAskUserCard,
   buildAskUserClosedCard,
@@ -52,24 +53,6 @@ const REQUEST_ID_BYTES = 8;
  * before the repaint has about 13 days of room; no extra margin is needed.
  */
 export const ASK_USER_CARD_TTL_MS = 24 * 60 * 60 * 1000;
-
-/** The timer seam, so tests can expire a round without waiting for one. */
-export interface AskUserTimers {
-  set(fn: () => void, ms: number): unknown;
-  clear(handle: unknown): void;
-}
-
-const realTimers: AskUserTimers = {
-  set(fn, ms) {
-    const handle = setTimeout(fn, ms);
-    // A waiting question must never be the reason a process stays alive.
-    (handle as { unref?: () => void }).unref?.();
-    return handle;
-  },
-  clear(handle) {
-    clearTimeout(handle as Parameters<typeof clearTimeout>[0]);
-  },
-};
 
 export interface AskUserOpened {
   readonly requestId: string;
@@ -120,7 +103,7 @@ export interface AskUserSettlement {
 
 /**
  * A round that closed on its own. Unlike a click, nothing is there to repaint
- * the card from a callback response, so the session patches the card in place
+ * the card from a callback response, so the card-actions owner patches the card in place
  * — at `settlement.cardMessageId`, the same id the answer is routed from.
  */
 export interface AskUserExpiry {
@@ -143,6 +126,7 @@ export type AskUserApplyResult =
     };
 
 export interface AskUserRegistry {
+  readonly events: EventEmitter<{ expired: [AskUserExpiry] }>;
   /**
    * Build a round and the card that asks it. The round is neither answerable
    * nor on the clock until `activate`, because a round this registry holds is
@@ -171,7 +155,7 @@ interface OpenRound {
   /** Where `messageId` landed, from the same send response — set together. */
   chatId?: string;
   threadId?: string | undefined;
-  timer?: unknown;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 function toast(
@@ -229,25 +213,15 @@ function expiredText(): string {
 }
 
 export interface AskUserRegistryOptions {
-  /**
-   * Called when a round closes on its own. The session delivers the settlement
-   * and repaints the card; the registry only decides that the round is over.
-   */
-  readonly onExpire?: (expiry: AskUserExpiry) => void;
   readonly ttlMs?: number;
-  readonly newRequestId?: () => string;
-  readonly timers?: AskUserTimers;
 }
 
 export function createAskUserRegistry(
   options: AskUserRegistryOptions = {},
 ): AskUserRegistry {
   const rounds = new Map<string, OpenRound>();
-  const timers = options.timers ?? realTimers;
+  const events = new EventEmitter<{ expired: [AskUserExpiry] }>();
   const ttlMs = options.ttlMs ?? ASK_USER_CARD_TTL_MS;
-  const newRequestId =
-    options.newRequestId ??
-    ((): string => randomBytes(REQUEST_ID_BYTES).toString('hex'));
 
   /** Take the round out of play and describe what Core should be told. */
   function closeRound(
@@ -259,7 +233,7 @@ export function createAskUserRegistry(
     },
   ): AskUserSettlement {
     rounds.delete(round.requestId);
-    if (round.timer !== undefined) timers.clear(round.timer);
+    if (round.timer !== undefined) clearTimeout(round.timer);
     const text =
       outcome === 'submitted'
         ? submittedText(round)
@@ -312,8 +286,9 @@ export function createAskUserRegistry(
   }
 
   return {
+    events,
     open({ text, questions }): AskUserOpened {
-      const requestId = newRequestId();
+      const requestId = randomBytes(REQUEST_ID_BYTES).toString('hex');
       const round: OpenRound = {
         requestId,
         text,
@@ -330,16 +305,17 @@ export function createAskUserRegistry(
             round.threadId = sent.threadId;
           }
           rounds.set(requestId, round);
-          round.timer = timers.set(() => {
+          round.timer = setTimeout(() => {
             // Already settled by a click? Then this timer lost the race and
             // the round is gone; `closeRound` on a stale round would report a
             // second settlement for one question.
             if (rounds.get(requestId) !== round) return;
-            options.onExpire?.({
+            events.emit('expired', {
               settlement: closeRound(round, 'expired'),
               card: buildAskUserClosedCard('expired', round.text),
             });
           }, ttlMs);
+          round.timer.unref();
         },
       };
     },
@@ -428,7 +404,7 @@ export function createAskUserRegistry(
 
     abandonAll(): void {
       for (const round of rounds.values()) {
-        if (round.timer !== undefined) timers.clear(round.timer);
+        if (round.timer !== undefined) clearTimeout(round.timer);
       }
       rounds.clear();
     },

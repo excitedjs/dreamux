@@ -12,15 +12,15 @@ import {
   hostRuntimePaths,
 } from '../../agent-runtime/index.js';
 import { resolveAgent, type ResolvedAgentConfig } from '../../config/config.js';
-import type {
-  AgentRuntimeGenerationLease,
-  AgentRuntimeStateStore,
-} from './runtime-state.js';
 import {
   assertUniqueMcpServerNames,
   mcpServerDescriptor,
 } from '../../mcp/launch.js';
 import { reprepareDeletedManagedWorktree } from '../worktree/workspaces.js';
+import type {
+  AgentRuntimeGenerationLease,
+  AgentRuntimeStateStore,
+} from './runtime-state.js';
 import {
   agentRoleNoun,
   type TeammateServiceDeps,
@@ -197,7 +197,7 @@ export class RuntimeGeneration {
             // Asked fresh, not a snapshot taken at construction: a sibling's
             // managed worktree occupancy can change between construction
             // and this reopen.
-            findManagedWorktreeOwner: this.deps.findManagedWorktreeOwner,
+            siblings: this.deps.siblings,
             worktrees: this.deps.worktrees,
             identity: current,
           }),

@@ -5,8 +5,8 @@
  * config addresses as `builtin:codex`. It constructs the provider on package
  * defaults: `AgentRuntimeProvider` has no `ref`/`descriptor` member (Core owns
  * registration identity in its registry, never echoed back to the provider),
- * and `CodexAgentRuntimeProviderOptions`'s process/client-factory and backoff
- * fields are test/embedder seams this plugin has no host-supplied value for.
+ * and the provider constructs its process/client directly. This plugin uses
+ * the provider's default restart backoff values.
  */
 import type { DreamuxPlugin } from '@excitedjs/dreamux-types';
 

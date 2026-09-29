@@ -5,7 +5,7 @@
  * conversation it was bound to and reads who else is in it; deciding what that
  * conversation routes to is a Dispatcher operation and lives elsewhere.
  */
-import type { FeishuToolContext, FeishuToolDef } from './types.js';
+import { listChatBots, type PeerBot } from '../chat-bots-store.js';
 import {
   asRecord,
   closedObjectSchema,
@@ -13,6 +13,7 @@ import {
   optionalString,
   requireString,
 } from './schema.js';
+import type { FeishuToolContext, FeishuToolDef } from './types.js';
 
 /** The Team this call belongs to, or `null` for the Dispatcher Agent. */
 function callerTeamName(ctx: FeishuToolContext): string | null {
@@ -82,11 +83,13 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
     };
   },
   async handle(ctx, input) {
-    const result = await ctx.session.sendText(input.chatId, input.text, {
+    const result = await ctx.session.outbound.sendText({
+      chatId: input.chatId,
+      text: input.text,
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
       callerTeamName: callerTeamName(ctx),
     });
-    return { message_ids: result.message_ids };
+    return { message_ids: result.messages.map((message) => message.messageId) };
   },
 };
 
@@ -130,12 +133,8 @@ export const reactDef: FeishuToolDef<ReactInput> = {
     };
   },
   async handle(ctx, input) {
-    const result = await ctx.session.react(
-      input.chatId,
-      input.messageId,
-      input.emoji,
-    );
-    return { reaction_id: result.reaction_id };
+    const reactionId = await ctx.session.outbound.react(input);
+    return { reaction_id: reactionId };
   },
 };
 
@@ -175,21 +174,18 @@ export const listChatBotsDef: FeishuToolDef<{ chatId: string }> = {
     return { chatId: requireString(obj, 'chat_id') };
   },
   async handle(ctx, input) {
-    const listing = await ctx.session.listKnownChatBots(input.chatId);
+    const listing = await listChatBots(ctx.session.chatBotsStore, input.chatId);
     return {
-      chat_id: listing.chat_id,
+      chat_id: input.chatId,
       known: listing.known.map(toJson),
       trusted: listing.trusted.map(toJson),
     };
   },
 };
 
-function toJson(bot: {
-  open_id: string;
-  name?: string;
-}): Record<string, string> {
+function toJson(bot: PeerBot): Record<string, string> {
   return {
-    open_id: bot.open_id,
+    open_id: bot.openId,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
   };
 }

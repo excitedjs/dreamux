@@ -18,6 +18,7 @@ import type {
   AgentRuntimeActivitySink,
   AgentRuntimeInterruptOutcome,
   AgentRuntimeSubmissionInput,
+  DreamuxLogger,
   JsonValue,
   RuntimeActivity,
   RuntimeAdmission,
@@ -50,7 +51,7 @@ export interface TurnManagerOptions {
   codec: CodexOutputSchemaCodec | null;
   reasoning: CodexReasoningEffort;
   activitySink: AgentRuntimeActivitySink;
-  log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  logger: DreamuxLogger;
 }
 
 export class TurnManager {
@@ -65,11 +66,7 @@ export class TurnManager {
   private tokenUsage: ThreadTokenUsage | null = null;
   private decisionTail: Promise<void> = Promise.resolve();
   private stopped = false;
-  private readonly log: TurnManagerOptions['log'];
-
-  constructor(private readonly opts: TurnManagerOptions) {
-    this.log = opts.log;
-  }
+  constructor(private readonly opts: TurnManagerOptions) {}
 
   /**
    * Admit one already-rendered submission. The manager holds no source ledger:
@@ -152,10 +149,9 @@ export class TurnManager {
       );
     } catch (error) {
       const normalized = asError(error);
-      this.log(
-        'error',
-        `turn/start submission failed for ${description}: ${normalized.message}`,
-        normalized,
+      this.opts.logger.error(
+        { description, err: normalized },
+        'turn/start submission failed',
       );
       this.inFlightNativeAdmissions.delete(admissionId);
       this.releaseCompletedRecords(admissionId);
@@ -346,7 +342,7 @@ export class TurnManager {
   private failProtocol(error: Error): void {
     const first = this.protocolFailure === null;
     this.protocolFailure ??= error;
-    this.log('error', error.message, error);
+    this.opts.logger.error({ err: error }, 'codex turn protocol failed');
     // Whatever codex had running dies with the connection, including a turn
     // this manager only ever saw items for, which has no record for the loop
     // below to reach. The first failure reports that end; later ones repeat

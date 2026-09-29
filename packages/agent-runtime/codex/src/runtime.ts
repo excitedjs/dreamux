@@ -1,17 +1,6 @@
 import { join } from 'node:path';
+import { allocateCodexSocketPath } from './internal/socket.js';
 
-import { CodexProcess, type CodexProcessExit } from './supervisor.js';
-import { CodexWsClient } from './rpc.js';
-import { performInitializeHandshake } from './handshake.js';
-import type {
-  ServerRequest,
-  ThreadResumeParams,
-  ThreadResumeResponse,
-  ThreadStartParams,
-  ThreadStartResponse,
-} from './types.js';
-import { TurnManager } from './turn-manager.js';
-import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
   AgentRuntimeIdentity,
@@ -24,11 +13,23 @@ import type {
   AgentRuntimeSubmissionInput,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
+import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
+import { performInitializeHandshake } from './handshake.js';
 import { codexSpawnEnv } from './paths.js';
-import { codexThreadInstructions } from './system-prompt.js';
-import { applyCodexSkillExtraRoots } from './skill-roots.js';
-import type { CodexRuntimeDeps } from './runtime-deps.js';
 import { CodexReasoningEffort } from './reasoning-effort.js';
+import { CodexWsClient } from './rpc.js';
+import type { CodexRuntimeDeps } from './runtime-deps.js';
+import { applyCodexSkillExtraRoots } from './skill-roots.js';
+import { CodexProcess, type CodexProcessExit } from './supervisor.js';
+import { codexThreadInstructions } from './system-prompt.js';
+import { TurnManager } from './turn-manager.js';
+import type {
+  ServerRequest,
+  ThreadResumeParams,
+  ThreadResumeResponse,
+  ThreadStartParams,
+  ThreadStartResponse,
+} from './types.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -217,11 +218,12 @@ export class CodexRuntime implements AgentRuntime {
       );
     }
     const cwd = this.deps.cwd;
-    const socketPath = this.deps.allocateSocketPath(this.dispatcherId);
+    const socketPath = allocateCodexSocketPath(
+      this.paths.runtimeSocketDirs(),
+      this.dispatcherId,
+    );
     const codexLogDir = join(this.paths.logsDir(), 'codex-app-server');
-    const factory =
-      this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
-    const process = factory({
+    const process = new CodexProcess({
       socketPath,
       cwd,
       stdoutLogPath: join(codexLogDir, `${this.dispatcherId}.log`),
@@ -238,10 +240,7 @@ export class CodexRuntime implements AgentRuntime {
     await process.start();
     this.assertGeneration(generation);
 
-    const clientFactory =
-      this.deps.codexClientFactory ??
-      ((sock) => new CodexWsClient({ socketPath: sock }));
-    const client = clientFactory(socketPath);
+    const client = new CodexWsClient({ socketPath });
     this.client = client;
     client.onClose((reason) => {
       if (this.client !== client) return;
@@ -277,7 +276,7 @@ export class CodexRuntime implements AgentRuntime {
       threadId: thread.thread.id,
       client: this.client,
       codec: this.deps.codec,
-      log: this.log,
+      logger: this.deps.logger,
       activitySink: this.deps.activitySink,
       reasoning: new CodexReasoningEffort(
         this.client,
@@ -293,7 +292,7 @@ export class CodexRuntime implements AgentRuntime {
     await applyCodexSkillExtraRoots({
       client: this.client,
       sources: this.deps.skillSources,
-      log: this.log,
+      logger: this.deps.logger,
     });
   }
 

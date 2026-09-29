@@ -13,10 +13,7 @@ import type { DreamuxPlugin } from '@excitedjs/dreamux-types';
 
 import type { FeishuApi } from './extension.js';
 import { FeishuExtensionRegistry } from './feishu-extensions.js';
-import {
-  buildFeishuChannelProvider,
-  type CreateFeishuChannelProviderOptions,
-} from './provider.js';
+import { buildFeishuChannelProvider } from './provider.js';
 
 declare module '@excitedjs/dreamux-types' {
   interface DreamuxPluginApis {
@@ -24,11 +21,9 @@ declare module '@excitedjs/dreamux-types' {
   }
 }
 
-export function createFeishuPlugin(
-  options: CreateFeishuChannelProviderOptions = {},
-): DreamuxPlugin {
+export function createFeishuPlugin(): DreamuxPlugin {
   const extensions = new FeishuExtensionRegistry();
-  const provider = buildFeishuChannelProvider(options, extensions);
+  const provider = buildFeishuChannelProvider(extensions);
   const api: FeishuApi = {
     extensions: { register: (extension) => extensions.register(extension) },
   };

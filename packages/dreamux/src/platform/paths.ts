@@ -39,20 +39,20 @@
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import {
+  delimiter,
   dirname,
   isAbsolute,
   join,
   relative,
   resolve,
   sep,
-  delimiter,
 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assertUnixSocketPathBudget } from '@excitedjs/dreamux-utils';
 
-import { pathExists } from './fs-errors.js';
 import { validateDispatcherId } from './dispatcher-id.js';
+import { pathExists } from './fs-errors.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(dirname(HERE));
@@ -534,8 +534,6 @@ export function standardExecDirs(options: ExecDirOptions): string[] {
   ]);
 }
 
-export type ExecDirProbe = (path: string) => Promise<boolean>;
-
 /**
  * Resolve the standard executable fallback list for one onboard/daemon-install
  * run. The portable fallbacks remain deterministic; the single platform
@@ -547,11 +545,10 @@ export type ExecDirProbe = (path: string) => Promise<boolean>;
  */
 export async function probeStandardExecDirs(
   options: ExecDirOptions,
-  probe: ExecDirProbe = pathExists,
 ): Promise<string[]> {
   const dirs = standardExecDirs(options);
   const homebrewDir = homebrewExecDir(options.platform);
-  if (homebrewDir !== null && (await probe(homebrewDir))) {
+  if (homebrewDir !== null && (await pathExists(homebrewDir))) {
     dirs.push(homebrewDir);
   }
   return dedupeExecDirs(dirs);

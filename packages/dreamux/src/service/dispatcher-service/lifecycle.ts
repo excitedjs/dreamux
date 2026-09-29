@@ -6,22 +6,22 @@ import {
   type DispatcherConfig,
 } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
-import { ServerShuttingDownError } from '../../platform/errors.js';
-import { InFlightWork } from '../../platform/in-flight-work.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
+import type { WorkFence } from '../../platform/work-fence.js';
+import type { TeammateCollection } from '../agent/index.js';
 import type { ChannelService } from '../channel-service/index.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { SchedulerService } from '../scheduler/index.js';
 import type { TeamCollection } from '../team/index.js';
-import type { TeammateCollection } from '../agent/index.js';
 import type { WorkflowService } from '../workflow-service/index.js';
 import type { DispatcherAgent } from './agent.js';
 
 interface DispatcherLifecycleOptions {
   dispatcherId: string;
+  fence: WorkFence;
   config: ConfigReader;
   /** This dispatcher's own config entry, resolved once by `Dispatchers`. */
   dispatcher: DispatcherConfig;
@@ -39,14 +39,11 @@ interface DispatcherLifecycleOptions {
  * Owns Dispatcher input-source preparation, startup state, and the one
  * terminal close.
  *
- * This is also the dispatcher's one admission gate (folding the former
- * standalone `DispatcherTaskDrain`): a single boolean fence publishes before
- * any close work runs, `admit()` is the one check every externally-admitted
- * operation crosses, and `isClosing()` is the same fact
- * `TeammateCollection`/`TeamCollection` read at construction so a spawn or a
- * Team create that was already admitted before `close()` ran can close itself
- * the instant it registers, rather than running unstopped until a sweep
- * reaches it.
+ * The held WorkFence owns dispatcher admission and admitted-work drain.
+ * Lifecycle raises it before any close work and drains it between runtime
+ * sweeps. Collections read that same closing fact when materialization ends,
+ * so an already-admitted spawn or Team create immediately closes the runtime
+ * it registered after the first sweep.
  */
 export class DispatcherLifecycle {
   private workspaceCwd: string | null = null;
@@ -58,15 +55,6 @@ export class DispatcherLifecycle {
    */
   private starting: Promise<void> | null = null;
   /**
-   * The permanent admission fence: there is no in-process restart, so this
-   * never reverts to `false` once `close()` publishes it. Kept as its own field
-   * rather than derived from `closing` below: `isClosing()` is a fact
-   * `admit()`, `TeammateCollection`, and `TeamCollection` all read directly,
-   * and it must hold even during the gap between a failed release and a
-   * retried one, which is exactly when `closing` is momentarily `null`.
-   */
-  private closed = false;
-  /**
    * The current — or last-attempted — release task. A resource release can
    * fail transiently (a socket blip closing one channel session) with every
    * other resource released cleanly; caching that rejection forever would
@@ -77,32 +65,15 @@ export class DispatcherLifecycle {
    * nothing is left to release twice once every step already returned
    * cleanly. This is a fence-plus-task pair rather than one nullable
    * `Promise` field only because `isClosing()` cannot itself revert across a
-   * retry (see `closed` above); an ordinary same-object operation (dissolve,
+   * retry (the shared WorkFence owns that permanent fact); an ordinary same-object operation (dissolve,
    * host stop, start) has no such external reader and stays one field.
    */
   private closing: Promise<void> | null = null;
-  private readonly admittedWork = new InFlightWork();
 
   constructor(private readonly opts: DispatcherLifecycleOptions) {}
 
-  /** Whether `close()` has been called. Never reverts to `false`. */
-  isClosing(): boolean {
-    return this.closed;
-  }
-
-  /**
-   * Run one externally-admitted operation. The one check every Channel
-   * Command, MCP call, and cron fire crosses before it runs; a task that
-   * crossed it before `close()` published the fence is tracked so `close()`
-   * can join it once its own sweep has stopped every runtime it can reach.
-   */
-  admit<T>(task: () => Promise<T>): Promise<T> {
-    this.assertAvailable();
-    return this.admittedWork.track(Promise.resolve().then(task));
-  }
-
   async start(): Promise<void> {
-    this.assertAvailable();
+    this.opts.fence.assertOpen();
     if (this.starting !== null) return this.starting;
     const promise = this.doStart();
     this.starting = promise;
@@ -118,8 +89,8 @@ export class DispatcherLifecycle {
    */
   close(): Promise<void> {
     if (this.closing !== null) return this.closing;
-    if (!this.closed) {
-      this.closed = true;
+    if (!this.opts.fence.isClosing()) {
+      this.opts.fence.close();
       // Published before any awaited work runs, so a caller reaching this
       // dispatcher from any angle — an admitted Command, a construction
       // path's own `isClosing()` read, a second `close()` call — sees the
@@ -167,7 +138,7 @@ export class DispatcherLifecycle {
    * dispatcher closed rather than stuck forever in neither state.
    */
   private async doStart(): Promise<void> {
-    this.assertAvailable();
+    this.opts.fence.assertOpen();
     try {
       this.opts.channels.assertRunnable();
       const workspaceCwd = await ensureDispatcherWorkspace(
@@ -183,8 +154,8 @@ export class DispatcherLifecycle {
       await this.opts.channels.build();
       // Hands every built session its Core port, subscribing it before its
       // external input can open (see the ordering note below).
-      await this.opts.channels.initialize(() => this.assertAvailable());
-      this.assertAvailable();
+      await this.opts.channels.initialize(this.opts.fence);
+      this.opts.fence.assertOpen();
       // Built last: `DispatcherAgent.build()` commits the agent as its own
       // final step, so a failure anywhere above — channel build or
       // initialize — leaves no agent for `mustAgent()`/`status()` to find,
@@ -192,23 +163,23 @@ export class DispatcherLifecycle {
       await this.opts.dispatcherAgent.build(workspaceCwd);
       this.workspaceCwd = workspaceCwd;
       await this.opts.teams.recoverWorktreeCleanup();
-      this.assertAvailable();
+      this.opts.fence.assertOpen();
       await this.opts.workflows.recover();
-      this.assertAvailable();
+      this.opts.fence.assertOpen();
       await this.opts.teams.recover();
-      this.assertAvailable();
+      this.opts.fence.assertOpen();
       await this.opts.dispatcherAgent.activateIfNeeded();
-      this.assertAvailable();
+      this.opts.fence.assertOpen();
       // Opens external input, one already-initialized session at a time; a
       // session is published as live only after its own start returns.
-      await this.opts.channels.start(() => this.assertAvailable());
-      this.assertAvailable();
+      await this.opts.channels.start(this.opts.fence);
+      this.opts.fence.assertOpen();
       await this.opts.workflows.start();
-      this.assertAvailable();
+      this.opts.fence.assertOpen();
       await this.opts.scheduler.start();
-      this.assertAvailable();
+      this.opts.fence.assertOpen();
       await this.opts.teams.startAdmissions();
-      this.assertAvailable();
+      this.opts.fence.assertOpen();
     } catch (error) {
       await this.closeAfterFailedTransition(error);
     }
@@ -256,7 +227,7 @@ export class DispatcherLifecycle {
     await this.sweepRuntimes(failures);
     // Every admitted task this dispatcher already let in is joined here, now
     // that the sweep above has stopped every runtime it could reach.
-    await collectShutdownFailure(failures, () => this.admittedWork.drain());
+    await collectShutdownFailure(failures, () => this.opts.fence.drain());
     // A second, idempotent pass of the same sweep: a pre-fence admission that
     // had not yet reached its runtime start during the first sweep can still
     // start — or, since `stopForHost()` fences admission only for its own
@@ -304,13 +275,5 @@ export class DispatcherLifecycle {
     await collectShutdownFailure(failures, async () => {
       await this.opts.dispatcherAgent.current?.stopForHost();
     });
-  }
-
-  private assertAvailable(): void {
-    if (this.isClosing()) {
-      throw new ServerShuttingDownError(
-        `dispatcher '${this.opts.dispatcherId}' is shutting down`,
-      );
-    }
   }
 }

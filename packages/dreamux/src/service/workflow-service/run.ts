@@ -4,14 +4,18 @@ import {
   errorMessage,
   isUnsupportedFeatureError,
 } from '@excitedjs/dreamux-utils';
+import { ForkedWorkflowRunner } from './runner-process.js';
 
-import type { WorkflowCompletionFact } from '../completion-router/index.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';
-import { throwSettledFailures } from '../../platform/shutdown-errors.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import type { Turn, TurnAdmission } from '../agent/turn.js';
-import type { LockedTeammate } from '../agent/service-types.js';
 import { workflowRunJournalPath } from '../../platform/paths.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import type { LockedTeammate } from '../agent/service-types.js';
+import type { Turn, TurnAdmission } from '../agent/turn.js';
+import type {
+  CompletionDeliveryPolicy,
+  CompletionInitiator,
+} from '../completion-router/index.js';
+import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import { WorkflowPersistenceError } from './errors.js';
 import {
   WorkflowJournal,
@@ -25,10 +29,7 @@ import {
   type WorkflowAgentStartMessage,
   type WorkflowRunnerChildMessage,
 } from './protocol.js';
-import type {
-  WorkflowRunnerFactory,
-  WorkflowRunnerHandle,
-} from './runner-process.js';
+import type { WorkflowRunnerHandle } from './runner-process.js';
 import { WorkflowSemaphore } from './semaphore.js';
 import { WorkflowRunStore } from './store.js';
 import type {
@@ -58,10 +59,10 @@ export interface WorkflowRunDeps {
   record: WorkflowRunRecord;
   store: WorkflowRunStore;
   teammates: WorkflowTeammateFactory;
-  createRunner: WorkflowRunnerFactory;
-  deliverTerminal: (completion: WorkflowCompletionFact) => Promise<void>;
+  runnerEntryPath: string;
+  completionDelivery: CompletionDeliveryPolicy;
+  recipient: CompletionInitiator;
   log: DreamuxLogger;
-  now?: (() => number) | undefined;
 }
 
 interface AgentCall {
@@ -113,7 +114,7 @@ export class WorkflowRun {
    * delivered, or once a stop made it not news: the initiator or its own scope
    * fence asked for the stop, so the party that ended the run would read it.
    */
-  private deliverTerminal: WorkflowRunDeps['deliverTerminal'] | null;
+  private recipient: CompletionInitiator | null;
   /** Set once, by whichever of {@link reserveStop}/{@link requestTerminal}
    * wins. */
   private terminalIntent: TerminalIntent | null = null;
@@ -141,12 +142,12 @@ export class WorkflowRun {
         runId: deps.record.run_id,
       }),
     );
-    this.deliverTerminal = deps.deliverTerminal;
+    this.recipient = deps.recipient;
     this.semaphore = new WorkflowSemaphore(deps.record.max_concurrency);
     this.settled = new Promise<void>((resolve) => {
       this.announceSettled = resolve;
     });
-    this.runner = deps.createRunner({
+    this.runner = new ForkedWorkflowRunner(deps.runnerEntryPath, {
       onMessage: (message) => this.receiveRunnerMessage(message),
       onExit: (exit) => {
         deps.log.info(
@@ -316,7 +317,7 @@ export class WorkflowRun {
    * race keeps its report. */
   private closeOnTerminalIntent(status: WorkflowTerminalStatus): void {
     this.semaphore.close(new Error(`workflow ${status}`));
-    if (status === 'stopped') this.deliverTerminal = null;
+    if (status === 'stopped') this.recipient = null;
   }
 
   /** The one retryable {@link finalize} task, shared by every caller. */
@@ -367,7 +368,7 @@ export class WorkflowRun {
         if (!this.terminalAccepting) return;
         if (message.kind === 'phase') this.record.phase = message.message;
         else this.record.last_log = message.message;
-        this.record.updated_at = this.now();
+        this.record.updated_at = Date.now();
         await this.persist(async () => {
           await this.journal.append({
             kind: message.kind,
@@ -417,7 +418,7 @@ export class WorkflowRun {
       await this.sendAgentError(message.index, errorMessage(error));
       return;
     }
-    const createdAt = this.now();
+    const createdAt = Date.now();
     const record: WorkflowAgentRecord = {
       index: message.index,
       name: null,
@@ -470,7 +471,7 @@ export class WorkflowRun {
       }
       call.record.status = 'running';
       call.record.phase = call.options.phase ?? this.record.phase;
-      this.record.updated_at = this.now();
+      this.record.updated_at = Date.now();
       await this.persist(() => this.deps.store.write(this.record));
       if (this.terminalRequested !== null) {
         await this.completeAgent(call, 'stopped', null, null);
@@ -500,7 +501,7 @@ export class WorkflowRun {
       call.handle = handle;
 
       call.record.name = handle.name;
-      const submittedAt = this.now();
+      const submittedAt = Date.now();
       this.record.updated_at = submittedAt;
       await this.persist(async () => {
         await this.journal.append({
@@ -644,7 +645,7 @@ export class WorkflowRun {
       status,
       result: status === 'completed' ? result : null,
       error,
-      settled_at: call.record.settled_at ?? this.now(),
+      settled_at: call.record.settled_at ?? Date.now(),
     };
     const candidate = call.resultCandidate;
     call.record.status = candidate.status;
@@ -739,7 +740,7 @@ export class WorkflowRun {
     );
 
     if (this.terminalCandidate === null) {
-      const endedAt = this.now();
+      const endedAt = Date.now();
       this.terminalCandidate = {
         ...structuredClone(this.record),
         status: requestedStatus,
@@ -766,9 +767,9 @@ export class WorkflowRun {
       this.unlockedHandles.add(handle);
     }
 
-    const deliverTerminal = this.deliverTerminal;
-    if (deliverTerminal !== null) {
-      await deliverTerminal({
+    const recipient = this.recipient;
+    if (recipient !== null) {
+      await this.deps.completionDelivery.deliver(recipient, {
         kind: 'workflow',
         source: 'workflow',
         runId: this.record.run_id,
@@ -787,7 +788,7 @@ export class WorkflowRun {
           2,
         ),
       });
-      this.deliverTerminal = null;
+      this.recipient = null;
     }
     this.deps.log.info(
       {
@@ -817,9 +818,5 @@ export class WorkflowRun {
     } catch (error) {
       throw new WorkflowPersistenceError(errorMessage(error));
     }
-  }
-
-  private now(): number {
-    return this.deps.now?.() ?? Date.now();
   }
 }

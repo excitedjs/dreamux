@@ -98,6 +98,11 @@ Key source: `/packages/dreamux/src/command/` (registry, schema/validation,
 `mustDispatcherId`), `/packages/dreamux/src/server/` (catalog composition,
 `CoreCommandHost`), `/packages/dreamux/src/admin/socket.ts`.
 
+The actual Server implements the command-host view; domain factories receive
+narrow structural views of it, not resolver closure bags. Its addressed lookup
+validates the caller id and current config before touching the collection
+accessor, preserving pre-start error precedence for direct embedding callers.
+
 ## MCP Protocol Boundary
 
 One Agent-facing stdio shim (`/packages/dreamux/src/mcp/shim.ts`) knows an

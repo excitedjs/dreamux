@@ -25,7 +25,7 @@ const FEISHU_COT_OPERATION_TIMEOUT_MS = 20_000;
 
 export interface FeishuCotIoOptions {
   readonly log: DreamuxLogger;
-  readonly cotClient: () => FeishuCotClient | undefined;
+  readonly cotClient: FeishuCotClient | undefined;
   readonly signal: AbortSignal;
 }
 
@@ -43,7 +43,7 @@ export class FeishuCotIo {
   constructor(private readonly opts: FeishuCotIoOptions) {}
 
   open(scope: FeishuCotIoScope): FeishuCotIoHandle | undefined {
-    const client = this.opts.cotClient();
+    const client = this.opts.cotClient;
     return client === undefined
       ? undefined
       : new FeishuCotIoHandle(this.opts.log, client, this.opts.signal, scope);

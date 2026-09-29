@@ -79,9 +79,10 @@ The dispatcher *has* an agent; it is not itself an Agent Runtime. Each
 its own), worktree manager, and completion-delivery policy its owning
 `TeamCollection` injects. The per-Team
 `TeammateCollection` is members-only: the TeamLeader lives at the Team root and
-is never cached in the collection's entity map. `TeamsPort.leaderScope()`
-(`DispatcherService.teams.leaderScope()`) returns a `TeamLeaderHandle` to admin
-and MCP team-leader callers, never the concrete `TeamService`.
+is never cached in the collection's entity map. The Team assembles its leader's
+tools from its own members, Workflows, scheduler, and dissolve operation. Channel
+tools receive the actual ChannelService and fences through neutral structural
+views. There is no leader-scope handle or lookup back through TeamCollection.
 
 One service class belongs in one file or directory; a class with helpers gets a
 directory whose `index.ts` is the class and whose siblings are its helpers.
@@ -385,10 +386,10 @@ Source:
 
 ### Completion Routing
 
-Completion delivery is captured by object and closure, not reconstructed through
-a dispatcher-wide key. A delivery-initiating action (`spawn`, `send`, or
-team-create-with-prompt) resolves its initiator before runtime admission and
-attaches one closure to the entity-owned `Turn`. After the winning terminal
+Completion delivery carries an actual recipient object, never a dispatcher-wide
+lookup key. A delivery-initiating action (`spawn`, `send`, or
+team-create-with-prompt) queries its owner before runtime admission and
+attaches the recipient to the entity-owned `Turn`. After the winning terminal
 outcome is selected, that Turn invokes the shared stateless
 `CompletionDeliveryPolicy`, which delivers at-most-once per completion token
 while preserving provider order — never keyed by native ids, completion text,
@@ -399,7 +400,7 @@ per-producer or per-recipient dedupe axis to keep.
 
 - the initiating action retains the target directly; there is no Turn id lookup
   map or terminal registry;
-- channel inbound and remote-control turns do not attach a completion closure,
+- channel inbound and remote-control turns do not attach a completion recipient,
   so they are not pushed;
 - one Turn starts at most one delivery task after outcome selection;
 - completion preparation and each submission attempt are deadline-bounded;
@@ -413,8 +414,8 @@ read at the moment delivery would start. The producer never learns that its
 owner is going away, and no teardown walks the producer population:
 
 - an entity reports a turn only while it is `active` and not under host
-  release (`AgentService` passes this as a closure into each `EntityTurn`
-  it constructs, read once at the moment delivery would start). A turn its
+  release (`EntityTurn` queries its actual AgentService owner's
+  `owesCompletion()` once at the moment delivery would start). A turn its
   own close, host stop, or dissolve ended is
   settled for convergence and dropped for good, so a later `ensureDelivery()`
   cannot revive it; a delivery already under way is never retracted. Both
@@ -422,21 +423,29 @@ owner is going away, and no teardown walks the producer population:
   the fence reads it when it settles, and host release still drains admissions
   when the native stop fails;
 - `CompletionDeliveryPolicy` reads the dispatcher admission gate
-  (`DispatcherLifecycle.isClosing()`) once per requested delivery, before
+  (`WorkFence.isClosing()`) once per requested delivery, before
   folding or queueing. `close()` — the one terminal close a failed `start()`
   reuses instead of a separate rollback — raises that gate synchronously, so
   nothing settling behind it, including a Team member's or leader's natural
   completion during a long Workflow teardown, reaches a closing owner. There
   is no in-process stop→start path: once `close()` has run, this dispatcher
   never accepts work again (R11);
-- a Team-scope recipient runs its delivery inside `TeamService.admit()`, so a
+- a Team-scope recipient runs its delivery inside `TeamService.admitTeam()`, so a
   dissolving Team refuses it with `TeamClosedError`;
 - a Workflow run stops owing its terminal report the moment a stop reserves
-  the `stopped` intent (`WorkflowRun` clears its `deliverTerminal` when it
+  the `stopped` intent (`WorkflowRun` clears its owed recipient when it
   reserves a stop); a completed or failed intent that won first keeps its
   report. A leader turn that completes naturally inside a
   dissolve's Workflow-stop window is still real news and reaches the
   dispatcher.
+
+The recipient query timing is part of this boundary. DispatcherAgent returns
+`mustAgent()` at the original initiating operation; a configured but disabled
+dispatcher therefore still fails before submitting a member's first turn.
+TeamService returns itself without an additional readiness check and performs
+its Team-only check during preparation and prepared submission. Adding a
+dispatcher check there would retract already-queued delivery. The stable Team
+object supplies FIFO identity without a separate recipient key.
 
 Source:
 
@@ -476,10 +485,18 @@ Dreamux-owned orchestration is exposed through MCP tools injected into runtime
 roles. Each surface is an in-server delegate owned by its own domain — Team,
 TeamMate, scheduler, workflow, and one per channel that publishes tools.
 
-The role→delegate decision lives in one place,
-`dispatcher-service/mcp-delegates.ts`. The Dispatcher Agent and a TeamLeader get
-different sets because they are different callers, not because a shared server
-filters by who is asking.
+The role owner assembles its delegates: DispatcherAgent during build, and
+`teamLeaderOptions` in `team/leader.ts` when TeamService builds its leader.
+Each holds the actual channel source and
+its own domain collaborators. Channel snapshots are taken after initialization.
+The different tool sets follow the callers' ownership, not a shared server's
+filter or a lookup back through TeamCollection.
+
+A live leader MCP lease can outlast the Team's closed-record write while
+earlier children stop. Lease validity therefore does not replace the actual
+Team's access policy. The per-entry order and admission spans of
+`admitLeaderTools(operation)` are owned by
+[`service/CLAUDE.md`](/packages/dreamux/src/service/CLAUDE.md).
 
 There is one Agent-facing MCP descriptor shape for every server: the same
 binary, the same `mcp` subcommand, the admin socket to reach, and an opaque
@@ -503,7 +520,8 @@ Source:
 - `/packages/dreamux/src/mcp/server.ts`
 - `/packages/dreamux/src/mcp/shim.ts`
 - `/packages/dreamux/src/service/mcp/`
-- `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/team/leader-mcp.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/agent/mcp.ts`
 - `/packages/dreamux/src/service/team/mcp.ts`

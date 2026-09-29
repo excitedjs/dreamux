@@ -41,7 +41,7 @@ never on `@excitedjs/dreamux` core.
   never both — stated on `FeishuRoutingDocument` and refused at both writes
   that could break it, each inside its own commit, so every caller meets it.
   Binding a single topic is unaffected, which is what provisioning installs.
-  A dissolved Team's routes are invalidated from the `team.closed` event.
+  A dissolved Team's routes are invalidated from `team.state` with `status: closed`.
 - Own the Feishu slash-command surface. A human message whose leading text
   (after mentions) starts with a known `/command` token is executed here; it is
   never delivered to any agent runtime, and no agent is asked to render the
@@ -115,6 +115,20 @@ never on `@excitedjs/dreamux` core.
   short reason in structured diagnostics, not inline XML.
 
 ## Session Resource Ownership
+
+The session composes and closes its actual owners. `FeishuTeamSubmitter` owns
+liveness, optimistic COT anchor claim, Core admission, and anchor retirement
+and release. `FeishuInboundRouter` owns delivery fallback and slash routing.
+Provisioning retains its first submission inside the guarded per-target run;
+waiters await that submission before reading the new binding.
+
+`FeishuCoreCommands` holds the invoker installed after routing loads. COT holds
+the constructed transport client and the session lifecycle. Outbound owns
+tracked binding notifications and suppression for topics without a root.
+Card actions own question sends and expiry delivery/repaint, observing the
+ask-user registry's local expiry emitter. Tool handlers use one owner view,
+map their own results, and enter the same MCP lifecycle fence for built-in and
+extension calls. No bot/transport factory override is exposed.
 
 `FeishuRouting` constructs its own store from dispatcher/channel identity and
 state directory. The session initializes routing before installing its Core

@@ -289,6 +289,7 @@ before the remaining stages run as one orchestration ("后面所有的PR，你�
 - R69 architecture first: "ok ，开始搞吧，主要还是以架构为主。然后我们再讨论最终的产品行为问题". Continue the reviewed architecture cleanup; discuss the remaining product behavior questions afterwards. The implementation boundary and deferred findings are recorded in the [ownership follow-up](artifacts/ownership-follow-up.md).
 - R70 review staffing: "评审的话不要老是拉 codex，你这台机器上，mimo、deepseek、claude 都是可用的异构模型。" Use heterogeneous reviewers. TeamLeader staffing choice: MiMo reviews ownership and architecture; DeepSeek reviews cross-module behavior preservation, alongside the already-started Codex/Claude review.
 - Communication cadence: "降低你的汇报频率，只有关键节点才用 reply 工具同步". Channel updates are limited to meaningful milestones, blockers, review outcomes, and delivery.
+- R71 complete data-flow ownership (2026-09-29): "为啥还是有一些 Deps 类型？这些类型里还是有闭包函数"; "onPersisted 这种状态同步为啥不能用 eventEmitter 来做呢？"; then "要做就要做到彻底，然后整个数据流这块用闭包是一个非常愚蠢的方案。明明我们有无数种其他的方式。" Continue the architecture task across the whole inter-component data flow, replacing closure-based ownership plumbing rather than stopping at the eight changes in PR #457. The [data-flow continuation](artifacts/data-flow-follow-up.md) records the current evidence, scope interpretation, and preservation requirements. The prior TeamLeader assumption that entity-specific callbacks could simply be retained is superseded; a notification's necessity does not justify its callback transport.
 
 ## Resolved by the rulings above
 

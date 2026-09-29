@@ -4,13 +4,12 @@
  * One delegate serves both callers, and they are two genuinely different
  * objects rather than one object told who is asking: a Dispatcher Agent's
  * delegate holds the real `DispatcherService` itself, a TeamLeader's holds
- * that Team's `TeamLeaderHandle` (each named here only through the narrow
+ * that Team (each named here only through the narrow
  * structural interface declared below, so this collection-tier file need not
- * import the concrete class or interface). The handle carries no lease of
- * its own: each surface it exposes (`teammates`, `workflows`) fences every
- * verb itself, against a concurrent dissolve, through its own
- * constructor-injected `admit` — this file only forwards a call to that
- * surface.
+ * import the concrete class or interface). The Team admits tool access at
+ * each former owner-lookup point; each child surface (`teammates`, `workflows`)
+ * then fences its own operation through the actual Team. The adapter keeps
+ * argument parsing in its original position relative to those checks.
  *
  * The Workflow tools are composed onto this same catalog and call dispatch
  * from `workflow-service/mcp.js`: they are advertised on this server because
@@ -30,10 +29,6 @@ import type { JsonSchema } from '@excitedjs/dreamux-types';
 
 import type { CommandPayload } from '../../command/payload.js';
 import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
-import { mapAgentActivityCommandError } from './activity.js';
-import type { AgentEntitySpawnResult } from './identity.js';
-import type { TeammateOps } from './types.js';
-import type { WorkflowOps } from '../workflow-service/index.js';
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
@@ -49,6 +44,7 @@ import type {
   McpDelegateResult,
   McpServerDelegate,
 } from '../mcp/types.js';
+import type { WorkflowOps } from '../workflow-service/index.js';
 import { WORKFLOW_TOOL_RECORDS } from '../workflow-service/mcp.js';
 import {
   REPO_REQUEST_SCHEMA,
@@ -56,6 +52,8 @@ import {
   repoWorktree,
 } from '../worktree/repo-request.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
+import { mapAgentActivityCommandError } from './activity.js';
+import type { AgentEntitySpawnResult } from './identity.js';
 import {
   agentCloseRequest,
   agentEntityLastQuery,
@@ -65,6 +63,7 @@ import {
   historyQuery,
   teammateReceiptSchema,
 } from './requests.js';
+import type { TeammateOps } from './types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
 
@@ -73,7 +72,7 @@ export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
  * delegate calls. `DispatcherService` satisfies this shape without either
  * file needing to name the other, so this collection-tier file needs no
  * import from the orchestration tier that owns the concrete class. Exported
- * so `dispatcher-service/mcp-delegates.ts`, the one caller that passes a
+ * so `dispatcher-service/agent.ts`, the one caller that passes a
  * `DispatcherService` in as this scope, can extend it with the few members
  * it also needs instead of restating these three.
  */
@@ -87,6 +86,7 @@ export interface TeamMateMcpDispatcherScope {
 interface TeamMateMcpTeamLeaderScope {
   readonly teammates: TeammateOps;
   readonly workflows: WorkflowOps;
+  admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
 }
 
 /** The dispatcher or Team collections this caller operates on. */
@@ -97,12 +97,7 @@ export type TeamMateMcpScope =
     }
   | {
       readonly kind: 'team_leader';
-      /**
-       * Resolved per call, never captured. A handle held across calls would
-       * keep answering for a Team object that has since closed, instead of
-       * reaching whichever Team currently holds that id.
-       */
-      readonly team: () => Promise<TeamMateMcpTeamLeaderScope>;
+      readonly team: TeamMateMcpTeamLeaderScope;
     };
 
 /** One tool this delegate advertises, paired with the handler that serves it. */
@@ -146,20 +141,18 @@ async function callTool(
 /**
  * The roster operations both scopes share, spelled once.
  *
- * `TeamLeaderHandle.teammates` is deliberately a structural match for the
+ * the Team's `teammates` is deliberately a structural match for the
  * dispatcher's `teammates` on exactly these verbs, so read and send paths need
  * no branch at all — only `spawn` differs, because only `spawn` differs.
  */
 async function teammates(scope: TeamMateMcpScope) {
-  return scope.kind === 'dispatcher'
-    ? scope.dispatcher.teammates
-    : (await scope.team()).teammates;
+  if (scope.kind === 'dispatcher') return scope.dispatcher.teammates;
+  return scope.team.admitLeaderTools(async () => scope.team.teammates);
 }
 
 async function workflows(scope: TeamMateMcpScope) {
-  return scope.kind === 'dispatcher'
-    ? scope.dispatcher.workflows
-    : (await scope.team()).workflows;
+  if (scope.kind === 'dispatcher') return scope.dispatcher.workflows;
+  return scope.team.admitLeaderTools(async () => scope.team.workflows);
 }
 
 /**
@@ -530,9 +523,8 @@ async function spawn(
   if (scope.kind === 'team_leader') {
     // A Team TeamMate always inherits the Team's shared workspace, which is why
     // the leader catalog does not advertise `repo` at all.
-    result = await (
-      await scope.team()
-    ).teammates.spawn({
+    const members = await teammates(scope);
+    result = await members.spawn({
       name: request.name,
       prompt: request.prompt,
       intent: request.intent,
