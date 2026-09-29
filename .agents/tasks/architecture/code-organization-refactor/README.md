@@ -32,8 +32,9 @@
   applied. This task remains in intake for the deferred product decisions and
   final coverage, rather than declaring the whole refactor complete.
 - Next action: discuss remaining product behavior decisions and complete final
-  test coverage on PR #453. Deliver this reviewed architecture continuation as
-  a child PR under the existing delivery ruling.
+  test coverage on PR #453. The reviewed architecture continuation is delivered
+  through [PR #457](https://github.com/excitedjs/dreamux/pull/457) under the
+  existing delivery ruling.
 - Related tasks: absorbs the solution of [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md) (issue #448) by operator ruling; builds on the cap ruling recorded in [suppress-owner-close-stop-pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md) and the cap decision in [Repository Guardrail Records](/.agents/tasks/architecture/repository-guardrails/README.md); the survey ran on the branch of [PR #453](https://github.com/excitedjs/dreamux/pull/453) (plugin system).
 
 ## Development approval
@@ -48,7 +49,7 @@
 
 - Pull request: This record travels in [PR #453](https://github.com/excitedjs/dreamux/pull/453)
   by operator ruling ("提交进 PR #453 的分支"); the ownership continuation is
-  delivered as a reviewed child PR into that branch.
+  [PR #457](https://github.com/excitedjs/dreamux/pull/457), targeting that branch.
 - Knowledge closeout: Complete for the ownership continuation. Updated
   [service topology](/.agents/domains/service-topology.md),
   [dispatcher orchestration](/.agents/domains/dispatcher-orchestration.md),
