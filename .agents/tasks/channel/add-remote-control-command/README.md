@@ -60,6 +60,7 @@
 
 ## Delivery
 
+- Pull request: https://github.com/excitedjs/dreamux/pull/456
 - Scope: Archive the requirement, design, three independent reviews, and
   adjudication. No product code or configuration changes are included.
 - Coverage limit: Source and version evidence is the 2026-09-21 snapshot.
