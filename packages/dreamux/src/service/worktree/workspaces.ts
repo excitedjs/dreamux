@@ -5,28 +5,19 @@ import {
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { AgentIdentityUpdateInput } from '../agent/store.js';
 import type {
-  SpawnTeamMateRequest,
+  SpawnTeamMateInput,
   TeamMateSharedWorkspace,
 } from '../agent/types.js';
 import type { AgentEntityIdentity } from '../agent/identity.js';
-import { reuseCwdWorktree, WorktreeManager } from './manager.js';
+import { WorktreeManager } from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {
   config: DreamuxConfig;
   worktrees: WorktreeManager;
   dispatcherId: string;
   name: string;
-  request: SpawnTeamMateRequest;
+  request: SpawnTeamMateInput;
 }): Promise<TeamMateSharedWorkspace> {
-  const loan = input.request.sharedWorkspace;
-  if (loan !== undefined) {
-    return {
-      ...loan,
-      worktree: reuseCwdWorktree(loan.runtimeCwd),
-      // Lent by its owner, so its owner keeps it.
-      createdCheckout: false,
-    };
-  }
   if (
     input.request.worktree === undefined &&
     (input.request.cwd === undefined || input.request.cwd.trim() === '')

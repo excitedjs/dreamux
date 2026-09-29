@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Bind fixed runtime context once and return persistence and cleanup operations to their owning services.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

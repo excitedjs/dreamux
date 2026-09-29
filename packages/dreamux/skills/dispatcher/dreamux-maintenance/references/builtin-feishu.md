@@ -15,6 +15,9 @@ which recipient. All three live in one server-owned document per configured
 channel at
 `~/.dreamux/state/<dispatcher-id>/feishu-routing.<channel-slug>.<digest>.json`,
 where the slug and digest are both derived from the configured channel `id`.
+`FeishuRouting` owns construction, loading, writes, and drain of this store.
+It loads before event subscriptions or extensions start and drains after
+extensions close.
 
 - It is fully server-owned. Do not edit, copy over, synthesize, or delete it as
   an operational repair, and do not hand-write a binding into it.
@@ -89,6 +92,9 @@ Feishu plugin's own state directory (`state/plugins/feishu/`, a plugin-scoped
 directory Core hands to every plugin), not the dispatcher's Feishu channel
 state — it is a different directory tree from `access.json`/`chat-bots.json`/
 the routing document, so an extension cannot land among Feishu's own files.
+The Feishu extension registry binds the plugin directory during server
+initialization and derives each session's extension path from it. Extension
+runtime state is held separately per channel session.
 Feishu passes the path and does not create it; the contents belong to that
 extension. Do not edit, copy over, or delete it as an operational repair.
 

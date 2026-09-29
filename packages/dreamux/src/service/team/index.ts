@@ -51,7 +51,11 @@ import {
   type TeamCollectionOptions,
 } from './types.js';
 import { allocateConcreteNameAsync } from '../name-allocator.js';
-import { TeamService, type TeamServiceDeps } from './service.js';
+import {
+  settleTeamWorktreeCleanup,
+  TeamService,
+  type TeamServiceDeps,
+} from './service.js';
 import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
 import { teamSummary } from './team-summary.js';
 import type { TeamMateSharedWorkspace } from '../agent/types.js';
@@ -72,8 +76,8 @@ import type { TeamsPort } from './teams-port.js';
  * `get` (private) is a get-or-rebuild factory (like `Dispatchers.get` /
  * `TeammateCollection.entityFor`): cached live service if any, else rebuilt
  * from the persisted {@link TeamRecord} and cached. Each `TeamService` OWNS its
- * per-team `TeammateCollection` (`teamScope: team_id`) built from the shared
- * deps forwarded here.
+ * per-team `TeammateCollection`, bound to the Team ID and workspace at
+ * construction from the shared dependencies forwarded here.
  *
  * Implements {@link TeamsPort} directly: every dispatcher-facing per-Team
  * operation gates itself on the injected `admitOperation` internally, so a
@@ -390,7 +394,10 @@ export class TeamCollection implements TeamsPort {
 
   private async reclaimTeamWorktree(teamId: string): Promise<void> {
     try {
-      await this.settleClosedWorktree(teamId);
+      await settleTeamWorktreeCleanup(
+        this.store.handle(teamId),
+        this.worktrees,
+      );
     } catch (error) {
       this.opts.log.error(
         {
@@ -401,55 +408,6 @@ export class TeamCollection implements TeamsPort {
         'Team managed worktree cleanup recovery failed',
       );
     }
-  }
-
-  /**
-   * Reclaim the managed checkout a closed Team still owes, from its record
-   * alone.
-   *
-   * A closed Team is a record and nothing else: no `TeamService` is
-   * constructed here, because there is no live Team left to construct. The
-   * dissolve that just closed one (via the `settleWorktreeCleanup` callback
-   * `TeamServiceDeps` gives its `TeamService`) and this collection's own
-   * startup sweep both reach this same method and do exactly the same thing,
-   * since the record is the only input either of them has.
-   *
-   * The Team's record is the only owner of that checkout and the only place
-   * its result is written: the Agents that ran inside the directory never
-   * held a copy of this fact, so there is nothing downstream to notify. A
-   * failure throws without writing a second fact — the `cleanup-pending` one
-   * stands and the next start finds the same work to do, which is why there is
-   * no retry ledger.
-   */
-  private async settleClosedWorktree(teamId: string): Promise<void> {
-    const record = await this.store.get(teamId);
-    if (
-      record === null ||
-      record.worktree.cleanup_state !== 'cleanup-pending'
-    ) {
-      return;
-    }
-    const cleaned = await this.worktrees.cleanup(
-      {
-        source_cwd: record.repo_cwd,
-        source_repo: record.source_repo,
-        worktree: record.worktree,
-      },
-      { force: record.worktree_cleanup_force },
-    );
-    if (cleaned.cleanup_state === 'retained-error') {
-      throw new Error(
-        cleaned.cleanup_error ?? 'managed worktree cleanup failed',
-      );
-    }
-    // The authorization goes with the pending work it authorized. No
-    // `TeamService` holds this Team's handle open right now (it is closed),
-    // so this mints one just for this write, same as `depsBase` does for a
-    // live Team.
-    await this.store.handle(teamId).update({
-      worktree: { ...cleaned, cleanup_error: null },
-      cleanupForce: false,
-    });
   }
 
   /**
@@ -878,7 +836,6 @@ export class TeamCollection implements TeamsPort {
       // Bound to this Team's own id: the service can publish and merge its
       // own record but can never address another Team's by id.
       record: this.store.handle(teamId),
-      settleWorktreeCleanup: (id) => this.settleClosedWorktree(id),
     };
   }
 

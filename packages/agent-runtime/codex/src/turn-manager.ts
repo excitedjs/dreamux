@@ -40,8 +40,7 @@ interface NativeTurnRecord {
 }
 
 export interface TurnManagerOptions {
-  dispatcherId: string;
-  getThreadId(): string | null;
+  threadId: string;
   client: CodexWsClient;
   /**
    * The session-bound output schema codec, compiled once when the runtime was
@@ -51,7 +50,7 @@ export interface TurnManagerOptions {
   codec: CodexOutputSchemaCodec | null;
   reasoning: CodexReasoningEffort;
   activitySink: AgentRuntimeActivitySink;
-  log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
 export class TurnManager {
@@ -66,16 +65,10 @@ export class TurnManager {
   private tokenUsage: ThreadTokenUsage | null = null;
   private decisionTail: Promise<void> = Promise.resolve();
   private stopped = false;
-  private readonly log: NonNullable<TurnManagerOptions['log']>;
+  private readonly log: TurnManagerOptions['log'];
 
   constructor(private readonly opts: TurnManagerOptions) {
-    this.log =
-      opts.log ??
-      ((level, message, error) => {
-        const prefix = `[turn-manager ${opts.dispatcherId}] ${level}`;
-        if (error === undefined) console.error(prefix, message);
-        else console.error(prefix, message, error);
-      });
+    this.log = opts.log;
   }
 
   /**
@@ -97,8 +90,8 @@ export class TurnManager {
           ([, record]) =>
             record.terminal === null && record.completion === null,
         );
-      const threadId = this.opts.getThreadId();
-      if (active === undefined || threadId === null) return { status: 'idle' };
+      const threadId = this.opts.threadId;
+      if (active === undefined) return { status: 'idle' };
       await interruptTurn(this.opts.client, threadId, active[0]);
       return { status: 'interrupted' };
     });
@@ -134,12 +127,7 @@ export class TurnManager {
     if (this.stopped) return { status: 'stopped' };
     if (this.protocolFailure !== null)
       return { status: 'failed', error: this.protocolFailure };
-    const threadId = this.opts.getThreadId();
-    if (threadId === null)
-      return {
-        status: 'failed',
-        error: new Error('input submitted without thread_id'),
-      };
+    const threadId = this.opts.threadId;
     let asked: SubmissionEffort;
     try {
       asked = await this.opts.reasoning.effortFor(text);
@@ -150,7 +138,7 @@ export class TurnManager {
     if (this.protocolFailure !== null)
       return { status: 'failed', error: this.protocolFailure };
     const deferred = createRuntimeSubmission();
-    this.ensureCollector(threadId);
+    this.ensureCollector();
     const admissionId = this.nextNativeAdmission++;
     this.inFlightNativeAdmissions.add(admissionId);
     let response: Awaited<ReturnType<typeof submitTurnStart>>;
@@ -204,19 +192,24 @@ export class TurnManager {
    * manager is built (`CodexRuntime` resolves the thread and only then
    * constructs its `TurnManager`), so `threadId` never changes across calls.
    */
-  private ensureCollector(threadId: string): void {
+  private ensureCollector(): void {
     if (this.collector !== null) return;
-    this.collector = subscribeTurnCollection(this.opts.client, threadId, {
-      onTokenUsage: (usage) => {
-        this.tokenUsage = usage ?? null;
+    this.collector = subscribeTurnCollection(
+      this.opts.client,
+      this.opts.threadId,
+      {
+        onTokenUsage: (usage) => {
+          this.tokenUsage = usage ?? null;
+        },
+        onItemStarted: (turnId, item) =>
+          this.observeItem(turnId, item, 'started', Date.now()),
+        onItemCompleted: (turnId, item, occurredAt) =>
+          this.observeItem(turnId, item, 'completed', occurredAt),
+        onTerminal: (turnId, terminal) =>
+          this.observeTerminal(turnId, terminal),
+        onUnscopedFailure: (error) => this.failProtocol(error),
       },
-      onItemStarted: (turnId, item) =>
-        this.observeItem(turnId, item, 'started', Date.now()),
-      onItemCompleted: (turnId, item, occurredAt) =>
-        this.observeItem(turnId, item, 'completed', occurredAt),
-      onTerminal: (turnId, terminal) => this.observeTerminal(turnId, terminal),
-      onUnscopedFailure: (error) => this.failProtocol(error),
-    });
+    );
   }
 
   private bindSubmission(turnId: string, deferred: SubmissionDeferred): void {

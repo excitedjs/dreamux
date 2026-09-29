@@ -57,7 +57,7 @@ description: "Dreamux host operation notes. Load when diagnosing or operating dr
 | Built-in bootstrap plugin | Enabling `builtin:bootstrap`, or diagnosing its `.workspace/identity.md`, `user.md`, and `bootstrap.md` files and what the Dispatcher and TeamLeaders receive from them. | [Built-in bootstrap](references/builtin-bootstrap.md) |
 | Built-in Codex config | Inspecting or changing the current `builtin:codex` Agent Runtime provider config. | [Built-in Codex](references/builtin-codex.md) |
 | Built-in Claude Code config | Inspecting or changing the current `builtin:claude-code` Agent Runtime provider config. | [Built-in Claude Code](references/builtin-claude-code.md) |
-| Built-in Feishu credentials | Inspecting or changing the current `builtin:feishu` Channel credential config. | [Built-in Feishu](references/builtin-feishu.md) |
+| Built-in Feishu configuration and state | Inspecting or changing `builtin:feishu` credentials, or diagnosing Channel-owned routing, peer-bot trust, and extension state. | [Built-in Feishu](references/builtin-feishu.md) |
 | Feishu access V3 | Diagnosing Feishu access policy or safely editing current V3 `access.json`, including trusted chats and `/introduce`. | [Feishu access V3](references/feishu-access-v3.md) |
 
 ## Reporting

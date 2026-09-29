@@ -50,11 +50,7 @@ export interface CreateFeishuChannelProviderOptions {
 export function createFeishuChannelProvider(
   options: CreateFeishuChannelProviderOptions = {},
 ): ChannelProvider<FeishuChannelConfig> {
-  return buildFeishuChannelProvider(
-    options,
-    new FeishuExtensionRegistry(),
-    () => undefined,
-  );
+  return buildFeishuChannelProvider(options, new FeishuExtensionRegistry());
 }
 
 /**
@@ -65,15 +61,6 @@ export function createFeishuChannelProvider(
 export function buildFeishuChannelProvider(
   options: CreateFeishuChannelProviderOptions,
   extensions: FeishuExtensionRegistry,
-  /**
-   * The Feishu plugin's own state directory, read lazily because it is set
-   * only once the plugin host's `server()` phase runs, which is always after
-   * this provider is built but always before any session actually
-   * initializes. `createFeishuChannelProvider` above has no plugin host at
-   * all, so it supplies a constant `undefined` — its registry can never hold
-   * an extension, so nothing ever reads the value.
-   */
-  pluginStateDir: () => string | undefined,
 ): ChannelProvider<FeishuChannelConfig> {
   return {
     config: {
@@ -173,7 +160,6 @@ export function buildFeishuChannelProvider(
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log,
         extensions,
-        pluginStateDir,
         ...(options.botFactory !== undefined
           ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
           : {}),

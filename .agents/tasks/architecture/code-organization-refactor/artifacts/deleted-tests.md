@@ -3619,12 +3619,14 @@ to wake'`.
 Unlike the other six whole-file deletions in this stage, this class was not
 renamed-in-place: Stage 6b's commit message states plainly that
 `TeamWorktreeCleanup` "fold[s] into `TeamCollection`" — there is no standalone
-`TeamWorktreeCleanup` class or `worktree-cleanup.ts` file anywhere in current
-`src/` to re-point an import to. Verified this stage: the folded logic is
-`service/team/index.ts`'s private `settleClosedWorktree`/`reclaimTeamWorktree`
-methods (lines ~397-459), which read the same `cleanup_state ===
-'cleanup-pending'` fact and call the same `WorktreeManager.cleanup()` the
-deleted class did. Two more imports in the same file are also stale and
+`TeamWorktreeCleanup` class or `worktree-cleanup.ts` file to re-point an import
+to. At deletion time, the folded logic was in `service/team/index.ts`'s
+private `settleClosedWorktree`/`reclaimTeamWorktree` methods. The architecture
+continuation moves pending cleanup to `settleTeamWorktreeCleanup` in
+`service/team/service.ts`; restoration must exercise that current owner and
+the current R62/R67 ordering. It still reads the `cleanup_state ===
+'cleanup-pending'` fact and calls `WorktreeManager.cleanup()`. Two more
+imports in the deleted file are also stale and
 would need fixing on restore: `TeamStore` from
 `'../src/service/team-collection/store.js'` (now `service/team/store.js`)
 and `TeamRecord` from `'../src/service/team-collection/types.js'` (now
@@ -3646,10 +3648,17 @@ private submitDissolve, which itself is the only call site that invokes
 .dissolve('` — **behavior**, same disposition; restore with a spy on
   `.dissolve()` call count across both entry points, per the doc's own
   suggestion.
-- All other 16 cases — **behavior**, real constructed-object tests (a real
-  temp git repo + `WorktreeManager` + `TeamClosing`/`TeamService` harness)
-  entirely outside the audit's source-text inventory; contract fully holds,
-  restore verbatim once the three import paths above are fixed: `'a
+- The remaining cases were **behavior**, real constructed-object tests (a real
+  temp git repo + `WorktreeManager` + `TeamClosing`/`TeamService` harness),
+  entirely outside the audit's source-text inventory. The case names below
+  preserve what was deleted; they are not a direction to restore the old
+  lifecycle verbatim. R62/R67 supersede their pre-close/post-stop ordering:
+  precheck passes, the record becomes closed, then child services are
+  destroyed serially and worktree cleanup runs. A dirty worktree discovered
+  after the closed write retains the directory without reopening the Team.
+  Restore the force protections and record-only cleanup coverage under that
+  current order, and replace the caller-specific ordering expectations.
+  The deleted names were: `'a
 dispatcher-triggered dissolve rechecks the worktree after every runtime
 stops'`, `'a TeamLeader self-dissolve stops its other children first,
 checks while it is still alive, then stops itself'`, `'the post-stop
@@ -3671,10 +3680,9 @@ the final record write fails'`, `'does nothing when the record has no
 pending cleanup — no worktree call, no write'`, `'reclaims a pending
 worktree with the force authorization the pending record carries, then
 clears it'` (this and the next two cases exercise the folded
-  `settleClosedWorktree` logic directly, so restoration also needs whatever
-  harness seam the pre-fold test used to reach `TeamWorktreeCleanup.settle`
-  directly to instead reach it through `TeamCollection`'s private methods,
-  or a narrower public entry point if one exists by the final pass), `'throws
+  record-based settlement logic directly, so restoration must use its current
+  owning entry instead of reviving `TeamWorktreeCleanup` or reaching through
+  `TeamCollection`'s private methods), `'throws
 without writing a second fact when the reclaim itself fails, leaving the
 pending record standing for the next start'`.
 

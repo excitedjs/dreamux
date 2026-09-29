@@ -175,9 +175,14 @@ the Team.
   failures, then worktree cleanup; a failure after the `closed` write is
   logged, never rolled back), the abandoned-creation cleanup (the same
   destroy routine, reached after abandonment's own `closed` write), and the
-  host sweep, all taking the TeamLeader as a plain argument rather than
-  through a leader-holder callback — the Team holds its leader for its whole
-  life once `createNew`/`rebuild` succeed, so there is no lazy rebuild path.
+  host sweep. The module-level `settleTeamWorktreeCleanup` accepts the loaded
+  Team record handle and worktree manager; live dissolve, abandonment, and the
+  collection's background recovery sweep all call it. A retained-error leaves
+  cleanup pending without writing a second fact. The pre-record checkout
+  rollback stays with collection creation. Child destruction takes the held
+  TeamLeader directly rather than through a leader-holder callback — the Team
+  holds its leader for its whole life once `createNew`/`rebuild` succeed, so
+  there is no lazy rebuild path.
   Its retirement broadcast is `readonly closed: Promise<TeamClosedFact>`,
   resolved once the dissolve's (or abandonment's) destroy pass has run,
   succeeded or not — not at the moment the `closed` record itself lands — so a
@@ -189,15 +194,15 @@ the Team.
   collection tier below. `TeamLeaderHandle` is a plain data type declared in
   the store-tier `types.ts` (it names no service- or collection-tier type of
   its own), and `types.ts` is where `teams-port.ts` reads it from; its
-  `teammates` field is typed `TeamLeaderTeammateOps`, a
-  `Pick<TeammateOps, ...>` declared once in `agent/types.ts` and shared with
-  the TeamMate MCP delegate's own team-leader scope (`agent/mcp.ts`) instead
-  of each declaring its own copy. The
-  collection tier (`index.ts`, `commands.ts`, `mcp.ts`) is
+  `teammates` field uses the same `TeammateOps` as a dispatcher.
+  The member collection binds `{ id, workspace }` once for a Team, or `null`
+  for dispatcher members. Ordinary and Workflow creation both use that scope;
+  Team members always record a reuse-cwd workspace and never reclaim the Team
+  checkout. The collection tier (`index.ts`, `commands.ts`, `mcp.ts`) is
   `TeamCollection`: one materialization cache (construction dedup,
-  live-instance eviction, and the closed-Team worktree reclamation sweep
-  merged into the same class) plus a private not-materialized Team list/
-  summary/history projection and the Team Commands and MCP delegate.
+  live-instance eviction, and the closed-Team worktree recovery sweep) plus a
+  private not-materialized Team list/summary/history projection and the Team
+  Commands and MCP delegate.
   `TeamCollection`
   implements `TeamsPort` directly (no `.port`/`.commands` adapter object,
   the same shape `SchedulerService` uses for `SchedulerCommands`): every
@@ -205,15 +210,11 @@ the Team.
   which fences once, opens the Team, and hands back that `TeamService`'s own
   `leaderScope()` surface unwrapped (`teammates`/`workflows` exposed
   directly, each already fencing itself through its own
-  constructor-injected `admit`, plus one real closure for `spawnTeamMate`'s
-  shared-workspace injection) — for admin/MCP team-leader callers to reach
+  constructor-injected `admit`) — for admin/MCP team-leader callers to reach
   through `DispatcherService.teams` (no forwarding method on
   `DispatcherService` itself) — gates itself on the injected `admitOperation`
-  internally, never the concrete `TeamService`. This
-  directory merge is a code-location, ownership, and internal-API change
-  only: `record.json`'s shape, field meanings, and owner are unchanged, so no
-  `packages/dreamux/skills/dispatcher/dreamux-maintenance/` update accompanies
-  it.
+  internally, never the concrete `TeamService`. `record.json` keeps its
+  existing shape and field meanings.
 - **`agent/` + `completion-router/`** — `agent/` is one directory, files
   ordered by R7's declared direction rather than by the class-plus-helpers
   rule above: store → service → collection. Two
@@ -249,7 +250,10 @@ the Team.
   close; its retirement broadcast is `readonly closed: Promise<TeammateClosedFact>`,
   resolved once on close, and it
   is constructed per-entity by `AgentServiceFactory`, the per-dispatcher
-  factory that owns the shared `AdmissionLedger`. `channel-submission.ts` (the
+  factory that owns the shared `AdmissionLedger` and binds the live config
+  reader, provider catalog, projection, worktree manager, and logger once.
+  Each create/open/upsert supplies only location, identity policy, role options,
+  publication, and any live sibling occupancy query. `channel-submission.ts` (the
   Channel-facing submission reader) sits in this tier because it needs
   `submission.ts`, not the store or collection tier. The collection tier
   (`index.ts`, `commands.ts`, `mcp.ts`, `system-prompt.ts`, `errors.ts`) is

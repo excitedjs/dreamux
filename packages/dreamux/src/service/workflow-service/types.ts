@@ -2,17 +2,17 @@ import type {
   CreateLockedTeammateOptions,
   LockedTeammate,
 } from '../agent/service-types.js';
-import type { SpawnTeamMateRequest } from '../agent/types.js';
+import type { SpawnTeamMateInput } from '../agent/types.js';
 
 export type WorkflowCallerKind = 'dispatcher' | 'team_leader';
 
 /** How a Workflow run materializes the locked TeamMate one of its agent
  * calls needs — implemented by whichever collection owns this scope
- * (`TeammateCollection` for a dispatcher scope, a Team's own workspace-loan
- * closure for a Team scope). */
+ * (the scoped `TeammateCollection`, with dispatcher admission wrapped by
+ * its owner for dispatcher-level runs). */
 export interface WorkflowTeammateFactory {
   createLocked(
-    input: SpawnTeamMateRequest,
+    input: SpawnTeamMateInput,
     options?: CreateLockedTeammateOptions,
   ): Promise<LockedTeammate>;
 }

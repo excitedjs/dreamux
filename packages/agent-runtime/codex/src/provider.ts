@@ -141,7 +141,7 @@ export function createCodexAgentRuntimeProvider(
         allocateSocketPath: (id) =>
           allocateCodexSocketPath(paths.runtimeSocketDirs(), id),
         codexBinPath: resolveCodexBinPath(codexConfig.bin),
-        resolveExtraArgs: () => runtimeArgs,
+        extraArgs: runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,
         // context.skillSources is a required field on AgentRuntimeCreateContext

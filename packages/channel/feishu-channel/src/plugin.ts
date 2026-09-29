@@ -28,18 +28,7 @@ export function createFeishuPlugin(
   options: CreateFeishuChannelProviderOptions = {},
 ): DreamuxPlugin {
   const extensions = new FeishuExtensionRegistry();
-  // Filled by `server()`, read by an extension's session-level initialize —
-  // always later, since core runs every plugin's `server` before the first
-  // Dispatcher (and so the first channel session) exists. Same
-  // supplier-resolved-later idiom as the dispatcher agent's own
-  // `mcp: () => TeammateAgentMcp`: the value does not exist when this factory
-  // runs, only by the time something actually calls the supplier.
-  let pluginStateDir: string | undefined;
-  const provider = buildFeishuChannelProvider(
-    options,
-    extensions,
-    () => pluginStateDir,
-  );
+  const provider = buildFeishuChannelProvider(options, extensions);
   const api: FeishuApi = {
     extensions: { register: (extension) => extensions.register(extension) },
   };
@@ -50,7 +39,7 @@ export function createFeishuPlugin(
       host.channelProviders.contribute('feishu', provider);
     },
     server(host) {
-      pluginStateDir = host.stateDir;
+      extensions.initialize(host.stateDir);
     },
   };
 }

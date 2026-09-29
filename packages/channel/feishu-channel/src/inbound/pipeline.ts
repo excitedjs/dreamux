@@ -5,9 +5,8 @@
  * the session class owns bot lifecycle and construction.
  *
  * Owns the full onMessage flow: introduce/trusted-bot injection, the
- * two-lock access gate (LOCK-1 gate compute + LOCK-2 pair merge after send),
- * and the delivery path. Access policy decides whether a message may be
- * interpreted at all; routing then decides where the interpreted message goes,
+ * access decisions and send-before-save pairing IO, and the delivery path.
+ * Access policy decides whether a message may be interpreted at all; routing then decides where the interpreted message goes,
  * and the two stay separate — an allowed message with no route is not
  * delivered anywhere. `FeishuInboundHandle` is this module's own narrow view
  * of the session — the collaborators an inbound event actually reaches, not
@@ -48,25 +47,15 @@ import {
 import {
   detectIntroduce,
   introduceAckText,
-  introduceDenyReason,
   introducedPeers,
 } from '../introduce.js';
 import {
   detectFeishuSlashCommand,
   type FeishuSlashCommandInvocation,
 } from '../feishu-slash-commands.js';
-import {
-  PAIRING_TTL_MS,
-  PAIRING_TOKEN_REGEX,
-  type DispatcherAccessState,
-  type PendingPairingEntry,
-} from '../access/state.js';
-import {
-  dreamuxFeishuGate,
-  type GateAction,
-  type GateInbound,
-  type GateResult,
-} from '../access/gate.js';
+import { PAIRING_TOKEN_REGEX } from '../access/state.js';
+import type { GateInbound } from '../access/gate.js';
+import type { FeishuAccess } from '../access/index.js';
 import { buildPairingApprovalCard } from '../cards/pairing.js';
 import {
   chatSubmission,
@@ -91,7 +80,7 @@ export interface FeishuInboundHandle {
   readonly dispatcherId: string;
   readonly attachmentCacheDir: string;
   readonly bot: FeishuBot;
-  readonly accessStore: TransactionalStore<DispatcherAccessState>;
+  readonly access: FeishuAccess;
   readonly chatBotsStore: TransactionalStore<ChatBotsState>;
   readonly botDisplayName: string;
   readonly targetRouter: FeishuInboundTargeting;
@@ -192,13 +181,16 @@ export async function onMessage(
     return;
   }
 
-  await h.accessStore.load();
-  const access = h.accessStore.current;
+  const access = await h.access.inboundPolicy({
+    chatType: classification.chatType,
+    chatId: event.chatId,
+    senderId: event.senderId,
+  });
 
   if (
     classification.chatType === 'group' &&
     classification.senderKind === 'bot' &&
-    access.group.allow_chats.includes(event.chatId)
+    access.observeBots
   ) {
     await observeKnownBot(h.chatBotsStore, event.chatId, {
       openId: event.senderId,
@@ -206,11 +198,7 @@ export async function onMessage(
     });
   }
   if (detectIntroduce(event.messageType, event.rawContent, event.mentions)) {
-    const denyReason = introduceDenyReason(access, {
-      chatType: classification.chatType,
-      chatId: event.chatId,
-      senderId: event.senderId,
-    });
+    const denyReason = access.introduceDenyReason;
     if (denyReason === null) {
       const peers: PeerBot[] = introducedPeers(event.mentions, h.bot.botOpenId);
       if (peers.length > 0) {
@@ -257,26 +245,7 @@ export async function onMessage(
     bot_mentioned: botMentioned,
   };
 
-  // LOCK-1: compute gate; commit for deliver/drop; for pair we do
-  // send-before-save, so the store keeps the pre-pair value unchanged here.
-  let action!: GateAction;
-  let logs!: GateResult['logs'];
-  await h.accessStore.update((current) => {
-    const result = dreamuxFeishuGate(current, inbound);
-    action = result.action;
-    logs = result.logs;
-    return result.action.action === 'pair' ? current : result.nextState;
-  });
-
-  for (const l of logs) {
-    if (l.level === 'error') {
-      log(h).error(l.ctx ?? {}, `[feishu-gate] ${l.msg}`);
-    } else if (l.level === 'warn') {
-      log(h).warn(l.ctx ?? {}, `[feishu-gate] ${l.msg}`);
-    } else {
-      log(h).debug(l.ctx ?? {}, `[feishu-gate] ${l.msg}`);
-    }
-  }
+  const action = await h.access.gate(inbound);
 
   if (action.action === 'drop') {
     log(h).info(
@@ -297,10 +266,6 @@ export async function onMessage(
   }
 
   if (action.action === 'pair') {
-    // A `let`-bound discriminant loses its narrowed type inside a nested
-    // closure (the `h.accessStore.update` callbacks below), since TS cannot
-    // prove those closures run before `action` could be reassigned. Capture
-    // the narrowed 'pair' variant in a `const` so the closures see it typed.
     const pairAction = action;
     if (pairAction.is_resend && pairAction.prompt_message_id !== undefined) {
       try {
@@ -329,22 +294,7 @@ export async function onMessage(
         );
         return;
       }
-      await h.accessStore.update((current) => {
-        const existing = current.pending[pairAction.token];
-        if (existing === undefined) return current;
-        return {
-          ...current,
-          pending: {
-            ...current.pending,
-            [pairAction.token]: {
-              ...existing,
-              expires_at: Date.now() + PAIRING_TTL_MS,
-              prompt_message_id:
-                existing.prompt_message_id ?? pairAction.prompt_message_id,
-            },
-          },
-        };
-      });
+      await h.access.refreshPairing(pairAction);
       return;
     }
 
@@ -379,54 +329,7 @@ export async function onMessage(
       );
       return;
     }
-    // LOCK-2: merge against latest state (concurrent approval / resend window)
-    await h.accessStore.update((current) => {
-      // Approved mid-window? Skip entirely.
-      if (
-        pairAction.kind === 'dm' &&
-        current.allow_users.includes(inbound.sender_id)
-      ) {
-        return current;
-      }
-      if (
-        pairAction.kind === 'group' &&
-        current.group.allow_chats.includes(inbound.chat_id)
-      ) {
-        return current;
-      }
-      // Another pending entry for the same sender exists? For a resend from
-      // an older entry without a prompt message id, attach the newly-sent
-      // card id and refresh the TTL. Otherwise do not clobber a concurrent
-      // sender's already-recorded token.
-      const existingKey = Object.entries(current.pending).find(
-        ([, e]) => e.sender_id === inbound.sender_id,
-      );
-      if (existingKey !== undefined) {
-        if (!pairAction.is_resend) return current;
-        const [token, existing] = existingKey;
-        const bumped: PendingPairingEntry = {
-          ...existing,
-          expires_at: Date.now() + PAIRING_TTL_MS,
-          prompt_message_id: existing.prompt_message_id ?? sentCardMessageId,
-        };
-        return {
-          ...current,
-          pending: { ...current.pending, [token]: bumped },
-        };
-      }
-      // Merge with fresh TTL (send succeeded right now).
-      const entry: PendingPairingEntry = {
-        sender_id: inbound.sender_id,
-        chat_id: inbound.chat_id,
-        created_at: Date.now(),
-        expires_at: Date.now() + PAIRING_TTL_MS,
-        prompt_message_id: sentCardMessageId,
-      };
-      return {
-        ...current,
-        pending: { ...current.pending, [pairAction.token]: entry },
-      };
-    });
+    await h.access.recordPairingPrompt(inbound, pairAction, sentCardMessageId);
     return;
   }
 

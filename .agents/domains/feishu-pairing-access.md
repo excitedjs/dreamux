@@ -10,6 +10,12 @@ sender through Owner approval, and mutates peer-bot trust through `/introduce`.
 approval, `/introduce`, and known/trusted peer-bot state. It receives the
 dispatcher state directory from the host and does not import Dreamux core.
 
+`FeishuAccess` owns the private access store and its gate, pairing refresh,
+sent-prompt merge, and approval transitions. Inbound asks for policy and domain
+operations; it does not mutate the store. Card sends remain inbound IO outside
+the store queue, followed by a merge against the latest committed state.
+The store still loads lazily when an operation first needs it.
+
 `@excitedjs/feishu-transport` owns Feishu SDK I/O plus pure parse/render
 helpers. It owns no access state, gate, pairing, persistence, or delivery
 decision.
@@ -445,8 +451,9 @@ by the maintenance skill:
   `allow_users`. There are no `access.*` admin methods and no operator CLI for
   access state, and `dreamux doctor` is not an access-state validator.
 - The gate is pure: it takes a state snapshot and returns an action, the next
-  state, and logs. The session owns all I/O, the access store's serialized
-  queue, and send-before-save.
+  state, and logs. `FeishuAccess` owns its private store and serialized
+  transitions. The inbound pipeline owns message I/O and sends a pairing
+  prompt before asking `FeishuAccess` to persist it against the latest state.
 
 ## Regression Traps
 

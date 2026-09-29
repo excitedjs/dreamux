@@ -35,7 +35,6 @@ import {
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
 import { COMPLETION_SOURCE } from '../submission-sources.js';
-import type { WorktreeManager } from '../worktree/manager.js';
 import type { AgentEntityLedgerKey } from './admission.js';
 import { buildCompletionTurnText } from './completion-renderer.js';
 import {
@@ -784,7 +783,7 @@ export class AgentService {
       identity.worktree.mode === 'managed' &&
       identity.worktree.cleanup === 'delete-on-close';
     const worktree = shouldCleanup
-      ? await this.mustWorktrees().cleanup(identity)
+      ? await this.deps.worktrees.cleanup(identity)
       : identity.worktree;
     const closedAt = Date.now();
     const closed = await this.state.update({
@@ -841,15 +840,6 @@ export class AgentService {
     if (this.lockToken !== token) {
       throw new Error(`stale lock for ${agentRoleNoun(this.role, this.name)}`);
     }
-  }
-
-  private mustWorktrees(): WorktreeManager {
-    if (this.deps.worktrees === undefined) {
-      throw new Error(
-        `agent ${JSON.stringify(this.name)} has no worktree manager`,
-      );
-    }
-    return this.deps.worktrees;
   }
 }
 

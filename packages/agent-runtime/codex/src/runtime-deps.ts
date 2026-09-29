@@ -31,16 +31,16 @@ export interface CodexRuntimeDeps {
    */
   codec: CodexOutputSchemaCodec | null;
   allocateSocketPath: (id: string) => string;
-  skillSources?: readonly AgentRuntimeSkillSource[];
+  skillSources: readonly AgentRuntimeSkillSource[];
   codexBinPath: string;
   codexProcessFactory?:
     ((opts: CodexProcessOptions) => CodexProcess) | undefined;
   codexClientFactory?: ((socketPath: string) => CodexWsClient) | undefined;
-  resolveExtraArgs?: () => string[];
+  extraArgs: string[];
   handshakeTimeoutMs?: number;
   extraEnv?: Record<string, string>;
   restartBackoffBaseMs?: number | undefined;
   restartBackoffMaxMs?: number | undefined;
-  logger?: DreamuxLogger;
+  logger: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
 }

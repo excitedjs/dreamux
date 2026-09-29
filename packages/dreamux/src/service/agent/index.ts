@@ -5,7 +5,6 @@ import type {
   AgentRuntimeProviderCatalog,
   AgentRuntimePublicCapabilities,
 } from '../../agent-runtime/index.js';
-import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import {
   defaultAgentRuntime,
   type ResolvedAgentConfig,
@@ -51,7 +50,7 @@ import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../../platform/shutdown-errors.js';
-import type { AgentEntityBuildDeps, AgentServiceFactory } from './factory.js';
+import type { AgentServiceFactory } from './factory.js';
 import { AgentService } from './service.js';
 import type {
   CreateLockedTeammateOptions,
@@ -61,7 +60,7 @@ import type {
 import { toSubmissionResult } from './admission.js';
 import type { TurnCompletionDelivery } from './turn.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import type { WorktreeManager } from '../worktree/manager.js';
+import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
 import {
   assertManagedWorktreeAvailable,
   resolveSpawnWorkspace,
@@ -69,14 +68,15 @@ import {
 import type {
   CloseTeamMateInput,
   SendTeamMateInput,
-  SpawnTeamMateRequest,
+  SpawnTeamMateInput,
+  TeamWorkspaceLoan,
   TeammateOps,
 } from './types.js';
 
 export interface TeammateCollectionOptions {
   dispatcherId: string;
   /** The Team this Collection belongs to, or `null` for the dispatcher's own. */
-  teamScope: string | null;
+  teamScope: { id: string; workspace: TeamWorkspaceLoan } | null;
   config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
@@ -98,7 +98,6 @@ export interface TeammateCollectionOptions {
   names: AgentNameRegistry;
   agentServiceFactory: AgentServiceFactory;
   completionDelivery?: CompletionDeliveryPolicy;
-  conversationProjection: ConversationProjection;
   /**
    * The admission fence every `TeammateOps` verb this collection hands out
    * crosses before it runs, so a spawn/send/close/read alike refuses once the
@@ -215,7 +214,7 @@ export class TeammateCollection implements TeammateOps {
 
   constructor(private readonly opts: TeammateCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
-    this.teamScope = opts.teamScope;
+    this.teamScope = opts.teamScope?.id ?? null;
     this.worktrees = opts.worktrees;
     this.store = new AgentEntityCollectionStore({
       root: opts.root,
@@ -225,12 +224,12 @@ export class TeammateCollection implements TeammateOps {
     });
   }
 
-  spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
+  spawn(input: SpawnTeamMateInput): Promise<AgentEntitySpawnResult> {
     return this.opts.admitOperation(() => this.spawnAdmitted(input));
   }
 
   private async spawnAdmitted(
-    input: SpawnTeamMateRequest,
+    input: SpawnTeamMateInput,
   ): Promise<AgentEntitySpawnResult> {
     const entity = await this.createFreshEntity(input);
     try {
@@ -251,7 +250,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   async createLocked(
-    input: SpawnTeamMateRequest,
+    input: SpawnTeamMateInput,
     options: CreateLockedTeammateOptions = {},
   ): Promise<LockedTeammate> {
     // No capability gate: every provider must honor the session-bound output
@@ -653,7 +652,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   private async createFreshEntity(
-    input: SpawnTeamMateRequest,
+    input: SpawnTeamMateInput,
     options: CreateLockedTeammateOptions = {},
     beforePublish?: (entity: AgentService) => void,
   ): Promise<AgentService> {
@@ -664,11 +663,6 @@ export class TeammateCollection implements TeammateOps {
       'TeamMate identity',
     );
     const teamId = this.teamScope ?? undefined;
-    if (teamId !== undefined && input.sharedWorkspace === undefined) {
-      throw new Error(
-        'Team-scoped TeamMate spawn requires a shared team workspace',
-      );
-    }
     const agentRuntime =
       input.agentRuntime ??
       defaultAgentRuntime(this.opts.config.current(), this.dispatcherId);
@@ -696,14 +690,21 @@ export class TeammateCollection implements TeammateOps {
       );
     }
     return this.trackMaterialization(name, async () => {
-      const workspace = await resolveSpawnWorkspace({
-        config: this.opts.config.current(),
-        worktrees: this.worktrees,
-        dispatcherId: this.dispatcherId,
-        name,
-        request: input,
-      });
-      if (input.sharedWorkspace === undefined) {
+      const scope = this.opts.teamScope;
+      const workspace =
+        scope === null
+          ? await resolveSpawnWorkspace({
+              config: this.opts.config.current(),
+              worktrees: this.worktrees,
+              dispatcherId: this.dispatcherId,
+              name,
+              request: input,
+            })
+          : {
+              ...scope.workspace,
+              worktree: reuseCwdWorktree(scope.workspace.runtimeCwd),
+            };
+      if (scope === null) {
         await assertManagedWorktreeAvailable({
           findManagedWorktreeOwner: (path, excludingName) =>
             this.findManagedWorktreeOwner(path, excludingName),
@@ -728,8 +729,9 @@ export class TeammateCollection implements TeammateOps {
           status: 'stopped',
         },
         options: (identity) => this.teammateOptions(identity, options),
-        deps: this.entityBuildDeps(),
-        log: this.opts.log,
+        onPersisted: this.opts.onPersisted,
+        findManagedWorktreeOwner: (path, excludingName) =>
+          this.findManagedWorktreeOwner(path, excludingName),
       });
       try {
         beforePublish?.(entity);
@@ -790,28 +792,10 @@ export class TeammateCollection implements TeammateOps {
     return this.opts.agentServiceFactory.open({
       location: { dir: this.store.entityDir(name), expectedName: name },
       options: (identity) => this.teammateOptions(identity, {}),
-      deps: this.entityBuildDeps(),
-      log: this.opts.log,
-    });
-  }
-
-  /**
-   * Every collaborator an entity this Collection builds needs besides its
-   * identity storage and its role-specific options — the same for a fresh
-   * create and a reopen, so both `createFreshEntity` and `openEntity` share
-   * it.
-   */
-  private entityBuildDeps(): AgentEntityBuildDeps {
-    return {
-      config: this.opts.config,
-      agentRuntimeProviders: this.opts.agentRuntimeProviders,
       onPersisted: this.opts.onPersisted,
       findManagedWorktreeOwner: (path, excludingName) =>
         this.findManagedWorktreeOwner(path, excludingName),
-      worktrees: this.worktrees,
-      conversationProjection: this.opts.conversationProjection,
-      log: this.opts.log,
-    };
+    });
   }
 
   /**

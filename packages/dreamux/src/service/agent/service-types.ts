@@ -54,12 +54,8 @@ export interface TeammateServiceDeps {
    * dropped on retire.
    */
   admissions: AdmissionLedger;
-  /**
-   * The worktree manager backing `close` (cleanup) and a closed-teammate reopen
-   * (reprepare). Omitted only for the dispatcher agent (issue #233 Phase 5),
-   * which never closes or reopens, so it never reaches the manager.
-   */
-  worktrees?: WorktreeManager;
+  /** Dispatcher-scoped worktree capability, bound by AgentServiceFactory. */
+  worktrees: WorktreeManager;
   conversationProjection: ConversationProjection;
   log: DreamuxLogger;
 }

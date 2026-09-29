@@ -376,7 +376,10 @@ Source:
 
 ### Inbound routing
 
-Routing is one small service over the Channel's own document. Every read is
+`FeishuRouting` in `/packages/channel/feishu-channel/src/routing/index.ts`
+constructs its own document store from the session's location and identifiers.
+The session calls its initialization before installing subscriptions or
+extensions, and its close after draining those writers. Every read is
 synchronous against the last committed document, and every write is a commit, so
 a caller told a route exists is being told what disk says. The plan is one of
 three answers: `bound` (with the row that answered, which may be the parent

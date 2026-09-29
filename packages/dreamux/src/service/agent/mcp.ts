@@ -32,11 +32,7 @@ import type { CommandPayload } from '../../command/payload.js';
 import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
 import { mapAgentActivityCommandError } from './activity.js';
 import type { AgentEntitySpawnResult } from './identity.js';
-import type {
-  SpawnTeamMateRequest,
-  TeamLeaderTeammateOps,
-  TeammateOps,
-} from './types.js';
+import type { TeammateOps } from './types.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
@@ -87,30 +83,13 @@ export interface TeamMateMcpDispatcherScope {
   workspace(): Promise<string>;
 }
 
-/**
- * Structural stand-in for `TeamLeaderHandle`, for the same reason: this
- * collection-tier file needs no import from the team tier that owns the
- * concrete interface. `teammates` is `TeamLeaderTeammateOps` (`./types.js`),
- * the same derived type `TeamLeaderHandle` declares its own `teammates`
- * field with, so `spawn`'s omission is stated once rather than by two
- * independent `Pick`s that could drift apart.
- */
+/** Structural view of the Team's scoped collections, without a team-tier import. */
 interface TeamMateMcpTeamLeaderScope {
-  readonly teammates: TeamLeaderTeammateOps;
+  readonly teammates: TeammateOps;
   readonly workflows: WorkflowOps;
-  spawnTeamMate(
-    input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
-  ): Promise<AgentEntitySpawnResult>;
 }
 
-/**
- * What the two callers actually operate on.
- *
- * The dispatcher scope's `teammates` keeps `spawn` because its `spawn`
- * drives the collection directly; the Team scope's omits it because a Team
- * TeamMate is spawned into the Team's shared workspace, through the handle's
- * own `spawnTeamMate`.
- */
+/** The dispatcher or Team collections this caller operates on. */
 export type TeamMateMcpScope =
   | {
       readonly kind: 'dispatcher';
@@ -553,7 +532,7 @@ async function spawn(
     // the leader catalog does not advertise `repo` at all.
     result = await (
       await scope.team()
-    ).spawnTeamMate({
+    ).teammates.spawn({
       name: request.name,
       prompt: request.prompt,
       intent: request.intent,

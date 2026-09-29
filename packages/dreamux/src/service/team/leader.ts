@@ -1,24 +1,18 @@
 import type {
   AgentRuntimeSkillSource,
   AgentRuntimeSystemPrompt,
-  DreamuxLogger,
   LaunchDraft,
 } from '@excitedjs/dreamux-types';
 import type { AsyncSeriesHook } from 'tapable';
 
-import {
-  DISABLE_FEATURE_CRON,
-  type AgentRuntimeProviderCatalog,
-} from '../../agent-runtime/index.js';
-import type { ConfigReader } from '../../config/service.js';
+import { DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
 import {
   bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
 } from '../../platform/paths.js';
-import type { TeamCollectionOptions, TeamRecord } from './types.js';
+import type { TeamRecord } from './types.js';
 import type { AgentServiceFactory } from '../agent/factory.js';
-import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type {
   AgentEntityIdentity,
   AgentEntityWorktreeIdentity,
@@ -29,7 +23,7 @@ import type {
   TeammateAgentMcp,
   TeammateServiceOptions,
 } from '../agent/service-types.js';
-import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
+import { reuseCwdWorktree } from '../worktree/manager.js';
 
 /**
  * The TeamLeader skill roots Core always injects. A caller's `skill_sources`
@@ -68,29 +62,6 @@ export interface TeamLeaderCreationInput {
 }
 
 /**
- * The slice of `TeamServiceDeps` (declared at `TeamService`'s construction
- * site in `service.ts`) this file actually reads.
- *
- * Picked from `TeamCollectionOptions` — the wider bag `TeamServiceDeps`
- * itself composes from — rather than importing `TeamServiceDeps`: `service.ts`
- * already imports value exports from this file, so a type import running the
- * other way would make the two files a cycle. Every field below is one
- * `TeamCollectionOptions` already declares, not one of `TeamServiceDeps`'s own
- * additions (`teamRoot`, `store`, `settleWorktreeCleanup`), so `Pick` alone
- * covers it.
- */
-type TeamLeaderAgentBaseDeps = Pick<
-  TeamCollectionOptions,
-  | 'leaderMcp'
-  | 'config'
-  | 'agentRuntimeProviders'
-  | 'agentServiceFactory'
-  | 'conversationProjection'
-  | 'worktrees'
-  | 'log'
->;
-
-/**
  * What every leader creation/open/restore entry in this file is built from:
  * the Team-owned facts plus the collaborators the resulting `AgentService`
  * needs. `teamRoot` is the one location fact — this Team's own root
@@ -106,57 +77,8 @@ export interface TeamLeaderOpenDeps {
   leaderMcp(input: { teamId: string; leaderName: string }): TeammateAgentMcp;
   /** This Team's `leaderLaunch` hook, run at each leader construction. */
   leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
-  config: ConfigReader;
-  agentRuntimeProviders: AgentRuntimeProviderCatalog;
   onPersisted: (identity: AgentEntityIdentity) => void;
   agentServiceFactory: AgentServiceFactory;
-  conversationProjection: ConversationProjection;
-  worktrees: WorktreeManager;
-  log: DreamuxLogger;
-}
-
-/**
- * The Team-owned half of {@link TeamLeaderOpenDeps}: what every leader a
- * Team creates, opens, or restores is built from, spelled once.
- */
-export function teamLeaderAgentBase(input: {
-  deps: TeamLeaderAgentBaseDeps;
-  teamId: string;
-  teamRoot: string;
-  workspace: AgentEntityWorktreeIdentity;
-  onPersisted: (identity: AgentEntityIdentity) => void;
-  leaderLaunch: AsyncSeriesHook<[LaunchDraft]>;
-}): TeamLeaderOpenDeps {
-  const { deps } = input;
-  return {
-    teamId: input.teamId,
-    teamRoot: input.teamRoot,
-    workspace: input.workspace,
-    leaderMcp: deps.leaderMcp,
-    leaderLaunch: input.leaderLaunch,
-    config: deps.config,
-    agentRuntimeProviders: deps.agentRuntimeProviders,
-    onPersisted: input.onPersisted,
-    agentServiceFactory: deps.agentServiceFactory,
-    conversationProjection: deps.conversationProjection,
-    worktrees: deps.worktrees,
-    log: deps.log,
-  };
-}
-
-/**
- * The `AgentServiceFactory` collaborators every leader build needs besides
- * its identity storage and its role-specific options.
- */
-function leaderBuildDeps(deps: TeamLeaderOpenDeps) {
-  return {
-    config: deps.config,
-    agentRuntimeProviders: deps.agentRuntimeProviders,
-    onPersisted: deps.onPersisted,
-    conversationProjection: deps.conversationProjection,
-    worktrees: deps.worktrees,
-    log: deps.log,
-  };
 }
 
 /**
@@ -266,8 +188,7 @@ export async function createTeamLeaderAgentForTeam(input: {
       replaceExisting: true,
     },
     options: (identity) => teamLeaderOptions(deps, identity),
-    deps: leaderBuildDeps(deps),
-    log: deps.log,
+    onPersisted: deps.onPersisted,
   });
 }
 
@@ -285,8 +206,7 @@ async function adoptTeamLeaderIfAligned(
     location: { dir: deps.teamRoot, expectedName: null },
     align: (identity) => alignedWithLeader(identity, record),
     options: (identity) => teamLeaderOptions(deps, identity),
-    deps: leaderBuildDeps(deps),
-    log: deps.log,
+    onPersisted: deps.onPersisted,
   });
 }
 

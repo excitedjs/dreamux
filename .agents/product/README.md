@@ -522,8 +522,11 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   `npm:<package>[#export]`, optionally with a plugin-owned `config` block). A
   config without `plugins[]` behaves as before; the built-in Feishu channel is
   always loaded and never listed. A plugin that fails to load, a duplicate
-  plugin or provider name, or a `config` block for a plugin that takes none
-  stops `dreamux serve` with an error naming the plugin; a plugin callback that
+  plugin or provider name stops `dreamux serve` with an error naming the
+  plugin. The current implementation ignores a plugin's `config` block when
+  the plugin has no config reader; whether to retain this rule remains open in
+  the [refactor requirement](/.agents/tasks/architecture/code-organization-refactor/requirement.md).
+  A plugin callback that
   fails while an agent launches is logged and skipped, and the launch goes on
   without that plugin's additions. (Domain: [plugins](/.agents/domains/plugins.md).)
 - **A plugin can append to every TeamMate's launch, the same way it already
@@ -537,8 +540,10 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   accepted one, a plugin may change the requested name prefix, intent, leader
   identity/prompt/skill sources, or repository; an already-accepted request
   never re-runs this. (Domain: [plugins](/.agents/domains/plugins.md).)
-- **The bootstrap plugin keeps a shared profile.** With `builtin:bootstrap`
-  enabled, a Dispatcher whose cwd lacks `.workspace/identity.md` or
+- **The bootstrap plugin keeps a shared profile in development builds.** The
+  plugin is not published (R56), so `builtin:bootstrap` is unavailable in a
+  published installation. With it enabled in a development build, a
+  Dispatcher whose cwd lacks `.workspace/identity.md` or
   `.workspace/user.md` is told at start to offer the user to create them
   together (the guide is also written to `.workspace/bootstrap.md`). Once both
   files exist, the Dispatcher (from its next start) and every TeamLeader (from

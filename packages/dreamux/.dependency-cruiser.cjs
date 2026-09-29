@@ -64,7 +64,7 @@
 //     completion-renderer/factory/service/service-types) sits in its own
 //     entry between service-primitives and service-mid, because
 //     workflow-service/ and scheduler/ construct and type against it
-//     (SpawnTeamMateRequest, Turn, TurnAdmission, LockedTeammate,
+//     (Turn, TurnAdmission, LockedTeammate,
 //     CreateLockedTeammateOptions) - the reverse of what a single merged
 //     entry after service-mid could express. The collection tier
 //     (index/commands/mcp/system-prompt/errors) keeps the
