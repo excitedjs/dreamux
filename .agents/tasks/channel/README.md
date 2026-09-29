@@ -35,3 +35,4 @@
 - [State where a document comment is anchored](/.agents/tasks/channel/state-the-comment-anchor/README.md) — Stop presenting Feishu's truncated quote as the anchored text, and carry the anchor facts Feishu does give: whole-document vs anchored, the anchor id, and whether the anchored content was deleted.
 - [Refine the ask_user_question card](/.agents/tasks/channel/refine-ask-user-question-card/README.md) — Keep a question card answerable for 24 hours, and let one card carry the explanation that precedes its questions
 - [Hide Claude Code subagent activity](/.agents/tasks/channel/hide-claude-subagent-activity/README.md) — Report only the main agent's activity from the Claude Code runtime; a subagent's envelopes produce no runtime activity
+- [Add the Feishu remote-control command](/.agents/tasks/channel/add-remote-control-command/README.md) — Let operators enable or disable remote control for Claude Code and Codex through /rc, /rc on, and /rc off in Feishu
