@@ -14,19 +14,17 @@ import type {
   ChannelMcpToolRegistration,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
+import type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 
-import { FeishuOperationError } from './feishu-bounded-operation.js';
-import { DREAMUX_ASK_ACTIONS } from './feishu-ask-user-card.js';
-import { DREAMUX_PAIRING_CARD_ACTION } from './feishu-pairing-card.js';
-import type { FeishuBindingOperations } from './feishu-session-bindings.js';
-import {
-  readMessageRoute,
-  sendCard,
-  type FeishuExtensionActionHandler,
-  type SessionHandle,
-} from './feishu-session-ops.js';
+import { builtinCardAction } from './card-actions.js';
+import type { FeishuBindingOperations } from './routing/operations.js';
+import type { FeishuBot } from './bot.js';
+import type { FeishuOutbound } from './outbound/index.js';
+import type { FeishuInboundTargeting } from './inbound/target.js';
+import type { FeishuLifecycle } from './session/lifecycle.js';
 import type {
   FeishuExtension,
+  FeishuExtensionActionResult,
   FeishuExtensionTool,
   FeishuInstanceApi,
 } from './extension.js';
@@ -55,12 +53,13 @@ export class FeishuExtensionRegistry {
         );
       }
       for (const kind of tool.callers) {
-        const other = findFeishuTool(tool.name, kind) !== undefined
-          ? 'built-in Feishu tool'
-          : this.toolOwner(tool.name, kind) ??
-            (offersTool(ext.tools.slice(0, index), tool.name, kind)
-              ? 'another tool of the same extension'
-              : undefined);
+        const other =
+          findFeishuTool(tool.name, kind) !== undefined
+            ? 'built-in Feishu tool'
+            : (this.toolOwner(tool.name, kind) ??
+              (offersTool(ext.tools.slice(0, index), tool.name, kind)
+                ? 'another tool of the same extension'
+                : undefined));
         if (other !== undefined) {
           throw new Error(
             `Feishu extension "${ext.name}" tool "${tool.name}" ` +
@@ -78,13 +77,12 @@ export class FeishuExtensionRegistry {
         );
       }
       const other =
-        action.key === DREAMUX_PAIRING_CARD_ACTION ||
-        DREAMUX_ASK_ACTIONS.has(action.key)
+        builtinCardAction(action.key) !== undefined
           ? 'built-in Feishu card action'
-          : this.actionOwner(action.key) ??
+          : (this.actionOwner(action.key) ??
             (ext.cardActions.slice(0, index).some((a) => a.key === action.key)
               ? 'another card action of the same extension'
-              : undefined);
+              : undefined));
       if (other !== undefined) {
         throw new Error(
           `Feishu extension "${ext.name}" card action "${action.key}" ` +
@@ -111,7 +109,9 @@ export class FeishuExtensionRegistry {
     name: string,
     kind: ChannelMcpCaller['kind'],
   ): string | undefined {
-    const owner = this.extensions.find((ext) => offersTool(ext.tools, name, kind));
+    const owner = this.extensions.find((ext) =>
+      offersTool(ext.tools, name, kind),
+    );
     return owner === undefined ? undefined : `extension "${owner.name}"`;
   }
 
@@ -128,13 +128,32 @@ function offersTool(
   name: string,
   kind: ChannelMcpCaller['kind'],
 ): boolean {
-  return tools.some((tool) => tool.name === name && tool.callers.includes(kind));
+  return tools.some(
+    (tool) => tool.name === name && tool.callers.includes(kind),
+  );
+}
+
+/**
+ * What a resolved extension card action gives the session's card-action
+ * dispatch: enough to run it and to name it in a forward's delivery logs.
+ */
+export interface FeishuExtensionActionHandler {
+  readonly extensionName: string;
+  invoke(event: FeishuCardActionEvent): Promise<FeishuExtensionActionResult>;
 }
 
 export interface FeishuExtensionInitializeInput {
   readonly dispatcherId: string;
   readonly channelId: string;
-  readonly stateDir: string;
+  /**
+   * The Feishu plugin's own state directory (`ServerHost.stateDir`) — not
+   * the channel instance's `state_root` that `access.json`/`chat-bots.json`/
+   * the routing document sit under. `undefined` only for a session built
+   * with no plugin host at all (`createFeishuChannelProvider` directly),
+   * whose registry can never hold an extension, so `initialize` below never
+   * reads it in that case.
+   */
+  readonly pluginStateDir: string | undefined;
   readonly signal: AbortSignal;
   readonly api: FeishuInstanceApi;
 }
@@ -161,14 +180,20 @@ export class FeishuSessionExtensions {
         ext.initialize({
           dispatcherId: input.dispatcherId,
           channelId: input.channelId,
+          // Non-null: the plugin host runs every plugin's `server()` (which
+          // sets this) before the first Dispatcher, and so the first channel
+          // session, exists; the one caller with no plugin host at all
+          // (`createFeishuChannelProvider`) has an empty registry, so this
+          // loop body never runs for it.
           stateRoot: join(
-            input.stateDir,
+            input.pluginStateDir!,
+            input.dispatcherId,
             'feishu-extensions',
             ext.name,
             channelPathSegment(input.channelId),
           ),
           signal: input.signal,
-          log: this.log.child?.({ feishu_extension: ext.name }) ?? this.log,
+          log: this.log.child({ feishu_extension: ext.name }),
           api: input.api,
         }),
       );
@@ -272,61 +297,63 @@ export interface FeishuBoundExtensionTool {
 }
 
 /**
- * The instance api for one session lifecycle. `handle` carries that
- * lifecycle's fence, so every outbound call made after the instance began
- * closing rejects as `aborted`.
+ * The instance api for one session lifecycle. `lifecycle` is that session's
+ * one liveness value, so every outbound call made after the instance began
+ * closing rejects as `aborted` — `assertLive()` is `FeishuLifecycle`'s own
+ * check, not a second one re-derived here.
  */
 export function buildInstanceApi(input: {
-  handle: SessionHandle;
+  lifecycle: FeishuLifecycle;
+  outbound: FeishuOutbound;
+  /** Card repaint (`editCard`) reaches the bot directly; see `outbound/index.ts`'s header. */
+  bot: Pick<FeishuBot, 'editCard'>;
+  targetRouter: Pick<FeishuInboundTargeting, 'project'>;
   routing: FeishuRouting;
   bindings: FeishuBindingOperations;
   /** Closing the instance waits for work passed here before it drains routing. */
   track(work: Promise<unknown>): Promise<unknown>;
 }): FeishuInstanceApi {
-  const { handle, routing, bindings } = input;
-  const assertCurrent = (): void => {
-    if (!handle.sessionFence.isCurrent()) {
-      throw new FeishuOperationError('aborted');
-    }
-  };
+  const { lifecycle, outbound, bot, targetRouter, routing, bindings } = input;
   return {
     owner(target) {
       const plan = routing.plan(target, null);
       return plan.kind === 'bound' ? plan.teamName : null;
     },
     async readMessageRoute(messageId) {
-      assertCurrent();
-      const route = await readMessageRoute(handle, messageId);
+      lifecycle.assertLive();
+      const route = await outbound.locate(messageId);
       return { target: route.target };
     },
     async bindTeam({ target, teamName, display }) {
-      assertCurrent();
+      lifecycle.assertLive();
       // Tracked: the bind writes routing after an awaited Core status read,
       // which must not land after the instance closed its routing store.
       await input.track(bindings.bindChannel({ target, teamName, display }));
     },
     async sendCard({ chatId, replyTo, card }) {
-      const sent = await sendCard(handle, {
+      const sent = await outbound.sendCard({
         target: {
-          conversationId: chatId,
-          ...(replyTo !== undefined ? { replyTo } : {}),
+          chatId,
+          ...(replyTo !== undefined ? { replyToMessageId: replyTo } : {}),
         },
         card,
       });
-      const messageId = sent.messageIds[0];
-      if (messageId === undefined) {
+      const sentMessage = sent.messages[0];
+      if (sentMessage === undefined) {
         throw new Error('Feishu returned no message id for the sent card');
       }
-      // A card sent as a reply lands in the replied-to message's topic, which
-      // only Feishu can report. Observing it lets a later reply to this card
-      // resolve to the same target.
-      const { target } = await readMessageRoute(handle, messageId);
-      handle.targetRouter.observe(messageId, target);
-      return { messageId, target };
+      // Where the card landed, from Feishu's own send response: a chat-mode
+      // lookup only for a chat this session has not already resolved, no
+      // second `readMessage` round trip.
+      const { target } = await targetRouter.project({
+        chatId: sentMessage.chatId,
+        threadId: sentMessage.threadId,
+      });
+      return { messageId: sentMessage.messageId, target };
     },
     async editCard(messageId, card) {
-      assertCurrent();
-      await handle.bot.editCard(messageId, card);
+      lifecycle.assertLive();
+      await bot.editCard(messageId, card);
     },
   };
 }

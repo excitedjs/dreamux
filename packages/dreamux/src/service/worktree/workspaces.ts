@@ -3,15 +3,12 @@ import {
   type DreamuxConfig,
 } from '../../config/config.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import type {
-  AgentEntityCollectionStore,
-  AgentIdentityStore,
-} from '../agent-entity/identity-store.js';
+import type { AgentIdentityUpdateInput } from '../agent/store.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
-} from '../teammate-collection/types.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
+} from '../agent/types.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
 import { reuseCwdWorktree, WorktreeManager } from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {
@@ -35,12 +32,15 @@ export async function resolveSpawnWorkspace(input: {
     (input.request.cwd === undefined || input.request.cwd.trim() === '')
   ) {
     return input.worktrees.prepareDefaultWorkspace({
-      dispatcherWorkspace: await dispatcherWorkspace(
+      dispatcherWorkspace: await ensureDispatcherWorkspace(
         input.config,
         input.dispatcherId,
       ),
       slug: input.name,
-      workspaceEnabled: defaultWorkspaceEnabled(input.config, input.dispatcherId),
+      workspaceEnabled: defaultWorkspaceEnabled(
+        input.config,
+        input.dispatcherId,
+      ),
     });
   }
   const cwd = input.request.cwd;
@@ -55,7 +55,7 @@ export async function resolveSpawnWorkspace(input: {
     cwd,
     ...(managedMode
       ? {
-          dispatcherWorkspace: await dispatcherWorkspace(
+          dispatcherWorkspace: await ensureDispatcherWorkspace(
             input.config,
             input.dispatcherId,
           ),
@@ -65,34 +65,46 @@ export async function resolveSpawnWorkspace(input: {
   });
 }
 
+/**
+ * Compute the patch that recovers a managed worktree whose checkout was
+ * deleted, or the empty patch when there is nothing to recover.
+ *
+ * Returns a patch rather than writing it: the caller holds the one write
+ * authority over this entity's identity (`AgentRuntimeStateStore.update`),
+ * and a second writer reaching back into the identity store from inside this
+ * function would be the nested `update()` call `TransactionalStore`'s own
+ * `change` contract forbids.
+ */
 export async function reprepareDeletedManagedWorktree(input: {
   config: DreamuxConfig;
-  /** The entity's own bound identity store. */
-  identities: AgentIdentityStore;
-  /** The collection this entity belongs to; absent for an owner-root Agent. */
-  peers?: AgentEntityCollectionStore;
+  /**
+   * The collection's own occupancy query: the name of whichever sibling
+   * already owns a given managed worktree path, or `null` when it is free.
+   * Absent for an owner-root Agent (the dispatcher Agent, a TeamLeader),
+   * which has no sibling collection.
+   */
+  findManagedWorktreeOwner?:
+    | ((path: string, excludingName: string) => Promise<string | null>)
+    | undefined;
   worktrees: WorktreeManager;
   identity: AgentEntityIdentity;
-}): Promise<AgentEntityIdentity> {
+}): Promise<AgentIdentityUpdateInput> {
   if (
     input.identity.worktree.mode !== 'managed' ||
     input.identity.worktree.cleanup_state !== 'deleted'
   ) {
-    return input.identity;
+    return {};
   }
   const workspace = await input.worktrees.prepare({
     dispatcherId: input.identity.dispatcher_id,
     teammateName: input.identity.name,
     cwd: input.identity.source_cwd,
-    dispatcherWorkspace: await dispatcherWorkspace(
+    dispatcherWorkspace: await ensureDispatcherWorkspace(
       input.config,
       input.identity.dispatcher_id,
     ),
     request: {
       mode: 'managed',
-      ...(input.identity.worktree.slug !== null
-        ? { slug: input.identity.worktree.slug }
-        : {}),
       ...(input.identity.worktree.base_ref !== null
         ? { base_ref: input.identity.worktree.base_ref }
         : {}),
@@ -103,51 +115,49 @@ export async function reprepareDeletedManagedWorktree(input: {
     },
   });
   await assertManagedWorktreeAvailable({
-    ...(input.peers !== undefined ? { peers: input.peers } : {}),
+    findManagedWorktreeOwner: input.findManagedWorktreeOwner,
     name: input.identity.name,
     worktree: workspace.worktree,
   });
-  return input.identities.update(input.identity, {
+  return {
     sourceCwd: workspace.sourceCwd,
     sourceRepo: workspace.sourceRepo,
     cwd: workspace.runtimeCwd,
     runtimeCwd: workspace.runtimeCwd,
     worktree: workspace.worktree,
-  });
+  };
 }
 
 /**
  * Refuse a managed worktree path another Agent in the same collection owns.
  *
- * The peer set is the caller's own already-bound collection: an owner-root
- * Agent (the dispatcher Agent, a TeamLeader) has no peer collection and never
- * takes a managed worktree of its own, so an omitted `peers` means there is
- * nothing to collide with.
+ * `findManagedWorktreeOwner` is the caller's own collection-scoped occupancy
+ * query, asked fresh for this one candidate path rather than handing over
+ * every sibling's identity: an owner-root Agent (the dispatcher Agent, a
+ * TeamLeader) has no sibling collection and never takes a managed worktree of
+ * its own, so an omitted query means there is nothing to collide with.
  */
 export async function assertManagedWorktreeAvailable(input: {
-  peers?: AgentEntityCollectionStore;
+  findManagedWorktreeOwner?:
+    | ((path: string, excludingName: string) => Promise<string | null>)
+    | undefined;
   name: string;
   worktree: AgentEntityIdentity['worktree'];
 }): Promise<void> {
-  if (input.worktree.mode !== 'managed' || input.peers === undefined) return;
-  const identities = await input.peers.list();
-  const collision = identities.find(
-    (identity) =>
-      identity.name !== input.name &&
-      identity.worktree.mode === 'managed' &&
-      identity.worktree.path === input.worktree.path,
+  if (
+    input.worktree.mode !== 'managed' ||
+    input.findManagedWorktreeOwner === undefined
+  ) {
+    return;
+  }
+  const owner = await input.findManagedWorktreeOwner(
+    input.worktree.path,
+    input.name,
   );
-  if (collision !== undefined) {
+  if (owner !== null) {
     throw new Error(
       `managed worktree path ${JSON.stringify(input.worktree.path)} is already ` +
-        `owned by TeamMate ${JSON.stringify(collision.name)}`,
+        `owned by TeamMate ${JSON.stringify(owner)}`,
     );
   }
-}
-
-export function dispatcherWorkspace(
-  config: DreamuxConfig,
-  dispatcherId: string,
-): Promise<string> {
-  return ensureDispatcherWorkspace(config, dispatcherId);
 }

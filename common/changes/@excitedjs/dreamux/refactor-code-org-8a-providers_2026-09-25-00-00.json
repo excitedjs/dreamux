@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Codex and Claude Code now load exactly like the built-in Feishu plugin: both are always-loaded plugins that contribute their Agent Runtime provider, instead of a core-side static builtin-provider registry pre-registering their descriptors ahead of the provider loader importing their package. No behavior change for a default install: both still register under builtin:codex / builtin:claude-code before agents[] is resolved, and a config naming an unmapped builtin:<ref> still fails loud with the same UnknownBuiltinProviderPackageError it always has. `dreamux uninstall`'s directory-safety guard also no longer hard-codes ~/.codex and ~/.claude: it now builds the same always-loaded plugin registry and asks each registered Agent Runtime provider for its own operatorStateRoot, so a provider added or removed by future plugin work is protected (or not) automatically. The protected paths for a default install are unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

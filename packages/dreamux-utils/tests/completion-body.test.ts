@@ -29,8 +29,12 @@ describe('completionInlineBudget', () => {
   });
 
   it('falls back to the default for a blank/whitespace value', () => {
-    expect(completionInlineBudget({ [ENV_KEY]: '' })).toBe(COMPLETION_INLINE_BUDGET_DEFAULT);
-    expect(completionInlineBudget({ [ENV_KEY]: '   ' })).toBe(COMPLETION_INLINE_BUDGET_DEFAULT);
+    expect(completionInlineBudget({ [ENV_KEY]: '' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
+    expect(completionInlineBudget({ [ENV_KEY]: '   ' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
   });
 
   it('trims surrounding whitespace around a valid integer', () => {
@@ -39,7 +43,9 @@ describe('completionInlineBudget', () => {
 
   it('falls back to the default for a non-decimal-integer value ("32k")', () => {
     // Stricter than native's lenient parseInt: no partial parse.
-    expect(completionInlineBudget({ [ENV_KEY]: '32k' })).toBe(COMPLETION_INLINE_BUDGET_DEFAULT);
+    expect(completionInlineBudget({ [ENV_KEY]: '32k' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
   });
 
   it('falls back to the default for a value with trailing garbage ("123abc")', () => {
@@ -51,8 +57,12 @@ describe('completionInlineBudget', () => {
   it('falls back to the default for zero and negative-looking input', () => {
     // "-5" fails the \d+ regex outright (no sign allowed), so it also falls
     // back to the default rather than being read as a negative number.
-    expect(completionInlineBudget({ [ENV_KEY]: '0' })).toBe(COMPLETION_INLINE_BUDGET_DEFAULT);
-    expect(completionInlineBudget({ [ENV_KEY]: '-5' })).toBe(COMPLETION_INLINE_BUDGET_DEFAULT);
+    expect(completionInlineBudget({ [ENV_KEY]: '0' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
+    expect(completionInlineBudget({ [ENV_KEY]: '-5' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
   });
 
   it('accepts a valid positive integer under the max as-is', () => {
@@ -60,12 +70,16 @@ describe('completionInlineBudget', () => {
   });
 
   it('clamps a value above the upper bound to the max, without throwing', () => {
-    expect(completionInlineBudget({ [ENV_KEY]: '999999' })).toBe(COMPLETION_INLINE_BUDGET_MAX);
+    expect(completionInlineBudget({ [ENV_KEY]: '999999' })).toBe(
+      COMPLETION_INLINE_BUDGET_MAX,
+    );
   });
 
   it('passes the exact max value through unclamped', () => {
     expect(
-      completionInlineBudget({ [ENV_KEY]: String(COMPLETION_INLINE_BUDGET_MAX) }),
+      completionInlineBudget({
+        [ENV_KEY]: String(COMPLETION_INLINE_BUDGET_MAX),
+      }),
     ).toBe(COMPLETION_INLINE_BUDGET_MAX);
   });
 });
@@ -139,7 +153,10 @@ describe('resolveCompletionBody', () => {
     process.env[ENV_KEY] = '5';
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-cb-'));
     const first = await resolveCompletionBody({ result: 'overflow-one' }, root);
-    const second = await resolveCompletionBody({ result: 'overflow-two' }, root);
+    const second = await resolveCompletionBody(
+      { result: 'overflow-two' },
+      root,
+    );
     if (first.kind !== 'spilled' || second.kind !== 'spilled') {
       throw new Error('expected both results to spill');
     }

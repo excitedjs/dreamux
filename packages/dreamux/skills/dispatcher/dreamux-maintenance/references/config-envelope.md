@@ -4,23 +4,41 @@ This reference owns the current host envelope, config path authority, provider
 opacity, and safe structural editing workflow.
 
 Use `dreamux config path` as the config path authority.
-`DREAMUX_CONFIG_DIR` may relocate `config.json`. Do not use `dreamux config
-show` to inspect provider config; it is not a field-targeted secret-safe view.
+`DREAMUX_ROOT` may relocate `config.json` (and every other Dreamux-owned
+path). Do not use `dreamux config show` to inspect provider config; it is not
+a field-targeted secret-safe view.
+
+While `dreamux serve` runs, the Config Service holds `config.json` in memory
+as the running process's single authority over it; a hand edit made to the
+file after start is not read until restart. `agents[]` is additionally
+readable and replaceable live through the `config.agents.get`/
+`config.agents.replace` Commands (secrets returned as `''`, a whole-section
+replace matched by `id`, a submitted `''` for a secret-named key keeping the
+stored value) — a replace takes effect for the next runtime launch, not the
+one already running. `dispatchers[]` has no Command and stays hand-edit-with-
+the-daemon-stopped only.
 
 The complete current host envelope has independently optional `plugins`,
 `agents`, and `dispatchers` arrays. An omitted `agents` or `dispatchers` array
 normalizes to an empty collection; an omitted `plugins` array means no opt-in
 plugins.
 
-`plugins[]` entries are either a plugin ref string or an object with exactly:
+`plugins[]` entries are either a plugin ref string or an object with:
 
 - non-empty plugin ref `ref`: `builtin:<id>` (the built-in opt-in plugin is
   `bootstrap`) or `npm:<package>` with an optional `#<export>`;
 - optional plugin-owned `config`, validated by that plugin. A `config` block
-  for a plugin that takes no config (no `config.read`) is ignored; this is the
-  one place `plugins[]` tolerates an unrecognized key. `rejectUnknownKeys`
-  still applies to `plugins[]` entry keys (`ref`/`config`) and elsewhere in
-  `config.ts`.
+  for a plugin that takes no config (no `config.read`) is ignored. Every key at
+  the host envelope's own levels — the top level, `plugins[]` entries
+  (`ref`/`config`), `dispatchers[]`, `channels[]`, `agents[]`, and
+  `dispatchers[].workspace` — tolerates an unrecognized key. Wrong types and
+  missing required fields are still rejected at every level. This tolerance is
+  about the envelope's own keys only; whether it also extends to a
+  provider-owned `config` block (`agents[].config`, `channels[].config`) is
+  that provider's own choice — use the provider's reference as the authority
+  there, not this one. The `builtin:codex`, `builtin:claude-code`, and
+  `builtin:feishu` config readers tolerate an unrecognized key in their own
+  `config` block too, under the same R21 policy.
 
 The built-in Feishu plugin is always loaded and must not be listed. A
 malformed entry fails `dreamux serve` and shows as a failed `config` line in
@@ -47,9 +65,10 @@ provider a plugin contributes is addressed in `agents[].provider` or
 - required non-empty `channels[]`;
 - required non-empty `agentRuntime` matching an `agents[].id`.
 
-Each `channels[]` entry contains a unique-per-Dispatcher non-empty `id`, a
-non-empty Channel provider ref, and optional provider-owned `config`, and
-nothing else. One provider ref may appear only once in one Dispatcher.
+Each `channels[]` entry recognizes a unique-per-Dispatcher non-empty `id`, a
+non-empty Channel provider ref, and optional provider-owned `config`; any
+other key is tolerated but unread. One provider ref may appear only once in
+one Dispatcher.
 Automatic collaboration-space provisioning is Channel-owned policy, not host
 config: the Channel that offers the flow owns it, so it is set through that
 Channel's own surface rather than in this envelope.
@@ -60,7 +79,9 @@ authority; do not infer fields from a built-in provider.
 ## Safe Current Config Editing
 
 1. Confirm explicit operator intent for the target Dispatcher, config file, and
-   exact fields.
+   exact fields. When the change is only to `agents[]` and the daemon is
+   running, prefer `config.agents.get`/`config.agents.replace` over a hand
+   edit: a hand edit made while the daemon runs is not read until restart.
 2. Resolve the file with `dreamux config path` without printing its contents.
 3. Load the separate provider reference for each affected built-in provider
    or built-in plugin; for an external provider or plugin, including a

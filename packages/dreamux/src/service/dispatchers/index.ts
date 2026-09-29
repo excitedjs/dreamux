@@ -1,39 +1,49 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DreamuxConfig } from '../../config/config.js';
-import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import type { DispatcherStore } from '../../state/dispatcher-store.js';
-import type {
-  CoreCommandRegistry,
-  Dispatcher,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import {
+  dispatcherChannelIdentity,
+  type DispatcherConfig,
+} from '../../config/config.js';
+import type { ConfigReader } from '../../config/service.js';
+import type { RestartIntentConsumer } from '../dispatcher-service/restart-intent.js';
+import type { Dispatcher, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { CoreCommandRegistry } from '../../command/types.js';
 import type { SyncHook } from 'tapable';
-import { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import { readAgentIdentity } from '../agent/store.js';
+import type { AgentEntityIdentity } from '../agent/identity.js';
 import { dispatcherDir } from '../../platform/paths.js';
-import { DispatcherService } from '../dispatcher-service/index.js';
+import {
+  DispatcherService,
+  type DispatcherServiceOptions,
+} from '../dispatcher-service/index.js';
 import type {
   DispatcherRuntimeStatus,
-  DispatcherServiceOptions,
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
-import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
+import { identityStatusToRuntimeStatus } from '../dispatcher-service/agent.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 
 export interface DispatchersOptions {
-  config: DreamuxConfig;
-  dispatchers: DispatcherStore;
+  config: ConfigReader;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
   /** The process-wide Agent-facing MCP lease registry every dispatcher mints into. */
   mcpLeases: McpLeaseRegistry;
+  /**
+   * The one restart marker this process loaded at boot (issue #78), resolved
+   * once by `server.ts` before this collection is constructed. A constructor
+   * value rather than a setter: every `DispatcherService` this collection
+   * builds afterward receives the same already-loaded consumer directly.
+   */
+  restartIntent: RestartIntentConsumer;
   /** The process-wide admitted Command port every Channel session invokes through. */
   commands: CoreCommandRegistry;
   homePathPrefixes: readonly string[];
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
-  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  workflowLoggerFactory?: ((dispatcherId: string) => DreamuxLogger) | undefined;
   /** The host `dispatcher` hook, fired once per constructed DispatcherService. */
   dispatcherHook: SyncHook<[Dispatcher]>;
   log: DreamuxLogger;
@@ -48,37 +58,29 @@ export interface DispatchersOptions {
  */
 export class Dispatchers {
   private readonly services = new Map<string, DispatcherService>();
-  private readonly config: DreamuxConfig;
-  private readonly dispatcherStore: DispatcherStore;
+  private readonly config: ConfigReader;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly mcpLeases: McpLeaseRegistry;
   private readonly commands: CoreCommandRegistry;
   private readonly homePathPrefixes: readonly string[];
   private readonly adminSocketPath: string | undefined;
-  private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  private readonly channelLoggerFactory: (
+    dispatcherId: string,
+  ) => DreamuxLogger;
   private readonly workflowLoggerFactory:
-    | ((dispatcherId: string) => DreamuxLogger)
-    | undefined;
+    ((dispatcherId: string) => DreamuxLogger) | undefined;
   private readonly dispatcherHook: SyncHook<[Dispatcher]>;
   private readonly log: DreamuxLogger;
-  /**
-   * Read-only readers for each dispatcher's own root Agent identity, shared by
-   * {@link summarize} and {@link status} (issue #233 / PR #282 review). Each is
-   * bound to one dispatcher root here, at this composition boundary, and cached
-   * so the read-model probes don't rebuild one per row. A plain reader — never a
-   * DispatcherService trigger: it does not prepare or start any aggregate.
-   */
-  private readonly rootIdentities = new Map<string, AgentIdentityStore>();
-  private restartIntent: RestartIntentConsumer | null = null;
+  private readonly restartIntent: RestartIntentConsumer;
   private accepting = true;
 
   constructor(opts: DispatchersOptions) {
     this.config = opts.config;
-    this.dispatcherStore = opts.dispatchers;
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.channelProviders = opts.channelProviders;
     this.mcpLeases = opts.mcpLeases;
+    this.restartIntent = opts.restartIntent;
     this.commands = opts.commands;
     this.homePathPrefixes = opts.homePathPrefixes;
     this.adminSocketPath = opts.adminSocketPath;
@@ -88,18 +90,22 @@ export class Dispatchers {
     this.log = opts.log;
   }
 
-  private rootIdentity(dispatcherId: string): AgentIdentityStore {
-    let store = this.rootIdentities.get(dispatcherId);
-    if (store === undefined) {
-      store = new AgentIdentityStore({
-        dir: dispatcherDir(dispatcherId),
-        dispatcherId,
-        expectedName: null,
-        log: this.log,
-      });
-      this.rootIdentities.set(dispatcherId, store);
-    }
-    return store;
+  /**
+   * A stateless snapshot read of one dispatcher's own root Agent identity, for
+   * {@link summarize} and {@link status}'s fallback when no live runtime
+   * status exists. Fresh every call rather than cached: `DispatcherService`
+   * owns the writing store once it materializes, so this collection never
+   * needs — and must never hold — its own committed copy of the same file.
+   */
+  private rootIdentity(
+    dispatcherId: string,
+  ): Promise<AgentEntityIdentity | null> {
+    return readAgentIdentity({
+      dir: dispatcherDir(dispatcherId),
+      dispatcherId,
+      expectedName: null,
+      log: this.log,
+    });
   }
 
   get(id: string): DispatcherService {
@@ -109,7 +115,6 @@ export class Dispatchers {
         throw new Error('dreamux dispatchers are shutting down');
       }
       service = new DispatcherService(this.dispatcherOptions(id));
-      service.setRestartIntent(this.restartIntent);
       this.services.set(id, service);
       // After `set`, so a tap that re-enters `get(id)` receives this object.
       // Every tap and every plugin-added interceptor on this hook is isolated
@@ -119,82 +124,115 @@ export class Dispatchers {
     return service;
   }
 
-  setRestartIntent(consumer: RestartIntentConsumer | null): void {
-    this.restartIntent = consumer;
-    for (const service of this.services.values()) {
-      service.setRestartIntent(consumer);
-    }
-  }
-
   async summarize(): Promise<DispatcherSummary[]> {
-    return Promise.all(this.dispatcherStore.list().map(async (row) => {
-      const service = this.services.get(row.dispatcher_id);
-      const live = service?.liveRuntimeStatus() ?? null;
-      if (live !== null) {
+    return Promise.all(
+      this.config.current().dispatchers.map(async (dispatcher) => {
+        const service = this.services.get(dispatcher.id);
+        const live = service?.dispatcherAgent.status() ?? null;
+        if (live !== null) {
+          return {
+            dispatcher_id: dispatcher.id,
+            channel_identity: dispatcherChannelIdentity(dispatcher),
+            status: live.status,
+            session_id: live.sessionId,
+            enabled: dispatcher.enabled,
+          };
+        }
+        const identity = await this.rootIdentity(dispatcher.id);
         return {
-          dispatcher_id: row.dispatcher_id,
-          channel_identity: row.channel_identity,
-          status: live.status === null
-            ? 'stopped'
-            : runtimeStatusToIdentityStatus(live.status),
-          session_id: live.sessionId,
-          enabled: row.enabled === 1,
+          dispatcher_id: dispatcher.id,
+          channel_identity: dispatcherChannelIdentity(dispatcher),
+          status: identityStatusToRuntimeStatus(identity?.status ?? null),
+          session_id: identity?.session_id ?? null,
+          enabled: dispatcher.enabled,
         };
-      }
-      const identity = await this.rootIdentity(row.dispatcher_id).read();
-      return {
-        dispatcher_id: row.dispatcher_id,
-        channel_identity: row.channel_identity,
-        status: identity?.status ?? 'stopped',
-        session_id: identity?.session_id ?? null,
-        enabled: row.enabled === 1,
-      };
-    }));
+      }),
+    );
   }
 
   async status(id: string): Promise<DispatcherRuntimeStatus> {
     const service = this.services.get(id);
-    const live = service?.liveRuntimeStatus() ?? null;
+    const live = service?.dispatcherAgent.status() ?? null;
     if (live !== null) return live;
-    const identity = await this.rootIdentity(id).read();
+    const identity = await this.rootIdentity(id);
     return {
-      status: identity?.status ?? null,
+      status: identityStatusToRuntimeStatus(identity?.status ?? null),
       sessionId: identity?.session_id ?? null,
       lastError: identity?.last_error ?? null,
     };
   }
 
+  /**
+   * Start every enabled dispatcher — the counterpart to {@link shutdown}.
+   * Sequential and log-and-continue, not aggregate-and-throw: one
+   * dispatcher's start failure must not stop the others from starting or
+   * abort the whole boot (`Server.start()` used to run this exact loop
+   * itself).
+   */
+  async start(): Promise<void> {
+    for (const dispatcher of this.config
+      .current()
+      .dispatchers.filter((d) => d.enabled)) {
+      try {
+        await this.get(dispatcher.id).start();
+      } catch (err) {
+        this.log.error(
+          {
+            dispatcher_id: dispatcher.id,
+            err: errorInfo(err),
+          },
+          'dispatcher failed to start',
+        );
+      }
+    }
+  }
+
+  /**
+   * Close every already-materialized dispatcher: one terminal close,
+   * no separate begin/end phase. `accepting` is fenced first, synchronously,
+   * so nothing new can materialize once this has started; never construct a
+   * dispatcher during shutdown.
+   */
   async shutdown(): Promise<void> {
-    this.beginShutdown();
+    this.accepting = false;
     const results = await Promise.allSettled(
-      [...this.services.values()].map((service) => service.shutdown()),
+      [...this.services.values()].map((service) => service.close()),
     );
     throwSettledFailures(results, 'multiple dispatchers failed to shut down');
   }
 
-  /** Fence only already-materialized aggregates; never construct during shutdown. */
-  beginShutdown(): void {
-    this.accepting = false;
-    for (const service of this.services.values()) service.beginShutdown();
+  /**
+   * The one canonical read of this dispatcher's own config entry — resolved
+   * here, once, rather than by each of `DispatcherService` and
+   * `ChannelService` re-deriving the same
+   * `config.current().dispatchers.find(...)` lookup independently. The
+   * message matches `configuredDispatcherCwd`'s own fail-loud text for the
+   * same fact, since this is now the earlier of the two checks to run.
+   */
+  private dispatcherConfig(id: string): DispatcherConfig {
+    const dispatcher = this.config
+      .current()
+      .dispatchers.find((entry) => entry.id === id);
+    if (dispatcher === undefined) {
+      throw new Error(`dispatcher ${JSON.stringify(id)} is not configured`);
+    }
+    return dispatcher;
   }
 
   private dispatcherOptions(id: string): DispatcherServiceOptions {
     return {
       id,
+      dispatcher: this.dispatcherConfig(id),
       config: this.config,
-      dispatchers: this.dispatcherStore,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,
+      restartIntent: this.restartIntent,
       commands: this.commands,
       homePathPrefixes: this.homePathPrefixes,
-      ...(this.adminSocketPath !== undefined
-        ? { adminSocketPath: this.adminSocketPath }
-        : {}),
+      adminSocketPath: this.adminSocketPath,
       channelLoggerFactory: this.channelLoggerFactory,
-      ...(this.workflowLoggerFactory !== undefined
-        ? { workflowLoggerFactory: this.workflowLoggerFactory }
-        : {}),
+      workflowLoggerFactory: this.workflowLoggerFactory,
       log: this.log,
     };
   }

@@ -18,6 +18,8 @@
  *         teammate/<name>/    dispatcher-owned teammate identity
  *         team/<team>/        one dir per team: leader identity,
  *                             record.json, teammate/<name>/ members
+ *       plugins/<name>/       one plugin's own durable state; plugin-owned,
+ *                             Core neither creates nor reads inside it
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
@@ -36,19 +38,21 @@
 
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep, delimiter } from 'node:path';
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+  delimiter,
+} from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  assertUnixSocketPathBudget,
-} from '@excitedjs/dreamux-utils';
+import { assertUnixSocketPathBudget } from '@excitedjs/dreamux-utils';
 
-import {
-  BUILT_IN_DEFAULTS,
-  type DreamuxConfig,
-} from '../config/config.js';
 import { pathExists } from './fs-errors.js';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { validateDispatcherId } from './dispatcher-id.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(dirname(HERE));
@@ -60,27 +64,7 @@ export const BUNDLED_SKILL_NAMES = [
   'teamwork',
 ] as const;
 
-export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];
-
-let currentConfig: DreamuxConfig = BUILT_IN_DEFAULTS;
-
-/**
- * Set the active configuration snapshot. Called once by Server.start() with
- * the result of loadConfig(); tests can call it to inject a custom snapshot.
- * Idempotent.
- */
-export function setRuntimeConfig(config: DreamuxConfig): void {
-  currentConfig = config;
-}
-
-/** Test hook: revert to the built-in defaults. */
-export function resetRuntimeConfig(): void {
-  currentConfig = BUILT_IN_DEFAULTS;
-}
-
-export function getRuntimeConfig(): DreamuxConfig {
-  return currentConfig;
-}
+export type BundledSkillName = (typeof BUNDLED_SKILL_NAMES)[number];
 
 /**
  * The dreamux home root. Overridable via the `DREAMUX_ROOT` environment variable
@@ -96,17 +80,10 @@ export function dreamuxRoot(): string {
 /** Lexical containment: is `candidate` at or under `root` (both resolved)? */
 function pathIsAtOrUnder(root: string, candidate: string): boolean {
   const rel = relative(resolve(root), resolve(candidate));
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
-}
-
-/**
- * True when `path` resolves to, or inside, the dreamux home root (`~/.dreamux`).
- * Lexical only — symlinks are not caught; use {@link isRealPathUnderDreamuxRoot}
- * for the placement guard. Managed worktree creation must fail loud rather than
- * place a worktree under Dreamux's own state/run/cache tree (issue #182 PR-4).
- */
-export function isUnderDreamuxRoot(path: string): boolean {
-  return pathIsAtOrUnder(dreamuxRoot(), path);
+  return (
+    rel === '' ||
+    (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+  );
 }
 
 /** realpath, falling back to a lexical resolve when the path does not exist. */
@@ -119,11 +96,16 @@ export async function canonicalPath(path: string): Promise<string> {
 }
 
 /**
- * Symlink-safe variant of {@link isUnderDreamuxRoot} (issue #182 PR-4, #186):
- * canonicalizes both the root and `path` with `realpath` before the containment
- * check, so a workspace that symlinks into `~/.dreamux` is still rejected.
+ * True when `path` resolves to, or inside, the dreamux home root
+ * (`~/.dreamux`). Symlink-safe (issue #182 PR-4, #186): canonicalizes both
+ * the root and `path` with `realpath` before the containment check, so a
+ * workspace that symlinks into `~/.dreamux` is still rejected. Managed
+ * worktree creation must fail loud rather than place a worktree under
+ * Dreamux's own state/run/cache tree (issue #182 PR-4).
  */
-export async function isRealPathUnderDreamuxRoot(path: string): Promise<boolean> {
+export async function isRealPathUnderDreamuxRoot(
+  path: string,
+): Promise<boolean> {
   const [realRoot, realPath] = await Promise.all([
     canonicalPath(dreamuxRoot()),
     canonicalPath(path),
@@ -206,12 +188,36 @@ export function legacyAdminSocketPath(): string {
   return join(stateRoot(), 'admin.sock');
 }
 
+/**
+ * The pidfile lock beside a Unix admin socket at `socketPath` — the single-
+ * instance guard `admin/socket.ts` acquires before binding, and the same
+ * convention `assertNoLegacyAdminServer` probes against the legacy socket
+ * path. Takes the socket path rather than deriving it, since a test passes
+ * its own `socketPath`.
+ */
+export function adminSocketLockPath(socketPath: string): string {
+  return `${socketPath}.lock`;
+}
+
 export function dispatcherDir(id: string): string {
   return join(stateRoot(), dispatcherPathSegment(id));
 }
 
-export function defaultDispatcherCwd(id: string): string {
-  return join(dispatcherDir(id), 'cwd');
+/**
+ * One plugin's own durable state directory, scoped by the plugin's own name —
+ * not by dispatcher, the way {@link dispatcherDir} is. Core hands this to the
+ * plugin at `server()` time and never creates or reads inside it; a plugin
+ * that needs per-dispatcher scoping underneath its own directory composes
+ * that itself. `name` is used verbatim, never sanitized: this builder's one
+ * caller (`plugin/host.ts`) passes only a `loaded.name` that
+ * `plugin/loader.ts`'s `constructPlugin` already validated against the safe
+ * single-segment `PLUGIN_NAME_PATTERN`, so it is already exactly this
+ * directory's name: distinct names map to distinct segments on a
+ * case-sensitive filesystem, and none can resolve to `.`/`..` and escape
+ * `state/plugins/`.
+ */
+export function pluginStateDir(name: string): string {
+  return join(stateRoot(), 'plugins', name);
 }
 
 /** The package-shipped bundled skill root (issue #209). */
@@ -384,9 +390,10 @@ export function validateWorkflowRunId(runId: string): string {
 
 /** The workflow collection root for one dispatcher or Team scope. */
 export function workflowScopeDir(input: WorkflowScopePathInput): string {
-  const ownerDir = input.teamId === null
-    ? dispatcherDir(input.dispatcherId)
-    : dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
+  const ownerDir =
+    input.teamId === null
+      ? dispatcherDir(input.dispatcherId)
+      : dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
   return join(ownerDir, 'workflow');
 }
 
@@ -422,7 +429,8 @@ export function dispatcherCronJobsPath(id: string): string {
 
 /**
  * Neutral teammate-name path segment sanitizer. Shared by the neutral
- * teammate-state builders here and by each builtin's teammate log-path builders.
+ * teammate-state builders here and by each builtin's teammate log-path
+ * builders.
  */
 export function teamMateNameSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]/g, '_');
@@ -443,8 +451,9 @@ export function dispatcherPathSegment(id: string): string {
 // resolves them.
 //
 // `buildServicePath` is the single source of truth for that PATH. It lives in
-// platform/ (the neutral path builder) so onboard/service.ts only orchestrates
-// the managed-service environment and never owns the home/PATH contract itself.
+// platform/ (the neutral path builder) so daemon/environment.ts only
+// orchestrates the managed-service environment and never owns the home/PATH
+// contract itself.
 //
 // Order (deduplicated while preserving first occurrence):
 //   1. Stable Dreamux-owned dirs (selected Node bin dir, resolved provider bin
@@ -593,41 +602,6 @@ export function withServicePath(
   input: ServicePathInput,
 ): NodeJS.ProcessEnv {
   return { ...env, PATH: buildServicePath(input) };
-}
-
-/**
- * Return a copy of `env` with PATH augmented so bare provider/agent binaries
- * resolve against the standard executable dirs during `dreamux onboard` and
- * `dreamux daemon install`. It places the captured session PATH (in original
- * order) ahead of the fresh-install fallback dirs (XDG_BIN_HOME /
- * $HOME/.local/bin + portable platform system dirs), matching the order
- * {@link buildServicePath} persists into the service unit — so the
- * daemon-install preflight and the running service agree.
- *
- * Stable Dreamux-owned dirs (Node bin, provider bin dirs, dreamux bin) are NOT
- * included here: at resolve time the Node bin is not yet selected and the
- * dreamux bin dir is computed separately. Those are added when the service PATH
- * is rendered (see `managedServicePath` in onboard/service.ts). Pass
- * `extraDirs` to lead the PATH with explicit actual dirs (e.g. a resolved
- * provider bin dir).
- *
- * The caller's env (and process.env) is never mutated; platform/homeDir/env are
- * passed explicitly by the caller and these helpers never read process.env.
- * XDG_BIN_HOME is a widely-followed convention (NOT part of the formal XDG Base
- * Directory spec); it is honored alongside $HOME/.local/bin so binaries in
- * either location resolve.
- */
-export function withStandardExecPath(
-  env: NodeJS.ProcessEnv,
-  options: ExecDirOptions & { extraDirs?: string[] },
-): NodeJS.ProcessEnv {
-  const sessionPath = env['PATH'] ?? '';
-  const fallbackDirs = standardExecDirs(options);
-  return withServicePath(env, {
-    stableDirs: options.extraDirs ?? [],
-    sessionPath,
-    fallbackDirs,
-  });
 }
 
 function homebrewExecDir(platform: NodeJS.Platform): string | null {

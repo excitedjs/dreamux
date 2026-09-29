@@ -17,7 +17,6 @@ export type ParsedLine =
       kind: 'init';
       sessionId: string | null;
       model: string | null;
-      capabilities: readonly string[];
       raw: JsonObject;
     }
   | {
@@ -46,7 +45,12 @@ export type ParsedLine =
       kind: 'compact_boundary';
       raw: JsonObject;
     }
-  | { kind: 'result'; uuid: string | null; outcome: ResultEnvelope; raw: JsonObject }
+  | {
+      kind: 'result';
+      uuid: string | null;
+      outcome: ResultEnvelope;
+      raw: JsonObject;
+    }
   | {
       kind: 'command_lifecycle';
       commandUuid: string | null;
@@ -68,16 +72,16 @@ export type ParsedLine =
       error: string | null;
       raw: JsonObject;
     }
-  | { kind: 'other'; type: string | null; subtype: string | null; raw: JsonObject }
+  | {
+      kind: 'other';
+      type: string | null;
+      subtype: string | null;
+      raw: JsonObject;
+    }
   | { kind: 'parse_error'; raw: string };
 
 export type CommandLifecycleState =
-  | 'queued'
-  | 'started'
-  | 'completed'
-  | 'cancelled'
-  | 'discarded'
-  | 'refused';
+  'queued' | 'started' | 'completed' | 'cancelled' | 'discarded' | 'refused';
 
 /** The terminal `result` envelope, reduced to what the runtime records per turn. */
 export interface ResultEnvelope {
@@ -110,22 +114,10 @@ export interface ResultEnvelope {
    * not return a validated structured object.
    */
   readonly hasStructuredOutput: boolean;
-  readonly tokenUsage?: { readonly inputTokens: number; readonly outputTokens: number };
-}
-
-/**
- * Per-turn stdin delivery options. The default (an absent object) produces a
- * plain human-equivalent user turn; completion delivery opts into the native
- * notification idiom.
- */
-export interface TurnSubmitOptions {
-  /**
-   * Mark the stdin user message synthetic. claude-code maps this to its
-   * internal `isMeta`: hidden in the TUI transcript but model-visible and sent
-   * to the API like a normal user turn — the native channel for a background /
-   * sub-agent completion notification. Never set on human channel turns.
-   */
-  isSynthetic?: boolean;
+  readonly tokenUsage?: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
 }
 
 /** The reduced outcome of one assistant turn, terminated by a `result`. */
@@ -144,7 +136,10 @@ export interface TurnOutcome {
    * was returned.
    */
   readonly hasStructuredOutput: boolean;
-  readonly tokenUsage?: { readonly inputTokens: number; readonly outputTokens: number };
+  readonly tokenUsage?: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
   readonly contextTokens?: number | null;
 }
 
@@ -171,7 +166,7 @@ export interface ClaudeCodeSessionSpec {
    */
   remoteControl: boolean;
   /** Surface the local-only Remote Control URL when Claude returns one. */
-  onRemoteControlUrl?: (url: string) => void;
+  onRemoteControlUrl?: ((url: string) => void) | undefined;
   /** Diagnostic logger for protocol-level events (parse errors, control answers). */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   onProtocolEvent?: (event: ClaudeProtocolEvent) => void;
@@ -191,12 +186,10 @@ export type ClaudeActivityLine = Extract<
 >;
 
 export type ClaudeProtocolEvent =
-  | { readonly kind: 'interrupted'; readonly uuid: string | null; readonly outcome: TurnOutcome }
   | {
-      /** Public native observation; lifecycle alone does not supply a completion. */
-      readonly kind: 'command_lifecycle';
-      readonly commandUuid: string;
-      readonly state: CommandLifecycleState;
+      readonly kind: 'interrupted';
+      readonly uuid: string | null;
+      readonly outcome: TurnOutcome;
     }
   | { readonly kind: 'stream'; readonly line: ClaudeActivityLine }
   | {
@@ -204,8 +197,6 @@ export type ClaudeProtocolEvent =
       /** The result envelope's own id, not its inbound-message attribution. */
       readonly uuid: string | null;
       readonly outcome: TurnOutcome;
-      /** Submitted commands answered by this result; empty for background-only turns. */
-      readonly commandUuids: readonly string[];
     };
 
 /**
@@ -216,11 +207,7 @@ export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
   /** Resolve native admission; the returned submission carries eventual settlement. */
-  submit(
-    prompt: string,
-    options?: TurnSubmitOptions,
-    commandUuid?: string,
-  ): Promise<RuntimeAdmission>;
+  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission>;
   /** Interrupt whatever claude is doing; false when it is doing nothing. */
   interrupt(reason: string): Promise<boolean>;
   /** Whether the child is currently alive. */

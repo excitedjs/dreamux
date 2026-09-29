@@ -17,10 +17,18 @@
  *                        (bin-launcher / codex-live) carry such disables.
  *
  * Rule set (issue #85 convergence — primary + backstops):
- *   - max-lines .................. source files over 700 physical lines are a
- *                                  hard error. Large files hide architectural
- *                                  boundaries and make review/debug cycles
- *                                  slower, so they must be split.
+ *   - max-lines .................. source files over 700 *code* lines (blank
+ *                                  lines and comments excluded) are a hard
+ *                                  error. This is a smell detector, not a
+ *                                  budget: the two legitimate responses to a
+ *                                  file tripping it are finding the
+ *                                  responsibility that wants its own owner
+ *                                  and giving it a real named module, or
+ *                                  recording the file as a micro-refactor
+ *                                  candidate for the operator to schedule.
+ *                                  Trimming comments/whitespace or exiling
+ *                                  one or two small helpers to duck the gate
+ *                                  is itself a violation (whitepaper §6).
  *   - n/no-sync .................. primary. Matches any callee whose name ends
  *                                  in `Sync` (the Node convention), so it
  *                                  catches `readFileSync()`, `fs.mkdirSync()`,
@@ -92,7 +100,7 @@ function bannedSyncImports(groups, message) {
  */
 const SYNC_DESTRUCTURE_SELECTOR = {
   selector:
-    "VariableDeclarator > ObjectPattern > Property[key.name=/Sync$/][computed=false]",
+    'VariableDeclarator > ObjectPattern > Property[key.name=/Sync$/][computed=false]',
   message:
     'Destructuring a synchronous (*Sync) member is banned in runtime/CLI source (issue #85). Use the node:fs/promises (async) API instead.',
 };
@@ -177,6 +185,109 @@ export function withProviderImportBoundary(baseConfig) {
   return withSrcImportBans(baseConfig, [CORE_PACKAGE_BAN]);
 }
 
+/**
+ * Package-wide re-export ban (code-organization refactor, H6). A module must
+ * not re-export another module's surface (`export * from` / `export { X }
+ * from`) — that hides which module actually owns `X` behind a package-wide
+ * grep and invites a barrel-of-barrels shape. Only a package's own declared
+ * entry point(s) legitimately do this, since re-exporting the package's
+ * public surface is what an entry point is for.
+ */
+const PACKAGE_REEXPORT_SELECTORS = [
+  {
+    selector: 'ExportAllDeclaration',
+    message:
+      "A module must not re-export another module's whole surface. Import the owning module directly, or add an intentional export to the package entry point.",
+  },
+  {
+    selector: 'ExportNamedDeclaration[source]',
+    message:
+      'A module must not re-export another module. Import the owning module directly, or add an intentional export to the package entry point.',
+  },
+];
+
+/**
+ * Entry-point-only re-export ban: appends a NEW config block on top of
+ * `baseConfig` rather than mutating its `src/**\/*.ts` block. Flat-config
+ * merges rule *keys* across matching blocks but replaces a single key's
+ * option array wholesale on the last match — so this block must carry
+ * `SYNC_DESTRUCTURE_SELECTOR` too (dropping it here would silently disable
+ * the issue #85 sync-destructure backstop for every file this block matches,
+ * since its `no-restricted-syntax` value would win over the base block's for
+ * the same rule key). `entryFiles` is the caller's own package-relative list
+ * (its root barrel, plus any other file a live consumer still asserts the
+ * exact export surface of).
+ */
+export function withPackageEntryOnlyReexports(baseConfig, { entryFiles }) {
+  return [
+    ...baseConfig,
+    {
+      files: ['src/**/*.ts'],
+      ignores: entryFiles,
+      rules: {
+        'no-restricted-syntax': [
+          'error',
+          SYNC_DESTRUCTURE_SELECTOR,
+          ...PACKAGE_REEXPORT_SELECTORS,
+        ],
+      },
+    },
+  ];
+}
+
+/**
+ * "Dumping ground" filename ban (code-organization refactor, H4). A file
+ * named `*-helpers.ts` / `*-support.ts` / `*-ops.ts` / a bare `run-support.ts`
+ * / `runtime-session.ts` names no single responsibility, which is exactly
+ * what invites unrelated functions to keep landing in it. Filename-only, so
+ * it is a small inline rule (no stock ESLint rule reports on a filename) —
+ * package-wide by default via `sharedPlugins`/the base `src/**\/*.ts` block
+ * below, not an opt-in helper like the boundary functions above, since it has
+ * no per-package parameter to supply. Severity is `error`: the
+ * code-organization refactor deleted or folded in every prior match, so a
+ * new one is a regression to reject, not a warning to tolerate.
+ */
+const DUMPING_GROUND_FILENAME_PATTERNS = [
+  /-helpers\.ts$/,
+  /-support\.ts$/,
+  /-ops\.ts$/,
+  /^run-support\.ts$/,
+  /^runtime-session\.ts$/,
+];
+
+const dreamuxPlugin = {
+  rules: {
+    'no-dumping-ground-filename': {
+      meta: {
+        type: 'suggestion',
+        docs: {
+          description:
+            'disallow filenames that describe no single responsibility',
+        },
+        schema: [],
+      },
+      create(context) {
+        return {
+          Program(node) {
+            const filename = context.filename.split(/[\\/]/).pop() ?? '';
+            if (
+              DUMPING_GROUND_FILENAME_PATTERNS.some((pattern) =>
+                pattern.test(filename),
+              )
+            ) {
+              context.report({
+                node,
+                message:
+                  'Filename names no single responsibility (matches *-helpers.ts / *-support.ts / *-ops.ts / run-support.ts / runtime-session.ts). Name the file for the one thing it owns, or fold it into its owner.',
+              });
+            }
+          },
+        };
+      },
+    },
+  },
+};
+
 const baseLanguageOptions = {
   parser: tseslint.parser,
   ecmaVersion: 2023,
@@ -186,6 +297,7 @@ const baseLanguageOptions = {
 const sharedPlugins = {
   n,
   '@eslint-community/eslint-comments': comments,
+  dreamux: dreamuxPlugin,
 };
 
 /**
@@ -208,7 +320,7 @@ export default [
     rules: {
       'max-lines': [
         'error',
-        { max: 700, skipBlankLines: false, skipComments: false },
+        { max: 700, skipBlankLines: true, skipComments: true },
       ],
       'n/no-sync': ['error', { allowAtRootLevel: false }],
       'no-restricted-imports': bannedSyncImports(
@@ -220,6 +332,7 @@ export default [
         'error',
         { ignore: [] },
       ],
+      'dreamux/no-dumping-ground-filename': 'error',
     },
   },
   // Tests: synchronous fs fixtures are fine (not the server event loop). Only

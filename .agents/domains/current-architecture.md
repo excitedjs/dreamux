@@ -9,7 +9,7 @@ authoritative, and source wins over both.
 `dreamux serve` runs one local Node process. The server owns admin IPC,
 configuration loading, provider registries, durable state, and one
 `DispatcherService` per enabled dispatcher. Each `DispatcherService` *has an*
-agent: a contained `TeammateService` that owns the agent runtime lifecycle.
+agent: a contained `AgentService` that owns the agent runtime lifecycle.
 Dispatcher-only concerns — channel sessions, restart-notice injection, role MCP
 assembly, completion routing, the neutral conversation projection — stay on
 `DispatcherService`.
@@ -30,8 +30,8 @@ the rush path only.
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
 | `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider- and plugin-authoring contracts |
 | `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared utility helpers with **no Dreamux dependency of any kind** (transcript bounds, digest validation, positional reads, deterministic rendering, path containment) plus the one redaction capability — secret key names, text rules, and the JSON walk — that core, the logger, and config display all call |
-| `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | built-in Codex Agent Runtime provider behind `builtin:codex` |
-| `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | built-in Claude Code Agent Runtime provider behind `builtin:claude-code` |
+| `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | always-loaded built-in Codex plugin: contributes the Agent Runtime provider behind `builtin:codex` |
+| `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | always-loaded built-in Claude Code plugin: contributes the Agent Runtime provider behind `builtin:claude-code` |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
 | `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | always-loaded built-in Feishu plugin: contributes the Channel provider behind `builtin:feishu` and publishes the Feishu extension api |
 | `@excitedjs/dreamux-plugin-bootstrap` | `/packages/plugins/bootstrap/` | built-in opt-in bootstrap plugin behind `builtin:bootstrap`: profile files from the Dispatcher cwd's `.workspace/` in the Dispatcher and TeamLeader launch prompts |
@@ -39,7 +39,10 @@ the rush path only.
 
 Inside `/packages/dreamux/src/`: `admin/` (socket transport), `channel/` and
 `agent-runtime/` (generic provider catalogs/loaders), `command/` (the one
-Command registry), `config/`, `plugin/` (plugin loading, host hooks, tap
+Command registry), `config/` (`config.ts`'s loader/validator, `service.ts`'s
+`ConfigService` — `config.json`'s single in-process authority — and
+`commands.ts`'s `config.agents.get`/`config.agents.replace` Commands),
+`plugin/` (plugin loading, host hooks, tap
 runner), `mcp/` (stdio protocol owner), `platform/` (paths, logging, sockets),
 `service/` (dispatcher/Team/TeamMate/Workflow domains and their MCP
 delegates), `state/`, and `server.ts`. Public CLI:
@@ -52,9 +55,9 @@ Owner for install/build/test, change files, and release:
 ## Provider Seams
 
 Two seams, three built-in providers resolved through one registry/catalog
-shape: `builtin:codex` and `builtin:claude-code` load through the provider
-loader exactly like external `npm:` refs, and `builtin:feishu` is contributed
-into the same registry by the always-loaded Feishu plugin:
+shape: `builtin:codex`, `builtin:claude-code`, and `builtin:feishu` are each
+contributed into the same registry by their own always-loaded plugin, before
+an operator-configured `npm:` provider or plugin loads into it:
 
 - **Agent Runtime** — a provider factory creates a runtime handle with
   `start` / `submit({ text })` / `stop`; provider-private session state crosses
@@ -91,8 +94,9 @@ Admin callers may pass validated `skill_sources` on `teammate.spawn` /
 control-plane slices (events, protocol baseline, introspection, authentication)
 are the one [active proposal](../proposals/admin-control-plane-surface.md).
 
-Key source: `/packages/dreamux/src/command/`,
-`/packages/dreamux/src/admin/socket.ts`.
+Key source: `/packages/dreamux/src/command/` (registry, schema/validation,
+`mustDispatcherId`), `/packages/dreamux/src/server/` (catalog composition,
+`CoreCommandHost`), `/packages/dreamux/src/admin/socket.ts`.
 
 ## MCP Protocol Boundary
 
@@ -113,7 +117,7 @@ through, no sanitized catch-all — is owned by
 
 ## Teams, TeamMates, And Completion Routing
 
-The Dispatcher Service owns TeamMate and Team state; `TeammateService` is the
+The Dispatcher Service owns TeamMate and Team state; `AgentService` is the
 sole lifecycle command owner for every conversational agent, and Collections
 own construction, caching, and eviction. A Team's `record.json` is the sole
 existence, name, and idempotency authority; dissolve is a submission whose
@@ -166,7 +170,10 @@ execution is never replayed. The exact numeric limits are user-facing and owned
 by [Dynamic Workflow usage](../product/dynamic-workflow-usage.md#53-exact-limits).
 
 Key source: `/packages/dreamux/src/service/workflow-service/`,
-`/packages/dreamux/src/service/dispatcher-service/dispatcher-workflows.ts`.
+`/packages/dreamux/src/service/dispatcher-service/index.ts` (constructs the
+dispatcher-scoped `WorkflowService` directly) and
+`/packages/dreamux/src/service/dispatcher-service/lifecycle.ts` (fans its
+start/recover/close-admission out to the Team scope).
 
 ## State, Cache, Run Files, And Logs
 

@@ -15,16 +15,15 @@ Dreamux has two live provider seams:
 - `channel` creates Channel sessions, resolves Channel targets, and owns
   provider-specific tools.
 
-The built-in refs are stable aliases. Core resolves the two Agent Runtime refs
-to packages through the same loader path as package-backed providers;
-`builtin:feishu` is contributed into the same registry by the always-loaded
-Feishu plugin:
+The built-in refs are stable aliases. All three are contributed into the
+registry by their own always-loaded plugin — the same mechanism, and the same
+registry, an operator-listed `plugins[]` entry uses:
 
-| Ref | Kind | Package | Registered by |
-|---|---|---|---|
-| `builtin:codex` | `agentRuntime` | `@excitedjs/agent-runtime-codex` | provider loader |
-| `builtin:claude-code` | `agentRuntime` | `@excitedjs/agent-runtime-claude-code` | provider loader |
-| `builtin:feishu` | `channel` | `@excitedjs/feishu-channel` | the `feishu` plugin's `contribute` |
+| Ref                   | Kind           | Package                                | Registered by                           |
+| --------------------- | -------------- | -------------------------------------- | --------------------------------------- |
+| `builtin:codex`       | `agentRuntime` | `@excitedjs/agent-runtime-codex`       | the `codex` plugin's `contribute`       |
+| `builtin:claude-code` | `agentRuntime` | `@excitedjs/agent-runtime-claude-code` | the `claude-code` plugin's `contribute` |
+| `builtin:feishu`      | `channel`      | `@excitedjs/feishu-channel`            | the `feishu` plugin's `contribute`      |
 
 A provider any plugin contributes is addressed as `builtin:<name>`, with the
 same ref grammar and catalogs; the plugin mechanism is owned by
@@ -39,7 +38,7 @@ exports declarations only: provider descriptors, Agent Runtime contracts,
 Channel contracts, turn shapes, diagnostics, and the plugin contract. It does not export host stores, path
 helpers, provider loaders, or runtime implementations.
 
-**Who may depend on it is part of what it is.** It exists for code *outside*
+**Who may depend on it is part of what it is.** It exists for code _outside_
 Dreamux — an external provider compiles against it to be loadable — so a
 dependency on it is a statement that the depending code is provider-facing.
 `@excitedjs/dreamux-utils` therefore depends on it not at all, not even for a
@@ -60,7 +59,10 @@ The three-way rule, in one line each:
   package. Its one dependency is `tapable`, by type only, for the plugin hook
   contract: a published `.d.ts` that names tapable's hook types makes consumers
   resolve tapable, so it is a real `dependencies` entry rather than a dev or
-  peer one.
+  peer one. Its `tsconfig.json` sets `compilerOptions.types` to an empty array,
+  so no `@types/node` ambient global (`NodeJS`, `Buffer`, and the rest) can
+  appear in its declarations, keeping a host typings dependency out of every
+  external provider package that compiles against it.
 - `@excitedjs/dreamux-utils` — pure helpers, depends on nothing.
 - Provider and plugin packages — depend on `dreamux-types` (and may use
   `dreamux-utils`), never on `@excitedjs/dreamux`.
@@ -97,7 +99,7 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux-types/src/plugin.ts`
-- `/packages/dreamux-types/tests/no-host-types.test.ts`
+- `/packages/dreamux-types/tsconfig.json`
 - `/packages/dreamux-utils/package.json`
 - `/packages/agent-runtime/codex/package.json`
 - `/packages/agent-runtime/claude-code/package.json`
@@ -108,7 +110,7 @@ Source:
 ### Operator Config
 
 The operator config is JSON at the path reported by `dreamux config path`:
-normally `~/.dreamux/config.json`, relocatable with `DREAMUX_CONFIG_DIR`.
+normally `~/.dreamux/config.json`, relocatable with `DREAMUX_ROOT`.
 
 Current schema:
 
@@ -122,15 +124,18 @@ Current schema:
 - `dispatchers[].channels[]` entries carry dispatcher-local `id`, provider ref,
   and provider-owned config.
 
-Config loading first loads plugins (the always-loaded Feishu plugin, then
-`plugins[]` in order) and runs their `contribute`, then loads the referenced
+Config loading first loads plugins (the always-loaded codex, claude-code, and
+Feishu plugins, then `plugins[]` in order) and runs their `contribute`, then loads the referenced
 Agent Runtime and Channel providers, validates provider-owned config through
 each provider's `readConfig`, and finally runs each plugin's `config.read`.
-Provider config can be sync or async. Core rejects old top-level `codex`,
-inline `dispatchers[].runtime`, missing `agentRuntime`, duplicate
-`agents[].id`, duplicate dispatcher ids, duplicate channel ids, and duplicate
-channel provider refs within one dispatcher. It does not silently migrate old
-shapes.
+Provider config can be sync or async. Core rejects missing `agentRuntime`,
+duplicate `agents[].id`, duplicate dispatcher ids, duplicate channel ids, and
+duplicate channel provider refs within one dispatcher — every one of these is
+a wrong type or a missing/duplicate required field. It does not reject a
+retired shape by name (an old top-level `codex` block, inline
+`dispatchers[].runtime`, and so on load as an ordinary tolerated unknown key;
+see [state-config-and-files.md](state-config-and-files.md)), and it does not
+silently migrate old shapes into the current one.
 
 Off Windows the config file must be mode `0600`. Any other mode is a loud load
 failure that names the offending mode; the file is never repaired in place.
@@ -142,7 +147,7 @@ app id.
 Source:
 
 - `/packages/dreamux/src/config/config.ts`
-- `/packages/dreamux/src/config/config-helpers.ts`
+- `/packages/dreamux/src/config/load.ts`
 - `/packages/dreamux/src/plugin/loader.ts`
 - `/packages/dreamux/src/agent-runtime/external-provider.ts`
 - `/packages/dreamux/src/channel/external-channel-provider.ts`
@@ -201,7 +206,7 @@ Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/teammate-service/factory.ts`
+- `/packages/dreamux/src/service/agent/factory.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 
 ### System Prompt
@@ -242,7 +247,7 @@ re-supplied as `systemPrompt.append` fragments on every launch that rebuilds the
 create context — initial create/spawn, close/reopen, process restart, Team
 rebuild, and runtime resume.
 
-Prompt policy stays outside the generic `TeammateService` runtime container.
+Prompt policy stays outside the generic `AgentService` runtime container.
 `TeamService` supplies the TeamLeader default and identity fragments; owned
 operations may supply host-private fragments through their collection creation
 options, which is how Dynamic Workflow injects its workflow-role contract
@@ -261,11 +266,14 @@ resume fallback start. Both escape XML text content inside each wrapper so one
 fragment cannot create or modify sibling blocks.
 
 Plugins add text and skill roots through launch drafts: the Dispatcher's
-`beforeLaunch` and a Team's `beforeTeamLeaderLaunch` hooks. Draft
+`launch` hook, a Team's `leaderLaunch` hook, and the Dispatcher's
+`teammateLaunch` hook (fired once per ordinary TeamMate construction,
+Dispatcher-spawned or Team-scoped). Draft
 instructions follow the built-in prompt in both Dispatcher forms (`replace`
-joined, `append` as extra fragments) and precede the TeamLeader's identity
-fragment; draft skill roots follow the built-in ones, fenced against them. The
-composition is owned by [plugins](plugins.md#launch-draft-composition).
+joined, `append` as extra fragments) and precede the TeamLeader's or TeamMate's
+identity fragment; draft skill roots follow the built-in ones, fenced against
+them. The composition is owned by
+[plugins](plugins.md#launch-draft-composition).
 
 Dreamux-owned turns that are not channel messages use plain text input; the
 provider receives no `CompletionEnvelope`, no source discriminator, and no
@@ -276,11 +284,10 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-collection/index.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
+- `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/codex/src/runtime-support.ts`
-- `/packages/agent-runtime/codex/tests/system-prompt.test.ts`
+- `/packages/agent-runtime/codex/src/system-prompt.ts`
 - `/packages/agent-runtime/claude-code/src/provider.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
@@ -342,11 +349,10 @@ Source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/agent-runtime/skill-sources.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/team-collection/create-request.ts`
-- `/packages/dreamux/src/service/team-collection/commands.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-collection/index.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
+- `/packages/dreamux/src/service/team/commands.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
+- `/packages/dreamux/src/service/agent/index.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
@@ -359,7 +365,7 @@ names; each runtime maps the names it understands and ignores the rest.
 
 Current names:
 
-- `userInterrupt`, emitted for every agent at the shared `createTeammateService`
+- `userInterrupt`, emitted for every agent at the shared `AgentServiceFactory.create()`
   construction boundary. It disables the model-facing "ask the user a question"
   tool, which in a channel-only environment would wedge a turn waiting for an
   out-of-band answer. Claude Code maps it to the `AskUserQuestion` disallowed
@@ -383,8 +389,8 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/agent-runtime/host-context.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
 ### Regression Trap: background origin is not completion ownership
@@ -403,7 +409,6 @@ erase its started group. Core continues routing shared completion tokens to the
 recipients captured on each submitted request.
 
 Source: `/packages/agent-runtime/claude-code/src/rpc.ts`,
-`/packages/agent-runtime/claude-code/src/runtime-session.ts`,
 `/packages/agent-runtime/claude-code/src/runtime.ts`,
 `/packages/dreamux/src/service/completion-router/index.ts`.
 
@@ -559,6 +564,7 @@ Each provider maps the neutral call to its own protocol:
   a text-free `turn.interrupted` activity ahead of the end, and the display
   layer puts that sentence on the card. That line, not the card's end status,
   is what an interrupt owes the operator.
+
 - **Codex** sends `turn/interrupt` with `{ threadId, turnId }` and gets an empty
   response. The method is part of the app-server v2 surface at the declared
   minimum `0.137.0`, so this added no version requirement. An accepted interrupt
@@ -587,22 +593,25 @@ Source:
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/control-rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 
 ### Claude Code Stream-Json Settlement
 
 One resident session accepts every input through the same submit path. RPC owns
-one table of unanswered requests: the settlement resolver, native admission
-resolver and, while capability is unknown, a deferred write. Requests are
-registered before writing so early native evidence cannot outrun registration.
-The runtime owns process continuity and durable state; it has no second request
-registry, initial/steer branch or enclosing execution-window promise.
+one table of unanswered requests, keyed by commandUuid; every submission writes
+to stdin immediately on admission. Requests are registered before writing so
+early native evidence cannot outrun registration. The runtime owns process
+continuity and durable state; it has no second request registry, initial/steer
+branch or enclosing execution-window promise.
 
-Admission resolves on a successful write callback or positive native evidence.
-A proven failure before writing is failed admission; an unconfirmed write is
-ambiguous and must not be retried automatically. Concurrent inputs wait for
-lifecycle evidence when capability is unknown, and are rejected when it is
-unavailable. Existing single-input compatibility remains supported.
+command_lifecycle admission is assumed always supported — there is no runtime
+capability check and no version gate against the CLI. Admission resolves on a
+successful write callback or positive native evidence. A proven failure before
+writing is failed admission; an unconfirmed write is ambiguous and must not be
+retried automatically. A request that was registered but never written is not
+a state this RPC can be in: closing the session (stop or a transport failure)
+always finds every outstanding request already written, so every admission it
+produces on close is ambiguous, never a clean stopped/failed.
 
 At each native result, RPC associates and settles the requests it answers:
 
@@ -613,9 +622,8 @@ At each native result, RPC associates and settles the requests it answers:
 - An exactly matching submitted user_message_uuid is additional positive
   evidence, including no-start compatibility. A foreign or absent UUID never
   vetoes consumed requests, and origin is never a routing filter.
-- With lifecycle evidence, an empty group stays empty. A merely queued request
-  is not answered by an earlier background result. The lifecycle-less fallback
-  applies only to a written single input and a result with no UUID.
+- An empty group stays empty. A merely queued request is not answered by an
+  earlier background result.
 
 RPC removes answered requests before callbacks, creates one immutable completion
 using the pinned session/structured-output contract, and settles those requests
@@ -651,9 +659,12 @@ fails and triggers process teardown. Pure background work arms no such timer.
 Custom ClaudeCodeSession factories implement submit returning RuntimeAdmission,
 with settlement owned by the session. The spec supplies sessionId and optional
 outputSchemaEnabled; the exit callback carries its Error. Protocol result
-callbacks retain commandUuids and command_lifecycle for observation. The public
-interrupted variant remains available for independently established interruption;
-cancelled alone no longer emits that boundary. Direct ClaudeCodeStreamRpc
+callbacks retain command_lifecycle for observation; the result event itself
+carries the result envelope's own uuid and outcome only, not the commandUuids
+it answered — no production consumer reads that attribution, only the result's
+own reported end. The public interrupted variant remains available for
+independently established interruption; cancelled alone no longer emits that
+boundary. Direct ClaudeCodeStreamRpc
 consumers also use submit, fail and stop; its options require sessionId and its
 timeout callback receives the failure Error. Protocol callbacks alone do not
 settle requests. This is a breaking Claude extension-seam change; the neutral
@@ -673,12 +684,10 @@ retain evidence gaps; deterministic coverage is not a universal ordering guarant
 Source:
 
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
-- `/packages/agent-runtime/claude-code/src/runtime-session.ts`
 - `/packages/agent-runtime/claude-code/src/runtime-activity.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/types.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
-- `/packages/agent-runtime/claude-code/tests/runtime-background.test.ts`
 
 ### Claude Code Stream-Json Envelopes On The Display Line
 
@@ -729,14 +738,17 @@ errors stay inside each runtime package's own `src/activity/`. Both built-ins
 reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral
 digests, bounded scan accounting, exact positional reads, and path containment;
 duplicating those security and determinism primitives in each provider is not an
-accepted boundary. That module owns mechanism only and no record shape, and it
-does not bound Core's output — Core re-validates each returned page against its
-own record, cursor, and byte budgets in
-`/packages/dreamux/src/service/agent-entity/activity-reader.ts`.
+accepted boundary. That module owns mechanism only and no record shape.
+`/packages/dreamux/src/service/agent/activity.ts` still validates
+each returned page's shape — record count against what was requested, and
+record/cursor field types — but imposes no byte/char/cursor-length magnitude
+cap of its own; a provider's own bounds are the only bound on what it returns.
 
 ### Codex Portable Output Schema
 
-Dreamux core passes the neutral `AgentRuntimeTextInput.outputSchema` unchanged.
+Dreamux core passes the neutral `outputSchema` of the runtime create context
+unchanged; it is bound once to the runtime session and no submission carries
+or changes it.
 `@excitedjs/agent-runtime-codex` privately compiles it for Codex strict
 structured output; no Codex branch, retry loop, or schema validator exists in
 core.
@@ -758,31 +770,28 @@ Compilation validates and clones the input. Open objects, schema-valued
 `additionalProperties`, optional-nullable properties, tuples, missing or
 ambiguous types, non-null unions, references/composition/conditionals,
 unsupported bounds, unknown keywords, and other unsupported shapes return
-`UnsupportedAgentRuntimeFeatureError` with `feature: "outputSchema"` before
-pending submission accounting or `turn/start`. Errors include the schema path;
-constraints are never silently dropped.
+`UnsupportedAgentRuntimeFeatureError` with `feature: "outputSchema"` when the
+provider creates the runtime, before any `turn/start`. Errors include the
+schema path; constraints are never silently dropped.
 
-Each active Codex turn slot owns either no codec or one authoritative private
-codec. Its fingerprint canonically covers both the wire schema and restoration
-plan. Compatible structured followers may fold into the active turn; a different
-fingerprint or structured/unstructured mixing fails before another
-`turn/start`. The codec remains private to the canonical active slot, and every
-accepted native alias converges before the public submission settles.
+The provider compiles the schema once into one private codec per runtime, and
+every `turn/start` on that runtime sends the same wire schema.
 
-Restoration runs once, behind the existing pending-turn mutual-exclusion guard,
-before `onTurnCompleted`. A successful restoration is the only structured text
-seen by `CodexRuntime.recordCollectedTurn()`, so `lastResult` and completed
-settlement use the neutral restored JSON. Parse or shape restoration failure does
-not call `onTurnCompleted` or mutate `lastResult`; it selects one ordinary failed
-runtime outcome with no assistant text. Submission failure, stop, app-server
-teardown/restart, and late completion clear or discard in-memory codecs through
-the same turn lifecycle and never restore or settle twice.
+Restoration runs once per native turn, when `TurnManager` settles the turn's
+submissions. A successful restoration replaces the turn's final assistant JSON
+text with the neutral restored JSON, and that text is the completion's
+`resultText`. A parse or shape restoration failure settles every submission of
+the turn with one ordinary failed completion and no assistant text. Stop and
+app-server teardown settle through the same turn record, so a turn is never
+restored or settled twice.
 
-Each collector owns and unregisters exactly one Codex notification handler.
-Normal completion and terminal failure close it automatically; rejected
-`turn/start`, runtime stop, and direct `runTurn` cleanup dispose it explicitly.
-An abandoned collector therefore cannot buffer a later turn or accumulate
-handlers on the resident Codex client.
+Each collector owns and unregisters exactly one Codex notification handler. It
+stays subscribed across every native turn on its thread — normal completion
+and turn failure never close it on their own — until explicit disposal:
+`TurnManager.stop()` disposes it on teardown, and an unscoped protocol failure
+(an `error` notification carrying no `turnId`) disposes it internally right
+after reporting the failure. An abandoned collector therefore cannot buffer a
+later turn or accumulate handlers on the resident Codex client.
 
 Source:
 
@@ -791,7 +800,6 @@ Source:
 - `/packages/agent-runtime/codex/src/rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/codex/tests/codex-events.test.ts`
 
 ### Native Turn Usage Activity
 
@@ -813,7 +821,7 @@ emit another usage activity.
   terminal, and clears it both there and on a collector/thread change.
   Input/output come from `total.inputTokens` and `total.outputTokens`; cached
   input and reasoning output are already included. Context is included only
-  when `last.totalTokens` and a *positive* `modelContextWindow` are both
+  when `last.totalTokens` and a _positive_ `modelContextWindow` are both
   present; otherwise the activity carries `context: null` and a display layer
   renders `n/a` — the historical line — rather than a used count that would
   be indistinguishable from a runtime that structurally lacks a window.
@@ -858,6 +866,23 @@ tail. The cold read never materializes an entity or starts a runtime, so a
 closed teammate stays readable, and it is required to produce records for a turn
 that is still in progress.
 
+`RuntimeActivity` (this section) and `AgentActivityRecord` (the cold-read
+member of `readRecentActivity`'s page, projected into Core's own `last`-read
+response shape, `AgentEntityActivityRecord`, by
+`/packages/dreamux/src/service/agent/activity.ts` — nothing here is written to
+disk; an agent's on-disk state is `identity.json` only) stay two contracts, not
+one split into a live and a cold view of the same shape. No code anywhere in
+the repo projects one into the other today. Operator ruling, 2026-09-24 (R32):
+these are two mechanisms with different origins (rollout-file replay vs. RPC
+push), so forcing them into one would likely mean writing a pile of glue code;
+a shape-only unification is fine only if it is pure deletion, with nothing
+added. Unifying them here would not meet that bar: it would either enrich the
+minimal cold contract with live-only detail a rollout/session replay cannot
+honestly reconstruct (an addition, not a deletion) or drop live richness to
+match the cold shape (a capability loss nobody asked for). Both contracts stay
+as they are; see
+[R32 in the code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md).
+
 `RuntimeActivity` carries **no submission**. A provider folds any number of
 Dreamux submissions into one native turn, so an activity cannot honestly name
 the submission that caused it, and inventing one made a display pick an
@@ -889,12 +914,12 @@ Every member except `turn.ended` carries `occurredAt` and `id`, one shared
 base shape. `id` is the provider's own id for the object the activity reports,
 taken whole — no prefix, suffix, counter, or composition:
 
-| Activity | Claude Code | Codex |
-| --- | --- | --- |
-| `assistant.message` | the assistant line's `uuid` | agent message item id |
-| `tool.call` (start and result) | `tool_use.id` | tool item id (its `call_id`) |
-| `context.compacted` | the `compact_boundary` line's `uuid` | compaction item id |
-| `token.usage`, `turn.interrupted` | the `result` line's own `uuid` | `turnId` |
+| Activity                          | Claude Code                          | Codex                        |
+| --------------------------------- | ------------------------------------ | ---------------------------- |
+| `assistant.message`               | the assistant line's `uuid`          | agent message item id        |
+| `tool.call` (start and result)    | `tool_use.id`                        | tool item id (its `call_id`) |
+| `context.compacted`               | the `compact_boundary` line's `uuid` | compaction item id           |
+| `token.usage`, `turn.interrupted` | the `result` line's own `uuid`       | `turnId`                     |
 
 So an id is not unique per activity: a call's start and result share one, and
 so do one turn's usage and interrupt marker. A consumer that needs one
@@ -1033,10 +1058,10 @@ new work rather than queueing it.
 Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
-- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
-- `/packages/dreamux/src/service/scheduler/service.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
-- `/packages/dreamux/src/service/team-service/closing.ts`
+- `/packages/dreamux/src/service/agent/activity.ts`
+- `/packages/dreamux/src/service/scheduler/index.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
@@ -1045,8 +1070,7 @@ Source:
 - **The dependency direction is one-way.** A provider package must not depend on
   `@excitedjs/dreamux`, and Core must not import a provider implementation or
   call a provider-specific factory. Both directions are guarded by
-  `/packages/dreamux/tests/package-boundary-guards.test.ts` and
-  `/packages/dreamux-types/tests/no-host-types.test.ts`.
+  `/packages/dreamux/tests/package-boundary-guards.test.ts`.
 - **There is no neutral idle capability.** Nothing in Core asks a runtime
   whether it is busy, and no seam read may be reinterpreted as one.
 - **Core is the sole authority for prompt state.** The whole `systemPrompt`

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2a, item 8 (R24/R25): agents[].config.turn_timeout_ms and .approval_policy are no longer read - Codex approval policy is always 'never' (issue #2 trust model), and turn_timeout_ms was accepted-and-ignored with no runtime effect. Both keys are still tolerated (and ignored) in an existing config.json - a file that sets either does not need editing.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

@@ -16,10 +16,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, '..');
 
 function readJson(relativePath: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(pkgRoot, relativePath), 'utf8')) as Record<
-    string,
-    unknown
-  >;
+  return JSON.parse(
+    readFileSync(join(pkgRoot, relativePath), 'utf8'),
+  ) as Record<string, unknown>;
 }
 
 describe('@excitedjs/dreamux-types manifest', () => {

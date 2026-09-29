@@ -12,20 +12,36 @@
  */
 import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
 
-import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { ChannelService } from '../channel-service/index.js';
-import { channelMcpDelegates } from '../channel-service/mcp-delegates.js';
 import type { McpServerDelegate } from '../mcp/types.js';
-import { createCronMcpDelegate } from '../scheduler/mcp-delegate.js';
-import { createTeamMcpDelegate } from '../team-collection/mcp-delegate.js';
-import { createTeamMateMcpDelegate } from '../teammate-collection/mcp-delegate.js';
-import type { DispatcherService } from './index.js';
+import { createCronMcpDelegate } from '../scheduler/mcp.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
+import { createTeamMcpDelegate } from '../team/mcp.js';
+import type { TeamsPort } from '../team/teams-port.js';
+import {
+  createTeamMateMcpDelegate,
+  type TeamMateMcpDispatcherScope,
+} from '../agent/mcp.js';
+
+/**
+ * Structural stand-in for `DispatcherService`, naming only the members role
+ * assembly calls beyond the ones `TeamMateMcpDispatcherScope` already names
+ * (`teammates`/`workflows`/`workspace()` — this file passes `dispatcher`
+ * straight through to `createTeamMateMcpDelegate`, so extending that scope
+ * instead of restating it keeps the two in sync). `DispatcherService`
+ * satisfies this shape without this file needing to import the concrete
+ * class from the sibling `index.ts` that owns it — that back-import is what
+ * closed the `index.ts` <-> `mcp-delegates.ts` cycle.
+ */
+interface RoleDelegateDispatcher extends TeamMateMcpDispatcherScope {
+  readonly teams: TeamsPort;
+  readonly scheduler: SchedulerCommands;
+  admitOperation<T>(task: () => Promise<T>): Promise<T>;
+}
 
 interface RoleDelegateInput {
-  dispatcherId: string;
-  dispatcher: DispatcherService;
+  dispatcher: RoleDelegateDispatcher;
   channels: ChannelService;
-  channelProviders: ChannelProviderCatalog;
 }
 
 /** The Dispatcher Agent's servers: its channels, Teams, TeamMates, and cron. */
@@ -34,15 +50,18 @@ export function dispatcherAgentMcpDelegates(
 ): McpServerDelegate[] {
   const caller: ChannelMcpCaller = { kind: 'dispatcher' };
   return [
-    ...channelDelegates(input, caller, (task) =>
+    ...input.channels.mcpDelegates(caller, (task) =>
       input.dispatcher.admitOperation(task),
     ),
     createTeamMcpDelegate({
-      dispatcher: input.dispatcher,
+      teams: input.dispatcher.teams,
       caller: { kind: 'dispatcher' },
     }),
     createTeamMateMcpDelegate({
       kind: 'dispatcher',
+      // The TeamMate MCP delegate reaches `teammates` and the dispatcher's
+      // own default `workspace()` too, unlike the Team delegate above, which
+      // needs only `TeamsPort`.
       dispatcher: input.dispatcher,
     }),
     createCronMcpDelegate({
@@ -69,37 +88,22 @@ export function teamLeaderMcpDelegates(
     leader_name: leaderName,
   };
   return [
-    ...channelDelegates(input, caller, (task) =>
+    ...input.channels.mcpDelegates(caller, (task) =>
       // A leader's channel call also enters its Team's work fence: the
       // runtime-generation lease fences a replaced runtime, but only the Team
       // fence serializes against an in-flight dissolve.
-      input.dispatcher.runForTeamLeader(teamId, task),
+      input.dispatcher.teams.runForLeader(teamId, task),
     ),
     createTeamMcpDelegate({
-      dispatcher: input.dispatcher,
-      caller: { kind: 'team_leader', teamId, leaderName },
+      teams: input.dispatcher.teams,
+      caller: { kind: 'team_leader', teamId },
     }),
     createTeamMateMcpDelegate({
       kind: 'team_leader',
-      team: () => input.dispatcher.team(teamId),
+      team: () => input.dispatcher.teams.leaderScope(teamId),
     }),
     createCronMcpDelegate({
-      scheduler: () => input.dispatcher.teamScheduler(teamId),
+      scheduler: () => input.dispatcher.teams.scheduler(teamId),
     }),
   ];
-}
-
-function channelDelegates(
-  input: RoleDelegateInput,
-  caller: ChannelMcpCaller,
-  dispatch: <T>(task: () => Promise<T>) => Promise<T>,
-): McpServerDelegate[] {
-  return channelMcpDelegates({
-    dispatcherId: input.dispatcherId,
-    channels: input.channels.configuredChannels(),
-    channelProviders: input.channelProviders,
-    caller,
-    sessionMcp: (channelId) => input.channels.sessionMcp(channelId),
-    dispatch,
-  });
 }

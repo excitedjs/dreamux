@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 5 item 9: command/ becomes kernel-only. Moved command/catalog.ts to server/command-catalog.ts and split command/host.ts, keeping the pure mustDispatcherId in command/ and moving CoreCommandHost/mustDispatcher/mustDispatcherRow (which name concrete domain types) to the new server/command-host.ts. Each of the 8 domain commands.ts factories (config, channel-service, dispatchers, mcp, scheduler, team-collection, teammate-collection, workflow-service) now takes a narrow per-domain resolver instead of the full CoreCommandHost, removing the 15 upward imports command/catalog.ts and command/host.ts (both kernel-tier) previously carried into foundation/service/composition-tier modules; one new same-direction-as-existing edge is added (team-collection/commands.ts to dispatcher-service/index.ts, a type-only import matching the pattern team-collection/mcp-delegate.ts already carries), for a net reduction of 14. createCoreCommandRegistry's external signature, the array order it builds, every Command's name/schema/behavior, and every thrown error type are unchanged; this is a code-location and internal-signature move only.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

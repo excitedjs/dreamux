@@ -29,7 +29,9 @@ export function configuredDispatcherCwd(
 ): string {
   const dispatcher = config.dispatchers.find((d) => d.id === dispatcherId);
   if (dispatcher === undefined) {
-    throw new Error(`dispatcher ${JSON.stringify(dispatcherId)} is not configured`);
+    throw new Error(
+      `dispatcher ${JSON.stringify(dispatcherId)} is not configured`,
+    );
   }
   return resolve(dispatcher.cwd);
 }

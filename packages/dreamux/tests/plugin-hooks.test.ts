@@ -57,8 +57,14 @@ async function skillRoot(...skills: string[]): Promise<string> {
   return realpath(root);
 }
 
-function launchHook(log: DreamuxLogger, name?: string): AsyncSeriesHook<[LaunchDraft]> {
-  return launchDraftTaps(new AsyncSeriesHook<[LaunchDraft]>(['draft'], name), log);
+function launchHook(
+  log: DreamuxLogger,
+  name?: string,
+): AsyncSeriesHook<[LaunchDraft]> {
+  return launchDraftTaps(
+    new AsyncSeriesHook<[LaunchDraft]>(['draft'], name),
+    log,
+  );
 }
 
 describe('isolatedTaps (dispatcher, team)', () => {
@@ -78,11 +84,18 @@ describe('isolatedTaps (dispatcher, team)', () => {
 
     expect(seen).toEqual(['alpha', 'omega']);
     expect(errors).toHaveLength(1);
-    expect(errors[0]?.fields).toMatchObject({ plugin: 'broken', tap: 'any name', hook: 'team' });
+    expect(errors[0]?.fields).toMatchObject({
+      plugin: 'broken',
+      tap: 'any name',
+      hook: 'team',
+    });
   });
 
   it('runs interceptors a plugin adds', () => {
-    const hook = isolatedTaps(new SyncHook<[string[]]>(['seen']), recordingLog().log);
+    const hook = isolatedTaps(
+      new SyncHook<[string[]]>(['seen']),
+      recordingLog().log,
+    );
     const calls: string[][] = [];
     hook.intercept({ call: (seen: string[]) => calls.push([...seen]) });
     hook.tap('alpha', (seen) => seen.push('alpha'));
@@ -92,7 +105,7 @@ describe('isolatedTaps (dispatcher, team)', () => {
     expect(calls).toEqual([[]]);
   });
 
-  it('owns a tap registered inside another tap, after an await, by the outer tap\'s plugin', async () => {
+  it("owns a tap registered inside another tap, after an await, by the outer tap's plugin", async () => {
     const { log, errors } = recordingLog();
     const outer = isolatedTaps(
       new AsyncSeriesHook<[{ requestId: string | null }]>(['ctx'], 'created'),
@@ -143,10 +156,12 @@ describe('loadPhaseTaps (plugin.for(name))', () => {
     expect(caught).toBeInstanceOf(PluginLoadError);
     expect((caught as PluginLoadError).plugin).toBe('acme');
     expect((caught as PluginLoadError).phase).toBe('api');
-    expect((caught as Error).message).toContain('plugin "feishu" api: bad register');
+    expect((caught as Error).message).toContain(
+      'plugin "feishu" api: bad register',
+    );
   });
 
-  it('falls back to the tap\'s own name when an owner-less tap fails loading', () => {
+  it("falls back to the tap's own name when an owner-less tap fails loading", () => {
     const hook = loadPhaseTaps(new SyncHook<[unknown]>(['api']), 'feishu');
     hook.tap('mystery', () => {
       throw new Error('bad register');
@@ -199,7 +214,11 @@ describe('isolatedTaps (created)', () => {
 
     await hook.promise({ requestId: null });
 
-    expect(errors[0]?.fields).toMatchObject({ plugin: null, tap: 'lonely', hook: 'created' });
+    expect(errors[0]?.fields).toMatchObject({
+      plugin: null,
+      tap: 'lonely',
+      hook: 'created',
+    });
   });
 
   it('catches a tapAsync failure reported through done(err) and still runs the other tap', async () => {
@@ -225,7 +244,7 @@ describe('isolatedTaps (created)', () => {
 });
 
 describe('composeLaunchDraft', () => {
-  it('drops a failing tap\'s pushes and keeps the others in tap order', async () => {
+  it("drops a failing tap's pushes and keeps the others in tap order", async () => {
     const { log, errors } = recordingLog();
     const hook = launchHook(log, 'beforeLaunch');
     hook.tapPromise('alpha', async (draft) => {
@@ -247,7 +266,7 @@ describe('composeLaunchDraft', () => {
     expect(errors.map((e) => e.fields['tap'])).toEqual(['broken']);
   });
 
-  it('catches a tapAsync failure on a launch hook without losing the other tap\'s contribution', async () => {
+  it("catches a tapAsync failure on a launch hook without losing the other tap's contribution", async () => {
     const { log, errors } = recordingLog();
     const hook = launchHook(log, 'beforeLaunch');
     runAsPlugin('broken', () =>
@@ -297,7 +316,7 @@ describe('composeLaunchDraft', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('hands each tap its own empty draft, never another tap\'s additions', async () => {
+  it("hands each tap its own empty draft, never another tap's additions", async () => {
     const hook = launchHook(recordingLog().log);
     const seenByOmega: string[] = [];
     hook.tapPromise('alpha', async (draft) => {
@@ -325,7 +344,9 @@ describe('composeLaunchDraft', () => {
       { name: 'core', path: required, source: 'dreamux-core' },
     ]);
 
-    expect(draft.skillSources).toEqual([{ name: 'alpha', path: plugin, source: 'alpha' }]);
+    expect(draft.skillSources).toEqual([
+      { name: 'alpha', path: plugin, source: 'alpha' },
+    ]);
     expect(draft.instructions).toEqual(['from alpha']);
   });
 
@@ -336,7 +357,11 @@ describe('composeLaunchDraft', () => {
     const { log, errors } = recordingLog();
     const hook = launchHook(log, 'beforeLaunch');
     hook.tapPromise('shadow', async (draft) => {
-      draft.skillSources.push({ name: 'shadow', path: shadowing, source: 'shadow' });
+      draft.skillSources.push({
+        name: 'shadow',
+        path: shadowing,
+        source: 'shadow',
+      });
       draft.instructions.push('from shadow');
     });
     hook.tapPromise('alpha', async (draft) => {
@@ -381,7 +406,11 @@ describe('composeLaunchDraft', () => {
     const { log, errors } = recordingLog();
     const hook = launchHook(log, 'beforeLaunch');
     hook.tapPromise('alpha', async (draft) => {
-      draft.skillSources.push({ name: 'alpha', path: pluginA, source: 'alpha' });
+      draft.skillSources.push({
+        name: 'alpha',
+        path: pluginA,
+        source: 'alpha',
+      });
       draft.instructions.push('from alpha');
     });
     hook.tapPromise('beta', async (draft) => {
@@ -415,20 +444,28 @@ describe('composeLaunchDraft', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('drops a later tap whose skill root collides with an earlier plugin\'s already-merged root', async () => {
+  it("drops a later tap whose skill root collides with an earlier plugin's already-merged root", async () => {
     const alphaRoot = await skillRoot('foo');
     const betaRoot = await skillRoot('foo');
     const { log, errors } = recordingLog();
     const hook = launchHook(log, 'beforeLaunch');
     runAsPlugin('alpha', () =>
       hook.tapPromise('alpha-tap', async (draft) => {
-        draft.skillSources.push({ name: 'alpha', path: alphaRoot, source: 'alpha' });
+        draft.skillSources.push({
+          name: 'alpha',
+          path: alphaRoot,
+          source: 'alpha',
+        });
         draft.instructions.push('from alpha');
       }),
     );
     runAsPlugin('beta', () =>
       hook.tapPromise('beta-tap', async (draft) => {
-        draft.skillSources.push({ name: 'beta', path: betaRoot, source: 'beta' });
+        draft.skillSources.push({
+          name: 'beta',
+          path: betaRoot,
+          source: 'beta',
+        });
         draft.instructions.push('from beta');
       }),
     );
@@ -436,7 +473,9 @@ describe('composeLaunchDraft', () => {
     const draft = await composeLaunchDraft(hook, []);
 
     expect(draft.instructions).toEqual(['from alpha']);
-    expect(draft.skillSources).toEqual([{ name: 'alpha', path: alphaRoot, source: 'alpha' }]);
+    expect(draft.skillSources).toEqual([
+      { name: 'alpha', path: alphaRoot, source: 'alpha' },
+    ]);
     expect(errors.map((e) => e.fields['tap'])).toEqual(['beta-tap']);
     expect(errors[0]?.fields['plugin']).toBe('beta');
   });

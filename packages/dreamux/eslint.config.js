@@ -6,38 +6,20 @@
 // contracts and resolves `builtin:*` to a package NAME the dynamic loader
 // imports at runtime. The boundary (both directions) is centralized in
 // @excitedjs/eslint-config so it is expressed once and consumed uniformly.
+// The package-wide re-export ban is centralized there too (code-organization
+// refactor, H6) — this package has no root src/index.ts, so only
+// src/service/index.ts is excluded: smoke-built-cli still asserts its exact
+// export surface until that barrel is deleted in a later refactor stage.
 import baseConfig, {
-  SYNC_DESTRUCTURE_SELECTOR,
   withCoreImportBoundary,
+  withPackageEntryOnlyReexports,
 } from '@excitedjs/eslint-config';
-
-const SERVICE_REEXPORT_SELECTORS = [
-  {
-    selector: 'ExportAllDeclaration',
-    message:
-      'Service submodules must not re-export another module. Import the owning module directly, or add an intentional export to src/service/index.ts.',
-  },
-  {
-    selector: 'ExportNamedDeclaration[source]',
-    message:
-      'Service submodules must not re-export another module. Import the owning module directly, or add an intentional export to src/service/index.ts.',
-  },
-];
 
 export default [
   {
     ignores: ['tests/fixtures/workflows/*.mjs'],
   },
-  ...withCoreImportBoundary(baseConfig),
-  {
-    files: ['src/service/**/*.ts'],
-    ignores: ['src/service/index.ts'],
-    rules: {
-      'no-restricted-syntax': [
-        'error',
-        SYNC_DESTRUCTURE_SELECTOR,
-        ...SERVICE_REEXPORT_SELECTORS,
-      ],
-    },
-  },
+  ...withPackageEntryOnlyReexports(withCoreImportBoundary(baseConfig), {
+    entryFiles: ['src/service/index.ts'],
+  }),
 ];

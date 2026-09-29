@@ -143,19 +143,38 @@ export class RuleViolation extends Error {
   }
 }
 
-/** The process refused the request because shutdown already closed admission. */
+/**
+ * A reader's refusal to interpret a persisted file: the version, shape, or a
+ * field is one this build does not accept. Deliberately *not* a
+ * {@link DreamuxError} — it names no wire code because Dreamux 0.x has no
+ * migration path for it; the only remedy is deleting the file and letting it
+ * rebuild, and a read path that hits it propagates the failure rather than
+ * degrading to `null` or an empty document the way an ordinary missing or
+ * corrupt-but-tolerated file does.
+ */
+export class LegacyStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = new.target.name;
+  }
+}
+
+/**
+ * The request was refused because some admission gate already closed.
+ *
+ * The default message is the process-wide fence `command/port.ts` closes at
+ * shutdown. A dispatcher, a workflow scope, or a Channel port closes its own
+ * admission independently of that fence, and passes its own wording instead —
+ * every closed-scope refusal still carries the one `SERVER_SHUTTING_DOWN` code
+ * a caller can branch on.
+ */
 export class ServerShuttingDownError extends StatedFailure {
-  constructor() {
+  constructor(message = 'dreamux server is shutting down') {
     super(
       'SERVER_SHUTTING_DOWN',
-      'dreamux server is shutting down',
+      message,
       'Nothing was started by this call. Wait for the operator to bring the ' +
         'server back, then call again.',
     );
   }
-}
-
-/** The message of an arbitrary thrown value, for wrapping into a typed error. */
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

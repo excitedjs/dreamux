@@ -14,12 +14,15 @@
  */
 
 import { createServer, type Server as NetServer, type Socket } from 'node:net';
-import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { Server } from '../server.js';
-import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
-import type { CoreCommandContext, JsonValue } from '@excitedjs/dreamux-types';
+import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
+import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
+import type {
+  CoreCommandContext,
+  CoreCommandRegistry,
+} from '../command/types.js';
 import {
   DreamuxError,
   TransportError,
@@ -27,8 +30,29 @@ import {
   commandFailure,
   type CommandFailure,
 } from '../command/errors.js';
-import { errorInfo } from '../platform/error-info.js';
+import {
+  acquireInstanceLock,
+  defaultIsPidAlive,
+  readPidFile,
+  releaseInstanceLock,
+} from '../platform/instance-lock.js';
+import { adminSocketLockPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
+
+/**
+ * The slice of `Server` this transport actually calls: the admitted Command
+ * port every adapter invokes through, and the log a failure Core never
+ * classified is written to.
+ *
+ * Declared locally instead of taking the concrete `Server` class: `server.ts`
+ * already imports `createAdminSocketServer` from this module to build its
+ * admin socket, so a type import running the other way would make the two
+ * files a cycle.
+ */
+export interface AdminSocketHost {
+  readonly commands: CoreCommandRegistry;
+  readonly logger: DreamuxLogger;
+}
 
 export interface AdminSocketServer {
   start(): Promise<void>;
@@ -56,21 +80,15 @@ export interface AdminSocketOptions {
   selfPid?: number;
 }
 
-/**
- * Max attempts to reclaim a stale pidfile before yielding to a competitor.
- * Mirrors claudemux's instance-lock policy.
- */
-const RECLAIM_ATTEMPTS = 3;
-
 export function createAdminSocketServer(
-  server: Server,
+  server: AdminSocketHost,
   socketPath: string,
   options: AdminSocketOptions = {},
 ): AdminSocketServer {
   const chmodFn = options.chmodFn ?? chmod;
   const isAlive = options.isPidAlive ?? defaultIsPidAlive;
   const myPid = options.selfPid ?? process.pid;
-  const lockPath = `${socketPath}.lock`;
+  const lockPath = adminSocketLockPath(socketPath);
   let netServer: NetServer | null = null;
   let holdLock = false;
 
@@ -85,13 +103,14 @@ export function createAdminSocketServer(
       // (probe, cleanup, bind) behind a pidfile that's created with the
       // exclusive `wx` flag — atomic at the filesystem level. Once we
       // hold it, nobody else can be inside this start() concurrently.
-      // Stale pidfiles (dead holder) are reclaimed up to RECLAIM_ATTEMPTS
-      // times; a live holder always loses the race.
+      // Stale pidfiles (dead holder) are reclaimed up to a bounded number of
+      // times (`platform/instance-lock.ts`); a live holder always loses the
+      // race.
       // The socket + lock live under the volatile run root (issue #182),
       // which may not exist yet on a fresh install — create it owner-only, and
       // tighten it if a pre-existing run dir is group/world-traversable.
       await ensureOwnerOnlyDir(dirname(socketPath));
-      await acquirePidLock(lockPath, myPid, isAlive);
+      await acquireInstanceLock(lockPath, myPid, isAlive);
       holdLock = true;
 
       try {
@@ -105,7 +124,7 @@ export function createAdminSocketServer(
         });
 
         // PR #3 review #2: chmod is a hard requirement, not best-effort —
-        // a 0666 admin socket exposes server-ctl methods to every local user.
+        // a 0666 admin socket exposes every admin Command to every local user.
         try {
           await chmodFn(socketPath, 0o600);
         } catch (e) {
@@ -128,7 +147,7 @@ export function createAdminSocketServer(
         } catch {
           /* best-effort */
         }
-        await releasePidLock(lockPath, myPid);
+        await releaseInstanceLock(lockPath, myPid);
         holdLock = false;
         throw err;
       }
@@ -145,100 +164,11 @@ export function createAdminSocketServer(
         }
       }
       if (holdLock) {
-        await releasePidLock(lockPath, myPid);
+        await releaseInstanceLock(lockPath, myPid);
         holdLock = false;
       }
     },
   };
-}
-
-/**
- * Acquire the single-instance pidfile lock.
- *
- * Atomic `wx` create races safely: two competing startups both attempt the
- * same call; one wins, one gets EEXIST. The loser then reads the holder's
- * PID and decides:
- *   - alive holder  → throw (split-brain prevention)
- *   - dead holder   → remove the stale file and retry the `wx` create
- *
- * RECLAIM_ATTEMPTS bounds the retry so a pathologically broken filesystem
- * doesn't spin forever.
- */
-async function acquirePidLock(
-  lockPath: string,
-  myPid: number,
-  isAlive: (pid: number) => boolean,
-): Promise<void> {
-  for (let attempt = 0; attempt < RECLAIM_ATTEMPTS; attempt++) {
-    try {
-      await writeFile(lockPath, `${myPid}\n`, { flag: 'wx', mode: 0o600 });
-      return;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-    }
-    const holder = await readPidFile(lockPath);
-    if (holder === myPid) {
-      // Re-entrant — shouldn't happen in normal use, but treat as held.
-      return;
-    }
-    if (holder !== null && isAlive(holder)) {
-      throw new Error(
-        `admin socket lockfile ${lockPath} is held by another live dreamux serve process (pid ${holder}). ` +
-          'Refusing to bind to avoid split-brain admin control. ' +
-          'Stop the other instance before starting a new one.',
-      );
-    }
-    // Stale lock (unreadable PID, or PID belongs to a dead process).
-    // Remove and retry the exclusive create. A competitor reclaiming the
-    // same stale file simply wins this round of `wx`, and we'll see *their*
-    // live PID on the next iteration and bail out.
-    try {
-      await rm(lockPath, { force: true });
-    } catch {
-      /* concurrent reclaim — retry the wx open */
-    }
-  }
-  throw new Error(
-    `admin socket lockfile ${lockPath} could not be acquired after ${RECLAIM_ATTEMPTS} reclaim attempts; ` +
-      'a competitor is racing us. Retry after the other startup finishes.',
-  );
-}
-
-/**
- * Release the pidfile lock — but only if it still names us. A holder whose
- * file was already reclaimed by a competitor (e.g. we were paused long
- * enough for our PID to look dead) must not delete the new holder's lock.
- */
-async function releasePidLock(lockPath: string, myPid: number): Promise<void> {
-  if ((await readPidFile(lockPath)) !== myPid) return;
-  try {
-    await rm(lockPath, { force: true });
-  } catch {
-    /* best-effort */
-  }
-}
-
-async function readPidFile(path: string): Promise<number | null> {
-  let txt: string;
-  try {
-    txt = (await readFile(path, 'utf8')).trim();
-  } catch {
-    return null;
-  }
-  if (txt === '') return null;
-  const n = Number.parseInt(txt, 10);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
-
-function defaultIsPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    // EPERM means the process exists but we can't signal it (still alive).
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }
 
 export interface LegacyAdminServerCheckOptions {
@@ -278,7 +208,7 @@ export async function assertNoLegacyAdminServer(
   }
 }
 
-function handleConnection(server: Server, sock: Socket): void {
+function handleConnection(server: AdminSocketHost, sock: Socket): void {
   let buf = '';
   sock.setEncoding('utf8');
   sock.on('data', (chunk) => {
@@ -296,7 +226,11 @@ function handleConnection(server: Server, sock: Socket): void {
   });
 }
 
-async function processLine(server: Server, sock: Socket, line: string): Promise<void> {
+async function processLine(
+  server: AdminSocketHost,
+  sock: Socket,
+  line: string,
+): Promise<void> {
   let req: AdminRequest;
   try {
     req = JSON.parse(line) as AdminRequest;
@@ -306,7 +240,9 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
   } catch (err) {
     // A line that cannot be framed never reached a Command: this is the one
     // genuine transport failure this adapter owns.
-    const error = new TransportError(err instanceof Error ? err.message : String(err));
+    const error = new TransportError(
+      err instanceof Error ? err.message : String(err),
+    );
     write(sock, { id: '?', ok: false, error: commandFailure(error) });
     return;
   }
@@ -353,7 +289,7 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
  * the server log, because the caller only ever receives its message.
  */
 function reportedFailure(
-  server: Server,
+  server: AdminSocketHost,
   method: string,
   error: unknown,
 ): CommandFailure {
@@ -380,7 +316,10 @@ function adminInvocation(req: AdminRequest): {
   payload: JsonValue;
 } {
   const params = req.params;
-  if (params !== undefined && (typeof params !== 'object' || Array.isArray(params))) {
+  if (
+    params !== undefined &&
+    (typeof params !== 'object' || Array.isArray(params))
+  ) {
     throw new ValidationError("request 'params' must be an object");
   }
   const { dispatcher_id: dispatcherId, ...rest } = params ?? {};

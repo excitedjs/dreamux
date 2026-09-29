@@ -77,7 +77,7 @@ non-empty sender id. Other chat types fail with `unsupported_chat_type`, and
 other sender shapes fail with `sender_unknown`, before bot observation,
 `/introduce`, pairing, or delivery.
 
-The public `dreamuxFeishuGate` input is unchanged: it still has `chat_type` and
+The `dreamuxFeishuGate` input is unchanged: it still has `chat_type` and
 `is_bot_sender` and has no `sender_kind`. Callers must perform the exact
 classification above first. Passing `is_bot_sender: false` asserts a known
 human; negating `isBotSenderType(...)` alone is not sufficient because unknown

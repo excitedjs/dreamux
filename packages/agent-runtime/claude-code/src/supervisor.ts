@@ -11,17 +11,10 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import {
-  removeEmptyLogFile,
-  SupervisedChild,
-} from '@excitedjs/dreamux-utils';
+import { removeEmptyLogFile, SupervisedChild } from '@excitedjs/dreamux-utils';
 import { ClaudeCodeStreamRpc } from './rpc.js';
 import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
-import type {
-  ClaudeCodeSession,
-  ClaudeCodeSessionSpec,
-  TurnSubmitOptions,
-} from './types.js';
+import type { ClaudeCodeSession, ClaudeCodeSessionSpec } from './types.js';
 
 /** The live session: spawns and supervises the real `claude` child. */
 class LiveClaudeCodeSession implements ClaudeCodeSession {
@@ -38,7 +31,9 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   constructor(private readonly spec: ClaudeCodeSessionSpec) {}
 
   isAlive(): boolean {
-    return this.child !== null && !this.stopRequested && this.exitError === null;
+    return (
+      this.child !== null && !this.stopRequested && this.exitError === null
+    );
   }
 
   start(): Promise<void> {
@@ -47,13 +42,17 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     }
     if (this.startTask !== null) return this.startTask;
     if (this.child !== null) {
-      return Promise.reject(new Error('ClaudeCodeSession.start: already started'));
+      return Promise.reject(
+        new Error('ClaudeCodeSession.start: already started'),
+      );
     }
     const task = this.startSession();
     this.startTask = task;
-    void task.finally(() => {
-      if (this.startTask === task) this.startTask = null;
-    }).catch(() => undefined);
+    void task
+      .finally(() => {
+        if (this.startTask === task) this.startTask = null;
+      })
+      .catch(() => undefined);
     return task;
   }
 
@@ -84,7 +83,9 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     supervisor.onError((error) => {
       this.spec.log?.('warn', 'claude resident child error', error);
     });
-    supervisor.onExit(() => this.onChildExit(new Error('claude resident child exited')));
+    supervisor.onExit(() =>
+      this.onChildExit(new Error('claude resident child exited')),
+    );
     // Publish group-termination authority before spawn resolves. If a later
     // setup step fails, runtime cleanup can still prove that no child remains.
     this.supervisor = supervisor;
@@ -122,31 +123,27 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     if (this.spec.remoteControl) rpc.enableRemoteControl();
   }
 
-  submit(
-    prompt: string,
-    options: TurnSubmitOptions = {},
-    commandUuid?: string,
-  ): Promise<RuntimeAdmission> {
-    if (this.exitError !== null) return Promise.resolve({ status: 'failed', error: this.exitError });
-    if (this.stopRequested || this.stopped) return Promise.resolve({ status: 'stopped' });
+  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission> {
+    if (this.exitError !== null)
+      return Promise.resolve({ status: 'failed', error: this.exitError });
+    if (this.stopRequested || this.stopped)
+      return Promise.resolve({ status: 'stopped' });
     if (this.child === null || this.rpc === null) {
-      return Promise.resolve({ status: 'failed', error: new Error('claude resident child is not running') });
+      return Promise.resolve({
+        status: 'failed',
+        error: new Error('claude resident child is not running'),
+      });
     }
-    return this.rpc.submit(prompt, options, commandUuid);
+    return this.rpc.submit(prompt, commandUuid);
   }
 
   /**
-   * A dead child has nothing to interrupt, so this answers false rather than
-   * writing to its stdin. The liveness half matters on its own: a child that
-   * exited between the last stream line and this call still has an `rpc`, and
-   * writing to it surfaces an EPIPE as `Command /stop failed: write EPIPE`
-   * instead of the honest `No turn is running.`
+   * `rpc` is null before the child is up and after teardown, and it answers
+   * false itself once closed (`fail`/`stop` set that in the same tick the
+   * child stops being alive), so no liveness gate is needed here.
    */
   interrupt(reason: string): Promise<boolean> {
-    if (!this.isAlive() || this.stopped || this.rpc === null) {
-      return Promise.resolve(false);
-    }
-    return this.rpc.interrupt(reason);
+    return this.rpc?.interrupt(reason) ?? Promise.resolve(false);
   }
 
   async stop(): Promise<void> {
@@ -218,5 +215,4 @@ export type {
   ClaudeCodeSessionFactory,
   ClaudeCodeSessionSpec,
   TurnOutcome,
-  TurnSubmitOptions,
 } from './types.js';

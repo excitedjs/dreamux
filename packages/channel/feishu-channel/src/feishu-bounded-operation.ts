@@ -21,7 +21,7 @@ export interface FeishuOperationScope {
 interface FeishuBoundedOperationOptions<T> extends FeishuOperationScope {
   operation(): Promise<T>;
   beforeStart?(): void;
-  onLateValue?(value: T): void | Promise<void>;
+  onLateValue?: ((value: T) => void | Promise<void>) | undefined;
   now?: () => number;
 }
 
@@ -73,11 +73,16 @@ export function runFeishuBoundedOperation<T>(
       })
       .then(
         (value) => {
-          if (finish(() => resolve(value)) || options.onLateValue === undefined) {
+          if (
+            finish(() => resolve(value)) ||
+            options.onLateValue === undefined
+          ) {
             return;
           }
           try {
-            void Promise.resolve(options.onLateValue(value)).catch(() => undefined);
+            void Promise.resolve(options.onLateValue(value)).catch(
+              () => undefined,
+            );
           } catch {
             // Late cleanup is best-effort and cannot become a second failure.
           }
@@ -93,6 +98,8 @@ export function isFeishuOperationError(
   error: unknown,
   reason?: FeishuOperationFailure,
 ): error is FeishuOperationError {
-  return error instanceof FeishuOperationError &&
-    (reason === undefined || error.reason === reason);
+  return (
+    error instanceof FeishuOperationError &&
+    (reason === undefined || error.reason === reason)
+  );
 }

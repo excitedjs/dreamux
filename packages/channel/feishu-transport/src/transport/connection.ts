@@ -10,17 +10,17 @@
 
 /** Extract a human-readable detail from an unknown thrown value. */
 function detail(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** The connection dropped and the SDK has begun a reconnect cycle. */
 export function reconnectingLogLine(): string {
-  return 'Feishu connection lost — the SDK is reconnecting.'
+  return 'Feishu connection lost — the SDK is reconnecting.';
 }
 
 /** The reconnect cycle restored the connection. */
 export function reconnectedLogLine(): string {
-  return 'Feishu connection re-established.'
+  return 'Feishu connection re-established.';
 }
 
 /**
@@ -28,7 +28,7 @@ export function reconnectedLogLine(): string {
  * or an exhausted retry budget. The channel needs a restart to reconnect.
  */
 export function connectionErrorLogLine(err: unknown): string {
-  return `Feishu connection failed and the SDK stopped retrying: ${detail(err)}`
+  return `Feishu connection failed and the SDK stopped retrying: ${detail(err)}`;
 }
 
 /**
@@ -36,13 +36,16 @@ export function connectionErrorLogLine(err: unknown): string {
  * `sdkGaveUp` is true when the SDK has already stopped retrying on its own,
  * false when it is still looping and the channel is the one stopping it.
  */
-export function startupTimeoutLogLine(graceMs: number, sdkGaveUp: boolean): string {
-  const secs = Math.round(graceMs / 1000)
+export function startupTimeoutLogLine(
+  graceMs: number,
+  sdkGaveUp: boolean,
+): string {
+  const secs = Math.round(graceMs / 1000);
   const tail = sdkGaveUp
     ? 'the SDK has stopped retrying'
-    : 'stopping the connection attempt so it does not retry in a tight loop'
+    : 'stopping the connection attempt so it does not retry in a tight loop';
   return (
     `Feishu connection did not come up within ${secs}s of startup; ${tail}. ` +
     'Inbound events will not arrive until the channel is restarted.'
-  )
+  );
 }

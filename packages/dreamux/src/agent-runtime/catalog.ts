@@ -20,8 +20,9 @@ import type {
  * identity, so every caller that needs the id, ref, or kind reads it from this
  * wrapper.
  */
-export interface RegisteredAgentRuntimeProvider
-  extends RegisteredProvider<AgentRuntimeProvider<unknown>> {
+export interface RegisteredAgentRuntimeProvider extends RegisteredProvider<
+  AgentRuntimeProvider<unknown>
+> {
   readonly capabilities: AgentRuntimePublicCapabilities;
 }
 
@@ -30,7 +31,9 @@ export class UnsupportedAgentRuntimeProviderError extends Error {
     readonly providerRef: string,
     readonly reason: string,
   ) {
-    super(`agent runtime provider ${JSON.stringify(providerRef)} is not supported: ${reason}`);
+    super(
+      `agent runtime provider ${JSON.stringify(providerRef)} is not supported: ${reason}`,
+    );
     this.name = 'UnsupportedAgentRuntimeProviderError';
   }
 }

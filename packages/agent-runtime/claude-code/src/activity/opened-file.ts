@@ -2,11 +2,10 @@ import { constants } from 'node:fs';
 import { open, realpath, type FileHandle } from 'node:fs/promises';
 
 import {
+  ActivityError,
   isPathWithin,
   readBytesAt,
 } from '@excitedjs/dreamux-utils';
-
-import { ClaudeActivityError } from './error.js';
 
 export interface ClaudeOpenedRollout {
   handle: FileHandle;
@@ -37,13 +36,13 @@ export async function openClaudeRollout(
       realpath(candidate),
     ]);
     if (!opened.isFile()) {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'invalid',
         'Claude Code activity is not a regular file',
       );
     }
     if (!isPathWithin(canonicalRoot, canonicalPath)) {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'locator_outside_root',
         'Claude Code activity is unavailable for this session',
       );
@@ -57,7 +56,7 @@ export async function openClaudeRollout(
     try {
       const currentStat = await current.stat();
       if (opened.dev !== currentStat.dev || opened.ino !== currentStat.ino) {
-        throw new ClaudeActivityError(
+        throw new ActivityError(
           'unreadable',
           'Claude Code activity changed while opening',
         );
@@ -74,8 +73,8 @@ export async function openClaudeRollout(
     };
   } catch (error) {
     await handle.close().catch(() => undefined);
-    if (error instanceof ClaudeActivityError) throw error;
-    throw new ClaudeActivityError(
+    if (error instanceof ActivityError) throw error;
+    throw new ActivityError(
       'unreadable',
       'Claude Code activity is unreadable',
       { cause: error },
@@ -86,20 +85,15 @@ export async function openClaudeRollout(
 export async function validateClaudeSessionEvidence(
   opened: ClaudeOpenedRollout,
   expectedSessionId: string,
-  options: { maxReadChunkBytes?: number } = {},
 ): Promise<void> {
   const length = Math.min(opened.size, MAX_METADATA_BYTES + 1);
-  const data = await readBytesAt(opened.handle, 0, length, {
-    ...(options.maxReadChunkBytes !== undefined
-      ? { maxChunkBytes: options.maxReadChunkBytes }
-      : {}),
-  });
+  const data = await readBytesAt(opened.handle, 0, length);
   let cursor = 0;
   while (cursor < data.length) {
     const newline = data.indexOf(0x0a, cursor);
     if (newline < 0) {
       if (opened.size > MAX_METADATA_BYTES) {
-        throw new ClaudeActivityError(
+        throw new ActivityError(
           'invalid',
           'Claude Code activity metadata record is oversized',
         );
@@ -109,7 +103,7 @@ export async function validateClaudeSessionEvidence(
     const raw = data.subarray(cursor, newline).toString('utf8');
     const value = parseRecord(raw);
     if (value === null && raw.trim() !== '') {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'invalid',
         'Claude Code activity contains invalid native metadata',
       );
@@ -117,7 +111,7 @@ export async function validateClaudeSessionEvidence(
     const sessionId = stringValue(value?.['sessionId']);
     if (sessionId !== null) {
       if (sessionId !== expectedSessionId) {
-        throw new ClaudeActivityError(
+        throw new ActivityError(
           'session_mismatch',
           'Claude Code activity does not belong to the selected session',
         );
@@ -126,33 +120,31 @@ export async function validateClaudeSessionEvidence(
     }
     cursor = newline + 1;
   }
-  throw new ClaudeActivityError(
+  throw new ActivityError(
     'invalid',
     'Claude Code activity has no authoritative session metadata',
   );
 }
 
-function classifyOpenError(error: unknown): ClaudeActivityError {
+function classifyOpenError(error: unknown): ActivityError {
   const code = (error as NodeJS.ErrnoException).code;
   if (code === 'ENOENT') {
-    return new ClaudeActivityError(
+    return new ActivityError(
       'not_found',
       'Claude Code activity is unavailable',
       { cause: error },
     );
   }
   if (code === 'ELOOP') {
-    return new ClaudeActivityError(
+    return new ActivityError(
       'locator_outside_root',
       'Claude Code activity is unavailable for this session',
       { cause: error },
     );
   }
-  return new ClaudeActivityError(
-    'unreadable',
-    'Claude Code activity is unreadable',
-    { cause: error },
-  );
+  return new ActivityError('unreadable', 'Claude Code activity is unreadable', {
+    cause: error,
+  });
 }
 
 function parseRecord(value: string): Record<string, unknown> | null {

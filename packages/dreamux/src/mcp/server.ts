@@ -35,7 +35,7 @@ import {
   StdioServerTransport,
 } from '@modelcontextprotocol/server/stdio';
 
-import { unclassifiedFailureText } from './failure-text.js';
+import { failureText } from '../command/errors.js';
 
 /**
  * The exact ordered set of official MCP revisions Dreamux serves. Modern
@@ -110,8 +110,8 @@ export interface McpToolMetadata {
    * every built-in Channel provider tool supplies one.
    */
   outputSchema?: Record<string, unknown>;
-  annotations?: ToolAnnotations;
-  icons?: Icon[];
+  annotations?: ToolAnnotations | undefined;
+  icons?: Icon[] | undefined;
 }
 
 /** A fully bound tool: advertisement metadata plus its handler. */
@@ -133,13 +133,13 @@ export interface RunMcpServerOptions {
    * tests). When provided, the transport owns its own lifecycle and the runner
    * does not attach input-end shutdown.
    */
-  transport?: Transport;
+  transport?: Transport | undefined;
   /** Input stream for the default stdio transport. Defaults to `process.stdin`. */
-  input?: Readable;
+  input?: Readable | undefined;
   /** Output stream for the default stdio transport. Defaults to `process.stdout`. */
-  output?: Writable;
+  output?: Writable | undefined;
   /** Out-of-band logger. Diagnostics never reach the MCP wire. */
-  log?: (message: string) => void;
+  log?: ((message: string) => void) | undefined;
 }
 
 /**
@@ -179,8 +179,8 @@ class ObservableTransport implements Transport {
     return this.inner.sessionId;
   }
 
-  get hasPerRequestStream(): boolean | undefined {
-    return this.inner.hasPerRequestStream;
+  get hasPerRequestStream(): boolean {
+    return this.inner.hasPerRequestStream === true;
   }
 
   async start(): Promise<void> {
@@ -224,7 +224,9 @@ class ObservableTransport implements Transport {
   private fail(error: unknown): void {
     if (this.closed) return;
     this.closed = true;
-    this.rejectClosed(error instanceof Error ? error : new Error(String(error)));
+    this.rejectClosed(
+      error instanceof Error ? error : new Error(String(error)),
+    );
   }
 }
 
@@ -248,7 +250,9 @@ function buildMcpServer(
         description: tool.description,
         inputSchema: fromJsonSchema(tool.inputSchema as JsonSchemaType),
         ...(tool.outputSchema !== undefined
-          ? { outputSchema: fromJsonSchema(tool.outputSchema as JsonSchemaType) }
+          ? {
+              outputSchema: fromJsonSchema(tool.outputSchema as JsonSchemaType),
+            }
           : {}),
         ...(tool.annotations !== undefined
           ? { annotations: tool.annotations }
@@ -291,7 +295,7 @@ async function executeTool(
     // reads the code and the message that value already had.
     log(`tool '${tool.name}' failed: ${describeError(err)}`);
     return {
-      content: [{ type: 'text', text: unclassifiedFailureText(err) }],
+      content: [{ type: 'text', text: failureText(err) }],
       isError: true,
     };
   }
@@ -309,7 +313,9 @@ export function validateMcpJsonSchema(
   try {
     fromJsonSchema(schema as JsonSchemaType);
   } catch (err) {
-    throw new Error(`${label} is not a valid JSON Schema: ${describeError(err)}`);
+    throw new Error(
+      `${label} is not a valid JSON Schema: ${describeError(err)}`,
+    );
   }
 }
 
@@ -360,7 +366,9 @@ export async function runMcpServer(opts: RunMcpServerOptions): Promise<void> {
     // stdin EOF; the runner owns input-end shutdown so a closed input pipe
     // deterministically ends the server (process exit / awaited completion).
     const shutdown = (): void => {
-      handle.close().catch((error) => log(`mcp shutdown error: ${describeError(error)}`));
+      handle
+        .close()
+        .catch((error) => log(`mcp shutdown error: ${describeError(error)}`));
     };
     inputForEof.once('end', shutdown);
     inputForEof.once('close', shutdown);

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2a, item 2: made the always-supplied dependency-injection fields in the team-collection/team-service/teammate-collection/teammate-service/dispatcher-core-events layer required, deleting their dead optional-fallback handling. Internal-only; no runtime or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

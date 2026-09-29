@@ -4,10 +4,8 @@
  * Deliberately pino-compatible (fields-first: `info(fields, message)`), so the
  * host's real pino logger satisfies this shape *structurally* — Dreamux core
  * injects its pino logger as-is, with no wrapper and no conversion at any
- * boundary. A provider authored against `@excitedjs/dreamux-types` depends only
- * on this shape; when core injects no logger, the provider package owns its own
- * minimal console fallback (also this shape). That fallback is implementation
- * code and does not belong in this declaration-only package.
+ * boundary. Core always supplies a logger, so every provider context field
+ * that carries one is required, not optional.
  *
  * The dual call signature mirrors pino's two primary overloads: pass fields then
  * an optional message, or pass a bare message. A misplaced message-first call
@@ -27,8 +25,8 @@ export interface DreamuxLogger {
   debug: DreamuxLogFn;
   trace: DreamuxLogFn;
   /**
-   * Context-binding sub-logger. Optional so a minimal provider fallback need not
-   * implement it; pino's `child(bindings)` satisfies it directly.
+   * Context-binding sub-logger. Every constructed `DreamuxLogger` already
+   * provides it — pino's `child(bindings)` satisfies it directly.
    */
-  child?(bindings: Record<string, unknown>): DreamuxLogger;
+  child(bindings: Record<string, unknown>): DreamuxLogger;
 }

@@ -25,6 +25,9 @@ runtime app-server readiness, and same-version restart cautions.
 - Current durable state is under `~/.dreamux/state/`, volatile runtime files are
   under `~/.dreamux/run/`, and logs are under `~/.dreamux/logs/`. Use the path
   authorities reported by Dreamux instead of guessing alternate roots.
+- `~/.dreamux/state/plugins/<plugin-name>/` is each loaded plugin's own state
+  subtree. It is that plugin's concern, not something this skill's generic
+  inspection/repair procedures cover.
 
 ## Missing Replies And Stuck Turns
 
@@ -74,11 +77,6 @@ runtime app-server readiness, and same-version restart cautions.
   is not permission to perform an unbounded scan or to build a cache or index.
 - `identity.json` is fully server-owned. Do not edit, copy over, synthesize, or
   delete it as an operational repair.
-- Dreamux never creates, opens, stats, lists, validates, repairs, migrates, or
-  deletes a current-layout entity `turn.jsonl`. Any such file is inert legacy
-  residue. Its contents, version, permissions, parseability, or absence cannot
-  block startup or lifecycle behavior, and no manual cleanup or rebuild is
-  required.
 
 ## Workflow Run State
 
@@ -119,12 +117,15 @@ runtime app-server readiness, and same-version restart cautions.
   fully server-owned. Do not edit, copy over, synthesize, or delete a job by
   hand as an operational repair; use `cron_create`, `cron_update`, and
   `cron_delete` in the owning scope.
-- A job's only action is `{ kind: "prompt-agent", prompt, intent? }`: it injects
-  its prompt into the Dispatcher or TeamLeader that owns the schedule. Cron
-  spawns no agent and addresses no Channel, and a job carries no delivery
-  target. A store file containing a `spawn-teammate` action or a `deliver`
-  field is not current state: it fails loud when read, and `dreamux doctor`
-  names the file. Delete that job or the store file and recreate the schedule.
+- A job's only action is `{ kind: "prompt-agent", prompt }`: it injects its
+  prompt into the Dispatcher or TeamLeader that owns the schedule. Cron spawns
+  no agent and addresses no Channel, and a job carries no delivery target and
+  no `dispatcher_id` (the store path already scopes it). A store file
+  containing a `spawn-teammate` action is not current state: it fails loud
+  when read, and `dreamux doctor` names the file. A leftover `deliver` or
+  `dispatcher_id` field on an old job is tolerated as an ordinary unknown
+  field: it loads, is ignored, and is dropped the next time that job is
+  rewritten.
 - A due job is submitted through ordinary admission, so it may fold into a turn
   that is already running. Firing proves submission, not a visible reply.
 
@@ -134,35 +135,55 @@ runtime app-server readiness, and same-version restart cautions.
   `~/.dreamux/state/<dispatcher-id>/team/<team-id>/record.json` and is fully
   server-owned. Do not edit, clear, copy, or synthesize it manually.
 - Dissolve is a submission. The caller's receipt (`{ accepted, team_name,
-  status: submitted }`) proves only that the request was accepted; the stop and
-  the close run behind it and are never reported back to that caller. Read the
-  Team's status afterward to learn what actually happened.
+  status: submitted }`) proves only that the request was accepted; writing the
+  record closed, destroying every child resource, and reclaiming the worktree
+  all run behind that receipt and are never reported back to that caller. Read
+  the Team's status afterward to learn what actually happened.
 - The record's `status` and its `worktree.cleanup_state` are the only durable
   dissolve facts. There is no persisted dissolve operation, phase, retry
-  counter, or generation. A dissolve interrupted before its closed record
-  simply did not happen: the Team is still open and can be asked again.
+  counter, or generation. Writing `status: closed` is the dissolve's one commit
+  point: once it lands, the dissolve cannot fail in a way that reopens the
+  Team. A dissolve interrupted *before* that write simply did not happen — the
+  Team is still open and can be asked again. One interrupted *after* that write
+  leaves the Team durably closed, with whatever child resources (cron jobs,
+  members, the leader's runtime) had not yet been destroyed left exactly as
+  they were — nothing revisits a closed Team to finish that cleanup, so a
+  cron store file still present, or a member's `identity.json` still not
+  marked closed, under a `closed` Team record is inert residue from an
+  interrupted destroy pass, not a bug to chase. None of it can fire: a closed
+  Team is never rebuilt, so its `SchedulerService` is never constructed and no
+  timer is ever armed from that leftover file.
 - A Team can be durably `closed` while `worktree.cleanup_state` is still
   `cleanup-pending`. That state, plus `worktree_cleanup_force`, is the whole
   recovery input: dispatcher startup finishes the pending reclamation from the
   record alone, without materializing the closed Team. Do not delete the Team
   record or the managed worktree to clear the visible state.
-- Dirty or unmerged worktrees require an explicit operator decision. A default
-  dissolve is non-forced and never force-removes one: it leaves the Team open
-  and running rather than closing it. `force: true` on the dissolve is that
-  decision — it authorizes `git worktree remove --force` and discards the
-  uncommitted, untracked, or unmerged work in the managed checkout. `cleanup:
-  keep` and non-managed workspaces are terminally retained. The record's
-  `worktree.cleanup` is written once at creation from the caller's `repo`
-  request: a managed worktree requested without `cleanup` records
-  `delete-on-close`; a reused directory records `keep`. For a managed
-  `delete-on-close` worktree, Dreamux runs `git worktree remove <path>`, forced
-  only under that authorization: it does not use ref reachability as an
-  eligibility check, and neither form deletes the managed branch or its
-  commits.
-- A Team's cron store file is deleted while its resources close, before the
-  closed record is committed. A dissolve that fails after that point leaves the
-  Team open with no scheduled jobs left to arm; that loss is intended. A
-  deletion that itself fails leaves the file in place and fails the dissolve.
+- Only the precheck that runs before the closed record is written can refuse a
+  dirty or unmerged worktree and leave the Team open and running; a non-forced
+  dissolve always calls it first, and a refusal there means nothing else about
+  the dissolve ran. Once that precheck passes (or `force` skips it) and the
+  closed record lands, the Team closes regardless of what the worktree looks
+  like afterward: a member that dirties the worktree in the gap between the
+  precheck and the actual reclaim no longer blocks the dissolve, and a
+  non-forced reclaim then only keeps the directory instead of removing it.
+  `force: true` on the dissolve authorizes `git worktree remove --force` and
+  discards the uncommitted, untracked, or unmerged work in the managed
+  checkout, whenever the reclaim itself runs. `cleanup: keep` and non-managed
+  workspaces are terminally retained. The record's `worktree.cleanup` is
+  written once at creation from the caller's `repo` request: a managed
+  worktree requested without `cleanup` records `delete-on-close`; a reused
+  directory records `keep`. For a managed `delete-on-close` worktree, Dreamux
+  runs `git worktree remove <path>`, forced only under that authorization: it
+  does not use ref reachability as an eligibility check, and neither form
+  deletes the managed branch or its commits.
+- A Team's cron store file is deleted while its resources close, *after* the
+  closed record is committed — not before — alongside every other child
+  resource (Workflows, members, the leader). Once the closed record lands the
+  dissolve itself cannot fail: a cron-store deletion failure there is logged
+  and the file may be left in place, but nothing will ever arm the jobs in it
+  regardless, because the Team is already closed and a closed Team's scheduler
+  is never rebuilt — the same as any other child resource that would not close
+  cleanly.
 - Branch or ref deletion is a separate destructive capability that requires its
   own explicit design and authorization; Team dissolve never performs it.
 - Where a Team is reachable from the outside is Channel state, not Team state.

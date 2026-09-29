@@ -25,13 +25,13 @@
  * no product path needs, and the right fix for a result that does grow is
  * pagination owned by the domain that produces it.
  */
+import type { JsonValue } from '@excitedjs/dreamux-types';
+
 import type {
   CoreCommandContext,
   CoreCommandDefinition,
   CoreCommandRegistry,
-  JsonValue,
-} from '@excitedjs/dreamux-types';
-
+} from './types.js';
 import {
   canonicalJsonValue,
   JsonValueError,
@@ -90,11 +90,6 @@ export class CoreCommands implements CoreCommandRegistry {
       assertSchemaDefinition(definition, 'output');
       this.commands.set(definition.name, definition);
     }
-  }
-
-  /** Every registered name, in registration order. Diagnostics only. */
-  names(): readonly string[] {
-    return [...this.commands.keys()];
   }
 
   async invoke(
@@ -172,7 +167,10 @@ function assertSchemaDefinition(
  * produces an arbitrarily large one, so a generic limit here would only be an
  * arbitrary cutoff. Domain-owned pagination is the answer when one is needed.
  */
-function canonicalResult(definition: AnyCoreCommand, output: unknown): JsonValue {
+function canonicalResult(
+  definition: AnyCoreCommand,
+  output: unknown,
+): JsonValue {
   try {
     return canonicalJsonValue(output, JSON_VALUE_UNBOUNDED);
   } catch (error) {

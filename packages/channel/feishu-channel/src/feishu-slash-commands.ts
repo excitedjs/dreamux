@@ -1,21 +1,16 @@
-import type { JsonValue } from '@excitedjs/dreamux-types';
 import type { Mention } from '@excitedjs/feishu-transport';
 import parser from 'yargs-parser';
 
+import type { FeishuCoreCommands } from './feishu-core-commands.js';
 import { errorMessage } from './feishu-submit.js';
 import { leadingTextAfterMentions } from './introduce.js';
-import {
-  buildRunningTeamsCard,
-  type RunningTeamRow,
-} from './feishu-running-teams-card.js';
-import type {
-  FeishuBindingView,
-  FeishuRoutingPlan,
-} from './routing/index.js';
+import { buildRunningTeamsCard } from './cards/running-teams.js';
+import type { FeishuBindingView, FeishuRoutingPlan } from './routing/index.js';
 import { containingChat, type FeishuTarget } from './routing/target.js';
-import type { FeishuBindingOperations } from './feishu-session-bindings.js';
+import type { FeishuBindingOperations } from './routing/operations.js';
 
-export type FeishuSlashCommandName = 'bind' | 'dissolve' | 'help' | 'stop' | 'teams';
+export type FeishuSlashCommandName =
+  'bind' | 'dissolve' | 'help' | 'stop' | 'teams';
 
 export interface FeishuSlashCommandInvocation {
   readonly name: FeishuSlashCommandName;
@@ -23,7 +18,8 @@ export interface FeishuSlashCommandInvocation {
    * The positional arguments, in order.
    *
    * The parser's own result type is `{ _: Array<string | number>; [flag: string]: any }`,
-   * and this seam is crossed by `FeishuInboundDelivery`, a pinned public export.
+   * and this seam is crossed by `FeishuInboundDelivery.command()`, the one call
+   * from `inbound/` into `session/`.
    * Narrowing here keeps the `any` and the library's type out of both, and the
    * narrowing is honest: `parse-positional-numbers` is off, so every positional
    * is already a string. A row that wants a named flag adds a typed field.
@@ -51,9 +47,11 @@ export type FeishuSlashCommandReply =
 interface CommandContext {
   readonly args: readonly string[];
   readonly target: FeishuTarget;
+  /** The message this command was parsed from. */
+  readonly messageId: string;
   readonly bindChannel: FeishuBindingOperations['bindChannel'];
   readonly plan: FeishuRoutingPlan;
-  readonly invoke: (command: string, payload: JsonValue) => Promise<JsonValue>;
+  readonly commands: FeishuCoreCommands;
   readonly bindings: readonly FeishuBindingView[];
   readonly resolveChatName: (chatId: string) => Promise<string | undefined>;
 }
@@ -77,24 +75,32 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       // closed Team, the chat a Collaboration Space is registered on — is
       // stated by the layer that owns the fact and arrives here as a thrown
       // failure. This row adds no precondition of its own.
+      // `/bind` always routes the containing chat (never a topic directly —
+      // see its summary above), so there is no message id to give the bind
+      // itself: a topic's own root, if any, was set when it was provisioned
+      // and `bindChannel` preserves it on its own. `announceMessageId` is
+      // this command's own message, used only if `/bind` was typed from
+      // inside a topic that has no root of its own yet, so the receipt still
+      // has one to reply under.
       await context.bindChannel({
         target: containingChat(context.target),
         teamName,
         display: null,
         announceIn: context.target,
+        announceMessageId: context.messageId,
       });
       return { kind: 'silent' };
     },
   },
   dissolve: {
     usage: '/dissolve',
-    summary: 'Dissolve this conversation\'s bound Team.',
+    summary: "Dissolve this conversation's bound Team.",
     async execute(context) {
       if (context.plan.kind !== 'bound') {
         return { kind: 'text', text: 'This conversation has no bound Team.' };
       }
-      await context.invoke('team.dissolve', {
-        team_name: context.plan.teamName,
+      await context.commands.teamDissolve({
+        teamName: context.plan.teamName,
         note: 'Dissolved from the bound Feishu conversation.',
       });
       // The Team's close reaches this Channel as a `team.state` closed event,
@@ -111,7 +117,9 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       kind: 'text',
       text: [
         '**Dreamux commands**',
-        ...Object.values(COMMANDS).map((command) => `- \`${command.usage}\` — ${command.summary}`),
+        ...Object.values(COMMANDS).map(
+          (command) => `- \`${command.usage}\` — ${command.summary}`,
+        ),
       ].join('\n'),
     }),
   },
@@ -122,17 +130,16 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
       if (context.plan.kind === 'provision') {
         return { kind: 'text', text: 'This conversation has no bound Team.' };
       }
-      const raw = context.plan.kind === 'bound'
-        ? await context.invoke('team.interrupt', {
-            team_name: context.plan.teamName,
-          })
-        : await context.invoke('dispatcher.interrupt', {});
-      const result = raw as { status: 'interrupted' | 'idle' };
+      const outcome =
+        context.plan.kind === 'bound'
+          ? await context.commands.teamInterrupt(context.plan.teamName)
+          : await context.commands.dispatcherInterrupt();
       return {
         kind: 'text',
-        text: result.status === 'interrupted'
-          ? 'Current turn interrupted.'
-          : 'No turn is running.',
+        text:
+          outcome.status === 'interrupted'
+            ? 'Current turn interrupted.'
+            : 'No turn is running.',
       };
     },
   },
@@ -140,9 +147,8 @@ const COMMANDS: Readonly<Record<FeishuSlashCommandName, CommandDefinition>> = {
     usage: '/teams',
     summary: 'List running Teams.',
     async execute(context) {
-      const raw = await context.invoke('team.list', {});
-      const rows = (raw as unknown as { teams: RunningTeamRow[] }).teams
-        .filter((team) => team.status === 'running');
+      const teams = await context.commands.teamList();
+      const rows = teams.filter((team) => team.status === 'running');
       return {
         kind: 'card',
         card: await buildRunningTeamsCard({
@@ -178,14 +184,19 @@ export function detectFeishuSlashCommand(input: {
   const names = Object.keys(COMMANDS) as FeishuSlashCommandName[];
   const name = names.find((name) => {
     const token = `/${name}`;
-    return lower.startsWith(token) &&
-      (lower.length === token.length || /^\s/u.test(lower.slice(token.length)));
+    return (
+      lower.startsWith(token) &&
+      (lower.length === token.length || /^\s/u.test(lower.slice(token.length)))
+    );
   });
-  return name === undefined ? null : {
-    name,
-    args: parser(text.slice(name.length + 1), PARSER_CONFIG)._
-      .map((value) => String(value)),
-  };
+  return name === undefined
+    ? null
+    : {
+        name,
+        args: parser(text.slice(name.length + 1), PARSER_CONFIG)._.map(
+          (value) => String(value),
+        ),
+      };
 }
 
 export async function dispatchFeishuSlashCommand(
@@ -193,7 +204,10 @@ export async function dispatchFeishuSlashCommand(
   context: Omit<CommandContext, 'args'>,
 ): Promise<FeishuSlashCommandReply> {
   try {
-    return await COMMANDS[invocation.name].execute({ ...context, args: invocation.args });
+    return await COMMANDS[invocation.name].execute({
+      ...context,
+      args: invocation.args,
+    });
   } catch (error) {
     return {
       kind: 'text',

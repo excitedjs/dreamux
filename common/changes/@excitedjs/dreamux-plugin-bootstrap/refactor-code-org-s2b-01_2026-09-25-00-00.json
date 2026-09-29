@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2b, item 1: enable exactOptionalPropertyTypes. No source change needed; the package already compiled clean under the flag.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux-plugin-bootstrap"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-plugin-bootstrap",
+  "email": "053700@gmail.com"
+}

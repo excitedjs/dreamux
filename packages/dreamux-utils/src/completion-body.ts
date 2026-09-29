@@ -28,8 +28,7 @@ export const COMPLETION_INLINE_BUDGET_MAX = 160_000;
 const COMPLETION_INLINE_BUDGET_ENV = 'TASK_MAX_OUTPUT_LENGTH';
 
 export type ResolvedCompletionBody =
-  | { kind: 'inline'; text: string }
-  | { kind: 'spilled'; path: string };
+  { kind: 'inline'; text: string } | { kind: 'spilled'; path: string };
 
 export interface CompletionBodyInput {
   result: string | null;

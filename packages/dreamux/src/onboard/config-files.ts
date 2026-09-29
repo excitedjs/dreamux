@@ -4,7 +4,7 @@ import {
   type DispatcherProviderConfig,
   stringifyConfig,
 } from '../config/config.js';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import type { OnboardAnswers } from '../onboard/types.js';
 
 export function buildDreamuxConfigJson(answers: OnboardAnswers): string {
@@ -42,23 +42,22 @@ export function dreamuxConfigFromAnswers(
   // it; re-running onboard must not silently delete it.
   const agents: DreamuxConfig['agents'] = {};
   for (const [id, agent] of Object.entries(base.agents)) {
-    const rawConfig = cloneOptionalProviderConfig(agent.rawConfig);
     agents[id] = {
       provider: agent.provider,
       config: cloneProviderConfig(agent.config),
-      ...(rawConfig === undefined ? {} : { rawConfig }),
+      rawConfig: cloneOptionalProviderConfig(agent.rawConfig),
     };
   }
-  for (const dispatcher of dispatchers) {
-    const rawConfig = cloneOptionalProviderConfig(dispatcher.runtime.rawConfig);
-    agents[dispatcher.agentRuntime] = {
-      provider: dispatcher.runtime.provider,
-      config: cloneProviderConfig(dispatcher.runtime.config),
-      ...(rawConfig === undefined ? {} : { rawConfig }),
-    };
-  }
+  // The answers-driven dispatcher's agent is the only entry this onboard run
+  // can add or change; every other dispatcher's agent is already seeded above
+  // from `base.agents`, unchanged.
+  agents[answers.agentRuntime.id] = {
+    provider: answers.agentRuntime.provider,
+    config: cloneProviderConfig(answers.agentRuntime.config),
+    rawConfig: cloneProviderConfig(answers.agentRuntime.config),
+  };
   const next: DreamuxConfig = {
-    ...(base.plugins !== undefined ? { plugins: base.plugins } : {}),
+    plugins: base.plugins,
     agents,
     dispatchers,
   };
@@ -81,11 +80,6 @@ function dispatcherConfigFromAnswers(
       rawConfig: cloneProviderConfig(channel.config),
     })),
     agentRuntime: answers.agentRuntime.id,
-    runtime: {
-      provider: answers.agentRuntime.provider,
-      config: cloneProviderConfig(answers.agentRuntime.config),
-      rawConfig: cloneProviderConfig(answers.agentRuntime.config),
-    },
   };
 }
 
@@ -99,18 +93,9 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
       id: channel.id,
       provider: channel.provider,
       config: cloneProviderConfig(channel.config),
-      ...(channel.rawConfig === undefined
-        ? {}
-        : { rawConfig: cloneProviderConfig(channel.rawConfig) }),
+      rawConfig: cloneOptionalProviderConfig(channel.rawConfig),
     })),
     agentRuntime: dispatcher.agentRuntime,
-    runtime: {
-      provider: dispatcher.runtime.provider,
-      config: cloneProviderConfig(dispatcher.runtime.config),
-      ...(dispatcher.runtime.rawConfig === undefined
-        ? {}
-        : { rawConfig: cloneProviderConfig(dispatcher.runtime.rawConfig) }),
-    },
   };
 }
 

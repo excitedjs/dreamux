@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 5 item 3: extracted the domain-neutral history-page paging primitives (history limit clamp, cursor encode/decode, free-text preview truncation, and a new generic matchesGrepText substring matcher) out of service/agent-entity/read-helpers.ts and service/team-collection/read-helpers.ts into new platform/history-page.ts. Each domain's read-helpers.ts keeps only its own row shape and field list and now calls the shared primitives; repointed the 4 production import sites (team-collection/read-model.ts, team-collection/types.ts, teammate-collection/index.ts, agent-entity/history-query.ts). No behavior change beyond the separately-recorded team.history grep-trim fix.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

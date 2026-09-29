@@ -41,20 +41,45 @@ describe('LineBuffer', () => {
 describe('parseLine', () => {
   it('parses a system/init envelope', () => {
     const line = parseLine(
-      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude-x' }),
+      JSON.stringify({
+        type: 'system',
+        subtype: 'init',
+        session_id: 's1',
+        model: 'claude-x',
+      }),
     );
-    expect(line).toMatchObject({ kind: 'init', sessionId: 's1', model: 'claude-x' });
+    expect(line).toMatchObject({
+      kind: 'init',
+      sessionId: 's1',
+      model: 'claude-x',
+    });
   });
 
   it('parses a system/compact_boundary envelope and leaves other system subtypes as other', () => {
-    const boundary = parseLine(JSON.stringify({
-      type: 'system',
-      subtype: 'compact_boundary',
-      compact_metadata: { trigger: 'auto', pre_tokens: 14950, post_tokens: 1789 },
-    }));
+    const boundary = parseLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: {
+          trigger: 'auto',
+          pre_tokens: 14950,
+          post_tokens: 1789,
+        },
+      }),
+    );
     expect(boundary.kind).toBe('compact_boundary');
-    const status = parseLine(JSON.stringify({ type: 'system', subtype: 'status', status: 'compacting' }));
-    expect(status).toMatchObject({ kind: 'other', type: 'system', subtype: 'status' });
+    const status = parseLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'status',
+        status: 'compacting',
+      }),
+    );
+    expect(status).toMatchObject({
+      kind: 'other',
+      type: 'system',
+      subtype: 'status',
+    });
   });
 
   it('parses an assistant envelope, joining text blocks', () => {
@@ -82,7 +107,12 @@ describe('parseLine', () => {
 
   it('parses a success result envelope', () => {
     const line = parseLine(
-      JSON.stringify({ type: 'result', subtype: 'success', result: 'final', session_id: 's1' }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'final',
+        session_id: 's1',
+      }),
     );
     expect(line.kind).toBe('result');
     if (line.kind === 'result') {
@@ -278,7 +308,11 @@ describe('parseLine', () => {
         },
       }),
     );
-    expect(line).toMatchObject({ kind: 'control_response', requestId: 'r1', ok: true });
+    expect(line).toMatchObject({
+      kind: 'control_response',
+      requestId: 'r1',
+      ok: true,
+    });
     if (line.kind === 'control_response') {
       expect(line.response).toEqual({
         session_url: 'https://example.invalid/session/fake',
@@ -345,34 +379,61 @@ describe('parseLine', () => {
   });
 
   it('classifies unmodelled JSON as other and non-JSON as parse_error', () => {
-    expect(parseLine(JSON.stringify({ type: 'stream_event', event: {} })).kind).toBe('other');
+    expect(
+      parseLine(JSON.stringify({ type: 'stream_event', event: {} })).kind,
+    ).toBe('other');
     expect(parseLine('not json').kind).toBe('parse_error');
     expect(parseLine('[1,2,3]').kind).toBe('parse_error');
   });
 });
 
 describe('TurnAggregator native usage', () => {
-  function assistant(input: number, parentToolUseId: string | null = null): ReturnType<typeof parseLine> {
-    return parseLine(JSON.stringify({
-      type: 'assistant',
-      parent_tool_use_id: parentToolUseId,
-      message: {
-        content: [],
-        usage: { input_tokens: input, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 4_000, output_tokens: 1 },
-      },
-    }));
+  function assistant(
+    input: number,
+    parentToolUseId: string | null = null,
+  ): ReturnType<typeof parseLine> {
+    return parseLine(
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: parentToolUseId,
+        message: {
+          content: [],
+          usage: {
+            input_tokens: input,
+            cache_read_input_tokens: 10_000,
+            cache_creation_input_tokens: 4_000,
+            output_tokens: 1,
+          },
+        },
+      }),
+    );
   }
 
   function result(modelUsage: unknown): ReturnType<typeof parseLine> {
-    return parseLine(JSON.stringify({
-      type: 'result', subtype: 'success', result: 'answer', modelUsage,
-      usage: { input_tokens: 999_999, output_tokens: 999_999 },
-    }));
+    return parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'answer',
+        modelUsage,
+        usage: { input_tokens: 999_999, output_tokens: 999_999 },
+      }),
+    );
   }
 
   const models = {
-    main: { inputTokens: 1_000, cacheReadInputTokens: 20_000, cacheCreationInputTokens: 4_000, outputTokens: 60 },
-    other: { inputTokens: 568, cacheReadInputTokens: 2_000, cacheCreationInputTokens: 1_000, outputTokens: 9 },
+    main: {
+      inputTokens: 1_000,
+      cacheReadInputTokens: 20_000,
+      cacheCreationInputTokens: 4_000,
+      outputTokens: 60,
+    },
+    other: {
+      inputTokens: 568,
+      cacheReadInputTokens: 2_000,
+      cacheCreationInputTokens: 1_000,
+      outputTokens: 9,
+    },
   };
 
   it('uses the latest main context and sums only the current result model totals', () => {
@@ -382,14 +443,17 @@ describe('TurnAggregator native usage', () => {
     agg.accept(assistant(50_000, 'sub-agent-call'));
     agg.accept(result(models));
     expect(agg.takeOutcome()).toMatchObject({
-      text: 'answer', tokenUsage: { inputTokens: 28_568, outputTokens: 69 }, contextTokens: 14_500,
+      text: 'answer',
+      tokenUsage: { inputTokens: 28_568, outputTokens: 69 },
+      contextTokens: 14_500,
     });
     expect(agg.outcome()).toBeNull();
 
     agg.accept(assistant(750));
     agg.accept(result({ main: { ...models.main, inputTokens: 10_000 } }));
     expect(agg.takeOutcome()).toMatchObject({
-      tokenUsage: { inputTokens: 34_000, outputTokens: 60 }, contextTokens: 14_750,
+      tokenUsage: { inputTokens: 34_000, outputTokens: 60 },
+      contextTokens: 14_750,
     });
     agg.accept(result(models));
     expect(agg.takeOutcome()?.contextTokens).toBeNull();
@@ -401,19 +465,29 @@ describe('TurnAggregator native usage', () => {
     agg.discard();
     agg.accept(result(models));
     expect(agg.takeOutcome()).toMatchObject({
-      tokenUsage: { inputTokens: 28_568, outputTokens: 69 }, contextTokens: null,
+      tokenUsage: { inputTokens: 28_568, outputTokens: 69 },
+      contextTokens: null,
     });
   });
 
   it('does not reuse context when the latest main message has no usage', () => {
     const agg = new TurnAggregator();
     agg.accept(assistant(500));
-    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { content: [] } })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'assistant', message: { content: [] } }),
+      ),
+    );
     agg.accept(result(models));
     expect(agg.takeOutcome()?.contextTokens).toBeNull();
   });
 
-  it.each([undefined, {}, null, { main: { inputTokens: '100', outputTokens: 1 } }])(
+  it.each([
+    undefined,
+    {},
+    null,
+    { main: { inputTokens: '100', outputTokens: 1 } },
+  ])(
     'omits unavailable cumulative data rather than using per-turn usage: %j',
     (modelUsage) => {
       const agg = new TurnAggregator();
@@ -425,10 +499,18 @@ describe('TurnAggregator native usage', () => {
 
   it('preserves zero counts and accepts absent cache fields', () => {
     const agg = new TurnAggregator();
-    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 0 } } })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({
+          type: 'assistant',
+          message: { usage: { input_tokens: 0 } },
+        }),
+      ),
+    );
     agg.accept(result({ main: { inputTokens: 0, outputTokens: 0 } }));
     expect(agg.takeOutcome()).toMatchObject({
-      tokenUsage: { inputTokens: 0, outputTokens: 0 }, contextTokens: 0,
+      tokenUsage: { inputTokens: 0, outputTokens: 0 },
+      contextTokens: 0,
     });
   });
 });
@@ -436,18 +518,32 @@ describe('TurnAggregator native usage', () => {
 describe('TurnAggregator', () => {
   it('aggregates init + assistant + result into an outcome', () => {
     const agg = new TurnAggregator();
-    agg.accept(parseLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }),
+      ),
+    );
     agg.accept(
       parseLine(
         JSON.stringify({
           type: 'assistant',
-          message: { role: 'assistant', content: [{ type: 'text', text: 'snapshot' }] },
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'snapshot' }],
+          },
         }),
       ),
     );
     expect(agg.done).toBe(false);
     agg.accept(
-      parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: 'final', session_id: 's1' })),
+      parseLine(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          result: 'final',
+          session_id: 's1',
+        }),
+      ),
     );
     expect(agg.done).toBe(true);
     expect(agg.outcome()).toEqual({
@@ -467,45 +563,102 @@ describe('TurnAggregator', () => {
       parseLine(
         JSON.stringify({
           type: 'assistant',
-          message: { role: 'assistant', content: [{ type: 'text', text: 'the answer' }] },
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'the answer' }],
+          },
         }),
       ),
     );
-    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', session_id: 's1' })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          session_id: 's1',
+        }),
+      ),
+    );
     expect(agg.outcome()?.text).toBe('the answer');
   });
 
   it('uses the init session id when the result omits one', () => {
     const agg = new TurnAggregator();
-    agg.accept(parseLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-init' })));
-    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: 'ok' })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({
+          type: 'system',
+          subtype: 'init',
+          session_id: 's-init',
+        }),
+      ),
+    );
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'result', subtype: 'success', result: 'ok' }),
+      ),
+    );
     expect(agg.outcome()?.sessionId).toBe('s-init');
   });
 
   it('leaves in-flight text intact when takeOutcome is called before a result', () => {
     const agg = new TurnAggregator();
-    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'running answer' }] } })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'running answer' }] },
+        }),
+      ),
+    );
     expect(agg.takeOutcome()).toBeNull();
-    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: '' })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'result', subtype: 'success', result: '' }),
+      ),
+    );
     expect(agg.takeOutcome()?.text).toBe('running answer');
-    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: '' })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'result', subtype: 'success', result: '' }),
+      ),
+    );
     expect(agg.takeOutcome()?.text).toBe('');
   });
 
   it('discards cancelled text without requiring a result or discarding session identity', () => {
     const agg = new TurnAggregator();
-    agg.accept(parseLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })));
-    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'cancelled answer' }] } })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }),
+      ),
+    );
+    agg.accept(
+      parseLine(
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'cancelled answer' }] },
+        }),
+      ),
+    );
     agg.discard();
     expect(agg.takeOutcome()).toBeNull();
     expect(agg.sessionId).toBe('s1');
-    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: '' })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'result', subtype: 'success', result: '' }),
+      ),
+    );
     expect(agg.takeOutcome()).toMatchObject({ text: '', sessionId: 's1' });
   });
 
   it('returns null outcome before the result lands', () => {
     const agg = new TurnAggregator();
-    agg.accept(parseLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })));
+    agg.accept(
+      parseLine(
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }),
+      ),
+    );
     expect(agg.outcome()).toBeNull();
   });
 });
@@ -521,15 +674,6 @@ describe('outbound builders', () => {
   it('buildUserMessage omits isSynthetic by default', () => {
     const parsed = JSON.parse(buildUserMessage('hi'));
     expect('isSynthetic' in parsed).toBe(false);
-  });
-
-  it('buildUserMessage sets isSynthetic as a sibling of message', () => {
-    const parsed = JSON.parse(buildUserMessage('done', { isSynthetic: true }));
-    expect(parsed).toEqual({
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text: 'done' }] },
-      isSynthetic: true,
-    });
   });
 
   it('buildUserMessage sends no delivery priority at all', () => {

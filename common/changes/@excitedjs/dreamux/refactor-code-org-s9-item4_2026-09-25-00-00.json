@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 9, item 4: broke the five remaining two-file dependency-cruiser cycles. TeamServiceDeps (service/team) and SchedulerServiceOptions (service/scheduler) each named the concrete store class their own types.ts imported, so each moved to the file that actually constructs the service it configures (service.ts and index.ts respectively); service/team/leader.ts, which only reads a handful of TeamServiceDeps fields, now takes a small locally-declared structural type built from the same underlying field types instead of importing the wider bag, so it does not gain a new edge back into service.ts. service/agent/admission.ts's admissionWithoutTurn was a pure identity function with one call site; it is deleted and that call site now returns its input directly, and the TurnAdmission type it existed only to relabel moved to turn.ts (its actual producer) with admission.ts importing it back — every external importer of TurnAdmission now points at turn.ts. cli/doctor.ts and cli/doctor-plugins.ts each imported a type from the other; the shared DoctorCheck result row moved to a new cli/doctor-types.ts both import. admin/socket.ts took the whole concrete Server class just to call two of its members; createAdminSocketServer now takes a locally-declared AdminSocketHost naming only the admitted Command port and the logger. Internal reorg only; no runtime or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

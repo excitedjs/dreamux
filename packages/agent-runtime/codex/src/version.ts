@@ -14,7 +14,9 @@
 export const MIN_CODEX_VERSION = '0.137.0';
 
 /** Parse a `major.minor.patch` triple out of a `codex --version` line. */
-export function parseCodexVersion(raw: string): [number, number, number] | null {
+export function parseCodexVersion(
+  raw: string,
+): [number, number, number] | null {
   const match = raw.match(/(\d+)\.(\d+)\.(\d+)/);
   if (match === null) return null;
   return [Number(match[1]), Number(match[2]), Number(match[3])];

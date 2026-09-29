@@ -11,9 +11,11 @@
  * optional config, onboard, and diagnostic capabilities. Like the Agent Runtime
  * contract, it asserts no registration identity: a provider has no `ref` or
  * `descriptor` member to echo, and its factory receives only the published
- * ref-only `ProviderFactoryContext`. `builtin:feishu` resolves to
- * `@excitedjs/feishu-channel` through the same loading path once the alias is
- * resolved; a missing built-in channel package fails loud with the named ref.
+ * ref-only `ProviderFactoryContext`. `builtin:feishu` never actually reaches
+ * this loader: the always-loaded Feishu plugin registers its descriptor and
+ * implementation together, before this loader ever runs. A `builtin:` channel
+ * ref that reaches here anyway names an id no loaded plugin contributes and
+ * fails loud with the named ref.
  *
  * Unsettled for external providers: a channel provider's registration id is now
  * a segment of the model-facing MCP server name — `channel-<id>` on Claude
@@ -61,8 +63,13 @@ export class ExternalChannelProviderLoadError extends Error {
 }
 
 export class ExternalChannelProviderContractError extends Error {
-  constructor(readonly providerRef: string, message: string) {
-    super(`invalid channel provider ${JSON.stringify(providerRef)}: ${message}`);
+  constructor(
+    readonly providerRef: string,
+    message: string,
+  ) {
+    super(
+      `invalid channel provider ${JSON.stringify(providerRef)}: ${message}`,
+    );
     this.name = 'ExternalChannelProviderContractError';
   }
 }
@@ -70,7 +77,7 @@ export class ExternalChannelProviderContractError extends Error {
 export interface LoadChannelProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ExternalChannelModuleImporter;
+  importModule?: ExternalChannelModuleImporter | undefined;
 }
 
 const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<
@@ -128,7 +135,9 @@ function assertOptionalOnboard(
 ): void {
   if (value === undefined) return;
   if (!isRecord(value) || typeof value['collect'] !== 'function') {
-    context.fail('provider.onboard.collect must be a function when onboard is present');
+    context.fail(
+      'provider.onboard.collect must be a function when onboard is present',
+    );
   }
 }
 

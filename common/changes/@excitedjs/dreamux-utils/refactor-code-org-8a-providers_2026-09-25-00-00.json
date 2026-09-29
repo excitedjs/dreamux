@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 8a, item 1: renamed config-validate's requireNonEmptyString/requireStringArray/requireStringRecord/requirePositiveInt to readNonEmptyString/readStringArray/readStringRecord/readPositiveInt, matching the existing readOptionalString/readOptionalBoolean/readProviderConfigObject naming. No behavior change: all four still throw on a missing or wrong-type field. These are re-exported from the package's index.ts, so an external provider could in principle have imported them directly under the old names.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "053700@gmail.com"
+}

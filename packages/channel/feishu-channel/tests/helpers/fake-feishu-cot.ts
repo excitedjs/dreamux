@@ -42,7 +42,9 @@ export function createFakeCotClient(): FakeCotClient {
     cards,
     createError: null,
     appendError: null,
-    async createCot(input: FeishuCotCreateInput): Promise<FeishuCotCreateResult> {
+    async createCot(
+      input: FeishuCotCreateInput,
+    ): Promise<FeishuCotCreateResult> {
       if (client.createError !== null) throw client.createError;
       const ordinal = next++;
       const created = {
@@ -61,12 +63,14 @@ export function createFakeCotClient(): FakeCotClient {
     async appendCot(input: FeishuCotAppendInput): Promise<void> {
       if (client.appendError !== null) throw client.appendError;
       const card = cards.find((candidate) => candidate.cotId === input.cotId);
-      if (card === undefined) throw new Error(`no fake COT card ${input.cotId}`);
+      if (card === undefined)
+        throw new Error(`no fake COT card ${input.cotId}`);
       card.events.push(...input.events);
     },
     async completeCot(input: FeishuCotCompleteInput): Promise<void> {
       const card = cards.find((candidate) => candidate.cotId === input.cotId);
-      if (card === undefined) throw new Error(`no fake COT card ${input.cotId}`);
+      if (card === undefined)
+        throw new Error(`no fake COT card ${input.cotId}`);
       card.completedReason = input.reason;
     },
   };

@@ -12,10 +12,7 @@
  */
 import type { AgentRuntimePathContext } from '@excitedjs/dreamux-types';
 
-import {
-  cacheRoot,
-  logsRoot,
-} from '../platform/paths.js';
+import { cacheRoot, logsRoot } from '../platform/paths.js';
 import { runtimeSocketDirCandidates } from '../platform/runtime-sockets.js';
 
 export const hostRuntimePaths: AgentRuntimePathContext = {

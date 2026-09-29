@@ -10,9 +10,9 @@
  * channels never share one.
  */
 import type { ChannelMcpCaller, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 
-import type { FeishuCardActionEvent } from './bot.js';
-import type { FeishuCardActionResponse } from './feishu-pairing-card.js';
+import type { FeishuCardActionResponse } from './cards/pairing.js';
 import type { FeishuTarget } from './routing/target.js';
 import type { FeishuToolDef, FeishuToolResult } from './tools/types.js';
 
@@ -59,13 +59,15 @@ export interface FeishuExtension<S> {
  * step as a built-in tool; the handler receives this instance's state instead
  * of the built-in tool session. Refuse by throwing `PublicInvokeFailure`.
  */
-export type FeishuExtensionTool<S, TInput = unknown> =
-  Omit<FeishuToolDef<TInput>, 'handle'> & {
-    handle(
-      ctx: { readonly caller: ChannelMcpCaller; readonly state: S },
-      input: TInput,
-    ): Promise<FeishuToolResult>;
-  };
+export type FeishuExtensionTool<S, TInput = unknown> = Omit<
+  FeishuToolDef<TInput>,
+  'handle'
+> & {
+  handle(
+    ctx: { readonly caller: ChannelMcpCaller; readonly state: S },
+    input: TInput,
+  ): Promise<FeishuToolResult>;
+};
 
 /**
  * What a card action handler wants forwarded to the conversation's Team, as an
@@ -107,9 +109,11 @@ export interface FeishuExtensionContext {
   readonly dispatcherId: string;
   readonly channelId: string;
   /**
-   * `<dispatcher state dir>/feishu-extensions/<extension name>/<channel segment>`:
-   * one directory per extension per Feishu channel, so two Feishu channels on
-   * one Dispatcher never share state. Not created for you.
+   * `<Feishu plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension
+   * name>/<channel segment>`: one directory per extension per Feishu channel
+   * per Dispatcher, so two Feishu channels never share state and this can
+   * never land under the Feishu channel's own `access.json`/`chat-bots.json`/
+   * routing directory. Not created for you.
    */
   readonly stateRoot: string;
   /** Aborted when this channel instance begins closing. */
@@ -134,9 +138,10 @@ export interface FeishuInstanceApi {
     display: string;
   }): Promise<void>;
   /**
-   * Send a card and read back where Feishu placed it. There is no idempotency
-   * key, and the read-back runs after delivery: a rejection can mean the card
-   * is already in the chat, so retrying on any rejection can post it twice.
+   * Send a card and report where Feishu placed it, read off the send
+   * response itself. There is no idempotency key: a rejection can mean the
+   * card is already in the chat, so retrying on any rejection can post it
+   * twice.
    */
   sendCard(input: {
     chatId: string;

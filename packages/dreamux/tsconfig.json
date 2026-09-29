@@ -16,6 +16,7 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": false,
+    "exactOptionalPropertyTypes": true,
     "outDir": "./dist",
     "rootDir": "./src",
     "declaration": false,

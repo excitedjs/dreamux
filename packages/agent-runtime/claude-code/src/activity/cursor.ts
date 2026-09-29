@@ -1,9 +1,8 @@
 import {
+  ActivityError,
   isScanDigest,
   scanDigest,
 } from '@excitedjs/dreamux-utils';
-
-import { ClaudeActivityError } from './error.js';
 
 interface ClaudeCursorEnvelope {
   v: 1;
@@ -15,10 +14,6 @@ interface ClaudeCursorEnvelope {
   rw: number;
   rp: number | null;
   rd: string | null;
-}
-
-export function claudeQueryFingerprint(includeTools: boolean): string {
-  return scanDigest(JSON.stringify({ include_tools: includeTools }));
 }
 
 export function encodeClaudeCursor(input: {
@@ -54,20 +49,20 @@ export function decodeClaudeCursor(
     if (decoded.length === 0 || decoded.length > 3072) throw new Error('size');
     value = JSON.parse(decoded.toString('utf8'));
   } catch (error) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_invalid',
       'Claude Code activity cursor is invalid',
       { cause: error },
     );
   }
   if (!isEnvelope(value)) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_invalid',
       'Claude Code activity cursor is invalid',
     );
   }
   if (value.fp !== expectedFingerprint) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_query_mismatch',
       'Claude Code activity cursor belongs to a different query',
     );
@@ -92,8 +87,7 @@ function isEnvelope(value: unknown): value is ClaudeCursorEnvelope {
     Number.isSafeInteger(record['rw']) &&
     (record['rw'] as number) >= 0 &&
     (record['rp'] === null ||
-      (Number.isSafeInteger(record['rp']) &&
-        (record['rp'] as number) >= 0)) &&
+      (Number.isSafeInteger(record['rp']) && (record['rp'] as number) >= 0)) &&
     (record['rd'] === null || isScanDigest(record['rd'])) &&
     ((record['rp'] === null && record['rd'] === null) ||
       (record['rp'] !== null && record['rd'] !== null))

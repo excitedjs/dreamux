@@ -32,7 +32,9 @@ describe('internal-content tree scan', () => {
     // `mexico` and `meredith2` homes below — real-looking accounts that merely
     // start with an allowed name. The two-stage `grep -aoE | grep -vxE` shape
     // is what prevents that, so the real commands are what this exercises.
-    const extractionPattern = SCAN_SCRIPT.match(/^FORBIDDEN_RE='([^']+)'$/m)?.[1];
+    const extractionPattern = SCAN_SCRIPT.match(
+      /^FORBIDDEN_RE='([^']+)'$/m,
+    )?.[1];
     const allowlistPattern = SCAN_SCRIPT.match(/^ALLOWED_RE='([^']+)'$/m)?.[1];
     expect(extractionPattern).toContain('/home/[a-z][a-z0-9_-]+/');
     expect(allowlistPattern).toBeDefined();
@@ -77,7 +79,10 @@ describe('internal-content tarball scan', () => {
     const dir = await mkdtemp(join(tmpdir(), 'internal-content-'));
     dirs.push(dir);
     await mkdir(join(dir, 'package', 'dist'), { recursive: true });
-    await writeFile(join(dir, 'package', 'package.json'), '{"name":"fixture"}\n');
+    await writeFile(
+      join(dir, 'package', 'package.json'),
+      '{"name":"fixture"}\n',
+    );
     await writeFile(join(dir, 'package', 'dist', 'index.js'), distSource);
     const tgz = join(dir, `${name}.tgz`);
     await execa('tar', ['czf', tgz, '-C', dir, 'package']);
@@ -88,16 +93,21 @@ describe('internal-content tarball scan', () => {
     // `linuxbrew2` starts with an allowed name: the anchored second stage is
     // what keeps it out, the same shape the tree scan relies on above. The
     // source-tree placeholder users are not allowed in an artifact at all.
-    const tgz = await pack('leaky', [
-      `const node = '${home('volta')}bin/node';`,
-      `const brew = '${home('linuxbrew')}.linuxbrew/bin';`,
-      `const nearMiss = '${home('linuxbrew2')}private';`,
-      `const placeholder = '${home('example')}project';`,
-      `const leaked = '${home('someone')}work';`,
-      `const mount = '${MOUNT}home/someone/work';`,
-    ].join('\n'));
+    const tgz = await pack(
+      'leaky',
+      [
+        `const node = '${home('volta')}bin/node';`,
+        `const brew = '${home('linuxbrew')}.linuxbrew/bin';`,
+        `const nearMiss = '${home('linuxbrew2')}private';`,
+        `const placeholder = '${home('example')}project';`,
+        `const leaked = '${home('someone')}work';`,
+        `const mount = '${MOUNT}home/someone/work';`,
+      ].join('\n'),
+    );
 
-    const result = await execa(SCAN_SCRIPT_PATH, ['--tarball', tgz], { reject: false });
+    const result = await execa(SCAN_SCRIPT_PATH, ['--tarball', tgz], {
+      reject: false,
+    });
 
     expect(result.exitCode).toBe(1);
     const reported = result.stderr
@@ -114,12 +124,17 @@ describe('internal-content tarball scan', () => {
   });
 
   it('passes a tarball carrying only the public install locations, and refuses to scan a missing file', async () => {
-    const tgz = await pack('clean', [
-      `const node = '${home('volta')}bin/node';`,
-      `const brew = '${home('linuxbrew')}.linuxbrew/bin';`,
-    ].join('\n'));
+    const tgz = await pack(
+      'clean',
+      [
+        `const node = '${home('volta')}bin/node';`,
+        `const brew = '${home('linuxbrew')}.linuxbrew/bin';`,
+      ].join('\n'),
+    );
 
-    const clean = await execa(SCAN_SCRIPT_PATH, ['--tarball', tgz], { reject: false });
+    const clean = await execa(SCAN_SCRIPT_PATH, ['--tarball', tgz], {
+      reject: false,
+    });
     expect(clean.exitCode).toBe(0);
 
     // A scanner that quietly ignores what it was asked to scan is the failure

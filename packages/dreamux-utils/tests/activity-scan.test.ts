@@ -119,7 +119,9 @@ describe('readBytesAt', () => {
 
   it('assembles a read that requires multiple chunks', async () => {
     const data = Buffer.from('abcdefghij');
-    const result = await readBytesAt(fakeReader(data), 0, 10, { maxChunkBytes: 3 });
+    const result = await readBytesAt(fakeReader(data), 0, 10, {
+      maxChunkBytes: 3,
+    });
     expect(result.toString('utf8')).toBe('abcdefghij');
   });
 
@@ -138,15 +140,19 @@ describe('readBytesAt', () => {
 
   it('rejects a negative position or length', async () => {
     const data = Buffer.from('abc');
-    await expect(readBytesAt(fakeReader(data), -1, 1)).rejects.toThrow(RangeError);
-    await expect(readBytesAt(fakeReader(data), 0, -1)).rejects.toThrow(RangeError);
+    await expect(readBytesAt(fakeReader(data), -1, 1)).rejects.toThrow(
+      RangeError,
+    );
+    await expect(readBytesAt(fakeReader(data), 0, -1)).rejects.toThrow(
+      RangeError,
+    );
   });
 
   it('rejects a non-positive maxChunkBytes when length is non-zero', async () => {
     const data = Buffer.from('abc');
-    await expect(readBytesAt(fakeReader(data), 0, 3, { maxChunkBytes: 0 })).rejects.toThrow(
-      RangeError,
-    );
+    await expect(
+      readBytesAt(fakeReader(data), 0, 3, { maxChunkBytes: 0 }),
+    ).rejects.toThrow(RangeError);
   });
 
   it('rejects a reader that reports more bytesRead than requested', async () => {

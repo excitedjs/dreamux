@@ -21,51 +21,18 @@ import type {
   ChannelMcpToolRegistration,
   ChannelProvider,
   ChannelSessionCreateContext,
-  DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import { FeishuChannelSession } from './feishu-channel.js';
+import { FeishuChannelSession } from './session/session.js';
 import type { FeishuBot } from './bot.js';
 import { FeishuExtensionRegistry } from './feishu-extensions.js';
-import { createFeishuSessionMcp } from './feishu-session-mcp.js';
+import { createFeishuSessionMcp } from './tools/session-mcp.js';
 import { feishuToolRegistrations } from './tools/registry.js';
 
 /** Validated Feishu channel config the neutral session is constructed from. */
 export interface FeishuChannelConfig {
   appId: string;
   appSecret: string;
-}
-
-/**
- * Minimal `console.error`-backed logger the channel falls back to when the host
- * injects none (the standalone / generic-loader path; core always injects its
- * pino logger). Pino-shaped (fields-first) like the neutral `DreamuxLogger`, so
- * the session and transport consume it with no adapter. Owned here as
- * implementation code — never in declaration-only `dreamux-types`.
- */
-function consoleFallbackLogger(dispatcherId: string): DreamuxLogger {
-  const sink =
-    (level: string) =>
-    (fields: Record<string, unknown> | string, message?: string): void => {
-      const prefix = `[feishu ${dispatcherId}] ${level}`;
-      if (typeof fields === 'string') {
-        console.error(prefix, fields);
-        return;
-      }
-      // Never dump the whole fields bag — it can carry credentials and this
-      // fallback has no `redact` policy (core's injected pino does). Surface
-      // only `err`, matching the runtime packages' console fallbacks.
-      const err = fields['err'];
-      if (err !== undefined) console.error(prefix, message ?? '', err);
-      else console.error(prefix, message ?? '');
-    };
-  return {
-    error: sink('error'),
-    warn: sink('warn'),
-    info: sink('info'),
-    debug: () => {},
-    trace: () => {},
-  };
 }
 
 /** Options for {@link createFeishuChannelProvider}. */
@@ -83,7 +50,11 @@ export interface CreateFeishuChannelProviderOptions {
 export function createFeishuChannelProvider(
   options: CreateFeishuChannelProviderOptions = {},
 ): ChannelProvider<FeishuChannelConfig> {
-  return buildFeishuChannelProvider(options, new FeishuExtensionRegistry());
+  return buildFeishuChannelProvider(
+    options,
+    new FeishuExtensionRegistry(),
+    () => undefined,
+  );
 }
 
 /**
@@ -94,6 +65,15 @@ export function createFeishuChannelProvider(
 export function buildFeishuChannelProvider(
   options: CreateFeishuChannelProviderOptions,
   extensions: FeishuExtensionRegistry,
+  /**
+   * The Feishu plugin's own state directory, read lazily because it is set
+   * only once the plugin host's `server()` phase runs, which is always after
+   * this provider is built but always before any session actually
+   * initializes. `createFeishuChannelProvider` above has no plugin host at
+   * all, so it supplies a constant `undefined` — its registry can never hold
+   * an extension, so nothing ever reads the value.
+   */
+  pluginStateDir: () => string | undefined,
 ): ChannelProvider<FeishuChannelConfig> {
   return {
     config: {
@@ -102,17 +82,9 @@ export function buildFeishuChannelProvider(
         // The Feishu channel owns its config validation: the host no longer
         // pre-validates Feishu app credentials. The bot secret is
         // config-sourced, so a non-empty app_secret is required at config-load
-        // time to preserve fail-loud — not deferred to session start.
-        const unknown = Object.keys(obj).filter(
-          (key) => key !== 'app_id' && key !== 'app_secret',
-        );
-        if (unknown.length > 0) {
-          throw new Error(
-            `feishu channel config has unknown key(s): ${unknown
-              .map((key) => `'${key}'`)
-              .join(', ')}. Allowed: app_id, app_secret.`,
-          );
-        }
+        // time to preserve fail-loud — not deferred to session start. Unknown
+        // fields are tolerated, not rejected (R21): only a missing or
+        // wrong-type app_id/app_secret fails loading.
         const appId = obj['app_id'];
         const appSecret = obj['app_secret'];
         if (typeof appId !== 'string' || appId.trim() === '') {
@@ -181,16 +153,15 @@ export function buildFeishuChannelProvider(
       // when it went missing. The host owns this path; if it did not supply
       // one, that is a wiring fault to state now, not to paper over.
       const stateDir = context.state_root;
-      if (typeof stateDir !== 'string' || stateDir === '') {
+      if (!stateDir) {
         throw new Error(
           'Feishu channel requires an explicit state_root in its session ' +
             'create context. It stores durable routing state and must never ' +
             'fall back to the process working directory.',
         );
       }
-      const cacheRoot = context.cache_root ?? stateDir;
-      const log =
-        context.logger ?? consoleFallbackLogger(context.dispatcher_id);
+      const cacheRoot = context.cache_root;
+      const log = context.logger;
       const session = new FeishuChannelSession({
         dispatcherId: context.dispatcher_id,
         channelId: context.channel_id,
@@ -202,6 +173,7 @@ export function buildFeishuChannelProvider(
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log,
         extensions,
+        pluginStateDir,
         ...(options.botFactory !== undefined
           ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
           : {}),
@@ -224,8 +196,10 @@ function describeExtensions(extensions: FeishuExtensionRegistry): string {
         .map((tool) => `${tool.name}[${tool.callers.join(',')}]`)
         .join(', ');
       const actions = ext.cardActions.map((action) => action.key).join(', ');
-      return `${ext.name} (tools: ${tools === '' ? 'none' : tools}; ` +
-        `card actions: ${actions === '' ? 'none' : actions})`;
+      return (
+        `${ext.name} (tools: ${tools === '' ? 'none' : tools}; ` +
+        `card actions: ${actions === '' ? 'none' : actions})`
+      );
     })
     .join('; ');
 }

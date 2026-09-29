@@ -30,14 +30,18 @@ import type {
   DreamuxLogger,
   LaunchDraft,
 } from '@excitedjs/dreamux-types';
-import type { AsyncSeriesHook, SyncHook } from 'tapable';
+import type {
+  AsyncSeriesHook,
+  AsyncSeriesWaterfallHook,
+  SyncHook,
+} from 'tapable';
 
 import {
   canonicalizeRequiredSkillSources,
   normalizeAgentRuntimeSkillSources,
   type CanonicalSkillRoot,
 } from '../agent-runtime/skill-sources.js';
-import { errorInfo, errorMessage } from '../platform/error-info.js';
+import { errorInfo, errorMessage } from '@excitedjs/dreamux-utils';
 import { isThenable, PluginLoadError } from './loader.js';
 
 type TapFn = (...args: unknown[]) => unknown;
@@ -48,8 +52,16 @@ interface RegisteredTap {
   readonly fn: TapFn;
 }
 
-/** The part of a tapable hook this module touches. */
-type InterceptableHook = Pick<SyncHook<unknown[]>, 'name' | 'intercept'>;
+/**
+ * The part of a tapable hook this module touches. `R` is the hook's own
+ * result type: `void` for every hook shape here except {@link waterfallTaps}'s
+ * `AsyncSeriesWaterfallHook`, whose `intercept({result})` callback genuinely
+ * carries the waterfall's threaded value rather than `void`.
+ */
+type InterceptableHook<R = void> = Pick<
+  SyncHook<unknown[], R>,
+  'name' | 'intercept'
+>;
 
 const owners = new AsyncLocalStorage<string>();
 const ownersByHook = new WeakMap<object, (string | null)[]>();
@@ -68,13 +80,25 @@ function asOwner<T>(owner: string | null, fn: () => T): T {
   return owner === null ? fn() : owners.run(owner, fn);
 }
 
-/** Run one tap of any type to completion as a promise. */
-function invoke(tap: RegisteredTap, args: readonly unknown[]): Promise<unknown> {
-  if (tap.type !== 'async') return Promise.resolve().then(() => tap.fn(...args));
-  return new Promise<void>((resolve, reject) => {
-    tap.fn(...args, (err?: unknown) => {
+/**
+ * Run one tap of any type to completion as a promise, resolving to whatever
+ * value the tap produced: a `sync`/`promise` tap's return value, or a
+ * callback-style `async` tap's own `result` argument (tapable's node-callback
+ * convention, `(err, result) => …`). `isolatedTaps`/`launchDraftTaps` never
+ * read this resolved value — those hooks carry no per-tap return value — so
+ * forwarding it here only matters to a waterfall-shaped caller
+ * ({@link waterfallTaps}), which does.
+ */
+function invoke(
+  tap: RegisteredTap,
+  args: readonly unknown[],
+): Promise<unknown> {
+  if (tap.type !== 'async')
+    return Promise.resolve().then(() => tap.fn(...args));
+  return new Promise<unknown>((resolve, reject) => {
+    tap.fn(...args, (err?: unknown, result?: unknown) => {
       if (err !== undefined && err !== null && err !== false) reject(err);
-      else resolve();
+      else resolve(result);
     });
   });
 }
@@ -90,7 +114,11 @@ const INTERCEPTOR_METHODS = [
   'register',
 ] as const;
 type InterceptorMethod = (typeof INTERCEPTOR_METHODS)[number];
-type InterceptorFailure = (owner: string | null, method: InterceptorMethod, err: unknown) => void;
+type InterceptorFailure = (
+  owner: string | null,
+  method: InterceptorMethod,
+  err: unknown,
+) => void;
 /** What a plugin interceptor method that returned a promise becomes. */
 type AsyncInterceptorResult = (
   owner: string | null,
@@ -123,15 +151,19 @@ type AsyncInterceptorResult = (
  * `intercept` (see {@link install}), so that interceptor is never itself
  * guarded.
  */
-function guardPluginInterceptors(
-  hook: InterceptableHook,
+function guardPluginInterceptors<R = void>(
+  hook: InterceptableHook<R>,
   onFailure: InterceptorFailure,
   onAsync: AsyncInterceptorResult,
 ): void {
   const rawIntercept = hook.intercept.bind(hook);
-  hook.intercept = ((interceptor: Partial<Record<InterceptorMethod, TapFn>>) => {
+  hook.intercept = ((
+    interceptor: Partial<Record<InterceptorMethod, TapFn>>,
+  ) => {
     const owner = owners.getStore() ?? null;
-    const guarded: Partial<Record<InterceptorMethod, TapFn>> = { ...interceptor };
+    const guarded: Partial<Record<InterceptorMethod, TapFn>> = {
+      ...interceptor,
+    };
     for (const method of INTERCEPTOR_METHODS) {
       const fn = interceptor[method];
       if (fn === undefined) continue;
@@ -140,7 +172,8 @@ function guardPluginInterceptors(
       // interceptor to already-registered taps) assigns this return value
       // straight into its tap list with no check for `undefined`.
       guarded[method] = (...args: unknown[]) => {
-        const fallback = (): unknown => (method === 'register' ? args[0] : undefined);
+        const fallback = (): unknown =>
+          method === 'register' ? args[0] : undefined;
         let result: unknown;
         try {
           result = asOwner(owner, () => fn.apply(interceptor, args));
@@ -159,11 +192,11 @@ function guardPluginInterceptors(
       };
     }
     return rawIntercept(guarded as never);
-  }) as InterceptableHook['intercept'];
+  }) as InterceptableHook<R>['intercept'];
 }
 
-function install(
-  hook: InterceptableHook,
+function install<R = void>(
+  hook: InterceptableHook<R>,
   wrap: (tap: RegisteredTap, owner: string | null) => RegisteredTap,
   onInterceptorFailure: InterceptorFailure,
   onAsyncInterceptor: AsyncInterceptorResult,
@@ -174,7 +207,10 @@ function install(
     register: (tap) => {
       const owner = owners.getStore() ?? null;
       registered.push(owner);
-      return wrap(tap as unknown as RegisteredTap, owner) as unknown as typeof tap;
+      return wrap(
+        tap as unknown as RegisteredTap,
+        owner,
+      ) as unknown as typeof tap;
     },
   });
   guardPluginInterceptors(hook, onInterceptorFailure, onAsyncInterceptor);
@@ -182,7 +218,7 @@ function install(
 
 function reportSkipped(
   log: DreamuxLogger,
-  hook: InterceptableHook,
+  hook: Pick<InterceptableHook, 'name'>,
   name: string,
   owner: string | null,
   err: unknown,
@@ -194,11 +230,14 @@ function reportSkipped(
 }
 
 /**
- * Runtime hooks (`dispatcher`, `team`, `created`): a throwing or rejecting tap
- * is logged with its owner and the remaining taps still run. Async taps become
- * promise taps so a failure never reaches the hook's own callback.
+ * Runtime hooks (`dispatcher`, `team`): a throwing or rejecting tap is logged
+ * with its owner and the remaining taps still run. Async taps become promise
+ * taps so a failure never reaches the hook's own callback.
  */
-export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxLogger): H {
+export function isolatedTaps<H extends InterceptableHook>(
+  hook: H,
+  log: DreamuxLogger,
+): H {
   install(
     hook,
     (tap, owner) => {
@@ -237,9 +276,12 @@ export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxL
         },
       };
     },
-    (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+    (owner, method, err) =>
+      reportSkipped(log, hook, `intercept.${method}`, owner, err),
     (owner, method, result) => {
-      result.catch((err: unknown) => reportSkipped(log, hook, `intercept.${method}`, owner, err));
+      result.catch((err: unknown) =>
+        reportSkipped(log, hook, `intercept.${method}`, owner, err),
+      );
     },
   );
   return hook;
@@ -249,7 +291,10 @@ export function isolatedTaps<H extends InterceptableHook>(hook: H, log: DreamuxL
  * `hooks.plugin.for(apiOwner)`: called while plugins load, so a throw fails
  * loading and is attributed to the tap's owner.
  */
-export function loadPhaseTaps<H extends InterceptableHook>(hook: H, apiOwner: string): H {
+export function loadPhaseTaps<H extends InterceptableHook>(
+  hook: H,
+  apiOwner: string,
+): H {
   install(
     hook,
     (tap, owner) => ({
@@ -315,9 +360,12 @@ export function loadPhaseTaps<H extends InterceptableHook>(hook: H, apiOwner: st
 class LaunchComposition implements LaunchDraft {
   readonly instructions: string[] = [];
   readonly skillSources: AgentRuntimeSkillSource[] = [];
-  private requiredRoots: Promise<readonly CanonicalSkillRoot[] | null> | undefined;
+  private requiredRoots:
+    Promise<readonly CanonicalSkillRoot[] | null> | undefined;
 
-  constructor(private readonly requiredSkillSources: readonly AgentRuntimeSkillSource[]) {}
+  constructor(
+    private readonly requiredSkillSources: readonly AgentRuntimeSkillSource[],
+  ) {}
 
   /**
    * Canonicalize every required root (the built-in roots and a TeamLeader
@@ -344,7 +392,11 @@ class LaunchComposition implements LaunchDraft {
           canonical.push(root!);
         } catch (err) {
           log.error(
-            { skillSource: source.name, path: source.path, err: errorInfo(err) },
+            {
+              skillSource: source.name,
+              path: source.path,
+              err: errorInfo(err),
+            },
             'a required skill root is unreadable; plugin skill roots are skipped for this launch',
           );
           return null;
@@ -359,7 +411,11 @@ class LaunchComposition implements LaunchDraft {
     return (await this.canonicalRequiredRoots(log)) !== null;
   }
 
-  async accept(sub: LaunchDraft, label: string, log: DreamuxLogger): Promise<void> {
+  async accept(
+    sub: LaunchDraft,
+    label: string,
+    log: DreamuxLogger,
+  ): Promise<void> {
     // The fence costs filesystem IO; a tap that adds no roots skips it.
     if (sub.skillSources.length > 0) {
       // launchDraftTaps only reaches this branch after requiredRootsReadable
@@ -391,28 +447,34 @@ class LaunchComposition implements LaunchDraft {
  */
 const compositionsByHandle = new WeakMap<object, LaunchComposition>();
 
-/** Launch hooks (`beforeLaunch`, `beforeTeamLeaderLaunch`). */
-export function launchDraftTaps(
-  hook: AsyncSeriesHook<[LaunchDraft]>,
+/**
+ * Launch hooks (`launch`, `leaderLaunch`, `teammateLaunch`). `C` is the
+ * trailing context tuple a hook carries beside the draft handle — empty for
+ * `launch`/`leaderLaunch`, `[Readonly<{ teamId: string | null }>]` for
+ * `teammateLaunch` — forwarded verbatim to every tap and to `hook.promise()`.
+ */
+export function launchDraftTaps<C extends unknown[] = []>(
+  hook: AsyncSeriesHook<[LaunchDraft, ...C]>,
   log: DreamuxLogger,
-): AsyncSeriesHook<[LaunchDraft]> {
+): AsyncSeriesHook<[LaunchDraft, ...C]> {
   install(
     hook,
     (tap, owner) => ({
       ...tap,
       type: 'promise',
-      fn: async (handle) => {
+      fn: async (handle, ...context) => {
         // Set by composeLaunchDraft, the only caller that ever fires this hook.
         const composition = compositionsByHandle.get(handle as object)!;
         const sub: LaunchDraft = { instructions: [], skillSources: [] };
         try {
-          await asOwner(owner, () => invoke(tap, [sub]));
+          await asOwner(owner, () => invoke(tap, [sub, ...context]));
         } catch (err) {
           reportSkipped(log, hook, tap.name, owner, err);
           return;
         }
         const accepted =
-          sub.skillSources.length > 0 && !(await composition.requiredRootsReadable(log))
+          sub.skillSources.length > 0 &&
+          !(await composition.requiredRootsReadable(log))
             ? { instructions: sub.instructions, skillSources: [] }
             : sub;
         try {
@@ -422,9 +484,12 @@ export function launchDraftTaps(
         }
       },
     }),
-    (owner, method, err) => reportSkipped(log, hook, `intercept.${method}`, owner, err),
+    (owner, method, err) =>
+      reportSkipped(log, hook, `intercept.${method}`, owner, err),
     (owner, method, result) => {
-      result.catch((err: unknown) => reportSkipped(log, hook, `intercept.${method}`, owner, err));
+      result.catch((err: unknown) =>
+        reportSkipped(log, hook, `intercept.${method}`, owner, err),
+      );
     },
   );
   return hook;
@@ -437,15 +502,70 @@ export function launchDraftTaps(
  * plugin's own `hook.intercept` callbacks cannot reach the fence machinery or
  * the accumulated draft directly (see {@link compositionsByHandle}). Every tap
  * and every plugin-added interceptor on `hook` is already isolated by
- * {@link launchDraftTaps}, so `hook.promise()` here never rejects.
+ * {@link launchDraftTaps}, so `hook.promise()` here never rejects. `context`
+ * is whatever trailing tuple this hook carries beside the draft handle (see
+ * {@link launchDraftTaps}); empty for `launch`/`leaderLaunch`.
  */
-export async function composeLaunchDraft(
-  hook: AsyncSeriesHook<[LaunchDraft]>,
+export async function composeLaunchDraft<C extends unknown[] = []>(
+  hook: AsyncSeriesHook<[LaunchDraft, ...C]>,
   requiredSkillSources: readonly AgentRuntimeSkillSource[],
+  ...context: C
 ): Promise<LaunchDraft> {
   const composition = new LaunchComposition(requiredSkillSources);
   const handle: LaunchDraft = { instructions: [], skillSources: [] };
   compositionsByHandle.set(handle, composition);
-  await hook.promise(handle);
+  // tapable's `promise(...args: AsArray<T>)` cannot be reduced against the
+  // still-open `C` here, since `T` (`[LaunchDraft, ...C]`) is nested inside
+  // this function's own generic rather than a bare type parameter tapable's
+  // conditional type can resolve at the call site. The hook's real, concrete
+  // shape is exactly this: one `LaunchDraft` handle followed by the caller's
+  // own context tuple.
+  const fire = hook.promise.bind(hook) as unknown as (
+    draft: LaunchDraft,
+    ...rest: C
+  ) => Promise<void>;
+  await fire(handle, ...context);
   return composition;
+}
+
+/**
+ * A runtime waterfall hook (`createTeam`): each tap receives the previous
+ * tap's returned value (the caller's own initial value for the first tap) and
+ * returns the value the next tap sees — `undefined` means unchanged, tapable's
+ * own waterfall semantics, untouched by this wrapper. A throwing or rejecting
+ * tap is logged with its owner and the chain keeps the value it already had:
+ * the failing tap's own change is dropped, never the whole hook's result —
+ * "skip and keep the chain's current value," the same failure isolation
+ * {@link isolatedTaps} and {@link launchDraftTaps} give their own hook shapes.
+ */
+export function waterfallTaps<T>(
+  hook: AsyncSeriesWaterfallHook<[T]>,
+  log: DreamuxLogger,
+): AsyncSeriesWaterfallHook<[T]> {
+  // Pin install()'s result type to T explicitly: inference alone cannot
+  // recover T from AsyncSeriesWaterfallHook<[T]>'s shape through
+  // InterceptableHook<R>'s contravariant `intercept` parameter position.
+  install<T>(
+    hook,
+    (tap, owner) => ({
+      ...tap,
+      type: 'promise',
+      fn: async (value: unknown) => {
+        try {
+          return await asOwner(owner, () => invoke(tap, [value]));
+        } catch (err) {
+          reportSkipped(log, hook, tap.name, owner, err);
+          return value;
+        }
+      },
+    }),
+    (owner, method, err) =>
+      reportSkipped(log, hook, `intercept.${method}`, owner, err),
+    (owner, method, result) => {
+      result.catch((err: unknown) =>
+        reportSkipped(log, hook, `intercept.${method}`, owner, err),
+      );
+    },
+  );
+  return hook;
 }

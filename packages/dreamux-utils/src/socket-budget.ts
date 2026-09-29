@@ -22,7 +22,10 @@ export function unixSocketPathFitsBudget(path: string): boolean {
  * Return `path` if it fits the socket budget, else throw a fail-loud error
  * naming `label`, the byte count, and the offending path.
  */
-export function assertUnixSocketPathBudget(path: string, label: string): string {
+export function assertUnixSocketPathBudget(
+  path: string,
+  label: string,
+): string {
   if (unixSocketPathFitsBudget(path)) return path;
   const bytes = Buffer.byteLength(path, 'utf8');
   throw new Error(

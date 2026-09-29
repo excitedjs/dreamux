@@ -1,60 +1,67 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { isUnsupportedFeatureError } from '@excitedjs/dreamux-utils';
+import {
+  errorInfo,
+  errorMessage,
+  isUnsupportedFeatureError,
+} from '@excitedjs/dreamux-utils';
 
-import { errorInfo, errorMessage } from '../../platform/error-info.js';
 import type { WorkflowCompletionFact } from '../completion-router/index.js';
-import { InFlightWork } from '../in-flight-work.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
+import { InFlightWork } from '../../platform/in-flight-work.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
-import type {
-  CreateLockedTeammateOptions,
-} from '../teammate-collection/index.js';
-import type { Turn, TurnAdmission } from '../teammate-service/turn-recording.js';
-import type { LockedTeammate } from '../teammate-service/types.js';
-import { WORKFLOW_AGENT_SYSTEM_PROMPT } from './agent-policy.js';
+import type { Turn, TurnAdmission } from '../agent/turn.js';
+import type { LockedTeammate } from '../agent/service-types.js';
+import { workflowRunJournalPath } from '../../platform/paths.js';
+import { WorkflowPersistenceError } from './errors.js';
 import {
   WorkflowJournal,
   type WorkflowAgentResultJournalEvent,
 } from './journal.js';
-import type {
-  WorkflowAgentOptions,
-  WorkflowAgentStartMessage,
-  WorkflowRunnerChildMessage,
-} from './protocol.js';
+import { MAX_AGENTS } from './limits.js';
 import {
   isWorkflowRunnerChildMessage,
-  type WorkflowRunnerFactory,
-  type WorkflowRunnerHandle,
+  normalizeAgentOptions,
+  type WorkflowAgentOptions,
+  type WorkflowAgentStartMessage,
+  type WorkflowRunnerChildMessage,
+} from './protocol.js';
+import type {
+  WorkflowRunnerFactory,
+  WorkflowRunnerHandle,
 } from './runner-process.js';
+import { WorkflowSemaphore } from './semaphore.js';
 import { WorkflowRunStore } from './store.js';
 import type {
   WorkflowAgentRecord,
   WorkflowAgentStatus,
   WorkflowRunRecord,
+  WorkflowTeammateFactory,
   WorkflowTerminalStatus,
 } from './types.js';
-import {
-  nonEmpty,
-  normalizeAgentOptions,
-  WorkflowPersistenceError,
-  WorkflowSemaphore,
-} from './run-support.js';
-import { WorkflowRunTerminal } from './run-terminal.js';
 
-const MAX_AGENTS = 1000;
+/** Appended to every agent's system prompt: this call's output is consumed
+ * by the workflow, not shown to a human. */
+export const WORKFLOW_AGENT_SYSTEM_PROMPT =
+  'You are executing one agent call inside a Dreamux workflow. Your final ' +
+  'response is the return value consumed by the workflow, not a human-facing ' +
+  'progress message. Return only the requested value. When an output schema is ' +
+  "provided, use the runtime's structured-output mechanism and satisfy the " +
+  'schema exactly.';
+
+/** `value` when it is a non-empty (after trimming) string, otherwise `null`. */
+function nonEmpty(value: string | undefined): string | null {
+  if (value === undefined || value.trim() === '') return null;
+  return value;
+}
+
 export interface WorkflowRunDeps {
   record: WorkflowRunRecord;
   store: WorkflowRunStore;
-  journal: WorkflowJournal;
-  createLocked(
-    input: SpawnTeamMateRequest,
-    options: CreateLockedTeammateOptions,
-  ): Promise<LockedTeammate>;
+  teammates: WorkflowTeammateFactory;
   createRunner: WorkflowRunnerFactory;
   deliverTerminal: (completion: WorkflowCompletionFact) => Promise<void>;
   log: DreamuxLogger;
-  now?: () => number;
+  now?: (() => number) | undefined;
 }
 
 interface AgentCall {
@@ -64,37 +71,81 @@ interface AgentCall {
   handle: LockedTeammate | null;
   turn: Turn | null;
   resultCandidate: WorkflowAgentResultJournalEvent | null;
-  resultJournalCommitted: boolean;
   completed: boolean;
 }
+
+/** What a stop, a runner report, or an internal failure asked this run to
+ * become, reserved once before {@link WorkflowRun.finalize} makes it
+ * durable. */
+interface TerminalIntent {
+  status: WorkflowTerminalStatus;
+  result: unknown;
+  error: string | null;
+}
+
 /** One live Workflow entity with direct locked TeamMate and Turn ownership. */
 export class WorkflowRun {
   private readonly record: WorkflowRunRecord;
+  /** This run's own durability journal, bound from its own scope and run id
+   * — no owner hands one in. */
+  private readonly journal: WorkflowJournal;
   private readonly runner: WorkflowRunnerHandle;
   private readonly semaphore: WorkflowSemaphore;
-  private readonly terminal: WorkflowRunTerminal;
   private readonly calls = new Map<number, AgentCall>();
   private readonly materializations = new InFlightWork();
   private readonly runnerMessageTasks = new InFlightWork();
   private readonly agentTasks = new InFlightWork();
   private readonly unlockedHandles = new Set<LockedTeammate>();
-  private mutationTail: Promise<void> = Promise.resolve();
   private runnerMessageTail: Promise<void> = Promise.resolve();
+  /** Flips at *receipt* of a `run_result` message, before it is queued behind
+   * `runnerMessageTail` — distinct from `terminalIntent`, which is set only
+   * once that queued message is actually processed. Guards the receive-time
+   * window between the two: a second `run_result` or an `onExit` racing in
+   * it must still be dropped. */
   private runnerTerminalMessageSeen = false;
+  /** The full record {@link finalize} will commit, computed once after
+   * teardown and memoized so a retried finalize reuses the same `ended_at`
+   * instead of recomputing a different one — unlike `terminalIntent`, which
+   * is reserved before teardown even starts. */
   private terminalCandidate: WorkflowRunRecord | null = null;
-  private terminalJournalCommitted = false;
   /**
    * The terminal report this run still owes its initiator; `null` once it is
    * delivered, or once a stop made it not news: the initiator or its own scope
    * fence asked for the stop, so the party that ended the run would read it.
    */
   private deliverTerminal: WorkflowRunDeps['deliverTerminal'] | null;
-  private terminalLogged = false;
+  /** Set once, by whichever of {@link reserveStop}/{@link requestTerminal}
+   * wins. */
+  private terminalIntent: TerminalIntent | null = null;
+  /** Memoized {@link finalize} task; cleared on failure so a retry re-runs
+   * it. */
+  private terminalTask: Promise<void> | null = null;
+  private announceSettled!: () => void;
+  /**
+   * Resolves once this run is durably over: terminal record written, terminal
+   * completion delivered, nothing left to retry.
+   *
+   * It is a fact the run states about itself, not an instruction. The owner
+   * that holds the run decides what being over means for its own bookkeeping;
+   * the run does not reach up and remove itself from a collection it is not
+   * allowed to know about.
+   */
+  readonly settled: Promise<void>;
 
   constructor(private readonly deps: WorkflowRunDeps) {
     this.record = deps.record;
+    this.journal = new WorkflowJournal(
+      workflowRunJournalPath({
+        dispatcherId: deps.record.dispatcher_id,
+        teamId: deps.record.team_id,
+        runId: deps.record.run_id,
+      }),
+    );
     this.deliverTerminal = deps.deliverTerminal;
     this.semaphore = new WorkflowSemaphore(deps.record.max_concurrency);
+    this.settled = new Promise<void>((resolve) => {
+      this.announceSettled = resolve;
+    });
     this.runner = deps.createRunner({
       onMessage: (message) => this.receiveRunnerMessage(message),
       onExit: (exit) => {
@@ -108,9 +159,9 @@ export class WorkflowRun {
         );
         if (
           !this.runnerTerminalMessageSeen &&
-          this.terminal.requested === null
+          this.terminalRequested === null
         ) {
-          this.terminal.observe(
+          this.observeTerminal(
             'failed',
             null,
             `workflow runner exited before reporting a result (code=${String(exit.code)}, signal=${String(exit.signal)})`,
@@ -122,37 +173,33 @@ export class WorkflowRun {
           { run_id: this.record.run_id, err: errorInfo(error) },
           'workflow runner error',
         );
-        if (this.terminal.requested === null) {
-          this.terminal.observe('failed', null, error.message);
+        if (this.terminalRequested === null) {
+          this.observeTerminal('failed', null, error.message);
         }
       },
     });
-    this.terminal = new WorkflowRunTerminal({
-      runId: this.record.run_id,
-      status: () => this.record.status,
-      abortRunner: () => this.runner.send({ type: 'abort' }),
-      closeAdmission: (status) => {
-        this.semaphore.close(new Error(`workflow ${status}`));
-        // Reached once, when the first terminal intent is reserved. Only a
-        // stop reserves `stopped`; a completed or failed intent that won first
-        // keeps its report, and a delivery already under way is never behind
-        // this call.
-        if (status === 'stopped') this.deliverTerminal = null;
-      },
-      finalize: (status, result, error) => this.finalize(status, result, error),
-      log: deps.log,
-    });
   }
 
-  /** Resolves once this run is durably terminal; the owner reads it to evict. */
-  get settled(): Promise<void> { return this.terminal.settled; }
-
+  /**
+   * The run's last *committed* value — what `workflow_status`/`workflow_list`
+   * read — never the in-progress draft `this.record` becomes between a
+   * mutation and the {@link persist} call that publishes it. Reachable only
+   * after `initialize()` has published this run's first committed record
+   * (the owner does not register this `WorkflowRun` until then), so the
+   * handle is always loaded here.
+   */
   snapshot(): WorkflowRunRecord {
-    return structuredClone(this.record);
+    const current = this.deps.store.handle(this.record.run_id).current;
+    if (current === null) {
+      throw new Error(
+        `workflow run ${JSON.stringify(this.record.run_id)} has no committed record`,
+      );
+    }
+    return structuredClone(current);
   }
 
   async initialize(): Promise<void> {
-    await this.deps.journal.create({
+    await this.journal.create({
       kind: 'run',
       version: 1,
       run_id: this.record.run_id,
@@ -167,27 +214,126 @@ export class WorkflowRun {
 
   async start(script: string, args: unknown): Promise<void> {
     try {
-      if (this.terminal.requested !== null) {
-        await this.terminal.stop();
+      if (this.terminalRequested !== null) {
+        await this.stop();
         return;
       }
       await this.runner.start();
-      if (this.terminal.requested !== null) {
-        await this.terminal.stop();
+      if (this.terminalRequested !== null) {
+        await this.stop();
         return;
       }
       await this.runner.send({ type: 'run_start', script, args });
     } catch (error) {
-      await this.terminal.request('failed', null, errorMessage(error));
+      await this.requestTerminal('failed', null, errorMessage(error));
     }
   }
 
   async stop(): Promise<WorkflowTerminalStatus> {
-    return this.terminal.stop();
+    if (this.terminalIntent === null && this.record.status !== 'running') {
+      return this.record.status as WorkflowTerminalStatus;
+    }
+    this.reserveStop();
+    await this.ensureTerminalTask();
+    return (
+      this.terminalRequested ?? (this.record.status as WorkflowTerminalStatus)
+    );
   }
 
-  closeAdmission(): void {
-    this.terminal.reserveStop();
+  requestStop(): void {
+    this.reserveStop();
+  }
+
+  private get terminalRequested(): WorkflowTerminalStatus | null {
+    return this.terminalIntent?.status ?? null;
+  }
+
+  /** Gates a new `agent_start` and an `emit` phase/log update: no terminal
+   * intent reserved, and `record.status` — the committed fact, kept even
+   * though a live run cannot leave `running` without first reserving one —
+   * still says `running`. */
+  private get terminalAccepting(): boolean {
+    return this.terminalIntent === null && this.record.status === 'running';
+  }
+
+  private get terminalSuppressDelivery(): boolean {
+    return this.terminalIntent !== null;
+  }
+
+  /** Reserve the `stopped` intent and signal the runner; a no-op once an
+   * intent is already reserved or the run is no longer `running`. */
+  private reserveStop(): void {
+    if (this.terminalIntent !== null || this.record.status !== 'running') {
+      return;
+    }
+    this.terminalIntent = { status: 'stopped', result: null, error: null };
+    this.closeOnTerminalIntent('stopped');
+    this.deps.log.info({ run_id: this.record.run_id }, 'stopping workflow run');
+    void this.runner.send({ type: 'abort' }).catch((error: unknown) => {
+      this.deps.log.warn(
+        { run_id: this.record.run_id, err: errorInfo(error) },
+        'workflow abort IPC failed; killing runner',
+      );
+    });
+  }
+
+  /** Reserve an already-known status/result/error, then return the shared
+   * {@link finalize} task; a no-op reservation once an intent exists, but the
+   * task is still returned so every caller converges on the same wait. */
+  private requestTerminal(
+    status: WorkflowTerminalStatus,
+    result: unknown,
+    error: string | null,
+  ): Promise<void> {
+    if (this.terminalIntent === null) {
+      this.terminalIntent = { status, result, error };
+      this.closeOnTerminalIntent(status);
+    }
+    return this.ensureTerminalTask();
+  }
+
+  /** Fire-and-forget {@link requestTerminal}, for an observed terminal fact
+   * (a runner exit) rather than one the caller itself caused. */
+  private observeTerminal(
+    status: WorkflowTerminalStatus,
+    result: unknown,
+    error: string | null,
+  ): void {
+    void this.requestTerminal(status, result, error).catch(
+      (terminalError: unknown) => {
+        this.deps.log.error(
+          { run_id: this.record.run_id, err: errorInfo(terminalError) },
+          'workflow terminal transition failed',
+        );
+      },
+    );
+  }
+
+  /** Reached once, when the first terminal intent is reserved: no further
+   * Agent may acquire a concurrency slot, and — only for a stop — the
+   * initiator no longer gets a completion push, since the party that ended
+   * the run would read it itself. A completed or failed intent that won the
+   * race keeps its report. */
+  private closeOnTerminalIntent(status: WorkflowTerminalStatus): void {
+    this.semaphore.close(new Error(`workflow ${status}`));
+    if (status === 'stopped') this.deliverTerminal = null;
+  }
+
+  /** The one retryable {@link finalize} task, shared by every caller. */
+  private ensureTerminalTask(): Promise<void> {
+    if (this.terminalTask !== null) return this.terminalTask;
+    const intent = this.terminalIntent;
+    if (intent === null) return Promise.resolve();
+    const task = this.finalize(intent.status, intent.result, intent.error)
+      .then(() => {
+        this.announceSettled();
+      })
+      .catch((error: unknown) => {
+        if (this.terminalTask === task) this.terminalTask = null;
+        throw error;
+      });
+    this.terminalTask = task;
+    return task;
   }
 
   private receiveRunnerMessage(message: unknown): void {
@@ -198,15 +344,13 @@ export class WorkflowRun {
       );
       return;
     }
-    if (
-      this.runnerTerminalMessageSeen ||
-      this.terminal.requested !== null
-    ) return;
+    if (this.runnerTerminalMessageSeen || this.terminalRequested !== null)
+      return;
     if (message.type === 'run_result') this.runnerTerminalMessageSeen = true;
     const task = this.runnerMessageTail
       .then(() => this.handleRunnerMessage(message))
       .catch((error: unknown) => {
-        this.terminal.observe('failed', null, errorMessage(error));
+        this.observeTerminal('failed', null, errorMessage(error));
       });
     this.runnerMessageTail = task;
     if (message.type !== 'run_result') this.runnerMessageTasks.track(task);
@@ -220,15 +364,12 @@ export class WorkflowRun {
         await this.handleAgentStart(message);
         return;
       case 'emit':
-        if (
-          this.record.status !== 'running' ||
-          this.terminal.requested !== null
-        ) return;
-        await this.mutate(async () => {
-          if (message.kind === 'phase') this.record.phase = message.message;
-          else this.record.last_log = message.message;
-          this.record.updated_at = this.now();
-          await this.deps.journal.append({
+        if (!this.terminalAccepting) return;
+        if (message.kind === 'phase') this.record.phase = message.message;
+        else this.record.last_log = message.message;
+        this.record.updated_at = this.now();
+        await this.persist(async () => {
+          await this.journal.append({
             kind: message.kind,
             message: message.message,
             created_at: this.record.updated_at,
@@ -237,27 +378,28 @@ export class WorkflowRun {
         });
         return;
       case 'run_result':
-        if (this.terminal.requested !== null) return;
-        await this.terminal.request(
+        if (this.terminalRequested !== null) return;
+        await this.requestTerminal(
           message.status === 'completed' ? 'completed' : 'failed',
-          message.status === 'completed' ? message.result ?? null : null,
+          message.status === 'completed' ? (message.result ?? null) : null,
           message.status === 'completed' ? null : message.error,
         );
         return;
     }
   }
 
-  private async handleAgentStart(message: WorkflowAgentStartMessage): Promise<void> {
-    if (
-      !this.terminal.accepting ||
-      this.record.status !== 'running' ||
-      this.terminal.requested !== null
-    ) {
+  private async handleAgentStart(
+    message: WorkflowAgentStartMessage,
+  ): Promise<void> {
+    if (!this.terminalAccepting) {
       await this.sendAgentError(message.index, 'workflow is no longer running');
       return;
     }
     if (this.calls.has(message.index)) {
-      await this.sendAgentError(message.index, 'duplicate workflow agent index');
+      await this.sendAgentError(
+        message.index,
+        'duplicate workflow agent index',
+      );
       return;
     }
     if (this.calls.size >= MAX_AGENTS) {
@@ -294,13 +436,12 @@ export class WorkflowRun {
       handle: null,
       turn: null,
       resultCandidate: null,
-      resultJournalCommitted: false,
       completed: false,
     };
     this.calls.set(message.index, call);
     this.record.agents.push(record);
     this.record.updated_at = createdAt;
-    await this.mutate(() => this.deps.store.write(this.record));
+    await this.persist(() => this.deps.store.write(this.record));
 
     this.deps.log.info(
       {
@@ -323,33 +464,30 @@ export class WorkflowRun {
     let releaseSlot: (() => void) | null = null;
     try {
       releaseSlot = await this.semaphore.acquire();
-      if (this.terminal.requested !== null) {
+      if (this.terminalRequested !== null) {
         await this.completeAgent(call, 'stopped', null, null);
         return;
       }
       call.record.status = 'running';
       call.record.phase = call.options.phase ?? this.record.phase;
       this.record.updated_at = this.now();
-      await this.mutate(() => this.deps.store.write(this.record));
-      if (this.terminal.requested !== null) {
+      await this.persist(() => this.deps.store.write(this.record));
+      if (this.terminalRequested !== null) {
         await this.completeAgent(call, 'stopped', null, null);
         return;
       }
 
-      const materialization = this.deps.createLocked(
+      const materialization = this.deps.teammates.createLocked(
         {
-          name: nonEmpty(call.options.label) ??
+          name:
+            nonEmpty(call.options.label) ??
             `workflow-${this.record.run_id}-${call.record.index + 1}`,
           prompt,
           intent:
             call.options.intent ??
             `Workflow ${this.record.run_id} agent ${call.record.index + 1}`,
-          ...(call.options.agentType !== undefined
-            ? { agentRuntime: call.options.agentType }
-            : {}),
-          ...(call.options.identity !== undefined
-            ? { identity: call.options.identity }
-            : {}),
+          agentRuntime: call.options.agentType,
+          identity: call.options.identity,
         },
         {
           systemPromptAppend: [WORKFLOW_AGENT_SYSTEM_PROMPT],
@@ -364,8 +502,8 @@ export class WorkflowRun {
       call.record.name = handle.name;
       const submittedAt = this.now();
       this.record.updated_at = submittedAt;
-      await this.mutate(async () => {
-        await this.deps.journal.append({
+      await this.persist(async () => {
+        await this.journal.append({
           kind: 'submit',
           index: call.record.index,
           name: handle.name,
@@ -373,7 +511,7 @@ export class WorkflowRun {
         });
         await this.deps.store.write(this.record);
       });
-      if (this.terminal.requested !== null) {
+      if (this.terminalRequested !== null) {
         await this.completeAgent(call, 'stopped', null, null);
         return;
       }
@@ -382,10 +520,10 @@ export class WorkflowRun {
         prompt,
         // A Workflow step is work one Agent handed to another, exactly like an
         // MCP spawn; who scheduled it is already the turn's own identity.
+        // The step's output schema is already bound at creation time (above,
+        // via CreateLockedTeammateOptions) and cannot vary per submission —
+        // WorkflowTeammateSubmitInput carries no outputSchema field.
         source: AGENT_TASK_SOURCE,
-        ...(call.options.schema !== undefined
-          ? { outputSchema: call.options.schema }
-          : {}),
       });
       this.deps.log.info(
         {
@@ -399,11 +537,11 @@ export class WorkflowRun {
       await this.observeAdmission(call, admission);
     } catch (error) {
       if (error instanceof WorkflowPersistenceError) {
-        this.terminal.observe('failed', null, error.message);
+        this.observeTerminal('failed', null, error.message);
         return;
       }
       if (!call.completed) {
-        const stopped = this.terminal.requested !== null;
+        const stopped = this.terminalRequested !== null;
         const publicError = errorMessage(error);
         await this.completeAgent(
           call,
@@ -414,11 +552,7 @@ export class WorkflowRun {
             ? publicError
             : undefined,
         ).catch((persistenceError: unknown) => {
-          this.terminal.observe(
-            'failed',
-            null,
-            errorMessage(persistenceError),
-          );
+          this.observeTerminal('failed', null, errorMessage(persistenceError));
         });
       }
     } finally {
@@ -433,11 +567,12 @@ export class WorkflowRun {
     if (admission.status !== 'submitted') {
       const stopped =
         admission.status === 'stopped' || admission.status === 'skipped';
-      const error = admission.status === 'failed' || admission.status === 'ambiguous'
-        ? admission.error.message
-        : stopped
-          ? null
-          : `workflow agent submission ${admission.status}`;
+      const error =
+        admission.status === 'failed' || admission.status === 'ambiguous'
+          ? admission.error.message
+          : stopped
+            ? null
+            : `workflow agent submission ${admission.status}`;
       const runnerError =
         (admission.status === 'failed' || admission.status === 'ambiguous') &&
         isUnsupportedFeatureError(admission.error, 'outputSchema')
@@ -453,15 +588,10 @@ export class WorkflowRun {
       return;
     }
     call.turn = admission.turn;
-    let outcome: Awaited<typeof admission.turn.settled>;
-    try {
-      outcome = await admission.turn.settled;
-    } catch (error) {
-      const persistenceError = errorMessage(error);
-      await this.terminal.failAfterNotification(persistenceError, () =>
-        this.completeAgent(call, 'failed', null, persistenceError, persistenceError, true));
-      return;
-    }
+    // Never rejects: EntityTurn.settled folds every rejection into a
+    // `{status: 'failed', ...}` outcome (service/agent/turn.ts) before it
+    // resolves.
+    const outcome = await admission.turn.settled;
     if (outcome.status !== 'completed') {
       await this.completeAgent(
         call,
@@ -505,7 +635,7 @@ export class WorkflowRun {
     status: Extract<WorkflowAgentStatus, 'completed' | 'failed' | 'stopped'>,
     result: unknown,
     error: string | null,
-    runnerError?: string, deliverWhileTerminal = false,
+    runnerError?: string,
   ): Promise<void> {
     if (call.completed) return;
     call.resultCandidate ??= {
@@ -522,11 +652,8 @@ export class WorkflowRun {
     call.record.error = candidate.error;
     call.record.settled_at = candidate.settled_at;
     this.record.updated_at = candidate.settled_at;
-    await this.mutate(async () => {
-      if (!call.resultJournalCommitted) {
-        await this.deps.journal.ensureAgentResult(candidate);
-        call.resultJournalCommitted = true;
-      }
+    await this.persist(async () => {
+      await this.journal.ensureAgentResult(candidate);
       await this.deps.store.write(this.record);
     });
     call.completed = true;
@@ -539,7 +666,7 @@ export class WorkflowRun {
       },
       'workflow agent settled',
     );
-    if (this.terminal.suppressDelivery && !deliverWhileTerminal) return;
+    if (this.terminalSuppressDelivery) return;
     if (runnerError !== undefined) {
       await this.runner.send({
         type: 'agent_result',
@@ -556,7 +683,7 @@ export class WorkflowRun {
   }
 
   private async sendAgentError(index: number, error: string): Promise<void> {
-    if (this.terminal.suppressDelivery) return;
+    if (this.terminalSuppressDelivery) return;
     await this.runner.send({ type: 'agent_result', index, error });
   }
 
@@ -566,18 +693,25 @@ export class WorkflowRun {
     requestedError: string | null,
   ): Promise<void> {
     const runnerStopResults = await Promise.allSettled([this.runner.stop()]);
+    // Admission-bookkeeping convergence, not a wait on an Agent's own turn:
+    // this waits only for createLocked() (registering the locked handle) to
+    // resolve, so the `handles` list read just below is complete before the
+    // close pass runs, not for a still-running turn to finish naturally.
     await this.materializations.drain();
 
-    const handles = [...new Set(
-      [...this.calls.values()]
-        .map((call) => call.handle)
-        .filter((handle): handle is LockedTeammate => handle !== null),
-    )].filter((handle) => !this.unlockedHandles.has(handle));
+    const handles = [
+      ...new Set(
+        [...this.calls.values()]
+          .map((call) => call.handle)
+          .filter((handle): handle is LockedTeammate => handle !== null),
+      ),
+    ].filter((handle) => !this.unlockedHandles.has(handle));
     const closeResults = await Promise.allSettled(
       handles.map(async (handle) =>
         handle.close({
           note: `Workflow ${this.record.run_id} ${requestedStatus}`,
-        })),
+        }),
+      ),
     );
     if (closeResults.some((close) => close.status === 'rejected')) {
       throwSettledFailures(
@@ -586,15 +720,19 @@ export class WorkflowRun {
       );
     }
 
+    // Each of these three waits for this run's own already-admitted write
+    // (a queued runner message, a completeAgent call, a store write) to land
+    // truthfully — never for an Agent's own turn to finish naturally, which
+    // a stop must never wait on.
     await this.runnerMessageTasks.drain();
     await this.agentTasks.drain();
-    await this.mutationTail;
+    await this.deps.store.handle(this.record.run_id).drain();
     for (const call of this.calls.values()) {
       if (!call.completed) {
         await this.completeAgent(call, 'stopped', null, requestedError);
       }
     }
-    await this.mutationTail;
+    await this.deps.store.handle(this.record.run_id).drain();
     throwSettledFailures(
       runnerStopResults,
       `workflow ${JSON.stringify(this.record.run_id)} runner failed to stop`,
@@ -612,16 +750,13 @@ export class WorkflowRun {
       };
     }
     const candidate = this.terminalCandidate;
-    if (!this.terminalJournalCommitted) {
-      await this.deps.journal.ensureTerminal({
-        kind: 'end',
-        status: candidate.status as WorkflowTerminalStatus,
-        result: candidate.result,
-        error: candidate.error,
-        ended_at: candidate.ended_at!,
-      });
-      this.terminalJournalCommitted = true;
-    }
+    await this.journal.ensureTerminal({
+      kind: 'end',
+      status: candidate.status as WorkflowTerminalStatus,
+      result: candidate.result,
+      error: candidate.error,
+      ended_at: candidate.ended_at!,
+    });
     await this.deps.store.write(candidate);
     Object.assign(this.record, structuredClone(candidate));
 
@@ -654,31 +789,34 @@ export class WorkflowRun {
       });
       this.deliverTerminal = null;
     }
-    if (!this.terminalLogged) {
-      this.terminalLogged = true;
-      this.deps.log.info(
-        {
-          run_id: this.record.run_id,
-          status: candidate.status,
-          agent_count: candidate.agents.length,
-          err: candidate.error === null
-            ? undefined
-            : { message: candidate.error },
-        },
-        'workflow run terminal',
-      );
-    }
+    this.deps.log.info(
+      {
+        run_id: this.record.run_id,
+        status: candidate.status,
+        agent_count: candidate.agents.length,
+        err:
+          candidate.error === null ? undefined : { message: candidate.error },
+      },
+      'workflow run terminal',
+    );
   }
 
-  private mutate<T>(task: () => Promise<T>): Promise<T> {
-    const next = this.mutationTail.then(task, task);
-    this.mutationTail = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next.catch((error: unknown) => {
+  /**
+   * Run a durable write (journal append and/or `store.write`) and reclassify
+   * any failure as a {@link WorkflowPersistenceError}. Ordering between two
+   * durable writes from this same `WorkflowRun` instance comes from awaiting
+   * them in sequence, not from a queue here: each per-run `TransactionalStore`
+   * already serializes concurrent writers on its own file.
+   * `executeAgent`'s catch depends on this classification to tell "this run's
+   * own storage failed" (a terminal failure) apart from "this Agent's runtime
+   * work failed" (an ordinary agent failure another write can still record).
+   */
+  private async persist<T>(work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
       throw new WorkflowPersistenceError(errorMessage(error));
-    });
+    }
   }
 
   private now(): number {

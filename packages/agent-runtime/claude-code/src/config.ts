@@ -1,24 +1,22 @@
 /**
- * Builtin `builtin:claude-code` runtime config: schema type, defaults, reader,
- * and the typed accessor.
+ * Builtin `builtin:claude-code` runtime config: schema type, defaults, and
+ * reader.
  *
  * Owned by the `@excitedjs/agent-runtime-claude-code` package (issue #209). It
  * depends only on the shared neutral validation primitives
- * (`@excitedjs/dreamux-utils`) and the package's own provider ref
- * (`./provider-ref`); it never imports `@excitedjs/dreamux` core. Core re-exports
- * these symbols through its `config/config.ts` (via the package's light
- * `./config` subpath) so the non-builtin callers (doctor, tests) keep their
- * import paths, and the cold-start config path never pulls in the runtime engine.
+ * (`@excitedjs/dreamux-utils`); it never imports `@excitedjs/dreamux` core.
+ * The package's `./config` export subpath (see `package.json`) resolves to
+ * this module directly, kept open for a future config-only consumer that
+ * wants to avoid pulling in the runtime engine through the package's main
+ * `./index.js`/`plugin.js` chain; no such consumer exists yet.
  */
 
-import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
 import {
   readOptionalBoolean,
   readOptionalString,
-  rejectUnknownKeys,
-  requirePositiveInt,
-  requireStringArray,
-  requireStringRecord,
+  readPositiveInt,
+  readStringArray,
+  readStringRecord,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -52,7 +50,7 @@ export interface DispatcherClaudeCodeConfig {
   turn_timeout_ms: number;
 }
 
-/** Default `dispatchers[].runtime.config.bin` for `builtin:claude-code`. */
+/** Default `agents[].config.bin` for `builtin:claude-code`. */
 export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
 
 /**
@@ -61,7 +59,7 @@ export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
  * turn is failed and the child reaped (issue #120 anti-hang, idle-based since
  * issue #156) — it is reset on every stream line, so it does not cap a long but
  * actively-streaming turn. Operators can override via
- * `dispatchers[].runtime.config.turn_timeout_ms`.
+ * each dispatcher's `agents[]` entry `config.turn_timeout_ms`.
  */
 export const DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS = 600_000;
 
@@ -90,28 +88,20 @@ export function readDispatcherClaudeCodeConfig(
   file: string,
   prefix: string,
 ): DispatcherClaudeCodeConfig {
-  rejectUnknownKeys(
-    rawClaude,
-    new Set([
-      'bin',
-      'model',
-      'permission_mode',
-      'remote_control',
-      'extra_args',
-      'extra_env',
-      'turn_timeout_ms',
-    ]),
-    file,
-    prefix,
-  );
   const defaults = defaultDispatcherClaudeCodeConfig();
-  const bin = readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
+  const bin =
+    readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
   if (bin.trim() === '') {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
-  const permissionMode = readOptionalString(rawClaude, 'permission_mode', file, prefix);
+  const permissionMode = readOptionalString(
+    rawClaude,
+    'permission_mode',
+    file,
+    prefix,
+  );
   if (
     permissionMode !== null &&
     !ALLOWED_CLAUDE_CODE_PERMISSION_MODES.has(permissionMode)
@@ -131,21 +121,21 @@ export function readDispatcherClaudeCodeConfig(
       file,
       prefix,
     ),
-    extra_args: requireStringArray(
+    extra_args: readStringArray(
       rawClaude,
       'extra_args',
       defaults.extra_args,
       file,
       prefix,
     ),
-    extra_env: requireStringRecord(
+    extra_env: readStringRecord(
       rawClaude,
       'extra_env',
       defaults.extra_env,
       file,
       prefix,
     ),
-    turn_timeout_ms: requirePositiveInt(
+    turn_timeout_ms: readPositiveInt(
       rawClaude,
       'turn_timeout_ms',
       defaults.turn_timeout_ms,
@@ -153,22 +143,4 @@ export function readDispatcherClaudeCodeConfig(
       prefix,
     ),
   };
-}
-
-/**
- * Typed accessor for a dispatcher's resolved claude-code runtime config. Typed
- * structurally (not against `DispatcherConfig`) so this module never imports
- * the host config type — a full `DispatcherConfig` still satisfies it at the
- * call sites.
- */
-export function dispatcherClaudeCodeConfig(dispatcher: {
-  id: string;
-  runtime: { provider: string; config: unknown };
-}): DispatcherClaudeCodeConfig {
-  if (dispatcher.runtime.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
-    throw new Error(
-      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Claude Code`,
-    );
-  }
-  return dispatcher.runtime.config as DispatcherClaudeCodeConfig;
 }

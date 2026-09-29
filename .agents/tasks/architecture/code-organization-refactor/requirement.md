@@ -80,9 +80,17 @@ compiler-based replacements for two type-surface tests (H11).
 
 ### Lifecycle
 
-- Closing is self-contained per Agent and batched upward, layer by layer; the
-  dispatcher-level second sweep and the separate failed-start rollback go
-  (R10).
+- Closing is self-contained per Agent and batched upward, layer by layer,
+  killing every runtime immediately instead of draining it; the separate
+  failed-start rollback goes, folded into the same close path (R10). The
+  dispatcher-level second runtime sweep stays: register-time self-close only
+  preempts a brand-new entity's first submission, not an already-materialized
+  entity whose pre-fence admission reaches, or revives, its runtime start
+  after the first sweep pass already passed it by, since `stopForHost()`
+  fences admission only for its own convergence and never moves the entity's
+  phase. The original inference that self-close made the second sweep
+  unnecessary did not hold and was withdrawn
+  ([rulings](rulings.md#lifecycle), R10).
 - Every Dispatcher starts at daemon start and stops only with the daemon;
   `dispatcher.start`, its CLI verb, and the reopen logic are deleted (R11).
 - While a Dispatcher stops, reads are refused like writes (R12), with one
@@ -142,8 +150,41 @@ what it moves.
 
 ## Open items to settle in the technical solution
 
-- R18: whether every Agent's completions have exactly one possible recipient
-  (decides one layer or two).
+- R18 — resolved, Case A (one layer): every entity's `initiatorFor` is bound
+  once at construction and never varied per submission (the only two
+  definitions, `service/team/service.ts:172` and
+  `service/dispatcher-service/index.ts:215`, are both closed over fixed
+  state — a Team's `TeamLeaderCompletionTargets.recipientKey`
+  (`service/team/completion-targets.ts:27`) is one frozen object for the
+  Team's whole life, and the dispatcher's `mustAgent()`
+  (`service/dispatcher-service/agent.ts:159`) returns the same single
+  `this.service` field for the `DispatcherAgent`'s life, so the dispatcher
+  case falls back to `recipientKey ?? initiator` on that same fixed object).
+  `service/agent/turn.ts`'s `EntityTurn.startDeliveryIfReady()` fires its
+  `deliveryClosure` at most once per `EntityTurn`, and each `EntityTurn` is
+  constructed with one closure fixed at attach time
+  (`EntityTurnCoordinator.attachSubmission`, `turn.ts:121-136`). The only way
+  one `RuntimeCompletion` object reaches the router more than once is
+  `packages/agent-runtime/codex/src/turn-manager.ts`'s `NativeTurnRecord`: a
+  steering `turn/start` that merges into an already-running native turn adds
+  a member to that record instead of opening a new one, and `finalize()`
+  (`turn-manager.ts:324-351`) settles every member with the same
+  `completion` object reference. Every member comes from a submission into
+  the same `TurnManager` (one per `CodexRuntime`, `runtime.ts:241`), and a
+  `CodexRuntime` instance lives inside one entity's own `RuntimeGeneration`
+  (`service/agent/runtime-generation.ts:61`), itself owned by that entity's
+  `AgentService` — "one canonical Agent entity and the sole owner of its
+  live lifecycle" (`service/agent/service.ts:68`) — so no other entity's
+  submissions ever reach that `TurnManager`. Every member that can share a
+  completion object therefore already shares the same fixed `initiatorFor`,
+  hence the same `recipientKey`. No code path produces two different
+  recipients for the same `RuntimeCompletion` object.
+  `CompletionDeliveryPolicy` in `service/completion-router/index.ts` now
+  dedupes on a single `WeakMap<RuntimeCompletion, Promise<void>>` keyed
+  directly on the completion object; the source-string-keyed outer `Map` and
+  the per-recipient `WeakMap` nested inside it are gone. `recipientTails`
+  (per-recipient FIFO ordering) is unrelated to this dedupe and is
+  unchanged.
 - R32: whether unifying the two activity shapes is a net deletion.
 - R22: the inventory of persisted diagnostic-only fields beyond `access.json`.
 - R21: which loader rules change, and the PR #453 plugin `config` block rule.

@@ -40,7 +40,6 @@ import type {
   McpDelegateResult,
   McpServerDelegate,
 } from '../mcp/types.js';
-import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 
 /**
  * The namespace every Channel MCP server is named in.
@@ -142,13 +141,7 @@ export function createChannelMcpDelegate(
     // own fact. A provider never names the server it is exposed through.
     name: serverName,
     describe(): McpDelegateDescription {
-      return {
-        identity: {
-          name: `dreamux-channel-${input.providerId}`,
-          version: MCP_IDENTITY_VERSION,
-        },
-        tools,
-      };
+      return { tools };
     },
     async call(call: McpDelegateCall): Promise<McpDelegateResult> {
       const handler = handlers.get(call.name);

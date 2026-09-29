@@ -24,9 +24,7 @@ export function compileWorkflowScript(source: string): string {
   rejectImports(program);
   const metaExport = workflowMetaExport(program.body[0]);
   if (metaExport === null) {
-    throw new Error(
-      'workflow script must start with export const meta',
-    );
+    throw new Error('workflow script must start with export const meta');
   }
   validateWorkflowMeta(readPlainLiteralObject(metaExport.initializer));
   rejectBodyExports(program);
@@ -49,14 +47,16 @@ function privateClosurePrefix(removedMeta: string): string {
     const prefix = `(${strictOpening}`;
     return prefix + ' '.repeat(line.length - prefix.length);
   }
-  return lines.map((line, index) => {
-    if (index % 2 === 1) return line;
-    if (index === firstContentIndex) {
-      return `(${' '.repeat(Math.max(0, line.length - 1))}`;
-    }
-    if (index === lastContentIndex) return strictOpening;
-    return ' '.repeat(line.length);
-  }).join('');
+  return lines
+    .map((line, index) => {
+      if (index % 2 === 1) return line;
+      if (index === firstContentIndex) {
+        return `(${' '.repeat(Math.max(0, line.length - 1))}`;
+      }
+      if (index === lastContentIndex) return strictOpening;
+      return ' '.repeat(line.length);
+    })
+    .join('');
 }
 
 function parseWorkflowScript(source: string): Program {
@@ -69,7 +69,9 @@ function parseWorkflowScript(source: string): Program {
 }
 
 function rejectImports(program: Program): void {
-  if (program.body.some((statement) => statement.type === 'ImportDeclaration')) {
+  if (
+    program.body.some((statement) => statement.type === 'ImportDeclaration')
+  ) {
     throw new Error('workflow imports are disabled');
   }
 }
@@ -98,17 +100,11 @@ function workflowMetaExport(
     return null;
   }
   const declaration = statement.declaration;
-  if (
-    declaration.kind !== 'const' ||
-    declaration.declarations.length !== 1
-  ) {
+  if (declaration.kind !== 'const' || declaration.declarations.length !== 1) {
     return null;
   }
   const declarator = declaration.declarations[0]!;
-  if (
-    declarator.id.type !== 'Identifier' ||
-    declarator.id.name !== 'meta'
-  ) {
+  if (declarator.id.type !== 'Identifier' || declarator.id.name !== 'meta') {
     return null;
   }
   return { statement, initializer: declarator.init! };
@@ -156,9 +152,7 @@ function readPrimitiveLiteral(literal: Literal): unknown {
 function readArrayLiteral(array: ArrayExpression): unknown[] {
   return array.elements.map((element) => {
     if (element === null || element.type === 'SpreadElement') {
-      throw new Error(
-        'workflow meta must be a recursively plain literal tree',
-      );
+      throw new Error('workflow meta must be a recursively plain literal tree');
     }
     return readPlainLiteral(element);
   });
@@ -171,9 +165,7 @@ function readObjectLiteral(object: ObjectExpression): Record<string, unknown> {
   >;
   for (const entry of object.properties) {
     if (entry.type === 'SpreadElement' || !isPlainProperty(entry)) {
-      throw new Error(
-        'workflow meta must be a recursively plain literal tree',
-      );
+      throw new Error('workflow meta must be a recursively plain literal tree');
     }
     value[plainPropertyName(entry)] = readPlainLiteral(entry.value);
   }
@@ -215,16 +207,16 @@ function validateWorkflowMeta(meta: Record<string, unknown>): void {
 }
 
 function validateWorkflowPhase(phase: unknown): void {
-  if (
-    typeof phase !== 'object' ||
-    phase === null ||
-    Array.isArray(phase)
-  ) {
-    throw new Error('workflow meta phases must contain objects with string title');
+  if (typeof phase !== 'object' || phase === null || Array.isArray(phase)) {
+    throw new Error(
+      'workflow meta phases must contain objects with string title',
+    );
   }
   const record = phase as Record<string, unknown>;
   if (typeof record.title !== 'string') {
-    throw new Error('workflow meta phases must contain objects with string title');
+    throw new Error(
+      'workflow meta phases must contain objects with string title',
+    );
   }
   for (const key of ['detail', 'model'] as const) {
     if (record[key] !== undefined && typeof record[key] !== 'string') {

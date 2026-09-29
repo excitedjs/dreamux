@@ -7,7 +7,10 @@
  * this layer owns. Both caller-facing surfaces — the canonical Commands and the
  * MCP delegates — read the same shape through these two functions.
  */
-import type { JsonSchema, TeamCreateRepoRequest } from '@excitedjs/dreamux-types';
+import type {
+  JsonSchema,
+  TeamCreateRepoRequest,
+} from '@excitedjs/dreamux-types';
 
 import { ValidationError } from '../../command/errors.js';
 import {
@@ -16,7 +19,7 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 import { STRING, enumOf, objectSchema } from '../../command/schema.js';
-import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
+import type { TeamMateWorktreeRequest } from './types.js';
 
 /**
  * The complete repository policy a Team or TeamMate may request.
@@ -33,14 +36,13 @@ export const REPO_REQUEST_SCHEMA: JsonSchema = objectSchema(
     path: STRING,
     base_ref: STRING,
     branch: STRING,
-    slug: STRING,
     cleanup: enumOf(['keep', 'delete-on-close']),
   },
   ['mode'],
 );
 
 /** The managed-only controls a `reuse-cwd` request must not carry. */
-const MANAGED_ONLY_KEYS = ['base_ref', 'branch', 'slug', 'cleanup'] as const;
+const MANAGED_ONLY_KEYS = ['base_ref', 'branch', 'cleanup'] as const;
 
 /**
  * Read the canonical repository policy. A reused working directory is never
@@ -59,7 +61,9 @@ export function repoRequest(
   const obj = value as CommandPayload;
   const mode = mustString(obj, 'mode');
   if (mode !== 'reuse-cwd' && mode !== 'managed') {
-    throw new ValidationError(`param '${key}.mode' must be 'reuse-cwd' or 'managed'`);
+    throw new ValidationError(
+      `param '${key}.mode' must be 'reuse-cwd' or 'managed'`,
+    );
   }
   const path = optionalString(obj, 'path');
   if (mode === 'reuse-cwd') {
@@ -74,17 +78,17 @@ export function repoRequest(
   }
   const cleanup = optionalString(obj, 'cleanup');
   if (cleanup !== null && cleanup !== 'keep' && cleanup !== 'delete-on-close') {
-    throw new ValidationError(`param '${key}.cleanup' must be 'keep' or 'delete-on-close'`);
+    throw new ValidationError(
+      `param '${key}.cleanup' must be 'keep' or 'delete-on-close'`,
+    );
   }
   const baseRef = optionalString(obj, 'base_ref');
   const branch = optionalString(obj, 'branch');
-  const slug = optionalString(obj, 'slug');
   return {
     mode,
     ...(path !== null ? { path } : {}),
     ...(baseRef !== null ? { base_ref: baseRef } : {}),
     ...(branch !== null ? { branch } : {}),
-    ...(slug !== null ? { slug } : {}),
     ...(cleanup !== null ? { cleanup } : {}),
   };
 }
@@ -99,15 +103,15 @@ export function repoWorktree(
 ): { cwd: string | null; worktree: TeamMateWorktreeRequest } | null {
   if (repo === null) return null;
   const cwd = repo.path ?? null;
-  if (repo.mode === 'reuse-cwd') return { cwd, worktree: { mode: 'reuse-cwd' } };
+  if (repo.mode === 'reuse-cwd')
+    return { cwd, worktree: { mode: 'reuse-cwd' } };
   return {
     cwd,
     worktree: {
       mode: 'managed',
-      ...(repo.slug !== undefined ? { slug: repo.slug } : {}),
-      ...(repo.base_ref !== undefined ? { base_ref: repo.base_ref } : {}),
-      ...(repo.branch !== undefined ? { branch: repo.branch } : {}),
-      ...(repo.cleanup !== undefined ? { cleanup: repo.cleanup } : {}),
+      base_ref: repo.base_ref,
+      branch: repo.branch,
+      cleanup: repo.cleanup,
     },
   };
 }

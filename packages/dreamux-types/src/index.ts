@@ -16,11 +16,13 @@
  * policy.
  *
  * Module layout follows domain ownership: `agent-runtime.ts` is the Provider /
- * native execution seam, `channel.ts` is the bridge lifecycle plus the two
- * generic Core ports, `command.ts` is the generic Command port, `plugin.ts` is
- * the plugin seam (plugin object, hosts, hooked Dispatcher/Team faces, launch
- * draft), and `team.ts` / `teammate.ts` hold the Core domain facts each of
- * those entities owns.
+ * native execution seam, `activity.ts` is the Activity domain (live and cold
+ * record shapes) that seam produces, `channel.ts` is the bridge lifecycle plus
+ * the two generic Core ports, `plugin.ts` is the plugin seam (plugin object,
+ * hosts, hooked Dispatcher/Team faces, launch draft), and `team.ts` /
+ * `teammate.ts` hold the Core domain facts each of those entities owns
+ * (`team.ts` also owns the published Channel Command failure shape, since a
+ * Team Command payload is its only consumer).
  *
  * Root-export policy (issue #209): the root aggregates every public contract
  * type so an external provider author can name any of them directly. A type
@@ -31,138 +33,13 @@
  * legitimately depend on). The `exports` map publishes only this root, so this
  * list IS the public API.
  */
-export type { DreamuxLogger } from './logger.js';
-export type { JsonSchema, JsonValue } from './json.js';
-export type { JsonInvokeResult, JsonInvoker } from './invoke.js';
-export type {
-  AgentRuntimeProviderDescriptor,
-  BuiltinProviderRef,
-  ChannelProviderDescriptor,
-  DreamuxEnvironment,
-  ProviderBinCheck,
-  NpmProviderRef,
-  ProviderDiagnosticRunner,
-  ProviderDiagnosticScope,
-  ProviderDescriptor,
-  ProviderDiagnosticResult,
-  ProviderFactory,
-  ProviderFactoryContext,
-  ProviderKind,
-  ProviderOnboard,
-  ProviderOnboardConfirmPrompt,
-  ProviderOnboardContext,
-  ProviderOnboardPromptHost,
-  ProviderOnboardSecretPrompt,
-  ProviderOnboardTextPrompt,
-  ProviderRef,
-  ProviderRefSource,
-  RegisteredProvider,
-} from './provider.js';
-export type {
-  AgentActivityError,
-  AgentActivityPage,
-  AgentActivityQuery,
-  AgentActivityReadContext,
-  AgentActivityRecord,
-  AgentRuntime,
-  AgentRuntimeActivitySink,
-  AgentRuntimeBinCheck,
-  AgentRuntimeConfigCapability,
-  AgentRuntimeCreateContext,
-  AgentRuntimeDiagnosticCapability,
-  AgentRuntimeDiagnosticContext,
-  AgentRuntimeDiagnosticRunner,
-  AgentRuntimeDiagnosticResult,
-  AgentRuntimeIdentity,
-  AgentRuntimeInterruptOutcome,
-  AgentRuntimeLogger,
-  AgentRuntimeMcpServer,
-  AgentRuntimeOnboardCapability,
-  AgentRuntimePathContext,
-  AgentRuntimeProvider,
-  AgentRuntimeProviderCapabilities,
-  AgentRuntimeProviderConfigReadContext,
-  AgentRuntimeProviderFactory,
-  AgentRuntimeSkillSource,
-  AgentRuntimeStartOutcome,
-  AgentRuntimeStateLeaseRevokedError,
-  AgentRuntimeStateSink,
-  AgentRuntimeStateUpdate,
-  AgentRuntimeStatus,
-  AgentRuntimeSubmissionInput,
-  AgentRuntimeSystemPrompt,
-  RuntimeActivity,
-  RuntimeAdmission,
-  RuntimeCompletion,
-  RuntimeSubmission,
-  RuntimeSubmissionSettlement,
-  RuntimeToolAction,
-} from './agent-runtime.js';
-export type {
-  ChannelCommandError,
-  ChannelCommandRetryableErrorCode,
-  CoreCommandContext,
-  CoreCommandDefinition,
-  CoreCommandRegistry,
-  CoreCommandSource,
-} from './command.js';
-export type {
-  SubmitCommand,
-  TeamCreateCommand,
-  TeamCreateRepoRequest,
-  TeamStatus,
-  TeamSummary,
-  TeamStateEvent,
-  TeamStateTeammateSummary,
-  TeamSubmitCommand,
-  TeamSubmitResult,
-} from './team.js';
-export type {
-  TeamContainedRole,
-  TeammateActivityEvent,
-  TeammateActorScope,
-  TeammateInputEvent,
-  TeammateInputNotice,
-  TeammateRole,
-  TeammateStateEvent,
-  TeammateStatus,
-} from './teammate.js';
-export type {
-  ChannelBinCheck,
-  ChannelConfigCapability,
-  ChannelConfigContext,
-  ChannelCorePort,
-  ChannelCoreEvent,
-  ChannelDiagnosticCapability,
-  ChannelDiagnosticContext,
-  ChannelDiagnosticRunner,
-  ChannelDiagnosticResult,
-  ChannelEventSource,
-  ChannelEventSubscription,
-  ChannelIdentityCapability,
-  ChannelInstance,
-  ChannelMcpCall,
-  ChannelMcpCallContext,
-  ChannelMcpCaller,
-  ChannelMcpCapability,
-  ChannelMcpToolAnnotations,
-  ChannelMcpToolDescriptor,
-  ChannelMcpToolIcon,
-  ChannelMcpToolOutcome,
-  ChannelMcpToolRegistration,
-  ChannelOnboardCapability,
-  ChannelProvider,
-  ChannelProviderFactory,
-  ChannelSession,
-  ChannelSessionCreateContext,
-  ChannelSessionMcpCapability,
-} from './channel.js';
-export type {
-  ContributeHost,
-  Dispatcher,
-  DreamuxPlugin,
-  DreamuxPluginApis,
-  LaunchDraft,
-  ServerHost,
-  Team,
-} from './plugin.js';
+export type * from './logger.js';
+export type * from './json.js';
+export type * from './invoke.js';
+export type * from './provider.js';
+export type * from './agent-runtime.js';
+export type * from './activity.js';
+export type * from './team.js';
+export type * from './teammate.js';
+export type * from './channel.js';
+export type * from './plugin.js';

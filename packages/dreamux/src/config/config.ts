@@ -1,58 +1,37 @@
-import { pathExists } from '../platform/fs-errors.js';
-
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { mkdir, open, readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
+import { asChannelProvider } from '../channel/catalog.js';
 import {
-  loadAgentRuntimeProviders,
-  type ExternalAgentRuntimeModuleImporter,
-} from '../agent-runtime/external-provider.js';
-import {
-  loadChannelProviders,
-  type ExternalChannelModuleImporter,
-} from '../channel/external-channel-provider.js';
-import {
-  createBuiltinProviderRegistry,
+  InvalidProviderRefError,
+  ReservedExternalProviderError,
+  UnknownBuiltinProviderError,
+  formatProviderRef,
+  type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
 import {
   describeType,
   isPlainObject,
+  readNonEmptyString,
   readProviderConfigObject,
-  rejectUnknownKeys,
-  requireNonEmptyString,
+  redactSecretKeyValues,
 } from '@excitedjs/dreamux-utils';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
-import { createLogger } from '../platform/logger.js';
-import {
-  loadPlugins,
-  readPluginConfigs,
-  readPluginEntries,
-  type LoadedPlugin,
-  type PluginConfigEntry,
-  type PluginModuleImporter,
-} from '../plugin/loader.js';
-import {
-  agentProviderRefs,
-  asChannelProvider,
-  channelProviderRefs,
-  expandHome,
-  readOptionalBoolean,
-  redactConfigSecrets,
-  resolveConfigProvider,
-} from './config-helpers.js';
-export { expandHome } from './config-helpers.js';
+import { dreamuxRoot } from '../platform/paths.js';
+import { validateDispatcherId } from '../platform/dispatcher-id.js';
+import { RuleViolation } from '../platform/errors.js';
+import type { PluginConfigEntry } from '../plugin/loader.js';
 
 export interface DreamuxConfig {
-    /**
-     * The raw `plugins[]` entries, present iff the file has a `plugins` key.
-     * Kept only so `stringifyConfig` round-trips them; the loaded plugins
-     * travel in {@link LoadConfigResult.plugins}.
-     */
-    plugins?: PluginConfigEntry[];
-    agents: Record<string, ResolvedAgentConfig>;
-    dispatchers: DispatcherConfig[];
+  /**
+   * The raw `plugins[]` entries, present iff the file has a `plugins` key.
+   * Kept only so `stringifyConfig` round-trips them; the loaded plugins
+   * travel in `config/load.ts`'s `LoadConfigResult.plugins`.
+   */
+  plugins?: PluginConfigEntry[] | undefined;
+  agents: Record<string, ResolvedAgentConfig>;
+  dispatchers: DispatcherConfig[];
 }
 
 export interface DreamuxWorkspaceConfig {
@@ -61,8 +40,8 @@ export interface DreamuxWorkspaceConfig {
 
 export interface ResolvedAgentConfig {
   provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig | undefined;
 }
 
 export interface DispatcherConfig {
@@ -71,109 +50,130 @@ export interface DispatcherConfig {
   enabled: boolean;
   workspace: DreamuxWorkspaceConfig;
   channels: DispatcherChannelConfig[];
-    agentRuntime: string;
-    runtime: DispatcherRuntimeConfig;
+  agentRuntime: string;
 }
 
 export interface DispatcherChannelConfig {
   id: string;
   provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
-    identity?: string;
-}
-
-export interface DispatcherRuntimeConfig {
-  provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig | undefined;
+  identity?: string;
 }
 
 export type DispatcherProviderConfig = Record<string, unknown>;
+
+/**
+ * The agent config a dispatcher references (`agents[dispatcher.agentRuntime]`),
+ * looked up on demand rather than carried as a precomputed field on
+ * `DispatcherConfig`. `readDispatchers` already validates every parsed
+ * dispatcher's `agentRuntime` names a real `agents[]` entry and every
+ * dispatcher id is unique, so a `config` this loader produced never fails
+ * this lookup; callers must not pass a hand-built `config`/`dispatcherId`
+ * pair that skips that validation.
+ */
+export function dispatcherAgent(
+  config: DreamuxConfig,
+  dispatcherId: string,
+): ResolvedAgentConfig {
+  const dispatcher = config.dispatchers.find(
+    (entry) => entry.id === dispatcherId,
+  )!;
+  return config.agents[dispatcher.agentRuntime]!;
+}
+
+/**
+ * A dispatcher's neutral, provider-reported channel identity (issue #209
+ * de-leak): its primary (first) channel's identity, surfaced for status
+ * display. Core never interprets it and never names the channel provider's
+ * config fields. Empty string when the primary channel reports no identity.
+ * Stated once here rather than at each of `dispatcher.list`/`dispatcher.status`/
+ * the dispatcher-ready log, which otherwise each redecide "primary channel".
+ */
+export function dispatcherChannelIdentity(
+  dispatcher: DispatcherConfig,
+): string {
+  return dispatcher.channels[0]?.identity ?? '';
+}
+
+/**
+ * A dispatcher's own `agentRuntime` — the id a spawn launches when it names
+ * none — looked up by dispatcher id rather than taken as a precomputed field,
+ * so a caller that only holds an id still gets it. Throws when `dispatcherId`
+ * names no configured dispatcher, since there is then no `agentRuntime` to
+ * default to.
+ */
+export function defaultAgentRuntime(
+  config: DreamuxConfig,
+  dispatcherId: string,
+): string {
+  const dispatcherCfg =
+    config.dispatchers.find((entry) => entry.id === dispatcherId) ?? null;
+  if (dispatcherCfg === null) {
+    throw new Error(
+      `cannot spawn a teammate for unknown dispatcher '${dispatcherId}': ` +
+        'no dispatcher config to resolve a default agentRuntime from. Pass an ' +
+        'explicit agentRuntime (an agents[].id).',
+    );
+  }
+  return dispatcherCfg.agentRuntime;
+}
+
+/**
+ * Resolve one `agents[]` entry by id, with an error naming every declared
+ * agent id when the reference does not match — the caller-facing companion to
+ * {@link dispatcherAgent}'s already-validated lookup, used wherever an
+ * `agentRuntime` id arrives from outside the loader (a spawn request, a
+ * persisted identity) and may not name a currently-declared agent.
+ */
+export function resolveAgent(
+  config: DreamuxConfig,
+  dispatcherId: string,
+  agentRuntimeId: string,
+): ResolvedAgentConfig {
+  const agent = config.agents[agentRuntimeId];
+  if (agent === undefined) {
+    const known = Object.keys(config.agents);
+    const knownHint =
+      known.length > 0
+        ? `Known agents: ${known.map((id) => `'${id}'`).join(', ')}.`
+        : 'No agents are declared.';
+    throw new Error(
+      `teammate for dispatcher '${dispatcherId}' references agentRuntime ` +
+        `'${agentRuntimeId}', which matches no agents[].id. ${knownHint} ` +
+        'Add the agent to config and rebuild, or respawn the teammate with a ' +
+        'known agent id.',
+    );
+  }
+  return agent;
+}
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
   agents: {},
   dispatchers: [],
 };
-export const DEFAULT_CONFIG_JSON = stringifyConfig(BUILT_IN_DEFAULTS);
 
 export interface ConfigPathOverrides {
-    configDir?: string;
-    providerRegistry?: ProviderRegistry;
-    externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
-    externalChannelModuleImporter?: ExternalChannelModuleImporter;
-    pluginModuleImporter?: PluginModuleImporter;
+  providerRegistry?: ProviderRegistry;
 }
 
-export interface LoadConfigResult {
-  config: DreamuxConfig;
-  configFile: string;
-  providerRegistry: ProviderRegistry;
-  /** Loaded and contributed, with configs read; `server` has not run. */
-  plugins: LoadedPlugin[];
+export function globalConfigDir(): string {
+  return dreamuxRoot();
 }
 
-export function globalConfigDir(overrides: ConfigPathOverrides = {}): string {
-  if (overrides.configDir !== undefined) return overrides.configDir;
-  return process.env['DREAMUX_CONFIG_DIR'] || join(homedir(), '.dreamux');
+export function globalConfigFile(): string {
+  return join(globalConfigDir(), 'config.json');
 }
 
-export function globalConfigFile(overrides: ConfigPathOverrides = {}): string {
-  return join(globalConfigDir(overrides), 'config.json');
-}
-
-export function legacyGlobalConfigFile(
-  overrides: ConfigPathOverrides = {},
-): string {
-  return join(globalConfigDir(overrides), 'config.toml');
-}
-
-export async function loadOrInitConfig(
-  overrides: ConfigPathOverrides = {},
-): Promise<{
-  config: DreamuxConfig;
-  configFile: string;
-  createdOnThisBoot: boolean;
-  providerRegistry: ProviderRegistry;
-  plugins: LoadedPlugin[];
-}> {
-  const file = globalConfigFile(overrides);
-  const providerRegistry = providerRegistryFor(overrides);
-  await assertNoLegacyTomlOnly(overrides);
-  await mkdir(dirname(file), { recursive: true });
-
-  const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
-  const { config, plugins } = await readConfigFile(
-    file,
-    providerRegistry,
-    overrides,
-  );
-  return { config, configFile: file, createdOnThisBoot, providerRegistry, plugins };
-}
-
-export async function loadConfig(
-  overrides: ConfigPathOverrides = {},
-): Promise<LoadConfigResult> {
-  const file = globalConfigFile(overrides);
-  const providerRegistry = providerRegistryFor(overrides);
-  await assertNoLegacyTomlOnly(overrides);
-  const { config, plugins } = await readConfigFile(
-    file,
-    providerRegistry,
-    overrides,
-  );
-  return { config, configFile: file, providerRegistry, plugins };
+export function legacyGlobalConfigFile(): string {
+  return join(globalConfigDir(), 'config.toml');
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {
   const fileShape = {
-    ...(config.plugins !== undefined
-      ? {
-          plugins: config.plugins.map((entry) =>
-            'config' in entry ? { ref: entry.ref, config: entry.config } : entry.ref,
-          ),
-        }
-      : {}),
+    plugins: config.plugins?.map((entry) =>
+      'config' in entry ? { ref: entry.ref, config: entry.config } : entry.ref,
+    ),
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
       provider: agent.provider,
@@ -208,98 +208,8 @@ export function redactConfigForDisplay(raw: string, file: string): string {
         'Fix the JSON syntax before running `dreamux config show`.',
     );
   }
-  redactConfigSecrets(parsed);
+  redactSecretKeyValues(parsed);
   return `${JSON.stringify(parsed, null, 2)}\n`;
-}
-
-async function readConfigFile(
-  file: string,
-  providerRegistry: ProviderRegistry,
-  overrides: ConfigPathOverrides,
-): Promise<{ config: DreamuxConfig; plugins: LoadedPlugin[] }> {
-  if (!(await pathExists(file))) {
-    throw new Error(
-      `dreamux config is missing at ${file}.\n` +
-        'Run `dreamux onboard` to create it before starting the server.',
-    );
-  }
-  await assertConfigFileMode(file);
-  const raw = await readFile(file, 'utf8');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `dreamux config parse error in ${file}: ${msg}\n` +
-        `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
-    );
-  }
-  // Plugins contribute providers config may address, so they load before
-  // provider refs are loaded and validated. A non-object top level is still
-  // reported by mergeWithDefaults.
-  const entries = isPlainObject(parsed)
-    ? readPluginEntries(parsed, file)
-    : undefined;
-  const plugins = await loadPlugins({
-    registry: providerRegistry,
-    entries: entries ?? [],
-    // The serve file logger does not exist yet; contribute only registers.
-    logger: createLogger({ name: 'plugins' }),
-    ...(overrides.pluginModuleImporter !== undefined
-      ? { importModule: overrides.pluginModuleImporter }
-      : {}),
-  });
-  await loadAgentRuntimeProviders({
-    registry: providerRegistry,
-    refs: agentProviderRefs(parsed),
-    importModule: overrides.externalAgentRuntimeModuleImporter,
-  });
-  await loadChannelProviders({
-    registry: providerRegistry,
-    refs: channelProviderRefs(parsed),
-    importModule: overrides.externalChannelModuleImporter,
-  });
-  const config = await mergeWithDefaults(parsed, file, providerRegistry);
-  readPluginConfigs(plugins, file);
-  return {
-    config: entries === undefined ? config : { ...config, plugins: entries },
-    plugins,
-  };
-}
-
-export async function assertNoLegacyTomlOnly(
-  overrides: ConfigPathOverrides = {},
-): Promise<void> {
-  const jsonFile = globalConfigFile(overrides);
-  const tomlFile = legacyGlobalConfigFile(overrides);
-  if ((await pathExists(jsonFile)) || !(await pathExists(tomlFile))) return;
-  throw new Error(
-    `legacy dreamux config detected at ${tomlFile}, but ${jsonFile} does not exist.\n` +
-      'dreamux 0.x does not migrate TOML config; it will not read it or write default ' +
-      'JSON over an existing install.\n' +
-      `Recreate the config as JSON (run \`dreamux onboard\`, or write ${jsonFile} with a ` +
-      `dispatchers array), then move ${tomlFile} aside.`,
-  );
-}
-
-async function atomicWriteIfAbsent(
-  file: string,
-  content: string,
-): Promise<boolean> {
-  let handle;
-  try {
-    handle = await open(file, 'wx', 0o600);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw err;
-  }
-  try {
-    await handle.writeFile(content);
-  } finally {
-    await handle.close();
-  }
-  return true;
 }
 
 export async function assertConfigFileMode(file: string): Promise<void> {
@@ -311,20 +221,81 @@ export async function assertConfigFileMode(file: string): Promise<void> {
   );
 }
 
-function providerRegistryFor(overrides: ConfigPathOverrides): ProviderRegistry {
-  return overrides.providerRegistry ?? createBuiltinProviderRegistry();
+function readOptionalBoolean(
+  obj: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+  file: string,
+  prefix = '',
+): boolean {
+  const v = obj[key];
+  if (v === undefined) return fallback;
+  if (typeof v === 'boolean') return v;
+  throw new RuleViolation(
+    `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
+  );
 }
 
-async function mergeWithDefaults(
+export function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function resolveConfigProvider(
+  rawProvider: string,
+  expectedKind: ProviderDescriptor['kind'],
+  file: string,
+  prefix: string,
+  providerRegistry: ProviderRegistry,
+): { ref: string; descriptor: ProviderDescriptor } {
+  try {
+    const descriptor = providerRegistry.resolve(rawProvider);
+    if (descriptor.kind !== expectedKind) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is a ${descriptor.kind} provider, expected ${expectedKind}`,
+      );
+    }
+    return { ref: formatProviderRef(descriptor.ref), descriptor };
+  } catch (err) {
+    if (err instanceof InvalidProviderRefError) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider is invalid: ${err.message}`,
+      );
+    }
+    if (err instanceof ReservedExternalProviderError) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' was not loaded as an external ${expectedKind} provider.\n` +
+          err.message,
+      );
+    }
+    if (err instanceof UnknownBuiltinProviderError) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}provider references unknown builtin provider '${err.id}'`,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Validates and shapes a parsed config file (`raw`) into a {@link DreamuxConfig}.
+ * Exported for `config/load.ts`'s `resolveConfig`, which loads the
+ * agent-runtime/channel providers `raw` references before calling this — this
+ * function itself does no loading, only validation, so it never contributes a
+ * provider twice no matter how many times a caller re-validates the same raw
+ * config within one process (`ConfigService.replaceAgents`).
+ */
+export async function mergeWithDefaults(
   raw: unknown,
   file: string,
   providerRegistry: ProviderRegistry,
 ): Promise<DreamuxConfig> {
   if (!isPlainObject(raw)) {
-    throw new Error(`dreamux config error in ${file}: top-level must be an object`);
+    throw new RuleViolation(
+      `dreamux config error in ${file}: top-level must be an object`,
+    );
   }
-  rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['plugins', 'agents', 'dispatchers']), file, '');
 
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   const dispatchers = await readDispatchers(
@@ -346,11 +317,10 @@ function readWorkspaceConfig(
 ): DreamuxWorkspaceConfig {
   if (rawWorkspace === undefined) return { enabled: false };
   if (!isPlainObject(rawWorkspace)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix.slice(0, -1)} must be an object (got ${describeType(rawWorkspace)})`,
     );
   }
-  rejectUnknownKeys(rawWorkspace, new Set(['enabled']), file, prefix);
   return {
     enabled: readOptionalBoolean(rawWorkspace, 'enabled', false, file, prefix),
   };
@@ -361,18 +331,8 @@ export function defaultWorkspaceEnabled(
   dispatcherId: string,
 ): boolean {
   return (
-    config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)?.workspace
-      .enabled ?? false
-  );
-}
-
-function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
-  if (!('codex' in raw)) return;
-  throw new Error(
-    `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
-      'supported. Declare a named agent under agents[] with the selected runtime ' +
-      'provider and a provider-owned config block, then reference it from each ' +
-      'dispatcher via dispatchers[].agentRuntime.',
+    config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)
+      ?.workspace.enabled ?? false
   );
 }
 
@@ -383,7 +343,7 @@ async function readAgents(
 ): Promise<Record<string, ResolvedAgentConfig>> {
   if (rawAgents === undefined) return {};
   if (!Array.isArray(rawAgents)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: agents must be an array (got ${describeType(rawAgents)}).\n` +
         'Declare named runtimes as agents[] entries, each with an id, a provider ' +
         '(for example "builtin:<id>" or "npm:<package>"), and a provider-owned config block.',
@@ -394,37 +354,40 @@ async function readAgents(
     const raw = rawAgents[index];
     const prefix = `agents[${index}].`;
     if (!isPlainObject(raw)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: agents[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
-    rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, prefix);
-    const id = requireNonEmptyString(raw, 'id', file, prefix);
+    const id = readNonEmptyString(raw, 'id', file, prefix);
     if (Object.prototype.hasOwnProperty.call(out, id)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: agents[${index}].id duplicates agent '${id}'`,
       );
     }
     const provider = resolveConfigProvider(
-      requireNonEmptyString(raw, 'provider', file, prefix),
+      readNonEmptyString(raw, 'provider', file, prefix),
       'agentRuntime',
       file,
       prefix,
       providerRegistry,
     );
-    const rawConfig = readProviderConfigObject(raw['config'], file, `${prefix}config`, {
-      allowMissing: true,
-    });
+    const rawConfig = readProviderConfigObject(
+      raw['config'],
+      file,
+      `${prefix}config`,
+      {
+        allowMissing: true,
+      },
+    );
     const runtimeProvider = asAgentRuntimeProvider(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
     if (runtimeProvider === null) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
-          'Its provider package did not yield a runnable agentRuntime ' +
-          'implementation. Pass a providerRegistry seeded with the builtin ' +
-          'descriptors (the default) so the loader can resolve the package, or ' +
-          'register a valid implementation before config validation.',
+          'Its provider package or plugin did not yield a runnable agentRuntime ' +
+          'implementation. Register a valid implementation for this ref before ' +
+          'config validation runs.',
       );
     }
     const parsedConfig =
@@ -451,7 +414,7 @@ async function readDispatchers(
 ): Promise<DispatcherConfig[]> {
   if (rawDispatchers === undefined) return [];
   if (!Array.isArray(rawDispatchers)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: dispatchers must be an array (got ${describeType(rawDispatchers)})`,
     );
   }
@@ -461,30 +424,16 @@ async function readDispatchers(
     const raw = rawDispatchers[index];
     const prefix = `dispatchers[${index}].`;
     if (!isPlainObject(raw)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: dispatchers[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
-    if ('runtime' in raw) {
-      throw new Error(
-        `dreamux config error in ${file}: ${prefix}runtime is no longer supported.\n` +
-          'Runtime config moved to a named agents[] entry. Declare the runtime ' +
-          'under top-level agents[] (id, provider, config) and reference it here ' +
-          `with ${prefix}agentRuntime = "<agent id>", then rebuild ${file}.`,
-      );
-    }
-    rejectUnknownKeys(
-      raw,
-      new Set(['id', 'cwd', 'enabled', 'workspace', 'channels', 'agentRuntime']),
-      file,
-      prefix,
-    );
     const id = validateDispatcherId(
-      requireNonEmptyString(raw, 'id', file, prefix),
+      readNonEmptyString(raw, 'id', file, prefix),
       `${prefix}id`,
     );
     if (ids.has(id)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: dispatchers[${index}].id duplicates dispatcher '${id}'`,
       );
     }
@@ -500,13 +449,12 @@ async function readDispatchers(
 
     const cwd = raw['cwd'];
     if (typeof cwd !== 'string' || cwd.trim() === '') {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}cwd is required for dispatcher ` +
           `'${id}': set it to the Dispatcher's workspace directory`,
       );
     }
     const agentRuntimeId = resolveAgentRuntime(raw, prefix, file, agents);
-    const agent = agents[agentRuntimeId]!;
     out.push({
       id,
       cwd: expandHome(cwd),
@@ -518,11 +466,6 @@ async function readDispatchers(
       ),
       channels,
       agentRuntime: agentRuntimeId,
-      runtime: {
-        provider: agent.provider,
-        config: agent.config,
-        ...(agent.rawConfig === undefined ? {} : { rawConfig: agent.rawConfig }),
-      },
     });
   }
   return out;
@@ -535,20 +478,20 @@ function resolveAgentRuntime(
   agents: Record<string, ResolvedAgentConfig>,
 ): string {
   if (!('agentRuntime' in raw)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}agentRuntime is required.\n` +
         'Declare a named runtime under top-level agents[] (id, provider, config) ' +
         `and set ${prefix}agentRuntime to that agent's id, then rebuild ${file}.`,
     );
   }
-  const agentRuntimeId = requireNonEmptyString(raw, 'agentRuntime', file, prefix);
+  const agentRuntimeId = readNonEmptyString(raw, 'agentRuntime', file, prefix);
   if (!Object.prototype.hasOwnProperty.call(agents, agentRuntimeId)) {
     const known = Object.keys(agents);
     const knownHint =
       known.length > 0
         ? `Known agents: ${known.map((id) => `'${id}'`).join(', ')}.`
         : 'No agents[] are declared.';
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}agentRuntime='${agentRuntimeId}' ` +
         `does not match any agents[].id. ${knownHint}\n` +
         `Add an agents[] entry with id '${agentRuntimeId}' (or fix the reference), then rebuild ${file}.`,
@@ -566,13 +509,13 @@ async function readDispatcherChannels(
 ): Promise<DispatcherChannelConfig[]> {
   const prefix = `${dispatcherPrefix}channels`;
   if (!Array.isArray(rawChannels)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix} must be an array (got ${describeType(rawChannels)}).\n` +
         'Use providerized config v2: dispatchers[].channels[] with a channel provider ref and provider-owned config.',
     );
   }
   if (rawChannels.length === 0) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix} must contain at least one channel.`,
     );
   }
@@ -583,43 +526,26 @@ async function readDispatcherChannels(
     const raw = rawChannels[index];
     const channelPrefix = `${prefix}[${index}].`;
     if (!isPlainObject(raw)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
       );
     }
-    if (raw['collaborationSpace'] !== undefined) {
-      // Named rather than left to the generic unknown-key rejection: this key
-      // used to configure a real Core capability, and an operator who wrote it
-      // needs to be told where that capability went, not that it is a typo.
-      throw new Error(
-        `dreamux config error in ${file}: ${channelPrefix}collaborationSpace ` +
-          'was removed. Core no longer owns Collaboration Space policy — the ' +
-          'channel that offers the flow owns it now. Configure it there and ' +
-          'delete this key.',
-      );
-    }
-    rejectUnknownKeys(
-      raw,
-      new Set(['id', 'provider', 'config']),
-      file,
-      channelPrefix,
-    );
-    const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
+    const id = readNonEmptyString(raw, 'id', file, channelPrefix);
     if (channelIds.has(id)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}id='${id}' duplicates another channel in this dispatcher; channel ids must be unique per dispatcher.`,
       );
     }
     channelIds.add(id);
     const provider = resolveConfigProvider(
-      requireNonEmptyString(raw, 'provider', file, channelPrefix),
+      readNonEmptyString(raw, 'provider', file, channelPrefix),
       'channel',
       file,
       channelPrefix,
       providerRegistry,
     );
     if (providerRefs.has(provider.ref)) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' duplicates another channel in this dispatcher; each provider may appear at most once per dispatcher.`,
       );
     }
@@ -634,12 +560,11 @@ async function readDispatcherChannels(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
     if (channelProvider === null) {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but has no channel implementation.\n` +
-          'Its provider package did not yield a usable channel implementation. ' +
-          'Pass a providerRegistry seeded with the builtin descriptors (the ' +
-          'default) so the loader can resolve the package, or register a valid ' +
-          'implementation before config validation.',
+          'Its provider package or plugin did not yield a usable channel ' +
+          'implementation (one exposing createSession). Register a valid ' +
+          'implementation for this ref before config validation runs.',
       );
     }
     const parsed =
@@ -650,6 +575,11 @@ async function readDispatcherChannels(
       })) as DispatcherProviderConfig | undefined) ?? rawConfig;
     let identity = '';
     try {
+      // `config.read` is optional, so `parsed` can still be unvalidated raw
+      // operator input here, and a provider can implement `identity` without
+      // implementing `config`; keep this best-effort so a throwing getter
+      // degrades to an empty display value instead of failing config load —
+      // an unrunnable shape fails loud later, at the dispatcher launch guard.
       identity = channelProvider.identity?.get(parsed) ?? '';
     } catch {
       identity = '';

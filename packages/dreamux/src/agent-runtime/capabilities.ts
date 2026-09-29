@@ -11,18 +11,10 @@
 import {
   canonicalJsonValue,
   isPlainObject,
+  JSON_VALUE_UNBOUNDED,
   JsonValueError,
 } from '../platform/json-value.js';
 import type { AgentRuntimeProvider, JsonValue } from '@excitedjs/dreamux-types';
-
-/** Core's independent bounds on a provider's declared capabilities. */
-const MAX_TAGS = 32;
-const MAX_TAG_LENGTH = 64;
-const PUBLIC_CONFIG_BOUNDS = {
-  maxDepth: 4,
-  maxEntries: 32,
-  maxBytes: 4096,
-} as const;
 
 /**
  * A provider's declared capabilities after Core validated and froze them.
@@ -99,25 +91,18 @@ function normalizeCapabilities(
 
 function normalizeTags(value: unknown, ref: string): readonly string[] {
   if (!Array.isArray(value)) {
-    throw new InvalidAgentRuntimeCapabilitiesError(ref, 'tags must be an array');
-  }
-  if (value.length > MAX_TAGS) {
     throw new InvalidAgentRuntimeCapabilitiesError(
       ref,
-      `tags may hold at most ${MAX_TAGS} entries`,
+      'tags must be an array',
     );
   }
   const seen = new Set<string>();
   const tags: string[] = [];
   for (const entry of value as readonly unknown[]) {
-    if (
-      typeof entry !== 'string' ||
-      entry.length === 0 ||
-      entry.length > MAX_TAG_LENGTH
-    ) {
+    if (typeof entry !== 'string' || entry.length === 0) {
       throw new InvalidAgentRuntimeCapabilitiesError(
         ref,
-        `each tag must be a non-empty string of at most ${MAX_TAG_LENGTH} characters`,
+        'each tag must be a non-empty string',
       );
     }
     // Declaration order is the provider's; duplicates are simply collapsed.
@@ -140,7 +125,7 @@ function normalizePublicConfig(
     );
   }
   try {
-    return canonicalJsonValue(value, PUBLIC_CONFIG_BOUNDS) as Readonly<
+    return canonicalJsonValue(value, JSON_VALUE_UNBOUNDED) as Readonly<
       Record<string, JsonValue>
     >;
   } catch (error) {

@@ -4,16 +4,15 @@ import type {
   AgentActivityReadContext,
   AgentActivityRecord,
 } from '@excitedjs/dreamux-types';
-import { readBytesAt } from '@excitedjs/dreamux-utils';
+import {
+  activityQueryFingerprint,
+  ActivityError,
+  readBytesAt,
+} from '@excitedjs/dreamux-utils';
 
 import type { DispatcherClaudeCodeConfig } from '../config.js';
-import {
-  claudeQueryFingerprint,
-  decodeClaudeCursor,
-  digest,
-  encodeClaudeCursor,
-} from './cursor.js';
-import { ClaudeActivityError } from './error.js';
+import { claudeSpawnEnv } from '../paths.js';
+import { decodeClaudeCursor, digest, encodeClaudeCursor } from './cursor.js';
 import {
   openClaudeRollout,
   type ClaudeOpenedRollout,
@@ -71,60 +70,37 @@ interface RewriteEvidence {
 export async function readClaudeRecentActivity(
   query: AgentActivityQuery,
   context: AgentActivityReadContext<DispatcherClaudeCodeConfig>,
-  testHooks: {
-    afterLocate?: () => void | Promise<void>;
-    maxReadChunkBytes?: number;
-  } = {},
 ): Promise<AgentActivityPage> {
   const limit = resolveLimit(query.limit);
   const sessionId = query.sessionId;
   const includeTools = query.includeTools ?? true;
-  const env = effectiveEnvironment(context);
+  const env = claudeSpawnEnv(context.config.extra_env);
   const located = await locateClaudeHistory({
     sessionId,
     cwd: context.cwd,
-    locator: null,
     env,
   });
-  await testHooks.afterLocate?.();
   const opened = await openClaudeRollout(located.path, located.root);
   if (opened.dev !== located.dev || opened.ino !== located.ino) {
     await opened.handle.close();
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'unreadable',
       'Claude Code activity source changed after validation',
     );
   }
   try {
-    await validateClaudeSessionEvidence(opened, sessionId, {
-      ...(testHooks.maxReadChunkBytes !== undefined
-        ? { maxReadChunkBytes: testHooks.maxReadChunkBytes }
-        : {}),
-    });
-    const fingerprint = claudeQueryFingerprint(includeTools);
+    await validateClaudeSessionEvidence(opened, sessionId);
+    const fingerprint = activityQueryFingerprint(includeTools);
     const cursor =
       query.cursor === undefined
         ? null
         : decodeClaudeCursor(query.cursor, fingerprint);
     const endOffset = Math.min(cursor?.pos ?? opened.size, opened.size);
-    const rewriteEvidence = await verifyRewriteEvidence(
-      opened,
-      cursor,
-      testHooks.maxReadChunkBytes,
-    );
+    const rewriteEvidence = await verifyRewriteEvidence(opened, cursor);
     if (cursor !== null) {
-      await verifyCursorBoundaryDigest(
-        opened,
-        cursor.pos,
-        cursor.bd,
-        testHooks.maxReadChunkBytes,
-      );
+      await verifyCursorBoundaryDigest(opened, cursor.pos, cursor.bd);
     }
-    const window = await readWindow(
-      opened,
-      endOffset,
-      testHooks.maxReadChunkBytes,
-    );
+    const window = await readWindow(opened, endOffset);
     const parsed = parseEntries(window.bytes, window.startOffset, sessionId);
     const logical = applyNativeRewrites(parsed.entries);
     const chain = recoverParallelToolBranches(
@@ -137,10 +113,9 @@ export async function readClaudeRecentActivity(
     const hasOlder =
       (anchor?.start ?? endOffset) > 0 &&
       (projected.length > consumed.length || parsed.boundReached);
-    const boundary =
-      anchor ?? (hasOlder ? parsed.oldestProcessed : null);
+    const boundary = anchor ?? (hasOlder ? parsed.oldestProcessed : null);
     if (boundary !== null && cursor !== null && boundary.start >= cursor.pos) {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'scan_unsupported',
         'Claude Code activity pagination cannot make safe progress',
       );
@@ -173,7 +148,7 @@ export async function readClaudeRecentActivity(
 function resolveLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_RECORD_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORD_LIMIT) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'invalid',
       `Claude Code activity limit must be an integer in 1..${MAX_RECORD_LIMIT}`,
     );
@@ -184,15 +159,10 @@ function resolveLimit(limit: number | undefined): number {
 async function readWindow(
   opened: ClaudeOpenedRollout,
   endOffset: number,
-  maxReadChunkBytes?: number,
 ): Promise<{ bytes: Buffer; startOffset: number }> {
   const startOffset = Math.max(0, endOffset - MAX_DECODED_BYTES);
   const length = endOffset - startOffset;
-  const bytes = await readBytesAt(opened.handle, startOffset, length, {
-    ...(maxReadChunkBytes !== undefined
-      ? { maxChunkBytes: maxReadChunkBytes }
-      : {}),
-  });
+  const bytes = await readBytesAt(opened.handle, startOffset, length);
   return { bytes, startOffset };
 }
 
@@ -221,7 +191,7 @@ function parseEntries(
     const raw = bytes.subarray(lineStart, rawEnd).toString('utf8');
     const value = parseRecord(raw);
     if (value === null && raw.trim() !== '') {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'invalid',
         'Claude Code activity contains an unreadable record',
       );
@@ -230,14 +200,14 @@ function parseEntries(
       const nativeSessionId = stringValue(value['sessionId']);
       if (nativeSessionId !== null) {
         if (sessionId !== null && nativeSessionId !== sessionId) {
-          throw new ClaudeActivityError(
+          throw new ActivityError(
             'session_mismatch',
             'Claude Code activity does not belong to the selected session',
           );
         }
       }
       if (isProjectableRecord(value) && nativeSessionId === null) {
-        throw new ClaudeActivityError(
+        throw new ActivityError(
           'invalid',
           'Claude Code activity record has no native session id',
         );
@@ -275,16 +245,14 @@ function buildSelectedChain(entries: readonly NativeEntry[]): NativeEntry[] {
     if (parent !== null) parents.add(parent);
   }
   const leaf =
-    [...entries]
-      .reverse()
-      .find((entry) => {
-        const uuid = stringValue(entry.value['uuid']);
-        return (
-          uuid !== null &&
-          !parents.has(uuid) &&
-          isConversationParticipant(entry.value)
-        );
-      }) ?? null;
+    [...entries].reverse().find((entry) => {
+      const uuid = stringValue(entry.value['uuid']);
+      return (
+        uuid !== null &&
+        !parents.has(uuid) &&
+        isConversationParticipant(entry.value)
+      );
+    }) ?? null;
   if (leaf === null) return [];
   const chain: NativeEntry[] = [];
   const seen = new Set<string>();
@@ -391,37 +359,32 @@ async function verifyCursorBoundaryDigest(
   opened: ClaudeOpenedRollout,
   position: number,
   expected: string,
-  maxReadChunkBytes?: number,
 ): Promise<void> {
-    const length = Math.min(
-      MAX_DECODED_BYTES,
-      Math.max(0, opened.size - position),
+  const length = Math.min(
+    MAX_DECODED_BYTES,
+    Math.max(0, opened.size - position),
+  );
+  const bytes = await readBytesAt(opened.handle, position, length);
+  const newline = bytes.indexOf(0x0a, 0);
+  if (bytes.length === 0) {
+    throw new ActivityError(
+      'cursor_stale',
+      'Claude Code activity cursor is no longer valid',
     );
-    const bytes = await readBytesAt(opened.handle, position, length, {
-      ...(maxReadChunkBytes !== undefined
-        ? { maxChunkBytes: maxReadChunkBytes }
-        : {}),
-    });
-    const newline = bytes.indexOf(0x0a, 0);
-    if (bytes.length === 0) {
-      throw new ClaudeActivityError(
-        'cursor_stale',
-        'Claude Code activity cursor is no longer valid',
-      );
-    }
-    if (newline < 0) {
-      throw new ClaudeActivityError(
-        'scan_unsupported',
-        'Claude Code activity cursor boundary exceeds the bounded limit',
-      );
-    }
-    const boundaryBytes = bytes.subarray(0, newline + 1);
-    if (digest(boundaryBytes) !== expected) {
-      throw new ClaudeActivityError(
-        'cursor_stale',
-        'Claude Code activity cursor is no longer valid',
-      );
-    }
+  }
+  if (newline < 0) {
+    throw new ActivityError(
+      'scan_unsupported',
+      'Claude Code activity cursor boundary exceeds the bounded limit',
+    );
+  }
+  const boundaryBytes = bytes.subarray(0, newline + 1);
+  if (digest(boundaryBytes) !== expected) {
+    throw new ActivityError(
+      'cursor_stale',
+      'Claude Code activity cursor is no longer valid',
+    );
+  }
 }
 
 function isConversationParticipant(value: Record<string, unknown>): boolean {
@@ -446,17 +409,10 @@ function isProjectableRecord(value: Record<string, unknown>): boolean {
 async function verifyRewriteEvidence(
   opened: ClaudeOpenedRollout,
   cursor: ReturnType<typeof decodeClaudeCursor> | null,
-  maxReadChunkBytes?: number,
 ): Promise<RewriteEvidence> {
   if (cursor === null) {
     const start = Math.max(0, opened.size - MAX_DECODED_BYTES);
-    return scanRewriteEvidence(
-      opened,
-      start,
-      opened.size,
-      start === 0,
-      maxReadChunkBytes,
-    );
+    return scanRewriteEvidence(opened, start, opened.size, start === 0);
   }
   if (
     cursor.gen !==
@@ -466,34 +422,28 @@ async function verifyRewriteEvidence(
       digest: cursor.rd,
     })
   ) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
   }
   if (cursor.rw > opened.size) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
   }
   if (cursor.rp !== null && cursor.rd !== null) {
-    await verifyCursorBoundaryDigest(
-      opened,
-      cursor.rp,
-      cursor.rd,
-      maxReadChunkBytes,
-    );
+    await verifyCursorBoundaryDigest(opened, cursor.rp, cursor.rd);
   }
   const appended = await scanRewriteEvidence(
     opened,
     cursor.rw,
     opened.size,
     true,
-    maxReadChunkBytes,
   );
   if (appended.position !== null) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Claude Code activity cursor is no longer valid',
     );
@@ -510,27 +460,20 @@ async function scanRewriteEvidence(
   start: number,
   end: number,
   startsAtBoundary: boolean,
-  maxReadChunkBytes?: number,
 ): Promise<RewriteEvidence> {
   const length = end - start;
   if (length > MAX_DECODED_BYTES) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Claude Code activity interval exceeds the bounded limit',
     );
   }
-  const data = await readBytesAt(opened.handle, start, length, {
-    ...(maxReadChunkBytes !== undefined
-      ? { maxChunkBytes: maxReadChunkBytes }
-      : {}),
-  });
+  const data = await readBytesAt(opened.handle, start, length);
   let position: number | null = null;
   let evidenceDigest: string | null = null;
-  let cursor = startsAtBoundary
-    ? 0
-    : data.indexOf(0x0a) + 1;
+  let cursor = startsAtBoundary ? 0 : data.indexOf(0x0a) + 1;
   if (cursor === 0 && !startsAtBoundary && data.length > 0) {
-    throw new ClaudeActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Claude Code activity cannot find a bounded record boundary',
     );
@@ -541,7 +484,7 @@ async function scanRewriteEvidence(
     const raw = data.subarray(cursor, newline).toString('utf8');
     const value = parseRecord(raw);
     if (value === null && raw.trim() !== '') {
-      throw new ClaudeActivityError(
+      throw new ActivityError(
         'invalid',
         'Claude Code activity contains an unreadable record',
       );
@@ -572,12 +515,10 @@ function rewriteGeneration(evidence: RewriteEvidence): string {
 function isRewriteRecord(value: Record<string, unknown>): boolean {
   return (
     value['type'] === 'summary' ||
-    (value['type'] === 'system' &&
-      value['subtype'] === 'compact_boundary') ||
+    (value['type'] === 'system' && value['subtype'] === 'compact_boundary') ||
     value['snipMetadata'] !== undefined
   );
 }
-
 
 function visibleText(value: unknown, type: string): string {
   if (typeof value === 'string') return value;
@@ -598,16 +539,6 @@ function parseRecord(raw: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function effectiveEnvironment(
-  context: AgentActivityReadContext<DispatcherClaudeCodeConfig>,
-): Record<string, string | undefined> {
-  return {
-    ...process.env,
-    ...(context.injectEnv ?? {}),
-    ...context.config.extra_env,
-  };
 }
 
 function timestampIso(value: unknown): string | null {

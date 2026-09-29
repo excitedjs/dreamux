@@ -16,18 +16,17 @@ import type {
   DreamuxPlugin,
 } from '@excitedjs/dreamux-types';
 import {
+  errorMessage,
   isPlainObject,
-  rejectUnknownKeys,
-  requireNonEmptyString,
+  readNonEmptyString,
 } from '@excitedjs/dreamux-utils';
 
-import { errorMessage } from '../platform/error-info.js';
 import {
   ALWAYS_LOADED_PLUGIN_REFS,
   BUILTIN_PLUGIN_PACKAGES,
-  BUILTIN_PROVIDERS,
   parseProviderRef,
   registerBuiltinProvider,
+  type ProviderImplementation,
   type ProviderKind,
   type ProviderRef,
   type ProviderRegistry,
@@ -45,19 +44,29 @@ export interface LoadedPlugin {
   readonly source: string;
   readonly plugin: DreamuxPlugin;
   /** Its `plugins[]` entry and index; `null` for an always-loaded plugin. */
-  readonly entry: { readonly index: number; readonly value: PluginConfigEntry } | null;
+  readonly entry: {
+    readonly index: number;
+    readonly value: PluginConfigEntry;
+  } | null;
   /** `config.read` result; set by {@link readPluginConfigs}. */
   config: unknown;
   readonly providers: readonly { kind: ProviderKind; name: string }[];
 }
 
 export type PluginLoadPhase =
-  | 'import'
-  | 'factory'
-  | 'contribute'
-  | 'config'
-  | 'server'
-  | 'api';
+  'import' | 'factory' | 'contribute' | 'config' | 'server' | 'api';
+
+/**
+ * `name` becomes a `state/plugins/<name>` directory segment verbatim
+ * (`pluginStateDir`), so it must already be a safe single path segment.
+ * Anchoring the first character to an ASCII letter or digit rules out `.`
+ * and `..` (which would resolve `state/plugins/<name>` up to `state/plugins`
+ * or `state`), and restricting the whole name to this alphabet makes the
+ * name-to-segment mapping the identity function, so two distinct names can
+ * never land on the same directory the way a lossy sanitizer (mapping both
+ * `@acme/tool` and `_acme_tool` to `_acme_tool`) could.
+ */
+const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export class PluginLoadError extends Error {
   constructor(
@@ -102,7 +111,9 @@ export function readPluginEntries(
   const value = raw['plugins'];
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
-    throw new Error(`dreamux config error in ${file}: plugins must be an array`);
+    throw new Error(
+      `dreamux config error in ${file}: plugins must be an array`,
+    );
   }
   return value.map((item: unknown, index) => {
     const prefix = `plugins[${index}]`;
@@ -110,8 +121,7 @@ export function readPluginEntries(
     if (typeof item === 'string') {
       entry = { ref: item };
     } else if (isPlainObject(item)) {
-      rejectUnknownKeys(item, new Set(['ref', 'config']), file, `${prefix}.`);
-      entry = { ref: requireNonEmptyString(item, 'ref', file, `${prefix}.`) };
+      entry = { ref: readNonEmptyString(item, 'ref', file, `${prefix}.`) };
       if ('config' in item) entry.config = item['config'];
     } else {
       throw new Error(
@@ -137,12 +147,13 @@ export async function loadPlugins(options: {
   registry: ProviderRegistry;
   entries: readonly PluginConfigEntry[];
   logger: DreamuxLogger;
-  importModule?: PluginModuleImporter;
+  importModule?: PluginModuleImporter | undefined;
 }): Promise<LoadedPlugin[]> {
   const importModule = options.importModule ?? defaultImportModule;
-  const providerSources = new Map<string, string>(
-    BUILTIN_PROVIDERS.map((spec) => [spec.id, 'Dreamux core']),
-  );
+  // Every provider, built-in or plugin-supplied, is contributed by a plugin
+  // now, so the first `contribute()` call to claim a name is its source; there
+  // is nothing to pre-seed.
+  const providerSources = new Map<string, string>();
   const sources = [
     ...ALWAYS_LOADED_PLUGIN_REFS.map((ref) => ({
       ref,
@@ -171,7 +182,14 @@ export async function loadPlugins(options: {
       logger: options.logger,
       providerSources,
     });
-    loaded.push({ name: plugin.name, source, plugin, entry, config: undefined, providers });
+    loaded.push({
+      name: plugin.name,
+      source,
+      plugin,
+      entry,
+      config: undefined,
+      providers,
+    });
   }
   return loaded;
 }
@@ -179,9 +197,7 @@ export async function loadPlugins(options: {
 /**
  * Call each plugin's `config.read` with its entry's `config`. A `config` block
  * for a plugin without `config.read` is ignored: a plugin with no reader has
- * nowhere to route the block that would give it effect. This is narrower than
- * general unknown-field tolerance — `rejectUnknownKeys` still applies to
- * `plugins[]` entry keys and elsewhere in `config.ts`.
+ * nowhere to route the block that would give it effect.
  */
 export function readPluginConfigs(
   plugins: readonly LoadedPlugin[],
@@ -230,7 +246,8 @@ async function constructPlugin(
       { cause: err },
     );
   }
-  const exportName = ref.source === 'npm' ? (ref.export ?? 'default') : 'default';
+  const exportName =
+    ref.source === 'npm' ? (ref.export ?? 'default') : 'default';
   const factory = module[exportName];
   if (typeof factory !== 'function') {
     throw new PluginLoadError(
@@ -243,20 +260,32 @@ async function constructPlugin(
   try {
     plugin = (factory as () => unknown)();
   } catch (err) {
-    throw new PluginLoadError(ref.raw, 'factory', `plugin factory threw: ${errorMessage(err)}`, {
-      cause: err,
-    });
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      `plugin factory threw: ${errorMessage(err)}`,
+      {
+        cause: err,
+      },
+    );
   }
-  // `name` keys the same-name rule and every plugin log line.
-  if (
-    !isPlainObject(plugin) ||
-    typeof plugin['name'] !== 'string' ||
-    plugin['name'] === ''
-  ) {
+  if (!isPlainObject(plugin) || typeof plugin['name'] !== 'string') {
     throw new PluginLoadError(
       ref.raw,
       'factory',
       'plugin factory must return an object with a non-empty string name',
+    );
+  }
+  // `name` keys the same-name rule, every plugin log line, and (via
+  // `pluginStateDir`) a `state/plugins/<name>` directory segment — see
+  // `PLUGIN_NAME_PATTERN`.
+  if (!PLUGIN_NAME_PATTERN.test(plugin['name'])) {
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      'plugin factory must return an object with a name of 1-64 ASCII ' +
+        'letters, digits, dots, underscores, or dashes, starting with a ' +
+        `letter or digit: ${JSON.stringify(plugin['name'])}`,
     );
   }
   return plugin as unknown as DreamuxPlugin;
@@ -272,7 +301,11 @@ function contributePlugin(
 ): { kind: ProviderKind; name: string }[] {
   const providers: { kind: ProviderKind; name: string }[] = [];
   if (plugin.contribute === undefined) return providers;
-  const contribute = (kind: ProviderKind, name: string, provider: unknown): void => {
+  const contribute = (
+    kind: ProviderKind,
+    name: string,
+    provider: ProviderImplementation,
+  ): void => {
     const other = context.providerSources.get(name);
     if (other !== undefined) {
       throw new PluginLoadError(
@@ -292,8 +325,10 @@ function contributePlugin(
         contribute('channel', name, provider),
     },
     agentRuntimeProviders: {
-      contribute: <TConfig>(name: string, provider: AgentRuntimeProvider<TConfig>) =>
-        contribute('agentRuntime', name, provider),
+      contribute: <TConfig>(
+        name: string,
+        provider: AgentRuntimeProvider<TConfig>,
+      ) => contribute('agentRuntime', name, provider),
     },
   };
   let result: unknown;

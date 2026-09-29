@@ -13,13 +13,10 @@ import type {
   JsonValue,
 } from '@excitedjs/dreamux-types';
 
-import type { AskUserQuestionSpec } from '../feishu-ask-user-card.js';
-import type { FeishuSpaceRecord } from '../routing/document.js';
-import type {
-  FeishuBindingView,
-  FeishuDocumentSubscriptionView,
-} from '../routing/index.js';
-import type { FeishuTarget } from '../routing/target.js';
+import type { AskUserQuestionSpec } from '../cards/ask-user.js';
+import type { FeishuBindingOperations } from '../routing/operations.js';
+import type { FeishuRouting } from '../routing/index.js';
+import type { FeishuDocumentComments } from '../feishu-document-comments.js';
 
 /** Logger shape used by the Feishu session — pino-style, fields-first. */
 export type ChannelLogger = import('@excitedjs/dreamux-types').DreamuxLogger;
@@ -35,19 +32,17 @@ export interface FeishuListChatBotsResult {
   trusted: WireChatBot[];
 }
 
-export interface FeishuSpacePolicyInput {
-  spaceName: string;
-  chatId: string;
-  display: string | null;
-  leaderAgentRuntime: string;
-  identity: string | null;
-  repo: { path: string; base_ref: string | null } | null;
-}
-
 /**
- * The live session capability tool handlers run against. It is deliberately a
- * plain function bundle: definitions stay unit-testable and never reach into
- * the session class.
+ * The live session capability tool handlers run against.
+ *
+ * `sendText`/`react`/`listKnownChatBots`/`askUserQuestion` carry session-owned
+ * logic (mapping the outbound result to the tool's own wire shape, reading the
+ * chat-bots store) and stay methods here. Routing, binding, and document-
+ * subscription tools instead reach their real owners directly through the
+ * narrow `Pick<>`s below — there is nothing for a re-declared forwarding
+ * method to add between a tool handler and `FeishuBindingOperations` /
+ * `FeishuRouting` / `FeishuDocumentComments`, which each already validate and
+ * own their own state.
  */
 export interface FeishuToolSession {
   readonly logger: ChannelLogger;
@@ -55,7 +50,11 @@ export interface FeishuToolSession {
   sendText(
     chatId: string,
     text: string,
-    opts?: { messageId?: string },
+    opts: {
+      messageId?: string;
+      /** The calling Team, or `null` for the Dispatcher Agent. */
+      callerTeamName: string | null;
+    },
   ): Promise<{ message_ids: string[] }>;
   react(
     chatId: string | undefined,
@@ -74,47 +73,18 @@ export interface FeishuToolSession {
     questions: readonly AskUserQuestionSpec[];
     messageId?: string;
   }): Promise<{ request_id: string }>;
-  /**
-   * `requireOwner` is the Team a route must already belong to, if any Team
-   * does. A Dispatcher omits it and may move any route; a TeamLeader passes
-   * its own Team and reaches only its own.
-   */
-  bindChannel(input: {
-    target: FeishuTarget;
-    teamName: string;
-    display: string | null;
-    requireOwner?: string;
-  }): Promise<{ team_name: string; previous_team_name: string | null }>;
-  unbindChannel(
-    target: FeishuTarget,
-    requireOwner?: string,
-  ): Promise<{ team_name: string | null }>;
-  listBindings(): readonly FeishuBindingView[];
-  bindSpace(input: FeishuSpacePolicyInput): Promise<FeishuSpaceRecord>;
-  unbindSpace(spaceName: string): Promise<FeishuSpaceRecord | null>;
-  getSpace(spaceName: string): FeishuSpaceRecord | undefined;
-  listSpaces(): readonly FeishuSpaceRecord[];
-  /**
-   * `teamName` is the calling recipient — a TeamLeader's own Team, or `null`
-   * for the Dispatcher Agent. It is derived from the caller, never named in an
-   * argument, so all three of these reach the caller's own rows and no others.
-   */
-  subscribeDocument(input: {
-    document: string;
-    type: string | null;
-    teamName: string | null;
-  }): Promise<{
-    file_token: string;
-    file_type: string;
-    already_subscribed: boolean;
-  }>;
-  unsubscribeDocument(input: {
-    document: string;
-    teamName: string | null;
-  }): Promise<{ file_token: string; unsubscribed: boolean }>;
-  listSubscriptions(
-    teamName: string | null,
-  ): readonly FeishuDocumentSubscriptionView[];
+  readonly bindings: Pick<
+    FeishuBindingOperations,
+    'bindChannel' | 'unbindChannel' | 'bindSpace' | 'unbindSpace'
+  >;
+  readonly routing: Pick<
+    FeishuRouting,
+    'listBindings' | 'spaceByName' | 'listSpaces' | 'listSubscriptions'
+  >;
+  readonly docComments: Pick<
+    FeishuDocumentComments,
+    'subscribe' | 'unsubscribe'
+  >;
 }
 
 export interface FeishuToolContext {

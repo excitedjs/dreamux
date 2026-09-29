@@ -11,14 +11,16 @@
  * so a domain Command module has one import for the base, the generic failures,
  * and the one failure the registry owns.
  */
+import { errorMessage } from '@excitedjs/dreamux-utils';
+
 import {
   DreamuxError,
   RuleViolation,
   StatedFailure,
   ValidationError,
-  errorMessage,
 } from '../platform/errors.js';
 
+// eslint-disable-next-line no-restricted-syntax -- callers import the Command failure vocabulary from this module today (see file-level comment above), not from platform/errors.js or dreamux-utils directly
 export {
   DreamuxError,
   InternalError,
@@ -27,8 +29,9 @@ export {
   StatedFailure,
   TransportError,
   ValidationError,
-  errorMessage,
 } from '../platform/errors.js';
+// eslint-disable-next-line no-restricted-syntax -- same one-import convenience re-export as above, for the canonical helper's new home
+export { errorMessage } from '@excitedjs/dreamux-utils';
 
 /**
  * One Command failure, in the shape every adapter puts on its wire.
@@ -58,6 +61,45 @@ export function commandFailure(error: unknown): CommandFailure {
     return { code: error.code, message: error.message };
   }
   return { code: 'INTERNAL', message: errorMessage(error) };
+}
+
+/**
+ * The sentence for one already-classified Command failure.
+ *
+ * `commandFailure` sets `action` for exactly the failures a domain stated for
+ * itself, so `action === undefined` here means exactly "not one of those" —
+ * the code and message travel as given, with no next step invented for a
+ * failure that never authored one. When it is set, the reason is turned into
+ * a full sentence and the action follows it, so a caller reads the same three
+ * parts a stated failure's own author wrote.
+ *
+ * Takes a {@link CommandFailure} directly rather than only `unknown`, because
+ * a value that already carries that exact shape — a Command failure that
+ * crossed a wire and was reconstructed on the other side, for instance —
+ * needs the same rendering without being re-classified as if it were a fresh
+ * thrown value.
+ */
+export function commandFailureText(failure: CommandFailure): string {
+  return failure.action === undefined
+    ? `${failure.code}: ${failure.message}`
+    : `${failure.code}: ${sentence(failure.message)} ${failure.action}`;
+}
+
+/**
+ * The sentence for any thrown value, by the class it already is.
+ *
+ * Built on {@link commandFailure}'s own classification, so every caller gets
+ * the same answer `commandFailure(err)` would already commit to, in one call.
+ */
+export function failureText(error: unknown): string {
+  return commandFailureText(commandFailure(error));
+}
+
+/** A reason always ends as a sentence, whether or not its author ended it. */
+function sentence(reason: string): string {
+  const stated = reason.trim();
+  if (stated === '') return 'No further detail is available.';
+  return /[.!?]$/.test(stated) ? stated : `${stated}.`;
 }
 
 /**

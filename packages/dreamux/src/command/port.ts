@@ -11,12 +11,9 @@
  * The port is itself a {@link CoreCommandRegistry}, which is why an adapter
  * cannot tell the difference — and cannot ask for the unadmitted one.
  */
-import type {
-  CoreCommandContext,
-  CoreCommandRegistry,
-  JsonValue,
-} from '@excitedjs/dreamux-types';
+import type { JsonValue } from '@excitedjs/dreamux-types';
 
+import type { CoreCommandContext, CoreCommandRegistry } from './types.js';
 import { ServerShuttingDownError } from './errors.js';
 import type { CoreCommands } from './registry.js';
 
@@ -25,11 +22,6 @@ export class CoreCommandPort implements CoreCommandRegistry {
   private readonly inFlight = new Set<Promise<unknown>>();
 
   constructor(private readonly registry: CoreCommands) {}
-
-  /** Every registered name, in registration order. Diagnostics only. */
-  names(): readonly string[] {
-    return this.registry.names();
-  }
 
   invoke(
     context: CoreCommandContext,

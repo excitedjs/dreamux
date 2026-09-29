@@ -13,12 +13,16 @@
  * is process-local work, and it reaches this service only as the final binding
  * it installs.
  */
-import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
+import {
+  PublicInvokeFailure,
+  type TransactionalStore,
+} from '@excitedjs/dreamux-utils';
 
-import type { FeishuRoutingStore } from './store.js';
+import { updateRoutingDocument } from './store.js';
 import type {
   FeishuBindingRecord,
   FeishuDocSubscriptionRecord,
+  FeishuRoutingDocument,
   FeishuSpaceRecord,
   FeishuSpaceRepoPolicy,
   FeishuTargetRecord,
@@ -81,7 +85,6 @@ export interface FeishuBindingView {
   readonly thread_id: string | null;
   readonly display: string | null;
   readonly team_name: string;
-  readonly origin: FeishuBindingRecord['origin'];
   readonly space_name: string | null;
   readonly created_at: number;
   readonly updated_at: number;
@@ -90,21 +93,25 @@ export interface FeishuBindingView {
 /**
  * A route that no longer exists, in the terms its removal is announced in.
  *
- * The row is gone from disk, so its display can no longer be read back; it
- * travels with the target because a caller telling a conversation it was
- * released names it the way the bind did.
+ * The row is gone from disk, so its display and root can no longer be read
+ * back; both travel with the target because a caller telling a conversation
+ * it was released names it, and replies under it, the way the bind did.
  */
 export interface FeishuRemovedRoute {
   readonly target: FeishuTarget;
   readonly display: string | null;
+  readonly rootMessageId: string | null;
 }
 
 export class FeishuRouting {
-  constructor(private readonly opts: {
-    readonly dispatcherId: string;
-    readonly channelId: string;
-    readonly store: FeishuRoutingStore;
-  }) {}
+  constructor(
+    private readonly opts: {
+      readonly dispatcherId: string;
+      readonly channelId: string;
+      readonly stateDir: string;
+      readonly store: TransactionalStore<FeishuRoutingDocument>;
+    },
+  ) {}
 
   // ── Resolution ─────────────────────────────────────────────────────────
 
@@ -135,9 +142,10 @@ export class FeishuRouting {
     if (!isBindableTarget(target)) {
       return { kind: 'dispatcher', reason: 'not_bindable' };
     }
-    const space = containerChatId === null
-      ? undefined
-      : this.spaceForContainer(containerChatId);
+    const space =
+      containerChatId === null
+        ? undefined
+        : this.spaceForContainer(containerChatId);
     return space === undefined
       ? { kind: 'dispatcher', reason: 'no_binding' }
       : { kind: 'provision', space };
@@ -153,6 +161,25 @@ export class FeishuRouting {
   spaceForContainer(chatId: string): FeishuSpaceRecord | undefined {
     return this.opts.store.current.spaces.find(
       (row) => row.container_chat_id === chatId,
+    );
+  }
+
+  /**
+   * This Team's own topic-kind bindings inside one Collaboration Space
+   * container — the row a `reply` call with no `message_id` inside that
+   * container may fall back to. A `null` team name — the Dispatcher Agent,
+   * which owns no Team — matches nothing by construction: no row's
+   * `team_name` is ever `null`.
+   */
+  topicBindingsFor(
+    containerChatId: string,
+    teamName: string | null,
+  ): readonly FeishuBindingRecord[] {
+    return this.opts.store.current.bindings.filter(
+      (row) =>
+        row.target.kind === 'topic' &&
+        row.target.chat_id === containerChatId &&
+        row.team_name === teamName,
     );
   }
 
@@ -178,8 +205,15 @@ export class FeishuRouting {
     target: FeishuTarget;
     teamName: string;
     display: string | null;
-    origin: FeishuBindingRecord['origin'];
     spaceId: string | null;
+    /**
+     * The visible message this binding's topic conversation should reply
+     * under, or `null` for a `group`/`p2p` target or a topic bound through a
+     * path with no message id. The caller resolves this value, including
+     * never regressing an already-set root on a rebind that happens not to
+     * carry one — this method writes exactly what it is given.
+     */
+    rootMessageId: string | null;
     /**
      * When set, refuse a target another Team currently holds instead of
      * moving it. A Team may claim what is free and keep what is already its
@@ -188,68 +222,72 @@ export class FeishuRouting {
     requireOwner?: string;
   }): Promise<{ previousTeamName: string | null }> {
     const displaced: { teamName: string | null } = { teamName: null };
-    await this.opts.store.update((document) => {
-      const key = targetKey(input.target);
-      const now = Date.now();
-      if (
-        input.target.kind === 'group' &&
-        document.spaces.some(
-          (row) => row.container_chat_id === input.target.chatId,
-        )
-      ) {
-        // The binding side of the document invariant stated on
-        // `FeishuRoutingDocument`. A topic inside the Space is unaffected and
-        // stays bindable — that is the row provisioning itself installs.
-        throw new PublicInvokeFailure(
-          'This Feishu chat is a Collaboration Space, which gives each of ' +
-            'its topics its own Team. Binding the chat itself would take ' +
-            'over every topic in it and stop new ones from getting a Team. ' +
-            'Bind a chat that is not a Collaboration Space.',
-        );
-      }
-      const existing = document.bindings.find(
-        (row) => targetKey(fromRecord(row.target)) === key,
-      );
-      if (existing !== undefined) {
+    await updateRoutingDocument(
+      this.opts.store,
+      this.opts.stateDir,
+      (document) => {
+        const key = targetKey(input.target);
+        const now = Date.now();
         if (
-          input.requireOwner !== undefined &&
-          existing.team_name !== input.requireOwner
+          input.target.kind === 'group' &&
+          document.spaces.some(
+            (row) => row.container_chat_id === input.target.chatId,
+          )
         ) {
-          // Deliberately says only that it belongs to someone else. Which
-          // Team owns a route is a Dispatcher read, and a refusal is not the
-          // place to hand it out.
+          // The binding side of the document invariant stated on
+          // `FeishuRoutingDocument`. A topic inside the Space is unaffected and
+          // stays bindable — that is the row provisioning itself installs.
           throw new PublicInvokeFailure(
-            'This Feishu conversation is already routed to another Team. ' +
-              'Ask the Dispatcher to move it.',
+            'This Feishu chat is a Collaboration Space, which gives each of ' +
+              'its topics its own Team. Binding the chat itself would take ' +
+              'over every topic in it and stop new ones from getting a Team. ' +
+              'Bind a chat that is not a Collaboration Space.',
           );
         }
-        displaced.teamName = existing.team_name;
-        if (
-          existing.team_name === input.teamName &&
-          existing.display === input.display &&
-          existing.origin === input.origin &&
-          existing.space_id === input.spaceId
-        ) {
-          return false;
+        const existing = document.bindings.find(
+          (row) => targetKey(fromRecord(row.target)) === key,
+        );
+        if (existing !== undefined) {
+          if (
+            input.requireOwner !== undefined &&
+            existing.team_name !== input.requireOwner
+          ) {
+            // Deliberately says only that it belongs to someone else. Which
+            // Team owns a route is a Dispatcher read, and a refusal is not the
+            // place to hand it out.
+            throw new PublicInvokeFailure(
+              'This Feishu conversation is already routed to another Team. ' +
+                'Ask the Dispatcher to move it.',
+            );
+          }
+          displaced.teamName = existing.team_name;
+          if (
+            existing.team_name === input.teamName &&
+            existing.display === input.display &&
+            existing.space_id === input.spaceId &&
+            existing.root_message_id === input.rootMessageId
+          ) {
+            return false;
+          }
+          existing.team_name = input.teamName;
+          existing.display = input.display;
+          existing.space_id = input.spaceId;
+          existing.root_message_id = input.rootMessageId;
+          existing.updated_at = now;
+          return true;
         }
-        existing.team_name = input.teamName;
-        existing.display = input.display;
-        existing.origin = input.origin;
-        existing.space_id = input.spaceId;
-        existing.updated_at = now;
+        document.bindings.push({
+          target: toRecord(input.target),
+          display: input.display,
+          team_name: input.teamName,
+          space_id: input.spaceId,
+          root_message_id: input.rootMessageId,
+          created_at: now,
+          updated_at: now,
+        });
         return true;
-      }
-      document.bindings.push({
-        target: toRecord(input.target),
-        display: input.display,
-        team_name: input.teamName,
-        origin: input.origin,
-        space_id: input.spaceId,
-        created_at: now,
-        updated_at: now,
-      });
-      return true;
-    });
+      },
+    );
     return { previousTeamName: displaced.teamName };
   }
 
@@ -265,23 +303,27 @@ export class FeishuRouting {
     requireOwner?: string,
   ): Promise<string | null> {
     const removed: { teamName: string | null } = { teamName: null };
-    await this.opts.store.update((document) => {
-      const key = targetKey(target);
-      const kept = document.bindings.filter((row) => {
-        if (targetKey(fromRecord(row.target)) !== key) return true;
-        if (requireOwner !== undefined && row.team_name !== requireOwner) {
-          throw new PublicInvokeFailure(
-            'This Feishu conversation is routed to another Team. Only the ' +
-              'Dispatcher can release it.',
-          );
-        }
-        removed.teamName = row.team_name;
-        return false;
-      });
-      if (kept.length === document.bindings.length) return false;
-      document.bindings = kept;
-      return true;
-    });
+    await updateRoutingDocument(
+      this.opts.store,
+      this.opts.stateDir,
+      (document) => {
+        const key = targetKey(target);
+        const kept = document.bindings.filter((row) => {
+          if (targetKey(fromRecord(row.target)) !== key) return true;
+          if (requireOwner !== undefined && row.team_name !== requireOwner) {
+            throw new PublicInvokeFailure(
+              'This Feishu conversation is routed to another Team. Only the ' +
+                'Dispatcher can release it.',
+            );
+          }
+          removed.teamName = row.team_name;
+          return false;
+        });
+        if (kept.length === document.bindings.length) return false;
+        document.bindings = kept;
+        return true;
+      },
+    );
     return removed.teamName;
   }
 
@@ -302,25 +344,33 @@ export class FeishuRouting {
   }> {
     const removed: FeishuRemovedRoute[] = [];
     const subscriptions: FeishuDocSubscriptionRecord[] = [];
-    await this.opts.store.update((document) => {
-      const kept = document.bindings.filter((row) => {
-        if (row.team_name !== teamName) return true;
-        removed.push({ target: fromRecord(row.target), display: row.display });
-        return false;
-      });
-      const keptSubscriptions = document.subscriptions.filter((row) => {
-        if (row.team_name !== teamName) return true;
-        subscriptions.push(row);
-        return false;
-      });
-      const changed =
-        kept.length !== document.bindings.length ||
-        keptSubscriptions.length !== document.subscriptions.length;
-      if (!changed) return false;
-      document.bindings = kept;
-      document.subscriptions = keptSubscriptions;
-      return true;
-    });
+    await updateRoutingDocument(
+      this.opts.store,
+      this.opts.stateDir,
+      (document) => {
+        const kept = document.bindings.filter((row) => {
+          if (row.team_name !== teamName) return true;
+          removed.push({
+            target: fromRecord(row.target),
+            display: row.display,
+            rootMessageId: row.root_message_id,
+          });
+          return false;
+        });
+        const keptSubscriptions = document.subscriptions.filter((row) => {
+          if (row.team_name !== teamName) return true;
+          subscriptions.push(row);
+          return false;
+        });
+        const changed =
+          kept.length !== document.bindings.length ||
+          keptSubscriptions.length !== document.subscriptions.length;
+        if (!changed) return false;
+        document.bindings = kept;
+        document.subscriptions = keptSubscriptions;
+        return true;
+      },
+    );
     // Reported apart from `removed` rather than folded into it: a removed route
     // is announced back into the conversation it named, and a subscription has
     // no conversation to announce into.
@@ -337,10 +387,10 @@ export class FeishuRouting {
       thread_id: row.target.thread_id ?? null,
       display: row.display,
       team_name: row.team_name,
-      origin: row.origin,
-      space_name: row.space_id === null
-        ? null
-        : spaces.get(row.space_id)?.space_name ?? null,
+      space_name:
+        row.space_id === null
+          ? null
+          : (spaces.get(row.space_id)?.space_name ?? null),
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
@@ -363,24 +413,28 @@ export class FeishuRouting {
     teamName: string | null;
   }): Promise<{ alreadySubscribed: boolean }> {
     const existing = { found: false };
-    await this.opts.store.update((document) => {
-      const row = document.subscriptions.find(
-        (candidate) =>
-          candidate.file_token === input.fileToken &&
-          candidate.team_name === input.teamName,
-      );
-      if (row !== undefined) {
-        existing.found = true;
-        return false;
-      }
-      document.subscriptions.push({
-        file_token: input.fileToken,
-        file_type: input.fileType,
-        team_name: input.teamName,
-        created_at: Date.now(),
-      });
-      return true;
-    });
+    await updateRoutingDocument(
+      this.opts.store,
+      this.opts.stateDir,
+      (document) => {
+        const row = document.subscriptions.find(
+          (candidate) =>
+            candidate.file_token === input.fileToken &&
+            candidate.team_name === input.teamName,
+        );
+        if (row !== undefined) {
+          existing.found = true;
+          return false;
+        }
+        document.subscriptions.push({
+          file_token: input.fileToken,
+          file_type: input.fileType,
+          team_name: input.teamName,
+          created_at: Date.now(),
+        });
+        return true;
+      },
+    );
     return { alreadySubscribed: existing.found };
   }
 
@@ -396,15 +450,19 @@ export class FeishuRouting {
     teamName: string | null,
   ): Promise<boolean> {
     const removed = { any: false };
-    await this.opts.store.update((document) => {
-      const kept = document.subscriptions.filter(
-        (row) => row.file_token !== fileToken || row.team_name !== teamName,
-      );
-      if (kept.length === document.subscriptions.length) return false;
-      document.subscriptions = kept;
-      removed.any = true;
-      return true;
-    });
+    await updateRoutingDocument(
+      this.opts.store,
+      this.opts.stateDir,
+      (document) => {
+        const kept = document.subscriptions.filter(
+          (row) => row.file_token !== fileToken || row.team_name !== teamName,
+        );
+        if (kept.length === document.subscriptions.length) return false;
+        document.subscriptions = kept;
+        removed.any = true;
+        return true;
+      },
+    );
     return removed.any;
   }
 
@@ -446,71 +504,65 @@ export class FeishuRouting {
     const committed: { record: FeishuSpaceRecord | undefined } = {
       record: undefined,
     };
-    await this.opts.store.update((document) => {
-      const now = Date.now();
-      const existing = document.spaces.find((row) => row.space_id === id);
-      const conflicting = document.spaces.find(
-        (row) => row.space_name === input.spaceName && row.space_id !== id,
-      );
-      if (conflicting !== undefined) {
-        throw new PublicInvokeFailure(
-          `Collaboration space ${JSON.stringify(input.spaceName)} is ` +
-            'already bound to another Feishu chat. Choose another name, or ' +
-            'unbind that space first.',
+    await updateRoutingDocument(
+      this.opts.store,
+      this.opts.stateDir,
+      (document) => {
+        const now = Date.now();
+        const existing = document.spaces.find((row) => row.space_id === id);
+        const conflicting = document.spaces.find(
+          (row) => row.space_name === input.spaceName && row.space_id !== id,
         );
-      }
-      // The space side of the document invariant stated on
-      // `FeishuRoutingDocument`. Only a whole-chat row conflicts; the topic
-      // rows a Space installs as it provisions do not, so re-registering a
-      // Space that already has live topics keeps working.
-      const wholeChat = document.bindings.find(
-        (row) =>
-          row.target.kind === 'group' &&
-          row.target.chat_id === input.containerChatId,
-      );
-      if (wholeChat !== undefined) {
-        throw new PublicInvokeFailure(
-          `This Feishu chat is bound as a whole to Team ` +
-            `${JSON.stringify(wholeChat.team_name)}, which would answer for ` +
-            'every topic in it and leave new topics without a Team of their ' +
-            'own. Unbind the chat first, then register the space.',
+        if (conflicting !== undefined) {
+          throw new PublicInvokeFailure(
+            `Collaboration space ${JSON.stringify(input.spaceName)} is ` +
+              'already bound to another Feishu chat. Choose another name, or ' +
+              'unbind that space first.',
+          );
+        }
+        // The space side of the document invariant stated on
+        // `FeishuRoutingDocument`. Only a whole-chat row conflicts; the topic
+        // rows a Space installs as it provisions do not, so re-registering a
+        // Space that already has live topics keeps working.
+        const wholeChat = document.bindings.find(
+          (row) =>
+            row.target.kind === 'group' &&
+            row.target.chat_id === input.containerChatId,
         );
-      }
-      if (existing === undefined) {
-        const created: FeishuSpaceRecord = {
-          space_id: id,
-          space_name: input.spaceName,
-          container_chat_id: input.containerChatId,
-          display: input.display,
-          generation: 1,
-          leader_agent_runtime: input.leaderAgentRuntime,
-          identity: input.identity,
-          repo: input.repo,
-          created_at: now,
-          updated_at: now,
-        };
-        document.spaces.push(created);
-        committed.record = created;
+        if (wholeChat !== undefined) {
+          throw new PublicInvokeFailure(
+            `This Feishu chat is bound as a whole to Team ` +
+              `${JSON.stringify(wholeChat.team_name)}, which would answer for ` +
+              'every topic in it and leave new topics without a Team of their ' +
+              'own. Unbind the chat first, then register the space.',
+          );
+        }
+        if (existing === undefined) {
+          const created: FeishuSpaceRecord = {
+            space_id: id,
+            space_name: input.spaceName,
+            container_chat_id: input.containerChatId,
+            display: input.display,
+            leader_agent_runtime: input.leaderAgentRuntime,
+            identity: input.identity,
+            repo: input.repo,
+            created_at: now,
+            updated_at: now,
+          };
+          document.spaces.push(created);
+          committed.record = created;
+          return true;
+        }
+        existing.space_name = input.spaceName;
+        existing.display = input.display;
+        existing.leader_agent_runtime = input.leaderAgentRuntime;
+        existing.identity = input.identity;
+        existing.repo = input.repo;
+        existing.updated_at = now;
+        committed.record = existing;
         return true;
-      }
-      // Only creation facts advance the generation: a rename or a new display
-      // names the same policy snapshot. Either way the update reaches Team
-      // creations that start after it and no others — a creation already under
-      // way holds the record this document replaced.
-      const rebound =
-        existing.leader_agent_runtime !== input.leaderAgentRuntime ||
-        existing.identity !== input.identity ||
-        JSON.stringify(existing.repo) !== JSON.stringify(input.repo);
-      existing.space_name = input.spaceName;
-      existing.display = input.display;
-      existing.leader_agent_runtime = input.leaderAgentRuntime;
-      existing.identity = input.identity;
-      existing.repo = input.repo;
-      existing.updated_at = now;
-      if (rebound) existing.generation += 1;
-      committed.record = existing;
-      return true;
-    });
+      },
+    );
     const saved = committed.record;
     if (saved === undefined) {
       throw new Error('feishu space policy was not saved');
@@ -530,16 +582,20 @@ export class FeishuRouting {
     const removed: { record: FeishuSpaceRecord | undefined } = {
       record: undefined,
     };
-    await this.opts.store.update((document) => {
-      const kept = document.spaces.filter((row) => {
-        if (row.space_name !== spaceName) return true;
-        removed.record = row;
-        return false;
-      });
-      if (kept.length === document.spaces.length) return false;
-      document.spaces = kept;
-      return true;
-    });
+    await updateRoutingDocument(
+      this.opts.store,
+      this.opts.stateDir,
+      (document) => {
+        const kept = document.spaces.filter((row) => {
+          if (row.space_name !== spaceName) return true;
+          removed.record = row;
+          return false;
+        });
+        if (kept.length === document.spaces.length) return false;
+        document.spaces = kept;
+        return true;
+      },
+    );
     return removed.record ?? null;
   }
 

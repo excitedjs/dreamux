@@ -34,7 +34,7 @@
 
 import type { Mention } from '@excitedjs/feishu-transport';
 
-import type { DispatcherAccessState } from './feishu-gate.js';
+import type { DispatcherAccessState } from './access/state.js';
 import type { PeerBot } from './chat-bots-store.js';
 
 const INTRODUCE_RE = /^\/introduce(?:\s|$)/i;
@@ -89,7 +89,10 @@ export function introduceDenyReason(
   // Under `allowlist` the group is the unit of trust, so the chat must be named.
   // Under `follow-user` /introduce does not require a listed chat, but ordinary
   // trusted-chat delivery still does not grant sender-scoped mutation rights.
-  if (policy === 'allowlist' && !access.group.allow_chats.includes(input.chatId)) {
+  if (
+    policy === 'allowlist' &&
+    !access.group.allow_chats.includes(input.chatId)
+  ) {
     return 'chat_not_allowlisted';
   }
   // Authorization is an exact sender-id membership check. `allow_users` is
@@ -97,7 +100,8 @@ export function introduceDenyReason(
   // there deliberately also passes; ambient senders absent from the list do
   // not. An empty list authorizes nobody. The `sender_not_followed` code name
   // predates the single-list unification (issue #79).
-  if (!access.allow_users.includes(input.senderId)) return 'sender_not_followed';
+  if (!access.allow_users.includes(input.senderId))
+    return 'sender_not_followed';
   return null;
 }
 
@@ -124,11 +128,7 @@ export function detectIntroduce(
   rawContent: string,
   mentions: Mention[],
 ): boolean {
-  const remaining = leadingTextAfterMentions(
-    messageType,
-    rawContent,
-    mentions,
-  );
+  const remaining = leadingTextAfterMentions(messageType, rawContent, mentions);
   return remaining !== null && INTRODUCE_RE.test(remaining);
 }
 

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6f, item 2 (R48): wired the new Dispatcher.hooks.teammateLaunch hook through TeammateCollection.buildEntity (the one construction path behind spawn, createLocked, and reopen), the dispatcher-root and Team-scoped TeammateCollections, and the TeamMate system prompt, so a plugin can now append instructions and skill sources to every ordinary TeamMate's launch the same way it already can for the Dispatcher and a TeamLeader.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

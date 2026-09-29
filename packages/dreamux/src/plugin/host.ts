@@ -15,8 +15,14 @@ import type {
 } from '@excitedjs/dreamux-types';
 import { HookMap, SyncHook } from 'tapable';
 
-import { errorMessage } from '../platform/error-info.js';
-import { isolatedTaps, loadPhaseTaps, runAsPlugin, tapOwners } from './hooks.js';
+import { errorMessage } from '@excitedjs/dreamux-utils';
+import { pluginStateDir } from '../platform/paths.js';
+import {
+  isolatedTaps,
+  loadPhaseTaps,
+  runAsPlugin,
+  tapOwners,
+} from './hooks.js';
 import { isThenable, type LoadedPlugin, PluginLoadError } from './loader.js';
 
 export type ServerHooks = ServerHost['hooks'];
@@ -74,8 +80,9 @@ export function startPlugins(
       result = runAsPlugin(loaded.name, () =>
         server({
           config: loaded.config,
-          logger: logger.child?.({ plugin: loaded.name }) ?? logger,
+          logger: logger.child({ plugin: loaded.name }),
           hooks,
+          stateDir: pluginStateDir(loaded.name),
         }),
       );
     } catch (err) {

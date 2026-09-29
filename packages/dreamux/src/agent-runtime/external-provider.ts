@@ -61,7 +61,10 @@ export class ExternalAgentRuntimeProviderLoadError extends Error {
 }
 
 export class ExternalAgentRuntimeProviderContractError extends Error {
-  constructor(readonly providerRef: string, message: string) {
+  constructor(
+    readonly providerRef: string,
+    message: string,
+  ) {
     super(
       `invalid external agentRuntime provider ${JSON.stringify(providerRef)}: ${message}`,
     );
@@ -72,7 +75,7 @@ export class ExternalAgentRuntimeProviderContractError extends Error {
 export interface LoadAgentRuntimeProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ExternalAgentRuntimeModuleImporter;
+  importModule?: ExternalAgentRuntimeModuleImporter | undefined;
 }
 
 const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<
@@ -180,7 +183,9 @@ function assertOptionalOnboard(
 ): void {
   if (value === undefined) return;
   if (!isRecord(value) || typeof value['collect'] !== 'function') {
-    context.fail('provider.onboard.collect must be a function when onboard is present');
+    context.fail(
+      'provider.onboard.collect must be a function when onboard is present',
+    );
   }
 }
 

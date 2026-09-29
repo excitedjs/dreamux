@@ -15,9 +15,9 @@
 /** A document reference resolved as far as text alone can resolve it. */
 export interface FeishuDocumentRef {
   /** The token the URL or the caller named. `wiki` makes it a node token. */
-  readonly token: string
+  readonly token: string;
   /** The document type the reference itself states, or `null` for a bare token. */
-  readonly type: string | null
+  readonly type: string | null;
 }
 
 /** Feishu URL words that differ from the type its APIs take. */
@@ -26,30 +26,32 @@ const URL_SEGMENT_TYPES: Readonly<Record<string, string>> = {
   sheets: 'sheet',
   base: 'bitable',
   mindnotes: 'mindnote',
-}
+};
 
 /**
  * Read a document URL or a bare token. Returns `null` only for input that
  * names nothing at all. Pure: no I/O, never throws.
  */
-export function parseFeishuDocumentRef(input: string): FeishuDocumentRef | null {
-  const trimmed = input.trim()
-  if (trimmed === '') return null
+export function parseFeishuDocumentRef(
+  input: string,
+): FeishuDocumentRef | null {
+  const trimmed = input.trim();
+  if (trimmed === '') return null;
 
-  let url: URL
+  let url: URL;
   try {
-    url = new URL(trimmed)
+    url = new URL(trimmed);
   } catch {
     // Not a URL, so the whole string is the token and its type is unstated.
-    return { token: trimmed, type: null }
+    return { token: trimmed, type: null };
   }
 
-  const segments = url.pathname.split('/').filter((segment) => segment !== '')
-  const token = segments.pop()
-  if (token === undefined) return null
-  const word = segments.pop()
+  const segments = url.pathname.split('/').filter((segment) => segment !== '');
+  const token = segments.pop();
+  if (token === undefined) return null;
+  const word = segments.pop();
   return {
     token: decodeURIComponent(token),
-    type: word === undefined ? null : URL_SEGMENT_TYPES[word] ?? word,
-  }
+    type: word === undefined ? null : (URL_SEGMENT_TYPES[word] ?? word),
+  };
 }

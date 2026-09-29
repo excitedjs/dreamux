@@ -21,11 +21,11 @@ Dreamux local files split by volatility and ownership:
   logs/                diagnostics
 ```
 
-Two environment overrides exist and they are not the same knob.
-`DREAMUX_CONFIG_DIR` relocates where `config.json` is looked up and nothing
-else; `DREAMUX_ROOT` relocates the whole Dreamux home, which is why every
-`state/`, `run/`, `cache/`, and `logs/` path follows it and `access.json` in
-particular is independent of `DREAMUX_CONFIG_DIR`.
+One environment override relocates the whole Dreamux home: `DREAMUX_ROOT`.
+Every `config.json`, `state/`, `run/`, `cache/`, and `logs/` path follows it,
+though `access.json` and `config.json` reach the root through different
+builders (`stateRoot()` for the former, `dreamuxRoot()` directly for the
+latter).
 
 Path builders belong in `/packages/dreamux/src/platform/paths.ts`. Volatile
 runtime socket allocation belongs in
@@ -33,8 +33,12 @@ runtime socket allocation belongs in
 their own runtime-specific paths from the neutral path context. `~/.codex/`
 remains Codex's own global auth/config/memory home: dispatcher app-server
 processes follow Codex there and Dreamux creates no dispatcher-private
-`CODEX_HOME`. Dreamux bundled skills are injected at runtime by role and are
-never installed into a dispatcher workspace.
+`CODEX_HOME`. Doctor and the cold activity reader resolve the Codex home from
+the same per-agent `extra_env` the runtime actually spawns with, not always
+the operator's default `~/.codex`, so an agent-level `CODEX_HOME` override is
+honored consistently everywhere Dreamux looks at Codex's home. Dreamux bundled
+skills are injected at runtime by role and are never installed into a
+dispatcher workspace.
 
 Not every file under `state/` is Core's. Each document names its owner below,
 and only that owner decides whether a field can be maintained externally.
@@ -44,7 +48,10 @@ Source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/platform/runtime-sockets.ts`
 - `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/config/service.ts`
+- `/packages/dreamux/src/config/commands.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/agent-runtime/codex/src/paths.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
@@ -53,8 +60,8 @@ Source:
 ### Operator Config
 
 The path reported by `dreamux config path` is the only Dreamux operator config
-source. It is normally `~/.dreamux/config.json`, may be relocated by
-`DREAMUX_CONFIG_DIR`, and is mode `0600` because provider configs may contain
+source. It is normally `~/.dreamux/config.json`, relocatable with
+`DREAMUX_ROOT`, and is mode `0600` because provider configs may contain
 secrets.
 
 It declares:
@@ -71,31 +78,56 @@ It declares:
   to an `agents[].id`.
 - `dispatchers[].channels[]`: dispatcher-local channel id, Channel provider ref,
   and provider-owned channel config. Core owns no routing or Collaboration Space
-  policy here. A leftover `collaborationSpace` block is a loud config error: the
-  Channel that offers the product flow owns that policy, in its own state.
+  policy here. A leftover `collaborationSpace` block is tolerated and ignored,
+  like any other retired key: the Channel that offers the product flow owns
+  that policy, in its own state.
 
-Legacy top-level `workspace.enabled` is not accepted. Set
-`dispatchers[].workspace.enabled` on each dispatcher instead; omitted dispatcher
-workspace policy defaults to disabled, including an empty `workspace` object.
-Explicit true/false values are preserved; onboarding seeds new policy as false
-and preserves existing policy. A dispatcher `runtime` block is likewise
-rejected with the rebuild instruction to declare a named `agents[]` entry.
+A legacy top-level `workspace` key is not read: `dispatchers[].workspace.enabled`
+is the only place workspace policy is read from, per-dispatcher. Omitted
+dispatcher workspace policy defaults to disabled, including an empty
+`workspace` object. Explicit true/false values are preserved; onboarding seeds
+new policy as false and preserves existing policy. A dispatcher `runtime`
+block is tolerated and ignored, the same as any other retired key.
+
+Every key `config.json` reads is still checked for the right type, and every
+required key is still checked for presence, at every level (R21). An
+unrecognized key anywhere in the envelope — the top level, `dispatchers[]`,
+`dispatchers[].workspace`, `dispatchers[].channels[]`, or `agents[]` — is
+tolerated and ignored rather than rejected, with no exception for a named
+legacy shape: a leftover top-level `codex` block, a dispatcher `runtime`
+block, a dispatcher's leftover `feishu`/`codex` provider block (the pre-v2
+config shape), a channel's `collaborationSpace` block, and a leftover
+top-level `workspace` key all load the same way — as an ordinary tolerated
+unknown key, with no special-cased rejection or rebuild-instruction error.
 
 `dreamux serve` fails loudly and creates no silent defaults when the config file
 is missing, when its mode is not `0600`, when the JSON does not parse, when the
-shape is rejected (unknown keys, a top-level `codex` block, a dispatcher
-`runtime` block, a duplicate dispatcher id, a dispatcher entry without a
-non-empty `cwd` (enabled or not; the error names the dispatcher id), a channel
-`collaborationSpace` block), or when a providerized entry or a plugin cannot be
-loaded (including a duplicate plugin or provider name, and a `config` block for
-a plugin that takes none). The operator fix path is `dreamux onboard` or a
-manual rebuild.
+shape is rejected (a wrong type or a missing required field at any level, a
+duplicate dispatcher id, a dispatcher entry without a non-empty `cwd` (enabled
+or not; the error names the dispatcher id)), or when a providerized entry or a
+plugin cannot be loaded (including a duplicate plugin or provider name; a
+`config` block for a plugin with no reader is tolerated and ignored, not
+rejected). The operator fix path is `dreamux onboard` or a manual rebuild.
+
+While `dreamux serve` runs, the Config Service (`config/service.ts`) holds
+`config.json` in memory as this process's single authority over it; a hand
+edit made to the file after start is not read until restart, the same
+in-memory-authority rule the routing document and `access.json`/
+`chat-bots.json` already follow (see Durable State Layout below).
+`agents[]` is additionally readable and replaceable live, without a restart,
+through the `config.agents.get`/`config.agents.replace` Commands (secrets
+returned as `''`, a whole-section replace matched by `id`, a submitted `''`
+for a secret-named key keeping the stored value); a replace takes effect for
+the next runtime launch, not the one already running. `dispatchers[]` has no
+Command and stays hand-edit-with-the-daemon-stopped only.
 
 Source:
 
 - `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/config/load.ts`
+- `/packages/dreamux/src/config/service.ts`
+- `/packages/dreamux/src/config/commands.ts`
 - `/packages/dreamux/src/plugin/loader.ts`
-- `/packages/dreamux/src/config/config-helpers.ts`
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/onboard/run.ts`
 
@@ -124,16 +156,26 @@ state/<dispatcher-id>/
   workflow/<run-id>/
     record.json
     journal.jsonl
+state/plugins/<plugin-name>/  one plugin's own durable state (R50)
 ```
 
 `teammate/` and `team/` hold only entity directories, because listing a
 collection is a blind `readdir`: an owner's own Agent record, its Team record,
 and its channel state all sit beside the collection, never inside it.
 
+`state/plugins/<plugin-name>/` is plugin-owned: Core hands the directory path
+to the plugin at `server()` time (`ServerHost.stateDir`) and never creates it
+or reads inside it. `plugin/loader.ts`'s `constructPlugin` validates a
+factory-returned plugin name against a safe single-segment pattern (1-64 ASCII
+letters/digits/dot/underscore/dash, starting with a letter or digit) and fails
+loading loud otherwise, so `pluginStateDir` uses `<plugin-name>` verbatim: distinct
+names map to distinct segments on a case-sensitive filesystem (on a
+case-insensitive one `Foo` and `foo` share a directory), and none can resolve
+to `.`/`..` and escape `state/plugins/`.
+
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/dreamux/src/state/dispatcher-store.ts`
 
 ### Agent Identity Records
 
@@ -155,14 +197,22 @@ conversation projection.
 to Core, which stores it verbatim, checks it for presence, and hands it back to
 the same provider without parsing, indexing, or branching on it. Absent or
 `null` reads as `null` (no prior session); a present value that is not a
-non-empty string fails loud. That type check is the only gate on the session,
-because an id the provider can no longer find already degrades correctly to
-"start a fresh session".
+non-empty string is rejected the same way any other required-field violation is
+(below) — the reader does not repair it into something plausible. That type
+check is the only gate on the session, because an id the provider can no
+longer find already degrades correctly to "start a fresh session".
 
-Reading rejects exactly five removed fields — `checkpoint`, `checkpoint_kind`,
-`session_ref`, `display_name`, `close_status` — plus a pre-#148 record that
-still references its runtime through `provider_ref`. A leftover `role` or
-`transcript_locator` is inert residue that no path reads, validates, or deletes.
+Only one shape problem propagates as an exception out of a read: a pre-#148
+record that still references its runtime through `provider_ref`
+(`LegacyStateError`). Every other shape problem — a required field missing or
+the wrong type (including a malformed `session_id`), or JSON that does not
+parse at all — is rejected the same way a missing file is: the whole record
+reads as `null` with a logged warning, so one unreadable entity's directory
+never sinks a whole collection scan. Every leftover key that is not itself a
+shape problem — including `checkpoint`, `checkpoint_kind`, `session_ref`,
+`display_name`, and `close_status`, the curated removed-field list R47 deleted
+from this reader — is tolerated and ignored, the same as a leftover `role` or
+`transcript_locator`: inert residue that no path reads, validates, or deletes.
 Role is deliberately not persisted at all: each of the four owners that can
 materialize an Agent already knows which role it is, and a durable copy could
 disagree with the directory the record actually lives in.
@@ -190,10 +240,10 @@ cold provider query and stores no copy, index, or cursor in Dreamux state.
 
 Source:
 
-- `/packages/dreamux/src/service/agent-entity/types.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent/identity.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 - `/packages/dreamux/src/agent-runtime/skill-sources.ts`
-- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
+- `/packages/dreamux/src/service/agent/activity.ts`
 
 ### Team Records
 
@@ -202,18 +252,33 @@ inputs, the workspace, `status`, `closed_at` / `close_note`, the accepted
 `team.create` request identity and payload hash, the one shared worktree
 identity, and `worktree_cleanup_force`. Do not edit or manufacture it by hand.
 
-The record is also the Team's own name claim. Publishing it is an exclusive
-create, and that create is the whole acceptance protocol: before it the
-candidate name is free and a caller that loses the race simply picks another;
-after it the record owns the name permanently, including after the Team closes.
+The record is also the Team's own name claim. Publishing it is a serialized
+load-decide-write inside the one `TransactionalStore` the collection holds for
+that Team id for its whole life, and that create is the whole acceptance
+protocol: before it the candidate name is free and a caller that loses the
+race against that same in-memory queue simply picks another; after it the
+record owns the name permanently, including after the Team closes. An
+unreadable residue file this daemon has not loaded yet counts as no Team, so
+it is not protected — the next create overwrites it and wins the name. Once
+this daemon has loaded a valid record for that Team id, that load-decide-write
+protocol is what makes the name permanent: a hand edit or deletion on disk
+after that point changes nothing, because the store's committed in-memory
+value, not a fresh disk read, is what the next `create()` decides against.
 There is no separate claim file.
 
 It carries no dissolve operation — no operation id, no phase, no requester
 generation, no handoff ids, no attempt count, no retry time. A dissolve is an
-ordinary submission answered `{ accepted, team_name, status: "submitted" }`, and
-the single record write that sets `closed` is the only durable step. A process
-that dies mid-dissolve therefore leaves an open Team whose children reopen
-lazily, and the dissolve can simply be asked again.
+ordinary submission answered `{ accepted, team_name, status: "submitted" }`,
+before anything has stopped, and the single record write that sets `closed`
+is the durable commit point (R62): a non-forced worktree precheck is the one
+refusal left, and everything after the `closed` write — destroying every
+child service, reclaiming the worktree — is best-effort and never rolled
+back. A process that dies before that write lands leaves the Team exactly as
+`dissolve` found it, untouched, so the dissolve can simply be asked again. One
+that dies after the write lands leaves the Team durably closed, with whatever
+children the destroy pass had not yet reached exactly as they were (a
+member's `identity.json` still open, a cron store file still present) —
+inert residue nothing revisits, since a closed Team is never rebuilt.
 
 Team `status` is `starting | running | closed`. The one thing a close can leave
 behind is physical: a managed `delete-on-close` checkout that could not be
@@ -228,13 +293,26 @@ downstream is notified.
 
 Source:
 
-- `/packages/dreamux/src/service/team-collection/store.ts`
-- `/packages/dreamux/src/service/team-collection/worktree-cleanup.ts`
+- `/packages/dreamux/src/service/team/store.ts`
+- `/packages/dreamux/src/service/team/index.ts`
 
 ### Channel-Owned State
 
 Three files under the dispatcher state root belong to the Feishu Channel, not to
-Core. Core supplies the per-dispatcher state root and nothing else.
+Core. Core supplies the per-dispatcher state root and nothing else. Each is
+loaded into memory once — routing at session start, `access.json` and
+`chat-bots.json` at first use — and held for the life of the session; a hand
+edit made while the channel is running is not read until the next restart.
+Every persisted Dreamux file, this trio included, follows the shape policy the
+code-organization refactor's R21/R22 rulings set: an unknown field is
+tolerated and ignored, and a fact no code reads back is not persisted at all —
+it goes to a log line instead
+(`.agents/tasks/architecture/code-organization-refactor/rulings.md`). Loader
+strictness on a missing or wrong-typed field still varies by file and is
+unchanged by that policy: the routing document and `access.json` fail loud
+(below); `chat-bots.json` degrades the one bad field to its default instead
+(`chat-bots-store.ts`'s `normalizeEntry`), because peer-bot discovery is not
+security-critical the way access control is.
 
 `feishu-routing.<channel-slug>.<digest>.json` is one Channel session's routing
 authority, owned end to end by `@excitedjs/feishu-channel`: the filename (a slug
@@ -250,31 +328,36 @@ incompatible document fails loud and the operator recreates the rows through the
 Channel's own `bind_channel` / `bind_collaboration_space` tools.
 
 `access.json` is the deliberate mixed-ownership exception. Its path is fixed
-under the state root, independent of `DREAMUX_CONFIG_DIR`. `version` is
+under the state root. `version` is
 Channel/schema-owned; `dm_policy` and `group.*` are operator policy;
 `allow_users` is shared between live pairing/Owner approval and a quiesced
-operator; `pending`, `observed_chats`, `warnings`, and `last_gate` are Channel
-runtime ledger. The Channel writes it owner-only and creates a missing state
-directory at `0700`. The exact manual-maintenance procedure — quiesce, post-stop
-re-read, owner-only atomic patch, restart — is owned by
-`/packages/dreamux/skills/dispatcher/dreamux-maintenance/`, not by this page.
+operator; `pending` is Channel runtime ledger, not operator-editable. The
+former `observed_chats`/`warnings`/`last_gate` top-level fields and each
+pending entry's `kind`/`replies` are gone (R22/R45: they were write-only or
+warning-dedup-only, and are not persisted). The Channel writes it owner-only
+and creates a missing state directory at `0700`. The exact manual-maintenance
+procedure — quiesce, post-stop re-read, owner-only atomic patch, restart — is
+owned by `/packages/dreamux/skills/dispatcher/dreamux-maintenance/`, not by
+this page.
 
 `chat-bots.json` is the Feishu known/trusted peer bot store, `version: 1`,
 owner-only and atomically written by the same provider.
 
-`feishu-extensions/<extension>/<channel segment>/` belongs to one Feishu
-extension (a plugin-registered add-on to the Feishu channel) for one configured
-Feishu channel; `<channel segment>` is the same slug-plus-digest the routing
-document filename carries. Feishu hands the extension the path and does not
-create it; its contents are the extension's own. See
-[channel](channel.md#feishu-extensions).
+`state/plugins/feishu/<dispatcher-id>/feishu-extensions/<extension>/<channel
+segment>/` belongs to one Feishu extension (a plugin-registered add-on to the
+Feishu channel) for one configured Feishu channel; `<channel segment>` is the
+same slug-plus-digest the routing document filename carries. This root is the
+Feishu plugin's own state directory (`state/plugins/<plugin-name>/`, above),
+not the dispatcher state root the trio above sits under. Feishu hands the
+extension the path and does not create it; its contents are the extension's
+own. See [channel](channel.md#feishu-extensions).
 
 Source:
 
 - `/packages/channel/feishu-channel/src/routing/store.ts`
 - `/packages/channel/feishu-channel/src/routing/document.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
-- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
+- `/packages/channel/feishu-channel/src/access/index.ts`
 
 ### Scheduler And Workflow Records
 
@@ -308,48 +391,104 @@ state mechanisms:
 - no persisted runtime socket path;
 - no workspace-local `.codex/skills` installation;
 - no dispatcher-root `status.json` recovery authority (`identity.json` is the
-  Dreamux agent-entity recovery state);
+  Dreamux Agent entity recovery state);
 - no durable `runtime/<name>/` scratch under the dispatcher state root (runtime
   scratch is volatile and lives under `run/`).
 
-`legacy-state.ts` is the one module that still knows the removed leaf names. It
-probes them so `dreamux serve` aborts and `dreamux doctor` names the path to
-delete: `channel-bindings.json` and `collaboration-spaces.json` at the
-dispatcher root (removed Core routing and Space state — a Channel now owns both,
-in its own file), `teammate/identities`, `teammate/records`, `teammate/turns`,
-`teammate/sessions.jsonl`, `teammate/history`, `team/records`,
-`team/channel-bindings.json`, and `team/ledger`. The `teammate/` and `team/`
-directories themselves stay valid, which is why detection probes leaves rather
-than parents.
+Dreamux 0.x does not migrate old state, but as of R47 it also no longer
+actively probes for these removed leaf names: `channel-bindings.json` and
+`collaboration-spaces.json` at the dispatcher root (removed Core routing and
+Space state — a Channel now owns both, in its own file), `teammate/identities`,
+`teammate/records`, `teammate/turns`, `teammate/sessions.jsonl`,
+`teammate/history`, `team/records`, `team/channel-bindings.json`, and
+`team/ledger`. A leftover under one of these names is now inert residue: no
+path creates, reads, validates, or deletes it, `dreamux serve` starts with it
+present, and `dreamux doctor` does not report it. The `teammate/` and `team/`
+directories themselves stay valid as the current per-entity collection roots;
+the reserved-name guard (`assertNotReservedAgentName`,
+`service/agent/identity.ts`) still keeps a real entity directory from
+taking one of these leaf names, so a live entity can never collide with a
+leftover.
 
 Source:
 
-- `/packages/dreamux/src/service/legacy-state.ts`
 - `/packages/dreamux/src/platform/paths.ts`
+- `/packages/dreamux/src/service/agent/identity.ts`
 
-### JSON Document Stores
+### Transactional Stores
 
-Versioned single-document JSON stores should use `JsonDocumentStore<TDoc>`. The
-base owns read/write mechanics:
+Every persisted Dreamux store — the Feishu routing document, `access.json`,
+and `chat-bots.json`, plus each dispatcher/TeamMate/TeamLeader/Team member's
+`identity.json`, a Team's `record.json`, `cron-jobs.json`, and a Workflow
+run's `record.json` — is one `TransactionalStore<T>`
+(`@excitedjs/dreamux-utils`) bound to one file. The primitive owns:
 
-- a missing file returns the concrete store's `empty()` document;
-- a version mismatch fails loud as `LegacyStateError`, naming the file and the
-  delete-to-rebuild fix;
-- a malformed document fails loud the same way by default, and only an
-  explicitly `warn-rebuild` store warns and returns `empty()` instead;
-- writes are atomic, owner-only mode `0600`, pretty JSON with a trailing
-  newline.
+- one committed in-memory value, read once and then served from memory on
+  every later call until this store's own write path replaces it;
+- one owner-supplied `load()` for the first read, which is also the only
+  version/legacy-shape check that file gets — there is no shared generic
+  version gate; each owner keeps its own error text;
+- `update`/`create`/`remove` sharing one FIFO queue per store, so two callers
+  changing the same file never race each other's read-modify-write;
+- atomic writes: a sibling temp file is written in full, then renamed (or,
+  for `create()`'s no-clobber default, linked) over the target — the file
+  changes before the in-memory value does, so a reader never sees a value
+  that is not also on disk, and a failed write leaves neither changed. Owner-
+  only mode `0600`, pretty JSON with a trailing newline by default, no
+  `fsync`.
 
-The base owns no paths and no schemas: path builders stay in `platform/paths.ts`
-and each concrete store owns its validation and domain methods. Append-only
-JSONL stores that remain in the current contract (Workflow journals) stay
-concrete-store responsibilities, and agent transcript formats and discovery
-belong to the runtime provider package.
+The primitive owns no paths and no schemas: path builders stay in
+`platform/paths.ts`, and each concrete owner keeps its own validation and
+domain methods. `config.json` is on this primitive too, owned by
+`config/service.ts`'s `ConfigService` — a missing file, wrong mode, bad JSON,
+or a rejected shape still exits the `dreamux serve` process exactly as it did
+before this primitive backed the file; its _validation_ already tolerated an
+unknown field the same way (see Operator Config above).
+
+Per-owner corrupt-file policy is deliberately not unified; several behaviors
+survive on top of the one primitive, because unifying them would change
+product behavior no one asked for:
+
+- **Cron and Workflow run:** a malformed or wrong-version file fails loud as
+  `LegacyStateError`; a missing file is a successful default (`null` for
+  Workflow run, `{version: 1, jobs: []}` for cron).
+- **Identity:** the one shape problem that fails loud is a pre-#148 record
+  still keyed by `provider_ref` (`LegacyStateError`). A missing file, a
+  wrong-version file, or any other malformed content instead logs a warning
+  and reads as `null` — one unreadable entity's directory never sinks a whole
+  collection scan (see Agent Identity Records above).
+- **Team record:** malformed, wrong-version, and missing all read as the same
+  successful `null` ("no Team"). A malformed record does not throw, because
+  that would turn a hand-edited or half-written record into a crash instead
+  of "no Team", and would defeat the Team record handle's own replace-invalid-
+  residue path (see Team Records above).
+- **`chat-bots.json`:** the whole-file version/shape check still fails loud,
+  but one malformed entry field degrades to that field's default instead of
+  failing the whole read (see Channel-Owned State above); this policy
+  predates this stage and is unaffected by it.
+- **`config.json`:** fails loud exactly as `dreamux serve` did before this
+  file moved onto the primitive — missing file, wrong mode, bad JSON, or a
+  rejected shape all stop the process; moving the file onto
+  `TransactionalStore<T>` changed how the value is held in memory, not what
+  makes it reject (see Operator Config above).
+
+Append-only JSONL stores that remain in the current contract (Workflow
+journals) stay concrete-store responsibilities on top of the same exclusive-
+create helper (`publishFileExclusive`) rather than `TransactionalStore`
+itself, and agent transcript formats and discovery belong to the runtime
+provider package.
 
 Source:
 
-- `/packages/dreamux/src/platform/json-document-store.ts`
-- `/packages/dreamux/src/platform/atomic-write.ts`
+- `/packages/dreamux-utils/src/transactional-store.ts`
+- `/packages/dreamux-utils/src/fs.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
+- `/packages/dreamux/src/service/team/store.ts`
+- `/packages/dreamux/src/service/scheduler/store.ts`
+- `/packages/dreamux/src/service/workflow-service/store.ts`
+- `/packages/channel/feishu-channel/src/routing/store.ts`
+- `/packages/channel/feishu-channel/src/chat-bots-store.ts`
+- `/packages/channel/feishu-channel/src/access/index.ts`
 
 ### Run Files And Runtime Sockets
 
@@ -385,7 +524,7 @@ Cache files are not durable state and are not recovery records.
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/channel/feishu-channel/src/feishu-message.ts`
+- `/packages/channel/feishu-channel/src/inbound/attachments.ts`
 
 ### Logs
 
@@ -468,10 +607,13 @@ creation in the transparent file ledger without touching the filesystem.
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/dreamux/src/onboard/service.ts`
-- `/packages/dreamux/src/onboard/service-node.ts`
+- `/packages/dreamux/src/daemon/unit.ts`
+- `/packages/dreamux/src/daemon/environment.ts`
+- `/packages/dreamux/src/daemon/host.ts`
+- `/packages/dreamux/src/daemon/control.ts`
+- `/packages/dreamux/src/daemon/status.ts`
 - `/packages/dreamux/src/daemon/install.ts`
-- `/packages/dreamux/src/onboard/ledger.ts`
+- `/packages/dreamux/src/platform/file-ledger.ts`
 
 ### 0.x Upgrade Policy
 
@@ -485,8 +627,8 @@ Rules:
 - TeamMate/Team recovery records fail loud rather than infer user-meaningful
   facts;
 - explicitly rebuildable server state may warn and rebuild only when documented;
-- removed layouts may be detected for diagnostics, but not read as source data,
-  rewritten, or deleted;
+- a removed layout, path, or field is ignored, not detected — no reader or
+  doctor check flags it, reads it as source data, rewrites it, or deletes it;
 - an incompatible shape, version, or path change that leaves the upgraded
   reader unable to start needs a Rush change file with `BREAKING:` and concrete
   `Rebuild:` guidance — that upgrade-blocking migration is the only thing
@@ -531,10 +673,19 @@ correct outcome, in this order:
 
 Adding a validation that rejects a document a previous build wrote moves a
 change from (1) to (3) — check that the rejection is earning its cost before
-writing it. The removed-field rule under *Invariants* draws the same line for
-one field: rejection is earned only when accepting would silently discard a
-fact the reader cannot otherwise see, because each rejection costs the operator
-a rebuild.
+writing it: it is earned only when accepting would silently discard a fact the
+reader cannot otherwise see, because each rejection costs the operator a
+rebuild. R47 removed the one example of this pattern that used to live here (a
+curated removed-field list on the agent identity record, rejecting `checkpoint`
+and `session_ref` while tolerating other leftover keys) for exactly that
+reason: none of its rejected fields were reachable through a real upgrade path
+any more, so the check had stopped earning its cost. What still fails loud —
+because accepting it would run the wrong thing, not just carry an inert key —
+is a persisted document whose `version` its owning `TransactionalStore`'s
+`load()` does not recognize (cron and Workflow run; identity and Team record
+are deliberate exceptions with their own policy, see Transactional Stores
+above), and an agent identity still keyed by the pre-#148 `provider_ref`
+format; both raise `LegacyStateError`.
 
 Any change to the shape, validation, default, ownership, or meaning of a config
 or persisted state file also updates
@@ -542,8 +693,9 @@ or persisted state file also updates
 
 Source:
 
-- `/packages/dreamux/src/service/legacy-state.ts`
-- `/packages/dreamux/src/platform/json-document-store.ts`
+- `/packages/dreamux/src/platform/errors.ts`
+- `/packages/dreamux-utils/src/transactional-store.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 
 ## Invariants
 

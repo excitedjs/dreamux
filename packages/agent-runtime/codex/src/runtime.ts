@@ -1,22 +1,16 @@
-
 import { join } from 'node:path';
 
-import {
-  CodexProcess,
-  type CodexProcessExit,
-} from './supervisor.js';
+import { CodexProcess, type CodexProcessExit } from './supervisor.js';
 import { CodexWsClient } from './rpc.js';
 import { performInitializeHandshake } from './handshake.js';
 import type {
+  ServerRequest,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
 } from './types.js';
-import {
-  TurnManager,
-} from './turn-manager.js';
-import { createFailFastApprovalHandler } from './approval.js';
+import { TurnManager } from './turn-manager.js';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
@@ -30,16 +24,59 @@ import type {
   AgentRuntimeSubmissionInput,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
-import {
-  codexProcessEnv,
-  codexThreadInstructions,
-} from './runtime-support.js';
+import { codexSpawnEnv } from './paths.js';
+import { codexThreadInstructions } from './system-prompt.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
 import type { CodexRuntimeDeps } from './runtime-deps.js';
 import { CodexReasoningEffort } from './reasoning-effort.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
+
+/**
+ * A method name like `exec_command_approval`, `apply_patch_approval`, etc.
+ */
+const APPROVAL_METHOD_HINTS = ['approval', 'approve', 'confirm', 'review'];
+
+function looksLikeApprovalRequest(method: string): boolean {
+  const m = method.toLowerCase();
+  return APPROVAL_METHOD_HINTS.some((h) => m.includes(h));
+}
+
+/**
+ * Server→client request handler for Codex server-requests (issue #2, "trust
+ * model" and "implementation pitfalls"):
+ *   - MVP runs Codex with approval-policy=never (or auto-approve).
+ *   - If a server-request still arrives (e.g. because policy was
+ *     misconfigured or codex escalates anyway), fail loudly — never return
+ *     null. Silent null is the trap that hangs the daemon.
+ *
+ * `onReject` is an observer hook for logs/metrics only: a runtime package
+ * knows nothing about Channels, so this handler must not try to reach a user
+ * — the rejection travels back to codex, and Core decides what any Channel
+ * says.
+ */
+function createFailFastApprovalHandler(opts: {
+  onReject?: (req: ServerRequest) => void | Promise<void>;
+}) {
+  return async (req: ServerRequest): Promise<unknown> => {
+    if (opts.onReject !== undefined) {
+      try {
+        await opts.onReject(req);
+      } catch {
+        /* observer hook, must not mask the rejection itself */
+      }
+    }
+    if (looksLikeApprovalRequest(req.method)) {
+      throw new Error(
+        `approvals are not supported in this version (${req.method}). Configure codex approval-policy=never, or deploy this dispatcher in a trusted-local environment.`,
+      );
+    }
+    throw new Error(
+      `dispatcher received an unsupported codex server-request: ${req.method} (id=${req.id})`,
+    );
+  };
+}
 
 export class CodexRuntime implements AgentRuntime {
   private process: CodexProcess | null = null;
@@ -82,8 +119,7 @@ export class CodexRuntime implements AgentRuntime {
     const logger = deps.logger;
     this.log =
       logger !== undefined
-        ? (lvl, msg, err) =>
-            logger[lvl](err !== undefined ? { err } : {}, msg)
+        ? (lvl, msg, err) => logger[lvl](err !== undefined ? { err } : {}, msg)
         : (lvl, msg, err) => {
             const prefix = `[dispatcher ${identity.runtimeId}] ${lvl}`;
             if (err !== undefined) console.error(prefix, msg, err);
@@ -117,9 +153,11 @@ export class CodexRuntime implements AgentRuntime {
     const generation = this.generation;
     const task = this.startRuntime(generation);
     this.startupTask = task;
-    void task.finally(() => {
-      if (this.startupTask === task) this.startupTask = null;
-    }).catch(() => undefined);
+    void task
+      .finally(() => {
+        if (this.startupTask === task) this.startupTask = null;
+      })
+      .catch(() => undefined);
     return task;
   }
 
@@ -159,9 +197,12 @@ export class CodexRuntime implements AgentRuntime {
         failures.push(cleanupError);
       }
       if (failures.length > 1) {
-        const failureDetails = failures.slice(1).map((failure) =>
-          failure instanceof Error ? failure.message : String(failure)
-        ).join('; ');
+        const failureDetails = failures
+          .slice(1)
+          .map((failure) =>
+            failure instanceof Error ? failure.message : String(failure),
+          )
+          .join('; ');
         throw new AggregateError(
           failures,
           `codex runtime start failed and cleanup did not fully converge: ${failureDetails}`,
@@ -184,12 +225,9 @@ export class CodexRuntime implements AgentRuntime {
     const cwd = this.deps.cwd;
     const socketPath = this.deps.allocateSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.() ?? [];
-    if (this.deps.codexHomeDoctor !== undefined) {
-      await this.deps.codexHomeDoctor({ runtimeId: this.dispatcherId, cwd });
-      this.assertGeneration(generation);
-    }
     const codexLogDir = join(this.paths.logsDir(), 'codex-app-server');
-    const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
+    const factory =
+      this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
     const process = factory({
       socketPath,
       cwd,
@@ -197,7 +235,7 @@ export class CodexRuntime implements AgentRuntime {
       stderrLogPath: join(codexLogDir, `${this.dispatcherId}.stderr.log`),
       binPath: this.deps.codexBinPath,
       extraArgs,
-      env: codexProcessEnv(this.deps.injectEnv, this.deps.extraEnv),
+      env: codexSpawnEnv(globalThis.process.env, this.deps.extraEnv),
     });
     this.process = process;
     process.onExit((exit) => {
@@ -208,7 +246,8 @@ export class CodexRuntime implements AgentRuntime {
     this.assertGeneration(generation);
 
     const clientFactory =
-      this.deps.codexClientFactory ?? ((sock) => new CodexWsClient({ socketPath: sock }));
+      this.deps.codexClientFactory ??
+      ((sock) => new CodexWsClient({ socketPath: sock }));
     const client = clientFactory(socketPath);
     this.client = client;
     client.onClose((reason) => {
@@ -228,9 +267,7 @@ export class CodexRuntime implements AgentRuntime {
     });
     this.client.setServerRequestHandler(approvalHandler);
     const initResponse = await performInitializeHandshake(this.client, {
-      ...(this.deps.handshakeTimeoutMs !== undefined
-        ? { timeoutMs: this.deps.handshakeTimeoutMs }
-        : {}),
+      timeoutMs: this.deps.handshakeTimeoutMs,
     });
     this.assertGeneration(generation);
     this.log(
@@ -250,7 +287,12 @@ export class CodexRuntime implements AgentRuntime {
       codec: this.deps.codec,
       log: this.log,
       activitySink: this.deps.activitySink,
-      reasoning: new CodexReasoningEffort(this.client, thread, this.threadResumed, this.deps.cwd),
+      reasoning: new CodexReasoningEffort(
+        this.client,
+        thread,
+        this.threadResumed,
+        this.deps.cwd,
+      ),
     });
   }
 
@@ -313,10 +355,9 @@ export class CodexRuntime implements AgentRuntime {
       this.assertGeneration(generation);
       const msg = err instanceof Error ? err.message : String(err);
       if (!options.allowFreshFallback) {
-        throw new Error(
-          `codex could not restore session ${existing}: ${msg}`,
-          { cause: err },
-        );
+        throw new Error(`codex could not restore session ${existing}: ${msg}`, {
+          cause: err,
+        });
       }
       this.log(
         'warn',
@@ -359,7 +400,10 @@ export class CodexRuntime implements AgentRuntime {
     }
     const turnManager = this.turnManager;
     if (turnManager === null) {
-      return { status: 'failed', error: new Error('turn manager not initialized') };
+      return {
+        status: 'failed',
+        error: new Error('turn manager not initialized'),
+      };
     }
     // The text is already the complete model-facing message: this runtime
     // renders no envelope and never branches on where the turn came from.
@@ -432,7 +476,8 @@ export class CodexRuntime implements AgentRuntime {
     // they do not decide whether stop converged. Only the native teardown does;
     // a failed write is already terminal through the fence.
     const stoppingState = Promise.resolve().then(() =>
-      this.settleState({ kind: 'status', status: 'stopping' }));
+      this.settleState({ kind: 'status', status: 'stopping' }),
+    );
     const [, teardownResult] = await Promise.allSettled([
       stoppingState,
       teardown,
@@ -484,7 +529,10 @@ export class CodexRuntime implements AgentRuntime {
       clientClose,
       processReap,
     ]);
-    if (results[0]?.status === 'fulfilled' && this.turnManager === turnManager) {
+    if (
+      results[0]?.status === 'fulfilled' &&
+      this.turnManager === turnManager
+    ) {
       this.turnManager = null;
     }
     if (results[1]?.status === 'fulfilled' && this.client === client) {
@@ -498,12 +546,16 @@ export class CodexRuntime implements AgentRuntime {
 
   private handleChildExit(exit: CodexProcessExit): void {
     const details =
-      exit.signal !== null ? `signal=${exit.signal}` : `code=${exit.code ?? 'null'}`;
+      exit.signal !== null
+        ? `signal=${exit.signal}`
+        : `code=${exit.code ?? 'null'}`;
     this.scheduleRestart(`codex app-server child exited (${details})`);
   }
 
   private handleClientClose(reason: Error): void {
-    this.scheduleRestart(`codex app-server websocket closed: ${reason.message}`);
+    this.scheduleRestart(
+      `codex app-server websocket closed: ${reason.message}`,
+    );
   }
 
   private scheduleRestart(reason: string): void {
@@ -515,18 +567,22 @@ export class CodexRuntime implements AgentRuntime {
     const delay = this.restartDelayMs(attempt);
     this.log('warn', `${reason}; restarting in ${delay}ms`);
     this.setStatus('degraded');
-    this.fence.publishDetached(() => this.state.publish({
-      kind: 'status',
-      status: 'degraded',
-      lastError: reason,
-    }));
+    this.fence.publishDetached(() =>
+      this.state.publish({
+        kind: 'status',
+        status: 'degraded',
+        lastError: reason,
+      }),
+    );
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       const task = this.restartCodexRuntime(reason, this.generation);
       this.restartTask = task;
-      void task.finally(() => {
-        if (this.restartTask === task) this.restartTask = null;
-      }).catch(() => undefined);
+      void task
+        .finally(() => {
+          if (this.restartTask === task) this.restartTask = null;
+        })
+        .catch(() => undefined);
     }, delay);
   }
 
@@ -555,9 +611,11 @@ export class CodexRuntime implements AgentRuntime {
         failures.push(cleanupError);
       }
       if (this.stopping || generation !== this.generation) return;
-      const msg = failures.map((failure) =>
-        failure instanceof Error ? failure.message : String(failure)
-      ).join('; ');
+      const msg = failures
+        .map((failure) =>
+          failure instanceof Error ? failure.message : String(failure),
+        )
+        .join('; ');
       this.log('error', `restart failed: ${msg}`, err);
       this.setStatus('degraded');
       await this.settleState({
@@ -607,9 +665,7 @@ export class CodexRuntime implements AgentRuntime {
    * owns the entity, and any other failure means Core's record of this runtime
    * can no longer be repaired from here.
    */
-  private publish(
-    update: AgentRuntimeStateUpdate,
-  ): Promise<void> {
+  private publish(update: AgentRuntimeStateUpdate): Promise<void> {
     return this.fence.publish(() => this.state.publish(update));
   }
 
@@ -624,9 +680,7 @@ export class CodexRuntime implements AgentRuntime {
    * terminated, or the original start/restart failure — which a state-write
    * failure does not change.
    */
-  private async settleState(
-    update: AgentRuntimeStateUpdate,
-  ): Promise<void> {
+  private async settleState(update: AgentRuntimeStateUpdate): Promise<void> {
     try {
       await this.publish(update);
     } catch {
@@ -663,7 +717,11 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   private assertGeneration(generation: number): void {
-    if (this.stopping || this.fence.isFenced || generation !== this.generation) {
+    if (
+      this.stopping ||
+      this.fence.isFenced ||
+      generation !== this.generation
+    ) {
       throw new Error('codex runtime is stopping');
     }
   }
@@ -674,8 +732,9 @@ function throwSettledFailures(
   message: string,
 ): void {
   const failures = results
-    .filter((result): result is PromiseRejectedResult =>
-      result.status === 'rejected')
+    .filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
     .map((result) => result.reason);
   if (failures.length === 0) return;
   if (failures.length === 1) throw failures[0];

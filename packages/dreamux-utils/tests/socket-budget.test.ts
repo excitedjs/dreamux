@@ -54,13 +54,17 @@ describe('unixSocketPathFitsBudget', () => {
 describe('assertUnixSocketPathBudget', () => {
   it('returns the path unchanged when it fits', () => {
     const path = '/tmp/short.sock';
-    expect(assertUnixSocketPathBudget(path, 'codex app-server socket')).toBe(path);
+    expect(assertUnixSocketPathBudget(path, 'codex app-server socket')).toBe(
+      path,
+    );
   });
 
   it('throws naming the label, byte count, and offending path when it does not fit', () => {
     const path = '/tmp/' + 'x'.repeat(200) + '.sock';
     const bytes = Buffer.byteLength(path, 'utf8');
-    expect(() => assertUnixSocketPathBudget(path, 'codex app-server socket')).toThrowError(
+    expect(() =>
+      assertUnixSocketPathBudget(path, 'codex app-server socket'),
+    ).toThrowError(
       new RegExp(
         `codex app-server socket is too long for Unix sockets \\(${bytes} bytes > 103 safe bytes\\): ${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
       ),

@@ -20,9 +20,7 @@ function wyhash(input: Uint8Array, seed: bigint): bigint {
       const end = length - 4;
       const quarter = (length >> 3) << 2;
       left = (read(input, 0, 4) << 32n) | read(input, quarter, 4);
-      right =
-        (read(input, end, 4) << 32n) |
-        read(input, end - quarter, 4);
+      right = (read(input, end, 4) << 32n) | read(input, end - quarter, 4);
     } else if (length > 0) {
       left =
         (BigInt(input[0]!) << 16n) |
@@ -57,21 +55,14 @@ function wyhash(input: Uint8Array, seed: bigint): bigint {
     right = read(input, length - 8, 8);
     state = lanes[0]!;
   }
-  const product = multiply(
-    left ^ SECRET[1],
-    right ^ state,
-  );
+  const product = multiply(left ^ SECRET[1], right ^ state);
   return mix(
     product.low ^ SECRET[0] ^ BigInt(length),
     product.high ^ SECRET[1],
   );
 }
 
-function read(
-  input: Uint8Array,
-  offset: number,
-  length: number,
-): bigint {
+function read(input: Uint8Array, offset: number, length: number): bigint {
   let value = 0n;
   for (let index = 0; index < length; index += 1) {
     value |= BigInt(input[offset + index] ?? 0) << BigInt(index * 8);
@@ -84,10 +75,7 @@ function mix(left: bigint, right: bigint): bigint {
   return product.low ^ product.high;
 }
 
-function multiply(
-  left: bigint,
-  right: bigint,
-): { low: bigint; high: bigint } {
+function multiply(left: bigint, right: bigint): { low: bigint; high: bigint } {
   const product = uint64(left) * uint64(right);
   return {
     low: uint64(product),

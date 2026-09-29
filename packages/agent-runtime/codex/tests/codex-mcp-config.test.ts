@@ -33,7 +33,8 @@ function parsedMcpServers(args: string[]): Record<string, unknown> {
   // The override is a bare TOML inline table; wrap it under a key so a
   // standalone TOML document parser accepts it.
   const doc = `mcp_servers = ${value}\n`;
-  return (parseToml(doc) as { mcp_servers: Record<string, unknown> }).mcp_servers;
+  return (parseToml(doc) as { mcp_servers: Record<string, unknown> })
+    .mcp_servers;
 }
 
 describe('codexMcpServerArgs', () => {
@@ -76,17 +77,20 @@ describe('codexMcpServerArgs', () => {
     '中文名字',
     'emoji-🚀-name',
     'tab\tnewline\nname',
-  ])('round-trips the UNCHANGED logical name %j through TOML quoting', (name) => {
-    const servers: AgentRuntimeMcpServer[] = [
-      { name, command: 'node', args: [] },
-    ];
-    const parsed = parsedMcpServers(codexMcpServerArgs(servers));
-    // A dotted/quoted/spaced name must land under EXACTLY that key — never
-    // split across nested tables (the failure mode a bare, unquoted `.` in a
-    // `-c key=value` key would cause) and never sanitized.
-    expect(Object.keys(parsed)).toEqual([name]);
-    expect(parsed[name]).toMatchObject({ command: 'node' });
-  });
+  ])(
+    'round-trips the UNCHANGED logical name %j through TOML quoting',
+    (name) => {
+      const servers: AgentRuntimeMcpServer[] = [
+        { name, command: 'node', args: [] },
+      ];
+      const parsed = parsedMcpServers(codexMcpServerArgs(servers));
+      // A dotted/quoted/spaced name must land under EXACTLY that key — never
+      // split across nested tables (the failure mode a bare, unquoted `.` in a
+      // `-c key=value` key would cause) and never sanitized.
+      expect(Object.keys(parsed)).toEqual([name]);
+      expect(parsed[name]).toMatchObject({ command: 'node' });
+    },
+  );
 
   it('merges into the operator config rather than replacing it: only Core-named servers appear', () => {
     // codexMcpServerArgs itself only ever emits ONE `-c mcp_servers=...`
@@ -109,6 +113,9 @@ describe('codexMcpServerArgs', () => {
     ];
     const parsed = parsedMcpServers(codexMcpServerArgs(servers));
     expect(Object.keys(parsed)).toEqual(['first', 'second']);
-    expect(parsed['second']).toEqual({ command: 'python3', args: ['-m', 'server'] });
+    expect(parsed['second']).toEqual({
+      command: 'python3',
+      args: ['-m', 'server'],
+    });
   });
 });

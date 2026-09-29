@@ -1,22 +1,18 @@
 /**
- * Builtin `builtin:codex` runtime config: schema type, defaults, reader, and
- * the typed accessor.
+ * Builtin `builtin:codex` runtime config: schema type, defaults, and reader.
  *
  * Codex runtime config is owned by this package (the `builtin:codex` provider),
  * not by the Dreamux host config module. It depends only on the shared neutral
- * validation primitives (`@excitedjs/dreamux-utils`) and the package-local
- * provider ref, never on `@excitedjs/dreamux` core. The Dreamux host config
- * module re-exports these so
+ * validation primitives (`@excitedjs/dreamux-utils`), never on
+ * `@excitedjs/dreamux` core. The Dreamux host config module re-exports these so
  * the non-builtin callers (doctor, daemon, tests) keep their import paths.
  */
 
-import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import {
   readOptionalString,
-  rejectUnknownKeys,
-  requirePositiveInt,
-  requireStringArray,
-  requireStringRecord,
+  readPositiveInt,
+  readStringArray,
+  readStringRecord,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -30,18 +26,13 @@ import {
  * environment variable is a host-level override that takes precedence over it
  * (resolved by the codex builtin's `resolveCodexBinPath`).
  * `initialize_timeout_ms` is that dispatcher's handshake timeout.
- * `turn_timeout_ms` is accepted and defaulted by this config reader, but the
- * current `CodexRuntime` does not consume it. It therefore has no runtime
- * effect; documenting that gap must not be confused with wiring a timeout.
  */
 export interface DispatcherCodexConfig {
   bin: string;
-  approval_policy: string;
   sandbox_mode: string;
   extra_args: string[];
   extra_env: Record<string, string>;
   initialize_timeout_ms: number;
-  turn_timeout_ms: number;
 }
 
 /**
@@ -54,25 +45,8 @@ export const DEFAULT_CODEX_BIN = 'codex';
 /** Default `agents[].config.initialize_timeout_ms` (handshake timeout, ms). */
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
 
-/**
- * Default accepted value for `agents[].config.turn_timeout_ms` (ms). The reader
- * validates and returns it, but `CodexRuntime` currently does not consume it,
- * so changing this value has no runtime effect.
- */
-export const DEFAULT_CODEX_TURN_TIMEOUT_MS = 600_000;
-
-/** Default `agents[].config.approval_policy` when omitted. */
-export const DEFAULT_APPROVAL_POLICY = 'never';
-
 /** Default `agents[].config.sandbox_mode` when omitted. */
 export const DEFAULT_SANDBOX_MODE = 'workspace-write';
-
-export const ALLOWED_APPROVAL_POLICIES = new Set([
-  'never',
-  'auto',
-  'auto-approve',
-  'on-failure',
-]);
 
 export const ALLOWED_SANDBOX_MODES = new Set([
   'read-only',
@@ -83,12 +57,10 @@ export const ALLOWED_SANDBOX_MODES = new Set([
 export function defaultDispatcherCodexConfig(): DispatcherCodexConfig {
   return {
     bin: DEFAULT_CODEX_BIN,
-    approval_policy: DEFAULT_APPROVAL_POLICY,
     sandbox_mode: DEFAULT_SANDBOX_MODE,
     extra_args: [],
     extra_env: {},
     initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
-    turn_timeout_ms: DEFAULT_CODEX_TURN_TIMEOUT_MS,
   };
 }
 
@@ -97,20 +69,11 @@ export function readDispatcherCodexConfig(
   file: string,
   prefix: string,
 ): DispatcherCodexConfig {
-  rejectUnknownKeys(
-    rawCodex,
-    new Set([
-      'bin',
-      'approval_policy',
-      'sandbox_mode',
-      'extra_args',
-      'extra_env',
-      'initialize_timeout_ms',
-      'turn_timeout_ms',
-    ]),
-    file,
-    prefix,
-  );
+  // Unknown fields (including the retired 'approval_policy' and
+  // 'turn_timeout_ms': Codex approval policy is hard-coded to 'never', and
+  // turn_timeout_ms was accepted-and-ignored with no runtime effect) are
+  // tolerated, not rejected — the persisted-shape policy (R21) rejects only
+  // a wrong type or a missing required field.
   // An omitted (or explicitly null) field falls back to the dispatcher-local
   // default. Before the top-level block was removed, `null` meant "inherit the
   // global default"; with no global, it simply means "use the built-in".
@@ -119,14 +82,6 @@ export function readDispatcherCodexConfig(
   if (bin.trim() === '') {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
-    );
-  }
-  const approvalPolicy =
-    readOptionalString(rawCodex, 'approval_policy', file, prefix) ??
-    defaults.approval_policy;
-  if (!ALLOWED_APPROVAL_POLICIES.has(approvalPolicy)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}approval_policy='${approvalPolicy}' is not one of ${Array.from(ALLOWED_APPROVAL_POLICIES).join(' | ')}`,
     );
   }
   const sandboxMode =
@@ -139,53 +94,27 @@ export function readDispatcherCodexConfig(
   }
   return {
     bin,
-    approval_policy: approvalPolicy,
     sandbox_mode: sandboxMode,
-    extra_args: requireStringArray(
+    extra_args: readStringArray(
       rawCodex,
       'extra_args',
       defaults.extra_args,
       file,
       prefix,
     ),
-    extra_env: requireStringRecord(
+    extra_env: readStringRecord(
       rawCodex,
       'extra_env',
       defaults.extra_env,
       file,
       prefix,
     ),
-    initialize_timeout_ms: requirePositiveInt(
+    initialize_timeout_ms: readPositiveInt(
       rawCodex,
       'initialize_timeout_ms',
       defaults.initialize_timeout_ms,
       file,
       prefix,
     ),
-    turn_timeout_ms: requirePositiveInt(
-      rawCodex,
-      'turn_timeout_ms',
-      defaults.turn_timeout_ms,
-      file,
-      prefix,
-    ),
   };
-}
-
-/**
- * Typed accessor for a dispatcher's resolved codex runtime config. Typed
- * structurally (not against `DispatcherConfig`) so this module never imports
- * the host config type — a full `DispatcherConfig` still satisfies it at the
- * call sites.
- */
-export function dispatcherCodexConfig(dispatcher: {
-  id: string;
-  runtime: { provider: string; config: unknown };
-}): DispatcherCodexConfig {
-  if (dispatcher.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF) {
-    throw new Error(
-      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Codex`,
-    );
-  }
-  return dispatcher.runtime.config as DispatcherCodexConfig;
 }

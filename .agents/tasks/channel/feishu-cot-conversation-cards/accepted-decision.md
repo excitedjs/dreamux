@@ -194,4 +194,4 @@ What replaced what:
   decides whether a path is renamed. See
   [`/packages/dreamux/src/platform/home-paths.ts`](/packages/dreamux/src/platform/home-paths.ts)
   and
-  [`/packages/dreamux/src/channel/conversation-projection.ts`](/packages/dreamux/src/channel/conversation-projection.ts).
+  [`/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`](/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts).

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: code organization refactor stage 8c, item 1 (R26/R27): `DREAMUX_CONFIG_DIR` is deleted, and so is `dreamux onboard`'s `--config-dir` option; `dreamux uninstall --config-dir` is deleted too, by inference — it has nothing left to relocate once `config.json` is root-derived. `config.json` now always lives at `<DREAMUX_ROOT>/config.json` (default `~/.dreamux/config.json`, unchanged for every install that never set `DREAMUX_CONFIG_DIR`); the managed-service unit now writes `DREAMUX_ROOT` instead of `DREAMUX_CONFIG_DIR`; `dreamux uninstall` now also removes the (by-then-empty) root directory itself, not just its contents. Scenario: an install that set `DREAMUX_CONFIG_DIR` to a path different from its `DREAMUX_ROOT` (or different from the default root when `DREAMUX_ROOT` was never set) — after upgrade `DREAMUX_CONFIG_DIR` is silently ignored, so the daemon looks for `config.json` under `DREAMUX_ROOT` (or the default root) instead of the operator's configured directory. If no `config.json` exists there, the daemon fails on an ordinary missing-file error that never mentions `DREAMUX_CONFIG_DIR` or what moved, and the unit's `Restart=on-failure` loops; if a `config.json` already exists there (for example from an earlier default-path `dreamux onboard`, before `DREAMUX_CONFIG_DIR` was set), the daemon starts silently against that unrelated file instead. Rebuild: move `config.json` from the old `DREAMUX_CONFIG_DIR` path to `<DREAMUX_ROOT>/config.json` (creating parent directories as needed), then re-run `dreamux daemon install` (or `dreamux onboard` again) so the service unit is rewritten with `DREAMUX_ROOT`.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -171,11 +171,23 @@ the same change that touches it.
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
   than a persisted saga. A newly provisioned Feishu topic Team receives its
-  configured identity followed by the bound chat and initial triggering message
-  address. The leader must use that initial message ID when its current context
-  offers no other one, and must never omit the reply message ID. Existing Teams
-  and the shared space policy are unchanged; identity stays a string.
+  configured identity unmodified; no reply address is appended to it, because
+  the Channel itself resolves where an address-less reply lands (see the next
+  bullet). Existing Teams and the shared space policy are unchanged; identity
+  stays a string.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **A `reply` with no message id inside a Collaboration Space chat is guarded
+  by the Channel, not by prompt instruction.** Every other Feishu chat keeps
+  today's behavior — an address-less reply opens a new top-level message. Only
+  inside a chat that carries a Collaboration Space does the Channel step in: the
+  reply lands under the calling Team's own bound topic when exactly one exists
+  with a known root message, and is refused with an instruction to pass a
+  `message_id` otherwise. The check is caller-agnostic — it asks only "does
+  exactly one topic name this caller" — so a Dispatcher Agent call, which never
+  owns a topic binding, is always refused rather than special-cased; that is the
+  mechanism protecting the space from a stray new topic working as designed, not
+  a gap. Nothing else about a Feishu chat's reply behavior changed.
+  (Domain: [channel](/.agents/domains/channel.md).)
 - **A provisioning run that produces no Team answers in place.** When a
   collaboration space cannot provision the Team a message was routed to, the
   Channel replies under that message — `Could not start a Team for this
@@ -212,12 +224,16 @@ the same change that touches it.
 - **The Team record is the only existence fact.** A readable, valid Team record
   means the Team exists and its name is taken; no record (or an invalid one)
   means no Team and a free name. Nothing else — ledgers, claims, identities —
-  competes with it.
+  competes with it. While the daemon runs, a record deleted or damaged by hand
+  no longer frees the name: the Team's record store holds the last record it
+  loaded in memory for the life of the daemon, so a hand edit to the file on
+  disk is not read until restart.
 - **Dissolve means terminate now and reclaim.** The user pressing dissolve
-  wants processes dead and tokens no longer burning: all member runtimes stop
-  immediately, the receipt says `accepted`/`closed` after the durable logical
-  close, and slow physical cleanup (large worktrees) continues in the
-  background. `force` is the explicit authorization to discard local changes.
+  wants processes dead and tokens no longer burning: the receipt answers
+  `{accepted, status: "submitted"}` as soon as the Team owns the background
+  work, before anything has stopped; all member runtimes then stop and close
+  behind that receipt, and slow physical cleanup (large worktrees) continues
+  after that. `force` is the explicit authorization to discard local changes.
   A TeamLeader dissolving its own Team usually never receives the tool
   response; that connection loss is the expected surface, and delivery failure
   never rolls the dissolve back. Automatic cleanup removes only the worktree
@@ -227,16 +243,24 @@ the same change that touches it.
   `delete-on-close` (operator ruling R31 in the refine-model-facing-surfaces
   record, 2026-09-06: kept worktrees piled up); pass `cleanup: keep` to retain
   one.
-- **A dissolve that cannot reclaim its worktree is refused before it is
-  accepted.** A non-forced dissolve assesses the managed worktree first: if it
-  is dirty or unmerged the caller gets the refusal and its reason, rather than
-  an `accepted` receipt for a dissolve that then quietly stops. `force` remains
-  the authorization to discard that work.
-  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
-- **A failed dissolve leaves a Team that still exists.** Whatever committed
-  before the failure stays committed (closed members stay closed, deleted cron
-  stores stay deleted); the next ordinary use rebuilds from disk, and the next
-  dissolve retries the same close operations. No rollback product exists.
+- **Dissolve has exactly one reversible step: the worktree precheck, or a
+  failed record write.** A non-forced dissolve assesses the managed worktree
+  first: if it is dirty or unmerged the caller gets the refusal and its
+  reason, rather than an `accepted` receipt for a dissolve that then quietly
+  stops, and the Team is untouched and usable again — `force` remains the
+  authorization to discard that work. Once the precheck passes (or is
+  skipped) and the Team's record says `closed`, the Team is over for good:
+  destroying its children (Workflows, scheduler, members, the leader) and
+  reclaiming its worktree are both best-effort from there — every step is
+  attempted, a failure is logged, and nothing is rolled back, because there is
+  nothing left to roll back to. A member dirtying the worktree after the
+  precheck no longer refuses the dissolve: the Team still closes, and a
+  non-forced cleanup then only keeps the directory instead of removing it.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md);
+  operator ruling R62/R67 in the code-organization-refactor rulings record,
+  2026-09-28: worktree precheck, then write `closed`, then destroy every child
+  service one after another, then worktree cleanup — a failure after `closed`
+  never reopens the Team.)
 - **Creation tools use entity-based worktree names.** The Dispatcher-facing
   `teammate.spawn` and `team.create` MCP tools accept repo mode, path, base ref,
   branch, and cleanup controls, but no custom directory slug. A managed
@@ -467,6 +491,29 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   asset. On the 0.x line an incompatible shape is handled by fail-loud plus
   manual rebuild — no migrations, no lazy backfill, no old-shape fallback
   readers. (Domain: [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **A live Feishu session holds authority over its own files; a hand edit
+  waits for restart.** Once a Channel session loads its routing document,
+  `access.json`, or `chat-bots.json`, that in-memory value is authoritative for
+  the rest of the session — an edit made to the file on disk while the
+  dispatcher keeps running is not read until the next restart. (Domain:
+  [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **The Config Service holds authority over `config.json` while the daemon
+  runs; a hand edit waits for restart.** Once `dreamux serve` loads
+  `config.json`, that in-memory value is authoritative for the rest of the
+  process — an edit made to the file on disk while the daemon keeps running
+  is not read until the next restart, matching the routing
+  document/`access.json`/`chat-bots.json` rule above. (Domain:
+  [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **Runtime `agents[]` configuration is readable and replaceable through
+  Commands.** `config.agents.get` returns the current `agents[]` in file
+  shape with every secret-named value emptied; `config.agents.replace`
+  validates and writes a whole new `agents[]` array, matched to the
+  existing one by `id` — submitting `''` for a secret-named key keeps the
+  stored value, so a caller that read-then-replaced without ever seeing a
+  real secret cannot erase it. A replace takes effect for the next runtime
+  launch; a runtime already running keeps what it launched with.
+  `dispatchers[]` has no Command; it is still edited by hand with the
+  daemon stopped. (Domain: [add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).)
 
 ## Plugins
 
@@ -479,6 +526,17 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   stops `dreamux serve` with an error naming the plugin; a plugin callback that
   fails while an agent launches is logged and skipped, and the launch goes on
   without that plugin's additions. (Domain: [plugins](/.agents/domains/plugins.md).)
+- **A plugin can append to every TeamMate's launch, the same way it already
+  can for the Dispatcher and a TeamLeader.** Every ordinary TeamMate —
+  dispatcher-spawned, a Team's own member, or a Workflow agent — gets a
+  plugin's prompt instructions and skill sources appended before it launches,
+  told which Team (if any) owns that TeamMate. (Domain:
+  [plugins](/.agents/domains/plugins.md).)
+- **A plugin can adjust a Team's creation parameters.** Before a Team is
+  built from a `team.create` request that is not a replay of an already
+  accepted one, a plugin may change the requested name prefix, intent, leader
+  identity/prompt/skill sources, or repository; an already-accepted request
+  never re-runs this. (Domain: [plugins](/.agents/domains/plugins.md).)
 - **The bootstrap plugin keeps a shared profile.** With `builtin:bootstrap`
   enabled, a Dispatcher whose cwd lacks `.workspace/identity.md` or
   `.workspace/user.md` is told at start to offer the user to create them

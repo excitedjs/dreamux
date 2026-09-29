@@ -5,6 +5,8 @@
 // compiles against the neutral @excitedjs/dreamux-types contract and must
 // never import @excitedjs/dreamux core. The boundary is centralized in
 // @excitedjs/eslint-config.
-import baseConfig, { withProviderImportBoundary } from '@excitedjs/eslint-config';
+import baseConfig, {
+  withProviderImportBoundary,
+} from '@excitedjs/eslint-config';
 
 export default withProviderImportBoundary(baseConfig);

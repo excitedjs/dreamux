@@ -39,12 +39,8 @@ import type { Readable, Writable } from 'node:stream';
 import type { JsonInvoker, JsonValue } from '@excitedjs/dreamux-types';
 
 import { AdminClientError, adminJsonInvoker } from '../admin/client.js';
-import {
-  codedFailureText,
-  statedFailureText,
-  unclassifiedFailureText,
-} from './failure-text.js';
-import { validateMcpToolCatalog } from './catalog.js';
+import { commandFailureText, failureText } from '../command/errors.js';
+import { validateMcpToolCatalog } from '../service/mcp/catalog.js';
 import {
   PublicToolError,
   runMcpServer,
@@ -57,14 +53,16 @@ import {
 export interface DreamuxMcpShimOptions {
   /** The opaque lease token this server presents on every request. */
   lease: string;
-  adminSocketPath?: string;
+  adminSocketPath?: string | undefined;
   input?: Readable;
   output?: Writable;
   transport?: RunMcpServerOptions['transport'];
   log?: (message: string) => void;
 }
 
-export async function runDreamuxMcp(opts: DreamuxMcpShimOptions): Promise<void> {
+export async function runDreamuxMcp(
+  opts: DreamuxMcpShimOptions,
+): Promise<void> {
   if (opts.lease === '') {
     throw new Error('the Dreamux MCP shim requires a lease token');
   }
@@ -84,16 +82,14 @@ export async function runDreamuxMcp(opts: DreamuxMcpShimOptions): Promise<void> 
   );
   await runMcpServer({
     identity: description.identity,
-    tools: tools.map(
-      (tool): McpToolDefinition => ({
-        ...tool,
-        handler: (args) => callTool(core, opts.lease, tool.name, args),
-      }),
-    ),
-    ...(opts.input !== undefined ? { input: opts.input } : {}),
-    ...(opts.output !== undefined ? { output: opts.output } : {}),
-    ...(opts.transport !== undefined ? { transport: opts.transport } : {}),
-    ...(opts.log !== undefined ? { log: opts.log } : {}),
+    tools: tools.map((tool): McpToolDefinition => ({
+      ...tool,
+      handler: (args) => callTool(core, opts.lease, tool.name, args),
+    })),
+    input: opts.input,
+    output: opts.output,
+    transport: opts.transport,
+    log: opts.log,
   });
 }
 
@@ -174,18 +170,20 @@ async function callTool(
  * or a transport failure this process observed itself — keeps the code and the
  * message it already has. Core does not own those words and does not replace
  * them.
+ *
+ * Shares its rendering with `command/errors.ts` rather than re-deriving the
+ * branch: an `AdminClientError` already carries exactly a `CommandFailure`'s
+ * three fields (it is reconstructed from the server's own error envelope), so
+ * it goes straight to the renderer instead of through `commandFailure`'s
+ * thrown-value classification, which would not recognize it as one of Core's
+ * own known failure classes and would report it as `INTERNAL`. Anything else
+ * reaching this process — a `TransportError` this side observed for itself —
+ * was never wire-classified, so it takes the classifying path.
  */
 function invocationFailureText(error: unknown): string {
-  if (error instanceof AdminClientError) {
-    return error.action !== undefined
-      ? statedFailureText({
-          code: error.code,
-          message: error.message,
-          action: error.action,
-        })
-      : codedFailureText(error.code, error.message);
-  }
-  return unclassifiedFailureText(error);
+  return error instanceof AdminClientError
+    ? commandFailureText(error)
+    : failureText(error);
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

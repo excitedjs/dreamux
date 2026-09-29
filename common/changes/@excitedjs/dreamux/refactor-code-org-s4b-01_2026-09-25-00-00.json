@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 4b item 1: moved AgentIdentityStore and AgentEntityCollectionStore onto TransactionalStore, deleted AgentRuntimeStateStore's own mutation tail in favor of the store's serialized update, and fixed four second-authority duplicate-reader sites (dispatcher-root identity shared between Dispatchers and DispatcherService, TeammateCollection.mustIdentity, reprepareDeletedManagedWorktree's nested-update pattern, and TeammateCollection.buildEntity minting a second, never-loaded AgentIdentityStore instead of reusing the one that created or read the entity). AgentIdentityStoreBinding no longer carries onPersisted; every create/update/upsert call now threads it explicitly. Named behavior change: a name lookup for a live TeamMate (mustIdentity) now answers from that TeamMate's own live identity instead of a fresh file read, so it can no longer race a runtime that just committed a status transition; record.json's shape is unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -1,5 +1,4 @@
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import {
   cancel,
@@ -35,11 +34,10 @@ import { expandHome } from '../config/config.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
-  createBuiltinProviderRegistry,
   formatProviderRef,
-  type ProviderRegistry,
+  ProviderRegistry,
 } from '../registry/index.js';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { createLogger } from '../platform/logger.js';
 import { loadPlugins } from '../plugin/loader.js';
 import type {
@@ -51,7 +49,6 @@ import type {
 export interface OnboardCliOptions {
   yes?: boolean;
   dryRun?: boolean;
-  configDir?: string;
   dispatcherId?: string;
   dispatcherCwd?: string;
   agent?: string | string[];
@@ -78,10 +75,6 @@ export async function collectOnboardAnswers(
   if (!interactive) return await answersFromOptions(options, false);
 
   intro('dreamux onboard');
-  const configDir = await promptText(
-    'dreamux config directory',
-    defaultConfigDir(options),
-  );
   const dispatcherId = validateDispatcherId(
     await promptText(
       'dispatcher id',
@@ -117,7 +110,6 @@ export async function collectOnboardAnswers(
   const answers = await answersFromOptions(
     {
       ...options,
-      configDir,
       dispatcherId,
       dispatcherCwd,
       agent: agentProvider,
@@ -126,6 +118,7 @@ export async function collectOnboardAnswers(
       startService,
     },
     true,
+    registry,
   );
   outro('Collected onboarding inputs.');
   return answers;
@@ -134,6 +127,7 @@ export async function collectOnboardAnswers(
 export async function answersFromOptions(
   options: OnboardCliOptions,
   fromInteractive: boolean,
+  registry?: ProviderRegistry,
 ): Promise<OnboardAnswers> {
   const dispatcherId = validateDispatcherId(
     options.dispatcherId ?? DEFAULT_DISPATCHER_ID,
@@ -146,10 +140,18 @@ export async function answersFromOptions(
     'agent',
   );
   const channelSelections = parseChannelSelections(options.channel);
-  const registry = await onboardProviderRegistry();
-  await loadSelectedProviders(registry, agentSelection, channelSelections);
-  const agentCatalog = new AgentRuntimeProviderCatalog({ registry });
-  const channelCatalog = new ChannelProviderCatalog({ registry });
+  const effectiveRegistry = registry ?? (await onboardProviderRegistry());
+  await loadSelectedProviders(
+    effectiveRegistry,
+    agentSelection,
+    channelSelections,
+  );
+  const agentCatalog = new AgentRuntimeProviderCatalog({
+    registry: effectiveRegistry,
+  });
+  const channelCatalog = new ChannelProviderCatalog({
+    registry: effectiveRegistry,
+  });
   const promptHost = promptHostForMode(fromInteractive);
 
   const agentConfigJson = parseConfigJsonMap(
@@ -164,7 +166,6 @@ export async function answersFromOptions(
   );
 
   return {
-    configDir: normalizePath(options.configDir ?? defaultConfigDir(options)),
     dispatcherId,
     dispatcherCwd: normalizePath(dispatcherCwd),
     agentRuntime: await onboardAgentRuntime(
@@ -212,7 +213,9 @@ function parseChannelSelections(
   const providers = new Set<string>();
   for (const entry of out) {
     if (ids.has(entry.id)) {
-      throw new Error(`onboard channel id '${entry.id}' is declared more than once`);
+      throw new Error(
+        `onboard channel id '${entry.id}' is declared more than once`,
+      );
     }
     ids.add(entry.id);
     if (providers.has(entry.provider)) {
@@ -236,7 +239,8 @@ function parseProviderSelection(
   const id = eq >= 0 ? trimmed.slice(0, eq).trim() : defaultId;
   const provider = eq >= 0 ? trimmed.slice(eq + 1).trim() : trimmed;
   if (id === '') throw new Error(`--${optionName} id must not be empty`);
-  if (provider === '') throw new Error(`--${optionName} provider must not be empty`);
+  if (provider === '')
+    throw new Error(`--${optionName} provider must not be empty`);
   return { id, provider };
 }
 
@@ -331,7 +335,9 @@ function parseConfigJsonMap(
   for (const raw of optionValues(input)) {
     const { id, json } = splitConfigJson(raw, defaultId, optionName);
     if (out.has(id)) {
-      throw new Error(`--${optionName} for id '${id}' is declared more than once`);
+      throw new Error(
+        `--${optionName} for id '${id}' is declared more than once`,
+      );
     }
     const parsed = parseJsonObject(json, optionName);
     out.set(id, parsed);
@@ -355,7 +361,10 @@ function splitConfigJson(
   return { id, json };
 }
 
-function parseJsonObject(raw: string, optionName: string): Record<string, unknown> {
+function parseJsonObject(
+  raw: string,
+  optionName: string,
+): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -370,12 +379,17 @@ function parseJsonObject(raw: string, optionName: string): Record<string, unknow
 }
 
 /**
- * The built-in registry plus the always-loaded plugins' providers, so
- * `builtin:feishu` (contributed by the Feishu plugin) resolves during onboard.
+ * An empty registry with the always-loaded plugins' providers contributed
+ * into it, so `builtin:codex` / `builtin:claude-code` / `builtin:feishu` all
+ * resolve during onboard.
  */
 async function onboardProviderRegistry(): Promise<ProviderRegistry> {
-  const registry = createBuiltinProviderRegistry();
-  await loadPlugins({ registry, entries: [], logger: createLogger({ name: 'onboard' }) });
+  const registry = new ProviderRegistry();
+  await loadPlugins({
+    registry,
+    entries: [],
+    logger: createLogger({ name: 'onboard' }),
+  });
   return registry;
 }
 
@@ -442,10 +456,6 @@ function nonInteractivePromptValue(
   );
 }
 
-function defaultConfigDir(options: OnboardCliOptions): string {
-  return options.configDir ?? join(homedir(), '.dreamux');
-}
-
 async function promptText(
   label: string,
   initialValue?: string,
@@ -453,7 +463,9 @@ async function promptText(
 ): Promise<string> {
   const value = await text({
     message: label,
-    initialValue,
+    // @clack/prompts' TextOptions.initialValue is foreign and has no
+    // explicit `| undefined` — key presence must stay observable here.
+    ...(initialValue !== undefined ? { initialValue } : {}),
     validate: (input) =>
       required && (input === undefined || input.trim() === '')
         ? 'required'
@@ -473,10 +485,7 @@ async function promptConfirm(
   return unwrapPrompt(value);
 }
 
-async function promptSecret(
-  label: string,
-  required = true,
-): Promise<string> {
+async function promptSecret(label: string, required = true): Promise<string> {
   const value = await password({
     message: label,
     validate: (input) =>

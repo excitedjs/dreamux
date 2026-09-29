@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6f, item 1: updated the two internal tap registrations (dispatcher.hooks.launch, team.hooks.leaderLaunch) to follow the matching dreamux-types rename. No change to this package's own published surface.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux-plugin-bootstrap"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-plugin-bootstrap",
+  "email": "053700@gmail.com"
+}

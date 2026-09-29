@@ -34,7 +34,8 @@ async function getProvablyDeadPid(): Promise<number> {
   const child = spawn('node', ['-e', 'process.exit(0)'], { detached: true });
   const pid = await new Promise<number>((resolve, reject) => {
     child.once('spawn', () => {
-      if (child.pid === undefined) reject(new Error('spawned child has no pid'));
+      if (child.pid === undefined)
+        reject(new Error('spawned child has no pid'));
     });
     child.once('exit', () => {
       if (child.pid !== undefined) resolve(child.pid);
@@ -79,7 +80,9 @@ describe('isProcessGroupAlive / killProcessGroup with a real detached child', ()
   });
 
   it('reports a freshly spawned detached child group as alive, then not-alive after SIGKILL', async () => {
-    child = spawn('node', ['-e', 'setInterval(() => {}, 1000)'], { detached: true });
+    child = spawn('node', ['-e', 'setInterval(() => {}, 1000)'], {
+      detached: true,
+    });
     await new Promise<void>((resolve, reject) => {
       child!.once('spawn', () => resolve());
       child!.once('error', reject);
@@ -149,7 +152,9 @@ describe('ensureOwnerOnlyDir', () => {
     await mkdir(real, { mode: 0o700 });
     const link = join(root, 'link');
     await symlink(real, link);
-    await expect(ensureOwnerOnlyDir(link)).rejects.toThrow(/it is a symlink, not a real directory/);
+    await expect(ensureOwnerOnlyDir(link)).rejects.toThrow(
+      /it is a symlink, not a real directory/,
+    );
   });
 
   it('rejects a directory owned by a different uid using the injected getuid probe', async () => {
@@ -161,7 +166,9 @@ describe('ensureOwnerOnlyDir', () => {
     // without needing actual multi-user permissions.
     await expect(
       ensureOwnerOnlyDir(target, { getuid: () => -1 }),
-    ).rejects.toThrow(/it is owned by uid \d+, not the current user \(uid -1\)/);
+    ).rejects.toThrow(
+      /it is owned by uid \d+, not the current user \(uid -1\)/,
+    );
   });
 });
 
@@ -190,7 +197,9 @@ describe('removeEmptyLogFile', () => {
 
   it('never throws for a missing file (best-effort)', async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-os-'));
-    await expect(removeEmptyLogFile(join(root, 'nope.log'))).resolves.toBeUndefined();
+    await expect(
+      removeEmptyLogFile(join(root, 'nope.log')),
+    ).resolves.toBeUndefined();
   });
 });
 

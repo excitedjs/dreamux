@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 9, item 8: deleted the failing 'the routing surface it does export owns only Feishu-local target/document concepts' case in tests/public-api.test.ts, per R43 -- the package's public barrel no longer exports a name called FeishuRouting. Test-only; no runtime or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

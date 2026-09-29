@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A `channels[].config` block for the built-in Feishu provider now follows the same persisted-shape policy (R21) as the rest of config.json: an unrecognized key alongside `app_id`/`app_secret` is tolerated and ignored instead of refusing `dreamux serve`. A missing or wrong-type `app_id`/`app_secret` still fails loading.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

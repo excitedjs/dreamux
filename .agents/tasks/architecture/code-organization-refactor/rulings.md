@@ -84,6 +84,14 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
   Team, Dispatcher, Server) only calls close on its children, layer by layer.
   A child under construction registers with its parent first and closes itself
   if the parent is already closing (inference: this replaces the second sweep).
+  PR #455 review round correction: the inference does not hold — register-time
+  self-close only preempts a brand-new entity's first submission; it does not
+  cover an already-materialized entity whose pre-fence admission reaches (or
+  revives) its runtime start only after the dispatcher's first sweep pass has
+  already read past it, since `stopForHost()` fences admission only for its
+  own convergence and never moves the entity's phase. `DispatcherLifecycle`
+  keeps an idempotent runtime sweep both before and after the admitted-work
+  drain; see `packages/dreamux/src/service/CLAUDE.md`.
 - R11 in-process Dispatcher restart: "没有这个需求，把打开和关闭都删掉", and
   "没有这个诉求，只要 Daemon 启动的时候，Dispatcher 全部都启动。延迟的只是
   Dispatcher 的 Agent Service，或者说，是 Agent Service 延迟拉起 Provider
@@ -147,7 +155,12 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
   `<root>/config.json`; `DREAMUX_CONFIG_DIR` and onboard `--config-dir` are
   deleted; the service unit writes `DREAMUX_ROOT`. An install that used a
   non-default config directory must re-run the service install (`BREAKING:`
-  with `Rebuild:`).
+  with `Rebuild:`). **Inference:** `dreamux uninstall`'s `--config-dir`
+  option is deleted too, for the same reason — the option has nothing left
+  to relocate once `config.json` is root-derived. As a result, `dreamux
+  uninstall`'s directory-removal loop also now removes the (by-then-empty)
+  `DREAMUX_ROOT` directory itself, since `configDir` and the root are now
+  the same path.
 - R27 onboard and the config directory: **selected** "onboard 也认这个变量"
   (inference: superseded in effect by R26, so onboard follows `DREAMUX_ROOT`).
 
@@ -249,6 +262,27 @@ before the remaining stages run as one orchestration ("后面所有的PR，你�
 - R51 hooks that alter Feishu's own behavior (the PR #453 design handoff's open item): **inference, from the operator's explanation of where that item came from:** it is already covered by the Feishu extension API (tools, `sendCard`, `editCard`, card actions); nothing further is built.
 
 - R52 hook names: asked "这些名字全都带before。可以把这个before去掉吗？Webpack那边都起了什么样的名字？" After the reply that webpack keeps `before`/`after` for paired hooks around one action, names a single transform hook after the action or data (`createModule`, `processAssets`) and a hand-off hook after the object (`compilation`, `module`), the proposed names were accepted: "可以". → `dispatcher.hooks.launch` (was `beforeLaunch`), `team.hooks.leaderLaunch` (was `beforeTeamLeaderLaunch`), `dispatcher.hooks.teammateLaunch` (new), `dispatcher.hooks.createTeam` (new, the `team.create` parameters), with `host.hooks.dispatcher` and `dispatcher.hooks.team` unchanged.
+
+- R53 gates during the run (2026-09-25 14:24), after two stages each took hours mostly running full gates per work item: "我觉得可以，毕竟是完全重写，你每个阶段都要求类型全过，lint全过，test全过这不现实。应该一次性把代码全部写完，回头再修类型和lint问题，最后再补充单测。" → From stage 2b's review onward, stages are written without running build, lint, typecheck:tests or tests. One final pass after the last stage makes types and lint green and deletes failing tests per R43. Unit tests are still added last on #453. Each stage commit still passes the pre-commit hook, which lints the staged `.ts` files.
+
+- R54 MCP delegate identity (a Stage 7 change no earlier ruling covered): a delegate's MCP server identity is derived from its registration name (`dreamux-<name>` at the package version) instead of being read, validated and frozen from its own `describe()` response. Asked what it affects, the operator was told that all four delegates are Core-owned, `McpDelegate` is not in `dreamux-types`, every previous `describe()` identity already equaled `dreamux-<name>`, and the `serverInfo` a runtime sees is unchanged; asked who consumes `describe()`, the chain was explained (lease mint → `mcp.describe` → shim `serverInfo`). His reply: "那看起来好像没啥影响才对。" → The derivation stays; `describe()` supplies only the tool catalog.
+- R55 `@ts-expect-error` in tests (the five Stage 3 relocated): "这些 @ts-expect-error 我感觉能干掉就干掉". → Deleted with the assertion each guarded, logged in the ledger. Scope is those five; other directives are not covered.
+- R56 publishing the bootstrap plugin: "先给这个包的 shouldpublish 设置成false，这次先不测这个插件". → `@excitedjs/dreamux-plugin-bootstrap` has `shouldPublish: false`, and `@excitedjs/dreamux` takes it as a dev dependency, since a runtime dependency on an unpublished package would make `dreamux` uninstallable. `builtin:bootstrap` is unavailable in published builds until this is reverted.
+
+## PR #455 review follow-ups (2026-09-28)
+
+- R57 closures split out only to satisfy max-lines: "这个模式确实非常恶心，先给所有因为行数被强行拆出闭包的文件都找出，把这个类型的闭包全部都干掉，后面我们再看真正超过700行的都有哪些文件。（可以先忽略 700 行的报错，先不 commit，到时候挨个修。）" → A child built by one parent, imported only there and driven by closures into the parent's private state is folded back into the parent. Files still over 700 code lines are handled one at a time afterwards.
+- R58 pass-through aggregates: asked "是不是还是有职责错放的问题呢？比如 聚合的上层类，只透传持有的聚合对象的调用之类的。", then approved the sweep: "好". On `AgentService.onClosed`: "这个玩意能用 event emitter 代替吗？", then "可以" to a one-shot Promise. → Methods that only forward to an owned object are deleted; one-time closed facts are `readonly closed: Promise<...>`.
+- R59 symlinked `DREAMUX_ROOT` in uninstall: "别扯淡，不要预设这种行为，删了属于活该。" → Uninstall carries no symlink branch.
+- R60 the cron store: "TeamService 创建 CronJobStore，把它交给 SchedulerService 是一个非常明确的反模式，为什么不能 SchedulerService 自己构造自己的CronJobStore 呢？" and "删 store 文件是 team 拥有的解散步骤  这个并不是我的裁定。删 store 是 team 自持的 SchedulerService 的行为，team 解散应该是销毁 SchedulerService，SchedulerService的销毁流程里自己删除自己的 store". → `SchedulerService` builds its own `CronJobStore` from a path; `destroy()` stops it and deletes its store. The earlier KB statement that deleting the store is a Team step was never an operator ruling and is removed.
+- R61 child services close their own loop: "同理，现在 teamService 做的太多了，他如果持有的都是 service 对象，service 的创建、销毁动作都由 service 自己闭环，才叫真正的消解职责" and "teamService 应该信任 自己聚合的其他 service 的 verb 是可靠的". → `TeamService` holds complete child services and calls their lifecycle verbs; children own their internal resources. **Inference, confirmed in discussion:** the parent still tries every child and aggregates destroy errors, because visiting all children is the parent's job.
+- R62 dissolve ordering (reaffirmed by R67): "team 解散失败 只有一个场景，就是 worktree 是 dirty 的，只要 worktree 是 clean，第一步先给 team record 设置成 closing 或者 closed（我忘记是哪个值了）。然后哪怕后面任何一个环节失败，这个团队也废了，没办法继续用了". → Dissolve is: worktree precheck (existing force rules) → write `closed` → destroy child services → worktree cleanup. A failure after `closed` never reopens the Team; a worktree that became dirty after the precheck only keeps the directory. There is no `closing` status; the persisted value is `closed`.
+- R63 Agent identity ownership: "AgentService 只拿到 storePath，是不是可以自己写 identity.json，自己从 identity 恢复？他们的父级 service真的需要感知到 identity.json 这个文件，甚至为此构造一个 identityStore 类嘛？" → An Agent is a directory to its parents: the agent module creates, opens and reads `identity.json` itself, and parents stop constructing `AgentIdentityStore` / `AgentEntityCollectionStore`.
+- R64 Team member worktrees: "team 下由 teamleader 创建出的 teammate，worktree 策略始终是 cwd 模式，本来他清理的时候就不会清理 worktree。" → Closing a Team member never cleans a worktree; unbuilt members are marked closed through the agent's own entry without running launch hooks.
+- R65 delivery: "开始开发吧，启动一个 ultracode，把我们本次要调整的部分一次性搞定". → R60 to R64 are implemented in one orchestration.
+- R66 dissolve, revised (proposed 2026-09-28 20:18, not adopted per R67): "是这样，解散行为先停 teammate、workflow、cron，并且调用 teamleader 的 interrupt ，然后尝试调用 team leader 的 close。如果此时 worktree dirty，那就先不解散团队，让 teamleader 自己去清理 worktree，自己解散自己。" and "是不是和main 上差不多？把解散第一步改成先写close 可能并不是最优解" (corrected: "说错了不是main，是next 分支"), and "但是 dissolve 本身还是有副作用，比如会立即清理定时任务、teammate 和workflow，这是符合预期的，因为 teammate close 掉还是可以继续重建的。cron 和 workflow 都是可以重建的。" On direction: "我未来可能会考虑给 team 里的 teammate 也放开 worktree 能力，而不只是现在这种借用 team 唯一的 worktree 的实现方式。只有这样，才可能实现多个 teammate 并行开发。最后合并到一起". → Discussed as a direction; not implemented this round (R67).
+- R67 dissolve, final for this round (2026-09-28 20:24): "先不调整了，按照当前的策略做完吧，就是预检通过就先设置成 closed，然后串行清理，worktree 暂时由 teamservice 持有。" → R62's order stands for this round: precheck → write `closed` → destroy child services one after another → worktree cleanup; the managed worktree stays owned by the Team. R66's alternative (leader-owned worktree, dirty handed to the leader) is not implemented now.
+- R68 final anti-pattern review (2026-09-29): asked "拉一个新的 codex-ultra ，mimo ，deepseek ，对最终的代码进行 review ，重点找出我们最后修复的这几种架构反模式". Shown the verified findings (items 1–6 on this branch's patterns, plus pre-branch items: the config-only dispatcher store, the double Team-name probe, and defensive code with no named scenario), with the recommendation to fix 1–6 now and defer the rest, he ruled: "全部修了。起一个 ultracode". → Every verified finding, pre-branch items included, is fixed in PR #455 in one orchestration. The anti-pattern list the review used is the [final review brief](artifacts/final-review-brief.md).
 
 ## Resolved by the rulings above
 

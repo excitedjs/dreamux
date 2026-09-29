@@ -16,7 +16,8 @@
   (since #209 the contract lived in `@excitedjs/dreamux-types`, not core; the
   file was deleted in the #350 follow-up cleanup — see the note below),
   both builtins' `channelInput`, the Feishu channel message layer
-  [`/packages/channel/feishu-channel/src/feishu-message.ts`](/packages/channel/feishu-channel/src/feishu-message.ts),
+  [`/packages/channel/feishu-channel/src/inbound/attachments.ts`](/packages/channel/feishu-channel/src/inbound/attachments.ts)
+  (renamed from `feishu-message.ts` in the code-organization refactor),
   and the no-leak boundary in
   [`/packages/dreamux/CLAUDE.md`](/packages/dreamux/CLAUDE.md)
 - **PR / Issue:** [#164](https://github.com/excitedjs/dreamux/issues/164)
@@ -87,9 +88,9 @@ text alone.
   route, or reply-target on them; reply targeting stays a channel-layer concern.
 - **The assembly locus moved.** Core, not each runtime, now renders the one
   provenance envelope every runtime reads:
-  [`/packages/dreamux/src/service/channel-submission.ts`](/packages/dreamux/src/service/channel-submission.ts)
+  [`/packages/dreamux/src/service/agent/channel-submission.ts`](/packages/dreamux/src/service/agent/channel-submission.ts)
   and
-  [`/packages/dreamux/src/service/teammate-service/submission.ts`](/packages/dreamux/src/service/teammate-service/submission.ts).
+  [`/packages/dreamux/src/service/agent/submission.ts`](/packages/dreamux/src/service/agent/submission.ts).
   The current behavior is owned by
   [`channel-routing-and-binding`](/.agents/domains/channel.md);
   this record is kept for the *why* of the routing/display split, not as a

@@ -18,22 +18,23 @@ Two files under the dispatcher state directory answer two different questions
 and are never conflated: `access.json` authorizes humans and chats,
 `chat-bots.json` records peer-bot awareness and trust.
 
-This page's path is itself load-bearing. `feishu-gate-io.ts` names it in the
+This page's path is itself load-bearing. `access/index.ts` names it in the
 user-visible V3 fail-loud message, and
 `/packages/dreamux/tests/feishu-allow-chats-release-contract.test.ts` reads it
 by path; renaming or moving the page changes user-facing copy and breaks CI.
 
 Source:
 
-- `/packages/channel/feishu-channel/src/feishu-gate.ts`
-- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-ops.ts`
+- `/packages/channel/feishu-channel/src/access/state.ts`
+- `/packages/channel/feishu-channel/src/access/gate.ts`
+- `/packages/channel/feishu-channel/src/access/index.ts`
+- `/packages/channel/feishu-channel/src/inbound/pipeline.ts`
 - `/packages/channel/feishu-channel/src/introduce.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
-- `/packages/channel/feishu-channel/src/feishu-channel.ts`
-- `/packages/channel/feishu-channel/src/feishu-message.ts`
+- `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/session/card-actions.ts`
+- `/packages/channel/feishu-channel/src/inbound/attachments.ts`
 - `/packages/channel/feishu-transport/`
 
 ## Contracts
@@ -66,7 +67,10 @@ ordinary processing, passive bot observation, `/introduce`, or the gate:
 - `sender_type: bot | app` plus a non-empty `sender_id` is bot;
 - every other sender combination drops as `sender_unknown`.
 
-The package-root `dreamuxFeishuGate` input ABI remains:
+The `dreamuxFeishuGate` input ABI remains (the function itself is an
+internal, not a package-root, export — the barrel keeps only what a
+cross-package caller or the package's own test suite needs, per
+`feishu-channel/src/index.ts`'s header comment):
 
 ```ts
 interface GateInbound {
@@ -90,9 +94,11 @@ The file path is fixed at:
 ~/.dreamux/state/<dispatcher-id>/access.json
 ```
 
-`DREAMUX_CONFIG_DIR` relocates `config.json` only. The Channel joins
-`access.json` under the host-supplied dispatcher state directory; callers must
-not derive the state path from `dreamux config path`.
+`DREAMUX_ROOT` is the one relocation variable for both `config.json` and
+`access.json`, though they still resolve through different builders
+(`dreamuxRoot()` directly vs. `stateRoot()`). The Channel joins `access.json`
+under the host-supplied dispatcher state directory; callers must not derive
+the state path from `dreamux config path`.
 
 The complete secure default and accepted top-level shape are:
 
@@ -106,17 +112,15 @@ The complete secure default and accepted top-level shape are:
     "require_mention": true
   },
   "allow_users": [],
-  "pending": {},
-  "observed_chats": [],
-  "warnings": [],
-  "last_gate": {
-    "at": 0
-  }
+  "pending": {}
 }
 ```
 
 `ACCESS_STATE_VERSION` remains `3`. No field, reader, saver, validator, fixture
-version, or public state type changes for trusted-chat semantics.
+version, or public state type changes for trusted-chat semantics — the R22/R45
+ledger shrink below (`observed_chats`/`warnings`/`last_gate`/per-entry
+`kind`/`replies` removed) is a separate, later change, unrelated to
+trusted-chat delivery.
 
 Types:
 
@@ -125,20 +129,28 @@ type DmPolicy = 'all' | 'allowlist' | 'pairing' | 'disabled';
 type GroupPolicy = 'block' | 'allowlist' | 'follow-user';
 
 interface PendingPairingEntry {
-  kind: 'dm' | 'group';
   sender_id: string;
   chat_id: string;
   created_at: number;
   expires_at: number;
-  replies: number;
   prompt_message_id?: string;
 }
 ```
 
-The reader is deliberately shallow: it requires `version === 3` plus the
-presence and container type of each top-level field, and accepts any string for
-`dm_policy` and `group.policy`. A missing file yields the secure default; a
-present file that fails the shape check fails loud instead of migrating.
+`FeishuAccess`'s access.json loader reconstructs the returned value field by
+field rather than casting the parsed JSON as-is: the top-level shape check
+(`version === 3` plus the presence and container type of each top-level field,
+accepting any string for `dm_policy` and `group.policy`) is deliberately
+shallow, as before, but each `pending` entry is now rebuilt individually —
+missing or wrong-typed `sender_id`, `chat_id`, `expires_at`, or `created_at`
+fails loud the same as a top-level shape failure (R21: reject, never invent a
+value); `prompt_message_id` is optional on the type, so it is carried through
+only when present and typed right. A field an older build once wrote that is
+no longer in the type above (`kind`, `replies`, and the former
+`observed_chats`/`warnings`/`last_gate` top-level ledger) is read and
+discarded, never round-tripped back to disk. A missing file yields the secure
+default; a present file that fails the shape check fails loud instead of
+migrating.
 
 Current ownership has four classes:
 
@@ -147,9 +159,15 @@ Current ownership has four classes:
   `group.require_mention`: operator policy.
 - `allow_users`: shared authority. Live pairing/App Owner approval may append
   it; an independent quiesced operator may maintain it.
-- `pending`, `observed_chats`, `warnings`, and `last_gate`: Channel runtime
-  ledger fields. `observed_chats` accumulates every chat this dispatcher has
-  seen, and crossing more than one appends the trust-domain warning once.
+- `pending`: Channel runtime ledger, not operator-editable — pairing-slot
+  bookkeeping the gate owns end to end.
+
+A dispatcher that observes traffic from more than one chat is no longer
+flagged with a dedicated dedup'd warning event (the mechanism was deleted, not
+reimplemented) — multi-chat traffic is visible only as repeated per-message
+log lines carrying `chat_id` (the drop and pair log lines both do; ordinary
+delivery still gets no gate-level log line), not as a distinct once-per-run
+event.
 
 ### Ordinary delivery
 
@@ -332,7 +350,7 @@ A model-facing Feishu MCP tool returns a chat's `known` and `trusted` peer bots
 as two separated arrays of `{ open_id, name? }`, for context recovery after
 compaction. The Feishu channel package owns the tool definition and handler
 (`/packages/channel/feishu-channel/src/tools/messaging-tools.ts`,
-`/packages/channel/feishu-channel/src/feishu-channel.ts`); the generic Channel
+`/packages/channel/feishu-channel/src/session/session.ts`); the generic Channel
 MCP delegate routes the call to the created session's MCP capability, and the
 handler reads `chat-bots.json` for the answer. Same transport shape as `reply` /
 `react`; no operator CLI surface.
@@ -347,27 +365,31 @@ Constants:
 ```text
 PAIRING_TOKEN_BYTES = 3
 PAIRING_TTL_MS = 3600000
-MAX_PENDING_PER_KIND = 10
+MAX_PENDING = 10
 ```
 
 Tokens are six lowercase hex characters generated with `randomBytes(3)`. The
-gate prunes expired pending entries at the beginning of each evaluation. Active
-dm-kind entries count toward the slot cap; the same sender reuses an existing
-unexpired entry across P2P/group requests.
+gate prunes expired pending entries at the beginning of each evaluation. Every
+active pending entry counts toward the one slot cap; the same sender reuses an
+existing unexpired entry across P2P/group requests.
 
 The session preserves send-before-save:
 
-1. Compute the pure gate result under the first access lock.
-2. For a new pair, send the Owner approval card before saving a pending entry.
-3. If send fails, save no pending entry.
-4. Under the second access lock, re-read and merge without overwriting a
-   concurrent approval or same-sender entry.
+1. Compute the pure gate result inside the access store's first `update`.
+2. For a new pair, send the Owner approval card before committing a pending
+   entry.
+3. If send fails, commit no pending entry.
+4. Inside the access store's second `update`, re-read the committed value and
+   merge without overwriting a concurrent approval or same-sender entry.
 5. A resend references the existing approval card when its message id is known
    and refreshes its TTL.
 
-All writes are complete owner-only sibling temporary files followed by atomic
-rename; final `access.json` mode is `0600` and a missing state directory is
-created at mode `0700`.
+Every commit is a complete owner-only sibling temporary file followed by
+atomic rename; final `access.json` mode is `0600` and a missing state
+directory is created at mode `0700`. The session holds one
+`TransactionalStore<DispatcherAccessState>` per Channel session; every read
+and write above goes through it, serialized on its own queue — there is no
+separate access mutex.
 
 ### Owner approval
 
@@ -380,11 +402,10 @@ On `card.action.trigger`:
 2. Resolve the Feishu app identity: the accepted set is the app creator plus the
    app owner when the owner type is absent or an enterprise member.
 3. Reject a non-Owner click without changing the card or pending entry.
-4. Under the access mutex, find the exact token and reject a missing, expired,
-   or unsupported group-kind entry.
-5. For a valid dm-kind entry, append its `sender_id` to `allow_users` if needed,
-   delete that pending entry, persist, and return the immediate raw-card success
-   response.
+4. Inside the access store's `update`, find the exact token and reject a
+   missing or expired entry.
+5. Append the entry's `sender_id` to `allow_users` if needed, delete that
+   pending entry, persist, and return the immediate raw-card success response.
 
 Approval checks the target entry expiry directly; it does not depend on another
 message arriving to prune state. A token whose sender is already on
@@ -424,8 +445,8 @@ by the maintenance skill:
   `allow_users`. There are no `access.*` admin methods and no operator CLI for
   access state, and `dreamux doctor` is not an access-state validator.
 - The gate is pure: it takes a state snapshot and returns an action, the next
-  state, and logs. The session owns all I/O, the access mutex, and
-  send-before-save.
+  state, and logs. The session owns all I/O, the access store's serialized
+  queue, and send-before-save.
 
 ## Regression Traps
 
@@ -436,16 +457,17 @@ by the maintenance skill:
 > `sender_not_followed` and writes no trust. Under `follow-user`, an `allow_users`
 > sender can still introduce in an unlisted chat.
 
-Focused tests lock the trusted-chat truth table across both policies and every
-`dm_policy`, the unchanged P2P and bot/trusted-bot paths, allow-chat-scoped bot
-observation, the ordinary-delivery versus `/introduce` authority split, V3
-defaults and reader/saver behavior, the token never reaching visible card copy,
-and the package-root gate input ABI:
-
-- `/packages/channel/feishu-channel/tests/feishu-gate.test.ts`
-- `/packages/channel/feishu-channel/tests/feishu-introduce.test.ts`
-- `/packages/channel/feishu-channel/tests/feishu-pairing-card.test.ts`
-- `/packages/channel/feishu-channel/tests/public-api.test.ts`
+The trusted-chat truth table across both policies and every `dm_policy`, the
+unchanged P2P and bot/trusted-bot paths, allow-chat-scoped bot observation, the
+ordinary-delivery versus `/introduce` authority split, V3 defaults and
+reader/saver behavior, and the token never reaching visible card copy were each
+locked by a dedicated test (`feishu-gate.test.ts`, `feishu-introduce.test.ts`,
+`feishu-pairing-card.test.ts`). The code-organization refactor deleted all
+three as broken-by-directory-move (R43; see
+[deleted-tests.md](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)'s
+"Final pass" section) and none has been rebuilt yet; the behavior itself is
+unchanged. `/packages/channel/feishu-channel/tests/public-api.test.ts` still
+locks the never-exported-name list.
 
 Raw inbound classification currently has no dedicated test lock.
 

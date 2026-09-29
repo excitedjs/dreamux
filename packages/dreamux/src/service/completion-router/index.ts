@@ -1,6 +1,10 @@
-import type { DreamuxLogger, RuntimeCompletion } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  RuntimeCompletion,
+  TeammateRole,
+} from '@excitedjs/dreamux-types';
 
-import { errorInfo } from '../../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 
 interface CompletionFactBase {
   status: 'completed' | 'failed' | 'stopped';
@@ -10,6 +14,8 @@ interface CompletionFactBase {
 export interface TeammateCompletionFact extends CompletionFactBase {
   kind: 'teammate';
   source: string;
+  /** The producing Agent's runtime role, so delivery can word the notice accordingly. */
+  role: TeammateRole;
 }
 
 export interface WorkflowCompletionFact extends CompletionFactBase {
@@ -19,8 +25,7 @@ export interface WorkflowCompletionFact extends CompletionFactBase {
 }
 
 export type PreparedCompletionFact =
-  | TeammateCompletionFact
-  | WorkflowCompletionFact;
+  TeammateCompletionFact | WorkflowCompletionFact;
 
 export type CompletionDeliveryResult =
   | { status: 'accepted' }
@@ -48,16 +53,12 @@ type DeadlineResult<T> =
   | { status: 'rejected'; error: Error }
   | { status: 'timed_out' };
 
-interface CompletionEntry {
-  readonly recipients: WeakMap<object, Promise<void>>;
-}
-
 /** Stateful completion-token router and transport delivery policy. */
 export class CompletionDeliveryPolicy {
   private readonly attemptTimeoutMs: number;
-  private readonly producerCompletions = new Map<
-    string,
-    WeakMap<RuntimeCompletion, CompletionEntry>
+  private readonly completions = new WeakMap<
+    RuntimeCompletion,
+    Promise<void>
   >();
   private readonly recipientTails = new WeakMap<object, Promise<void>>();
 
@@ -77,7 +78,7 @@ export class CompletionDeliveryPolicy {
        */
       accepting: () => boolean;
       /** Deterministic test seam for the internal delivery-operation bound. */
-      attemptTimeoutMs?: number;
+      attemptTimeoutMs?: number | undefined;
     },
   ) {
     this.attemptTimeoutMs =
@@ -99,11 +100,16 @@ export class CompletionDeliveryPolicy {
    * Deliver one settled turn, folding on the provider token when there is one.
    *
    * A native completion is a value several paths can report; the token is its
-   * identity, so the same settlement reaches a recipient once. A turn that
-   * failed or was stopped produced no such value — there is nothing to fold, and
-   * a fabricated identity would only make two distinct settlements look like
-   * one. Both forms queue on the same per-recipient tail, so a recipient reads
-   * its news in the order the turns settled.
+   * identity, so the same settlement reaches a recipient once. Every submitter
+   * whose delivery closure is fixed to the same entity already resolves to the
+   * same recipient (an entity's `deliverCompletion` never varies across its
+   * turns), so folding on the token alone — with no per-recipient nesting — is
+   * enough: no code path produces two different recipients for the same
+   * `RuntimeCompletion` object. A turn that failed or was stopped produced no
+   * such value — there is nothing to fold, and a fabricated identity would
+   * only make two distinct settlements look like one. Both forms queue on the
+   * same per-recipient tail, so a recipient reads its news in the order the
+   * turns settled.
    *
    * The scope fence is read here, before folding or queueing: a delivery that
    * was already queued when the fence went up is never retracted, and a token
@@ -129,21 +135,11 @@ export class CompletionDeliveryPolicy {
     if (token === null) {
       return this.enqueue(recipientKey, initiator, completion);
     }
-    let completions = this.producerCompletions.get(completion.source);
-    if (completions === undefined) {
-      completions = new WeakMap();
-      this.producerCompletions.set(completion.source, completions);
-    }
-    let entry = completions.get(token);
-    if (entry === undefined) {
-      entry = { recipients: new WeakMap() };
-      completions.set(token, entry);
-    }
-    const existing = entry.recipients.get(recipientKey);
+    const existing = this.completions.get(token);
     if (existing !== undefined) return existing;
 
     const delivery = this.enqueue(recipientKey, initiator, completion);
-    entry.recipients.set(recipientKey, delivery);
+    this.completions.set(token, delivery);
     return delivery;
   }
 
@@ -153,8 +149,9 @@ export class CompletionDeliveryPolicy {
     completion: PreparedCompletionFact,
   ): Promise<void> {
     const previous = this.recipientTails.get(recipientKey) ?? Promise.resolve();
-    const delivery = previous.catch(() => undefined).then(() =>
-      this.deliverPrepared(initiator, completion));
+    const delivery = previous
+      .catch(() => undefined)
+      .then(() => this.deliverPrepared(initiator, completion));
     this.recipientTails.set(recipientKey, delivery);
     return delivery;
   }
@@ -190,6 +187,11 @@ export class CompletionDeliveryPolicy {
       return;
     }
     const prepared = preparation.value;
+    // Only a `failed` outcome loops back here (see the branches below): the
+    // provider seam reserves `failed` for a proven pre-admission failure —
+    // no native command was accepted — so a repeat costs nothing extra,
+    // unlike `ambiguous`, `unsupported`, a timeout, or a throw, none of
+    // which this loop retries.
     for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt += 1) {
       const submission = await settleWithinDeadline(
         () => prepared.submit(),

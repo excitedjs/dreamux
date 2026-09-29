@@ -1,0 +1,21 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 8a item 4: added paths.ts mirroring the codex package's spawn-env/config-home resolver — claudeSpawnEnv (moved verbatim from runtime-session.ts's buildClaudeProcessEnv) and resolveClaudeConfigHomeDir (hoisted out of activity/path.ts's claudeHistoryRoots, which now calls it and keeps its own missing-HOME error). runtime.ts and activity/reader.ts now share claudeSpawnEnv instead of each computing the process/extra_env merge separately. runtime-session.ts's other two exports, completionFromTurnOutcome and turnFailureMessage, moved into rpc.ts (their real owner: rpc.ts is completionFromTurnOutcome's only caller, and runtime-activity.ts now imports turnFailureMessage from rpc.ts instead); runtime-session.ts is deleted. None of this is re-exported from the package's own index.ts barrel, and no behavior changed.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    },
+    {
+      "comment": "The package's default export now means 'the Dreamux plugin factory that contributes the builtin:claude-code AgentRuntimeProvider' instead of 'the bare provider factory'. createClaudeCodeAgentRuntimeProvider is the named export for constructing the bare provider directly. Shrunk the public barrel (index.ts) to the plugin default, createClaudeCodeAgentRuntimeProvider plus its options type, and the DispatcherClaudeCodeConfig reader/defaults; everything else (the supervisor/session-factory types, stream/RPC internals, args helpers, mcp-config internals, the provider diagnostic, and the ClaudeCodeRuntimeDeps type) is now reachable only from inside this package. Also deleted a dead export with no caller anywhere in this repo, dispatcherClaudeCodeConfig (a provider-ref equality check duplicating a ref string Dreamux core already owns), and the package's own provider-ref.ts (the identical builtin:claude-code ref string is declared and used at Dreamux core's registry/builtins.ts). Anyone who configured agents[].provider: 'npm:@excitedjs/agent-runtime-claude-code' directly (nothing in this repo does) now fails loudly at the provider loader's factory-shape check instead of loading a provider.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    },
+    {
+      "comment": "Implemented the new AgentRuntimeProvider.operatorStateRoot capability, returning the operator's default Claude config home (resolveClaudeConfigHomeDir(process.env, process.cwd())). Dreamux core's uninstall guard now sources its protected Claude Code path from this instead of a hard-coded ~/.claude literal: for a default install the protected path is still ~/.claude, but if CLAUDE_CONFIG_DIR is set in the environment dreamux uninstall runs in, the guard now protects that directory instead.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "053700@gmail.com"
+}

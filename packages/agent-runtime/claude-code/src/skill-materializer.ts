@@ -1,11 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import {
-  mkdir,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
@@ -103,6 +97,8 @@ async function publish(
       );
     }
   } finally {
-    await rm(staleRoot, { recursive: true, force: true }).catch(() => undefined);
+    await rm(staleRoot, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
 }

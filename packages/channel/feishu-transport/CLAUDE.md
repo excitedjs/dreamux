@@ -9,6 +9,10 @@ package that exposes Lark SDK / JSAPI capabilities to channel layers.
 - Provide low-level JSAPI-shaped operations for connection, inbound event
   delivery, outbound message calls, reactions, resource APIs, and other Feishu
   platform capabilities.
+- Decode the raw inbound message-event and card-action-event envelopes into
+  typed shapes (`FeishuInboundEvent`, `FeishuCardActionEvent`) the channel
+  layer consumes directly; the channel layer re-exports these types unchanged
+  rather than defining its own.
 - Keep exported types and results platform-oriented, not Dreamux- or
   agent-oriented.
 - Keep the package host-agnostic: platform capabilities only, with no

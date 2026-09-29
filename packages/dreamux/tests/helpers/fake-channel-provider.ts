@@ -163,7 +163,10 @@ export function createFakeChannelProvider(
           record(`channel:${context.channel_id}:start`);
           if (options.invokeOnStart && handle.port !== null) {
             for (const call of options.invokeOnStart) {
-              await handle.port.invoke.invoke(call.command, call.payload as never);
+              await handle.port.invoke.invoke(
+                call.command,
+                call.payload as never,
+              );
             }
           }
         },
@@ -191,7 +194,9 @@ export function createFakeChannelProvider(
     },
     ...(options.mcp
       ? {
-          mcp: buildProviderMcp(options.mcp) as ChannelMcpCapability<FakeChannelConfig>,
+          mcp: buildProviderMcp(
+            options.mcp,
+          ) as ChannelMcpCapability<FakeChannelConfig>,
         }
       : {}),
   };
@@ -235,7 +240,11 @@ export function fakeChannelToolRegistration(input: {
     tool: {
       name: input.name,
       description: `fake tool ${input.name}`,
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
     },
   };
 }

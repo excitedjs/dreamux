@@ -1,45 +1,19 @@
 /**
- * Neutral config validation primitives.
+ * Shared JSON-shape validation helpers for Dreamux config readers.
  *
- * Extracted from `config/config.ts` so that per-runtime config readers (each
- * builtin's `agent-runtime/builtin/<name>/config.ts`) can validate their own
- * config blocks without importing `config/config.ts` — importing the host
- * config module from a builtin would re-form the builtin -> config import
- * cycle. These helpers are runtime-agnostic: they only know about JSON shapes
- * and produce `dreamux config error in <file>: ...` messages.
+ * Any code that reads a config block validates it with these: each provider
+ * package's own `config.ts` for its provider's block, and the host's config
+ * module and plugin loader for theirs. They are runtime-agnostic — they know
+ * only JSON shapes — and every rejection they throw is a
+ * `dreamux config error in <file>: ...` message.
  */
 
-export function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
+import { isPlainObject } from './json-shape.js';
 
 export function describeType(v: unknown): string {
   if (v === null) return 'null';
   if (Array.isArray(v)) return 'array';
   return typeof v;
-}
-
-export function rejectUnknownKeys(
-  obj: Record<string, unknown>,
-  allowed: Set<string>,
-  file: string,
-  prefix: string,
-): void {
-  for (const key of Object.keys(obj)) {
-    if (allowed.has(key)) continue;
-    const name = `${prefix}${key}`;
-    if (/^dispatchers\[\d+\]\.$/.test(prefix) && (key === 'feishu' || key === 'codex')) {
-      throw new Error(
-        `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
-          'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
-          'dispatchers[].channels[] for the channel and a named agents[] entry referenced via ' +
-          'dispatchers[].agentRuntime for the runtime, then restart.',
-      );
-    }
-    throw new Error(
-      `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema`,
-    );
-  }
 }
 
 function ensureString(v: unknown, key: string, file: string): string {
@@ -63,7 +37,7 @@ function requireString(
   return ensureString(v, `${prefix}${key}`, file);
 }
 
-export function requireNonEmptyString(
+export function readNonEmptyString(
   obj: Record<string, unknown>,
   key: string,
   file: string,
@@ -102,7 +76,7 @@ export function readOptionalBoolean(
   );
 }
 
-export function requireStringArray(
+export function readStringArray(
   obj: Record<string, unknown>,
   key: string,
   fallback: string[],
@@ -126,7 +100,7 @@ export function requireStringArray(
   });
 }
 
-export function requireStringRecord(
+export function readStringRecord(
   obj: Record<string, unknown>,
   key: string,
   fallback: Record<string, string>,
@@ -166,7 +140,7 @@ function readInt(
   );
 }
 
-export function requirePositiveInt(
+export function readPositiveInt(
   obj: Record<string, unknown>,
   key: string,
   fallback: number,

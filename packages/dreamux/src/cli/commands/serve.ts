@@ -1,11 +1,11 @@
 import type { CommandModule } from 'yargs';
 
-import type { CliDeps } from './types.js';
+import { runServe } from '../server.js';
 
-export function createServeCommand(deps: CliDeps): CommandModule {
+export function createServeCommand(): CommandModule {
   return {
     command: 'serve',
     describe: 'Run the local server in the foreground',
-    handler: async () => deps.execEntry(deps.serverEntry, []),
+    handler: async () => runServe(),
   };
 }

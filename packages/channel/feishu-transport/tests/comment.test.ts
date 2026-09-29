@@ -6,21 +6,21 @@
  * payload the SDK cannot resolve must yield `null`, never a throw.
  */
 
-import { describe, expect, test } from 'vitest'
-import { normalizeCommentEvent } from '../src/parse/comment'
+import { describe, expect, test } from 'vitest';
+import { normalizeCommentEvent } from '../src/parse/comment';
 
 describe('normalizeCommentEvent', () => {
   test('returns null for non-object inputs', () => {
-    expect(normalizeCommentEvent(null)).toBeNull()
-    expect(normalizeCommentEvent(undefined)).toBeNull()
-    expect(normalizeCommentEvent('not an event')).toBeNull()
-    expect(normalizeCommentEvent(42)).toBeNull()
-  })
+    expect(normalizeCommentEvent(null)).toBeNull();
+    expect(normalizeCommentEvent(undefined)).toBeNull();
+    expect(normalizeCommentEvent('not an event')).toBeNull();
+    expect(normalizeCommentEvent(42)).toBeNull();
+  });
 
   test('returns null when the payload carries nothing the SDK can decode', () => {
-    expect(normalizeCommentEvent({})).toBeNull()
-    expect(normalizeCommentEvent({ event: {} })).toBeNull()
-  })
+    expect(normalizeCommentEvent({})).toBeNull();
+    expect(normalizeCommentEvent({ event: {} })).toBeNull();
+  });
 
   test('carries the identifying fields a host body is built from', () => {
     expect(
@@ -43,8 +43,8 @@ describe('normalizeCommentEvent', () => {
       commenterId: 'ou_commenter',
       mentionedBot: true,
       timestamp: 1757894400000,
-    })
-  })
+    });
+  });
 
   test('a top-level comment reports an empty reply id', () => {
     expect(
@@ -56,6 +56,6 @@ describe('normalizeCommentEvent', () => {
         create_time: '1757894400000',
         user_id: { open_id: 'ou_commenter' },
       })?.replyId,
-    ).toBe('')
-  })
-})
+    ).toBe('');
+  });
+});

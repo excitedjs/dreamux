@@ -274,12 +274,7 @@ default used to initialize a missing `~/.dreamux/state/<id>/access.json` is:
     "require_mention": true
   },
   "allow_users": [],
-  "pending": {},
-  "observed_chats": [],
-  "warnings": [],
-  "last_gate": {
-    "at": 0
-  }
+  "pending": {}
 }
 ```
 
@@ -287,10 +282,9 @@ default used to initialize a missing `~/.dreamux/state/<id>/access.json` is:
 `dm_policy`, `group.policy`, `group.allow_chats`, and
 `group.require_mention` are operator policy. `allow_users` is shared authority:
 live pairing/Owner approval may append it, and a quiesced operator may maintain
-it. `pending`, `observed_chats`, `warnings`, and `last_gate` are Channel-owned
-runtime ledger fields. Add real chat or sender ids only through the quiesced
-field-specific maintenance workflow below; the secure default grants neither
-chat nor sender authority.
+it. `pending` is a Channel-owned runtime ledger field. Add real chat or sender
+ids only through the quiesced field-specific maintenance workflow below; the
+secure default grants neither chat nor sender authority.
 
 For human group messages, `group.require_mention` runs first and `block` drops
 all human traffic. Under `allowlist`, an unlisted chat drops and a listed chat
@@ -307,12 +301,13 @@ Before deploying, review every non-empty `allow_chats` entry under both
 be trusted and whose passive known-bot observation should remain enabled.
 
 The access path is always `~/.dreamux/state/<id>/access.json`;
-`DREAMUX_CONFIG_DIR` and `dreamux config path` affect `config.json` only. For a
+`DREAMUX_ROOT` is the one relocation variable for both `config.json` and
+`access.json`; `dreamux config path` still names `config.json` only. For a
 manual access edit, fully stop the owning Dispatcher, confirm it stopped,
 re-read after stop, apply only the requested policy/shared-authority fields via
 an owner-only sibling temporary file and atomic replacement at mode `0600`,
 validate the complete current V3 shape without printing values, and then start
-the Dispatcher. Preserve `version` and all Channel-owned ledger fields exactly.
+the Dispatcher. Preserve `version` and the `pending` ledger field exactly.
 A missing file after confirmed stop is valid current state: start from the full
 secure V3 default shown above, create a missing state directory at `0700`, and
 atomically create the first `0600` file. This is initialization, not a rebuild.
