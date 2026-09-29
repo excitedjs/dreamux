@@ -15,8 +15,9 @@
  * exist. `chatType` shares this cache and lookup for a card click, which names
  * no chat kind; it does not fail open, because the access decision it feeds has
  * no safe default kind when the two kinds are decided differently. Every inbound
- * event states its chat's kind, so a click in a chat this session has already
- * heard from needs no lookup.
+ * event this projects states its chat's kind, so a click in a chat this session
+ * has already routed an admitted message from needs no lookup; a message the
+ * gate dropped or a consumed command never reaches here and teaches nothing.
  */
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {

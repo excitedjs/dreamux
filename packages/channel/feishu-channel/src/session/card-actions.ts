@@ -338,7 +338,7 @@ export class FeishuCardActions {
    * and the kind is established only when the two answers differ. It comes
    * from the chat itself, never from the access lists the gate is judging:
    * the kind an inbound event in this chat reported, else Feishu. So a click in
-   * a chat this session has heard from needs no lookup and no permission
+   * a chat this session has routed an admitted message from needs no lookup and no permission
    * beyond the click itself. When the answer does
    * depend on the kind and none of those can say, the click is refused rather
    * than admitted on a guess, unlike topic detection, which degrades to an

@@ -239,7 +239,7 @@ supplies the gate's facts this way:
 - the chat is the click's `open_chat_id`. The callback carries no chat kind, so
   the gate is asked for both `p2p` and `group`; only when the two answers
   differ is the kind established, from the chat itself and never from the
-  access lists being judged: the kind an earlier inbound event in that chat
+  access lists being judged: the kind an earlier admitted, routed inbound message in that chat
   reported, and only then Feishu (a topic-mode group is a group). A click whose operator
   or chat is missing, or whose kind is needed and cannot be established, is
   refused;

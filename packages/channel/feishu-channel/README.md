@@ -120,16 +120,16 @@ The same read can decide who may answer a card, as a last resort. A click on
 an ask-user or extension card names its chat but not whether that chat is
 direct or a group, so the channel applies the inbound access policy for both
 kinds and establishes the kind only when the two answers differ. It takes the
-kind from what it already knows first: a chat listed in `group.allow_chats` is
-a group (so a member of a trusted group who is not on `allow_users` answers
-without any lookup), and a direct chat this session has received a message
-from is remembered. Only then does it ask the platform. A person the policy
+kind from the chat itself, never from the access lists it is judging: the kind
+reported by the last admitted inbound message this session routed in that chat
+(a group message dropped for lacking a mention, an untrusted bot's message, or
+a consumed `/introduce` teaches nothing). Only then does it ask the platform. A person the policy
 admits in a direct chat and in a group alike, or in neither, never triggers the
 read. When the answer does depend on the kind and it cannot be established, the
 click is refused with an error toast rather than degrading to an ordinary group
 as topic detection does, which on an install whose bot lacks the group
-information read permission affects only a person whose chat is neither listed
-nor already heard from.
+information read permission affects only a click in a chat this session has not
+yet routed an admitted message from.
 
 A confirmed topic target declares its enclosing group as a less-specific
 binding fallback. An exact topic binding wins first; a bound collaboration

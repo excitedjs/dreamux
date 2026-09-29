@@ -288,7 +288,9 @@ for a direct chat and a group, so the click is decided for both kinds and the
 kind is established only when the two decisions differ. It comes from the chat
 itself, never from the access lists being judged (a direct chat wrongly listed in
 `group.allow_chats` must still be judged as the direct chat it is): the kind an
-inbound event in that chat reported, kept by the same targeting owner as the
+admitted inbound message this session routed in that chat reported (a group
+message dropped for lacking a mention, an untrusted bot's message, or a consumed
+`/introduce` teaches nothing), kept by the same targeting owner as the
 per-chat mode cache topic detection uses (a group event records only the kind,
 apart from the mode, since it does not say whether the group is in topic mode). Only
 when no inbound event has said does the click ask Feishu, through the chat-get lookup that
@@ -400,7 +402,8 @@ Cache and concurrency are precise:
   no eviction; unsuccessful lookups are not cached at all, so a later accepted
   inbound retries. An accepted direct-chat inbound event also enters its chat as
   `p2p` without a lookup, because the event states it (a group event cannot
-  state topic versus ordinary mode, so it enters nothing);
+  state topic versus ordinary mode, so it enters no mode; it records only that
+  the chat is a group, kept apart for the card-click gate);
 - concurrent lookups for one chat share a single in-flight request, which is
   removed once it settles.
 
