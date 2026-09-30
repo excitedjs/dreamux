@@ -5,6 +5,8 @@
  * provider implementations that core actually invokes.
  */
 
+import { RuleViolation } from '@excitedjs/dreamux-utils';
+
 import { parseProviderRef } from './provider-ref.js';
 import {
   type ProviderDescriptor,
@@ -33,14 +35,18 @@ export const BUILTIN_CLAUDE_CODE_PROVIDER_REF = 'builtin:claude-code';
  * together from its own `contribute()` (see {@link ALWAYS_LOADED_PLUGIN_REFS}),
  * so this fires only for an id no loaded plugin contributes — typically a
  * provider whose plugin is no longer listed in `plugins[]`, or a typo.
+ *
+ * A {@link RuleViolation}, not a load failure: the ref is the only input, and
+ * there is no import, file read, or factory call that could have gone wrong —
+ * so a caller that submitted the ref (`config.agents.replace`) is told its
+ * value was refused, not that the server failed.
  */
-export class UnknownBuiltinProviderPackageError extends Error {
+export class UnknownBuiltinProviderPackageError extends RuleViolation {
   constructor(readonly id: string) {
     super(
       `no loaded plugin contributes provider ${JSON.stringify(`builtin:${id}`)} ` +
         'and Dreamux does not ship it; list the plugin that provides it in plugins[]',
     );
-    this.name = 'UnknownBuiltinProviderPackageError';
   }
 }
 

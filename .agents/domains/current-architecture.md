@@ -29,7 +29,7 @@ the rush path only.
 |---|---|---|
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
 | `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider- and plugin-authoring contracts |
-| `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared utility helpers with **no Dreamux dependency of any kind** (transcript bounds, digest validation, positional reads, deterministic rendering, path containment) plus the one redaction capability — secret key names, text rules, and the JSON walk — that core, the logger, and config display all call |
+| `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared utility helpers with **no Dreamux dependency of any kind** (transcript bounds, digest validation, positional reads, deterministic rendering, path containment) plus the one redaction capability — secret key names, text rules, and the JSON walk — that core, the logger, and config display all call, and the one `RuleViolation` class (a validator's refusal of a value) that the shared config validators, every provider's config reader, and core's request readers share |
 | `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | always-loaded built-in Codex plugin: contributes the Agent Runtime provider behind `builtin:codex` |
 | `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | always-loaded built-in Claude Code plugin: contributes the Agent Runtime provider behind `builtin:claude-code` |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |

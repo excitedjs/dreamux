@@ -81,6 +81,10 @@ export abstract class StatedFailure extends DreamuxError {
  * out-of-range field, or a scope the caller may not address. `BAD_REQUEST` is
  * the single code because the distinction that matters to a caller is "fix your
  * request", and the message names the exact field.
+ *
+ * A checked-and-refused value arrives from a validator as a `RuleViolation`
+ * (`@excitedjs/dreamux-utils`, shared with the providers' config readers);
+ * `command/errors.ts`'s `throwCallerMistake` re-types exactly that class here.
  */
 export class ValidationError extends StatedFailure {
   constructor(message: string) {
@@ -116,30 +120,6 @@ export class TransportError extends DreamuxError {
 export class InternalError extends DreamuxError {
   constructor(message: string) {
     super('INTERNAL', message);
-  }
-}
-
-/**
- * A domain rule said no.
- *
- * Deliberately *not* a {@link DreamuxError}: a rule is checked on more than one
- * kind of path, and only the caller's own request makes breaking it the
- * caller's fault. The reader that knows a value came from a caller re-types
- * exactly this class as {@link ValidationError}; the same rule broken by
- * persisted state stays unclassified and loud, because nothing the caller can
- * send would fix it.
- *
- * It exists so a request reader can narrow to one named type instead of
- * catching everything a validator might throw. A `TypeError` raised inside a
- * validation path is not a rule violation, and reporting it as the caller's
- * mistake both misleads the caller and states, in a failure's own words, a next
- * step that would not help. Such a failure keeps its own message and is
- * reported under `INTERNAL` instead.
- */
-export class RuleViolation extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = new.target.name;
   }
 }
 

@@ -32,12 +32,15 @@ export interface FeishuTargetRecord {
 
 /**
  * `root_message_id` is the visible message a topic-kind binding's own
- * conversation last had, set once at bind time. A Channel-authored card for a
- * topic (a binding notice, a route-removal notice) replies to it instead of
- * guessing a landing place; `null` for a `group`/`p2p` binding, which has no
- * single "root" message, or for a topic bound through a path with no message
- * id to hand (an MCP `bind_channel` naming a topic this session never saw, or
- * an extension's `bindTeam`).
+ * conversation replies under. A Channel-authored card for a topic (a binding
+ * notice, a route-removal notice) replies to it instead of guessing a landing
+ * place. Automatic provisioning sets it at bind time; a topic bound through a
+ * path with no message id to hand (an MCP `bind_channel` naming a topic this
+ * session never saw, an extension's `bindTeam`) or written before roots were
+ * persisted starts with `null` and is filled once, by the first message
+ * accepted in the topic or by a notice that had to ask the platform. It is
+ * always `null` for a `group`/`p2p` binding, which has no single "root"
+ * message.
  */
 export interface FeishuBindingRecord {
   target: FeishuTargetRecord;

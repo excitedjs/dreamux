@@ -211,6 +211,11 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
     topic reply to it; the parent-chat fallback and the in-memory
     newest-message table go.
   - TeamLeader COT after a restart: **selected** "保持不显示".
+  - TeamLeader COT after the first bind (added 2026-09-30; R41 had ruled only
+    on restart): "应该恢复 next的行为" → a bind or provisioning card that was
+    actually sent becomes the Team leader's first COT anchor, only while the
+    leader has none and only when the card landed in the bound target. It is
+    never restored from the persisted root, so the restart ruling above stands.
   - Context: "因为不只是系统自动发的卡片，模型在调用 reply
     工具的时候，刚好遇到了压缩；压缩有可能会把 Message ID
     丢掉。所以它会在话题群里边把消息发成话题群里面的一个新话题、现在这个解决方案是：在系统提示词里面给它追加最开始的那条
@@ -225,7 +230,11 @@ Where a ruling here and a proposal in the audit disagree, the ruling decides.
     is refused with an instruction to pass one. Every other chat keeps today's
     behavior. Inference, not objected to: the message-id guidance
     `leaderIdentity` writes into a provisioned leader's identity is deleted
-    once the Channel guard exists.
+    once the Channel guard exists. **Superseded 2026-09-30**: "嗯，不止把这个提示词加回来，还需要把这个出站寻址逻辑提升为基建，给所有发卡也用上"
+    → the guidance is written into a provisioned leader's identity again, and
+    the guard is one address rule of `FeishuOutbound` that every send uses
+    (`reply`, `ask_user_question`, extension cards, notices), not a `reply`
+    special case.
 - R42 bootstrap and `.workspace`: "这里和 .gitignore 有什么关系？如果把
   dispatcher cwd 配置到仓库里是用户自己的责任 / .workspace
   会被自动初始化成git 仓库嘛？", then "你的理解是错的，Dispatcher

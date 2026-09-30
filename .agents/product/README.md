@@ -74,10 +74,12 @@ the same change that touches it.
   When an agent is blocked on a decision only the user can make, the built-in
   Feishu channel posts an interactive question card — 1-4 single-select
   questions, each with an "Other" text box — and the agent stops and waits: the
-  tool returns as soon as the card is sent, never the answer. Anyone in the chat
-  may answer, an explicit operator ruling rather than a gap, and the answer
-  arrives as an ordinary inbound message carrying who clicked and the answered
-  card's message id. A supplied reply message id is used directly, including
+  tool returns as soon as the card is sent, never the answer. Only a person the
+  chat's inbound access policy admits may answer (the operator's 2026-09-30
+  ruling, "卡片点击应该走和入站消息一样的门禁"; before it, anyone in the chat
+  could); anyone else gets an error toast and changes nothing. The
+  answer arrives as an ordinary inbound message carrying who clicked and the
+  answered card's message id. A supplied reply message id is used directly, including
   one the session has not observed; without one, the card is a new chat message.
   Answers and expiry notices follow the card's actual conversation, obtained
   from message details. A failed lookup does not redirect them to the parent
@@ -170,23 +172,30 @@ the same change that touches it.
 - **A collaboration space is a Channel product flow.** The Channel provisions a
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
-  than a persisted saga. A newly provisioned Feishu topic Team receives its
-  configured identity unmodified; no reply address is appended to it, because
-  the Channel itself resolves where an address-less reply lands (see the next
-  bullet). Existing Teams and the shared space policy are unchanged; identity
-  stays a string.
+  than a persisted saga. A newly provisioned Feishu topic Team's leader
+  identity is the configured space identity followed by the chat id and the
+  message id that triggered the Team, with the instruction to pass that message
+  id to `reply` when no other is visible; the `reply` guard in the next bullet
+  is a second line, not a replacement. Existing Teams and the shared space
+  policy are unchanged; identity stays a string.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
-- **A `reply` with no message id inside a Collaboration Space chat is guarded
+- **A message with no message id inside a Collaboration Space chat is guarded
   by the Channel, not by prompt instruction.** Every other Feishu chat keeps
-  today's behavior — an address-less reply opens a new top-level message. Only
-  inside a chat that carries a Collaboration Space does the Channel step in: the
-  reply lands under the calling Team's own bound topic when exactly one exists
-  with a known root message, and is refused with an instruction to pass a
-  `message_id` otherwise. The check is caller-agnostic — it asks only "does
-  exactly one topic name this caller" — so a Dispatcher Agent call, which never
-  owns a topic binding, is always refused rather than special-cased; that is the
-  mechanism protecting the space from a stray new topic working as designed, not
-  a gap. Nothing else about a Feishu chat's reply behavior changed.
+  today's behavior — an address-less message opens a new top-level message.
+  Only inside a chat that carries a Collaboration Space does the Channel step
+  in, for every message an agent sends there: `reply`, `ask_user_question`, and
+  an extension's card (which passes the caller its tool handler received). It
+  lands under the calling Team's own bound topic when exactly one exists with a
+  known root message, and is refused with an instruction to pass a `message_id`
+  otherwise. The check is caller-agnostic — it asks only "does exactly one
+  topic name this caller" — so a Dispatcher Agent call, or an extension's
+  background call with no caller, neither of which owns a topic binding, is
+  always refused rather than special-cased; that is the mechanism protecting
+  the space from a stray new topic working as designed, not a gap. The
+  Channel's own messages are not agents' and are never re-addressed: a
+  binding, unbinding, dissolution, or space notice goes where its route says
+  (the space's own notices are chat-level). Nothing else about a Feishu chat's
+  send behavior changed.
   (Domain: [channel](/.agents/domains/channel.md).)
 - **A provisioning run that produces no Team answers in place.** When a
   collaboration space cannot provision the Team a message was routed to, the
@@ -210,10 +219,16 @@ the same change that touches it.
   The absolute repo cwd and runtime working directory are **deliberately**
   disclosed to the bound conversation's members — an explicit operator ruling
   that narrowed the earlier disclosure allowlist. Delivery is best-effort with
-  one retry; a failed card never affects the binding change it reports. Successful
+  one retry; a failed card never affects the binding change it reports. A card
+  for a topic replies under the topic's root message. A topic bound by tool, or
+  bound before roots were persisted, learns it from the first message accepted
+  in it, or else asks Feishu for the topic's root when a card needs it; if that
+  read fails, the card is skipped and logged — it never lands in the parent chat
+  or opens a new topic. Successful
   `bind_channel` and actual `unbind_channel` MCP receipts also tell the agent that
-  the system sends this card automatically and no additional user notification is
-  needed. A no-op unbind or refusal makes no success or card-delivery claim.
+  the system sends this card automatically on a best-effort basis and no additional
+  user notification is needed. A no-op unbind or refusal makes no success or
+  card-delivery claim.
   (Task: [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).)
 
 ## Team lifecycle
@@ -491,18 +506,22 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   asset. On the 0.x line an incompatible shape is handled by fail-loud plus
   manual rebuild — no migrations, no lazy backfill, no old-shape fallback
   readers. (Domain: [state-config-and-files](/.agents/domains/state-config-and-files.md).)
-- **A live Feishu session holds authority over its own files; a hand edit
-  waits for restart.** Once a Channel session loads its routing document,
+- **A live Feishu session holds authority over its own files; a live hand edit
+  is not honored.** Once a Channel session loads its routing document,
   `access.json`, or `chat-bots.json`, that in-memory value is authoritative for
   the rest of the session — an edit made to the file on disk while the
-  dispatcher keeps running is not read until the next restart. (Domain:
+  dispatcher keeps running is not read, and the session's next write to that
+  file replaces it with the held value. Stop the daemon before editing
+  `access.json` by hand. (Domain:
   [state-config-and-files](/.agents/domains/state-config-and-files.md).)
 - **The Config Service holds authority over `config.json` while the daemon
-  runs; a hand edit waits for restart.** Once `dreamux serve` loads
+  runs; a live hand edit is not honored.** Once `dreamux serve` loads
   `config.json`, that in-memory value is authoritative for the rest of the
   process — an edit made to the file on disk while the daemon keeps running
-  is not read until the next restart, matching the routing
-  document/`access.json`/`chat-bots.json` rule above. (Domain:
+  is not read, and the next `config.agents.replace` writes the held value over
+  it. This is the routing document/`access.json`/`chat-bots.json` rule above
+  on the same `TransactionalStore`: stop the daemon before editing
+  `config.json` by hand. (Domain:
   [state-config-and-files](/.agents/domains/state-config-and-files.md).)
 - **Runtime `agents[]` configuration is readable and replaceable through
   Commands.** `config.agents.get` returns the current `agents[]` in file
@@ -510,8 +529,11 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   validates and writes a whole new `agents[]` array, matched to the
   existing one by `id` — submitting `''` for a secret-named key keeps the
   stored value, so a caller that read-then-replaced without ever seeing a
-  real secret cannot erase it. A replace takes effect for the next runtime
-  launch; a runtime already running keeps what it launched with.
+  real secret cannot erase it. A payload the validators refuse — a wrong
+  type, an out-of-set value, or a `builtin:` ref no loaded plugin contributes
+  — is reported as `BAD_REQUEST` with the validator's own wording, and writes
+  nothing. A replace takes effect for the next runtime launch; a runtime
+  already running keeps what it launched with.
   `dispatchers[]` has no Command; it is still edited by hand with the
   daemon stopped. (Domain: [add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).)
 

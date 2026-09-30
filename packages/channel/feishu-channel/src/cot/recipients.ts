@@ -31,9 +31,10 @@ const FEISHU_COT_FENCED_TARGETS_MAX = 512;
  * The visible Feishu message a chain-of-thought card hangs under.
  *
  * The anchor is entirely the Channel's: it is captured from the inbound message
- * this session is about to submit, or from a message this session just sent,
- * and Core never carries it. `target` is kept beside the ids so a binding that
- * moves away can retire exactly the anchors that pointed at it.
+ * this session is about to submit, or from the binding card this session just
+ * sent for a Team, and Core never carries it. `target` is kept beside the ids
+ * so a binding that moves away can retire exactly the anchors that pointed at
+ * it.
  */
 export interface VisibleMessageAnchor {
   readonly chatId: string;

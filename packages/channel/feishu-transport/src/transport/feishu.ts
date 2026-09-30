@@ -19,6 +19,7 @@ import {
 } from './diagnostics.js';
 import {
   normalizeMessageReadItem,
+  threadRootOf,
   type FeishuMessageReader,
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,
@@ -265,6 +266,12 @@ export interface FeishuTransport {
   readMessage?(
     request: FeishuMessageReadRequest,
   ): Promise<FeishuMessageReadResponse>;
+  /**
+   * The message a topic's replies hang under, asked of the platform by topic
+   * id, or `undefined` when the topic lists no message. Optional like the
+   * other reads: callers must fail safe when a custom transport lacks it.
+   */
+  readThreadRoot?(threadId: string): Promise<string | undefined>;
   /** Optional best-effort contact lookup for an accepted human sender. */
   resolveUserName?(openId: string): Promise<string | undefined>;
   /**
@@ -545,6 +552,27 @@ export function createFeishuTransport(
       return {
         items: (res.data?.items ?? []).map(normalizeMessageReadItem),
       };
+    },
+
+    async readThreadRoot(threadId: string): Promise<string | undefined> {
+      const res = await client.im.v1.message.list({
+        params: {
+          container_id_type: 'thread',
+          container_id: threadId,
+          sort_type: 'ByCreateTimeAsc',
+          page_size: 1,
+        },
+      });
+      // A business failure arrives as a non-zero code on a successful HTTP
+      // response; reading it as an empty topic would report "no root" for a
+      // request that never answered.
+      if (res.code !== undefined && res.code !== 0) {
+        throw new Error(
+          `Feishu topic message list for ${threadId} failed ` +
+            `(code ${res.code}: ${res.msg ?? ''})`,
+        );
+      }
+      return threadRootOf(res.data?.items?.[0]);
     },
 
     resolveUserName(openId: string): Promise<string | undefined> {

@@ -195,7 +195,7 @@ function validated(
 /**
  * `root_message_id` is the one binding-row field a released build may not
  * have written. Absent loses no fact — such a row simply predates the
- * feature and has no persisted root until it is rebound — so it reads as
+ * feature and has no persisted root until one is learned — so it reads as
  * `null`; present but not a string or `null` is the same corruption every
  * other field fails on.
  *

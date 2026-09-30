@@ -3,11 +3,14 @@
  * whoever owns the conversation it hangs under.
  *
  * A card click resolves to one of three payloads: an extension's own claimed
- * key, one of the ask-user answer keys, or the pairing-approval key. None of
- * them are this session's routing decision — each ends by handing the
- * click's answer text to `deliver`, the same submission path an ordinary
- * inbound message takes, addressed at the card it was clicked on rather than
- * at whatever chat the click event names.
+ * key, one of the ask-user answer keys, or the pairing-approval key. The first
+ * two are answered only for a person the conversation's inbound access policy
+ * admits, decided before either handler runs; the pairing key is the App
+ * Owner's and is checked against the App Owner instead. None of them are this
+ * session's routing decision — each ends by handing the click's answer text to
+ * `deliver`, the same submission path an ordinary inbound message takes,
+ * addressed at the card it was clicked on rather than at whatever chat the
+ * click event names.
  */
 import type { AskUserExpiry } from '../ask-user/registry.js';
 import type { AskUserQuestionSpec } from '../cards/ask-user.js';
@@ -20,6 +23,7 @@ import {
 } from '@excitedjs/feishu-transport';
 
 import type { FeishuAccess } from '../access/index.js';
+import type { GateInbound } from '../access/gate.js';
 import { PAIRING_TOKEN_REGEX } from '../access/state.js';
 import type {
   AskUserRegistry,
@@ -46,7 +50,7 @@ import {
   type SubmitOutcomeMessages,
 } from '../feishu-submit.js';
 import type { FeishuInboundTargeting } from '../inbound/target.js';
-import type { FeishuOutbound } from '../outbound/index.js';
+import type { FeishuOutbound, FeishuSender } from '../outbound/index.js';
 import type { FeishuTarget } from '../routing/target.js';
 
 /** The card-action callback's own answer, or nothing for a key it does not own. */
@@ -136,8 +140,10 @@ export class FeishuCardActions {
    * is sent as a reply to it, which is what puts it in that message's topic.
    * Without one the card is a new message in the chat, and in a topic group that
    * opens a topic of its own — right for a question that belongs to no particular
-   * message, wrong for one that does. Where the answer goes is not decided here;
-   * it is read back from the card that was actually sent.
+   * message, wrong for one that does. In a Collaboration Space chat that choice
+   * is not the sender's to make, so the outbound address rule applies to the
+   * card as it does to a reply. Where the answer goes is not decided here; it is
+   * read back from the card that was actually sent.
    *
    * The round is put in play only once the card is really sent, so a send that
    * throws leaves no question behind and fails where the model can see it.
@@ -147,6 +153,7 @@ export class FeishuCardActions {
     text?: string;
     questions: readonly AskUserQuestionSpec[];
     messageId?: string;
+    sender: FeishuSender;
   }): Promise<{ request_id: string }> {
     const opened = this.opts.askUser.open(input);
     const sent = await this.opts.outbound.sendCard({
@@ -156,6 +163,7 @@ export class FeishuCardActions {
           ? { replyToMessageId: input.messageId }
           : {}),
       },
+      sender: input.sender,
       card: opened.card,
       mode: 'inbound',
     });
@@ -196,11 +204,19 @@ export class FeishuCardActions {
    * A key that is neither is answered with nothing — some other, unrelated
    * card. An extension action's `forward`, once its own callback answer is
    * ready, is delivered the same detached way an ask-user settlement is.
+   *
+   * An extension's handler and an ask-user answer both change something — a
+   * round's state, whatever the handler does — so each is reached only after
+   * `refuseUnadmitted` has passed the click. Pairing approval is not: the App
+   * Owner who clicks it need not be admitted by the chat's policy, and is
+   * checked as the App Owner instead.
    */
   async handle(event: FeishuCardActionEvent): Promise<FeishuCardActionResult> {
     const key = String(event.actionValue[DREAMUX_ACTION_KEY] ?? '');
     const extension = this.opts.extensions.action(key);
     if (extension !== undefined) {
+      const refusal = await this.refuseUnadmitted(event);
+      if (refusal !== undefined) return refusal;
       const { response, forward } = await extension.invoke(event);
       if (forward !== undefined) {
         void this.deliverExtensionForward(
@@ -244,9 +260,9 @@ export class FeishuCardActions {
         text: settlement.text,
         sourceId: settlement.sourceId,
         attrs: {
-          // Anyone in the chat may answer the card; this is deliberate, so
-          // there is no check on who clicked. Carrying the clicker keeps the
-          // fact the model would otherwise lose.
+          // The click was admitted before it reached the round, so there is
+          // nothing to check here. Carrying the clicker keeps the fact the
+          // model would otherwise lose: which admitted person answered.
           ...(settlement.operatorOpenId !== undefined
             ? { sender_id: settlement.operatorOpenId }
             : {}),
@@ -291,6 +307,8 @@ export class FeishuCardActions {
   private async handleAskUserCardAction(
     event: FeishuCardActionEvent,
   ): Promise<FeishuCardActionResult> {
+    const refusal = await this.refuseUnadmitted(event);
+    if (refusal !== undefined) return refusal;
     const applied = this.opts.askUser.apply(event);
     if (applied.kind === 'settled') {
       // Detached deliberately. Feishu gives a card callback a few seconds
@@ -301,6 +319,105 @@ export class FeishuCardActions {
       void this.deliverAskUserSettlement(applied.settlement);
     }
     return applied.response;
+  }
+
+  /**
+   * The toast that refuses a click by someone the conversation's inbound policy
+   * does not admit, or `undefined` when the click may go on.
+   *
+   * The decision is the access gate's own, over the same held state and the
+   * same table an inbound message from this person would meet. Three facts stand
+   * in for the message the gate is used to seeing. The person is the click's
+   * operator, a human. The chat is the one the click names. The bot counts as
+   * mentioned: a click on this bot's own card addresses it as directly as a
+   * mention does, and requiring another one would refuse every click in a group
+   * that asks for mentions.
+   *
+   * The gate reads a direct chat and a group differently, and the event says
+   * which this is only by the chat's id, so the gate is asked for both kinds
+   * and the kind is established only when the two answers differ. It comes
+   * from the chat itself, never from the access lists the gate is judging:
+   * the kind an inbound event in this chat reported, else Feishu. So a click in
+   * a chat this session has routed an admitted message from needs no lookup and no permission
+   * beyond the click itself. When the answer does
+   * depend on the kind and none of those can say, the click is refused rather
+   * than admitted on a guess, unlike topic detection, which degrades to an
+   * ordinary group when the same read fails. Likewise when the operator or the
+   * chat is missing from the event.
+   */
+  private async refuseUnadmitted(
+    event: FeishuCardActionEvent,
+  ): Promise<FeishuCardActionResponse | undefined> {
+    const { operatorOpenId, openChatId } = event;
+    if (operatorOpenId === undefined || openChatId === undefined) {
+      return this.refuseUnconfirmed(event, false);
+    }
+    const facts: Omit<GateInbound, 'chat_type'> = {
+      sender_id: operatorOpenId,
+      chat_id: openChatId,
+      is_bot_sender: false,
+      trusted_bot: false,
+      // A card callback reaches only the app that sent the card, so a click is
+      // addressed to this bot as a mention is; `false` would refuse every
+      // click in a group that requires mentions.
+      bot_mentioned: true,
+    };
+    const asDirect = await this.opts.access.decide({
+      ...facts,
+      chat_type: 'p2p',
+    });
+    const asGroup = await this.opts.access.decide({
+      ...facts,
+      chat_type: 'group',
+    });
+    let decision = asDirect;
+    let chatType: 'p2p' | 'group' | undefined;
+    if ((asDirect.action === 'deliver') !== (asGroup.action === 'deliver')) {
+      chatType = await this.opts.targetRouter.chatType(openChatId);
+      if (chatType === undefined) return this.refuseUnconfirmed(event, true);
+      decision = chatType === 'p2p' ? asDirect : asGroup;
+    }
+    if (decision.action === 'deliver') return undefined;
+    this.opts.log.info(
+      {
+        dispatcher_id: this.opts.dispatcherId,
+        chat_id: openChatId,
+        ...(chatType !== undefined ? { chat_type: chatType } : {}),
+        sender_id: operatorOpenId,
+        message_id: event.openMessageId,
+        reason:
+          decision.action === 'drop' ? decision.reason : 'pairing_required',
+      },
+      '[card-action] click refused: sender not admitted by the access policy',
+    );
+    return {
+      toast: { type: 'error', content: '你没有权限操作这张卡片' },
+    };
+  }
+
+  /** A click the gate has nothing to decide on: the toast says what is missing. */
+  private refuseUnconfirmed(
+    event: FeishuCardActionEvent,
+    kindNeeded: boolean,
+  ): FeishuCardActionResponse {
+    this.opts.log.info(
+      {
+        dispatcher_id: this.opts.dispatcherId,
+        chat_id: event.openChatId,
+        message_id: event.openMessageId,
+        has_operator: event.operatorOpenId !== undefined,
+        has_chat: event.openChatId !== undefined,
+        chat_kind_needed: kindNeeded,
+      },
+      '[card-action] click refused: operator or chat kind could not be established (a chat kind lookup needs the bot to hold a group information read permission)',
+    );
+    return {
+      toast: {
+        type: 'error',
+        content:
+          '无法确认你的身份或所在会话的类型；若持续出现，请联系管理员检查机器人的群信息读取权限',
+      },
+    };
   }
 
   private async handlePairingCardAction(

@@ -18,7 +18,7 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import { STRING, enumOf, objectSchema } from '../../command/schema.js';
+import { boundedString, enumOf, objectSchema } from '../../command/schema.js';
 import type { TeamMateWorktreeRequest } from './types.js';
 
 /**
@@ -29,14 +29,47 @@ import type { TeamMateWorktreeRequest } from './types.js';
  * property that does not belong to the selected mode. The managed-only controls
  * stay part of the canonical contract — a Channel that owns a narrower policy
  * maps its own shape into this one instead of Core defining a second schema.
+ *
+ * This is the only repository schema: the canonical Commands validate against
+ * it and the MCP creation tools publish it, so the property descriptions a
+ * model reads and the length bounds on caller-supplied strings live here and
+ * nowhere else. The bounds are the untrusted-input caps — a filesystem path and
+ * a git ref name — not domain rules.
  */
 export const REPO_REQUEST_SCHEMA: JsonSchema = objectSchema(
   {
-    mode: enumOf(['reuse-cwd', 'managed']),
-    path: STRING,
-    base_ref: STRING,
-    branch: STRING,
-    cleanup: enumOf(['keep', 'delete-on-close']),
+    mode: {
+      ...enumOf(['reuse-cwd', 'managed']),
+      description:
+        'reuse-cwd runs in an existing directory; managed creates a git ' +
+        'worktree from a source repository.',
+    },
+    path: {
+      ...boundedString(4096, 1),
+      description:
+        'reuse-cwd: the directory to run in. managed: the source ' +
+        "repository; defaults to this agent's workspace.",
+    },
+    base_ref: {
+      ...boundedString(256, 1),
+      description:
+        'managed: the ref a newly created branch starts from; default ' +
+        'HEAD; ignored when branch already exists.',
+    },
+    branch: {
+      ...boundedString(256, 1),
+      description:
+        'managed: the branch to create or check out; defaults to ' +
+        'dreamux/<teammate_name> for a TeamMate or dreamux/team-<team_name> ' +
+        'for a Team, using the concrete allocated name.',
+    },
+    cleanup: {
+      ...enumOf(['keep', 'delete-on-close']),
+      description:
+        'managed: delete-on-close (the default) removes the worktree when ' +
+        'the agent closes or its Team dissolves and the tree is clean; keep ' +
+        'leaves it in place.',
+    },
   },
   ['mode'],
 );

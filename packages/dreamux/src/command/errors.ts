@@ -11,11 +11,10 @@
  * so a domain Command module has one import for the base, the generic failures,
  * and the one failure the registry owns.
  */
-import { errorMessage } from '@excitedjs/dreamux-utils';
+import { errorMessage, RuleViolation } from '@excitedjs/dreamux-utils';
 
 import {
   DreamuxError,
-  RuleViolation,
   StatedFailure,
   ValidationError,
 } from '../platform/errors.js';
@@ -24,14 +23,13 @@ import {
 export {
   DreamuxError,
   InternalError,
-  RuleViolation,
   ServerShuttingDownError,
   StatedFailure,
   TransportError,
   ValidationError,
 } from '../platform/errors.js';
-// eslint-disable-next-line no-restricted-syntax -- same one-import convenience re-export as above, for the canonical helper's new home
-export { errorMessage } from '@excitedjs/dreamux-utils';
+// eslint-disable-next-line no-restricted-syntax -- same one-import convenience re-export as above, for the canonical helper's new home and the one shared rule-violation class
+export { errorMessage, RuleViolation } from '@excitedjs/dreamux-utils';
 
 /**
  * One Command failure, in the shape every adapter puts on its wire.

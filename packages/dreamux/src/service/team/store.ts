@@ -3,11 +3,13 @@
  *
  * `team/<team>/record.json` is the single authority for a Team: a valid,
  * readable record is the only proof that Team exists and the only thing that
- * occupies its concrete name. One {@link TransactionalStore} per Team id holds
- * that file — the committed value in memory, the serialized queue every read
- * or write goes through — so a lookup after the first one serves the held
- * value and a write is the store's own atomic read-decide-replace, not a
- * second reservation mechanism.
+ * occupies its concrete name. One {@link TransactionalStore} per Team that
+ * exists, or that a caller is creating or holding a handle for, holds that
+ * file — the committed value in memory, the serialized queue every read or
+ * write goes through — so a lookup after the first one serves the held value
+ * and a write is the store's own atomic read-decide-replace, not a second
+ * reservation mechanism. A name nothing occupies has no store: asking whether
+ * it is taken reads the file and answers, and holds nothing.
  *
  * The store is bound to the `team/` collection root its owner resolved, and
  * appends only the concrete Team name to it.
@@ -61,9 +63,12 @@ export interface TeamRecordHandle {
 }
 
 export class TeamStore {
-  /** One `TransactionalStore` per Team id, built lazily and held for the life
-   * of this collection — a Team's record is read once and then served from
-   * memory until this Team's own write path replaces it. */
+  /** One `TransactionalStore` per Team that exists or has a holder (a handle,
+   * a creation in flight), built lazily and held for the life of this
+   * collection — a Team's record is read once and then served from memory
+   * until this Team's own write path replaces it. A store is never evicted:
+   * a handle and the create/update queue both stand on it. Only an ownerless
+   * read of a name with no record leaves nothing here ({@link get}). */
   private readonly stores = new Map<
     string,
     TransactionalStore<TeamRecord | null>
@@ -95,8 +100,8 @@ export class TeamStore {
    * Team's id so the caller never passes one.
    */
   handle(teamId: string): TeamRecordHandle {
-    // `storeFor` validates and memoizes; the same call `get`/`create`/`update`
-    // already made, so this throws at the same point they did.
+    // A handle is a holder: `storeFor` registers the store even for a name
+    // with no record yet, because `create` publishes through it.
     const store = this.storeFor(teamId);
     return {
       get current(): TeamRecord | null {
@@ -109,14 +114,19 @@ export class TeamStore {
 
   private storeFor(teamId: string): TransactionalStore<TeamRecord | null> {
     const id = validateTeamId(teamId);
-    let store = this.stores.get(id);
-    if (store === undefined) {
-      store = new TransactionalStore<TeamRecord | null>({
-        path: this.recordPath(id),
-        load: () => this.loadTeam(id),
-      });
-      this.stores.set(id, store);
-    }
+    return this.stores.get(id) ?? this.hold(id, () => this.loadTeam(id));
+  }
+
+  /** Register the one store for `id`; the caller has just checked none exists. */
+  private hold(
+    id: string,
+    load: () => Promise<TeamRecord | null>,
+  ): TransactionalStore<TeamRecord | null> {
+    const store = new TransactionalStore<TeamRecord | null>({
+      path: this.recordPath(id),
+      load,
+    });
+    this.stores.set(id, store);
     return store;
   }
 
@@ -150,9 +160,26 @@ export class TeamStore {
    *
    * The name check itself still throws — an invalid team id is a caller
    * defect, not a missing Team.
+   *
+   * A held store answers from memory. With no store, this reads the file and
+   * registers a store only when a valid record is there: a miss is returned
+   * without being kept, so probing candidate names, malformed residue, and
+   * names that never become a Team leave nothing resident. Registration
+   * happens after the read, so it re-checks for an owner first — a handle or a
+   * create may have registered the store while the read was in flight, and the
+   * store that is already there is the single authority for the answer. The
+   * registered store is seeded with the record just read instead of reading
+   * the file a second time.
    */
   async get(teamId: string): Promise<TeamRecord | null> {
-    return this.storeFor(teamId).load();
+    const id = validateTeamId(teamId);
+    const held = this.stores.get(id);
+    if (held !== undefined) return held.load();
+    const record = await this.loadTeam(id);
+    const owner = this.stores.get(id);
+    if (owner !== undefined) return owner.load();
+    if (record === null) return null;
+    return this.hold(id, async () => record).load();
   }
 
   async list(): Promise<TeamRecord[]> {

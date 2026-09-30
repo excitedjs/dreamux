@@ -353,7 +353,11 @@ export interface AgentRuntimeProviderConfigReadContext {
 
 /**
  * Optional provider-owned config parsing. A parse/validation failure must throw
- * (the host fails loud), never return a partially-valid config.
+ * (the host fails loud), never return a partially-valid config. Throw the
+ * `RuleViolation` from `@excitedjs/dreamux-utils` for a value this reader
+ * checked and refused, so a host request that carried that value (an online
+ * config replace) reports it as the caller's mistake; any other throw is
+ * reported as an internal failure.
  */
 export interface AgentRuntimeConfigCapability<TConfig> {
   read(

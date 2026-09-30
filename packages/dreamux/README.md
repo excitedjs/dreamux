@@ -303,11 +303,14 @@ be trusted and whose passive known-bot observation should remain enabled.
 The access path is always `~/.dreamux/state/<id>/access.json`;
 `DREAMUX_ROOT` is the one relocation variable for both `config.json` and
 `access.json`; `dreamux config path` still names `config.json` only. For a
-manual access edit, fully stop the owning Dispatcher, confirm it stopped,
+manual access edit, stop the daemon, confirm the process exited,
 re-read after stop, apply only the requested policy/shared-authority fields via
 an owner-only sibling temporary file and atomic replacement at mode `0600`,
 validate the complete current V3 shape without printing values, and then start
-the Dispatcher. Preserve `version` and the `pending` ledger field exactly.
+the daemon. Preserve `version` and the `pending` ledger field exactly. Never
+edit the file while the daemon runs: the running Channel holds the file in
+memory and its next write (a pairing request or an owner approval, for example)
+replaces the whole file, discarding the edit.
 A missing file after confirmed stop is valid current state: start from the full
 secure V3 default shown above, create a missing state directory at `0700`, and
 atomically create the first `0600` file. This is initialization, not a rebuild.

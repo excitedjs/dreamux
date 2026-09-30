@@ -45,10 +45,12 @@ import {
 } from './schema.js';
 
 const mutating = { readOnlyHint: false, destructiveHint: false } as const;
+// The card is best effort: it is skipped when a topic's reply root cannot be
+// read from Feishu, and dropped when the send fails after its one retry.
 const BIND_SUCCESS_TEXT =
-  'Binding succeeded. The system will automatically send a notification card; no additional user notification is needed.';
+  'Binding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
 const UNBIND_SUCCESS_TEXT =
-  'Unbinding succeeded. The system will automatically send a notification card; no additional user notification is needed.';
+  'Unbinding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
 
 interface TargetInput {
   chatId: string;

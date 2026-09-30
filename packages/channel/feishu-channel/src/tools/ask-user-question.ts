@@ -22,6 +22,7 @@
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 
 import type { AskUserOption, AskUserQuestionSpec } from '../cards/ask-user.js';
+import { agentSender } from '../outbound/index.js';
 import {
   asRecord,
   closedObjectSchema,
@@ -228,6 +229,7 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
     const result = await ctx.session.cardActions.askUserQuestion({
       chatId: input.chatId,
       questions: input.questions,
+      sender: agentSender(ctx.caller),
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
       ...(input.text !== undefined ? { text: input.text } : {}),
     });

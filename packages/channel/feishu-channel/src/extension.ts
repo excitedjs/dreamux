@@ -94,6 +94,10 @@ export interface FeishuExtensionAction<S> {
   /** The card button value's `dreamux_action`. */
   readonly key: string;
   /**
+   * Called only for a click by a person the conversation's inbound access
+   * policy admits: the Channel refuses everyone else before this runs, so the
+   * handler needs no check of its own on who clicked.
+   *
    * `response` is awaited before Feishu gets the callback answer, and Feishu
    * gives a card callback only a few seconds before the click looks dead:
    * answer quickly. `forward`, if present, is delivered afterwards and does
@@ -142,11 +146,20 @@ export interface FeishuInstanceApi {
    * response itself. There is no idempotency key: a rejection can mean the
    * card is already in the chat, so retrying on any rejection can post it
    * twice.
+   *
+   * `replyTo` addresses the card under that message, as is. Without it the
+   * card is a new top-level message in the chat — except in a Collaboration
+   * Space chat, where that would open a new topic: there the card lands under
+   * the topic the `caller` Team is bound to, and the call rejects unless that
+   * is exactly one topic whose root message is known. A tool handler passes its
+   * `ctx.caller`; work with no caller (background work, a card action handler)
+   * names `replyTo` there.
    */
   sendCard(input: {
     chatId: string;
     replyTo?: string;
     card: unknown;
+    caller?: ChannelMcpCaller;
   }): Promise<{ messageId: string; target: FeishuTarget }>;
   editCard(messageId: string, card: unknown): Promise<void>;
 }

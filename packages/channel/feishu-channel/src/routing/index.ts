@@ -223,10 +223,10 @@ export class FeishuRouting {
     spaceId: string | null;
     /**
      * The visible message this binding's topic conversation should reply
-     * under, or `null` for a `group`/`p2p` target or a topic bound through a
-     * path with no message id. The caller resolves this value, including
-     * never regressing an already-set root on a rebind that happens not to
-     * carry one — this method writes exactly what it is given.
+     * under, or `null` when the caller has none: a `group`/`p2p` target, or a
+     * topic bound through a path with no message id. A `null` keeps the root
+     * the row already holds, decided inside the commit, so a rebind never
+     * erases one that a concurrent `fillTopicRoot` just learned.
      */
     rootMessageId: string | null;
     /**
@@ -235,8 +235,15 @@ export class FeishuRouting {
      * own; taking a route away from another Team is a Dispatcher decision.
      */
     requireOwner?: string;
-  }): Promise<{ previousTeamName: string | null }> {
+  }): Promise<{
+    previousTeamName: string | null;
+    /** The root the row holds after this bind. */
+    rootMessageId: string | null;
+  }> {
     const displaced: { teamName: string | null } = { teamName: null };
+    const committed: { rootMessageId: string | null } = {
+      rootMessageId: null,
+    };
     await updateRoutingDocument(this.store, this.opts.stateDir, (document) => {
       const key = targetKey(input.target);
       const now = Date.now();
@@ -273,21 +280,24 @@ export class FeishuRouting {
           );
         }
         displaced.teamName = existing.team_name;
+        const rootMessageId = input.rootMessageId ?? existing.root_message_id;
+        committed.rootMessageId = rootMessageId;
         if (
           existing.team_name === input.teamName &&
           existing.display === input.display &&
           existing.space_id === input.spaceId &&
-          existing.root_message_id === input.rootMessageId
+          existing.root_message_id === rootMessageId
         ) {
           return false;
         }
         existing.team_name = input.teamName;
         existing.display = input.display;
         existing.space_id = input.spaceId;
-        existing.root_message_id = input.rootMessageId;
+        existing.root_message_id = rootMessageId;
         existing.updated_at = now;
         return true;
       }
+      committed.rootMessageId = input.rootMessageId;
       document.bindings.push({
         target: toRecord(input.target),
         display: input.display,
@@ -299,7 +309,41 @@ export class FeishuRouting {
       });
       return true;
     });
-    return { previousTeamName: displaced.teamName };
+    return {
+      previousTeamName: displaced.teamName,
+      rootMessageId: committed.rootMessageId,
+    };
+  }
+
+  /**
+   * Give a topic binding the message its conversation replies under, when it
+   * has none yet.
+   *
+   * Nothing but that one field is written: not the Team, not the display, and
+   * not the row's `updated_at`, because learning where a route already lives is
+   * not a change to the route. Only a topic row has a root, so any other target is
+   * left alone, as is a row that is absent (a topic served by its parent
+   * group, or a route removed meanwhile) or already rooted — whichever root
+   * was learned first is the one kept. The precondition is checked twice:
+   * against the last commit, so a topic that already has a root costs no
+   * write, and inside the commit, for the same reason `bind` re-reads its own.
+   */
+  async fillTopicRoot(
+    target: FeishuTarget,
+    rootMessageId: string,
+  ): Promise<void> {
+    if (target.kind !== 'topic') return;
+    const current = this.bindingFor(target);
+    if (current === undefined || current.root_message_id !== null) return;
+    const key = targetKey(target);
+    await updateRoutingDocument(this.store, this.opts.stateDir, (document) => {
+      const row = document.bindings.find(
+        (candidate) => targetKey(fromRecord(candidate.target)) === key,
+      );
+      if (row === undefined || row.root_message_id !== null) return false;
+      row.root_message_id = rootMessageId;
+      return true;
+    });
   }
 
   /**
@@ -312,8 +356,11 @@ export class FeishuRouting {
   async unbind(
     target: FeishuTarget,
     requireOwner?: string,
-  ): Promise<string | null> {
-    const removed: { teamName: string | null } = { teamName: null };
+  ): Promise<(FeishuRemovedRoute & { teamName: string }) | null> {
+    // The removed row is reported from inside the commit that deletes it, the
+    // way `forgetTeam` reports its routes: a snapshot read before this commit
+    // would miss a root `fillTopicRoot` committed just ahead of it.
+    let removed: (FeishuRemovedRoute & { teamName: string }) | null = null;
     await updateRoutingDocument(this.store, this.opts.stateDir, (document) => {
       const key = targetKey(target);
       const kept = document.bindings.filter((row) => {
@@ -324,14 +371,19 @@ export class FeishuRouting {
               'Dispatcher can release it.',
           );
         }
-        removed.teamName = row.team_name;
+        removed = {
+          target: fromRecord(row.target),
+          display: row.display,
+          rootMessageId: row.root_message_id,
+          teamName: row.team_name,
+        };
         return false;
       });
       if (kept.length === document.bindings.length) return false;
       document.bindings = kept;
       return true;
     });
-    return removed.teamName;
+    return removed;
   }
 
   /**

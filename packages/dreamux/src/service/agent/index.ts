@@ -153,7 +153,8 @@ export class TeammateCollection implements TeammateOps {
    *
    * They are nobody's until that send succeeds, so they cannot live in
    * {@link entities} — but a second send must still find the one already
-   * reopening rather than start a second runtime for the same Agent.
+   * reopening rather than start a second runtime for the same Agent, and `last`
+   * must find the running generation the reopen is about to publish.
    */
   private readonly reopening = new Map<string, Promise<AgentService>>();
   /**
@@ -214,14 +215,24 @@ export class TeammateCollection implements TeammateOps {
   ): Promise<LockedTeammate> {
     // No capability gate: every provider must honor the session-bound output
     // schema, so an unsupported-feature pre-check has nothing left to check.
-    let handle: LockedTeammate | null = null;
+
+    // The lock is taken inside the build, before the entity is published, and
+    // the build can still fail after that (the owner is closing as the entity
+    // registers). The caller never receives a handle from a failed call, so
+    // the build itself releases the lock before it reports the failure: a
+    // release that ran after the failed materialization left the collection's
+    // in-flight set could be missed by a concurrent sweep, which would then
+    // find the published entity still locked ("is locked"). Ownership of the
+    // lock passes to the caller only when the build succeeds.
+    let handle: LockedTeammate | undefined;
     await this.createFreshEntity(input, options, (entity) => {
-      handle = entity.lock();
+      const locked = entity.lock();
+      handle = locked;
+      return () => locked.unlock();
     });
-    if (handle === null) {
-      throw new Error('locked TeamMate publication completed without a handle');
-    }
-    return handle;
+    // The hook assigns before the build can resolve; the compiler cannot see
+    // an assignment made inside a callback.
+    return handle!;
   }
 
   /**
@@ -411,12 +422,26 @@ export class TeammateCollection implements TeammateOps {
     name: string,
     query: number | AgentEntityLastQuery,
   ): Promise<AgentEntityLastResult> {
-    const identity = await this.mustIdentity(validateAgentEntityName(name));
-    const entity = this.liveEntity(identity.name);
+    const stored = await this.mustIdentity(validateAgentEntityName(name));
+    let entity = this.liveEntity(stored.name);
+    if (entity === null) {
+      // A TeamMate reopened from a closed record runs its runtime before its
+      // first send returns and publishes it, so it is held by `reopening`, not
+      // by the Map. The build settles before any launch, so waiting for it is
+      // short; a failed reopen left no entity and the stored record answers.
+      entity =
+        (await this.reopening.get(stored.name)?.catch(() => null)) ?? null;
+    }
+    // No await between these two reads: only the running generation can
+    // publish a session id, so an identity and a launch taken at one instant
+    // name the same generation. An await between them could pair a session
+    // with the next generation's provider and config.
+    const identity = entity?.current() ?? stored;
     const activity = await readAgentActivity({
       config: this.opts.config.current(),
       providers: this.opts.agentRuntimeProviders,
       identity,
+      running: entity?.runningLaunch() ?? null,
       query: typeof query === 'number' ? { limit: query } : query,
       log: this.opts.log,
     });
@@ -622,7 +647,12 @@ export class TeammateCollection implements TeammateOps {
   private async createFreshEntity(
     input: SpawnTeamMateInput,
     options: CreateLockedTeammateOptions = {},
-    beforePublish?: (entity: AgentService) => void,
+    /**
+     * Runs on the built entity before it is published, and returns what
+     * undoes it. The undo runs if publication then fails, before the failed
+     * materialization settles.
+     */
+    beforePublish?: (entity: AgentService) => () => void,
   ): Promise<AgentService> {
     requireLifecycleText(input.name, 'TeamMate spawn name');
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
@@ -702,15 +732,21 @@ export class TeammateCollection implements TeammateOps {
         this.store,
       );
       this.subscribeState(entity);
+      let undo: (() => void) | undefined;
       try {
-        beforePublish?.(entity);
+        undo = beforePublish?.(entity);
       } catch (error) {
         await this.closeAfterFailedCreation(entity);
         throw error;
       }
-      this.entities.set(entity.name, entity);
-      this.subscribeEntity(entity);
-      this.selfCloseIfClosing(entity);
+      try {
+        this.entities.set(entity.name, entity);
+        this.subscribeEntity(entity);
+        this.selfCloseIfClosing(entity);
+      } catch (error) {
+        undo?.();
+        throw error;
+      }
       return entity;
     });
   }

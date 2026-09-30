@@ -11,11 +11,15 @@ directly vs. `stateRoot()`). Never derive this state path from
 
 The Channel's `FeishuAccess` owns the held store and every access transition.
 It loads the file on the first policy read, gate, approval, or trusted-user
-check and holds it for the rest of the session — a hand edit made while the
-channel is running is not read until the next restart, the same as the routing document
-and `chat-bots.json`. This is exactly why the quiesced edit procedure below
-requires a confirmed process exit before patching the file. A malformed file
-fails that operation; channel startup does not eagerly load access state.
+check and holds that value for the rest of the session. A hand edit made after
+that first load is not read, and every later write commits the held
+value to the whole file without re-reading it, so the next write (a pairing
+request or an owner approval, for example) replaces the file and discards the
+edit. Editing first and restarting afterwards is therefore not a substitute for
+stopping first. This is exactly why the quiesced edit procedure below requires
+stopping the daemon and confirming process exit before patching the file. A
+malformed file fails that operation; channel startup does not eagerly load
+access state.
 Pairing messages are sent outside the store transaction, then the access owner
 merges a successful send against the latest committed approval state.
 
@@ -62,8 +66,11 @@ first, and `group.policy: block` drops all human messages. A chat in
 the mention/block checks, its human members deliver without consulting
 `dm_policy`, `allow_users`, or pairing. An unlisted `allowlist` chat drops. An
 unlisted `follow-user` chat uses the existing `dm_policy` / `allow_users` /
-pairing path. Passive known-bot observation remains scoped to
-`group.allow_chats`. `/introduce` remains sender-scoped and requires exact
+pairing path. A click on a card the bot sent (an ask-user answer, an
+extension's card action) is decided by the same rules as a human message that
+mentions the bot, so `require_mention` does not refuse it; pairing approval is
+the exception and is checked against the App Owner instead. Passive known-bot
+observation remains scoped to `group.allow_chats`. `/introduce` remains sender-scoped and requires exact
 sender ID membership in `allow_users`; this check is not human-only, so a
 manually listed bot/app sender ID may pass authorization.
 
@@ -79,14 +86,15 @@ daemon stop -> confirmed process exit -> post-stop re-read -> exact atomic patch
 -> current-shape validation -> daemon start
 ```
 
-Keep the Channel owner fully quiesced for the entire read-modify-write window.
-After the post-stop re-read, change only requested operator-policy or
-`allow_users` fields. Preserve `version` and the `pending` ledger exactly. Use
-an owner-only sibling temporary file, atomic replacement, and final mode
-`0600`. Validate locally that the patched JSON still parses and every field is
-present with the right type — an unrecognized field is tolerated and left as
-found, but a missing or wrong-type field is rejected, same as the daemon's own
-loader. Do not claim that `dreamux doctor` validates access state.
+Keep the Channel owner fully quiesced for the entire read-modify-write window;
+never patch the file while the daemon is running. After the post-stop re-read,
+change only requested operator-policy or `allow_users` fields. Preserve
+`version` and the `pending` ledger exactly. Use an owner-only sibling temporary
+file, atomic replacement, and final mode `0600`. Validate locally that the
+patched JSON still parses and every field is present with the right type — an
+unrecognized field is tolerated and left as found, but a missing or wrong-type
+field is rejected, same as the daemon's own loader. Do not claim that
+`dreamux doctor` validates access state.
 
 If the file is absent after confirmed process exit, treat that explicit `ENOENT` as
 valid current state. Use the complete secure V3 default above as the in-memory

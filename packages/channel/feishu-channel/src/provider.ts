@@ -22,6 +22,7 @@ import type {
   ChannelProvider,
   ChannelSessionCreateContext,
 } from '@excitedjs/dreamux-types';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
 
 import { FeishuExtensionRegistry } from './feishu-extensions.js';
 import { FeishuChannelSession } from './session/session.js';
@@ -60,10 +61,12 @@ export function buildFeishuChannelProvider(
         const appId = obj['app_id'];
         const appSecret = obj['app_secret'];
         if (typeof appId !== 'string' || appId.trim() === '') {
-          throw new Error('feishu channel config requires a non-empty app_id');
+          throw new RuleViolation(
+            'feishu channel config requires a non-empty app_id',
+          );
         }
         if (typeof appSecret !== 'string' || appSecret.trim() === '') {
-          throw new Error(
+          throw new RuleViolation(
             'feishu channel config requires a non-empty app_secret',
           );
         }

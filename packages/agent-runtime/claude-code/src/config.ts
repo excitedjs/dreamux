@@ -17,6 +17,7 @@ import {
   readPositiveInt,
   readStringArray,
   readStringRecord,
+  RuleViolation,
 } from '@excitedjs/dreamux-utils';
 
 /**
@@ -92,7 +93,7 @@ export function readDispatcherClaudeCodeConfig(
   const bin =
     readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
   if (bin.trim() === '') {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
@@ -106,7 +107,7 @@ export function readDispatcherClaudeCodeConfig(
     permissionMode !== null &&
     !ALLOWED_CLAUDE_CODE_PERMISSION_MODES.has(permissionMode)
   ) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}permission_mode='${permissionMode}' is not one of ${Array.from(ALLOWED_CLAUDE_CODE_PERMISSION_MODES).join(' | ')}`,
     );
   }

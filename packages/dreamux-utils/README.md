@@ -17,9 +17,13 @@ against.
   vocabulary (`isPlainObject`, `asString`, `nonEmptyString`).
 - **error-info** — reading an arbitrary thrown value (`errorMessage`,
   `errorInfo`, `ErrorInfo`).
-- **config-validate** — neutral config-validation primitives that produce
-  `dreamux config error in <file>: ...` messages (`readNonEmptyString`,
-  `readStringArray`, …), built on `json-shape`.
+- **rule-violation** — the error a validator throws for a value it checked and
+  refused (`RuleViolation`). It lives here so a provider's config reader and
+  the host's request readers share one class without the provider depending on
+  the host.
+- **config-validate** — neutral config-validation primitives that throw a
+  `RuleViolation` carrying a `dreamux config error in <file>: ...` message
+  (`readNonEmptyString`, `readStringArray`, …), built on `json-shape`.
 - **os** — platform/filesystem primitives (`isProcessAlive`,
   `isProcessGroupAlive`, `killProcessGroup`, `ensureOwnerOnlyDir`,
   `removeEmptyLogFile`, `pathExists`). These are generic OS helpers, not

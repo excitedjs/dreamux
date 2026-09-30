@@ -161,10 +161,16 @@ closed TeamMate from the persisted `session_id`, and there is no standalone
 
 Read tools do not start or resume runtimes. `last` first checks the identity and
 scope, then delegates a bounded cold read to the selected `AgentRuntimeProvider`
-for that agent's native session history. It materializes no entity, starts no
-runtime, and stores no transcript copy, index, or cursor; it returns
-provider-neutral bounded message/tool records, an opaque backward cursor, and
-truncation state.
+for that agent's native session history. While the entity's runtime generation
+is running, the provider, config, and session id are the ones that generation
+was launched with, because an online `config.agents.replace` does not change
+what a running runtime uses (a TeamMate being reopened from a closed record
+counts: `last` waits for that build, which settles before any launch, and reads
+the entity it produced); with no runtime running they resolve from the current
+config, and one that no longer resolves is an error. Dreamux persists no
+historical config for this. It materializes no entity, starts no runtime, and
+stores no transcript copy, index, or cursor; it returns provider-neutral bounded message/tool
+records, an opaque backward cursor, and truncation state.
 
 No surface exposes a native history path. `spawn`, `send`, `list`, `status`, and
 `history` receipts carry the entity's `AgentEntityRuntimeStatus`, whose only

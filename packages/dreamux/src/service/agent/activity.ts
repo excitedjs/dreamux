@@ -15,6 +15,7 @@ import {
 } from './identity.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import { validateLastLimit } from './requests.js';
+import type { RunningLaunch } from './types.js';
 
 const ACTIVITY_ERROR_REASONS = new Set<AgentActivityError['reason']>([
   'session_unavailable',
@@ -38,9 +39,16 @@ export class AgentActivityReadError extends Error {
 }
 
 export interface ReadAgentActivityInput {
+  /** Resolves the provider and config of an entity with no running runtime. */
   config: DreamuxConfig;
   providers: AgentRuntimeProviderCatalog;
   identity: AgentEntityIdentity;
+  /**
+   * The provider and config of the running generation, when there is one. It
+   * wins over `config`: a runtime keeps the config it launched with, so the
+   * current config may no longer describe the session being read.
+   */
+  running: RunningLaunch | null;
   query: AgentEntityLastQuery;
   log: DreamuxLogger;
 }
@@ -70,12 +78,7 @@ export async function readAgentActivity(
   if (sessionId === null) {
     throw new AgentActivityReadError('session_unavailable');
   }
-  const agent = resolveAgent(
-    input.config,
-    input.identity.dispatcher_id,
-    input.identity.agent_runtime,
-  );
-  const provider = input.providers.resolve(agent.provider).implementation;
+  const { provider, config } = input.running ?? resolveStoppedSource(input);
   let page: AgentActivityPage;
   try {
     page = await provider.readRecentActivity(
@@ -86,7 +89,7 @@ export async function readAgentActivity(
         includeTools,
       },
       {
-        config: agent.config,
+        config,
         cwd: input.identity.runtime_cwd,
         logger: input.log,
       },
@@ -100,6 +103,19 @@ export async function readAgentActivity(
     records: page.records.map(toEntityRecord),
     nextCursor: page.nextCursor ?? null,
     truncated: page.truncated,
+  };
+}
+
+/** With no runtime running, the entity reads through the current config. */
+function resolveStoppedSource(input: ReadAgentActivityInput): RunningLaunch {
+  const agent = resolveAgent(
+    input.config,
+    input.identity.dispatcher_id,
+    input.identity.agent_runtime,
+  );
+  return {
+    provider: input.providers.resolve(agent.provider).implementation,
+    config: agent.config,
   };
 }
 

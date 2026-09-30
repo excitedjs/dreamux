@@ -137,13 +137,17 @@ export class ConfigService implements ConfigReader {
    * {@link mergeAgentEntries}), splice the result into the committed `raw`,
    * then run it through `resolveConfig` — the identical loader/validator a
    * fresh `dreamux serve` uses, so a write this rejects is a write the next
-   * start would also reject. `resolveConfig`'s own validators raise a
-   * `RuleViolation` for a malformed candidate (`config.ts`'s `mergeWithDefaults`);
-   * {@link throwCallerMistake} re-types exactly that into the caller's
-   * mistake, so `config.agents.replace` reports `BAD_REQUEST` instead of
-   * `INTERNAL` for a bad payload. Either way this call rejects with file and
-   * memory unchanged, by `TransactionalStore.update`'s own contract (nothing
-   * is written or swapped before `change` returns).
+   * start would also reject. Every validator on that path raises a
+   * `RuleViolation` for a value it checked and refused: `config.ts`'s
+   * `mergeWithDefaults`, the shared readers in `@excitedjs/dreamux-utils`, each
+   * provider's own `config.read`, and the loader's refusal of an unregistered
+   * `builtin:` ref. {@link throwCallerMistake} re-types exactly that into the
+   * caller's mistake, so `config.agents.replace` reports `BAD_REQUEST` instead
+   * of `INTERNAL` for a bad payload. A dynamic import, a file read, or a
+   * provider's own `TypeError` is not a refused value and keeps its own code.
+   * Either way this call rejects with file and memory unchanged, by
+   * `TransactionalStore.update`'s own contract (nothing is written or swapped
+   * before `change` returns).
    */
   async replaceAgents(
     candidateAgents: readonly Record<string, unknown>[],

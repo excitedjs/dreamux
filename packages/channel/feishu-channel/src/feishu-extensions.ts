@@ -25,7 +25,7 @@ import type {
   FeishuInstanceApi,
 } from './extension.js';
 import type { FeishuInboundTargeting } from './inbound/target.js';
-import type { FeishuOutbound } from './outbound/index.js';
+import { agentSender, type FeishuOutbound } from './outbound/index.js';
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuBindingOperations } from './routing/operations.js';
 import { channelPathSegment } from './routing/store.js';
@@ -334,12 +334,13 @@ export function buildInstanceApi(input: {
         bindings.bindChannel({ target, teamName, display }),
       );
     },
-    async sendCard({ chatId, replyTo, card }) {
+    async sendCard({ chatId, replyTo, card, caller }) {
       const sent = await outbound.sendCard({
         target: {
           chatId,
           ...(replyTo !== undefined ? { replyToMessageId: replyTo } : {}),
         },
+        sender: agentSender(caller),
         card,
       });
       const sentMessage = sent.messages[0];
