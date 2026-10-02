@@ -100,6 +100,14 @@ config shape), a channel's `collaborationSpace` block, and a leftover
 top-level `workspace` key all load the same way — as an ordinary tolerated
 unknown key, with no special-cased rejection or rebuild-instruction error.
 
+Read tolerance does not imply rewrite preservation. A non-dry-run
+`dreamux onboard` reconstructs known wrapper fields and may discard unknown
+ones, including fields on untouched entries. Provider-owned `config` contents
+on untouched entries retain their raw-config round trip. This is the accepted
+onboard policy; other writers retain their own contracts. Source:
+`/packages/dreamux/src/onboard/config-files.ts` and
+`/packages/dreamux/src/config/config.ts`.
+
 `dreamux serve` fails loudly and creates no silent defaults when the config file
 is missing, when its mode is not `0600`, when the JSON does not parse, when the
 shape is rejected (a wrong type or a missing required field at any level, a

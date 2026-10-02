@@ -281,12 +281,7 @@ export class DispatcherService implements Dispatcher {
     this.workflowService_ = new WorkflowService({
       dispatcherId: opts.id,
       teamId: null,
-      teammates: {
-        createLocked: (spawnInput, options) =>
-          this.fence.admit(() =>
-            this._teammates.createLocked(spawnInput, options),
-          ),
-      },
+      teammates: this._teammates,
       completionDelivery,
       completionOwner: this.dispatcherAgent,
       fence: this.fence,

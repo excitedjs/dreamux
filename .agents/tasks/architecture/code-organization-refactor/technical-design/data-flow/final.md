@@ -404,3 +404,13 @@ adding compensating state or changing a product rule.
 Knowledge closeout updates the affected service, completion, channel, plugin,
 runtime, and maintenance owners to current code, then runs the KB checker.
 Delivery is another reviewed child PR into #453, not a merge of #453 to `next`.
+
+## Since this was recorded: 2026-10-02
+
+R73, "停止新建", supersedes only the preserved `createLocked` asymmetry in
+section 1 and the Dispatcher factory wrapper in `Retained functional contracts`. The
+[Workflow close-admission solution](/.agents/tasks/architecture/code-organization-refactor/technical-design/workflow-close-admission/final.md)
+places construction admission in the collection and removes that wrapper.
+The original preservation decision above remains historical evidence; lock
+handoff, late-publication undo, completion delivery, and dissolve order stay
+unchanged. R72 separately accepts the existing onboard wrapper rewrite.

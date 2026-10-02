@@ -78,6 +78,12 @@ Channel's own surface rather than in this envelope.
 External `npm:` provider configs are opaque. Use the provider's schema as the
 authority; do not infer fields from a built-in provider.
 
+`dreamux onboard` reconstructs the known host wrapper fields when it writes
+configuration. Unknown wrapper fields may be discarded even on untouched
+entries; untouched provider-owned `config` contents retain their raw-config
+round trip. Loading an unknown envelope key remains supported. Use the
+structural-editing procedure below when unrelated fields must be preserved.
+
 ## Safe Current Config Editing
 
 1. Confirm explicit operator intent for the target Dispatcher, config file, and

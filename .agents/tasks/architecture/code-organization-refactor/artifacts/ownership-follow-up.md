@@ -61,8 +61,14 @@ authority for behavioral changes in this pass:
   config and session id from that generation, including a TeamMate still being
   reopened from a closed record (`last` waits for the reopen's build); with no
   runtime running it uses the current config.
-- Workflow `createLocked` bypasses collection admission; closing during
-  construction can strand a lock before its caller receives the handle.
+- Workflow `createLocked` bypasses collection admission. PR #460 fixed lock
+  release when closing refuses late publication; the Dispatcher/Team
+  construction-admission asymmetry remained. Settled 2026-10-02 by R73:
+  "停止新建". Both scopes must refuse new construction once their owner is
+  closing. Implemented and independently reviewed 2026-10-02: collection-owned
+  admission replaces the Dispatcher wrapper, with existing late lock undo
+  intact. Final parent concurrency coverage remains open. See the
+  [decision follow-up](product-decisions-20261002.md).
 - First binding may lose the initial COT anchor. R41 only ruled on restart.
   Resolved 2026-09-30: the sent bind card is the leader's first anchor again
   (see the R41 addition in `rulings.md`).
@@ -97,7 +103,9 @@ provider hooks without their own requirement and consumer analysis.
   that round trip. Moving attachment into `resolveConfig` adds another parse
   or a parameter rather than removing a concept. A future raw-document-based
   onboard rewrite would need to discuss unknown-field preservation and output
-  semantics; it is not part of this ownership pass.
+  semantics; it is not part of this ownership pass. Settled 2026-10-02 by R72:
+  "不用保留". Onboard's current unknown-wrapper-field rewrite is accepted;
+  provider-owned `config` round trips remain supported.
 
 ## Preservation ledger
 

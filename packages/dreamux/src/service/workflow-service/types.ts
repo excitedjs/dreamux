@@ -7,9 +7,8 @@ import type { SpawnTeamMateInput } from '../agent/types.js';
 export type WorkflowCallerKind = 'dispatcher' | 'team_leader';
 
 /** How a Workflow run materializes the locked TeamMate one of its agent
- * calls needs — implemented by whichever collection owns this scope
- * (the scoped `TeammateCollection`, with dispatcher admission wrapped by
- * its owner for dispatcher-level runs). */
+ * calls needs — the scoped `TeammateCollection` admits each construction
+ * through its owner before allocating or building the TeamMate. */
 export interface WorkflowTeammateFactory {
   createLocked(
     input: SpawnTeamMateInput,

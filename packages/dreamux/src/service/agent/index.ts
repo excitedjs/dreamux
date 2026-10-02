@@ -213,26 +213,28 @@ export class TeammateCollection implements TeammateOps {
     input: SpawnTeamMateInput,
     options: CreateLockedTeammateOptions = {},
   ): Promise<LockedTeammate> {
-    // No capability gate: every provider must honor the session-bound output
-    // schema, so an unsupported-feature pre-check has nothing left to check.
+    return this.opts.fence.admit(async () => {
+      // No capability gate: every provider must honor the session-bound output
+      // schema, so an unsupported-feature pre-check has nothing left to check.
 
-    // The lock is taken inside the build, before the entity is published, and
-    // the build can still fail after that (the owner is closing as the entity
-    // registers). The caller never receives a handle from a failed call, so
-    // the build itself releases the lock before it reports the failure: a
-    // release that ran after the failed materialization left the collection's
-    // in-flight set could be missed by a concurrent sweep, which would then
-    // find the published entity still locked ("is locked"). Ownership of the
-    // lock passes to the caller only when the build succeeds.
-    let handle: LockedTeammate | undefined;
-    await this.createFreshEntity(input, options, (entity) => {
-      const locked = entity.lock();
-      handle = locked;
-      return () => locked.unlock();
+      // The lock is taken inside the build, before the entity is published, and
+      // the build can still fail after that (the owner is closing as the entity
+      // registers). The caller never receives a handle from a failed call, so
+      // the build itself releases the lock before it reports the failure: a
+      // release that ran after the failed materialization left the collection's
+      // in-flight set could be missed by a concurrent sweep, which would then
+      // find the published entity still locked ("is locked"). Ownership of the
+      // lock passes to the caller only when the build succeeds.
+      let handle: LockedTeammate | undefined;
+      await this.createFreshEntity(input, options, (entity) => {
+        const locked = entity.lock();
+        handle = locked;
+        return () => locked.unlock();
+      });
+      // The hook assigns before the build can resolve; the compiler cannot see
+      // an assignment made inside a callback.
+      return handle!;
     });
-    // The hook assigns before the build can resolve; the compiler cannot see
-    // an assignment made inside a callback.
-    return handle!;
   }
 
   /**
