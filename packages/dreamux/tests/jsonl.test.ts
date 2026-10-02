@@ -23,9 +23,7 @@ describe('appendJsonLine', () => {
     await appendJsonLine(path, { index: 1 });
     await appendJsonLine(path, { index: 2 });
 
-    expect(await readFile(path, 'utf8')).toBe(
-      '{"index":1}\n{"index":2}\n',
-    );
+    expect(await readFile(path, 'utf8')).toBe('{"index":1}\n{"index":2}\n');
     expect((await stat(path)).mode & 0o077).toBe(0);
   });
 });

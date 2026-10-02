@@ -5,25 +5,16 @@
  * TeamLeader — so every Command first resolves that owner's
  * {@link SchedulerCommands} surface and then delegates unchanged. Job validation
  * stays inside the scheduler service; these definitions own the declared payload
- * schema, this surface's operator-only `action` field, and the owner selection.
- * The request codecs live with the scheduler's types, the job projection with
- * the store that produces the records, and the failures with the rules that
- * raise them — each stating its own reason and next step. The cron MCP delegate
- * reads the same helpers; neither adapter reads the other.
+ * schema and the owner selection. The request readers and the result
+ * projection live in `requests.ts`, the failures with the rules that raise
+ * them — each stating its own reason and next step. The cron MCP delegate
+ * reads the same `requests.ts` helpers; neither adapter reads the other.
  */
-import type {
-  CoreCommandContext,
-  CoreCommandDefinition,
-  JsonSchema,
-} from '@excitedjs/dreamux-types';
+import type { DispatcherCommandHost } from '../../command/host.js';
+import type { JsonSchema } from '@excitedjs/dreamux-types';
 
+import { commandPayload, type CommandPayload } from '../../command/payload.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
-import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
-import {
-  commandPayload,
-  optionalRecordField,
-  type CommandPayload,
-} from '../../command/payload.js';
 import {
   BOOLEAN,
   NON_EMPTY_STRING,
@@ -33,15 +24,24 @@ import {
   arrayOf,
   objectSchema,
 } from '../../command/schema.js';
-import { optionalTeamNameParam } from '../team-collection/types.js';
-import { cronJobResult, cronListResult, type CronJob } from './store.js';
+import type {
+  CoreCommandContext,
+  CoreCommandDefinition,
+} from '../../command/types.js';
+import { optionalTeamNameParam } from '../team/requests.js';
+import type { TeamsPort } from '../team/teams-port.js';
 import {
   cronCreateRequest,
   cronJobIdParam,
+  cronJobResult,
+  cronListResult,
   cronUpdateRequest,
-  type CronCreateRequest,
-  type CronUpdateRequest,
-  type SchedulerCommands,
+} from './requests.js';
+import type {
+  CronCreateRequest,
+  CronJob,
+  CronUpdateRequest,
+  SchedulerCommands,
 } from './types.js';
 
 /** The scheduler owner a cron Command addresses. */
@@ -61,17 +61,23 @@ function cronOwnerInput(params: CommandPayload): CronOwnerInput {
   return { teamId: optionalTeamNameParam(params, 'team_id') };
 }
 
+/** The one capability `schedulerCommands` needs from its addressed dispatcher. */
+interface SchedulerCommandsDispatcher {
+  readonly scheduler: SchedulerCommands;
+  readonly teams: Pick<TeamsPort, 'scheduler'>;
+}
+
 async function schedulerFor(
-  host: CoreCommandHost,
+  host: DispatcherCommandHost<SchedulerCommandsDispatcher>,
   context: CoreCommandContext,
   input: CronOwnerInput,
 ): Promise<SchedulerCommands> {
-  const dispatcher = mustDispatcher(host, context);
+  const dispatcher = host.addressedDispatcher(context);
   const { teamId } = input;
   if (teamId === null) return dispatcher.scheduler;
   // Resolving a Team-scoped owner can fail with a fact the Team already states:
   // gone and over stay two different answers, each keeping its own code.
-  return dispatcher.teamScheduler(teamId);
+  return dispatcher.teams.scheduler(teamId);
 }
 
 interface CronCreateInput extends CronOwnerInput {
@@ -87,7 +93,7 @@ interface CronDeleteInput extends CronOwnerInput {
 }
 
 export function schedulerCommands(
-  host: CoreCommandHost,
+  host: DispatcherCommandHost<SchedulerCommandsDispatcher>,
 ): readonly AnyCoreCommand[] {
   const list: CoreCommandDefinition<
     'scheduler.cron.list',
@@ -100,11 +106,17 @@ export function schedulerCommands(
     output: objectSchema({ jobs: arrayOf(OBJECT) }, ['jobs']),
     parse: (payload) => cronOwnerInput(commandPayload(payload)),
     async execute(context, input) {
-      return cronListResult(await (await schedulerFor(host, context, input)).list());
+      return cronListResult(
+        await (await schedulerFor(host, context, input)).list(),
+      );
     },
   };
 
-  const create: CoreCommandDefinition<'scheduler.cron.create', CronCreateInput, CronJob> = {
+  const create: CoreCommandDefinition<
+    'scheduler.cron.create',
+    CronCreateInput,
+    CronJob
+  > = {
     name: 'scheduler.cron.create',
     version: 1,
     input: objectSchema(
@@ -115,7 +127,6 @@ export function schedulerCommands(
         title: STRING,
         recurring: BOOLEAN,
         tz: STRING,
-        action: OBJECT,
       },
       ['cron', 'prompt'],
     ),
@@ -124,12 +135,7 @@ export function schedulerCommands(
       const params = commandPayload(payload);
       return {
         ...cronOwnerInput(params),
-        request: {
-          ...cronCreateRequest(params),
-          // Operator-only, and this surface's alone: no Agent-facing catalog
-          // advertises a raw action, so the shared codec does not read one.
-          ...optionalRecordField(params, 'action'),
-        },
+        request: cronCreateRequest(params),
       };
     },
     async execute(context, input) {
@@ -139,7 +145,11 @@ export function schedulerCommands(
     },
   };
 
-  const update: CoreCommandDefinition<'scheduler.cron.update', CronUpdateInput, CronJob> = {
+  const update: CoreCommandDefinition<
+    'scheduler.cron.update',
+    CronUpdateInput,
+    CronJob
+  > = {
     name: 'scheduler.cron.update',
     version: 1,
     input: objectSchema(
@@ -151,7 +161,6 @@ export function schedulerCommands(
         title: NULLABLE_STRING,
         recurring: BOOLEAN,
         tz: STRING,
-        action: OBJECT,
         enabled: BOOLEAN,
       },
       ['id'],
@@ -161,10 +170,7 @@ export function schedulerCommands(
       const params = commandPayload(payload);
       return {
         ...cronOwnerInput(params),
-        request: {
-          ...cronUpdateRequest(params),
-          ...optionalRecordField(params, 'action'),
-        },
+        request: cronUpdateRequest(params),
       };
     },
     async execute(context, input) {

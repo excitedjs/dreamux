@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 9, item 2: service/agent/mcp.ts and service/dispatcher-service/mcp-delegates.ts now type their DispatcherService/TeamLeaderHandle scope fields with narrow, locally-declared structural interfaces instead of importing the concrete classes, removing the resulting layer-order warnings and import cycles. Internal reorg only; no runtime or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

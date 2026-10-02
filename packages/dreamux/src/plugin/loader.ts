@@ -1,0 +1,356 @@
+/**
+ * Plugin loading: `plugins[]` entry parsing, import + factory, same-name
+ * checks, `contribute`, and `config.read`.
+ *
+ * Runs inside config loading, before provider refs are validated, because a
+ * plugin may contribute a provider that config addresses as `builtin:<name>`.
+ * `server` and api publication are not config concerns; they live in
+ * `./host.ts` and run only where hooks are needed (serve, doctor).
+ */
+
+import type {
+  AgentRuntimeProvider,
+  ChannelProvider,
+  ContributeHost,
+  DreamuxLogger,
+  DreamuxPlugin,
+} from '@excitedjs/dreamux-types';
+import {
+  errorMessage,
+  isPlainObject,
+  readNonEmptyString,
+  RuleViolation,
+} from '@excitedjs/dreamux-utils';
+
+import {
+  ALWAYS_LOADED_PLUGIN_REFS,
+  BUILTIN_PLUGIN_PACKAGES,
+  parseProviderRef,
+  registerBuiltinProvider,
+  type ProviderImplementation,
+  type ProviderKind,
+  type ProviderRef,
+  type ProviderRegistry,
+} from '../registry/index.js';
+
+/** One `plugins[]` item: a bare ref string is `{ ref }`. */
+export interface PluginConfigEntry {
+  ref: string;
+  config?: unknown;
+}
+
+export interface LoadedPlugin {
+  readonly name: string;
+  /** Human source label: `plugins[2] ("npm:@acme/x")` or `always-loaded "builtin:feishu"`. */
+  readonly source: string;
+  readonly plugin: DreamuxPlugin;
+  /** Its `plugins[]` entry and index; `null` for an always-loaded plugin. */
+  readonly entry: {
+    readonly index: number;
+    readonly value: PluginConfigEntry;
+  } | null;
+  /** `config.read` result; set by {@link readPluginConfigs}. */
+  config: unknown;
+  readonly providers: readonly { kind: ProviderKind; name: string }[];
+}
+
+export type PluginLoadPhase =
+  'import' | 'factory' | 'contribute' | 'config' | 'server' | 'api';
+
+/**
+ * `name` becomes a `state/plugins/<name>` directory segment verbatim
+ * (`pluginStateDir`), so it must already be a safe single path segment.
+ * Anchoring the first character to an ASCII letter or digit rules out `.`
+ * and `..` (which would resolve `state/plugins/<name>` up to `state/plugins`
+ * or `state`), and restricting the whole name to this alphabet makes the
+ * name-to-segment mapping the identity function, so two distinct names can
+ * never land on the same directory the way a lossy sanitizer (mapping both
+ * `@acme/tool` and `_acme_tool` to `_acme_tool`) could.
+ */
+const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export class PluginLoadError extends Error {
+  constructor(
+    /** The plugin name, or its ref when the name is not known yet. */
+    readonly plugin: string,
+    readonly phase: PluginLoadPhase,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`plugin "${plugin}" failed during ${phase}: ${message}`, options);
+    this.name = 'PluginLoadError';
+  }
+}
+
+/**
+ * Whether `value` is a thenable. `contribute` and `server` are typed `=> void`,
+ * which TypeScript accepts from an `async` implementation too; load-phase
+ * callers use this to reject one instead of silently racing api publication
+ * against it.
+ */
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+/**
+ * Validate the raw top-level `plugins` value. Runs before any import: unlike
+ * provider refs, a malformed plugin entry has no later validation pass that
+ * would report it.
+ */
+export function readPluginEntries(
+  raw: Record<string, unknown>,
+  file: string,
+): PluginConfigEntry[] | undefined {
+  const value = raw['plugins'];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new RuleViolation(
+      `dreamux config error in ${file}: plugins must be an array`,
+    );
+  }
+  return value.map((item: unknown, index) => {
+    const prefix = `plugins[${index}]`;
+    let entry: PluginConfigEntry;
+    if (typeof item === 'string') {
+      entry = { ref: item };
+    } else if (isPlainObject(item)) {
+      entry = { ref: readNonEmptyString(item, 'ref', file, `${prefix}.`) };
+      if ('config' in item) entry.config = item['config'];
+    } else {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix} must be a plugin ref string or { ref, config }`,
+      );
+    }
+    try {
+      parseProviderRef(entry.ref);
+    } catch (err) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}.ref ${errorMessage(err)}`,
+      );
+    }
+    return entry;
+  });
+}
+
+/**
+ * Import, construct, name-check and `contribute` the always-loaded plugins,
+ * then `entries` in file order.
+ */
+export async function loadPlugins(options: {
+  registry: ProviderRegistry;
+  entries: readonly PluginConfigEntry[];
+  logger: DreamuxLogger;
+}): Promise<LoadedPlugin[]> {
+  // Every provider, built-in or plugin-supplied, is contributed by a plugin
+  // now, so the first `contribute()` call to claim a name is its source; there
+  // is nothing to pre-seed.
+  const providerSources = new Map<string, string>();
+  const sources = [
+    ...ALWAYS_LOADED_PLUGIN_REFS.map((ref) => ({
+      ref,
+      source: `always-loaded ${JSON.stringify(ref)}`,
+      entry: null,
+    })),
+    ...options.entries.map((value, index) => ({
+      ref: value.ref,
+      source: `plugins[${index}] (${JSON.stringify(value.ref)})`,
+      entry: { index, value },
+    })),
+  ];
+  const loaded: LoadedPlugin[] = [];
+  for (const { ref, source, entry } of sources) {
+    const plugin = await constructPlugin(parseProviderRef(ref));
+    const clash = loaded.find((other) => other.name === plugin.name);
+    if (clash !== undefined) {
+      throw new PluginLoadError(
+        plugin.name,
+        'factory',
+        `plugin name "${plugin.name}" is declared by both ${clash.source} and ${source}`,
+      );
+    }
+    const providers = contributePlugin(plugin, {
+      registry: options.registry,
+      logger: options.logger,
+      providerSources,
+    });
+    loaded.push({
+      name: plugin.name,
+      source,
+      plugin,
+      entry,
+      config: undefined,
+      providers,
+    });
+  }
+  return loaded;
+}
+
+/**
+ * Call each plugin's `config.read` with its entry's `config`. A `config` block
+ * for a plugin without `config.read` is ignored: a plugin with no reader has
+ * nowhere to route the block that would give it effect.
+ */
+export function readPluginConfigs(
+  plugins: readonly LoadedPlugin[],
+  file: string,
+): void {
+  for (const loaded of plugins) {
+    if (loaded.entry === null) continue;
+    const { index, value: entry } = loaded.entry;
+    const reader = loaded.plugin.config;
+    if (reader === undefined) continue;
+    try {
+      loaded.config = reader.read(entry.config);
+    } catch (err) {
+      throw new PluginLoadError(
+        loaded.name,
+        'config',
+        `${file}: plugins[${index}].config: ${errorMessage(err)}`,
+        { cause: err },
+      );
+    }
+  }
+}
+
+async function constructPlugin(ref: ProviderRef): Promise<DreamuxPlugin> {
+  let packageName: string;
+  if (ref.source === 'npm') {
+    packageName = ref.package;
+  } else {
+    const builtin = BUILTIN_PLUGIN_PACKAGES[ref.id];
+    if (builtin === undefined) {
+      throw new PluginLoadError(ref.raw, 'import', 'unknown built-in plugin');
+    }
+    packageName = builtin;
+  }
+  let module: Record<string, unknown>;
+  try {
+    module = await defaultImportModule(packageName);
+  } catch (err) {
+    throw new PluginLoadError(
+      ref.raw,
+      'import',
+      `could not import package ${JSON.stringify(packageName)}: ${errorMessage(err)}`,
+      { cause: err },
+    );
+  }
+  const exportName =
+    ref.source === 'npm' ? (ref.export ?? 'default') : 'default';
+  const factory = module[exportName];
+  if (typeof factory !== 'function') {
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      `expected ${exportName} export to be a plugin factory function`,
+    );
+  }
+  let plugin: unknown;
+  try {
+    plugin = (factory as () => unknown)();
+  } catch (err) {
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      `plugin factory threw: ${errorMessage(err)}`,
+      {
+        cause: err,
+      },
+    );
+  }
+  if (!isPlainObject(plugin) || typeof plugin['name'] !== 'string') {
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      'plugin factory must return an object with a non-empty string name',
+    );
+  }
+  // `name` keys the same-name rule, every plugin log line, and (via
+  // `pluginStateDir`) a `state/plugins/<name>` directory segment — see
+  // `PLUGIN_NAME_PATTERN`.
+  if (!PLUGIN_NAME_PATTERN.test(plugin['name'])) {
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      'plugin factory must return an object with a name of 1-64 ASCII ' +
+        'letters, digits, dots, underscores, or dashes, starting with a ' +
+        `letter or digit: ${JSON.stringify(plugin['name'])}`,
+    );
+  }
+  return plugin as unknown as DreamuxPlugin;
+}
+
+function contributePlugin(
+  plugin: DreamuxPlugin,
+  context: {
+    registry: ProviderRegistry;
+    logger: DreamuxLogger;
+    providerSources: Map<string, string>;
+  },
+): { kind: ProviderKind; name: string }[] {
+  const providers: { kind: ProviderKind; name: string }[] = [];
+  if (plugin.contribute === undefined) return providers;
+  const contribute = (
+    kind: ProviderKind,
+    name: string,
+    provider: ProviderImplementation,
+  ): void => {
+    const other = context.providerSources.get(name);
+    if (other !== undefined) {
+      throw new PluginLoadError(
+        plugin.name,
+        'contribute',
+        `provider "${name}" is contributed by plugin "${plugin.name}" and by ${other}`,
+      );
+    }
+    registerBuiltinProvider(context.registry, { id: name, kind }, provider);
+    context.providerSources.set(name, `plugin "${plugin.name}"`);
+    providers.push({ kind, name });
+  };
+  const host: ContributeHost = {
+    logger: context.logger,
+    channelProviders: {
+      contribute: <TConfig>(name: string, provider: ChannelProvider<TConfig>) =>
+        contribute('channel', name, provider),
+    },
+    agentRuntimeProviders: {
+      contribute: <TConfig>(
+        name: string,
+        provider: AgentRuntimeProvider<TConfig>,
+      ) => contribute('agentRuntime', name, provider),
+    },
+  };
+  let result: unknown;
+  try {
+    result = plugin.contribute(host);
+  } catch (err) {
+    if (err instanceof PluginLoadError) throw err;
+    throw new PluginLoadError(plugin.name, 'contribute', errorMessage(err), {
+      cause: err,
+    });
+  }
+  // `contribute` is typed `=> void`, but TypeScript accepts an `async`
+  // implementation too: nothing awaits it, so a tap registered after its
+  // first `await` would silently never run. Its promise would otherwise go
+  // unwatched past this load-phase call, so a later rejection would crash the
+  // process with no handler; attach one before throwing the load error that
+  // already fails the plugin by name.
+  if (isThenable(result)) {
+    Promise.resolve(result).catch(() => {});
+    throw new PluginLoadError(
+      plugin.name,
+      'contribute',
+      'must be synchronous; register and tap only',
+    );
+  }
+  return providers;
+}
+
+async function defaultImportModule(
+  packageName: string,
+): Promise<Record<string, unknown>> {
+  return (await import(packageName)) as Record<string, unknown>;
+}

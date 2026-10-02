@@ -4,6 +4,16 @@
 
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `done`
+- 2026-09-26 addendum: this record's decision that configuration stays outside
+  the Command catalog ("Daemon process bootstrap, configuration, onboarding,
+  and diagnostics that are not current admin Commands remain direct host
+  control-plane capabilities.") is superseded for `agents[]` by the
+  [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md)
+  task (issue #448, delivered as the
+  [Code organization refactor](/.agents/tasks/architecture/code-organization-refactor/README.md)'s
+  Stage 4c): `config.agents.get`/`config.agents.replace` are now Commands.
+  `dispatchers[]` and every other config surface stay direct host
+  control-plane capabilities, unchanged by this addendum.
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
 - Current solution input revision: `requirement.md` SHA-256 `e7683f475f83e1cecfbb78f280d899b611b443e648ea48a3ced09f2e26b8376d`
 - Prior solution input revision: `requirement.md` SHA-256 `5e8b6ccb14666ddce48398744c5797fd6008b45979ed63f13edd2967185f628a`; the operator then required failed or empty Feishu bot self-identity resolution to remain retryable on the next inbound message instead of becoming a process-lifetime negative cache.

@@ -10,7 +10,7 @@
  * Dispatcher-scoped TeamMate publishes its first `teammate.state`; later
  * transitions publish the same kind. There is no separate creation event.
  */
-import type { RuntimeActivity } from './agent-runtime.js';
+import type { RuntimeActivity } from './activity.js';
 
 /**
  * The role a TeamMate presents at this boundary.
@@ -27,11 +27,7 @@ export type TeammateRole = 'dispatcher' | 'teammate' | 'team_leader';
 export type TeamContainedRole = Exclude<TeammateRole, 'dispatcher'>;
 
 export type TeammateStatus =
-  | 'starting'
-  | 'running'
-  | 'degraded'
-  | 'stopped'
-  | 'closed';
+  'starting' | 'running' | 'degraded' | 'stopped' | 'closed';
 
 export interface TeammateStateEvent {
   readonly schemaVersion: 1;

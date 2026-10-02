@@ -31,11 +31,7 @@ export function applyNativeRewrites<TEntry extends ClaudeRewriteEntry>(
     const path: string[] = [];
     const seen = new Set<string>();
     let current: string | null = uuid;
-    while (
-      current !== null &&
-      removed.has(current) &&
-      !seen.has(current)
-    ) {
+    while (current !== null && removed.has(current) && !seen.has(current)) {
       seen.add(current);
       path.push(current);
       if (resolvedParents.has(current)) {

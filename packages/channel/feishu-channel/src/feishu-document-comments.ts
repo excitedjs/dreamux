@@ -37,25 +37,19 @@
  * A Dispatcher delivery of an unclaimed mention writes no row, so a rejection
  * on it has nothing to remove.
  */
+import type { FeishuTeamSubmitter } from './session/submitter.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import {
   parseFeishuDocumentRef,
   type FeishuCommentEvent,
   type FeishuCommentSegment,
-  type FeishuDocCommentRequest,
   type FeishuDocCommentText,
-  type FeishuDocMetaResult,
-  type FeishuWikiNode,
 } from '@excitedjs/feishu-transport';
 
+import type { FeishuAccess } from './access/index.js';
+import type { FeishuBot } from './bot.js';
 import { runFeishuBoundedOperation } from './feishu-bounded-operation.js';
-import {
-  escapeXmlAttribute,
-  escapeXmlText,
-  formatFeishuCreateTime,
-  renderFeishuMention,
-} from './feishu-message-render.js';
 import {
   DOC_COMMENT_COLD_OPEN_REMINDER,
   DOC_COMMENT_REMINDER,
@@ -65,8 +59,14 @@ import {
   type FeishuSubmitOutcome,
   type SubmitOutcomeMessages,
 } from './feishu-submit.js';
-import type { FeishuRouting } from './routing/index.js';
+import {
+  escapeXmlAttribute,
+  escapeXmlText,
+  formatFeishuCreateTime,
+  renderFeishuMention,
+} from './inbound/render.js';
 import type { FeishuDocSubscriptionRecord } from './routing/document.js';
+import type { FeishuRouting } from './routing/index.js';
 
 /**
  * The budget both inbound enrichment reads share. The route awaits delivery
@@ -92,25 +92,26 @@ export interface FeishuDocumentCommentsOptions {
   readonly channelId: string;
   readonly log: DreamuxLogger;
   readonly routing: FeishuRouting;
-  /** `null` reaches the Dispatcher Agent, exactly as it does for a chat. */
-  submit(
-    teamName: string | null,
-    submission: FeishuSubmission,
-  ): Promise<FeishuSubmitOutcome>;
-  fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMetaResult>;
-  resolveWikiNode(token: string): Promise<FeishuWikiNode | null>;
-  /** The comment's own text; `null` when Feishu's thread does not hold it. */
-  fetchDocCommentText(
-    request: FeishuDocCommentRequest,
-  ): Promise<FeishuDocCommentText | null>;
-  /** Best-effort display name for the commenter; may answer `undefined`. */
-  resolveUserName(openId: string): Promise<string | undefined>;
+  readonly submitter: FeishuTeamSubmitter;
   /**
-   * Whether this commenter is one of the Dispatcher's trusted humans. Injected
-   * rather than read here, so this module learns no access-state layout and no
-   * path to it.
+   * The held transport, for the reads this module needs: document metadata,
+   * wiki-node resolution, a comment's own text, and best-effort commenter name
+   * lookup. Its siblings `FeishuOutbound` and `FeishuCardActions` take the same
+   * `bot: FeishuBot` directly rather than through per-method closures.
    */
-  isTrustedUser(openId: string): Promise<boolean>;
+  readonly bot: Pick<
+    FeishuBot,
+    | 'fetchDocMeta'
+    | 'resolveWikiNode'
+    | 'fetchDocCommentText'
+    | 'resolveUserName'
+  >;
+  /**
+   * The session's one held access-state owner, for the trusted-human check an
+   * unclaimed cold-open mention gates on. Injected rather than constructed
+   * here, so this module learns no access-state layout and no path to it.
+   */
+  readonly access: Pick<FeishuAccess, 'isTrustedDispatcherUser'>;
 }
 
 export class FeishuDocumentComments {
@@ -146,7 +147,7 @@ export class FeishuDocumentComments {
           '`docx`, `sheet`, `bitable`, `wiki`).',
       );
     }
-    const meta = await this.opts.fetchDocMeta(resolved.token, fileType);
+    const meta = await this.opts.bot.fetchDocMeta(resolved.token, fileType);
     // Only a token Feishu itself reported as unreadable may be answered with
     // "add the bot". A request failure propagates as an ordinary retryable tool
     // failure, and an unsupported type is its own answer.
@@ -215,7 +216,7 @@ export class FeishuDocumentComments {
     }
     const type = ref.type ?? declaredType;
     if (type !== 'wiki') return { token: ref.token, type };
-    const node = await this.opts.resolveWikiNode(ref.token);
+    const node = await this.opts.bot.resolveWikiNode(ref.token);
     if (node === null) {
       throw new PublicInvokeFailure(
         `This bot cannot see wiki node ${ref.token}. Add it as a ` +
@@ -290,7 +291,7 @@ export class FeishuDocumentComments {
       );
       return;
     }
-    if (!(await this.opts.isTrustedUser(event.commenterId))) {
+    if (!(await this.opts.access.isTrustedDispatcherUser(event.commenterId))) {
       this.opts.log.info(
         { ...this.scope(event), reason: 'commenter_not_trusted' },
         'feishu document comment mentioned the bot in an unfollowed document, ' +
@@ -304,7 +305,7 @@ export class FeishuDocumentComments {
     });
     // No row is written and none is removed: this delivery is a cold open, not
     // a subscription, so a rejection on it has nothing to reconcile.
-    const outcome = await this.opts.submit(null, submission);
+    const outcome = await this.opts.submitter.submit(null, submission);
     this.reportDelivery({ ...this.scope(event), team_name: null }, outcome);
   }
 
@@ -314,7 +315,7 @@ export class FeishuDocumentComments {
     submission: FeishuSubmission,
   ): Promise<void> {
     const scope = { ...this.scope(event), team_name: row.team_name };
-    const outcome = await this.opts.submit(row.team_name, submission);
+    const outcome = await this.opts.submitter.submit(row.team_name, submission);
     if (outcome.status !== 'rejected') {
       this.reportDelivery(scope, outcome);
       return;
@@ -380,10 +381,14 @@ export class FeishuDocumentComments {
     deadlineAt: number,
   ): Promise<string> {
     try {
-      return await runFeishuBoundedOperation({
-        deadlineAt,
-        operation: () => this.opts.resolveUserName(openId),
-      }) ?? '';
+      return (
+        (await runFeishuBoundedOperation({
+          deadlineAt,
+          operation: () =>
+            this.opts.bot.resolveUserName?.(openId) ??
+            Promise.resolve(undefined),
+        })) ?? ''
+      );
     } catch {
       // The name is decoration on an event that is already identified by ids.
       return '';
@@ -405,12 +410,13 @@ export class FeishuDocumentComments {
     try {
       const comment = await runFeishuBoundedOperation({
         deadlineAt,
-        operation: () => this.opts.fetchDocCommentText({
-          fileToken: event.fileToken,
-          fileType: event.fileType,
-          commentId: event.commentId,
-          replyId: event.replyId,
-        }),
+        operation: () =>
+          this.opts.bot.fetchDocCommentText({
+            fileToken: event.fileToken,
+            fileType: event.fileType,
+            commentId: event.commentId,
+            replyId: event.replyId,
+          }),
       });
       if (comment !== null) return comment;
       this.opts.log.info(
@@ -515,7 +521,10 @@ function documentCommentAttrs(
     ['notice_type', event.replyId === '' ? 'add_comment' : 'add_reply'],
     ['anchor', anchor === undefined ? '' : anchor.kind],
     ['anchor_id', anchor?.kind === 'content' ? anchor.anchorId : ''],
-    ['anchor_deleted', anchor?.kind === 'content' && anchor.deleted ? 'true' : ''],
+    [
+      'anchor_deleted',
+      anchor?.kind === 'content' && anchor.deleted ? 'true' : '',
+    ],
     ['mentioned', event.mentionedBot ? 'true' : 'false'],
     ['sender_id', event.commenterId],
     ['sender_name', senderName],
@@ -552,8 +561,11 @@ function documentCommentBody(comment: FeishuDocCommentText | null): string {
         `${escapeXmlText(anchor.preview)}\n</quote>`,
     );
   }
-  const content = comment === null ? '' : renderCommentSegments(comment.segments);
-  blocks.push(content === '' ? '<content />' : `<content>\n${content}\n</content>`);
+  const content =
+    comment === null ? '' : renderCommentSegments(comment.segments);
+  blocks.push(
+    content === '' ? '<content />' : `<content>\n${content}\n</content>`,
+  );
   return blocks.join('\n');
 }
 
@@ -569,8 +581,10 @@ function renderCommentSegments(
   segments: readonly FeishuCommentSegment[],
 ): string {
   return segments
-    .map((segment) => segment.kind === 'text'
-      ? escapeXmlText(segment.text)
-      : renderFeishuMention(segment.openId, ''))
+    .map((segment) =>
+      segment.kind === 'text'
+        ? escapeXmlText(segment.text)
+        : renderFeishuMention(segment.openId, ''),
+    )
     .join('');
 }

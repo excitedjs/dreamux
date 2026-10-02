@@ -1,13 +1,13 @@
 // Lint config for @excitedjs/dreamux-types.
 //
 // Base: the shared synchronous-blocking-IO gate (issue #85). Plus a neutral-
-// contract guard: the published runtime contract (agent-runtime.ts, turn.ts) is
+// contract guard: the published runtime contract (agent-runtime.ts) is
 // the seam every provider implements and core depends on. It must stay neutral —
 // it must never NAME a provider-specific field (channel routing/identity such as
 // chat_id / app_id / sender_id / message_id belongs to the channel layer; a
 // runtime turn carries only neutral text + a dedupe id + opaque passthrough; see
 // packages/dreamux/CLAUDE.md boundaries). This bans declaring such a field name
-// as an interface/type property key in those two files.
+// as an interface/type property key in that file.
 //
 // Scoped to the RUNTIME contract files on purpose — this is a principle, not a
 // frozen shape. The boundary is "a runtime turn must not route/identify on
@@ -20,7 +20,9 @@
 // update this list together with the decision record (the rule moves on
 // purpose, it is not silently bypassed). The selector matches only a declared
 // property KEY, never a comment or a string-literal example.
-import baseConfig, { SYNC_DESTRUCTURE_SELECTOR } from '@excitedjs/eslint-config';
+import baseConfig, {
+  SYNC_DESTRUCTURE_SELECTOR,
+} from '@excitedjs/eslint-config';
 
 /** Provider-specific field names that must not appear as a contract property key. */
 const PROVIDER_FIELD_NAME = [
@@ -55,7 +57,7 @@ export default [
     // Compose with the shared `no-restricted-syntax` (rule options are replaced,
     // not merged, by the last matching block) so the sync-destructure backstop
     // is preserved for these files alongside the contract-field ban.
-    files: ['src/agent-runtime.ts', 'src/turn.ts'],
+    files: ['src/agent-runtime.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',

@@ -61,7 +61,9 @@ describe('RuntimeStateFence.assertOpen / isFenced', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(RuntimeStateFencedError);
       expect((error as RuntimeStateFencedError).reason).toBe('persist_failed');
-      expect((error as RuntimeStateFencedError).name).toBe('RuntimeStateFencedError');
+      expect((error as RuntimeStateFencedError).name).toBe(
+        'RuntimeStateFencedError',
+      );
     }
   });
 });
@@ -69,7 +71,9 @@ describe('RuntimeStateFence.assertOpen / isFenced', () => {
 describe('RuntimeStateFence.publish', () => {
   it('resolves and leaves the fence open on a successful write', async () => {
     const { fence } = makeFence();
-    await expect(fence.publish(() => Promise.resolve())).resolves.toBeUndefined();
+    await expect(
+      fence.publish(() => Promise.resolve()),
+    ).resolves.toBeUndefined();
     expect(fence.isFenced).toBe(false);
   });
 
@@ -85,7 +89,9 @@ describe('RuntimeStateFence.publish', () => {
   it('closes with lease_revoked when the write rejects with a lease-revoked error', async () => {
     const { fence } = makeFence();
     const revoked = makeLeaseRevokedError();
-    await expect(fence.publish(() => Promise.reject(revoked))).rejects.toBe(revoked);
+    await expect(fence.publish(() => Promise.reject(revoked))).rejects.toBe(
+      revoked,
+    );
     try {
       fence.assertOpen();
       throw new Error('unreachable');
@@ -105,14 +111,14 @@ describe('RuntimeStateFence.publish', () => {
   it('starts native teardown exactly once even under a rapid double failure', async () => {
     const terminate = vi.fn(() => Promise.resolve());
     const { fence } = makeFence(terminate);
-    await expect(fence.publish(() => Promise.reject(new Error('first')))).rejects.toThrow(
-      'first',
-    );
+    await expect(
+      fence.publish(() => Promise.reject(new Error('first'))),
+    ).rejects.toThrow('first');
     // A second publish call after the fence is already closed must reject with
     // the fence error, not attempt another write or another teardown.
-    await expect(fence.publish(() => Promise.reject(new Error('second')))).rejects.toBeInstanceOf(
-      RuntimeStateFencedError,
-    );
+    await expect(
+      fence.publish(() => Promise.reject(new Error('second'))),
+    ).rejects.toBeInstanceOf(RuntimeStateFencedError);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 });
@@ -120,7 +126,9 @@ describe('RuntimeStateFence.publish', () => {
 describe('RuntimeStateFence.publishDetached', () => {
   it('never rejects even when the write throws', async () => {
     const { fence } = makeFence();
-    expect(() => fence.publishDetached(() => Promise.reject(new Error('boom')))).not.toThrow();
+    expect(() =>
+      fence.publishDetached(() => Promise.reject(new Error('boom'))),
+    ).not.toThrow();
     // Give the fire-and-forget write's microtask a turn to settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fence.isFenced).toBe(true);

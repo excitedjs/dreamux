@@ -15,29 +15,29 @@
  * notification body is the host handler's job.
  */
 
-import * as lark from '@larksuiteoapi/node-sdk'
+import * as lark from '@larksuiteoapi/node-sdk';
 
-import { isRecord } from '../json.js'
+import { isRecord } from '../json.js';
 
 /** The Feishu event_type this decoder is for. */
-export const DOC_COMMENT_EVENT_TYPE = 'drive.notice.comment_add_v1'
+export const DOC_COMMENT_EVENT_TYPE = 'drive.notice.comment_add_v1';
 
 /** A normalized document-comment event — the identifying fields the payload carries. */
 export interface FeishuCommentEvent {
   /** Token of the document the comment is on. */
-  fileToken: string
+  fileToken: string;
   /** Document type — `doc` / `docx` / `sheet` / `bitable` / ... */
-  fileType: string
+  fileType: string;
   /** Comment id. */
-  commentId: string
+  commentId: string;
   /** Reply id — set only when the event is a reply within a thread, `''` otherwise. */
-  replyId: string
+  replyId: string;
   /** open_id of the commenter. */
-  commenterId: string
+  commenterId: string;
   /** True when the comment @-mentions the bot. */
-  mentionedBot: boolean
+  mentionedBot: boolean;
   /** Millisecond timestamp of the event, as the SDK resolved it. */
-  timestamp: number
+  timestamp: number;
 }
 
 /**
@@ -49,18 +49,18 @@ export interface FeishuCommentEvent {
  * `EventDispatcher` delivers) or a full `{ event: ... }` envelope.
  */
 export function normalizeCommentEvent(raw: unknown): FeishuCommentEvent | null {
-  if (!isRecord(raw)) return null
-  const event = isRecord(raw.event) ? raw.event : raw
+  if (!isRecord(raw)) return null;
+  const event = isRecord(raw.event) ? raw.event : raw;
 
-  let decoded: lark.CommentEvent | null
+  let decoded: lark.CommentEvent | null;
   try {
-    decoded = lark.normalizeComment(event as lark.RawCommentEvent)
+    decoded = lark.normalizeComment(event as lark.RawCommentEvent);
   } catch {
     // `normalizeComment` is pure but not contractually total — guard it so a
     // surprising input shape is a dropped event, not a thrown one.
-    return null
+    return null;
   }
-  if (!decoded) return null
+  if (!decoded) return null;
 
   return {
     fileToken: decoded.fileToken,
@@ -70,5 +70,5 @@ export function normalizeCommentEvent(raw: unknown): FeishuCommentEvent | null {
     commenterId: decoded.operator.openId,
     mentionedBot: decoded.mentionedBot,
     timestamp: decoded.timestamp,
-  }
+  };
 }

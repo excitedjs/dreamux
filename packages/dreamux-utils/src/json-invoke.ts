@@ -21,9 +21,9 @@
  *
  * This package knows no Dreamux contracts: `@excitedjs/dreamux-types` is the
  * type set an *external provider* compiles against, and a utility every layer
- * calls must not reach into it. The shape is structural and identical to that
- * package's `JsonInvokeResult`, so a caller that names the contract assigns one
- * of these to it without a cast.
+ * calls must not reach into it. The shape is structural, so a caller that
+ * names an equivalent contract of its own assigns one of these to it without
+ * a cast.
  */
 export type SettledInvoke<TValue> =
   | { readonly ok: true; readonly value: TValue }

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6f, item 5 (R50): a Feishu extension's state root now nests under the Feishu plugin's own state directory (ServerHost.stateDir, captured in plugin.ts's server()) plus the dispatcher id, instead of the channel instance's state_root it borrowed before. access.json, chat-bots.json, and the routing document are untouched; this mechanism has not shipped in a release.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

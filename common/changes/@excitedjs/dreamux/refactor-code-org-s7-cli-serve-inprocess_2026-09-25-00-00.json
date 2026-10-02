@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 7, item 9: `dreamux serve` now runs `cli/server.ts`'s `runServe()` in-process instead of spawning `dist/cli/server.js` as a child process, and `dreamux status` / `dreamux dispatcher list` / `dreamux dispatcher status` now call the admin socket in-process through `admin/client.ts`'s `adminJsonInvoker` instead of spawning the deleted `server-ctl` entry; `cli/server-ctl.ts` is removed. Two small, verified output differences on failure paths: (1) when the admin socket is absent or refuses the connection, the status/dispatcher commands now report `TRANSPORT_ERROR` carrying Node's own socket error (e.g. `dreamux: admin socket connection to <path> failed - connect ENOENT <path>`) instead of the old bespoke `dreamux: cannot reach admin socket at <path> — is the server running?` sentence, matching the TRANSPORT_ERROR behavior the 0.24.0 CHANGELOG already documents for every other admin caller; a Command-level failure (the server ran and refused the request) still prints the unchanged `error: [code] message` line, and the exit code (1) is unchanged in both cases. These two commands are also now subject to the shared 10-second admin-socket request timeout instead of waiting indefinitely. (2) A `dreamux serve` startup failure now prints `dreamux: <message>` through the CLI's own top-level error handler instead of the old child process's `[server] fatal: <error with stack>` line, no stack included; verified for a missing/invalid config.json (rejects with `Error`/`RuleViolation`) and a failing plugin `server` hook (wrapped as `PluginLoadError`, also an `Error`), both of which keep exit code 1 unchanged, matching every other Dreamux failure's `Error`-subclass contract. `dreamux serve --help`'s old usage text (config path, `DREAMUX_CONFIG_DIR`, run/state/logs roots, plugin ref grammar) is dropped rather than carried into the new implementation: it was already unreachable through the `dreamux` CLI, which answers `--help` before ever invoking a serve handler, and that content already lives in `.agents/domains/state-config-and-files.md` and the `dreamux-maintenance` skill's `config-envelope.md` reference.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

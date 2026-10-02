@@ -49,10 +49,11 @@ boundary of a long task and after every context compaction, not just at kickoff.
 | modify config loading, `agents[]`, `dispatchers[]`, or provider refs | [Provider runtime](domains/provider-runtime.md), [State, config, and files](domains/state-config-and-files.md) |
 | modify any config/persisted-state shape, validation, default, ownership, or meaning | [State, config, and files](domains/state-config-and-files.md), [Model-facing writing](domains/model-facing-writing.md), and update the single owning reference under `packages/dreamux/skills/dispatcher/dreamux-maintenance/` plus its root route when needed |
 | modify bundled maintenance routing or the managed-daemon self-upgrade SOP | [Dispatcher skills](domains/dispatcher-skill.md), [Model-facing writing](domains/model-facing-writing.md), and the archived [maintenance progressive-disclosure specification](archive/proposals/dreamux-maintenance-progressive-disclosure.md) |
+| modify plugin loading, plugin hooks, launch drafts, or a built-in plugin | [Plugins](domains/plugins.md), [Provider runtime](domains/provider-runtime.md) |
 | modify provider loading, Agent Runtime providers, or Channel providers | [Provider runtime](domains/provider-runtime.md), [Channel](domains/channel.md), [Current architecture](domains/current-architecture.md) |
 | modify dispatcher runtime lifecycle, MCP injection, or Team/TeamMate lifecycle | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Service topology](domains/service-topology.md), source |
 | refactor/move a service class or change who-owns-what | [Service topology](domains/service-topology.md) FIRST, then source |
-| modify agent-entity identity/turn/runtime-state stores or name validation | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [State, config, and files](domains/state-config-and-files.md), source `packages/dreamux/src/service/agent-entity/` |
+| modify Agent entity identity/turn/runtime-state stores or name validation | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [State, config, and files](domains/state-config-and-files.md), source `packages/dreamux/src/service/agent/` |
 | modify scheduled tasks / cron | [Scheduled work](domains/scheduled-work.md), source |
 | modify bundled skills, system prompts, MCP descriptions, or tests locking model-visible text | [Model-facing writing](domains/model-facing-writing.md), [Dispatcher skills](domains/dispatcher-skill.md), then source |
 | modify Channel routing, binding, targets, or Collaboration Space policy | [Channel](domains/channel.md), source |
@@ -61,12 +62,14 @@ boundary of a long task and after every context compaction, not just at kickoff.
 | modify Dynamic Workflow behavior or its usage guide | [Current architecture](domains/current-architecture.md#dynamic-workflows), [Dynamic Workflow usage](product/dynamic-workflow-usage.md) |
 | modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Repository operations and release](domains/repository-operations-and-release.md) |
 | ask why an area is shaped this way | that domain page's History pointer, then the owning task record under [tasks/](tasks/README.md) |
+| write or modify a unit test | [Unit testing](domains/unit-testing.md) |
 | write or move KB content | [KB contributing guide](CONTRIBUTING.md) |
 
 ## Domains
 
 - [Current architecture](domains/current-architecture.md) — the map.
 - [Provider runtime](domains/provider-runtime.md)
+- [Plugins](domains/plugins.md)
 - [Channel](domains/channel.md)
 - [Feishu pairing access](domains/feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
@@ -77,6 +80,7 @@ boundary of a long task and after every context compaction, not just at kickoff.
 - [Scheduled work](domains/scheduled-work.md)
 - [Repository operations and release](domains/repository-operations-and-release.md)
 - [Model-facing writing](domains/model-facing-writing.md)
+- [Unit testing](domains/unit-testing.md)
 
 ## Research
 

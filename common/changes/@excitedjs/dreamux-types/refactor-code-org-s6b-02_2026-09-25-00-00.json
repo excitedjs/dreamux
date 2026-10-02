@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6b item 2 (R48): removed Team.hooks.created (an AsyncSeriesHook plugins could tap after a newly created Team reached running) from the Team interface, along with the Team doc comment's note about a failing created tap being logged. No plugin in this tree taps it; a plugin author who does loses the hook and must remove the tap to compile against this dreamux-types version.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

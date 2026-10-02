@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Stopping the daemon while a Team created with a prompt is still starting its TeamLeader no longer hangs: the Team is held, and stopped, before its first runtime start, and a create that arrives as the dispatcher closes is refused. A retried Team dissolve closes the TeamLeader identity an earlier failed attempt released. A recurring cron job whose fire was missed keeps its timer even if the wall clock stepped backward meanwhile.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

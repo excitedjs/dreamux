@@ -8,12 +8,13 @@ import type {
 import type { AgentRuntimeProviderCatalog } from './agent-runtime/catalog.js';
 import { hostRuntimePaths } from './agent-runtime/host-paths.js';
 import type { ChannelProviderCatalog } from './channel/catalog.js';
-import type { DispatcherConfig, DreamuxConfig } from './config/config.js';
 import {
-  dispatcherCacheDir,
-  dispatcherDir,
-} from './platform/paths.js';
-import type { CommandRunner } from './onboard/types.js';
+  dispatcherAgent,
+  type DispatcherConfig,
+  type DreamuxConfig,
+} from './config/config.js';
+import type { CommandRunner } from './platform/command-runner.js';
+import { dispatcherCacheDir, dispatcherDir } from './platform/paths.js';
 
 export type ProviderDiagnosticKind = 'agentRuntime' | 'channel';
 
@@ -31,6 +32,7 @@ export interface ProviderDiagnosticReport {
 }
 
 interface ProviderDiagnosticRunOptions {
+  config: DreamuxConfig;
   dispatcher: DispatcherConfig;
   catalogs: ProviderDiagnosticCatalogs;
   runner: CommandRunner;
@@ -48,18 +50,19 @@ interface ProviderBinCheckOptions {
 export async function runDispatcherProviderDiagnostics(
   options: ProviderDiagnosticRunOptions,
 ): Promise<ProviderDiagnosticReport[]> {
-  const { dispatcher, catalogs, runner, env, scope } = options;
+  const { config, dispatcher, catalogs, runner, env, scope } = options;
+  const agent = dispatcherAgent(config, dispatcher.id);
   const runtimeProvider = catalogs.agentRuntime.resolve(
-    dispatcher.runtime.provider,
+    agent.provider,
   ).implementation;
   const runtimeDiagnostic = runtimeProvider.diagnostic;
   const runtimeResult =
     runtimeDiagnostic === undefined
-      ? providerDefaultDiagnostic('agentRuntime', dispatcher.runtime.provider)
+      ? providerDefaultDiagnostic('agentRuntime', agent.provider)
       : await runtimeDiagnostic.runDiagnostic(
           {
             runtime_id: dispatcher.id,
-            config: dispatcher.runtime.config,
+            config: agent.config,
             env,
             scope,
             paths: hostRuntimePaths,
@@ -70,7 +73,7 @@ export async function runDispatcherProviderDiagnostics(
     {
       kind: 'agentRuntime',
       id: dispatcher.agentRuntime,
-      provider: dispatcher.runtime.provider,
+      provider: agent.provider,
       scope,
       result: runtimeResult,
     },
@@ -115,9 +118,8 @@ export function providerBinChecksForConfig(
   };
 
   for (const [agentId, agent] of Object.entries(options.config.agents)) {
-    const diagnostic = options.catalogs.agentRuntime.resolve(
-      agent.provider,
-    ).implementation.diagnostic;
+    const diagnostic = options.catalogs.agentRuntime.resolve(agent.provider)
+      .implementation.diagnostic;
     if (diagnostic === undefined) continue;
     for (const check of diagnostic.binChecks({
       runtime_id: agentId,
@@ -132,9 +134,8 @@ export function providerBinChecksForConfig(
 
   for (const dispatcher of options.config.dispatchers) {
     for (const channel of dispatcher.channels) {
-      const diagnostic = options.catalogs.channel.resolve(
-        channel.provider,
-      ).implementation.diagnostic;
+      const diagnostic = options.catalogs.channel.resolve(channel.provider)
+        .implementation.diagnostic;
       if (diagnostic === undefined) continue;
       for (const check of diagnostic.binChecks(
         channelDiagnosticContext(

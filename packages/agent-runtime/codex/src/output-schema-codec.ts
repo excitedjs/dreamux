@@ -1,22 +1,14 @@
-import { createHash } from 'node:crypto';
-
-import { unsupportedFeatureError } from '@excitedjs/dreamux-utils';
+import {
+  errorMessage,
+  unsupportedFeatureError,
+} from '@excitedjs/dreamux-utils';
 
 type SupportedType =
-  | 'object'
-  | 'array'
-  | 'string'
-  | 'number'
-  | 'integer'
-  | 'boolean'
-  | 'null';
+  'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null';
 
 type JsonPrimitive = null | boolean | number | string;
 
-type JsonValue =
-  | JsonPrimitive
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 type RestorationPlan =
   | { kind: 'value' }
@@ -28,10 +20,7 @@ type RestorationPlan =
   | {
       kind: 'object';
       acceptsNull: boolean;
-      properties: Record<
-        string,
-        { omitNull: boolean; plan: RestorationPlan }
-      >;
+      properties: Record<string, { omitNull: boolean; plan: RestorationPlan }>;
     };
 
 interface CompiledSchema {
@@ -42,7 +31,6 @@ interface CompiledSchema {
 
 export interface CodexOutputSchemaCodec {
   wireSchema: Record<string, unknown>;
-  fingerprint: string;
   restore(text: string): string;
 }
 
@@ -64,11 +52,7 @@ const OBJECT_KEYWORDS = new Set([
   'additionalProperties',
 ]);
 const ARRAY_KEYWORDS = new Set([...COMMON_KEYWORDS, 'items']);
-const NUMERIC_KEYWORDS = new Set([
-  ...COMMON_KEYWORDS,
-  'minimum',
-  'maximum',
-]);
+const NUMERIC_KEYWORDS = new Set([...COMMON_KEYWORDS, 'minimum', 'maximum']);
 
 export function compileCodexOutputSchema(
   schema: Record<string, unknown>,
@@ -79,15 +63,8 @@ export function compileCodexOutputSchema(
     fail('$.type', 'root schema must have type "object"');
   }
   const compiled = compileSchema(schema, '$', false);
-  const fingerprint = createHash('sha256')
-    .update(canonicalJson({
-      wireSchema: compiled.wireSchema as JsonValue,
-      restorationPlan: compiled.plan as unknown as JsonValue,
-    }))
-    .digest('hex');
   return {
     wireSchema: compiled.wireSchema,
-    fingerprint,
     restore(text) {
       let parsed: unknown;
       try {
@@ -113,27 +90,25 @@ function compileSchema(
   if (enumValues !== undefined) {
     validateEnumTypes(enumValues, type, nullable, `${path}.enum`);
   }
-  const acceptsNull = type === 'null' ||
+  const acceptsNull =
+    type === 'null' ||
     (nullable && (enumValues === undefined || enumValues.includes(null)));
   if (optional && acceptsNull) {
     fail(path, 'optional property already accepts null');
   }
 
-  const allowed = type === 'object'
-    ? OBJECT_KEYWORDS
-    : type === 'array'
-      ? ARRAY_KEYWORDS
-      : type === 'number' || type === 'integer'
-        ? NUMERIC_KEYWORDS
-        : COMMON_KEYWORDS;
+  const allowed =
+    type === 'object'
+      ? OBJECT_KEYWORDS
+      : type === 'array'
+        ? ARRAY_KEYWORDS
+        : type === 'number' || type === 'integer'
+          ? NUMERIC_KEYWORDS
+          : COMMON_KEYWORDS;
   rejectUnknownKeywords(schema, allowed, path);
 
   const wireSchema: Record<string, unknown> = {
-    type: type === 'null'
-      ? type
-      : optional || nullable
-        ? [type, 'null']
-        : type,
+    type: type === 'null' ? type : optional || nullable ? [type, 'null'] : type,
   };
   if (schema['description'] !== undefined) {
     if (typeof schema['description'] !== 'string') {
@@ -142,9 +117,10 @@ function compileSchema(
     wireSchema['description'] = schema['description'];
   }
   if (enumValues !== undefined) {
-    const wireEnum = optional && !enumValues.includes(null)
-      ? [...enumValues, null]
-      : enumValues;
+    const wireEnum =
+      optional && !enumValues.includes(null)
+        ? [...enumValues, null]
+        : enumValues;
     wireSchema['enum'] = canonicalEnum(wireEnum);
   }
 
@@ -290,7 +266,8 @@ function schemaEnum(value: unknown, path: string): JsonPrimitive[] | undefined {
       entry === null ||
       typeof entry === 'string' ||
       typeof entry === 'boolean'
-    ) return entry;
+    )
+      return entry;
     if (typeof entry === 'number' && Number.isFinite(entry)) return entry;
     fail(`${path}[${index}]`, 'enum entries must be primitive JSON values');
   });
@@ -312,11 +289,12 @@ function validateEnumTypes(
   }
   for (const [index, value] of values.entries()) {
     if (value === null && nullable) continue;
-    const valid = type === 'null'
-      ? value === null
-      : type === 'integer'
-        ? typeof value === 'number' && Number.isInteger(value)
-        : typeof value === type;
+    const valid =
+      type === 'null'
+        ? value === null
+        : type === 'integer'
+          ? typeof value === 'number' && Number.isInteger(value)
+          : typeof value === type;
     if (!valid) {
       fail(
         `${path}[${index}]`,
@@ -339,10 +317,16 @@ function requiredProperties(
       fail(`${path}[${index}]`, 'required entries must be strings');
     }
     if (!Object.hasOwn(properties, entry)) {
-      fail(`${path}[${index}]`, `unknown required property ${JSON.stringify(entry)}`);
+      fail(
+        `${path}[${index}]`,
+        `unknown required property ${JSON.stringify(entry)}`,
+      );
     }
     if (required.has(entry)) {
-      fail(`${path}[${index}]`, `duplicate required property ${JSON.stringify(entry)}`);
+      fail(
+        `${path}[${index}]`,
+        `duplicate required property ${JSON.stringify(entry)}`,
+      );
     }
     required.add(entry);
   }
@@ -356,7 +340,10 @@ function rejectUnknownKeywords(
 ): void {
   for (const keyword of Object.keys(schema)) {
     if (!allowed.has(keyword)) {
-      fail(`${path}.${keyword}`, `unsupported keyword ${JSON.stringify(keyword)}`);
+      fail(
+        `${path}.${keyword}`,
+        `unsupported keyword ${JSON.stringify(keyword)}`,
+      );
     }
   }
 }
@@ -370,13 +357,18 @@ function restoreValue(
   if (value === null && plan.acceptsNull) return null;
   if (plan.kind === 'array') {
     if (!Array.isArray(value)) {
-      throw new Error(`codex outputSchema restoration at ${path}: expected array`);
+      throw new Error(
+        `codex outputSchema restoration at ${path}: expected array`,
+      );
     }
     return value.map((entry, index) =>
-      restoreValue(entry, plan.items, `${path}[${index}]`));
+      restoreValue(entry, plan.items, `${path}[${index}]`),
+    );
   }
   if (!isRecord(value)) {
-    throw new Error(`codex outputSchema restoration at ${path}: expected object`);
+    throw new Error(
+      `codex outputSchema restoration at ${path}: expected object`,
+    );
   }
   const restored = { ...value };
   for (const [name, property] of Object.entries(plan.properties)) {
@@ -396,7 +388,8 @@ function restoreValue(
 
 function canonicalEnum(values: JsonPrimitive[]): JsonPrimitive[] {
   return [...values].sort((left, right) =>
-    canonicalJson(left).localeCompare(canonicalJson(right)));
+    canonicalJson(left).localeCompare(canonicalJson(right)),
+  );
 }
 
 function canonicalJson(value: JsonValue): string {
@@ -404,9 +397,13 @@ function canonicalJson(value: JsonValue): string {
     return `[${value.map(canonicalJson).join(',')}]`;
   }
   if (isRecord(value)) {
-    return `{${Object.keys(value).sort().map((key) =>
-      `${JSON.stringify(key)}:${canonicalJson(value[key] as JsonValue)}`,
-    ).join(',')}}`;
+    return `{${Object.keys(value)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${canonicalJson(value[key] as JsonValue)}`,
+      )
+      .join(',')}}`;
   }
   return JSON.stringify(value);
 }
@@ -443,8 +440,4 @@ function fail(path: string, reason: string): never {
     'outputSchema',
     `codex outputSchema at ${path}: ${reason}`,
   );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

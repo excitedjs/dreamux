@@ -5,77 +5,78 @@
  * provider implementations that core actually invokes.
  */
 
+import { RuleViolation } from '@excitedjs/dreamux-utils';
+
 import { parseProviderRef } from './provider-ref.js';
 import {
   type ProviderDescriptor,
+  type ProviderImplementation,
   type ProviderKind,
   ProviderRegistry,
 } from './registry.js';
-
-interface BuiltinSpec {
-  id: string;
-  kind: ProviderKind;
-}
 
 /**
  * Canonical provider refs Dreamux ships. These live next to the builtin ids so
  * core modules can import the stable refs from the registry layer instead of a
  * config-module shim.
  *
- * `builtin:feishu` is the built-in channel ref. Since the multi-channel config
- * slice (#209) it IS a registry descriptor (kind `channel`), so config loading
- * resolves it through the same provider path as runtimes and delegates
- * provider-specific config validation to the channel provider's `readConfig`.
+ * All three resolve to the provider their always-loaded plugin contributes
+ * (see {@link ALWAYS_LOADED_PLUGIN_REFS}), so config loading resolves them
+ * through one registry and delegates provider-specific config validation to
+ * the provider's own `readConfig`.
  */
 export const BUILTIN_FEISHU_PROVIDER_REF = 'builtin:feishu';
 export const BUILTIN_CODEX_PROVIDER_REF = 'builtin:codex';
 export const BUILTIN_CLAUDE_CODE_PROVIDER_REF = 'builtin:claude-code';
 
 /**
- * Built-in provider id -> npm package the generic loader imports for it
- * (issue #209). The built-in refs stay stable; Dreamux resolves them to the
- * packages that ship the built-in providers so `builtin:*` and `npm:*` refs use
- * the same loading path. Each package version-bumps independently behind the
- * stable ref.
+ * Thrown when a `builtin:` ref reaches the package loader unregistered: every
+ * built-in ships as a plugin and registers descriptor + implementation
+ * together from its own `contribute()` (see {@link ALWAYS_LOADED_PLUGIN_REFS}),
+ * so this fires only for an id no loaded plugin contributes — typically a
+ * provider whose plugin is no longer listed in `plugins[]`, or a typo.
+ *
+ * A {@link RuleViolation}, not a load failure: the ref is the only input, and
+ * there is no import, file read, or factory call that could have gone wrong —
+ * so a caller that submitted the ref (`config.agents.replace`) is told its
+ * value was refused, not that the server failed.
  */
-export const BUILTIN_PROVIDER_PACKAGES: Readonly<Record<string, string>> = {
-  codex: '@excitedjs/agent-runtime-codex',
-  'claude-code': '@excitedjs/agent-runtime-claude-code',
-  feishu: '@excitedjs/feishu-channel',
-};
-
-/** Thrown when a `builtin:` ref has no known package mapping. */
-export class UnknownBuiltinProviderPackageError extends Error {
+export class UnknownBuiltinProviderPackageError extends RuleViolation {
   constructor(readonly id: string) {
     super(
-      `builtin provider ${JSON.stringify(`builtin:${id}`)} has no known ` +
-        'package mapping',
+      `no loaded plugin contributes provider ${JSON.stringify(`builtin:${id}`)} ` +
+        'and Dreamux does not ship it; list the plugin that provides it in plugins[]',
     );
-    this.name = 'UnknownBuiltinProviderPackageError';
   }
 }
 
 /**
- * Resolve a built-in provider id to the npm package that ships it. Throws
- * {@link UnknownBuiltinProviderPackageError} for an unmapped id so the loader can
- * fail loud with a named ref rather than a raw module-loader error.
+ * Built-in plugin id -> the package whose default export is its factory. A
+ * plugin is not a provider: this is what `loadPlugins` imports to construct
+ * and `contribute()` each always-loaded plugin, not what a provider registers
+ * under.
  */
-export function resolveBuiltinProviderPackage(id: string): string {
-  const packageName = BUILTIN_PROVIDER_PACKAGES[id];
-  if (packageName === undefined) {
-    throw new UnknownBuiltinProviderPackageError(id);
-  }
-  return packageName;
-}
+export const BUILTIN_PLUGIN_PACKAGES: Readonly<Record<string, string>> = {
+  bootstrap: '@excitedjs/dreamux-plugin-bootstrap',
+  feishu: '@excitedjs/feishu-channel',
+  codex: '@excitedjs/agent-runtime-codex',
+  'claude-code': '@excitedjs/agent-runtime-claude-code',
+};
 
-/** The provider refs Dreamux ships and recognizes. */
-export const BUILTIN_PROVIDERS: readonly BuiltinSpec[] = [
-  { id: 'codex', kind: 'agentRuntime' },
-  { id: 'claude-code', kind: 'agentRuntime' },
-  { id: 'feishu', kind: 'channel' },
+/** Plugins loaded whether or not `plugins[]` lists them. */
+export const ALWAYS_LOADED_PLUGIN_REFS: readonly string[] = [
+  'builtin:feishu',
+  'builtin:codex',
+  'builtin:claude-code',
 ];
 
-function builtinDescriptor(spec: BuiltinSpec): ProviderDescriptor {
+/** The two fields a plugin-contributed registration names: id and kind. */
+interface BuiltinRegistration {
+  id: string;
+  kind: ProviderKind;
+}
+
+function builtinDescriptor(spec: BuiltinRegistration): ProviderDescriptor {
   return {
     id: spec.id,
     kind: spec.kind,
@@ -83,17 +84,14 @@ function builtinDescriptor(spec: BuiltinSpec): ProviderDescriptor {
   };
 }
 
-function buildBuiltinProviderRegistry(): ProviderRegistry {
-  const registry = new ProviderRegistry();
-  for (const spec of BUILTIN_PROVIDERS) {
-    registry.register(builtinDescriptor(spec));
-  }
-  return registry;
-}
-
 /**
- * Build a registry pre-populated with the builtin provider descriptors.
+ * Register a provider addressed as `builtin:<id>`: the descriptor and its
+ * implementation together. Used for plugin-contributed providers (and tests).
  */
-export function createBuiltinProviderRegistry(): ProviderRegistry {
-  return buildBuiltinProviderRegistry();
+export function registerBuiltinProvider(
+  registry: ProviderRegistry,
+  spec: BuiltinRegistration,
+  implementation: ProviderImplementation,
+): void {
+  registry.register(builtinDescriptor(spec), implementation);
 }

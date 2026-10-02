@@ -23,26 +23,28 @@
  * operator who rebinds or removes the space meanwhile changes what the next
  * creation sees and nothing about one already under way.
  */
+import type { FeishuBindingOperations } from './routing/operations.js';
+import type { FeishuTeamSubmitter } from './session/submitter.js';
 import type {
   DreamuxLogger,
-  JsonValue,
+  TeamCreateCommand,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
-import type { FeishuRouting } from './routing/index.js';
+import type { FeishuCoreCommands } from './feishu-core-commands.js';
+import {
+  errorMessage,
+  type FeishuChatSubmission,
+  type FeishuSubmitOutcome,
+} from './feishu-submit.js';
 import type { FeishuSpaceRecord } from './routing/document.js';
+import type { FeishuRouting } from './routing/index.js';
 import { targetIntent, teamNamePrefix } from './routing/naming.js';
 import {
   describeTarget,
   targetKey,
   type FeishuTarget,
 } from './routing/target.js';
-import {
-  errorMessage,
-  type FeishuChatSubmission,
-  type FeishuSubmitOutcome,
-  type FeishuTeamSubmitter,
-} from './feishu-submit.js';
 
 export interface FeishuProvisioningOptions {
   readonly dispatcherId: string;
@@ -50,16 +52,8 @@ export interface FeishuProvisioningOptions {
   readonly log: DreamuxLogger;
   readonly routing: FeishuRouting;
   readonly submitter: FeishuTeamSubmitter;
-  invoke(command: string, payload: JsonValue): Promise<JsonValue>;
-  /** Announce a newly installed route in the conversation it now serves. */
-  announce(input: {
-    target: FeishuTarget;
-    display: string | null;
-    teamName: string;
-    leaderName: string;
-    agentRuntime: string;
-    runtimeCwd: string;
-  }): void;
+  readonly commands: FeishuCoreCommands;
+  readonly bindings: Pick<FeishuBindingOperations, 'announceProvisioned'>;
 }
 
 /** One target, one policy snapshot, and the message that discovered both. */
@@ -170,10 +164,13 @@ export class FeishuProvisioning {
       target: input.target,
       teamName: created.team_name,
       display: input.display,
-      origin: 'space',
       spaceId: input.space.space_id,
+      // Automatic provisioning always has the message that triggered it, and
+      // its target is always a topic (`FeishuRouting.plan` only returns a
+      // `provision` plan for one) — the one path that can always set this.
+      rootMessageId: input.submission.anchor.messageId,
     });
-    this.opts.announce({
+    this.opts.bindings.announceProvisioned({
       target: input.target,
       display: input.display,
       teamName: created.team_name,
@@ -193,18 +190,15 @@ export class FeishuProvisioning {
     if (binding === undefined) {
       return {
         status: 'unsubmitted',
-        message:
-          `provisioning for ${describeTarget(input.target)} installed no route`,
+        message: `provisioning for ${describeTarget(input.target)} installed no route`,
       };
     }
     return this.opts.submitter.submit(binding.team_name, input.submission);
   }
 
-  private async createTeam(
-    input: ProvisioningRequest,
-  ): Promise<TeamSummary> {
+  private async createTeam(input: ProvisioningRequest): Promise<TeamSummary> {
     const { space, target } = input;
-    return (await this.opts.invoke('team.create', {
+    const command: TeamCreateCommand = {
       // The inbound Feishu message id, used bare: it is globally unique, so it
       // needs no target prefix to stay distinct. Request identity is scoped to
       // the message that triggered provisioning, not to the topic, and that
@@ -261,7 +255,8 @@ export class FeishuProvisioning {
             },
           }
         : {}),
-    } as JsonValue)) as unknown as TeamSummary;
+    };
+    return this.opts.commands.teamCreate(command);
   }
 }
 

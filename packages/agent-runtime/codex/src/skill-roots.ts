@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeSkillSource,
+  DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import { isAbsolute } from 'node:path';
 
@@ -8,32 +9,27 @@ import type { CodexWsClient } from './rpc.js';
 export async function applyCodexSkillExtraRoots(input: {
   client: CodexWsClient;
   sources: readonly AgentRuntimeSkillSource[];
-  log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  logger: DreamuxLogger;
 }): Promise<void> {
   if (input.sources.length === 0) return;
   assertAbsoluteSkillRootPaths(input.sources);
-  const extraRoots = [
-    ...new Set(
-      input.sources.map((source) => source.path),
-    ),
-  ];
+  const extraRoots = [...new Set(input.sources.map((source) => source.path))];
   if (extraRoots.length === 0) return;
   try {
     await input.client.request('skills/extraRoots/set', { extraRoots });
   } catch (err) {
     if (isUnsupportedRpcMethodError(err)) {
-      input.log(
-        'warn',
-        `skills/extraRoots/set unsupported by this app-server; continuing skill-blind (${extraRoots.length} extra root(s) not applied)`,
-        err,
+      input.logger.warn(
+        { extra_root_count: extraRoots.length, err },
+        'skills/extraRoots/set unsupported by this app-server; continuing skill-blind',
       );
       return;
     }
     throw err;
   }
-  input.log(
-    'info',
-    `applied ${extraRoots.length} skill extra root(s): ${extraRoots.join(', ')}`,
+  input.logger.info(
+    { extra_roots: extraRoots, extra_root_count: extraRoots.length },
+    'applied skill extra roots',
   );
 }
 

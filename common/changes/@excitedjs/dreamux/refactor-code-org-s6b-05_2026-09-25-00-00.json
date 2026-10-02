@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fixed a bug: team.create with a prompt, called through admin.sock or a Channel's team.create Command, no longer pushes the leader's first-turn completion back to the Dispatcher Agent -- only the Dispatcher's own team MCP create tool call does now, matching the deliverCompletionToDispatcher contract team.submit has always had. DispatcherService.createTeam, TeamCollection.createFromRequest/createAtCandidate, and TeamService.createNew all take an explicit deliverCompletionToDispatcher boolean threaded the same way teamId/payloadHash already thread through; service/team/commands.ts's create.execute() passes false, service/team/mcp.ts's create() (the Dispatcher's own MCP call) passes true. initial-prompt.ts's submitInitialLeaderPrompt is folded into TeamService.createNew, which now calls submitToLeader(...) directly and checks the returned TurnAdmission itself, so the initial turn runs through the same admit-fenced submission path (and the same completion-initiator wiring) as every later turn; resolveTeamLeaderCompletionDelivery (completion-targets.ts) is deleted as the second initiator-to-delivery mapping it duplicated. TeamLeaderCompletionTargets itself, used for a Team's own members' completions reporting to the leader, is unrelated and unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

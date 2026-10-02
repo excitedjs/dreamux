@@ -76,7 +76,10 @@ describe('PublicInvokeFailure', () => {
 
 describe('json-invoke.ts source neutrality (issue #209 operator decision)', () => {
   const here = dirname(fileURLToPath(import.meta.url));
-  const source = readFileSync(join(here, '..', 'src', 'json-invoke.ts'), 'utf8');
+  const source = readFileSync(
+    join(here, '..', 'src', 'json-invoke.ts'),
+    'utf8',
+  );
 
   it('imports no Dreamux package, not even a type from dreamux-types', () => {
     // `@excitedjs/dreamux-types` is the type set an external provider compiles
@@ -85,7 +88,9 @@ describe('json-invoke.ts source neutrality (issue #209 operator decision)', () =
     const importLines = source
       .split('\n')
       .filter((line) => /^\s*import /.test(line));
-    expect(importLines.filter((line) => line.includes('@excitedjs/'))).toEqual([]);
+    expect(importLines.filter((line) => line.includes('@excitedjs/'))).toEqual(
+      [],
+    );
   });
 
   it('names no Command, MCP tool, Team, or Channel vocabulary anywhere in the file', () => {

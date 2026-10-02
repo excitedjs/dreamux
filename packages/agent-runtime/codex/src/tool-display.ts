@@ -25,14 +25,23 @@ export interface ToolDisplay {
   readonly items: readonly string[];
 }
 
-const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, items: [] };
+const UNKNOWN: ToolDisplay = {
+  action: null,
+  summary: null,
+  invocation: null,
+  items: [],
+};
 
 export function toolDisplay(item: ThreadItem): ToolDisplay {
   switch (item.type) {
-    case 'commandExecution': return commandDisplay(item);
-    case 'fileChange': return fileChangeDisplay(item);
-    case 'webSearch': return webSearchDisplay(item);
-    default: return UNKNOWN;
+    case 'commandExecution':
+      return commandDisplay(item);
+    case 'fileChange':
+      return fileChangeDisplay(item);
+    case 'webSearch':
+      return webSearchDisplay(item);
+    default:
+      return UNKNOWN;
   }
 }
 
@@ -52,16 +61,24 @@ function commandDisplay(item: ThreadItem): ToolDisplay {
   const command = shellScriptForDisplay(stringField(item, 'command'));
   const actions = commandActions(item['commandActions']);
   const first = actions[0];
-  const uniform = first !== undefined && actions.every((entry) => entry.action === first.action);
+  const uniform =
+    first !== undefined &&
+    actions.every((entry) => entry.action === first.action);
   if (!uniform || first.action === 'run') {
-    return { action: 'run', summary: firstLine(command), invocation: command, items: [] };
+    return {
+      action: 'run',
+      summary: firstLine(command),
+      invocation: command,
+      items: [],
+    };
   }
   const details = unique(actions.map((entry) => entry.detail));
   return {
     action: first.action,
     summary: details.length === 0 ? firstLine(command) : details.join(', '),
     invocation: command,
-    items: first.action === 'read' ? unique(actions.map((entry) => entry.file)) : [],
+    items:
+      first.action === 'read' ? unique(actions.map((entry) => entry.file)) : [],
   };
 }
 
@@ -70,7 +87,11 @@ function shellScriptForDisplay(command: string | null): string | null {
   const words = splitShellWords(command);
   if (words === null || words.length === 0) return command;
   // Codex only decodes Windows drive-path text when its shlex spelling round-trips exactly.
-  if (command.includes(':\\') && words.map(quoteShellWord).join(' ') !== command) return command;
+  if (
+    command.includes(':\\') &&
+    words.map(quoteShellWord).join(' ') !== command
+  )
+    return command;
   let shell = words[0]!;
   while (!['bash', 'zsh', 'sh', 'pwsh', 'powershell'].includes(shell)) {
     const stem = parsePath(shell).name;
@@ -78,7 +99,9 @@ function shellScriptForDisplay(command: string | null): string | null {
     shell = stem;
   }
   if (['bash', 'zsh', 'sh'].includes(shell)) {
-    return words.length === 3 && (words[1] === '-lc' || words[1] === '-c') ? words[2]! : command;
+    return words.length === 3 && (words[1] === '-lc' || words[1] === '-c')
+      ? words[2]!
+      : command;
   }
   for (let i = 1; i + 1 < words.length; i++) {
     const flag = words[i]!.toLowerCase();
@@ -103,7 +126,8 @@ function splitShellWords(command: string): string[] | null {
       const next = command[++i];
       if (next === undefined) return null;
       if (next !== '\n') {
-        if (quote === '"' && !['$', '`', '"', '\\'].includes(next)) word += '\\';
+        if (quote === '"' && !['$', '`', '"', '\\'].includes(next))
+          word += '\\';
         word += next;
       }
       started = true;
@@ -144,16 +168,23 @@ function quoteShellWord(word: string): string {
     }
     for (; end < word.length; end++) {
       const char = word[end]!;
-      const nextUnquoted: boolean = unquoted && /^[a-zA-Z0-9_+./:@\]-]$/.test(char);
-      const nextSingle: boolean = single && char !== "'" && char !== '^' && char !== '\\';
-      const nextDouble: boolean = double && !['`', '$', '!', '^'].includes(char);
+      const nextUnquoted: boolean =
+        unquoted && /^[a-zA-Z0-9_+./:@\]-]$/.test(char);
+      const nextSingle: boolean =
+        single && char !== "'" && char !== '^' && char !== '\\';
+      const nextDouble: boolean =
+        double && !['`', '$', '!', '^'].includes(char);
       if (!nextUnquoted && !nextSingle && !nextDouble) break;
       unquoted = nextUnquoted;
       single = nextSingle;
       double = nextDouble;
     }
     const chunk = word.slice(start, end);
-    result += unquoted ? chunk : single ? `'${chunk}'` : `"${chunk.replace(/[$`"\\]/g, '\\$&')}"`;
+    result += unquoted
+      ? chunk
+      : single
+        ? `'${chunk}'`
+        : `"${chunk.replace(/[$`"\\]/g, '\\$&')}"`;
     start = end;
   }
   return result;
@@ -168,18 +199,29 @@ function commandActions(value: unknown): CommandAction[] {
     switch (record['type']) {
       case 'read': {
         const name = stringField(record, 'name');
-        actions.push({ action: 'read', detail: name, file: stringField(record, 'path') ?? name });
+        actions.push({
+          action: 'read',
+          detail: name,
+          file: stringField(record, 'path') ?? name,
+        });
         break;
       }
       case 'listFiles':
-        actions.push({ action: 'list_files', detail: stringField(record, 'path'), file: null });
+        actions.push({
+          action: 'list_files',
+          detail: stringField(record, 'path'),
+          file: null,
+        });
         break;
       case 'search': {
         const query = stringField(record, 'query');
         const path = stringField(record, 'path');
         actions.push({
           action: 'search',
-          detail: query !== null && path !== null ? `${query} in ${path}` : query ?? path,
+          detail:
+            query !== null && path !== null
+              ? `${query} in ${path}`
+              : (query ?? path),
           file: null,
         });
         break;
@@ -198,7 +240,9 @@ function commandActions(value: unknown): CommandAction[] {
  */
 function fileChangeDisplay(item: ThreadItem): ToolDisplay {
   const changes = Array.isArray(item['changes'])
-    ? item['changes'].map(recordValue).filter((c): c is Record<string, unknown> => c !== null)
+    ? item['changes']
+        .map(recordValue)
+        .filter((c): c is Record<string, unknown> => c !== null)
     : [];
   const paths = unique(changes.map((c) => stringField(c, 'path')));
   const diffs = changes.flatMap((change) => {
@@ -222,10 +266,17 @@ function webSearchDisplay(item: ThreadItem): ToolDisplay {
   switch (action?.['type']) {
     case 'search': {
       const queries = Array.isArray(action['queries'])
-        ? action['queries'].filter((q): q is string => typeof q === 'string' && q !== '')
+        ? action['queries'].filter(
+            (q): q is string => typeof q === 'string' && q !== '',
+          )
         : [];
-      detail = stringField(action, 'query') ??
-        (queries.length === 0 ? null : queries.length === 1 ? queries[0]! : `${queries[0]!} …`);
+      detail =
+        stringField(action, 'query') ??
+        (queries.length === 0
+          ? null
+          : queries.length === 1
+            ? queries[0]!
+            : `${queries[0]!} …`);
       break;
     }
     case 'openPage':
@@ -234,20 +285,35 @@ function webSearchDisplay(item: ThreadItem): ToolDisplay {
     case 'findInPage': {
       const pattern = stringField(action, 'pattern');
       const url = stringField(action, 'url');
-      detail = pattern !== null && url !== null ? `'${pattern}' in ${url}` : pattern === null ? url : `'${pattern}'`;
+      detail =
+        pattern !== null && url !== null
+          ? `'${pattern}' in ${url}`
+          : pattern === null
+            ? url
+            : `'${pattern}'`;
       break;
     }
     default:
       break;
   }
-  return { action: 'search', summary: detail ?? query, invocation: null, items: [] };
+  return {
+    action: 'search',
+    summary: detail ?? query,
+    invocation: null,
+    items: [],
+  };
 }
 
 function unique(values: ReadonlyArray<string | null>): string[] {
-  return [...new Set(values.filter((value): value is string => value !== null))];
+  return [
+    ...new Set(values.filter((value): value is string => value !== null)),
+  ];
 }
 
-function stringField(record: Record<string, unknown>, key: string): string | null {
+function stringField(
+  record: Record<string, unknown>,
+  key: string,
+): string | null {
   const value = record[key];
   return typeof value === 'string' && value !== '' ? value : null;
 }

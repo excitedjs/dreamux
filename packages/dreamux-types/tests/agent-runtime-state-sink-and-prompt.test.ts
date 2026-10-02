@@ -18,11 +18,10 @@ import type {
   AgentRuntimeSystemPrompt,
 } from '../src/agent-runtime.js';
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B
-  ? 1
-  : 0
-  ? true
-  : false;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
+    ? true
+    : false;
 
 function assertType<T extends true>(_proof?: T): void {
   // Compile-time-only: see agent-runtime-handle-contract.test.ts for the pattern's rationale.
@@ -39,7 +38,10 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
 
   it('AgentRuntimeStateUpdate is exactly status | session | session_lost', () => {
     assertType<
-      Equal<AgentRuntimeStateUpdate['kind'], 'status' | 'session' | 'session_lost'>
+      Equal<
+        AgentRuntimeStateUpdate['kind'],
+        'status' | 'session' | 'session_lost'
+      >
     >();
   });
 
@@ -65,7 +67,10 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
 
     await sink.publish({ kind: 'status', status: 'ready' });
     await sink.publish({ kind: 'session', sessionId: 'sess-1' });
-    await sink.publish({ kind: 'session_lost', reason: 'native process exited' });
+    await sink.publish({
+      kind: 'session_lost',
+      reason: 'native process exited',
+    });
 
     expect(received).toEqual([
       'status:ready',
@@ -76,7 +81,9 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
 
   it('publish rejects with a structurally branded AgentRuntimeStateLeaseRevokedError once revoked', async () => {
     function makeLeaseRevokedError(): AgentRuntimeStateLeaseRevokedError {
-      const error = new Error('lease revoked') as AgentRuntimeStateLeaseRevokedError;
+      const error = new Error(
+        'lease revoked',
+      ) as AgentRuntimeStateLeaseRevokedError;
       error.name = 'AgentRuntimeStateLeaseRevokedError';
       return error;
     }
@@ -87,7 +94,9 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
       },
     };
 
-    await expect(sink.publish({ kind: 'status', status: 'stopped' })).rejects.toMatchObject({
+    await expect(
+      sink.publish({ kind: 'status', status: 'stopped' }),
+    ).rejects.toMatchObject({
       name: 'AgentRuntimeStateLeaseRevokedError',
     });
 
@@ -107,8 +116,12 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
 
 describe('AgentRuntimeSystemPrompt: replace and append are both optional and independent', () => {
   it('replace-only, append-only, and both-forms values are all admissible', () => {
-    const replaceOnly: AgentRuntimeSystemPrompt = { replace: 'full replacement text' };
-    const appendOnly: AgentRuntimeSystemPrompt = { append: ['fragment one', 'fragment two'] };
+    const replaceOnly: AgentRuntimeSystemPrompt = {
+      replace: 'full replacement text',
+    };
+    const appendOnly: AgentRuntimeSystemPrompt = {
+      append: ['fragment one', 'fragment two'],
+    };
     const both: AgentRuntimeSystemPrompt = {
       replace: 'base',
       append: ['extra one', 'extra two'],
@@ -123,7 +136,9 @@ describe('AgentRuntimeSystemPrompt: replace and append are both optional and ind
   });
 
   it('append is an ordered readonly array — fragment order is a load-bearing part of the contract', () => {
-    const prompt: AgentRuntimeSystemPrompt = { append: ['first', 'second', 'third'] };
+    const prompt: AgentRuntimeSystemPrompt = {
+      append: ['first', 'second', 'third'],
+    };
     // Order must round-trip exactly; a provider applying at most one form still
     // owes the caller a stable append order when it does apply this form.
     expect([...(prompt.append ?? [])]).toEqual(['first', 'second', 'third']);
@@ -135,7 +150,7 @@ describe('AgentRuntimeSystemPrompt: replace and append are both optional and ind
 });
 
 describe('AgentRuntimeIdentity carries the session as one opaque id and nothing more', () => {
-  it('a resumable identity is a runtime id plus the provider\'s own prior session id', () => {
+  it("a resumable identity is a runtime id plus the provider's own prior session id", () => {
     const identity: AgentRuntimeIdentity = {
       runtimeId: 'runtime-42',
       sessionId: 'sess-42',

@@ -28,7 +28,9 @@ export function managedWorkspaceDir(dispatcherWorkspace: string): string {
 }
 
 /** The `.gitignore` Dreamux writes into `.workspace` so it never becomes repo content. */
-export function managedWorkspaceGitignorePath(dispatcherWorkspace: string): string {
+export function managedWorkspaceGitignorePath(
+  dispatcherWorkspace: string,
+): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), '.gitignore');
 }
 
@@ -78,7 +80,10 @@ export function defaultWorkspaceWorkPath(input: {
  */
 export function repoDisambiguatedSlug(canonicalRepoRoot: string): string {
   const base = teamMateNameSegment(basename(canonicalRepoRoot)) || 'repo';
-  const hash = createHash('sha256').update(canonicalRepoRoot).digest('hex').slice(0, 12);
+  const hash = createHash('sha256')
+    .update(canonicalRepoRoot)
+    .digest('hex')
+    .slice(0, 12);
   return `${base}-${hash}`;
 }
 

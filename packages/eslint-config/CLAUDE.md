@@ -8,7 +8,17 @@ Dreamux monorepo.
 - Own the repository-wide lint rules that packages consume through thin
   `eslint.config.js` files.
 - Keep the synchronous blocking IO ban centralized.
-- Keep the source-file line-count cap centralized.
+- Keep the source-file line-count cap centralized: `max-lines` at 700,
+  counting code only (`skipBlankLines`/`skipComments`), on `src/**/*.ts`.
+- Ban dumping-ground filenames (the patterns `*-helpers.ts / *-support.ts /
+  *-ops.ts / run-support.ts / runtime-session.ts`, none of which name a real
+  file today) package-wide on `src/**/*.ts`, `error` severity.
+- Offer an opt-in package-wide re-export ban
+  (`withPackageEntryOnlyReexports`): a package calls it from its own
+  `eslint.config.js` to forbid `export * from` / `export { X } from` outside
+  its declared entry file(s), `error` severity where adopted.
+- Enforce `prettier --check` on this package's own files via its `"lint"`
+  script (see the R2 waiver note under Boundaries).
 - Enforce reasoned inline disables and report stale disable comments.
 - Stay dependency-light and runtime-free: this package configures linting only.
 
@@ -21,6 +31,13 @@ Dreamux monorepo.
   the repository decision records and tests.
 - Do not introduce formatting churn. This package is for lint policy, not code
   style rewrites.
+  - Waived once, for the code-organization refactor's stage-3 formatting
+    commit (ruling R2 in
+    `.agents/tasks/architecture/code-organization-refactor/rulings.md`),
+    which reformatted this package's own files to the repo-root
+    `/.prettierrc.json` and wired `prettier --check` into a new `"lint"`
+    script here. Style is owned by that root file; this package's boundary
+    (ESLint rules, not style) is unchanged, and the waiver does not repeat.
 
 ## Upstream / Downstream Contract
 

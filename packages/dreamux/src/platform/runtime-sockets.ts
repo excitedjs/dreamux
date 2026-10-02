@@ -41,16 +41,19 @@ import {
   assertUnixSocketPathBudget,
   unixSocketPathFitsBudget,
 } from '@excitedjs/dreamux-utils';
-import {
-  runRoot,
-} from './paths.js';
+import { runRoot } from './paths.js';
 
 /**
  * Shared world-writable system tmp roots. `/private/tmp` and
  * `/private/var/tmp` are the macOS symlink-resolved spellings of `/tmp` and
  * `/var/tmp`, so a canonicalized path must not slip past the guard.
  */
-const SHARED_TMP_ROOTS = ['/tmp', '/var/tmp', '/private/tmp', '/private/var/tmp'];
+const SHARED_TMP_ROOTS = [
+  '/tmp',
+  '/var/tmp',
+  '/private/tmp',
+  '/private/var/tmp',
+];
 
 export function isSharedTmpPath(path: string): boolean {
   const normalized = normalize(path);
@@ -94,7 +97,8 @@ export function runtimeSocketDirCandidates(
  */
 function osTempDir(env: NodeJS.ProcessEnv): string {
   const fromEnv = env['TMPDIR'] ?? env['TMP'] ?? env['TEMP'];
-  const raw = fromEnv !== undefined && fromEnv.trim() !== '' ? fromEnv : tmpdir();
+  const raw =
+    fromEnv !== undefined && fromEnv.trim() !== '' ? fromEnv : tmpdir();
   // Strip a single trailing separator so joined paths stay canonical.
   return raw.endsWith(sep) && raw.length > 1 ? raw.slice(0, -1) : raw;
 }

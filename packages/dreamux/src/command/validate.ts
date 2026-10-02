@@ -78,19 +78,20 @@ export class SchemaViolation extends Error {
  * their own typed error.
  *
  * The schema's own shape is proven once by {@link validateSchemaDefinition} at
- * composition; the schema-shape guards below are unreachable defense in depth.
+ * composition; invocation checks only the supplied value.
  */
 export function validateJsonSchema(value: unknown, schema: JsonSchema): void {
   check(value, schema, '');
 }
 
 function check(value: unknown, schema: JsonSchema, path: string): void {
-  for (const name of Object.keys(schema)) {
-    if (!SUPPORTED_KEYWORDS.has(name)) {
-      throw new SchemaViolation(path, `schema uses unsupported keyword '${name}'`);
-    }
-  }
-  const types = declaredTypes(schema, path);
+  const declared = keyword(schema, 'type');
+  const types =
+    declared === undefined
+      ? null
+      : ((Array.isArray(declared)
+          ? declared
+          : [declared]) as readonly string[]);
   if (types !== null && !types.some((type) => matchesType(value, type))) {
     throw new SchemaViolation(
       path,
@@ -107,33 +108,33 @@ function check(value: unknown, schema: JsonSchema, path: string): void {
 function checkEnum(value: unknown, schema: JsonSchema, path: string): void {
   const allowed = keyword(schema, 'enum');
   if (allowed === undefined) return;
-  if (!Array.isArray(allowed)) {
-    throw new SchemaViolation(path, 'schema enum must be an array');
-  }
   const values = allowed as unknown as readonly JsonValue[];
   if (!values.some((entry) => entry === value)) {
-    throw new SchemaViolation(path, `${describe(value)} is not an allowed value`);
+    throw new SchemaViolation(
+      path,
+      `${describe(value)} is not an allowed value`,
+    );
   }
 }
 
 function checkString(value: string, schema: JsonSchema, path: string): void {
-  const min = numericKeyword(schema, 'minLength', path);
-  if (min !== null && value.length < min) {
+  const min = keyword(schema, 'minLength') as number | undefined;
+  if (min !== undefined && value.length < min) {
     throw new SchemaViolation(path, `must be at least ${min} characters`);
   }
-  const max = numericKeyword(schema, 'maxLength', path);
-  if (max !== null && value.length > max) {
+  const max = keyword(schema, 'maxLength') as number | undefined;
+  if (max !== undefined && value.length > max) {
     throw new SchemaViolation(path, `must be at most ${max} characters`);
   }
 }
 
 function checkNumber(value: number, schema: JsonSchema, path: string): void {
-  const min = numericKeyword(schema, 'minimum', path);
-  if (min !== null && value < min) {
+  const min = keyword(schema, 'minimum') as number | undefined;
+  if (min !== undefined && value < min) {
     throw new SchemaViolation(path, `must be >= ${min}`);
   }
-  const max = numericKeyword(schema, 'maximum', path);
-  if (max !== null && value > max) {
+  const max = keyword(schema, 'maximum') as number | undefined;
+  if (max !== undefined && value > max) {
     throw new SchemaViolation(path, `must be <= ${max}`);
   }
 }
@@ -143,19 +144,16 @@ function checkArray(
   schema: JsonSchema,
   path: string,
 ): void {
-  const min = numericKeyword(schema, 'minItems', path);
-  if (min !== null && value.length < min) {
+  const min = keyword(schema, 'minItems') as number | undefined;
+  if (min !== undefined && value.length < min) {
     throw new SchemaViolation(path, `must hold at least ${min} items`);
   }
-  const max = numericKeyword(schema, 'maxItems', path);
-  if (max !== null && value.length > max) {
+  const max = keyword(schema, 'maxItems') as number | undefined;
+  if (max !== undefined && value.length > max) {
     throw new SchemaViolation(path, `must hold at most ${max} items`);
   }
   const items = keyword(schema, 'items');
   if (items === undefined) return;
-  if (!isPlainObject(items)) {
-    throw new SchemaViolation(path, 'schema items must be a schema object');
-  }
   value.forEach((entry, index) => {
     check(entry, items as unknown as JsonSchema, `${path}[${index}]`);
   });
@@ -167,17 +165,8 @@ function checkObject(
   path: string,
 ): void {
   const properties = keyword(schema, 'properties');
-  if (properties !== undefined && !isPlainObject(properties)) {
-    throw new SchemaViolation(path, 'schema properties must be an object');
-  }
   const declared = (properties ?? {}) as unknown as Record<string, unknown>;
   const additional = keyword(schema, 'additionalProperties');
-  if (additional !== undefined && typeof additional !== 'boolean') {
-    throw new SchemaViolation(
-      path,
-      'schema additionalProperties must be a boolean',
-    );
-  }
   checkRequired(value, schema, path);
   for (const [name, entry] of Object.entries(value)) {
     // A present-but-`undefined` own property is absent on the wire, because a
@@ -189,9 +178,6 @@ function checkObject(
         throw new SchemaViolation(path, `unknown property '${name}'`);
       }
       continue;
-    }
-    if (!isPlainObject(child)) {
-      throw new SchemaViolation(path, `schema for '${name}' must be an object`);
     }
     check(
       entry,
@@ -208,13 +194,7 @@ function checkRequired(
 ): void {
   const required = keyword(schema, 'required');
   if (required === undefined) return;
-  if (!Array.isArray(required)) {
-    throw new SchemaViolation(path, 'schema required must be an array');
-  }
-  for (const name of required as unknown as readonly JsonValue[]) {
-    if (typeof name !== 'string') {
-      throw new SchemaViolation(path, 'schema required must hold strings');
-    }
+  for (const name of required as readonly string[]) {
     if (!Object.hasOwn(value, name) || value[name] === undefined) {
       throw new SchemaViolation(path, `missing required property '${name}'`);
     }
@@ -224,9 +204,9 @@ function checkRequired(
 function declaredTypes(schema: JsonSchema, path: string): string[] | null {
   const declared = keyword(schema, 'type');
   if (declared === undefined) return null;
-  const names = (
-    Array.isArray(declared) ? declared : [declared]
-  ) as unknown as readonly JsonValue[];
+  const names = (Array.isArray(declared)
+    ? declared
+    : [declared]) as unknown as readonly JsonValue[];
   const out: string[] = [];
   for (const name of names) {
     if (typeof name !== 'string' || !TYPE_NAMES.has(name)) {
@@ -307,7 +287,10 @@ function numericKeyword(
 export function validateSchemaDefinition(schema: JsonSchema, path = ''): void {
   for (const name of Object.keys(schema)) {
     if (!SUPPORTED_KEYWORDS.has(name)) {
-      throw new SchemaViolation(path, `schema uses unsupported keyword '${name}'`);
+      throw new SchemaViolation(
+        path,
+        `schema uses unsupported keyword '${name}'`,
+      );
     }
   }
   declaredTypes(schema, path);
@@ -335,7 +318,10 @@ function defineEnum(schema: JsonSchema, path: string): void {
   }
   if (allowed.length === 0) {
     // An empty enum admits nothing, so the property could never be supplied.
-    throw new SchemaViolation(path, 'schema enum must allow at least one value');
+    throw new SchemaViolation(
+      path,
+      'schema enum must allow at least one value',
+    );
   }
 }
 

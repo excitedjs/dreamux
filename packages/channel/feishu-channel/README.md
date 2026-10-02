@@ -1,13 +1,14 @@
 # @excitedjs/feishu-channel
 
-The built-in Feishu **`ChannelProvider`** for [Dreamux](../../dreamux) — the
-package behind the `builtin:feishu` provider reference. It implements the
+The built-in Feishu **plugin** for [Dreamux](../../dreamux): it contributes the
+Feishu `ChannelProvider` behind the `builtin:feishu` provider reference and
+publishes an extension api for other plugins. The provider implements the
 neutral `@excitedjs/dreamux-types` channel contract on top of
 [`@excitedjs/feishu-transport`](../feishu-transport), which stays the sole owner
 of the Lark SDK.
 
-`@excitedjs/dreamux` depends on this package by default and resolves
-`builtin:feishu` to it, so the Feishu channel ships out of the box.
+`@excitedjs/dreamux` depends on this package and always loads its plugin, so
+the Feishu channel ships out of the box.
 
 ## What it owns
 
@@ -42,10 +43,14 @@ of the Lark SDK.
 
 ## Public API
 
-- `createFeishuChannelProvider()` plus the default-exported provider factory —
-  builds the neutral `ChannelProvider` the generic channel loader registers for
-  `builtin:feishu`. Its `createSession` returns a contract-valid `ChannelSession`
-  (`reply` / `react` / `resolveTarget` / `tools` / `handleTool` /
+- The default-exported plugin factory and `createFeishuPlugin()` — the plugin
+  contributes the `feishu` channel provider (`builtin:feishu`) and publishes
+  `FeishuApi`, through which another plugin registers Feishu extensions: extra
+  MCP tools, card actions, and a per-channel-instance lifecycle with an
+  instance api (`FeishuExtension`, `FeishuInstanceApi`).
+- `createFeishuChannelProvider()` — the same provider with no extensions. Its
+  `createSession` returns a contract-valid `ChannelSession` (`reply` /
+  `react` / `resolveTarget` / `tools` / `handleTool` /
   `messageBelongsToTarget`).
 - The session class plus the gate, chat-bots store, message formatter, MCP tool
   parser, and production bot adapter helpers used by the core adapter that
@@ -72,7 +77,7 @@ non-empty sender id. Other chat types fail with `unsupported_chat_type`, and
 other sender shapes fail with `sender_unknown`, before bot observation,
 `/introduce`, pairing, or delivery.
 
-The public `dreamuxFeishuGate` input is unchanged: it still has `chat_type` and
+The `dreamuxFeishuGate` input is unchanged: it still has `chat_type` and
 `is_bot_sender` and has no `sender_kind`. Callers must perform the exact
 classification above first. Passing `is_bot_sender: false` asserts a known
 human; negating `isBotSenderType(...)` alone is not sufficient because unknown
@@ -98,7 +103,7 @@ takes effect when the new server starts.
 may deliver ordinary text in a trusted chat but cannot mutate peer-bot trust;
 the command is diagnosed as `sender_not_followed` and writes no trust.
 
-## Feishu topic-group permission
+## Feishu chat information permission
 
 Topic collaboration routing reads the enclosing chat through Feishu's
 `im.v1.chat.get` API. The bot must have a group information read permission
@@ -110,6 +115,21 @@ Every non-empty inbound `thread_id` is also included in the provider-owned
 display attributes, so runtimes render it in the model-visible `<channel>`
 envelope. Displaying that identifier does not classify an ordinary group
 thread as a collaboration topic.
+
+The same read can decide who may answer a card, as a last resort. A click on
+an ask-user or extension card names its chat but not whether that chat is
+direct or a group, so the channel applies the inbound access policy for both
+kinds and establishes the kind only when the two answers differ. It takes the
+kind from the chat itself, never from the access lists it is judging: the kind
+reported by the last admitted inbound message this session routed in that chat
+(a group message dropped for lacking a mention, an untrusted bot's message, or
+a consumed `/introduce` teaches nothing). Only then does it ask the platform. A person the policy
+admits in a direct chat and in a group alike, or in neither, never triggers the
+read. When the answer does depend on the kind and it cannot be established, the
+click is refused with an error toast rather than degrading to an ordinary group
+as topic detection does, which on an install whose bot lacks the group
+information read permission affects only a click in a chat this session has not
+yet routed an admitted message from.
 
 A confirmed topic target declares its enclosing group as a less-specific
 binding fallback. An exact topic binding wins first; a bound collaboration

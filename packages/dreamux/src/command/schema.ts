@@ -6,6 +6,9 @@
  * result against `output` after `execute` (see `validate.ts`). `parse` then
  * narrows the validated payload into the domain's own input type. Builders and
  * Commands live behind the same registry, so no adapter can hold a second copy.
+ * An MCP delegate's own tool descriptors (`service/mcp/tool-metadata.ts`) build
+ * their `inputSchema`/`outputSchema` from these same builders, since a JSON
+ * Schema primitive is not a Command concept — only its use here is.
  *
  * The shape a schema enforces is exactly the shape it declares. An input is
  * closed all the way down, because every key of it is caller-supplied. A result

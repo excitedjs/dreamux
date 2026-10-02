@@ -1,25 +1,20 @@
-import {
-  createContext,
-  Script,
-  SourceTextModule,
-  type Context,
-} from 'node:vm';
+import { createContext, Script, SourceTextModule, type Context } from 'node:vm';
 
-import type {
-  WorkflowAgentOptions,
-  WorkflowAgentResultMessage,
-  WorkflowRunnerChildMessage,
-  WorkflowRunnerParentMessage,
+import { isPlainObject } from '@excitedjs/dreamux-utils';
+
+import { MAX_HELPER_ITEMS } from './limits.js';
+import {
+  parseParentMessage,
+  type WorkflowAgentOptions,
+  type WorkflowAgentResultMessage,
+  type WorkflowRunnerChildMessage,
 } from './protocol.js';
-import { isRecord } from './run-support.js';
 import { compileWorkflowScript } from './script-compiler.js';
 
 interface PendingAgent {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
 }
-
-const MAX_HELPER_ITEMS = 4096;
 
 const pendingAgents = new Map<number, PendingAgent>();
 let nextAgentIndex = 0;
@@ -148,7 +143,7 @@ async function startAgent(
   if (typeof prompt !== 'string') {
     throw new Error('agent prompt must be a string');
   }
-  if (!isRecord(options)) {
+  if (!isPlainObject(options)) {
     throw new Error('agent options must be an object');
   }
 
@@ -281,7 +276,9 @@ function send(message: WorkflowRunnerChildMessage): void {
   process.send(message);
 }
 
-async function sendAndFlush(message: WorkflowRunnerChildMessage): Promise<void> {
+async function sendAndFlush(
+  message: WorkflowRunnerChildMessage,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     if (process.send === undefined || !process.connected) {
       reject(new Error('workflow runner IPC channel is unavailable'));
@@ -294,36 +291,8 @@ async function sendAndFlush(message: WorkflowRunnerChildMessage): Promise<void> 
   });
 }
 
-function parseParentMessage(value: unknown): WorkflowRunnerParentMessage | null {
-  if (!isRecord(value) || typeof value.type !== 'string') return null;
-
-  if (
-    value.type === 'run_start' &&
-    typeof value.script === 'string'
-  ) {
-    return {
-      type: 'run_start',
-      script: value.script,
-      args: value.args,
-    };
-  }
-  if (
-    value.type === 'agent_result' &&
-    Number.isSafeInteger(value.index) &&
-    (value.error === undefined || typeof value.error === 'string')
-  ) {
-    return {
-      type: 'agent_result',
-      index: value.index as number,
-      result: value.result,
-      error: value.error,
-    };
-  }
-  if (value.type === 'abort') return { type: 'abort' };
-  return null;
-}
-
 function errorMessage(error: unknown): string {
-  if (isRecord(error) && typeof error.message === 'string') return error.message;
+  if (isPlainObject(error) && typeof error.message === 'string')
+    return error.message;
   return String(error);
 }

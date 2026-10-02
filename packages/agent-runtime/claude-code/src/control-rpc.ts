@@ -1,6 +1,7 @@
 /** Claude Code stream-json control requests and their one pending reply. */
 import { randomUUID } from 'node:crypto';
 import type { Writable } from 'node:stream';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
   buildCanUseToolAllow,
@@ -23,8 +24,8 @@ export class ClaudeCodeControlRpc {
   constructor(
     private readonly stdin: Writable,
     private readonly options: {
-      log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
-      onRemoteControlUrl?: (url: string) => void;
+      logger?: DreamuxLogger | undefined;
+      onRemoteControlUrl?: ((url: string) => void) | undefined;
     },
   ) {}
 
@@ -46,12 +47,15 @@ export class ClaudeCodeControlRpc {
     });
     const pending: PendingInterrupt = { requestId, promise, resolve, reject };
     this.pendingInterrupt = pending;
-    this.stdin.write(`${buildInterruptRequest(requestId, reason)}\n`, (error) => {
-      if (error != null && this.pendingInterrupt === pending) {
-        this.pendingInterrupt = null;
-        reject(error);
-      }
-    });
+    this.stdin.write(
+      `${buildInterruptRequest(requestId, reason)}\n`,
+      (error) => {
+        if (error != null && this.pendingInterrupt === pending) {
+          this.pendingInterrupt = null;
+          reject(error);
+        }
+      },
+    );
     return promise;
   }
 
@@ -74,7 +78,9 @@ export class ClaudeCodeControlRpc {
   enableRemoteControl(): void {
     if (!this.stdin.writable) return;
     this.remoteControlRequestId = randomUUID();
-    this.stdin.write(`${buildRemoteControlEnable(this.remoteControlRequestId)}\n`);
+    this.stdin.write(
+      `${buildRemoteControlEnable(this.remoteControlRequestId)}\n`,
+    );
   }
 
   onControlRequest(
@@ -112,7 +118,8 @@ export class ClaudeCodeControlRpc {
     if (interrupt !== null && requestId === interrupt.requestId) {
       this.pendingInterrupt = null;
       if (ok) interrupt.resolve(true);
-      else interrupt.reject(new Error(error ?? 'claude interrupt request failed'));
+      else
+        interrupt.reject(new Error(error ?? 'claude interrupt request failed'));
       return;
     }
     if (requestId !== this.remoteControlRequestId) return;
@@ -122,16 +129,16 @@ export class ClaudeCodeControlRpc {
       if (typeof url === 'string') {
         this.options.onRemoteControlUrl?.(url);
       } else {
-        this.options.log?.(
-          'warn',
+        this.options.logger?.warn(
+          {},
           'claude remote control enable succeeded without a URL',
         );
       }
       return;
     }
-    this.options.log?.(
-      'warn',
-      `claude remote control enable failed${error !== null ? `: ${error}` : ''}`,
+    this.options.logger?.warn(
+      error !== null ? { err: error } : {},
+      'claude remote control enable failed',
     );
   }
 }

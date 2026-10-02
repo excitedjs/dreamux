@@ -20,6 +20,11 @@ release workflows, anti-leak guardrails, lint gates, or changelog behavior.
   workflows.
 - **`@excitedjs/eslint-config` owns the source gates** — the synchronous
   blocking-IO ban and the 700-line file cap — for every package.
+- **`/.prettierrc.json` owns repo-wide formatting style**, checked via
+  `prettier --check` appended to each package's own `lint` script (not part
+  of the shared ESLint flat config) — generated files (`CHANGELOG.json`,
+  `dist/`, `.rush/`) and Markdown (including the model-facing skill prompts
+  under `packages/dreamux/skills/`) are excluded from the check.
 - **`/.gitleaks.toml` and `/.npmrc` are shared canonical guardrails** with the
   sibling repo, not per-repo tunables.
 - **`/packages/dreamux/package.json` owns the published surface**: the single
@@ -27,13 +32,19 @@ release workflows, anti-leak guardrails, lint gates, or changelog behavior.
 - **npm trusted publishing owns publish authentication.** Each publishable
   package carries an npm trusted-publisher entry (provider GitHub Actions, owner
   `excitedjs`, repository `excitedjs/dreamux`, workflow `release.yml`). No
-  long-lived npm token exists.
+  long-lived npm token exists. A package that has never existed on npm has no
+  settings to attach that entry to, so it needs a one-time bootstrap by the
+  holder of publish rights on the `excitedjs` npm org before the change that
+  adds it with `shouldPublish: true` merges. When `@excitedjs/dreamux` gains a
+  `dependencies` entry on the new package in that same change (as it did for
+  `@excitedjs/dreamux-plugin-bootstrap`), merging first breaks the next beta
+  publish and every install of it.
 - **The TeamLeader-only [development workflow](../skills/dev-workflow/SKILL.md)
   owns how a non-trivial feature, refactor, or bug fix is driven** from task
   discovery through review, merge, and knowledge closeout.
 
 Source: `/.github/workflows/`, `/rush.json`, `/common/changes/`,
-`/packages/eslint-config/`, `/.gitleaks.toml`, `/.npmrc`,
+`/packages/eslint-config/`, `/.prettierrc.json`, `/.gitleaks.toml`, `/.npmrc`,
 `/packages/dreamux/package.json`.
 
 ## Contracts
@@ -56,12 +67,12 @@ commit produced by the release pipeline itself, which immediately re-syncs
 `next` onto the freshly bumped `main` so the invariant is restored before any
 new PR can land.
 
-| Branch | Purpose | Lifetime | Protected |
-|---|---|---|---|
-| `main` | Stable npm `latest` head; one commit per release plus `[skip ci]` version bumps | permanent | ruleset PR gate; only the release deploy key pushes directly |
-| `next` | Default PR base; beta channel head | permanent | squash-merge only via PR (1 approval); release deploy key may fast-forward on release |
-| `feature/<slug>` | In-progress work for one PR | branch-off to PR merge; squash merge deletes it | no |
-| `team/<slug>` | TeamMate team integration branches; merged via PR | same as feature | no |
+| Branch           | Purpose                                                                         | Lifetime                                        | Protected                                                                             |
+| ---------------- | ------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `main`           | Stable npm `latest` head; one commit per release plus `[skip ci]` version bumps | permanent                                       | ruleset PR gate; only the release deploy key pushes directly                          |
+| `next`           | Default PR base; beta channel head                                              | permanent                                       | squash-merge only via PR (1 approval); release deploy key may fast-forward on release |
+| `feature/<slug>` | In-progress work for one PR                                                     | branch-off to PR merge; squash merge deletes it | no                                                                                    |
+| `team/<slug>`    | TeamMate team integration branches; merged via PR                               | same as feature                                 | no                                                                                    |
 
 PRs target `next`, never `main`; the GitHub repo default branch is `next`.
 Hotfixes land on `next` first and ship through the normal promote path.
@@ -116,7 +127,7 @@ Source: `/rush.json`, `/common/config/rush/command-line.json`,
 Package source under `packages/*/src/**` must not use synchronous blocking IO.
 The shared flat config enforces, for `src/**`:
 
-- `max-lines` at 700 physical lines (blank lines and comments counted) — a hard
+- `max-lines` at 700 code lines (blank lines and comments excluded) — a hard
   error;
 - `n/no-sync`, which matches any callee whose name ends in `Sync`;
 - `no-restricted-imports` as backstop #1, banning `*Sync` named imports so a
@@ -138,6 +149,15 @@ TypeScript is not a source gate for module-edge shape — see
 staged package `src/` and `tests/` TypeScript against each package's own flat
 config as a local pre-flight.
 
+`prettier --check` also runs inside each package's own `lint` script, appended
+after ESLint, against the repo-root `/.prettierrc.json` config. The exclusion
+globs (`CHANGELOG.json`, `dist/`, `.rush/`, Markdown) live in the script's own
+CLI args, not a `.prettierignore` file — Prettier's ignore-file lookup does not
+search upward from a package directory, so a root-level ignore file would not
+reach any package's `lint` invocation. The pre-commit hook itself is
+unchanged: it still lint-gates staged TypeScript with ESLint only, not
+prettier — formatting is caught by `rush lint`/CI, not locally per commit.
+
 Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.test.ts`,
 `/packages/dreamux/tsconfig.json`, `/common/git-hooks/pre-commit`.
 
@@ -146,15 +166,15 @@ Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.tes
 `ci.yml` runs on every pull request whatever its base branch, and on pushes to
 `main`, `next`, and `feature/**`. The jobs:
 
-| Job | Gate |
-|---|---|
-| `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan |
-| `commit-metadata` | Author email must have a domain and must not be machine-local; `*@users.noreply.github.com` always passes; an optional private denylist regex comes from a repo variable, never from a committed file |
-| `shellcheck` | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `packages/dreamux/bin/dreamux` |
-| `kb` | `.agents/scripts/check.sh` — knowledge-base links, orphans, and task records; checks out full history and every `refs/pull/*/head`, because the task-record check resolves commit hashes against the local object database |
-| `rush` | Linux + macOS: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test |
-| `gitleaks` | Full-history `gitleaks git .` with the pinned binary and `.gitleaks.toml` |
-| `internal-content` | `common/scripts/check-internal-content.sh --tree` over every tracked file |
+| Job                  | Gate                                                                                                                                                                                                                       |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan                                                                                                                        |
+| `commit-metadata`    | Author email must have a domain and must not be machine-local; `*@users.noreply.github.com` always passes; an optional private denylist regex comes from a repo variable, never from a committed file                      |
+| `shellcheck`         | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `packages/dreamux/bin/dreamux`                            |
+| `kb`                 | `.agents/scripts/check.sh` — knowledge-base links, orphans, and task records; checks out full history and every `refs/pull/*/head`, because the task-record check resolves commit hashes against the local object database |
+| `rush`               | Linux + macOS: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test                                                                                                                |
+| `gitleaks`           | Full-history `gitleaks git .` with the pinned binary and `.gitleaks.toml`                                                                                                                                                  |
+| `internal-content`   | `common/scripts/check-internal-content.sh --tree` over every tracked file                                                                                                                                                  |
 
 Order inside the `rush` job is load-bearing. Build precedes typecheck because a
 package's `tsc --noEmit` resolves workspace dependencies through their emitted
@@ -291,17 +311,27 @@ The `files` allowlist ships `bin`, `dist`, `skills`, `README.md`, `LICENSE`,
 Dreamux-managed MCP descriptors and the internal `dreamux mcp` subcommand; it is
 not a separate public npm bin.
 
-Test doubles are not package surface. `createFakeFeishuBot` / `FakeFeishuBot`
-were removed from published package API as a breaking cleanup; the double now
-lives under `/packages/dreamux/tests/helpers/` and implements the production
-`FeishuBot` seam, injected through `createFeishuChannelProvider({ botFactory })`
-so the real channel, gate, routing, and MCP tool code still runs unmodified.
-A new test double belongs in `tests/` and must implement a production seam, not
-be exported from a package.
+Test doubles are not package surface. Feishu's provider constructs its bot
+directly; no public `botFactory` option or exported fake bot remains. The
+code-organization refactor's final parent test work must restore the contracts
+in [deleted-tests.md](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md),
+using current production owners and test-owned doubles where needed. Do not
+reintroduce a dormant public construction override merely to reproduce deleted
+test wiring. A new double belongs in `tests/`, not a published package export.
+
+`builtin:codex`, `builtin:claude-code`, and `builtin:feishu` load whether or
+not `plugins[]` lists them. `builtin:bootstrap` is imported only when
+`plugins[]` lists it, from `@excitedjs/dreamux-plugin-bootstrap` under
+`/packages/plugins/`. That package has never been published: `rush.json` sets
+`shouldPublish: false` and `@excitedjs/dreamux` lists it only as a
+devDependency (R56), so an installed build that lists `builtin:bootstrap` fails
+to load it until the one-time npm bootstrap above is done.
 
 Source: `/packages/dreamux/package.json`, `/packages/dreamux/bin/dreamux`,
+`/rush.json`, `/packages/dreamux/src/registry/builtins.ts`,
 `/packages/dreamux/src/cli/commands/mcp.ts`,
-`/packages/dreamux/tests/helpers/fake-feishu-bot.ts`.
+`/packages/channel/feishu-channel/src/provider.ts`,
+`/packages/channel/feishu-channel/src/session/session.ts`.
 
 ### Public-Repo Red Line
 
@@ -426,7 +456,7 @@ sequence; the `prerelease` job is gated off for `main`.
   `/common/changes/**/*.json` via `rush publish --apply`, which bumps versions
   and rewrites per-package CHANGELOGs, then commits
   `chore(release): version packages [skip ci]` and pushes it with the deploy
-  key. The `[skip ci]` footer is load-bearing: deploy-key pushes *are* visible
+  key. The `[skip ci]` footer is load-bearing: deploy-key pushes _are_ visible
   to `on.push`, and that footer is what stops the bump from retriggering
   `release.yml`.
 - **Topology repair, in the same job.** Immediately after the bump push it
@@ -436,7 +466,7 @@ sequence; the `prerelease` job is gated off for `main`.
   holds for the next promote run with no manual intervention.
 - **Publish job.** Gated on `should_publish`. It installs, builds, runs
   `smoke-built-cli`, then `rush publish --include-all --publish
-  --set-access-level public --registry https://registry.npmjs.org`. Rush calls
+--set-access-level public --registry https://registry.npmjs.org`. Rush calls
   pnpm publish, pnpm rewrites `workspace:` deps to registry versions, and npm
   uploads. `NPM_CONFIG_PROVENANCE=true` plus `id-token: write` make the final
   `npm publish` exchange the OIDC id-token for a short-lived token and attest
@@ -470,7 +500,7 @@ Source: `/.github/workflows/release.yml`, `/.github/workflows/promote-next.yml`,
   `contents: read` and authenticate with the release deploy key.
 - **A 0.x package never carries a `type: major` change file.**
 - **No synchronous blocking IO in `packages/*/src/**`, and no source file over
-  700 physical lines.**
+  700 code lines.**
 - **Nothing internal is committed or published.** Full-history gitleaks in CI
   and the prerelease tarball audit are both non-bypassable.
 
@@ -503,7 +533,7 @@ bypass actor.
 
 **Rejected direction:** any push identity other than the `release-pipeline`
 deploy key. Manual dispatch of `release.yml` against `main` remains the
-*retry* hook, not the normal path.
+_retry_ hook, not the normal path.
 
 Source: `/.github/workflows/promote-next.yml`, `/.github/workflows/release.yml`.
 
@@ -563,14 +593,14 @@ Source: `/packages/dreamux/tsconfig.json`,
 
 ## Failure Modes And Recovery
 
-| Failure | Where caught | Recovery |
-|---|---|---|
-| Topology violation: main is not an ancestor of next | promote-next topology guard | Read the divergence dump. (a) If main shows only `chore(release)` commits from a prior release, re-anchor next: cherry-pick the `[skip ci]` bump onto next or force-align next to main at the release SHA, then re-run promote. (b) If main shows a non-release commit, that is a process bug — remove/revert it from main and land the change through the normal PR→next path instead. |
-| Promote push of main did not trigger release.yml | Actions tab: no new release run on main after promote | Check whether the promoted HEAD commit message contains `[skip ci]` (workflows are skipped for it). Recovery either way: `Actions → release.yml → Run workflow → main` — manual dispatch is the designed retry hook. |
-| Pipeline push rejected (GH013 rule violation) or deploy-key auth failed | promote-next push step / release.yml version job logs | Verify the `release-branch-pr-gate` ruleset still lists deploy keys as bypass actors, the `release-pipeline` deploy key still exists with write access, and the `RELEASE_DEPLOY_KEY` secret matches it. Setup steps already fail loudly when the secret is absent. |
-| Version job produced the bump commit, but publish failed mid-upload | release.yml publish job logs | Re-run against the same commit via `Actions → release.yml → Run workflow → main`. The version job sees no diff in `packages/` or `common/changes/` and short-circuits with `should_publish=true` on `workflow_dispatch`, so only the publish job re-runs. Do not push a new commit just to re-trigger CI. |
-| Version bump was pushed but the next-sync step failed | release.yml version job | Verify the deploy-key bypass (previous row) is intact for `next`. If `next` moved between the bump and the sync, the step logs "Skipping next sync" intentionally; the next PR merged into next lands on top of the pre-release state, and promote-next still fast-forwards because that branch is a descendant of main. |
-| Author email fails the commit-metadata gate | PR CI, or the pre-commit hook locally | Fix with `git config user.email <your-github-email>`. Privacy addresses (`*@users.noreply.github.com`) are explicitly allowed. The local hook mirrors the CI check; run `rush update` to ensure it is wired. |
-| `rush change --verify` fails on a workflow-only PR | PR CI `rush-change-status` | Generate a `type: none` change file for the package whose workflow or surface is being altered. Workflow-only changes still need a paper trail in the CHANGELOG. |
+| Failure                                                                 | Where caught                                          | Recovery                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Topology violation: main is not an ancestor of next                     | promote-next topology guard                           | Read the divergence dump. (a) If main shows only `chore(release)` commits from a prior release, re-anchor next: cherry-pick the `[skip ci]` bump onto next or force-align next to main at the release SHA, then re-run promote. (b) If main shows a non-release commit, that is a process bug — remove/revert it from main and land the change through the normal PR→next path instead. |
+| Promote push of main did not trigger release.yml                        | Actions tab: no new release run on main after promote | Check whether the promoted HEAD commit message contains `[skip ci]` (workflows are skipped for it). Recovery either way: `Actions → release.yml → Run workflow → main` — manual dispatch is the designed retry hook.                                                                                                                                                                    |
+| Pipeline push rejected (GH013 rule violation) or deploy-key auth failed | promote-next push step / release.yml version job logs | Verify the `release-branch-pr-gate` ruleset still lists deploy keys as bypass actors, the `release-pipeline` deploy key still exists with write access, and the `RELEASE_DEPLOY_KEY` secret matches it. Setup steps already fail loudly when the secret is absent.                                                                                                                      |
+| Version job produced the bump commit, but publish failed mid-upload     | release.yml publish job logs                          | Re-run against the same commit via `Actions → release.yml → Run workflow → main`. The version job sees no diff in `packages/` or `common/changes/` and short-circuits with `should_publish=true` on `workflow_dispatch`, so only the publish job re-runs. Do not push a new commit just to re-trigger CI.                                                                               |
+| Version bump was pushed but the next-sync step failed                   | release.yml version job                               | Verify the deploy-key bypass (previous row) is intact for `next`. If `next` moved between the bump and the sync, the step logs "Skipping next sync" intentionally; the next PR merged into next lands on top of the pre-release state, and promote-next still fast-forwards because that branch is a descendant of main.                                                                |
+| Author email fails the commit-metadata gate                             | PR CI, or the pre-commit hook locally                 | Fix with `git config user.email <your-github-email>`. Privacy addresses (`*@users.noreply.github.com`) are explicitly allowed. The local hook mirrors the CI check; run `rush update` to ensure it is wired.                                                                                                                                                                            |
+| `rush change --verify` fails on a workflow-only PR                      | PR CI `rush-change-status`                            | Generate a `type: none` change file for the package whose workflow or surface is being altered. Workflow-only changes still need a paper trail in the CHANGELOG.                                                                                                                                                                                                                        |
 
 History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md)

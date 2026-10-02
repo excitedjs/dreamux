@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The config reader throws `RuleViolation` from `@excitedjs/dreamux-utils` for a refused `bin` or `permission_mode` value instead of a plain `Error`; messages are unchanged.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

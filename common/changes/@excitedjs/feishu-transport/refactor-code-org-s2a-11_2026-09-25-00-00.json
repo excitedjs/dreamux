@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Removed the unused group-creation/member-invite transport API (`FeishuTransport.createGroup`/`.inviteMembers` and their `FeishuCreateGroupInput`/`FeishuCreateGroupResult`/`FeishuInviteMembersInput`/`FeishuInviteMembersResult` types), the dead `FEISHU_TRANSPORT_PACKAGE` marker constant, and the `webSocketRegistration` test/embedding seam on `FeishuTransportOptions` (and its `FeishuWebSocketRegistration` type) — no production caller in this repo used any of them.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "053700@gmail.com"
+}

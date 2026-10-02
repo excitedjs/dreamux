@@ -15,6 +15,9 @@ which recipient. All three live in one server-owned document per configured
 channel at
 `~/.dreamux/state/<dispatcher-id>/feishu-routing.<channel-slug>.<digest>.json`,
 where the slug and digest are both derived from the configured channel `id`.
+`FeishuRouting` owns construction, loading, writes, and drain of this store.
+It loads before event subscriptions or extensions start and drains after
+extensions close.
 
 - It is fully server-owned. Do not edit, copy over, synthesize, or delete it as
   an operational repair, and do not hand-write a binding into it.
@@ -54,19 +57,74 @@ where the slug and digest are both derived from the configured channel `id`.
   changes nothing in this file — adding the commenter to `allow_users` is an
   access-state change, made through the pairing flow, not here.
 - A document this Dreamux version cannot read fails loud at channel start,
-  naming the file. Recreate the bindings through those tools rather than
-  editing it.
+  naming the file.
+- A topic-kind binding also carries the message id its cards reply under
+  (`root_message_id`). Automatic provisioning sets it when it binds; a manual
+  bind through `bind_channel` or an extension starts without one, and the
+  Channel fills it in itself — once, from the first message accepted in that
+  topic, or from Feishu when a card needs it first. It never replaces a value
+  that is already there. The Channel never reports or accepts it through a
+  tool; it is not an operator-facing fact and there is nothing to repair if it
+  is absent.
+
+## Feishu Peer-Bot Trust State
+
+The built-in Feishu Channel tracks which peer bots it has passively observed
+or been introduced to trust, per chat, in one server-owned file per dispatcher
+at `~/.dreamux/state/<dispatcher-id>/chat-bots.json`.
+
+- It is fully server-owned. Do not hand-edit it.
+- Loaded at the session's first peer-bot operation (a passive bot message,
+  `/introduce`, or a bot-added membership event), not at channel start, and
+  held in memory for the life of the session from then on. A change made to the
+  file while the channel is running is not read, and the session's next write
+  commits the held value to the whole file without re-reading it, so it
+  discards that change; the same holds for the routing document. An unreadable
+  or corrupt file degrades to an empty store rather than failing the channel's
+  start or any operation, since peer-bot discovery is not security-critical the
+  way `access.json` is.
+
+## Feishu Extension State
+
+Another plugin may register a Feishu extension: extra `channel-feishu` tools,
+card actions, and a lifecycle that runs with each Feishu channel. Each
+extension owns
+`~/.dreamux/state/plugins/feishu/<dispatcher-id>/feishu-extensions/<extension>/<channel-slug>.<digest>/`,
+one directory per configured Feishu channel, where the slug and digest are the
+same ones the channel's routing document filename carries. This root is the
+Feishu plugin's own state directory (`state/plugins/feishu/`, a plugin-scoped
+directory Core hands to every plugin), not the dispatcher's Feishu channel
+state — it is a different directory tree from `access.json`/`chat-bots.json`/
+the routing document, so an extension cannot land among Feishu's own files.
+The Feishu extension registry binds the plugin directory during server
+initialization and derives each session's extension path from it. Extension
+runtime state is held separately per channel session.
+Feishu passes the path and does not create it; the contents belong to that
+extension. Do not edit, copy over, or delete it as an operational repair.
+
+`dreamux doctor` lists each extension's tools and card actions on the
+diagnostic line of each configured Feishu channel, and only there: with no
+Dispatcher using a `builtin:feishu` channel, extensions are not listed. A
+Feishu extension that fails to initialize or start fails that Feishu channel's
+start.
 
 ## Collaboration-Space Identity At Team Creation
 
 A Collaboration Space's configured `identity` stays exactly as the operator set
-it in the routing document. When the Channel automatically provisions a Team for
-a topic in that space, it creates the Team's leader with that identity plus the
-bound conversation's reply address — the chat and the message that triggered the
-creation — appended after it. An absent space identity creates the Team with the
-reply address alone.
+it in the routing document; the Channel never rewrites it. When the Channel
+automatically provisions a Team for a topic in that space, it creates the Team's
+leader with that identity followed by guidance that names the bound chat's
+`chat_id` and the `message_id` of the message that triggered the Team, and tells
+the leader to pass that `message_id` to `reply` when no other is visible. An
+absent space identity creates the Team with the guidance alone. The guidance
+belongs to that Team's own leader identity from then on; a Team created or bound
+by hand has none.
 
-The appended text is generated per Team at creation time and belongs to the
-Team's own server-owned identity. It is not written back to the space policy,
-and an already-created Team is not revisited. To change the configured part, use
-`bind_collaboration_space`; do not hand-edit either document.
+The Channel also resolves an omitted address itself, as a second line: any
+message an agent sends into a Collaboration Space chat with no `message_id` —
+`reply`, `ask_user_question`, or an extension's card sent with its caller —
+lands under the caller's own bound topic's persisted `root_message_id` (see
+the binding row above) when exactly one such topic exists with one, and is
+refused with an instruction to pass a `message_id` otherwise. To change the
+configured identity, use `bind_collaboration_space`; do not hand-edit either
+document.

@@ -1,9 +1,6 @@
-import { turnFailureMessage } from './runtime-session.js';
+import { turnFailureMessage } from './rpc.js';
 import { toolDisplay } from './tool-display.js';
-import type {
-  ClaudeActivityLine,
-  ClaudeProtocolEvent,
-} from './types.js';
+import type { ClaudeActivityLine, ClaudeProtocolEvent } from './types.js';
 import type {
   JsonValue,
   RuntimeActivity,
@@ -41,11 +38,17 @@ export function endNativeTurn(
   reason: string | null,
   sink: AgentRuntimeActivitySink,
 ): void {
-  emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason }, sink);
+  emitActivity(
+    { kind: 'turn.ended', occurredAt: Date.now(), status, reason },
+    sink,
+  );
 }
 
 /** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
-function emitActivity(activity: RuntimeActivity, sink: AgentRuntimeActivitySink): void {
+function emitActivity(
+  activity: RuntimeActivity,
+  sink: AgentRuntimeActivitySink,
+): void {
   sink(Object.freeze(activity));
 }
 
@@ -53,7 +56,6 @@ export function handleProtocolEvent(
   event: ClaudeProtocolEvent,
   context: ProtocolEventContext,
 ): void {
-  if (event.kind === 'command_lifecycle') return;
   if (event.kind === 'result' || event.kind === 'interrupted') {
     const interrupted = event.kind === 'interrupted';
     const id = event.uuid;
@@ -63,24 +65,34 @@ export function handleProtocolEvent(
     const usage = event.outcome.tokenUsage;
     if (usage !== undefined && id !== null && id !== '') {
       const contextTokens = event.outcome.contextTokens;
-      emitActivity({
-        kind: 'token.usage',
-        occurredAt: Date.now(),
-        id,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        context: contextTokens == null
-          ? null
-          : { usedTokens: contextTokens, windowTokens: null },
-      }, context.activitySink);
+      emitActivity(
+        {
+          kind: 'token.usage',
+          occurredAt: Date.now(),
+          id,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          context:
+            contextTokens == null
+              ? null
+              : { usedTokens: contextTokens, windowTokens: null },
+        },
+        context.activitySink,
+      );
     }
     // `result` is claude's native terminal, and the display line ends on it:
     // attribution, completion and request settlement are
     // push-back's work on the same fact, and none of them may change the end,
     // delay it, or withhold it.
     endNativeTurn(
-      interrupted ? 'interrupted' : event.outcome.isError ? 'failed' : 'completed',
-      !interrupted && event.outcome.isError ? turnFailureMessage(event.outcome) : null,
+      interrupted
+        ? 'interrupted'
+        : event.outcome.isError
+          ? 'failed'
+          : 'completed',
+      !interrupted && event.outcome.isError
+        ? turnFailureMessage(event.outcome)
+        : null,
       context.activitySink,
     );
     context.activity.tools.clear();
@@ -115,7 +127,8 @@ function emitStreamActivity(
 ): void {
   if (line.kind === 'compact_boundary') {
     const id = stringValue(line.raw['uuid']);
-    if (id !== null && id !== '') emitActivity(compactedActivity(id), activitySink);
+    if (id !== null && id !== '')
+      emitActivity(compactedActivity(id), activitySink);
     return;
   }
   if (line.raw['parent_tool_use_id'] != null) return;
@@ -125,9 +138,10 @@ function emitStreamActivity(
   for (const candidate of content) {
     const block = recordValue(candidate);
     if (block === null) continue;
-    const activity = line.kind === 'assistant'
-      ? assistantBlockActivity(activityState, lineUuid, block)
-      : toolResultActivity(activityState, block);
+    const activity =
+      line.kind === 'assistant'
+        ? assistantBlockActivity(activityState, lineUuid, block)
+        : toolResultActivity(activityState, block);
     if (activity === null) continue;
     emitActivity(activity, activitySink);
   }
@@ -165,7 +179,11 @@ function assistantBlockActivity(
   lineUuid: string | null,
   block: Record<string, unknown>,
 ): RuntimeActivity | null {
-  if (block['type'] === 'text' && typeof block['text'] === 'string' && block['text'] !== '') {
+  if (
+    block['type'] === 'text' &&
+    typeof block['text'] === 'string' &&
+    block['text'] !== ''
+  ) {
     if (lineUuid === null || lineUuid === '') return null;
     return {
       kind: 'assistant.message',
@@ -238,7 +256,7 @@ function normalizeTextBlocks(value: unknown): JsonValue | null {
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 

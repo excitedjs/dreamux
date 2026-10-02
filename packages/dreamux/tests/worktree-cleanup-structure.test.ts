@@ -39,24 +39,23 @@ afterEach(() => {
 
 describe('repository-scale worktree-only cleanup', () => {
   it('does not enumerate refs or history and removes only the worktree non-force', async () => {
-    mocks.execa.mockImplementation(async (
-      command: unknown,
-      rawArgs: unknown,
-    ) => {
-      const args = rawArgs as string[];
-      switch (args[0]) {
-        case 'ls-files':
-        case 'status':
-        case 'worktree':
-          return { stdout: '' };
-        case 'for-each-ref':
-          return { stdout: LARGE_REF_OUTPUT };
-        default:
-          throw new Error(
-            `unexpected git command: ${String(command)} ${args.join(' ')}`,
-          );
-      }
-    });
+    mocks.execa.mockImplementation(
+      async (command: unknown, rawArgs: unknown) => {
+        const args = rawArgs as string[];
+        switch (args[0]) {
+          case 'ls-files':
+          case 'status':
+          case 'worktree':
+            return { stdout: '' };
+          case 'for-each-ref':
+            return { stdout: LARGE_REF_OUTPUT };
+          default:
+            throw new Error(
+              `unexpected git command: ${String(command)} ${args.join(' ')}`,
+            );
+        }
+      },
+    );
 
     await expect(new WorktreeManager().cleanup(identity)).resolves.toEqual({
       ...identity.worktree,
@@ -71,17 +70,21 @@ describe('repository-scale worktree-only cleanup', () => {
       ['worktree', 'remove', identity.worktree.path],
     ]);
     expect(LARGE_REF_OUTPUT.split('\n')).toHaveLength(LARGE_REF_COUNT);
-    expect(calls.filter((call) =>
-      (call[1] as string[])[0] === 'for-each-ref'
-    )).toHaveLength(0);
-    expect(calls.filter((call) =>
-      ['rev-list', 'rev-parse', 'merge-base', 'log'].includes(
-        (call[1] as string[])[0]!,
-      )
-    )).toHaveLength(0);
-    expect(calls.filter((call) =>
-      ['branch', 'update-ref'].includes((call[1] as string[])[0]!)
-    )).toHaveLength(0);
+    expect(
+      calls.filter((call) => (call[1] as string[])[0] === 'for-each-ref'),
+    ).toHaveLength(0);
+    expect(
+      calls.filter((call) =>
+        ['rev-list', 'rev-parse', 'merge-base', 'log'].includes(
+          (call[1] as string[])[0]!,
+        ),
+      ),
+    ).toHaveLength(0);
+    expect(
+      calls.filter((call) =>
+        ['branch', 'update-ref'].includes((call[1] as string[])[0]!),
+      ),
+    ).toHaveLength(0);
     for (const call of calls) {
       expect(call[2]).not.toHaveProperty('input');
       expect(call[1]).not.toContain('--force');

@@ -1,9 +1,7 @@
 import { constants } from 'node:fs';
 import { open, realpath, type FileHandle } from 'node:fs/promises';
 
-import { isPathWithin } from '@excitedjs/dreamux-utils';
-
-import { CodexActivityError } from './error.js';
+import { ActivityError, isPathWithin } from '@excitedjs/dreamux-utils';
 
 export interface CodexOpenedRollout {
   handle: FileHandle;
@@ -32,13 +30,13 @@ export async function openCodexRollout(
       realpath(candidate),
     ]);
     if (!opened.isFile()) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'invalid',
         'Codex activity source is not a regular file',
       );
     }
     if (!canonicalRoots.some((root) => isPathWithin(root, canonicalPath))) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'locator_outside_root',
         'Codex activity is unavailable for this session',
       );
@@ -52,7 +50,7 @@ export async function openCodexRollout(
     try {
       const currentStat = await current.stat();
       if (opened.dev !== currentStat.dev || opened.ino !== currentStat.ino) {
-        throw new CodexActivityError(
+        throw new ActivityError(
           'unreadable',
           'Codex activity source changed while opening',
         );
@@ -69,34 +67,30 @@ export async function openCodexRollout(
     };
   } catch (error) {
     await handle.close().catch(() => undefined);
-    if (error instanceof CodexActivityError) throw error;
-    throw new CodexActivityError(
-      'unreadable',
-      'Codex activity is unreadable',
-      { cause: error },
-    );
+    if (error instanceof ActivityError) throw error;
+    throw new ActivityError('unreadable', 'Codex activity is unreadable', {
+      cause: error,
+    });
   }
 }
 
-function classifyOpenError(error: unknown): CodexActivityError {
+function classifyOpenError(error: unknown): ActivityError {
   const code = (error as NodeJS.ErrnoException).code;
   if (code === 'ENOENT') {
-    return new CodexActivityError(
+    return new ActivityError(
       'not_found',
       'Codex activity is unavailable for this session',
       { cause: error },
     );
   }
   if (code === 'ELOOP') {
-    return new CodexActivityError(
+    return new ActivityError(
       'locator_outside_root',
       'Codex activity is unavailable for this session',
       { cause: error },
     );
   }
-  return new CodexActivityError(
-    'unreadable',
-    'Codex activity is unreadable',
-    { cause: error },
-  );
+  return new ActivityError('unreadable', 'Codex activity is unreadable', {
+    cause: error,
+  });
 }

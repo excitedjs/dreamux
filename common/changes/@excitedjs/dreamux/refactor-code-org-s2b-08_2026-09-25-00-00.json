@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2b, item 8: enabled exactOptionalPropertyTypes and fixed the 19 src + 1 test compile errors it surfaced, widening internal option types to accept explicit undefined and fixing one real behavioral gap (ObservableTransport.hasPerRequestStream now always returns a boolean, matching the MCP SDK's own `=== true` check). App package with no published .d.ts; no external-facing change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

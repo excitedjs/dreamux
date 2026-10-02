@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6c, item 4: fold WorkflowRunTerminal into WorkflowRun. Deleted the unreachable failAfterNotification/beforeFinalize/deliverWhileTerminal path (EntityTurn.settled never rejects, so the try/catch it guarded could never run) and run-terminal.ts's WorkflowRunTerminalDeps reverse-callback interface, moving its remaining state (terminalIntent, the memoized finalize task, the settled promise) and methods (reserveStop, requestTerminal, observeTerminal, ensureTerminalTask) onto WorkflowRun as private members. WorkflowRun.closeAdmission()/WorkflowService.closeAdmission() are renamed to requestStop()/requestStopAll() to name what they do; every internal call site is updated, and the redundant closeAdmission() call in TeamClosing.stopChildRuntimes is deleted since WorkflowService.stopAll() already calls requestStopAll() as its own first line. DispatcherWorkflows.closeAdmission() and TeamService.closeWorkflowAdmission() keep their own names (their own layer's naming is out of scope for this stage); only their bodies now call the renamed WorkflowService method. No persisted shape, wire contract, or observable run behavior changes.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -5,11 +5,10 @@
  * dispatchers — so it is owned here, beside the process it describes, rather
  * than by any dispatcher-local service.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { CoreCommandDefinition } from './command/types.js';
 
-import type { AnyCoreCommand } from './command/registry.js';
-import type { CoreCommandHost } from './command/host.js';
 import { commandPayload } from './command/payload.js';
+import type { AnyCoreCommand } from './command/registry.js';
 import {
   INTEGER,
   NO_INPUT,
@@ -17,6 +16,7 @@ import {
   arrayOf,
   objectSchema,
 } from './command/schema.js';
+import type { CoreCommandHost } from './server/command-host.js';
 import type { DispatcherSummary } from './service/dispatcher-service/types.js';
 
 interface ServerStatus {
@@ -25,7 +25,9 @@ interface ServerStatus {
   dispatchers: DispatcherSummary[];
 }
 
-export function serverCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
+export function serverCommands(
+  host: CoreCommandHost,
+): readonly AnyCoreCommand[] {
   const status: CoreCommandDefinition<'server.status', void, ServerStatus> = {
     name: 'server.status',
     version: 1,
@@ -45,7 +47,7 @@ export function serverCommands(host: CoreCommandHost): readonly AnyCoreCommand[]
       return {
         pid: process.pid,
         uptimeSec: Math.floor(process.uptime()),
-        dispatchers: await host.summarize(),
+        dispatchers: await host.dispatchers.summarize(),
       };
     },
   };

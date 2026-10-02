@@ -4,9 +4,15 @@
  *
  * Declares the codex bin check (deduped + executed by Dreamux core) and runs
  * the codex-home validation plus the codex version gate (#147) itself,
- * entirely against the neutral `@excitedjs/dreamux-types` diagnostic context. The
- * representative app-server socket sample is derived from the neutral path
- * context's `runtimeSocketDirs()`, so the package never names `~/.dreamux`.
+ * against the neutral `@excitedjs/dreamux-types` diagnostic context. The
+ * codex-home check runs against the runtime's actual spawn env (the
+ * diagnostic context's own target env — the managed service's env for a
+ * managed-service check — plus this runtime's `config.extra_env`, via
+ * `paths.ts`'s `codexSpawnEnv`) rather than the terminal process running
+ * `doctor`, so a per-agent `CODEX_HOME` or auth override is validated where
+ * it actually applies. The representative app-server socket sample is
+ * derived from the neutral path context's `runtimeSocketDirs()`, so the
+ * package never names `~/.dreamux`.
  */
 import type {
   AgentRuntimeBinCheck,
@@ -16,7 +22,6 @@ import type {
   AgentRuntimeDiagnosticResult,
 } from '@excitedjs/dreamux-types';
 
-import { codexArgsFromConfig, codexArgsToCli } from './args.js';
 import { type DispatcherCodexConfig } from './config.js';
 import {
   dispatcherCodexHomeDoctorContext,
@@ -24,12 +29,16 @@ import {
 } from './codex-home.js';
 import { representativeCodexSocketPath } from './internal/socket.js';
 import { resolveCodexBinPath } from './bin.js';
+import { codexSpawnEnv } from './paths.js';
 import { MIN_CODEX_VERSION, codexVersionSatisfies } from './version.js';
 
-type CodexDiagnosticContext = AgentRuntimeDiagnosticContext<DispatcherCodexConfig>;
+type CodexDiagnosticContext =
+  AgentRuntimeDiagnosticContext<DispatcherCodexConfig>;
 
 function codexBinCheckName(scope: CodexDiagnosticContext['scope']): string {
-  return scope === 'managedService' ? 'managed service Codex binary' : 'codex binary';
+  return scope === 'managedService'
+    ? 'managed service Codex binary'
+    : 'codex binary';
 }
 
 async function checkCodexVersion(
@@ -62,17 +71,29 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
         },
       ];
     },
-    async runDiagnostic(context, runner): Promise<AgentRuntimeDiagnosticResult> {
-      const cliArgs = codexArgsToCli(codexArgsFromConfig(context.config));
-      const socketDirs = context.paths?.runtimeSocketDirs() ?? [];
-      const homeContext = dispatcherCodexHomeDoctorContext(context.runtime_id, {
-        codexCliArgs: cliArgs,
-        socketPath: representativeCodexSocketPath(socketDirs, context.runtime_id),
-      });
-      const home = await validateDispatcherCodexHome(homeContext, {
-        env: context.env,
-        codexCliArgs: cliArgs,
-      });
+    async runDiagnostic(
+      context,
+      runner,
+    ): Promise<AgentRuntimeDiagnosticResult> {
+      const socketDirs = context.paths.runtimeSocketDirs();
+      // Validate against the env this runtime's Codex child actually spawns
+      // with (the diagnostic's target env — the managed service's own env for
+      // a managed-service check — plus this runtime's own `extra_env`), not
+      // the terminal process running `doctor`: an operator's per-agent
+      // `CODEX_HOME` or auth override in `extra_env`, or in the service's own
+      // env, must be honored here too.
+      const env = codexSpawnEnv(context.env, context.config.extra_env);
+      const homeContext = dispatcherCodexHomeDoctorContext(
+        context.runtime_id,
+        env,
+        {
+          socketPath: representativeCodexSocketPath(
+            socketDirs,
+            context.runtime_id,
+          ),
+        },
+      );
+      const home = await validateDispatcherCodexHome(homeContext, { env });
       const errors = [...home.errors];
       const versionError = await checkCodexVersion(context, runner);
       if (versionError !== null) errors.push(versionError);

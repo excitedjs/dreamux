@@ -1,9 +1,8 @@
 import {
+  ActivityError,
   isScanDigest,
   scanDigest,
 } from '@excitedjs/dreamux-utils';
-
-import { CodexActivityError } from './error.js';
 
 export interface CodexCursorPosition {
   segment: number;
@@ -17,10 +16,6 @@ interface CodexCursorEnvelope {
   gen: string;
   pos: CodexCursorPosition;
   bd: string;
-}
-
-export function codexQueryFingerprint(includeTools: boolean): string {
-  return scanDigest(JSON.stringify({ include_tools: includeTools }));
 }
 
 export function encodeCodexCursor(input: {
@@ -50,20 +45,20 @@ export function decodeCodexCursor(
     if (decoded.length === 0 || decoded.length > 3072) throw new Error('size');
     value = JSON.parse(decoded.toString('utf8'));
   } catch (error) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_invalid',
       'Codex activity cursor is invalid',
       { cause: error },
     );
   }
   if (!isCursorEnvelope(value)) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_invalid',
       'Codex activity cursor is invalid',
     );
   }
   if (value.fp !== expectedFingerprint) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_query_mismatch',
       'Codex activity cursor belongs to a different query',
     );

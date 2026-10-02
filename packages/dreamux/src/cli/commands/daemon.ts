@@ -8,13 +8,9 @@ import {
 import {
   DEFAULT_RESTART_ANNOUNCE,
   notifyResumedRestart,
-} from '../../daemon/restart-intent.js';
-import {
-  controlUserService,
-  type DaemonVerb,
-} from '../../daemon/service-control.js';
-import { ExecaCommandRunner } from '../../onboard/commands.js';
-import { validateDispatcherId } from '../../state/dispatcher-id.js';
+} from '../../service/dispatcher-service/restart-intent.js';
+import { controlUserService, type DaemonVerb } from '../../daemon/control.js';
+import { validateDispatcherId } from '../../platform/dispatcher-id.js';
 import { printServiceWarnings } from './service-output.js';
 import { noopHandler, type DreamuxCommand } from './types.js';
 
@@ -77,7 +73,10 @@ function createDaemonInstallCommand(): CommandModule<{}, DaemonInstallArgv> {
   };
 }
 
-function createDaemonUninstallCommand(): CommandModule<{}, DaemonUninstallArgv> {
+function createDaemonUninstallCommand(): CommandModule<
+  {},
+  DaemonUninstallArgv
+> {
   return {
     command: 'uninstall',
     describe:
@@ -140,9 +139,7 @@ function createDaemonRestartCommand(): CommandModule<{}, DaemonRestartArgv> {
 }
 
 async function runDaemonControl(verb: DaemonVerb): Promise<void> {
-  const result = await controlUserService(verb, {
-    runner: new ExecaCommandRunner(),
-  });
+  const result = await controlUserService(verb, {});
   const issued = result.commands
     .map((cmd) => `${cmd.command} ${cmd.args.join(' ')}`)
     .join('; ');
@@ -166,7 +163,7 @@ async function handleDaemonRestart(argv: DaemonRestartArgv): Promise<void> {
   );
   await notifyResumedRestart({
     targets,
-    ...(argv.announce !== undefined ? { announce: argv.announce } : {}),
+    announce: argv.announce,
     now: Date.now(),
     runControl: () => runDaemonControl('restart'),
   });

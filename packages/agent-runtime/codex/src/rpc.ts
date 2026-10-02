@@ -128,7 +128,9 @@ export class CodexWsClient {
 
   request<R = unknown>(method: string, params: unknown): Promise<R> {
     if (this.closed) {
-      return Promise.reject(this.closeReason ?? new Error('codex client closed'));
+      return Promise.reject(
+        this.closeReason ?? new Error('codex client closed'),
+      );
     }
     const id = this.nextId++;
     const envelope: RequestEnvelope = { method, id, params };
@@ -170,7 +172,9 @@ export class CodexWsClient {
       parsed = JSON.parse(text);
     } catch (e) {
       this.tearDown(
-        new Error(`codex daemon sent a non-JSON frame: ${(e as Error).message}`),
+        new Error(
+          `codex daemon sent a non-JSON frame: ${(e as Error).message}`,
+        ),
       );
       return;
     }

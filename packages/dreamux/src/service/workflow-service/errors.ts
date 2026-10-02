@@ -21,3 +21,5 @@ export class WorkflowRunNotFoundError extends StatedFailure {
     );
   }
 }
+
+export class WorkflowPersistenceError extends Error {}

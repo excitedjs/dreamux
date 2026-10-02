@@ -1,0 +1,16 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 8a, item 2: split RuntimeActivity/NativeActivity/RuntimeToolAction and the AgentActivity* cold-read contract out of agent-runtime.ts into a new activity.ts (both still root-exported, no import-path change for a root consumer). Removed CoreCommandContext/CoreCommandDefinition/CoreCommandRegistry/CoreCommandSource and JsonInvokeResult from the published surface: every consumer of the four Command types was inside @excitedjs/dreamux (now declared locally there), and JsonInvokeResult had zero consumers anywhere. Moved ChannelCommandError/ChannelCommandRetryableErrorCode from the now-deleted command.ts into team.ts, their only consumer (still root-exported). Named TeamSummary's previously-inline 9-member worktree_cleanup union as TeamWorktreeCleanupState. Made AgentRuntimeDiagnosticContext.paths required (the host has always supplied it; this only tightens a type). Nothing persisted changes and no runtime behavior changes.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    },
+    {
+      "comment": "Added an optional AgentRuntimeProvider.operatorStateRoot(env) capability, beside diagnostic: a provider that owns a global (non-per-agent-overridden) state directory reports it here instead of the host hard-coding that provider's directory name. Purely additive; a provider that does not implement it is unaffected.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

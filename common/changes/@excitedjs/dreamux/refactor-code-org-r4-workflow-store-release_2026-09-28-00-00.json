@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "`workflow_status` and `workflow_list` no longer serve a finished run's record from a stale in-memory cache for the rest of the dispatcher's process lifetime. The scope's `WorkflowRunStore` now releases a run's cached store once its owning run settles (or once a crash-recovery pass finds it already terminal), and reads finished records one-shot from disk afterward, so a hand edit to a finished run's record.json is now reflected.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

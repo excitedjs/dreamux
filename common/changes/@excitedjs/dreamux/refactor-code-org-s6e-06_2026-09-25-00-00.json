@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "TeammateCollection now takes its admission fence at construction and gates every TeammateOps verb (spawn/send/close/list/status/history/last/getCapabilities) internally, uniformly, instead of wrapping only the three mutating verbs at the dispatcher-service boundary. A dispatcher-root teammate.list/.status/.history/.last call now refuses with SERVER_SHUTTING_DOWN during a Dispatcher stop instead of answering from stale records; a Team-scoped one now refuses with TEAM_CLOSED during that Team's dissolve, and with SERVER_SHUTTING_DOWN during a Dispatcher stop, instead of always answering. dispatcher-service/teammate-ops.ts is deleted; DispatcherService.teammates returns the collection directly.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

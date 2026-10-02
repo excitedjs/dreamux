@@ -3,20 +3,23 @@ import type {
   AgentActivityQuery,
   AgentActivityReadContext,
 } from '@excitedjs/dreamux-types';
-import { readBytesAt } from '@excitedjs/dreamux-utils';
+import {
+  activityQueryFingerprint,
+  ActivityError,
+  readBytesAt,
+} from '@excitedjs/dreamux-utils';
 
 import type { DispatcherCodexConfig } from '../config.js';
-import { createCodexScanBudget } from './budget.js';
+import { codexSpawnEnv } from '../paths.js';
 import {
-  codexQueryFingerprint,
   decodeCodexCursor,
   digest,
   encodeCodexCursor,
   type CodexCursorPosition,
 } from './cursor.js';
-import { CodexActivityError } from './error.js';
 import { openCodexRollout, type CodexOpenedRollout } from './opened-file.js';
 import {
+  createCodexScanBudget,
   findCodexRolloutById,
   locateCodexRollout,
   readCodexRolloutText,
@@ -67,14 +70,12 @@ interface ScanResult {
 export async function readCodexRecentActivity(
   query: AgentActivityQuery,
   context: AgentActivityReadContext<DispatcherCodexConfig>,
-  testHooks: {
-    afterLocate?: () => void | Promise<void>;
-    maxReadChunkBytes?: number;
-  } = {},
 ): Promise<AgentActivityPage> {
   const limit = resolveLimit(query.limit);
   const includeTools = query.includeTools ?? true;
-  const roots = await resolveCodexRolloutRoots(effectiveEnvironment(context));
+  const roots = await resolveCodexRolloutRoots(
+    codexSpawnEnv(globalThis.process.env, context.config.extra_env),
+  );
   const discoveryBudget = createCodexScanBudget();
   const tail = await locateCodexRollout(
     null,
@@ -83,26 +84,20 @@ export async function readCodexRecentActivity(
     discoveryBudget,
   );
   const lineage = await buildLineage(tail, roots, discoveryBudget);
-  await testHooks.afterLocate?.();
   const generation = lineageGeneration(lineage);
-  const fingerprint = codexQueryFingerprint(includeTools);
+  const fingerprint = activityQueryFingerprint(includeTools);
   const cursor =
     query.cursor === undefined
       ? null
       : decodeCodexCursor(query.cursor, fingerprint);
   if (cursor !== null && cursor.gen !== generation) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
   }
   if (cursor !== null) {
-    await verifyBoundaryDigest(
-      lineage,
-      cursor.pos,
-      cursor.bd,
-      testHooks.maxReadChunkBytes,
-    );
+    await verifyBoundaryDigest(lineage, cursor.pos, cursor.bd);
   }
 
   const scan = await scanRecords({
@@ -110,9 +105,6 @@ export async function readCodexRecentActivity(
     startPosition: cursor?.pos ?? null,
     limit,
     includeTools,
-    ...(testHooks.maxReadChunkBytes !== undefined
-      ? { maxReadChunkBytes: testHooks.maxReadChunkBytes }
-      : {}),
   });
 
   const anchor = scan.hasOlder
@@ -125,7 +117,7 @@ export async function readCodexRecentActivity(
       offset: anchor.entry.start,
     };
     if (cursor !== null && !isStrictlyOlder(position, cursor.pos)) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'scan_unsupported',
         'Codex activity pagination cannot make safe progress',
       );
@@ -139,9 +131,7 @@ export async function readCodexRecentActivity(
   }
 
   return {
-    records: scan.collected
-      .map((entry) => entry.entry.record)
-      .reverse(),
+    records: scan.collected.map((entry) => entry.entry.record).reverse(),
     ...(nextCursor !== undefined ? { nextCursor } : {}),
     truncated: scan.truncated,
   };
@@ -149,12 +139,8 @@ export async function readCodexRecentActivity(
 
 function resolveLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_RECORD_LIMIT;
-  if (
-    !Number.isInteger(limit) ||
-    limit < 1 ||
-    limit > MAX_RECORD_LIMIT
-  ) {
-    throw new CodexActivityError(
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECORD_LIMIT) {
+    throw new ActivityError(
       'invalid',
       `Codex activity limit must be an integer in 1..${MAX_RECORD_LIMIT}`,
     );
@@ -172,7 +158,7 @@ async function buildLineage(
   let current = tail;
   while (current.historyBase !== null) {
     if (visited.has(current.historyBase.rolloutId)) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'invalid',
         'Codex activity history contains a cycle',
       );
@@ -189,7 +175,7 @@ async function buildLineage(
     });
     current = parent;
     if (lineage.length > 64) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'scan_unsupported',
         'Codex activity history exceeds the bounded depth',
       );
@@ -214,13 +200,12 @@ async function scanRecords(input: {
   startPosition: CodexCursorPosition | null;
   limit: number;
   includeTools: boolean;
-  maxReadChunkBytes?: number;
 }): Promise<ScanResult> {
   if (
     input.startPosition !== null &&
     input.startPosition.segment >= input.lineage.length
   ) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
@@ -239,11 +224,7 @@ async function scanRecords(input: {
     segmentIndex < input.lineage.length;
     segmentIndex += 1
   ) {
-    if (
-      Date.now() > deadline ||
-      bytesRemaining <= 0 ||
-      recordsRemaining <= 0
-    ) {
+    if (Date.now() > deadline || bytesRemaining <= 0 || recordsRemaining <= 0) {
       boundsHit = true;
       break;
     }
@@ -256,7 +237,6 @@ async function scanRecords(input: {
       segment.transcript,
       endOffset,
       bytesRemaining,
-      input.maxReadChunkBytes,
     );
     bytesRemaining -= window.bytesRead;
     recordsRemaining -= window.lines.length;
@@ -302,7 +282,6 @@ async function loadLineWindow(
   transcript: CodexValidatedRollout,
   requestedEndOffset: number | null,
   maxBytes: number,
-  maxReadChunkBytes?: number,
 ): Promise<{
   lines: CodexActivityLine[];
   startOffset: number;
@@ -329,11 +308,7 @@ async function loadLineWindow(
     const end = Math.min(requestedEndOffset ?? opened.size, opened.size);
     const start = Math.max(0, end - maxBytes);
     const length = end - start;
-    const data = await readBytesAt(opened.handle, start, length, {
-      ...(maxReadChunkBytes !== undefined
-        ? { maxChunkBytes: maxReadChunkBytes }
-        : {}),
-    });
+    const data = await readBytesAt(opened.handle, start, length);
     return {
       lines: parseLines(data, start, start === 0),
       startOffset: start,
@@ -367,7 +342,7 @@ function parseLines(
       try {
         value = JSON.parse(raw);
       } catch (error) {
-        throw new CodexActivityError(
+        throw new ActivityError(
           'invalid',
           'Codex activity contains an unreadable record',
           { cause: error },
@@ -390,11 +365,10 @@ async function verifyBoundaryDigest(
   lineage: readonly LineageSegment[],
   position: CodexCursorPosition,
   expectedDigest: string,
-  maxReadChunkBytes?: number,
 ): Promise<void> {
   const segment = lineage[position.segment];
   if (segment === undefined) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
@@ -402,10 +376,9 @@ async function verifyBoundaryDigest(
   const boundaryBytes = await readBoundaryRecordBytes(
     segment.transcript,
     position.offset,
-    maxReadChunkBytes,
   );
   if (digest(boundaryBytes) !== expectedDigest) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'cursor_stale',
       'Codex activity cursor is no longer valid',
     );
@@ -415,7 +388,6 @@ async function verifyBoundaryDigest(
 async function readBoundaryRecordBytes(
   transcript: CodexValidatedRollout,
   offset: number,
-  maxReadChunkBytes?: number,
 ): Promise<Buffer> {
   const opened = await openValidatedSegment(transcript);
   try {
@@ -424,17 +396,13 @@ async function readBoundaryRecordBytes(
       return boundaryRecordFromBuffer(Buffer.from(text, 'utf8'), offset);
     }
     if (offset >= opened.size) {
-      throw new CodexActivityError(
+      throw new ActivityError(
         'cursor_stale',
         'Codex activity cursor is no longer valid',
       );
     }
     const length = Math.min(MAX_DECODED_BYTES, opened.size - offset);
-    const bytes = await readBytesAt(opened.handle, offset, length, {
-      ...(maxReadChunkBytes !== undefined
-        ? { maxChunkBytes: maxReadChunkBytes }
-        : {}),
-    });
+    const bytes = await readBytesAt(opened.handle, offset, length);
     return boundaryRecordFromBuffer(bytes, 0);
   } finally {
     await opened.handle.close();
@@ -450,7 +418,7 @@ async function openValidatedSegment(
     (opened.dev !== transcript.dev || opened.ino !== transcript.ino)
   ) {
     await opened.handle.close();
-    throw new CodexActivityError(
+    throw new ActivityError(
       'unreadable',
       'Codex activity source changed after validation',
     );
@@ -461,22 +429,12 @@ async function openValidatedSegment(
 function boundaryRecordFromBuffer(bytes: Buffer, offset: number): Buffer {
   const newline = bytes.indexOf(0x0a, offset);
   if (newline < 0) {
-    throw new CodexActivityError(
+    throw new ActivityError(
       'scan_unsupported',
       'Codex activity cursor boundary exceeds the bounded limit',
     );
   }
   return bytes.subarray(offset, newline + 1);
-}
-
-function effectiveEnvironment(
-  context: AgentActivityReadContext<DispatcherCodexConfig>,
-): Record<string, string | undefined> {
-  return {
-    ...process.env,
-    ...(context.injectEnv ?? {}),
-    ...context.config.extra_env,
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

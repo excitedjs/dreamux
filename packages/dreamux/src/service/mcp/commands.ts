@@ -27,10 +27,9 @@
  * live in the lease the token resolves to, which is what keeps the shim
  * genuinely identity-free.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { CoreCommandDefinition } from '../../command/types.js';
 
 import { ValidationError } from '../../command/errors.js';
-import type { CoreCommandHost } from '../../command/host.js';
 import { commandPayload, mustNonEmptyString } from '../../command/payload.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
 import {
@@ -42,6 +41,7 @@ import {
   arrayOf,
   objectSchema,
 } from '../../command/schema.js';
+import type { McpLeaseRegistry } from './leases.js';
 import { assertDelegateResult } from './projection.js';
 import type { McpDelegateResult } from './types.js';
 
@@ -66,7 +66,9 @@ interface McpDescribeResult {
   tools: readonly unknown[];
 }
 
-export function mcpCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
+export function mcpCommands(
+  mcpLeases: McpLeaseRegistry,
+): readonly AnyCoreCommand[] {
   const describe: CoreCommandDefinition<
     'mcp.describe',
     McpDescribeInput,
@@ -97,7 +99,7 @@ export function mcpCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       // delegate is deliberately not consulted again: serving the snapshot is
       // what makes "immutable for one generation" a fact rather than a rule a
       // delegate is trusted to keep.
-      const catalog = host.mcpLeases.catalog(input.token);
+      const catalog = mcpLeases.catalog(input.token);
       return {
         identity: {
           name: catalog.identity.name,
@@ -158,7 +160,7 @@ export function mcpCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       // a delegate result that is neither published shape fails here, so no
       // caller sees a malformed answer reported as a successful Command.
       return assertDelegateResult(
-        await host.mcpLeases.invoke(input.token, {
+        await mcpLeases.invoke(input.token, {
           name: input.name,
           arguments: input.arguments,
         }),

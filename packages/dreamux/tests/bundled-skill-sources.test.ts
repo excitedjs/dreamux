@@ -21,7 +21,10 @@ import {
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 const EXPECTED_SKILLS_BY_ROOT = {
-  [bundledDispatcherSkillRoot()]: ['dispatcher-workflow', 'dreamux-maintenance'],
+  [bundledDispatcherSkillRoot()]: [
+    'dispatcher-workflow',
+    'dreamux-maintenance',
+  ],
   [bundledTeamLeaderSkillRoot()]: ['teamwork'],
   [bundledSharedSkillRoot()]: ['dynamic-workflow'],
 } satisfies Record<string, string[]>;
@@ -36,7 +39,9 @@ describe('bundled Dreamux skill roots', () => {
     ]);
   });
 
-  for (const [root, expectedSkills] of Object.entries(EXPECTED_SKILLS_BY_ROOT)) {
+  for (const [root, expectedSkills] of Object.entries(
+    EXPECTED_SKILLS_BY_ROOT,
+  )) {
     it(`ships only the expected skills in ${root}`, () => {
       expect(existsSync(root)).toBe(true);
       const skillNames = readdirSync(root, { withFileTypes: true })
@@ -61,7 +66,10 @@ describe('bundled Dreamux skill roots', () => {
   it('documents role-specific plus shared workflow injection and name protection', () => {
     const documents = [
       readFileSync(join(REPO_ROOT, 'packages/dreamux/README.md'), 'utf8'),
-      readFileSync(join(REPO_ROOT, '.agents/domains/dispatcher-skill.md'), 'utf8'),
+      readFileSync(
+        join(REPO_ROOT, '.agents/domains/dispatcher-skill.md'),
+        'utf8',
+      ),
     ];
 
     for (const document of documents) {

@@ -30,7 +30,10 @@ rl.on('line', (line) => {
   } catch {
     return;
   }
-  if (msg?.type === 'control_request' && msg?.request?.subtype === 'remote_control') {
+  if (
+    msg?.type === 'control_request' &&
+    msg?.request?.subtype === 'remote_control'
+  ) {
     process.stderr.write('remote-control-requested\n');
     emit({
       type: 'control_response',
@@ -47,7 +50,11 @@ rl.on('line', (line) => {
   const text = msg?.message?.content?.[0]?.text ?? '';
 
   if (typeof msg.uuid === 'string') {
-    emit({ type: 'command_lifecycle', command_uuid: msg.uuid, state: 'started' });
+    emit({
+      type: 'command_lifecycle',
+      command_uuid: msg.uuid,
+      state: 'started',
+    });
   }
   if (!sentInit) {
     emit({
@@ -62,7 +69,10 @@ rl.on('line', (line) => {
   emit({
     type: 'assistant',
     session_id: 'fake-sess-1',
-    message: { role: 'assistant', content: [{ type: 'text', text: `echo:${text}` }] },
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: `echo:${text}` }],
+    },
   });
   if (typeof msg.uuid === 'string') {
     emit({
@@ -72,6 +82,12 @@ rl.on('line', (line) => {
     });
   }
   if (mode === 'echo') {
-    emit({ type: 'result', subtype: 'success', result: `echo:${text}`, session_id: 'fake-sess-1', user_message_uuid: msg.uuid });
+    emit({
+      type: 'result',
+      subtype: 'success',
+      result: `echo:${text}`,
+      session_id: 'fake-sess-1',
+      user_message_uuid: msg.uuid,
+    });
   }
 });

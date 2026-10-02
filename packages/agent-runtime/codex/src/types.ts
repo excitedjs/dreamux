@@ -48,7 +48,6 @@ export interface InitializeResponse {
 
 export interface ThreadStartParams {
   cwd?: string | null;
-  approvalPolicy?: string | null;
   baseInstructions?: string | null;
   developerInstructions?: string | null;
 }
@@ -63,7 +62,6 @@ export interface ThreadStartResponse {
 export interface ThreadResumeParams {
   threadId: string;
   cwd?: string | null;
-  approvalPolicy?: string | null;
   baseInstructions?: string | null;
   developerInstructions?: string | null;
 }

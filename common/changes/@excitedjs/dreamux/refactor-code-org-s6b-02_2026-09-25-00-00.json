@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 6b item 2 (R48): deleted the team.hooks.created plugin hook end-to-end, together with its background scheduling (fireCreated), its InFlightWork-backed in-flight tracking, and the Dispatcher shutdown drain that awaited it. A plugin that tapped this hook loses it; nothing in this tree taps it today, and Dispatcher shutdown no longer waits on it.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

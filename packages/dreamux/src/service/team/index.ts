@@ -1,0 +1,966 @@
+import type {
+  AgentRuntimeInterruptOutcome,
+  TeamCreateCommand,
+  TeamSummary,
+} from '@excitedjs/dreamux-types';
+
+import {
+  normalizeSkillSources,
+  parseAgentRuntimeSkillSources,
+} from '../../agent-runtime/skill-sources.js';
+import { defaultWorkspaceEnabled } from '../../config/config.js';
+import { ServerShuttingDownError } from '../../platform/errors.js';
+import {
+  clampHistoryLimit,
+  decodeCursor,
+  encodeCursor,
+  matchesGrepText,
+  previewText,
+} from '../../platform/history-page.js';
+import { teamMateCollectionDir } from '../../platform/paths.js';
+import { KeyedAsyncQueue } from '../../platform/serial-queue.js';
+import { throwSettledFailures } from '../../platform/shutdown-errors.js';
+import {
+  requireLifecycleText,
+  type AgentEntityIdentity,
+  type AgentEntityIdentityStatus,
+} from '../agent/identity.js';
+import { toStatus } from '../agent/records.js';
+import {
+  agentCollectionMemberCount,
+  readAgentIdentity,
+} from '../agent/store.js';
+import type { TeammateSubmitInput } from '../agent/submission.js';
+import type { TurnAdmission } from '../agent/turn.js';
+import type { TeamMateSharedWorkspace } from '../agent/types.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
+import { allocateConcreteNameAsync } from '../name-allocator.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
+import type { WorktreeManager } from '../worktree/manager.js';
+import { repoWorktree } from '../worktree/repo-request.js';
+import {
+  IdempotencyConflictError,
+  TeamClosedError,
+  teamErrorInfo,
+  TeamNotFoundError,
+} from './errors.js';
+import { TEAM_LEADER_REQUIRED_SKILL_SOURCES } from './leader.js';
+import {
+  settleTeamWorktreeCleanup,
+  TeamService,
+  type TeamServiceDeps,
+} from './service.js';
+import { TeamStore } from './store.js';
+import { teamSummary } from './team-summary.js';
+import type { TeamsPort } from './teams-port.js';
+import {
+  validateTeamId,
+  type TeamCollectionOptions,
+  type TeamCreateAtNameInput,
+  type TeamDissolveCommand,
+  type TeamDissolveReceipt,
+  type TeamHistoryQuery,
+  type TeamHistoryResult,
+  type TeamHistoryRow,
+  type TeamListRow,
+  type TeamRecord,
+} from './types.js';
+
+/**
+ * The dispatcher's team collection (issue #233): one per dispatcher, owned by
+ * `DispatcherService`. It stores, creates, finds, lists, materializes, and
+ * evicts Teams, and nothing else — a Team's own lifecycle, including dissolve,
+ * belongs to the {@link TeamService} that is that Team.
+ *
+ * `get` (private) is a get-or-rebuild factory (like `Dispatchers.get` /
+ * `TeammateCollection.entityFor`): cached live service if any, else rebuilt
+ * from the persisted {@link TeamRecord} and cached. Each `TeamService` OWNS its
+ * per-team `TeammateCollection`, bound to the Team ID and workspace at
+ * construction from the shared dependencies forwarded here.
+ *
+ * Implements {@link TeamsPort} directly: every dispatcher-facing per-Team
+ * operation gates itself on the injected the dispatcher fence internally, so a
+ * caller reaches a Team through exactly one surface instead of an
+ * open/admit/read triple it must fence itself.
+ */
+export class TeamCollection implements TeamsPort {
+  private readonly dispatcherId: string;
+  private readonly store: TeamStore;
+  private readonly worktrees: WorktreeManager;
+  /**
+   * One materialized Team per id: the whole materialization cache.
+   * {@link track} sets an entry only once it has also arranged eviction
+   * (`service.closed.then(...)`), so an entry here is by definition a Team
+   * this collection is both caching and watching for its close.
+   */
+  private readonly live = new Map<string, TeamService>();
+  private readonly constructing = new Map<
+    string,
+    Promise<TeamService | null>
+  >();
+  /**
+   * Created Teams whose initial turn is still being admitted. Not in `live`,
+   * because a Team that is not yet running must not be served; held here,
+   * because that turn starts the leader's runtime and a host stop has to reach
+   * it.
+   */
+  private readonly starting = new Set<TeamService>();
+  /** Serializes the whole lookup/create sequence per request id. */
+  private readonly createRequestLifecycle = new KeyedAsyncQueue();
+
+  constructor(private readonly opts: TeamCollectionOptions) {
+    this.dispatcherId = opts.dispatcherId;
+    this.worktrees = opts.worktrees;
+    this.store = new TeamStore({
+      root: opts.root,
+      dispatcherId: this.dispatcherId,
+    });
+  }
+
+  /**
+   * Create one Team under a `team.create` request identity.
+   *
+   * The Team record is the whole protocol. Publishing it exclusively is the
+   * single acceptance point: it is what makes the Team exist, what takes the
+   * concrete name, and what durably records the request id and canonical
+   * payload hash a later replay is decided against.
+   *
+   * Before publication nothing is owned — the request is unaccepted, no Team
+   * exists, and the candidate name is free — so a lost process, a rejected
+   * candidate, or a plain retry may simply pick another name. After publication
+   * the same id with the same payload always resolves back to that Team,
+   * including once it is closed; the same id with a different payload is an
+   * idempotency conflict.
+   *
+   * Gated by the dispatcher fence like every other `TeamsPort` method: a create
+   * admitted right as the dispatcher starts closing still crosses the fence
+   * before doing any work, rather than building a workspace and a leader only
+   * to self-close in `track()` the moment it registers.
+   *
+   * The caller's `command` is the wire-shaped request, untranslated: only a
+   * request that is not a replay of an already-accepted one runs through the
+   * owning Dispatcher's `createTeam` hook (replay identity is decided above,
+   * against `payloadHash` alone, so a plugin never sees a replayed request),
+   * and only after that hook does this method do the repo/skill-source
+   * translation `commands.ts` and `mcp.ts` used to each do for themselves —
+   * so a plugin's own `leader.skill_sources`/`repo` value gets the identical
+   * mandatory-root injection and repo→worktree mapping an admin-supplied one
+   * gets, rather than skipping it by running before the hook.
+   */
+  async createFromRequest(input: {
+    requestId: string;
+    payloadHash: string;
+    command: TeamCreateCommand;
+    deliverCompletionToDispatcher: boolean;
+  }): Promise<TeamSummary> {
+    return this.opts.fence.admit(() =>
+      this.createRequestLifecycle.run(input.requestId, async () => {
+        const accepted = await this.acceptedRequest(input.requestId);
+        if (accepted !== null) {
+          if (accepted.create_payload_hash !== input.payloadHash) {
+            throw new IdempotencyConflictError(
+              `request_id ${JSON.stringify(input.requestId)} was already accepted with a ` +
+                'different team.create payload; use a new request_id for a new Team',
+            );
+          }
+          // Read the accepted Team without materializing it or resubmitting work.
+          return this.summaryFromRecord(accepted);
+        }
+        // `request_id` is excluded from what a tap sees: replay identity is
+        // decided above, against `payloadHash` alone, before this hook ever
+        // runs.
+        const {
+          name_prefix,
+          intent,
+          leader,
+          repo: requestedRepo,
+        } = input.command;
+        const resolved = await this.opts.dispatcherHooks.createTeam.promise({
+          name_prefix,
+          intent,
+          leader,
+          ...(requestedRepo !== undefined ? { repo: requestedRepo } : {}),
+        });
+        // A `createTeam` tap can return any `leader.skill_sources` value the
+        // type system cannot check at runtime (a plugin need not even be
+        // written in TypeScript). The pre-hook value already passed this same
+        // structural check once (`optionalParsedSkillSources`, at parse time);
+        // after the hook, and only after it, repeat it so a malformed value
+        // fails as a clean RuleViolation naming the field instead of a raw
+        // filesystem error deep inside skill-root canonicalization.
+        const parsedSkillSources =
+          resolved.leader.skill_sources !== undefined
+            ? parseAgentRuntimeSkillSources(
+                resolved.leader.skill_sources,
+                'plugin "createTeam" hook output\'s leader.skill_sources',
+              )
+            : null;
+        const skillSources = await normalizeSkillSources(parsedSkillSources, {
+          requiredSources: TEAM_LEADER_REQUIRED_SKILL_SOURCES,
+        });
+        const repo = repoWorktree(resolved.repo ?? null);
+        // A named repository request with no explicit path passes no
+        // `repoCwd` at all: `prepareWorkspace()` already falls back to the
+        // dispatcher's own default workspace when it sees none.
+        const repoCwd = repo?.cwd ?? null;
+        const options = {
+          intent: resolved.intent,
+          leaderAgentRuntime: resolved.leader.agent_runtime,
+          ...(repoCwd !== null ? { repoCwd } : {}),
+          ...(repo !== null ? { worktree: repo.worktree } : {}),
+          prompt: resolved.leader.prompt,
+          identity: resolved.leader.identity,
+          ...(skillSources !== null ? { skillSources } : {}),
+        };
+        const outcome: { created: TeamService | null } = { created: null };
+        const teamName = await allocateConcreteNameAsync({
+          kind: 'team',
+          base: resolved.name_prefix,
+          accept: async (candidate) => {
+            // No probe here: `create`'s own early-out against the same
+            // record is the authoritative answer, so a candidate already
+            // owned by another Team is refused there instead of twice.
+            outcome.created = await this.createAtCandidate({
+              ...options,
+              name: candidate,
+              createRequest: {
+                requestId: input.requestId,
+                payloadHash: input.payloadHash,
+              },
+              deliverCompletionToDispatcher:
+                input.deliverCompletionToDispatcher,
+            });
+            return outcome.created !== null;
+          },
+        });
+        const created = outcome.created;
+        if (created === null) {
+          throw new Error(
+            `team.create request ${JSON.stringify(input.requestId)} accepted the name ` +
+              `${JSON.stringify(teamName)} without publishing a Team record`,
+          );
+        }
+        return created.status();
+      }),
+    );
+  }
+
+  /**
+   * The Team this request id already produced, read from the records.
+   *
+   * The records are the only ledger: a creation that failed after publishing
+   * one still accepted the request, and a process that died before returning
+   * left the same proof behind. Scanning them is what makes a replay answer
+   * the same way across restarts.
+   */
+  private async acceptedRequest(requestId: string): Promise<TeamRecord | null> {
+    for (const team of await this.store.list()) {
+      if (team.create_request_id === requestId) return team;
+    }
+    return null;
+  }
+
+  /**
+   * Create one Team at a candidate name, or report the candidate as taken.
+   *
+   * `null` means a valid Team record occupies that name — the candidate is
+   * unavailable and the allocator should offer another.
+   */
+  private async createAtCandidate(
+    input: TeamCreateAtNameInput,
+  ): Promise<TeamService | null> {
+    return this.create(input, validateTeamId(input.name));
+  }
+
+  /**
+   * Compact rows from records alone; a list never consults a live runtime.
+   *
+   * Gated like every other per-Team operational read: an inventory read
+   * this narrow still names a Team, so it is fenced the same as `history` and
+   * `summary` rather than left observable through a dispatcher stop.
+   */
+  async list(): Promise<TeamListRow[]> {
+    return this.opts.fence.admit(() => this.listRows());
+  }
+
+  /** Gated because a read is still per-Team operational access. */
+  async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
+    return this.opts.fence.admit(() => this.historyResult(input));
+  }
+
+  /**
+   * Get-or-rebuild the team's service; a cold-cache miss is deduped (#233).
+   *
+   * Live Teams only: a closed record has no service, so this reports it as
+   * closed rather than building one. Callers outside reach a Team through
+   * {@link open} or a lease, which say the same thing in their own words.
+   *
+   * Creation publishes a Team's record before its object graph is finished, so
+   * a read that saw only the record would build a second, competing owner of
+   * the same Team. Every path that can produce the object registers through
+   * `constructing` instead. `null` from a joined construction means that
+   * construction did not produce this Team — a create whose candidate turned
+   * out to be taken — so the decision is made again against what is now
+   * durable rather than reported as this caller's answer.
+   */
+  private async get(teamId: string): Promise<TeamService> {
+    const id = validateTeamId(teamId);
+    for (;;) {
+      const cached = this.live.get(id);
+      if (cached !== undefined) return cached;
+      const joined = this.constructing.get(id);
+      if (joined === undefined) {
+        const construction = this.rebuild(id);
+        this.publishConstruction(id, construction);
+        return construction;
+      }
+      const service = await joined;
+      if (service !== null) return service;
+    }
+  }
+
+  /**
+   * One Team's status.
+   *
+   * An open Team this process already holds answers for itself, because its
+   * live state is the more current version of the same shape. Any other Team is
+   * read from its records: whether it is closed or simply not materialized
+   * here, a read must not build an entity — and a Team with no runtime in this
+   * process has no runtime state for a projection to be missing.
+   *
+   * Gated the same as every other per-Team operational read; the wrap
+   * used to sit on the caller (`DispatcherService.getTeamStatus()`) and now
+   * sits here instead, on the method itself.
+   */
+  async summary(teamId: string): Promise<TeamSummary> {
+    return this.opts.fence.admit(async () => {
+      const record = await this.mustTeam(validateTeamId(teamId));
+      return this.summaryFromRecord(record);
+    });
+  }
+
+  /**
+   * One source selection for status and accepted-request replay.
+   *
+   * The record just read from the store is authoritative for lifecycle, and it
+   * decides whether there is an entity to ask at all: a closed Team is a
+   * record, so it answers from that record and never from a cached service.
+   * Only an open Team this process holds answers for itself.
+   */
+  private async summaryFromRecord(record: TeamRecord): Promise<TeamSummary> {
+    if (record.status === 'closed') return this.recordSummary(record);
+    const live = this.live.get(record.team_id) ?? null;
+    return live === null ? this.recordSummary(record) : live.status();
+  }
+
+  /**
+   * Finish the physical reclamation a previous run left pending.
+   *
+   * The Team's own worktree cleanup fact is the entire recovery authority: a
+   * `closed` Team still marked `cleanup-pending` has a managed checkout the
+   * operator authorized destroying, and nothing else about a dissolve outlives
+   * the process that ran it. Nothing is materialized to do it — a closed Team
+   * is a record, and the record is all this work reads and writes.
+   *
+   * Each reclaim is launched, not awaited: it is the same background work that
+   * ran behind the durable close, so a slow Git must not hold up dispatcher
+   * start. A failure leaves the pending fact standing for the next start.
+   */
+  async recoverWorktreeCleanup(): Promise<void> {
+    for (const record of await this.store.list()) {
+      if (record.status !== 'closed') continue;
+      if (record.worktree.cleanup_state !== 'cleanup-pending') continue;
+      void this.reclaimTeamWorktree(record.team_id);
+    }
+  }
+
+  private async reclaimTeamWorktree(teamId: string): Promise<void> {
+    try {
+      await settleTeamWorktreeCleanup(
+        this.store.handle(teamId),
+        this.worktrees,
+      );
+    } catch (error) {
+      this.opts.log.error(
+        {
+          dispatcher_id: this.dispatcherId,
+          team_id: teamId,
+          err: teamErrorInfo(error),
+        },
+        'Team managed worktree cleanup recovery failed',
+      );
+    }
+  }
+
+  /**
+   * Get one Team that can take new work.
+   *
+   * The collection's whole part in a per-Team operation: find the entity, or
+   * say why there is none to reach — {@link TeamNotFoundError} for a Team that
+   * does not exist, {@link TeamClosedError} for one that is over. What happens
+   * next is the Team's own.
+   */
+  async open(teamId: string): Promise<TeamService> {
+    const id = validateTeamId(teamId);
+    const record = await this.mustTeam(id);
+    if (record.status === 'closed') {
+      throw new TeamClosedError(`Team ${JSON.stringify(id)} is closed`);
+    }
+    return this.get(id);
+  }
+
+  private async mustTeam(teamId: string): Promise<TeamRecord> {
+    const team = await this.store.get(validateTeamId(teamId));
+    if (team === null) {
+      throw new TeamNotFoundError(
+        `Team ${JSON.stringify(teamId)} does not exist`,
+      );
+    }
+    return team;
+  }
+
+  /**
+   * Submit one turn to a Team's TeamLeader.
+   *
+   * `deliverCompletionToDispatcher` is resolved to a `completionRecipient` here, inside
+   * the fence, rather than accepted as one directly: a caller outside `team/`
+   * knows only whether a Core-side initiator is waiting for the leader's
+   * completion, never the dispatcher Agent itself. A Channel-originated turn
+   * passes `false`, because the leader answers on its own Channel.
+   */
+  submitToLeader(
+    teamId: string,
+    input: TeammateSubmitInput & { deliverCompletionToDispatcher: boolean },
+  ): Promise<TurnAdmission> {
+    return this.opts.fence.admit(async () => {
+      const { deliverCompletionToDispatcher, ...submission } = input;
+      const completionRecipient = deliverCompletionToDispatcher
+        ? this.opts.completionOwner.completionRecipient()
+        : null;
+      return (await this.open(teamId)).submitInput({
+        ...submission,
+        ...(completionRecipient !== null ? { completionRecipient } : {}),
+      });
+    });
+  }
+
+  /** Interrupt one Team's leader. */
+  interruptLeader(teamId: string): Promise<AgentRuntimeInterruptOutcome> {
+    return this.opts.fence.admit(async () =>
+      (await this.open(teamId)).interruptLeader(),
+    );
+  }
+
+  /**
+   * Submit one Team's dissolve.
+   *
+   * Never waits for the outcome: once the Team owns the operation the caller
+   * has its receipt, and a second submission joins the first instead of
+   * dismantling the Team twice.
+   */
+  dissolve(
+    teamId: string,
+    input: TeamDissolveCommand,
+  ): Promise<TeamDissolveReceipt> {
+    return this.opts.fence.admit(async () =>
+      (await this.open(teamId)).dissolve(input),
+    );
+  }
+
+  scheduler(teamId: string): Promise<SchedulerCommands> {
+    return this.opts.fence.admit(
+      async () => (await this.open(teamId)).scheduler,
+    );
+  }
+
+  /**
+   * Materialize every non-closed Team. Rebuilding a Team reconciles the
+   * Workflow records its previous process left running, so a failure here
+   * fails the dispatcher's start before any channel opens.
+   */
+  async recover(): Promise<void> {
+    for (const team of await this.store.list()) {
+      if (team.status === 'closed') continue;
+      await this.get(team.team_id);
+    }
+  }
+
+  /**
+   * Open every non-closed Team's admissions (Workflow admission and its
+   * scheduler) through {@link TeamService.startAdmissions}. One Team's failure
+   * is logged and does not keep the others closed.
+   */
+  async startAdmissions(): Promise<void> {
+    for (const team of await this.store.list()) {
+      if (team.status === 'closed') continue;
+      try {
+        const service = await this.get(team.team_id);
+        await service.startAdmissions();
+      } catch (error) {
+        this.opts.log.error(
+          {
+            dispatcher_id: this.dispatcherId,
+            team_id: team.team_id,
+            err: teamErrorInfo(error),
+          },
+          'Team admissions start failed',
+        );
+      }
+    }
+  }
+
+  /** Close every live Team's admissions (Workflow stop-all and its scheduler). */
+  stopAdmissions(): void {
+    for (const service of this.live.values()) service.stopAdmissions();
+  }
+
+  /**
+   * Release the runtime authority this process took over its Teams.
+   *
+   * Only Teams this process materialized are swept, because only they hold a
+   * runtime to release. The discovery pass this replaced listed every durable
+   * non-closed record and materialized it first, which on a `starting` record
+   * creates that Team's TeamLeader identity — durable work on the stop path,
+   * done to entities the run never started.
+   */
+  async stopForHost(): Promise<void> {
+    const services = [...this.live.values(), ...this.starting];
+    // Nothing is evicted: a stopped Team is still this collection's until it
+    // closes, so the dispatcher's second sweep reaches it again if a pre-fence
+    // use restarted its leader in between.
+    const results = await Promise.allSettled(
+      // The containment root publishes its aggregate admission fence before
+      // this sweep. Do not hold a Team route lock while releasing members:
+      // their captured completion delivery may resolve the same TeamLeader
+      // through that route before the leader itself is released.
+      services.map((service) => service.stopForHost()),
+    );
+    throwSettledFailures(results, 'multiple Team runtimes failed to stop');
+  }
+
+  /**
+   * Create one Team at this candidate name, or report the name as taken.
+   *
+   * `null` means the candidate is not this creation's to use: a valid Team
+   * record already occupies it, or a construction already owns it. The caller
+   * allocates another one, and nothing this attempt made survives it.
+   */
+  private async create(
+    input: TeamCreateAtNameInput,
+    teamId: string,
+  ): Promise<TeamService | null> {
+    requireLifecycleText(input.intent, 'Team create intent');
+    // A cheap early-out before the expensive workspace preparation. The
+    // authoritative answer is the exclusive record publication below, which
+    // reports the same thing if the name is taken in between.
+    if ((await this.store.get(teamId)) !== null) return null;
+    // Synchronous from here: whoever registers first owns this id, so a second
+    // create at the same candidate steps aside rather than racing it.
+    if (this.constructing.has(teamId)) return null;
+    const construction = this.createTeam(input, teamId);
+    this.publishConstruction(teamId, construction);
+    return construction;
+  }
+
+  /**
+   * Prepare the workspace, publish the record, and take ownership of the
+   * result — the whole of what creating a Team means here.
+   *
+   * It is one operation because it has one side effect to answer for. The
+   * checkout is prepared before any record exists, so an ending that never
+   * publishes one has to undo it; after publication the record owns the
+   * checkout, and undoing it here would reach into a Team that exists.
+   */
+  private async createTeam(
+    input: TeamCreateAtNameInput,
+    teamId: string,
+  ): Promise<TeamService | null> {
+    const workspace = await this.prepareWorkspace(input, teamId);
+    const serviceInput = {
+      teamId,
+      name: input.name,
+      createRequest: input.createRequest,
+      prompt: input.prompt,
+      deliverCompletionToDispatcher: input.deliverCompletionToDispatcher,
+      leaderAgentRuntime: input.leaderAgentRuntime,
+      intent: input.intent,
+      identity: input.identity,
+      skillSources: input.skillSources,
+      workspace,
+    };
+    let created: TeamService | null;
+    try {
+      created = await TeamService.createNew(
+        this.depsBase(teamId),
+        serviceInput,
+      );
+    } catch (error) {
+      await this.discardUnclaimedCheckout(teamId, workspace);
+      throw error;
+    }
+    if (created === null) {
+      await this.discardUnclaimedCheckout(teamId, workspace);
+      return null;
+    }
+    this.starting.add(created);
+    try {
+      this.refuseIfClosing(created);
+      await created.startCreated(serviceInput);
+    } finally {
+      this.starting.delete(created);
+    }
+    this.track(created);
+    return created;
+  }
+
+  private async prepareWorkspace(
+    input: TeamCreateAtNameInput,
+    teamId: string,
+  ): Promise<TeamMateSharedWorkspace> {
+    const workspaceRoot = await ensureDispatcherWorkspace(
+      this.opts.config.current(),
+      this.dispatcherId,
+    );
+    return input.worktree === undefined && input.repoCwd === undefined
+      ? this.worktrees.prepareDefaultWorkspace({
+          dispatcherWorkspace: workspaceRoot,
+          slug: teamId,
+          workspaceEnabled: defaultWorkspaceEnabled(
+            this.opts.config.current(),
+            this.dispatcherId,
+          ),
+        })
+      : this.worktrees.prepare({
+          dispatcherId: this.dispatcherId,
+          teammateName: `team-${teamId}`,
+          cwd: input.repoCwd ?? workspaceRoot,
+          dispatcherWorkspace: workspaceRoot,
+          request: input.worktree,
+        });
+  }
+
+  /**
+   * Undo the checkout this failed attempt made, while it is still nobody's.
+   *
+   * A Team record is the only owner a managed checkout can have, so its absence
+   * is the proof that this preparation is unclaimed. Once a record exists — the
+   * closed one an abandoned creation leaves, or the Team that took the name —
+   * that record carries the cleanup and this must not touch the directory.
+   * Removal honors the requested policy, so a `keep` checkout is kept exactly
+   * as a dissolve would keep it, and a reused directory is never reached at all.
+   *
+   * Nothing here can be retried later: without a record there is no owner to
+   * carry a pending reclaim, so a removal that reports a refusal rather than
+   * raising one is stated here or nowhere.
+   */
+  private async discardUnclaimedCheckout(
+    teamId: string,
+    workspace: TeamMateSharedWorkspace,
+  ): Promise<void> {
+    if (!workspace.createdCheckout) return;
+    try {
+      if ((await this.store.get(teamId)) !== null) return;
+      const cleaned = await this.worktrees.cleanup({
+        source_cwd: workspace.sourceCwd,
+        source_repo: workspace.sourceRepo,
+        worktree: workspace.worktree,
+      });
+      // Removed or deliberately kept is the end of it. Anything else is a
+      // directory this attempt made and nobody now owns, so it is reported the
+      // same way a raised failure is — once, with where it is and why it stayed.
+      if (
+        cleaned.cleanup_state !== 'deleted' &&
+        cleaned.cleanup_state !== 'kept'
+      ) {
+        this.opts.log.warn(
+          {
+            dispatcher_id: this.dispatcherId,
+            team_id: teamId,
+            path: cleaned.path,
+            cleanup_state: cleaned.cleanup_state,
+            cleanup_error: cleaned.cleanup_error,
+          },
+          'prepared Team worktree was left behind',
+        );
+      }
+    } catch (error) {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.dispatcherId,
+          team_id: teamId,
+          path: workspace.worktree.path,
+          err: teamErrorInfo(error),
+        },
+        'prepared Team worktree was left behind',
+      );
+    }
+  }
+
+  /**
+   * Rebuild one Team from its record.
+   *
+   * A closed record is not a Team, it is that Team's history: nothing here
+   * constructs one, so a status read, a startup sweep, or a leftover physical
+   * cleanup answers from the record instead. That is what keeps this
+   * collection bounded by the Teams that are alive rather than by every Team
+   * that ever existed.
+   */
+  private async rebuild(teamId: string): Promise<TeamService> {
+    const record = await this.mustTeam(teamId);
+    if (record.status === 'closed') {
+      throw new TeamClosedError(
+        `Team ${JSON.stringify(record.team_id)} is closed`,
+      );
+    }
+    const service = await TeamService.rebuild(
+      this.depsBase(record.team_id),
+      record,
+    );
+    this.track(service);
+    return service;
+  }
+
+  /**
+   * Register the one construction of this Team while it runs.
+   *
+   * It is removed as soon as it settles: the cache holds what it produced, and
+   * a construction that produced nothing leaves no trace to join.
+   */
+  private publishConstruction(
+    teamId: string,
+    construction: Promise<TeamService | null>,
+  ): void {
+    const tracked = construction.finally(() => {
+      this.constructing.delete(teamId);
+    });
+    this.constructing.set(teamId, tracked);
+    // Whoever started it reports its failure; a construction nobody joined must
+    // not also surface as an unhandled rejection.
+    void tracked.catch(() => undefined);
+  }
+
+  /**
+   * Take ownership of one materialized Team: cache it and listen for its end.
+   *
+   * This collection is what holds a Team, so this is where it starts holding
+   * one: the factory hands back a finished service and the owner tracks it,
+   * rather than being called back into from inside the construction it asked
+   * for.
+   */
+  private track(service: TeamService): void {
+    if (this.live.get(service.id) === service) return;
+    this.live.set(service.id, service);
+    // The exact instance that ended is the exact instance dropped; a Team
+    // rebuilt at the same id afterwards is a different object and stays.
+    void service.closed.then(() => this.evict(service.id, service));
+    this.refuseIfClosing(service);
+  }
+
+  /**
+   * Stop a just-held Team and refuse to go on, when the dispatcher is already
+   * closing.
+   *
+   * `create`/`rebuild` cross the dispatcher fence before `close()` publishes its
+   * fence but finish constructing afterward, after the dispatcher's first
+   * sweep may already have passed. `stopForHost()` gives back runtime
+   * authority without closing anything, so a caller that went on would simply
+   * start the runtime again; throwing is what stops the continuation — for a
+   * created Team, before its initial turn starts the leader's runtime.
+   */
+  private refuseIfClosing(service: TeamService): void {
+    if (!this.opts.fence.isClosing()) return;
+    service.stopForHost().catch(() => undefined);
+    throw new ServerShuttingDownError(
+      `dispatcher '${this.dispatcherId}' is shutting down`,
+    );
+  }
+
+  private evict(teamId: string, expectedService: TeamService): void {
+    if (this.live.get(teamId) !== expectedService) return;
+    this.live.delete(teamId);
+  }
+
+  private depsBase(teamId: string): TeamServiceDeps {
+    return {
+      ...this.opts,
+      // Each Team gets its own already-resolved root; nothing below rebuilds it.
+      teamRoot: this.store.teamRoot(teamId),
+      // Bound to this Team's own id: the service can publish and merge its
+      // own record but can never address another Team's by id.
+      record: this.store.handle(teamId),
+    };
+  }
+
+  // Store-only Team list/summary/history projection; never materializes a
+  // runtime.
+
+  private async listRows(): Promise<TeamListRow[]> {
+    const out: TeamListRow[] = [];
+    for (const team of await this.store.list()) {
+      out.push(await this.listRow(team));
+    }
+    return out;
+  }
+
+  private async historyResult(
+    input: TeamHistoryQuery,
+  ): Promise<TeamHistoryResult> {
+    const rows: TeamHistoryRow[] = [];
+    for (const team of await this.store.list()) {
+      const row = await this.historyRow(team);
+      if (matchesTeamHistoryQuery(row, input)) rows.push(row);
+    }
+    rows.sort(
+      (a, b) =>
+        b.updated_at - a.updated_at ||
+        b.created_at - a.created_at ||
+        a.team_name.localeCompare(b.team_name),
+    );
+    const start = input.cursor !== undefined ? decodeCursor(input.cursor) : 0;
+    const limit = clampHistoryLimit(input.limit);
+    const items = rows.slice(start, start + limit);
+    const next = start + items.length;
+    return {
+      items,
+      next_cursor: next < rows.length ? encodeCursor(next) : null,
+    };
+  }
+
+  /**
+   * One Team's status, read from its records alone.
+   *
+   * How a closed Team is reported: it has no runtime left to ask, and
+   * constructing one to answer a read would resurrect an entity that is over.
+   * The leader's runtime state is `null` because nothing is running, not
+   * because nothing is known.
+   */
+  private async recordSummary(team: TeamRecord): Promise<TeamSummary> {
+    const leader = await this.leaderIdentity(team);
+    return teamSummary(
+      team,
+      leader === null ? null : toStatus(leader, null),
+      await this.memberCount(team),
+    );
+  }
+
+  private async listRow(team: TeamRecord): Promise<TeamListRow> {
+    return {
+      team_name: team.team_id,
+      status: team.status,
+      intent: team.intent,
+      source_repo: team.source_repo,
+      leader_name: team.leader_name,
+      leader_agent_runtime: team.leader_agent_runtime,
+      leader_state: await this.leaderState(team),
+      member_count: await this.memberCount(team),
+      created_at: team.created_at,
+      updated_at: team.updated_at,
+      closed_at: team.closed_at,
+      worktree_cleanup: team.worktree.cleanup_state,
+    };
+  }
+
+  private async historyRow(team: TeamRecord): Promise<TeamHistoryRow> {
+    return {
+      team_name: team.team_id,
+      status: team.status,
+      intent: team.intent,
+      source_repo: team.source_repo,
+      leader_name: team.leader_name,
+      leader_agent_runtime: team.leader_agent_runtime,
+      leader_state: await this.leaderState(team),
+      member_count: await this.memberCount(team),
+      created_at: team.created_at,
+      updated_at: team.updated_at,
+      closed_at: team.closed_at,
+      close_note: team.close_note,
+      close_note_preview:
+        team.close_note === null ? null : previewText(team.close_note),
+      worktree_cleanup: team.worktree.cleanup_state,
+    };
+  }
+
+  /**
+   * The leader's durable status, read from this Team's root and accepted only
+   * when the record names the leader the Team record names. No probing: the
+   * leader has exactly one location and this is it.
+   *
+   * A Team this process already holds live answers from that live entity's
+   * own in-memory identity — the more current copy, and one that needs no
+   * file read — rather than from a second, independently-cached read over
+   * the same `identity.json` a live owner already committed through.
+   */
+  private async leaderState(
+    team: TeamRecord,
+  ): Promise<AgentEntityIdentityStatus | null> {
+    const live = this.live.get(team.team_id) ?? null;
+    if (live !== null) return live.leaderIdentityStatus();
+    return (await this.leaderIdentity(team))?.status ?? null;
+  }
+
+  /**
+   * The store decides what an unreadable leader means, and this read accepts
+   * that decision unchanged: a missing or corrupt record is the `null` the
+   * store already logged, while a record this version refuses to interpret —
+   * old state — is raised. Catching here would turn "this file says something
+   * Dreamux no longer accepts" into "there is no leader", which is the one
+   * answer that is never true.
+   */
+  private async leaderIdentity(
+    team: TeamRecord,
+  ): Promise<AgentEntityIdentity | null> {
+    const leader = await readAgentIdentity({
+      dir: this.store.teamRoot(team.team_id),
+      dispatcherId: this.dispatcherId,
+      expectedName: null,
+      log: this.opts.log,
+    });
+    return leader !== null && leader.name === team.leader_name ? leader : null;
+  }
+
+  /** Directory occupancy is the roster fact; an unreadable member still counts. */
+  private async memberCount(team: TeamRecord): Promise<number> {
+    return agentCollectionMemberCount(
+      teamMateCollectionDir(this.store.teamRoot(team.team_id)),
+    );
+  }
+}
+
+function matchesTeamHistoryQuery(
+  row: TeamHistoryRow,
+  input: Omit<TeamHistoryQuery, 'dispatcherId'>,
+): boolean {
+  if (
+    input.name !== undefined &&
+    row.team_name !== validateTeamId(input.name)
+  ) {
+    return false;
+  }
+  if (input.status !== undefined && row.status !== input.status) return false;
+  if (input.repo !== undefined) {
+    const needle = input.repo.toLowerCase();
+    const hit =
+      row.source_repo !== null &&
+      row.source_repo.toLowerCase().includes(needle);
+    if (!hit) return false;
+  }
+  if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {
+    return false;
+  }
+  if (input.since !== undefined && row.updated_at < input.since) return false;
+  if (input.until !== undefined && row.updated_at > input.until) return false;
+  return true;
+}
+
+function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
+  return matchesGrepText(
+    [
+      row.team_name,
+      row.intent,
+      row.source_repo,
+      row.leader_name,
+      row.close_note,
+    ],
+    grep,
+  );
+}

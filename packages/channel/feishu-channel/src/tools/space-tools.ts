@@ -31,7 +31,6 @@ const spaceSchema = closedObjectSchema(
     space_name: nonEmptyString,
     chat_id: nonEmptyString,
     display: { type: ['string', 'null'] },
-    generation: { type: 'number' },
     leader_agent_runtime: nonEmptyString,
     has_identity: { type: 'boolean' },
     repo_path: { type: ['string', 'null'] },
@@ -43,7 +42,6 @@ const spaceSchema = closedObjectSchema(
     'space_name',
     'chat_id',
     'display',
-    'generation',
     'leader_agent_runtime',
     'has_identity',
     'repo_path',
@@ -58,7 +56,6 @@ function spaceView(space: FeishuSpaceRecord): FeishuToolResult {
     space_name: space.space_name,
     chat_id: space.container_chat_id,
     display: space.display,
-    generation: space.generation,
     leader_agent_runtime: space.leader_agent_runtime,
     has_identity: space.identity !== null,
     repo_path: space.repo?.path ?? null,
@@ -132,16 +129,17 @@ export const bindSpaceDef: FeishuToolDef<BindSpaceInput> = {
       display: optionalString(obj, 'display'),
       leaderAgentRuntime: requireString(obj, 'leader_agent_runtime'),
       identity: optionalString(obj, 'identity'),
-      repo: repo === null
-        ? null
-        : {
-            path: requireString(repo, 'path'),
-            base_ref: optionalString(repo, 'base_ref'),
-          },
+      repo:
+        repo === null
+          ? null
+          : {
+              path: requireString(repo, 'path'),
+              base_ref: optionalString(repo, 'base_ref'),
+            },
     };
   },
   async handle(ctx, input) {
-    const space = await ctx.session.bindSpace(input);
+    const space = await ctx.session.bindings.bindSpace(input);
     return { space: spaceView(space) };
   },
 };
@@ -166,7 +164,7 @@ export const unbindSpaceDef: FeishuToolDef<{ spaceName: string }> = {
     return { spaceName: requireString(obj, 'space_name') };
   },
   async handle(ctx, input) {
-    const removed = await ctx.session.unbindSpace(input.spaceName);
+    const removed = await ctx.session.bindings.unbindSpace(input.spaceName);
     return { space_name: input.spaceName, unbound: removed !== null };
   },
 };
@@ -204,18 +202,19 @@ export const getSpaceDef: FeishuToolDef<{ spaceName: string }> = {
     return { spaceName: requireString(obj, 'space_name') };
   },
   async handle(ctx, input) {
-    const space = ctx.session.getSpace(input.spaceName);
-    const targets = space === undefined
-      ? []
-      : ctx.session
-          .listBindings()
-          .filter((row) => row.space_name === space.space_name)
-          .map((row) => ({
-            chat_id: row.chat_id,
-            thread_id: row.thread_id,
-            display: row.display,
-            team_name: row.team_name,
-          }));
+    const space = ctx.session.routing.spaceByName(input.spaceName);
+    const targets =
+      space === undefined
+        ? []
+        : ctx.session.routing
+            .listBindings()
+            .filter((row) => row.space_name === space.space_name)
+            .map((row) => ({
+              chat_id: row.chat_id,
+              thread_id: row.thread_id,
+              display: row.display,
+              team_name: row.team_name,
+            }));
     return {
       space: space === undefined ? null : spaceView(space),
       targets,
@@ -239,6 +238,6 @@ export const listSpacesDef: FeishuToolDef<Record<string, never>> = {
     return {};
   },
   async handle(ctx) {
-    return { spaces: ctx.session.listSpaces().map(spaceView) };
+    return { spaces: ctx.session.routing.listSpaces().map(spaceView) };
   },
 };

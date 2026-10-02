@@ -1,10 +1,12 @@
 # @excitedjs/agent-runtime-codex
 
-The built-in **Codex** Agent Runtime provider for
-[Dreamux](https://github.com/excitedjs/dreamux), published behind the stable
-`builtin:codex` alias.
+The built-in **Codex** Dreamux plugin, always loaded by
+[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the
+plugin factory: the plugin contributes the Codex `AgentRuntimeProvider`,
+published behind the stable `builtin:codex` alias.
 
-It implements the public `AgentRuntimeProvider` contract from
+The provider it contributes implements the public `AgentRuntimeProvider`
+contract from
 [`@excitedjs/dreamux-types`](../../dreamux-types) against the Codex
 `app-server`: process supervision, the WebSocket RPC client, the `initialize`
 handshake, thread start/resume, the per-runtime turn manager, teammate
@@ -29,9 +31,12 @@ contract; see
 
 ## Logger
 
-The package logs through the optional `DreamuxLogger` the host passes in. With
-no logger it falls back to a minimal `console.error`-backed sink for standalone
-use and tests.
+The package logs through the required `DreamuxLogger` in the neutral runtime
+create context. The provider binds that logger, skill sources, and extra CLI
+arguments when it constructs the runtime. Each successful thread start/resume
+constructs a TurnManager bound to that thread id; socket allocation remains
+per process start. Optional process/client factories remain available for
+embedders.
 
 ## Ultrathink
 
@@ -54,15 +59,17 @@ modified. The feature uses stock `turn/start` parameters without a proxy.
 
 ## Standalone use
 
-External callers can register this provider directly:
+External callers can construct the bare provider directly, without going
+through the plugin:
 
 ```ts
 import { createCodexAgentRuntimeProvider } from '@excitedjs/agent-runtime-codex';
 ```
 
-The factory accepts the neutral create context plus optional host hooks
-(socket allocator, base process env, workspace skill preparation, and test
-factories for the Codex process / WS client / home doctor).
+The provider accepts `restartBackoffBaseMs` and `restartBackoffMaxMs` options.
+It constructs the native process and WebSocket client directly. Each runtime
+start allocates a fresh socket from the neutral path capability; restart never
+reuses a construction-time socket allocation.
 
 ## Portable Structured Output
 

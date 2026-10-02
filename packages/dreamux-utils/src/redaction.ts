@@ -1,4 +1,4 @@
-import { isPlainObject } from './config-validate.js';
+import { isPlainObject } from './json-shape.js';
 
 /**
  * What a conversation, a log line, and a printed config must not publish
@@ -69,18 +69,27 @@ const INLINE_SECRET_RE = new RegExp(
   String.raw`(["']?\b(?:` +
     SECRET_KEY_NAMES +
     String.raw`)\b["']?)(\s*[:=]\s*)(` +
-    String.raw`"(?:[^"\\]|\\.)*"` + '|' +
-    String.raw`'[^']*'` + '|' +
-    BACKTICK + `[^${BACKTICK}]*` + BACKTICK + '|' +
-    String.raw`[^\s,;"'` + BACKTICK + String.raw`)\]}]+)`,
+    String.raw`"(?:[^"\\]|\\.)*"` +
+    '|' +
+    String.raw`'[^']*'` +
+    '|' +
+    BACKTICK +
+    `[^${BACKTICK}]*` +
+    BACKTICK +
+    '|' +
+    String.raw`[^\s,;"'` +
+    BACKTICK +
+    String.raw`)\]}]+)`,
   'giu',
 );
 
 const SECRET_KEY_NAME_RE = new RegExp(`(?:${SECRET_KEY_NAMES})`, 'iu');
 
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
-const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
-const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
+const PRIVATE_KEY_RE =
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
+const JWT_RE =
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
 const COMMON_ACCESS_KEY_RE = /\b(?:AKIA|ASIA|AKLT)[A-Z0-9]{12,}\b/gu;
 
 /**
@@ -104,7 +113,10 @@ const PATH_TOKEN_CHARACTER_RE = /[\p{L}\p{N}_.~\\/-]/u;
  * surface an already-damaged value — a JSON result that no longer parses —
  * with no way to get it back.
  */
-export interface RedactedText { value: string; redacted: boolean }
+export interface RedactedText {
+  value: string;
+  redacted: boolean;
+}
 
 /**
  * Whether a field's *name* says its value is a secret.
@@ -123,20 +135,27 @@ export function isSecretKeyName(key: string): boolean {
  *
  * The caller owns a parsed, mutable structure it is about to display, and this
  * is the one thing it must not show. Values are destroyed rather than masked
- * by shape, because the key already settled the question.
+ * by shape, because the key already settled the question. `replacement`
+ * defaults to the display placeholder every existing caller wants; a caller
+ * that instead needs an empty-string projection (a config surface that hands
+ * the value back out for editing, where `'<redacted>'` would look like a real
+ * value) passes `''`.
  */
-export function redactSecretKeyValues(value: unknown): void {
+export function redactSecretKeyValues(
+  value: unknown,
+  replacement: unknown = '<redacted>',
+): void {
   if (Array.isArray(value)) {
-    for (const item of value) redactSecretKeyValues(item);
+    for (const item of value) redactSecretKeyValues(item, replacement);
     return;
   }
   if (!isPlainObject(value)) return;
   for (const [key, child] of Object.entries(value)) {
     if (isSecretKeyName(key)) {
-      value[key] = '<redacted>';
+      value[key] = replacement;
       continue;
     }
-    redactSecretKeyValues(child);
+    redactSecretKeyValues(child, replacement);
   }
 }
 
@@ -216,13 +235,15 @@ export function redactJson(
     // plain `out[key] = ...` would not: a payload carrying its own `__proto__`
     // member — ordinary data, which is exactly what `JSON.parse` builds it as —
     // would reach the prototype setter instead and disappear from the result.
-    const entries = Object.entries(node).map(([key, child]): [string, JsonValue] => {
-      if (isSecretKeyName(key)) {
-        redacted = true;
-        return [key, '<redacted>'];
-      }
-      return [key, walk(child)];
-    });
+    const entries = Object.entries(node).map(
+      ([key, child]): [string, JsonValue] => {
+        if (isSecretKeyName(key)) {
+          redacted = true;
+          return [key, '<redacted>'];
+        }
+        return [key, walk(child)];
+      },
+    );
     return Object.fromEntries(entries);
   };
   return value === null
