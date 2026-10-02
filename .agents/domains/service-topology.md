@@ -42,6 +42,11 @@ identity, its operations, its runtime-backed work, and its close.
 
 ## Ownership Rules
 
+- Workflow construction uses the actual scoped `TeammateCollection` as its
+  factory. The collection owns the `createLocked` admission crossing; neither
+  Workflow nor Dispatcher assembly adds an outer factory gate. The
+  construction and lock invariants are owned by
+  [service guidance](/packages/dreamux/src/service/CLAUDE.md).
 - Cron ownership is on the conversational-agent container: dispatcher cron is
   built by `DispatcherService`, TeamLeader cron by `TeamService`, and
   `AgentService` carries no `SchedulerService`. The construction sites in

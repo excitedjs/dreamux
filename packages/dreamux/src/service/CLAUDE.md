@@ -391,6 +391,14 @@ the Team.
   re-wraps a child's already-fenced verb. Internal lifecycle calls a close
   or a recovery makes on its own children (`recover`, `start`, `stopAll`,
   `requestStopAll`) stay unfenced — they run the close, not around it.
+- **Workflow construction crosses the collection's owner once.** Public
+  `async createLocked` enters the collection's existing fence before any
+  allocation, workspace, identity, or launch work. Both Workflow scopes hold
+  the actual collection; an outer Dispatcher wrapper would recheck in a
+  later microtask and could reject work already admitted before close. Keep
+  early Team-then-Dispatcher refusal, Promise rejection, and the separate
+  late-publication stop and provisional-lock undo. A construction refusal
+  does not override Workflow's first reserved terminal intent.
 - **A child under construction checks its parent's close, not the other way
   around.** An admitted `spawn`/`send`/`create` crosses its owner's admission
   fence before `close()` can raise it, but only finishes materializing its

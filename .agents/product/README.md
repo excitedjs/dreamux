@@ -490,6 +490,14 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 
 ## Long operations
 
+- **An accepted Workflow still needs admission for each new TeamMate.** Once
+  its Team or Dispatcher starts closing, another construction is refused
+  before name allocation, workspace resolution, identity creation, or launch
+  hooks. A Team refusal takes precedence over a Dispatcher refusal.
+  Construction admitted before close keeps its existing stop, cleanup, and
+  lock finalization; the run's first reserved terminal outcome still wins.
+  (Requirement: R73, "停止新建", in the
+  [existing-behavior follow-up](/.agents/tasks/architecture/code-organization-refactor/artifacts/product-decisions-20261002.md).)
 - **Tools return receipts, work runs behind them.** Any MCP operation that can
   outlast a runtime's tool timeout (dissolve, spawns, workflow runs) returns an
   immediate acceptance receipt; completion arrives as a push, and one settled
@@ -501,6 +509,12 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 
 ## Local state and upgrades
 
+- **Onboard rewrites known configuration wrapper fields.** A non-dry-run
+  `dreamux onboard` may discard unknown wrapper fields, including fields on
+  untouched entries. Untouched provider-owned `config` contents retain their
+  existing round trip; loading still tolerates unknown envelope keys.
+  (Requirement: R72, "不用保留", in the
+  [existing-behavior follow-up](/.agents/tasks/architecture/code-organization-refactor/artifacts/product-decisions-20261002.md).)
 - **Local runtime state is disposable; upgrades fail loudly.** Team, Agent, and
   Dispatcher operational state is rebuildable operational data, not a protected
   asset. On the 0.x line an incompatible shape is handled by fail-loud plus

@@ -300,6 +300,26 @@ before the remaining stages run as one orchestration ("后面所有的PR，你�
 - Communication cadence: "降低你的汇报频率，只有关键节点才用 reply 工具同步". Channel updates are limited to meaningful milestones, blockers, review outcomes, and delivery.
 - R71 complete data-flow ownership (2026-09-29): "为啥还是有一些 Deps 类型？这些类型里还是有闭包函数"; "onPersisted 这种状态同步为啥不能用 eventEmitter 来做呢？"; then "要做就要做到彻底，然后整个数据流这块用闭包是一个非常愚蠢的方案。明明我们有无数种其他的方式。" Continue the architecture task across the whole inter-component data flow, replacing closure-based ownership plumbing rather than stopping at the eight changes in PR #457. The [data-flow continuation](artifacts/data-flow-follow-up.md) records the current evidence, scope interpretation, and preservation requirements. The prior TeamLeader assumption that entity-specific callbacks could simply be retained is superseded; a notification's necessity does not justify its callback transport.
 
+## Existing-behavior follow-up (2026-10-02)
+
+- R72 onboard unknown wrapper fields: asked whether `dreamux onboard` must
+  preserve unknown wrapper fields when rewriting an existing configuration;
+  the operator answered "不用保留". The current known-field rewrite is accepted
+  for onboard, including unknown wrapper fields on untouched entries. This
+  does not remove support for provider-owned `config` contents, change the
+  load-time unknown-field tolerance from R21, or authorize other writers to
+  discard fields. No preservation mechanism is required for this item.
+- R73 Workflow construction during owner close: asked whether an already
+  accepted Workflow may start another TeamMate construction after its Team or
+  Dispatcher starts closing; the operator answered "停止新建". New construction
+  must be refused once that owner is closing in both scopes. Construction
+  already admitted before closing retains the existing stop/finalization and
+  lock-release behavior. This settles the admission asymmetry preserved by
+  the R71 solution; it does not change completion delivery or dissolve order.
+
+The [decision follow-up](artifacts/product-decisions-20261002.md) records
+current-source evidence, acceptance boundaries, and implementation status.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's

@@ -45,6 +45,12 @@ that branch's plugin code are part of this task's input.
 The target below is the audit's proposal (§6) as amended by the
 [rulings](rulings.md). Where they differ, the rulings decide.
 
+The [2026-10-02 existing-behavior follow-up](artifacts/product-decisions-20261002.md)
+settles onboard unknown-wrapper-field preservation (R72: current rewrite
+accepted) and Workflow construction during owner close (R73: refuse new
+construction in both scopes). The latter is implemented and reviewed; the
+prior data-flow design's explicit preservation of that asymmetry is historical.
+
 ### Harness
 
 - `max-lines` stays at 700 and counts code lines only (R1).
