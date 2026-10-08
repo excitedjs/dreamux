@@ -37,7 +37,7 @@
   verification confirmed the unified leader-tool access correction, hook-first
   assembly, and source documentation with no remaining behavior finding.
   The final four Rush gates passed with 64 files and 710 unchanged tests.
-- Delivery boundary: R77 stops the final review without a pass or restart. Knowledge is reconciled with the tested tree and the delivered index must carry those exact bytes. Use existing authority for one feature-base child PR, normal CI, child merge and the alpha handoff. R76 rejects correction of provider-home aliases; current normalized-path behavior remains. The [source adjudication](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/implementation-review.md) records each disposition and the documented startup scan limit. R71
+- Delivery boundary: R77 stops the final review without a pass or restart. Knowledge is reconciled with the tested tree and the delivered index must carry those exact bytes. R78 authorizes direct push and Actions alpha from the tested repair branch; the feature-base child PR follows normal CI and its existing merge authority separately. R76 rejects correction of provider-home aliases; current normalized-path behavior remains. The [source adjudication](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/implementation-review.md) records each disposition and the documented startup scan limit. R71
   and R73 have no unresolved accepted findings within their historical delivery
   scopes; the current resulting-tree review identifies the new continuation.
 - Progress: PR-0, requirement stages 1 through 9, and the R52 plugin lifecycle
@@ -68,6 +68,13 @@
 - Related tasks: absorbs the solution of [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md) (issue #448) by operator ruling; builds on the cap ruling recorded in [suppress-owner-close-stop-pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md) and the cap decision in [Repository Guardrail Records](/.agents/tasks/architecture/repository-guardrails/README.md); the survey ran on the branch of [PR #453](https://github.com/excitedjs/dreamux/pull/453) (plugin system).
 
 ## Development approval
+
+- R78 direct delivery, 2026-10-08: “看起来都是小问题了，直接 push ，发 alpha 包”.
+  Dispatch the existing alpha pipeline on the tested repair branch after its
+  mandatory-hook commit and push, without restarting review or waiting for child
+  integration. This supersedes the earlier alpha sequencing below, not the
+  release-channel or parent-merge boundaries.
+
 
 - Active review-fix continuation, 2026-10-03: the operator directly instructed
   “把这些问题修了” and then selected “退休后读盘 (Recommended)” for the sole
@@ -129,6 +136,12 @@
   or an actual superseding ruling.
 
 ## Delivery
+
+- Review-repair child: [PR #464](https://github.com/excitedjs/dreamux/pull/464),
+  based on the PR #453 feature branch. R78 separately authorizes direct alpha
+  publication from the tested repair branch; normal CI and child integration
+  remain GitHub delivery facts, not a final-review pass or parent-next authority.
+
 
 - Review-repair knowledge closeout, 2026-10-08: complete for revision 2,
   R74/R75/R76 and the R77 review-stop boundary. The

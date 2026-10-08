@@ -139,3 +139,10 @@ contracts remain unchanged. Completed prior reviews, source-based adjudication,
 TeamLeader pre-review and current local gates are separate evidence for this
 child delivery. Existing feature-base child and alpha authority remain; parent
 PR #453 integration into next and external-platform acceptance are not claimed.
+
+
+R78 subsequently instructs “看起来都是小问题了，直接 push ，发 alpha 包”.
+Use the existing feature-branch alpha pipeline directly after the tested repair
+branch's mandatory-hook commit and push, without waiting for child integration.
+Normal child-PR CI/merge remain a separate existing delivery boundary. No new
+review, runtime behavior, parent-next merge or stable/beta release is authorized.

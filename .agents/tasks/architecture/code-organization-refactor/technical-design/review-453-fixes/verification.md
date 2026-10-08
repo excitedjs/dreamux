@@ -30,6 +30,19 @@ No real Feishu/Claude/service-manager or insensitive-volume acceptance is claime
 Normal hosted CI remains a separate delivery gate. Startup retains its recorded
 3N cold-history scan cost; R76 leaves physical provider aliases unprotected.
 
+## Direct alpha delivery authority (2026-10-08)
+
+R78 records “看起来都是小问题了，直接 push ，发 alpha 包”. The source repair
+commit ran the actual mandatory hook: staged package ESLint, real author
+validation, gitleaks and staged internal-content checks passed. The source and
+tests retain all 199 tested hashes. [PR #464](https://github.com/excitedjs/dreamux/pull/464)
+uses the PR #453 feature base. Alpha can now be dispatched directly from that
+tested repair branch through the existing Actions workflow; it need not wait
+for child integration. Source/run identity, immutable npm version, artifact
+availability and installed compiled-CLI behavior must be verified before the
+tester handoff. Neither this authority nor local gates claim hosted CI success
+or an independent-review pass.
+
 ## Knowledge owners reconciled for child delivery
 
 | Owner | Closeout fact |
@@ -49,8 +62,9 @@ Normal hosted CI remains a separate delivery gate. Startup retains its recorded
 Knowledge closeout changes only authoritative records. The current tested
 source, tests, package guidance and change-note hashes remain unchanged.
 The actual commit must run the mandatory anti-leak hook, and normal child-PR CI
-must pass before the authorized child merge. The feature-branch Actions alpha
-and designated tester handoff use existing authority after that delivery.
+must pass before the authorized child merge. R78 authorizes immediate feature-branch Actions alpha after the tested repair
+commit and push, without waiting for child integration. The designated tester
+handoff uses the existing publication request.
 No parent-next merge, stable/beta publication or Team dissolution is authorized.
 
 ## Historical knowledge-and-diagnostic verification (2026-10-08)

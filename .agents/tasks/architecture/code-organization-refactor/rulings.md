@@ -373,6 +373,16 @@ current-source evidence, acceptance boundaries, and implementation status.
   feature-base child delivery or alpha handoff. It gives no new authority to
   merge parent PR #453 into next, promote stable/beta or claim platform acceptance.
 
+## Direct alpha delivery (2026-10-08)
+
+- R78 delivery: “看起来都是小问题了，直接 push ，发 alpha 包”. Push the
+  tested repair branch and dispatch the existing feature-branch alpha pipeline
+  directly, without restarting review or making alpha wait for child integration.
+  Preserve the mandatory commit hook and release artifact checks. The child PR
+  still carries the repair into PR #453 under its existing normal-CI/merge
+  authority. This does not authorize parent-next merge, stable/beta promotion,
+  raw npm publication or claims of external-platform acceptance.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's
