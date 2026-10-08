@@ -97,3 +97,31 @@ This is source/assertion pre-review under the operator's direct follow-up
 authority. The R77-stopped workflow was not restarted and no independent review
 pass is claimed. Current knowledge owners and maintenance guidance are aligned
 with these corrections; R74/R75/R76 and the documented startup scan cost remain.
+
+## Hosted-CI fixture follow-up
+
+[The first child CI run](https://github.com/excitedjs/dreamux/actions/runs/37813658082)
+passed macOS and failed two Ubuntu Team tests. A later documentation-only head
+passed all nine checks, but that rerun was not treated as a fixture correction.
+The same developer added call-through barriers to the two existing tests:
+
+- The inert-inventory cold-start case proves host shutdown can return while
+  the accepted dissolve still owes its leader identity write. This reuse-cwd
+  fixture awaits `service.closed` before restart and removal. It does not turn
+  that signal into a managed-worktree cleanup fence. The original ENOTEMPTY
+  traceback does not identify the exact late file; the barrier proves the
+  reachable late-write window, not the historical runner's exact interleaving.
+- The closed-before-destruction case pauses after the real retained-dirty
+  record rename and proves disk publication precedes the owner's committed
+  snapshot. It then awaits the public committed summary before checking disk,
+  dirty bytes and refusal to reopen. Child-stop order and close semantics stay
+  locked by the original assertions.
+
+Only those two tests changed. The TeamLeader inspected both barriers and all
+retained assertions. All 899 non-KB test-input hashes match; 351 production
+files and 75 selected native/contract files match the preceding enabled run.
+Full default Rush gates pass with 2,668 tests and six model exclusions; five
+consecutive targeted runs pass 26/26. The earlier six actual Codex results
+remain evidence over unchanged production/native bytes, not a new model run.
+Current-head hosted CI remains a separate delivery requirement. No production
+policy, retry-removal workaround, timeout widening or CI exclusion is added.
