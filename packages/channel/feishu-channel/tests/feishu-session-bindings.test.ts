@@ -597,6 +597,195 @@ function speak(h: Harness, teamName: string, text: string): void {
 }
 
 describe('COT route retirement through routing, submission, and binding owners', () => {
+  it('retires a removed exact presentation and admits a fresh same-Team inherited submission', async () => {
+    const h = await harness();
+    const parent = chatTarget('oc_parent', 'group');
+    const topic = topicTarget('oc_parent', 'thread_shared');
+    await seedRoute(h, parent, 'same-team');
+    await seedRoute(h, topic, 'same-team');
+    await submitAt(h, topic, 'om_exact');
+    expect(await h.ops.unbindChannel(topic)).toEqual({
+      team_name: 'same-team',
+    });
+    await nextTurn();
+    expect(h.routing.plan(topic, topic.chatId)).toEqual({
+      kind: 'bound',
+      teamName: 'same-team',
+      matched: parent,
+    });
+    expect(cotTerminal(h.cotClient.cards[0]!)).toBe('interrupted');
+    expect(cotTerminalCount(h.cotClient.cards[0]!)).toBe(1);
+    speak(h, 'same-team', 'late from exact route');
+    await nextTurn();
+    expect(h.cotClient.cards).toHaveLength(1);
+    await submitAt(h, topic, 'om_inherited');
+    speak(h, 'same-team', 'new inherited output');
+    await nextTurn();
+    expect(h.cotClient.cards).toHaveLength(2);
+    expect(h.cotClient.cards[1]!.originMessageId).toBe('om_inherited');
+    expect(cotTexts(h.cotClient.cards[1]!)).toContain('new inherited output');
+    expect(h.cotClient.cards.flatMap(cotTexts)).not.toContain(
+      'late from exact route',
+    );
+    await h.ops.unbindChannel(parent);
+    await nextTurn();
+    expect(cotTerminal(h.cotClient.cards[1]!)).toBe('interrupted');
+  });
+
+  it.each(['active', 'completed'] as const)(
+    'an exact takeover retires the inherited %s presentation at commit and later permits fallback',
+    async (phase) => {
+      const h = await harness();
+      const parent = chatTarget('oc_parent', 'group');
+      const topic = topicTarget('oc_parent', 'thread_shared');
+      await seedRoute(h, parent, 'old-team');
+      await submitAt(h, topic, 'om_old');
+      if (phase === 'completed') {
+        h.cot.handle({
+          schemaVersion: 1,
+          kind: 'teammate.activity',
+          occurredAt: 1,
+          teamName: 'old-team',
+          role: 'team_leader',
+          teammateName: 'old-team-leader',
+          activity: {
+            kind: 'turn.ended',
+            occurredAt: 1,
+            status: 'completed',
+            reason: null,
+          },
+        });
+        await nextTurn();
+      }
+      h.setStatus('new-team', 'running');
+      expect(
+        await h.ops.bindChannel({
+          target: topic,
+          teamName: 'new-team',
+          display: null,
+        }),
+      ).toEqual({
+        team_name: 'new-team',
+        previous_team_name: null,
+      });
+      await nextTurn();
+      expect(h.routing.bindingFor(parent)?.team_name).toBe('old-team');
+      expect(cotTerminal(h.cotClient.cards[0]!)).toBe(
+        phase === 'active' ? 'interrupted' : 'done',
+      );
+      expect(cotTerminalCount(h.cotClient.cards[0]!)).toBe(1);
+      expect(JSON.stringify(h.notifications[0]!.card)).not.toContain(
+        'Previous Team',
+      );
+      speak(h, 'old-team', 'late displaced inherited output');
+      await nextTurn();
+      expect(h.cotClient.cards).toHaveLength(1);
+      expect(cotTexts(h.cotClient.cards[0]!)).not.toContain(
+        'late displaced inherited output',
+      );
+      await submitAt(h, topic, 'om_new');
+      speak(h, 'new-team', 'new exact output');
+      await nextTurn();
+      expect(h.cotClient.cards).toHaveLength(2);
+      expect(cotTexts(h.cotClient.cards[1]!)).toContain('new exact output');
+      await h.ops.unbindChannel(topic);
+      await nextTurn();
+      expect(cotTerminal(h.cotClient.cards[1]!)).toBe('interrupted');
+      await submitAt(h, topic, 'om_restored');
+      speak(h, 'old-team', 'restored inherited output');
+      await nextTurn();
+      expect(h.cotClient.cards).toHaveLength(3);
+      expect(h.cotClient.cards[2]!.originMessageId).toBe('om_restored');
+      expect(cotTexts(h.cotClient.cards[2]!)).toContain(
+        'restored inherited output',
+      );
+    },
+  );
+
+  it('keeps old same-Team anchor provenance across an exact bind and captures the new route on fresh inbound', async () => {
+    const h = await harness();
+    const parent = chatTarget('oc_parent', 'group');
+    const topic = topicTarget('oc_parent', 'thread_shared');
+    await seedRoute(h, parent, 'same-team');
+    await submitAt(h, topic, 'om_inherited');
+    await h.ops.bindChannel({
+      target: topic,
+      teamName: 'same-team',
+      display: null,
+    });
+    expect(h.cotCalls).toEqual([{ op: 'claimed', teamName: 'same-team' }]);
+    speak(h, 'same-team', 'continues original presentation');
+    await nextTurn();
+    expect(cotTerminal(h.cotClient.cards[0]!)).toBeNull();
+    expect(cotTexts(h.cotClient.cards[0]!)).toContain(
+      'continues original presentation',
+    );
+    await h.ops.unbindChannel(parent);
+    await nextTurn();
+    expect(cotTerminal(h.cotClient.cards[0]!)).toBe('interrupted');
+    await submitAt(h, topic, 'om_exact');
+    expect(h.cotClient.cards).toHaveLength(2);
+    expect(h.cotClient.cards[1]!.originMessageId).toBe('om_exact');
+    await seedRoute(h, parent, 'same-team');
+    await h.ops.unbindChannel(parent);
+    speak(h, 'same-team', 'exact survives parent removal');
+    await nextTurn();
+    expect(cotTerminal(h.cotClient.cards[1]!)).toBeNull();
+    expect(cotTexts(h.cotClient.cards[1]!)).toContain(
+      'exact survives parent removal',
+    );
+  });
+
+  it.each(['takeover', 'fallback'] as const)(
+    'a failed %s commit changes no inherited presentation or fence',
+    async (operation) => {
+      const h = await harness();
+      const parent = chatTarget('oc_parent', 'group');
+      const topic = topicTarget('oc_parent', 'thread_shared');
+      await seedRoute(h, parent, 'old-team');
+      if (operation === 'fallback') await seedRoute(h, topic, 'old-team');
+      await submitAt(h, topic, 'om_old');
+      h.setStatus('new-team', 'running');
+      const options = {
+        dispatcherId: 'disp-1',
+        channelId: 'chan-1',
+        stateDir: dir,
+      };
+      const before = await readRoutingDocument(options);
+      const path = routingDocumentPath(options);
+      const preserved = `${path}.preserved`;
+      renameSync(path, preserved);
+      mkdirSync(path);
+      try {
+        const mutation =
+          operation === 'takeover'
+            ? h.ops.bindChannel({
+                target: topic,
+                teamName: 'new-team',
+                display: null,
+              })
+            : h.ops.unbindChannel(topic);
+        await expect(mutation).rejects.toThrow();
+      } finally {
+        rmSync(path, { recursive: true, force: true });
+        renameSync(preserved, path);
+      }
+      expect(await readRoutingDocument(options)).toEqual(before);
+      expect(h.routing.plan(topic, topic.chatId)).toMatchObject({
+        teamName: 'old-team',
+      });
+      expect(h.cotCalls).toEqual([]);
+      expect(h.notifications).toEqual([]);
+      speak(h, 'old-team', 'still active after failure');
+      await nextTurn();
+      expect(h.cotClient.cards).toHaveLength(1);
+      expect(cotTerminal(h.cotClient.cards[0]!)).toBeNull();
+      expect(cotTexts(h.cotClient.cards[0]!)).toContain(
+        'still active after failure',
+      );
+    },
+  );
+
   it.each(['displaced', 'same-Team', 'failed-commit'] as const)(
     'slow provisioning retires only a displaced committed route (%s)',
     async (scenario) => {

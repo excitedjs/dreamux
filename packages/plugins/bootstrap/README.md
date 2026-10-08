@@ -1,7 +1,9 @@
 # @excitedjs/dreamux-plugin-bootstrap
 
-The built-in Dreamux bootstrap plugin. It ships with `@excitedjs/dreamux` and
-is enabled by listing it in the top-level `plugins[]` of the Dreamux config:
+The repository's bootstrap plugin is unpublished (`shouldPublish: false`) and
+is a development dependency of `@excitedjs/dreamux`, unavailable in published
+Dreamux installations. In the repository workspace it is enabled by listing
+it in the top-level `plugins[]` of the Dreamux config:
 
 ```json
 { "plugins": ["builtin:bootstrap"] }

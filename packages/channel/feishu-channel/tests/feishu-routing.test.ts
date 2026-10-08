@@ -41,6 +41,50 @@ async function makeRouting(channelId = 'chan-1'): Promise<FeishuRouting> {
 }
 
 describe('FeishuRouting — plan() resolution order', () => {
+  it('reports inherited before and after Teams from the serialized binding commits', async () => {
+    const routing = await makeRouting();
+    const parent = chatTarget('oc_parent', 'group');
+    const topic = topicTarget('oc_parent', 'thread_shared');
+    const input = {
+      target: parent,
+      teamName: 'old-parent',
+      display: null,
+      rootMessageId: null,
+      spaceId: null,
+    };
+    await routing.bind(input);
+    // Queue both writes while the currently committed document still names
+    // old-parent. The topic commit must observe the preceding queued write.
+    const parentCommit = routing.bind({ ...input, teamName: 'new-parent' });
+    const topicCommit = routing.bind({
+      ...input,
+      target: topic,
+      teamName: 'exact-team',
+    });
+    await parentCommit;
+    expect(await topicCommit).toEqual({
+      previousTeamName: null,
+      previousServingTeamName: 'new-parent',
+      rootMessageId: null,
+    });
+    const fallbackCommit = routing.bind({
+      ...input,
+      teamName: 'fallback-parent',
+    });
+    const removal = routing.unbind(topic);
+    await fallbackCommit;
+    expect(await removal).toMatchObject({
+      teamName: 'exact-team',
+      nextServingTeamName: 'fallback-parent',
+      target: topic,
+    });
+    expect(routing.plan(topic, topic.chatId)).toEqual({
+      kind: 'bound',
+      teamName: 'fallback-parent',
+      matched: parent,
+    });
+  });
+
   it('an exact topic binding wins over its parent group binding', async () => {
     const routing = await makeRouting();
     const group = chatTarget('oc_group', 'group');
@@ -229,7 +273,11 @@ describe('FeishuRouting — bind/unbind ownership', () => {
         spaceId: null,
         requireOwner: 'team-self',
       }),
-    ).resolves.toEqual({ previousTeamName: 'team-self', rootMessageId: null });
+    ).resolves.toEqual({
+      previousTeamName: 'team-self',
+      previousServingTeamName: 'team-self',
+      rootMessageId: null,
+    });
     expect(routing.bindingFor(target)?.display).toBe('renamed');
   });
 

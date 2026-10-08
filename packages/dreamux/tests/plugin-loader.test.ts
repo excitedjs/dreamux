@@ -9,6 +9,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 
 import type {
   AgentRuntimeProvider,
@@ -24,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stringifyConfig } from '../src/config/config.js';
 import { loadConfig as readConfig } from '../src/config/load.js';
 import { startPlugins } from '../src/plugin/host.js';
+import { dreamuxRoot } from '../src/platform/paths.js';
 import {
   loadPlugins,
   PluginLoadError,
@@ -218,7 +220,7 @@ describe('loadPlugins', () => {
       }),
     );
     expect(err.message).toContain(
-      'plugin name "acme" is declared by both plugins[0] ("npm:@acme/a") and plugins[1] ("npm:@acme/b")',
+      'plugin name "acme" is declared by both plugins[0] ("npm:@acme/a") (as "acme") and plugins[1] ("npm:@acme/b")',
     );
   });
 
@@ -229,9 +231,112 @@ describe('loadPlugins', () => {
       }),
     );
     expect(err.message).toContain(
-      'plugin name "feishu" is declared by both always-loaded "builtin:feishu" and plugins[0] ("npm:@acme/a")',
+      'plugin name "feishu" is declared by both always-loaded "builtin:feishu" (as "feishu") and plugins[0] ("npm:@acme/a")',
     );
   });
+
+  it.each([
+    ['Foo', 'foo'],
+    ['foo', 'Foo'],
+  ])(
+    'rejects simultaneous case aliases %s and %s before the conflicting contribution',
+    async (first, second) => {
+      const calls: string[] = [];
+      const err = await loadError(
+        load([{ ref: 'npm:@acme/a' }, { ref: 'npm:@acme/b' }], {
+          '@acme/a': {
+            default: () => ({
+              name: first,
+              contribute() {
+                calls.push(first);
+              },
+            }),
+          },
+          '@acme/b': {
+            default: () => ({
+              name: second,
+              contribute() {
+                calls.push(second);
+              },
+            }),
+          },
+        }),
+      );
+      expect(err.plugin).toBe(second);
+      expect(err.phase).toBe('factory');
+      expect(err.message).toContain(
+        `plugins[0] ("npm:@acme/a") (as "${first}")`,
+      );
+      expect(err.message).toContain(
+        `plugin name "${second}" is declared by both`,
+      );
+      expect(err.message).toContain('plugins[1] ("npm:@acme/b")');
+      expect(err.message).toContain('unique ignoring ASCII case');
+      expect(calls).toEqual([first]);
+    },
+  );
+
+  it('rejects a case alias of an always-loaded plugin', async () => {
+    const err = await loadError(
+      load([{ ref: 'npm:@acme/a' }], {
+        '@acme/a': { default: () => ({ name: 'FEISHU' }) },
+      }),
+    );
+    expect(err.message).toContain(
+      'always-loaded "builtin:feishu" (as "feishu")',
+    );
+    expect(err.message).toContain('plugin name "FEISHU" is declared by both');
+    expect(err.message).toContain('plugins[0] ("npm:@acme/a")');
+  });
+
+  it('preserves a single mixed-case plugin name in its state directory and API key', async () => {
+    let stateDir: string | undefined;
+    const apiValues: unknown[] = [];
+    const loaded = await load([{ ref: 'npm:@acme/a' }], {
+      '@acme/a': {
+        default: (): DreamuxPlugin => ({
+          name: 'Foo',
+          api: 'mixed-case-api',
+          server(host) {
+            stateDir = host.stateDir;
+            forPlugin(host, 'Foo').tap('observer', (api) =>
+              apiValues.push(api),
+            );
+            forPlugin(host, 'foo').tap('wrong case', () =>
+              apiValues.push('wrong'),
+            );
+          },
+        }),
+      },
+    });
+    const started = startPlugins(loaded, silentLog);
+    expect(loaded.at(-1)?.name).toBe('Foo');
+    expect(stateDir).toBe(join(dreamuxRoot(), 'state', 'plugins', 'Foo'));
+    expect(apiValues).toEqual(['mixed-case-api']);
+    expect(started.tapOwners().plugin['Foo']).toEqual(['Foo']);
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'rejects an async factory that will %s with ref and phase attribution',
+    async (settlement) => {
+      const err = await loadError(
+        load([{ ref: 'npm:@acme/a' }], {
+          '@acme/a': {
+            default: async () => {
+              if (settlement === 'reject')
+                throw new Error('async factory failed');
+              return { name: 'acme' };
+            },
+          },
+        }),
+      );
+      expect(err.plugin).toBe('npm:@acme/a');
+      expect(err.phase).toBe('factory');
+      expect(err.message).toContain('plugin factory must be synchronous');
+      // Let any unobserved rejection surface through the test runner.
+      await nextTurn();
+    },
+  );
 
   it('rejects a provider name core already ships, naming both sources', async () => {
     const err = await loadError(
@@ -369,6 +474,41 @@ describe('loadPlugins', () => {
 });
 
 describe('readPluginConfigs', () => {
+  it.each(['resolve', 'reject'] as const)(
+    'rejects an async config reader that will %s before publishing its value',
+    async (settlement) => {
+      const loaded = await load([{ ref: 'npm:@acme/a', config: 1 }], {
+        '@acme/a': {
+          default: (): DreamuxPlugin => ({
+            name: 'acme',
+            config: {
+              read: async () => {
+                if (settlement === 'reject')
+                  throw new Error('async config failed');
+                return { parsed: true };
+              },
+            },
+          }),
+        },
+      });
+      let caught: unknown;
+      try {
+        readPluginConfigs(loaded, 'config.json');
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(PluginLoadError);
+      expect(caught).toMatchObject({ plugin: 'acme', phase: 'config' });
+      expect((caught as Error).message).toContain(
+        'config.json: plugins[0].config: config.read must be synchronous',
+      );
+      expect(
+        loaded.find((plugin) => plugin.name === 'acme')?.config,
+      ).toBeUndefined();
+      await nextTurn();
+    },
+  );
+
   it('calls config.read with undefined when the entry omits a config block', async () => {
     const loaded = await load([{ ref: 'npm:@acme/a' }], {
       '@acme/a': {

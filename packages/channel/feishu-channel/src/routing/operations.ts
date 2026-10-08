@@ -169,7 +169,7 @@ export class FeishuBindingOperations {
     // Team) carries none. A topic still without one learns it afterwards: from
     // the first message accepted in it, or from the platform when a notice
     // needs it first.
-    const { previousTeamName, rootMessageId } = await this.opts.routing.bind({
+    const binding = await this.opts.routing.bind({
       target,
       teamName: input.teamName,
       display: input.display,
@@ -181,13 +181,15 @@ export class FeishuBindingOperations {
     });
     this.presentCommittedBind({
       ...input,
-      previousTeamName,
-      rootMessageId,
+      ...binding,
       leaderName: team.leader_name,
       agentRuntime: team.leader_agent_runtime,
       runtimeCwd: team.runtime_cwd,
     });
-    return { team_name: input.teamName, previous_team_name: previousTeamName };
+    return {
+      team_name: input.teamName,
+      previous_team_name: binding.previousTeamName,
+    };
   }
 
   async unbindChannel(
@@ -198,6 +200,14 @@ export class FeishuBindingOperations {
     if (removed === null) return { team_name: null };
     const { teamName, display } = removed;
     this.opts.cot.onRouteReleased({ teamName, target });
+    // Retire the removed route's presentation, then allow new submissions
+    // through the committed fallback, even when it serves the same Team.
+    if (removed.nextServingTeamName !== null) {
+      this.opts.cot.onRouteClaimed({
+        teamName: removed.nextServingTeamName,
+        target,
+      });
+    }
     this.opts.outbound.notify(
       target,
       bindingUnboundCard({ target, display, teamName }),
@@ -265,6 +275,7 @@ export class FeishuBindingOperations {
   /** Present a committed bind, then announce it in the requested conversation. */
   presentCommittedBind(input: {
     previousTeamName: string | null;
+    previousServingTeamName: string | null;
     rootMessageId: string | null;
     target: FeishuTarget;
     display: string | null;
@@ -275,12 +286,15 @@ export class FeishuBindingOperations {
     announceIn?: FeishuTarget;
     announceMessageId?: string;
   }): void {
-    const { previousTeamName } = input;
+    const { previousTeamName, previousServingTeamName } = input;
     const displaced =
       previousTeamName !== null && previousTeamName !== input.teamName;
-    if (displaced) {
+    if (
+      previousServingTeamName !== null &&
+      previousServingTeamName !== input.teamName
+    ) {
       this.opts.cot.onRouteReleased({
-        teamName: previousTeamName,
+        teamName: previousServingTeamName,
         target: input.target,
       });
     }

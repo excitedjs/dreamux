@@ -105,6 +105,89 @@ describe('isolatedTaps (dispatcher, team)', () => {
     expect(calls).toEqual([[]]);
   });
 
+  it('keeps existing and later sync taps when a register interceptor omits its result, retaining tap ownership', () => {
+    const { log, errors } = recordingLog();
+    const hook = isolatedTaps(new SyncHook<[string[]]>(['seen'], 'team'), log);
+    runAsPlugin('alpha', () =>
+      hook.tap('first', (seen) => {
+        seen.push('alpha');
+        throw new Error('alpha failed');
+      }),
+    );
+    const registrations: string[] = [];
+    runAsPlugin('observer', () =>
+      hook.intercept({
+        // Tapable's JavaScript registration treats undefined as unchanged.
+        // @ts-expect-error Tapable types require a result even for observation.
+        register(tap) {
+          registrations.push(tap.name);
+        },
+      }),
+    );
+    runAsPlugin('omega', () => hook.tap('last', (seen) => seen.push('omega')));
+    const seen: string[] = [];
+    hook.call(seen);
+    expect(registrations).toEqual(['first', 'last']);
+    expect(seen).toEqual(['alpha', 'omega']);
+    expect(tapOwners(hook)).toEqual(['alpha', 'omega']);
+    expect(errors.map((entry) => entry.fields['plugin'])).toEqual(['alpha']);
+  });
+
+  it('keeps existing and later async taps when a register interceptor omits its result, retaining tap ownership', async () => {
+    const { log, errors } = recordingLog();
+    const hook = isolatedTaps(
+      new AsyncSeriesHook<[string[]]>(['seen'], 'created'),
+      log,
+    );
+    runAsPlugin('alpha', () =>
+      hook.tapPromise('first', async (seen) => {
+        seen.push('alpha');
+        throw new Error('alpha failed');
+      }),
+    );
+    const registrations: string[] = [];
+    runAsPlugin('observer', () =>
+      hook.intercept({
+        // @ts-expect-error Tapable types require a result even for observation.
+        register(tap) {
+          registrations.push(tap.name);
+        },
+      }),
+    );
+    runAsPlugin('omega', () =>
+      hook.tapPromise('last', async (seen) => {
+        seen.push('omega');
+      }),
+    );
+    const seen: string[] = [];
+    await hook.promise(seen);
+    expect(registrations).toEqual(['first', 'last']);
+    expect(seen).toEqual(['alpha', 'omega']);
+    expect(tapOwners(hook)).toEqual(['alpha', 'omega']);
+    expect(errors.map((entry) => entry.fields['plugin'])).toEqual(['alpha']);
+  });
+
+  it('preserves explicit register replacements and the original tap owner', () => {
+    const { log, errors } = recordingLog();
+    const hook = isolatedTaps(new SyncHook<[string[]]>(['seen'], 'team'), log);
+    runAsPlugin('alpha', () =>
+      hook.tap('first', (seen) => {
+        seen.push('alpha');
+        throw new Error('alpha failed');
+      }),
+    );
+    runAsPlugin('observer', () =>
+      hook.intercept({
+        register: (tap) => ({ ...tap, stage: tap.name === 'first' ? 10 : 0 }),
+      }),
+    );
+    runAsPlugin('omega', () => hook.tap('last', (seen) => seen.push('omega')));
+    const seen: string[] = [];
+    hook.call(seen);
+    expect(seen).toEqual(['omega', 'alpha']);
+    expect(errors.map((entry) => entry.fields['plugin'])).toEqual(['alpha']);
+  });
+
   it("owns a tap registered inside another tap, after an await, by the outer tap's plugin", async () => {
     const { log, errors } = recordingLog();
     const outer = isolatedTaps(

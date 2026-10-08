@@ -1259,6 +1259,13 @@ it already has a binding, else under the message `/bind` was typed in reply-
 chain terms, else it follows the same read-or-skip rule — it is a receipt about
 the bind, not itself part of the newly bound conversation.
 
+The committed routing owner reports the exact replaced row separately from
+the Team that served the target before binding, including parent inheritance.
+Presentation release uses the latter; `previous_team_name` and the receipt
+card still describe only an exact replaced binding. Taking over an inherited
+topic therefore retires the old Team's card without changing the public
+previous-binding response.
+
 A bind or provisioning card that was actually sent is also its Team's first
 chain-of-thought anchor, under three conditions. The card must be on screen:
 the offer is made from the send's own success, so a skipped, failed, or
@@ -1454,10 +1461,12 @@ first Channel user message.
 Anchors consult two bounded fences: a leader-wide fence set by Team close and
 endpoint-scoped route fences set by unbind or replacement, each retaining at most
 512 entries. Team starting/running clears both kinds for that leader, while a
-matching re-bind clears its endpoint route fence. Anchor admission checks its
-visible `target`: a topic unbound while its
-parent group still serves it stays fenced for a leader that already had COT
-state until the fence clears. Route-driven interruption also compares the
+matching re-bind clears its endpoint route fence. Removing an exact topic
+binding retires the presentation it produced, then claims the committed
+parent fallback at that visible target so fresh submissions are admitted,
+including when the fallback serves the same Team. This does not revive the
+old anchor or rewrite its provenance. Anchor admission checks its visible
+`target`. Route-driven interruption also compares the
 anchor's `servingTarget`, captured from the route that actually submitted it.
 Releasing a parent-group route retires a topic card served by that route;
 independently served exact topics survive. A later exact binding does not

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Retire inherited Team presentation on an exact topic takeover and allow fresh inherited presentation after topic unbind, using committed routing facts without changing anchor provenance. Keep pairing credentials out of fresh and resend decision logs while preserving pairing actions and stored tokens.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

@@ -2,7 +2,7 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { FeishuAccess } from '../src/access/index.js';
 import {
@@ -47,6 +47,67 @@ async function disk(): Promise<DispatcherAccessStateV3> {
 }
 
 describe('FeishuAccess v3 loader and atomic writes', () => {
+  it('logs fresh and resent pairing decisions without exposing the usable credential', async () => {
+    const logger = {
+      error: vi.fn(),
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+      trace: vi.fn(),
+      child: (): DreamuxLogger => logger,
+    } satisfies DreamuxLogger;
+    const access = new FeishuAccess({
+      stateDir: dir,
+      dispatcherId: 'test',
+      log: logger,
+    });
+    const fresh = await access.gate(inbound);
+    if (fresh.action !== 'pair') throw new Error('expected fresh pairing');
+    await access.recordPairingPrompt(inbound, fresh, 'prompt');
+    const resend = await access.gate(inbound);
+    expect(resend).toMatchObject({
+      action: 'pair',
+      token: fresh.token,
+      is_resend: true,
+      prompt_message_id: 'prompt',
+    });
+    expect(logger.debug).toHaveBeenCalledWith(
+      {
+        pairing_token_len: fresh.token.length,
+        sender_id: 'sender',
+        chat_id: 'chat',
+      },
+      '[feishu-gate] dm pairing: new slot',
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      {
+        pairing_token_len: fresh.token.length,
+        sender_id: 'sender',
+        chat_id: 'chat',
+        prompt_message_id: 'prompt',
+      },
+      '[feishu-gate] dm pairing: existing prompt',
+    );
+    expect((await disk()).pending[fresh.token]).toMatchObject({
+      sender_id: 'sender',
+      chat_id: 'chat',
+      prompt_message_id: 'prompt',
+    });
+    expect(await access.approvePairingByToken(fresh.token)).toMatchObject({
+      status: 'ok',
+    });
+    expect(await access.decide(inbound)).toMatchObject({ action: 'deliver' });
+    expect(
+      JSON.stringify([
+        ...logger.error.mock.calls,
+        ...logger.warn.mock.calls,
+        ...logger.info.mock.calls,
+        ...logger.debug.mock.calls,
+        ...logger.trace.mock.calls,
+      ]),
+    ).not.toContain(fresh.token);
+  });
+
   it('missing access.json uses the secure default v3 policy', async () => {
     const access = owner();
     expect(await access.decide(inbound)).toMatchObject({

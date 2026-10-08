@@ -144,16 +144,8 @@ export class FeishuRouting {
     target: FeishuTarget,
     containerChatId: string | null,
   ): FeishuRoutingPlan {
-    for (const candidate of resolutionChain(target)) {
-      const binding = this.bindingFor(candidate);
-      if (binding !== undefined) {
-        return {
-          kind: 'bound',
-          teamName: binding.team_name,
-          matched: candidate,
-        };
-      }
-    }
+    const bound = boundPlan(this.store.current.bindings, target);
+    if (bound !== null) return bound;
     if (!isBindableTarget(target)) {
       return { kind: 'dispatcher', reason: 'not_bindable' };
     }
@@ -236,16 +228,24 @@ export class FeishuRouting {
      */
     requireOwner?: string;
   }): Promise<{
+    /** The exact row replaced; inheritance does not change this response. */
     previousTeamName: string | null;
+    /** The Team serving this target before the commit, including inheritance. */
+    previousServingTeamName: string | null;
     /** The root the row holds after this bind. */
     rootMessageId: string | null;
   }> {
-    const displaced: { teamName: string | null } = { teamName: null };
+    const displaced: {
+      teamName: string | null;
+      servingTeamName: string | null;
+    } = { teamName: null, servingTeamName: null };
     const committed: { rootMessageId: string | null } = {
       rootMessageId: null,
     };
     await updateRoutingDocument(this.store, this.opts.stateDir, (document) => {
       const key = targetKey(input.target);
+      displaced.servingTeamName =
+        boundPlan(document.bindings, input.target)?.teamName ?? null;
       const now = Date.now();
       if (
         input.target.kind === 'group' &&
@@ -311,6 +311,7 @@ export class FeishuRouting {
     });
     return {
       previousTeamName: displaced.teamName,
+      previousServingTeamName: displaced.servingTeamName,
       rootMessageId: committed.rootMessageId,
     };
   }
@@ -356,15 +357,30 @@ export class FeishuRouting {
   async unbind(
     target: FeishuTarget,
     requireOwner?: string,
-  ): Promise<(FeishuRemovedRoute & { teamName: string }) | null> {
+  ): Promise<
+    | (FeishuRemovedRoute & {
+        teamName: string;
+        nextServingTeamName: string | null;
+      })
+    | null
+  > {
     // The removed row is reported from inside the commit that deletes it, the
     // way `forgetTeam` reports its routes: a snapshot read before this commit
     // would miss a root `fillTopicRoot` committed just ahead of it.
-    let removed: (FeishuRemovedRoute & { teamName: string }) | null = null;
+    let removed:
+      | (FeishuRemovedRoute & {
+          teamName: string;
+          nextServingTeamName: string | null;
+        })
+      | null = null;
     await updateRoutingDocument(this.store, this.opts.stateDir, (document) => {
       const key = targetKey(target);
-      const kept = document.bindings.filter((row) => {
-        if (targetKey(fromRecord(row.target)) !== key) return true;
+      const kept: FeishuBindingRecord[] = [];
+      for (const row of document.bindings) {
+        if (targetKey(fromRecord(row.target)) !== key) {
+          kept.push(row);
+          continue;
+        }
         if (requireOwner !== undefined && row.team_name !== requireOwner) {
           throw new PublicInvokeFailure(
             'This Feishu conversation is routed to another Team. Only the ' +
@@ -376,11 +392,12 @@ export class FeishuRouting {
           display: row.display,
           rootMessageId: row.root_message_id,
           teamName: row.team_name,
+          nextServingTeamName: null,
         };
-        return false;
-      });
-      if (kept.length === document.bindings.length) return false;
+      }
+      if (removed === null) return false;
       document.bindings = kept;
+      removed.nextServingTeamName = boundPlan(kept, target)?.teamName ?? null;
       return true;
     });
     return removed;
@@ -641,6 +658,23 @@ export class FeishuRouting {
   listSpaces(): readonly FeishuSpaceRecord[] {
     return this.store.current.spaces;
   }
+}
+
+/** Resolve against the document being read or committed, including inheritance. */
+function boundPlan(
+  bindings: readonly FeishuBindingRecord[],
+  target: FeishuTarget,
+): FeishuRoutingPlanBound | null {
+  for (const candidate of resolutionChain(target)) {
+    const key = targetKey(candidate);
+    const binding = bindings.find(
+      (row) => targetKey(fromRecord(row.target)) === key,
+    );
+    if (binding !== undefined) {
+      return { kind: 'bound', teamName: binding.team_name, matched: candidate };
+    }
+  }
+  return null;
 }
 
 function toRecord(target: FeishuTarget): FeishuTargetRecord {
