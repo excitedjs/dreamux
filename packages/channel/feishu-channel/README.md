@@ -67,6 +67,12 @@ sanitized submitted, activity, and settled lifecycle facts for dispatcher and
 TeamLeader conversations; Feishu anchors each presentation to the turn's
 inbound message.
 
+Binding a topic retires the displaced Team's presentation even when that Team
+served the topic through its parent group. Removing an exact topic binding
+retires that route's presentation and permits fresh submissions through a
+remaining parent binding, including one to the same Team. A standing anchor
+keeps the serving-route provenance captured when it was created.
+
 Test doubles are deliberately test-local and are not part of the published
 package API.
 

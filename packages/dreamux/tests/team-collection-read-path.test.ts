@@ -8,7 +8,10 @@ import {
 } from '../src/service/team/errors.js';
 import { TeamStore } from '../src/service/team/store.js';
 import type { TeamRecord } from '../src/service/team/types.js';
-import { AgentEntityCollectionStore } from '../src/service/agent/store.js';
+import {
+  AgentEntityCollectionStore,
+  AgentIdentityStore,
+} from '../src/service/agent/store.js';
 import { createLogger } from '../src/platform/logger.js';
 import { teamMateCollectionDir } from '../src/platform/paths.js';
 import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
@@ -28,11 +31,59 @@ describe('TeamCollection durable read paths', () => {
     const created = await fixture.teams.createFromRequest(
       teamRequest('retained-history'),
     );
+    const service = await fixture.teams.open(created.team_name);
+    const closingIdentity = deferred<void>();
+    const finishIdentity = deferred<void>();
+    fixture.releases.push(() => finishIdentity.resolve());
+    const update = AgentIdentityStore.prototype.update;
+    const identityUpdate = vi
+      .spyOn(AgentIdentityStore.prototype, 'update')
+      .mockImplementation(async function (this: AgentIdentityStore, patch) {
+        if (
+          this.dir === join(fixture.teamRoot, created.team_name) &&
+          typeof patch !== 'function' &&
+          patch.status === 'closed'
+        ) {
+          closingIdentity.resolve();
+          await finishIdentity.promise;
+        }
+        return update.call(this, patch);
+      });
+    let closed = false;
+    void service.closed.then(() => {
+      closed = true;
+    });
     await fixture.teams.dissolve(created.team_name, {
       note: 'Finished',
       force: true,
     });
-    await fixture.host.close();
+    try {
+      await closingIdentity.promise;
+      await fixture.host.close();
+      // Host shutdown stops runtimes; the accepted dissolve still owns this write.
+      expect(closed).toBe(false);
+      expect(
+        JSON.parse(
+          await readFile(
+            join(fixture.teamRoot, created.team_name, 'record.json'),
+            'utf8',
+          ),
+        ),
+      ).toMatchObject({ status: 'closed' });
+    } finally {
+      finishIdentity.resolve();
+      // This reuse-cwd Team has no physical worktree cleanup after child closure.
+      await service.closed;
+      identityUpdate.mockRestore();
+    }
+    expect(
+      JSON.parse(
+        await readFile(
+          join(fixture.teamRoot, created.team_name, 'identity.json'),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({ status: 'closed' });
     for (const name of ['ledger', '.tmp', 'backup old'])
       await writeRawRecord(fixture, name, 'inert bytes');
     const next = fixture.build();

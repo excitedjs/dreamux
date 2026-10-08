@@ -122,10 +122,13 @@ and release. `FeishuInboundRouter` owns delivery fallback, slash routing, and
 the reply root an accepted topic message teaches its route.
 Provisioning retains its first submission inside the guarded per-target run;
 waiters await that submission before reading the new binding.
-After its bind commits, provisioning passes the committed previous Team and
-reply root to `FeishuBindingOperations`. That owner retires a displaced Team's
+After its bind commits, provisioning passes the committed previous exact and
+effective serving Teams and reply root to `FeishuBindingOperations`. That owner retires a displaced Team's
 presentation before claiming and announcing the new Team, just as manual bind
 does. Same-Team binds do not release the route; failed commits affect no display.
+Removing an exact topic route retires its old presentation, then permits new
+submissions through any committed parent fallback. A standing anchor keeps the
+serving route that produced it; a later bind never rewrites that provenance.
 
 `FeishuCoreCommands` holds the invoker installed after routing loads. COT holds
 the constructed transport client and the session lifecycle. Outbound owns

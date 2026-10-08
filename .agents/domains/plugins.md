@@ -133,7 +133,8 @@ Order, all inside `loadConfig` except the last two steps:
 1. Parse `plugins[]` (before any import: a malformed entry has no later
    validation pass that would report it).
 2. For the always-loaded refs, then each entry in file order: import the
-   package, call the factory, reject a duplicate plugin name naming both
+   package, call the synchronous factory, reject a duplicate plugin name
+   ignoring ASCII case and naming both original spellings and
    sources, run `contribute`. A contributed provider is registered as
    `builtin:<name>` through `registerBuiltinProvider`, so config addresses it
    with the same ref grammar; a provider name already taken by another plugin
@@ -143,7 +144,8 @@ Order, all inside `loadConfig` except the last two steps:
    loaded plugin contributes and Dreamux does not ship fails loading with that
    statement, which is what an operator sees after removing a plugin from
    `plugins[]` while config still addresses its provider.
-4. Run each plugin's `config.read` on its entry's `config`. A `config` block
+4. Run each plugin's synchronous `config.read` on its entry's `config`.
+   A `config` block
    for a plugin with no `config.read` is ignored: a plugin with no reader has
    nowhere to route the block that would give it effect. An unrecognized key
    on a `plugins[]` entry is ignored, as everywhere else in config.json.
@@ -187,6 +189,10 @@ step: `name` becomes the `state/plugins/<name>` segment directly, so an
 unvalidated name could let two distinct plugins collide on one directory (a
 lossy sanitizer alone maps both `@acme/tool` and `_acme_tool` to
 `_acme_tool`) or resolve to `.`/`..` and escape `state/plugins/`.
+The duplicate-name comparison also rejects simultaneously loaded ASCII case
+aliases such as `Foo` and `foo`, which would share state on a case-insensitive
+filesystem. A single mixed-case name keeps its original state path and API key;
+no name or existing directory is rewritten.
 
 ## Failure Semantics
 
@@ -196,6 +202,9 @@ lossy sanitizer alone maps both `@acme/tool` and `_acme_tool` to
   `plugin <name>` row in place of the per-plugin rows and continues. The `for(name)` taps are load phase
   because name collisions a published api enforces (for example Feishu
   extension tool names) are raised inside them and must be hard errors.
+  Factories and config readers reject thenable results with phase attribution
+  and observe their rejected promises before failing loading. A config reader
+  never publishes a Promise as the plugin's validated configuration.
 - Core runs every hook with tapable's own `hook.call` / `hook.promise`, so
   interceptors plugins add with `hook.intercept` run. Isolation comes from two
   interceptors core installs on a hook before any plugin sees it: a `register`
@@ -209,6 +218,9 @@ lossy sanitizer alone maps both `@acme/tool` and `_acme_tool` to
   their return value (except `register`'s), so an `async` method's rejection is
   logged at runtime and fails loading under `for(name)`, and an `async`
   `register` leaves the tap unchanged even when it resolves to a modified tap.
+  A synchronous `register` result of `undefined` also leaves the original tap
+  unchanged, including when an interceptor is installed after existing taps;
+  explicit tap replacements and the original tap owner's attribution remain.
   No call site (`Dispatchers.get`, TeamService announcement,
   `composeLaunchDraft`, api publication) needs its own catch: every hook runs
   with plain `hook.call` / `hook.promise`. Isolation belongs to the hook

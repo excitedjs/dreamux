@@ -189,7 +189,7 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
       level: 'info',
       msg: 'dm pairing: existing prompt',
       ctx: {
-        token,
+        pairing_token_len: token.length,
         sender_id: input.sender_id,
         chat_id: input.chat_id,
         prompt_message_id: entry.prompt_message_id,
@@ -243,7 +243,11 @@ function dmPairPath(opts: FinalizeOpts): GateResult {
   logs.push({
     level: 'info',
     msg: 'dm pairing: new slot',
-    ctx: { token, sender_id: input.sender_id, chat_id: input.chat_id },
+    ctx: {
+      pairing_token_len: token.length,
+      sender_id: input.sender_id,
+      chat_id: input.chat_id,
+    },
   });
   return {
     action: {

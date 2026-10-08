@@ -383,6 +383,19 @@ current-source evidence, acceptance boundaries, and implementation status.
   authority. This does not authorize parent-next merge, stable/beta promotion,
   raw npm publication or claims of external-platform acceptance.
 
+## Parent delivery and external review comments (2026-10-08 to 2026-10-09)
+
+- Parent delivery: “先合入 453”. This later instruction authorizes normal
+  parent PR delivery into `next`, extending the earlier child-only boundary.
+  Required checks and non-author approval remain; there is no authorization
+  to bypass repository protection.
+- External review handling: “拉一下评论看看。真问题可以修复，不是真问题的话，直接在在评论上回复他。”
+  Source-backed review fixes and replies to the original comments are
+  authorized. R77's stopped independent workflow does not restart. R76's
+  physical-alias boundary remains. The
+  [comment adjudication](technical-design/review-453-fixes/pr453-review-comments.md)
+  records evidence without turning reviewer suggestions into operator rulings.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's

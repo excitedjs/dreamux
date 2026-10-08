@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Preserve existing taps when a plugin register interceptor omits its result. Reject asynchronous plugin factories and config readers with attributed load errors while observing their rejections. Reject simultaneously loaded plugin names that differ only by ASCII case; preserve the spelling of individual names, API keys, and state paths.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

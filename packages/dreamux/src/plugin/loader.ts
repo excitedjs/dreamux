@@ -62,10 +62,9 @@ export type PluginLoadPhase =
  * (`pluginStateDir`), so it must already be a safe single path segment.
  * Anchoring the first character to an ASCII letter or digit rules out `.`
  * and `..` (which would resolve `state/plugins/<name>` up to `state/plugins`
- * or `state`), and restricting the whole name to this alphabet makes the
- * name-to-segment mapping the identity function, so two distinct names can
- * never land on the same directory the way a lossy sanitizer (mapping both
- * `@acme/tool` and `_acme_tool` to `_acme_tool`) could.
+ * or `state`). Names keep their spelling; the duplicate-name check also
+ * rejects ASCII case aliases so loaded plugins stay isolated on
+ * case-insensitive filesystems.
  */
 const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -164,12 +163,14 @@ export async function loadPlugins(options: {
   const loaded: LoadedPlugin[] = [];
   for (const { ref, source, entry } of sources) {
     const plugin = await constructPlugin(parseProviderRef(ref));
-    const clash = loaded.find((other) => other.name === plugin.name);
+    const clash = loaded.find(
+      (other) => other.name.toLowerCase() === plugin.name.toLowerCase(),
+    );
     if (clash !== undefined) {
       throw new PluginLoadError(
         plugin.name,
         'factory',
-        `plugin name "${plugin.name}" is declared by both ${clash.source} and ${source}`,
+        `plugin name "${plugin.name}" is declared by both ${clash.source} (as "${clash.name}") and ${source}; names must be unique ignoring ASCII case`,
       );
     }
     const providers = contributePlugin(plugin, {
@@ -204,7 +205,12 @@ export function readPluginConfigs(
     const reader = loaded.plugin.config;
     if (reader === undefined) continue;
     try {
-      loaded.config = reader.read(entry.config);
+      const config = reader.read(entry.config);
+      if (isThenable(config)) {
+        Promise.resolve(config).catch(() => {});
+        throw new Error('config.read must be synchronous');
+      }
+      loaded.config = config;
     } catch (err) {
       throw new PluginLoadError(
         loaded.name,
@@ -260,6 +266,14 @@ async function constructPlugin(ref: ProviderRef): Promise<DreamuxPlugin> {
       {
         cause: err,
       },
+    );
+  }
+  if (isThenable(plugin)) {
+    Promise.resolve(plugin).catch(() => {});
+    throw new PluginLoadError(
+      ref.raw,
+      'factory',
+      'plugin factory must be synchronous',
     );
   }
   if (!isPlainObject(plugin) || typeof plugin['name'] !== 'string') {

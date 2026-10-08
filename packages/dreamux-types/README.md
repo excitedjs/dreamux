@@ -87,6 +87,14 @@ A provider implements the full contract against this package only — see
 > (issue #209 slice 3). The public target published here is already stable for
 > external and built-in runtime/channel packages to author against.
 
+## Plugin loading contract
+
+A plugin factory returns its `DreamuxPlugin` synchronously; `config.read`
+synchronously validates the plugin's config. Returning a thenable fails loading
+with the ref or plugin name and phase. Loaded plugin names must be unique
+ignoring ASCII case, so `Foo` and `foo` cannot coexist. A single mixed-case
+name keeps its original API key and `state/plugins/<name>` spelling.
+
 ## Build / test
 
 Built and tested through the monorepo (rush) path — the only supported install

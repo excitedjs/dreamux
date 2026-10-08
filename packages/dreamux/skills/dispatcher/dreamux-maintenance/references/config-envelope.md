@@ -27,8 +27,9 @@ plugins.
 
 `plugins[]` entries are either a plugin ref string or an object with:
 
-- non-empty plugin ref `ref`: `builtin:<id>` (the built-in opt-in plugin is
-  `bootstrap`) or `npm:<package>` with an optional `#<export>`;
+- non-empty plugin ref `ref`: `builtin:<id>` (`bootstrap` is available only
+  in the repository workspace, not published installations) or `npm:<package>`
+  with an optional `#<export>`;
 - optional plugin-owned `config`, validated by that plugin. A `config` block
   for a plugin that takes no config (no `config.read`) is ignored. Every key at
   the host envelope's own levels — the top level, `plugins[]` entries
@@ -45,10 +46,14 @@ plugins.
 The built-in Feishu plugin is always loaded and must not be listed. A
 malformed entry fails `dreamux serve` and shows as a failed `config` line in
 `dreamux doctor`. An unknown built-in plugin, a plugin that fails to load, two
-plugins with the same name, and two providers with the same name fail `dreamux
+plugins with names equal ignoring ASCII case, and two providers with the same name fail `dreamux
 serve` and show as a failed `plugin <name>` line in `dreamux doctor`. A
 provider a plugin contributes is addressed in `agents[].provider` or
 `channels[].provider` as `builtin:<name>`.
+Plugin names retain their spelling in API keys and `state/plugins/<name>`;
+only duplicate detection folds ASCII case. Plugin factories and `config.read`
+are synchronous; a returned thenable fails loading with its ref or name and
+phase, and its rejection is observed.
 
 `agents[]` entries contain:
 

@@ -188,7 +188,9 @@ function guardPluginInterceptors<R = void>(
           onAsync(owner, method, Promise.resolve(result));
           return fallback();
         }
-        return result;
+        // Tapable's retroactive registration does not apply the normal
+        // undefined-means-unchanged rule itself.
+        return method === 'register' && result === undefined ? args[0] : result;
       };
     }
     return rawIntercept(guarded as never);

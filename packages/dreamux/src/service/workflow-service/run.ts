@@ -808,6 +808,8 @@ export class WorkflowRun {
    * durable writes from this same `WorkflowRun` instance comes from awaiting
    * them in sequence, not from a queue here: each per-run `TransactionalStore`
    * already serializes concurrent writers on its own file.
+   * Result- and terminal-bearing writes await their matching journal fact
+   * before the corresponding store write is enqueued.
    * `executeAgent`'s catch depends on this classification to tell "this run's
    * own storage failed" (a terminal failure) apart from "this Agent's runtime
    * work failed" (an ordinary agent failure another write can still record).

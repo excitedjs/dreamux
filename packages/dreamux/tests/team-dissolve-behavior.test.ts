@@ -1,5 +1,12 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,6 +14,11 @@ import { teamCreatePayloadHash } from '../src/service/team/create-request.js';
 import { createLeaderTeamMcpDelegate } from '../src/service/team/leader-mcp.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 import { deferred } from './helpers/controlled-runtime-provider.js';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 type Fixture = Awaited<ReturnType<typeof dispatcherFixture>>;
 const execFileAsync = promisify(execFile);
@@ -113,6 +125,26 @@ describe('Team dissolve through actual owners and Git worktrees', () => {
     });
     fixture.provider.planNext({ stopBarrier: leaderStop.promise });
     const { created, service } = await managedTeam(fixture, 'Start work');
+    const publishedCleanup = deferred<void>();
+    const finishPublication = deferred<void>();
+    fixture.releases.push(() => finishPublication.resolve());
+    const actualFs =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      );
+    const recordPath = join(fixture.teamRoot, created.team_name, 'record.json');
+    vi.mocked(rename).mockImplementation(async (from, to) => {
+      await actualFs.rename(from, to);
+      if (
+        to === recordPath &&
+        (await diskRecord(fixture, created.team_name)).worktree
+          .cleanup_state === 'retained-dirty'
+      ) {
+        // Actual bytes are visible before TransactionalStore commits its snapshot.
+        publishedCleanup.resolve();
+        await finishPublication.promise;
+      }
+    });
     fixture.provider.planNext({ stopBarrier: memberStop.promise });
     await service.teammates.spawn({
       name: 'member',
@@ -151,15 +183,29 @@ describe('Team dissolve through actual owners and Git worktrees', () => {
     expect(order).toEqual(['member', 'leader']);
     leaderStop.resolve();
     await service.closed;
-    await vi.waitFor(async () =>
+    try {
+      await publishedCleanup.promise;
       expect(
         (await diskRecord(fixture, created.team_name)).worktree.cleanup_state,
-      ).toBe('retained-dirty'),
+      ).toBe('retained-dirty');
+      expect(await fixture.teams.summary(created.team_name)).toMatchObject({
+        status: 'closed',
+        worktree_cleanup: 'cleanup-pending',
+      });
+    } finally {
+      finishPublication.resolve();
+      vi.mocked(rename).mockRestore();
+    }
+    // The committed owner, rather than the earlier disk publication, fences reads.
+    await vi.waitFor(async () =>
+      expect(await fixture.teams.summary(created.team_name)).toMatchObject({
+        status: 'closed',
+        worktree_cleanup: 'retained-dirty',
+      }),
     );
-    expect(await fixture.teams.summary(created.team_name)).toMatchObject({
-      status: 'closed',
-      worktree_cleanup: 'retained-dirty',
-    });
+    expect(
+      (await diskRecord(fixture, created.team_name)).worktree.cleanup_state,
+    ).toBe('retained-dirty');
     expect(
       await readFile(join(created.runtime_cwd, 'late-dirty.txt'), 'utf8'),
     ).toBe('work admitted before dissolve\n');

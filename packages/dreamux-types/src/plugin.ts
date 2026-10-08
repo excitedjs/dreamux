@@ -15,7 +15,8 @@ import type { TeamCreateParams } from './team.js';
 
 /**
  * A Dreamux plugin: the object a plugin package's zero-argument factory
- * (its `default` export, or the `npm:<pkg>#<export>` export) returns.
+ * (its `default` export, or the `npm:<pkg>#<export>` export) returns
+ * synchronously. Factories and `config.read` must not return thenables.
  *
  * `contribute` and `server` only register and tap. They must not do IO, start
  * timers, or hold resources: `dreamux doctor` runs both while a daemon may be
@@ -27,7 +28,7 @@ import type { TeamCreateParams } from './team.js';
  * first `await`.
  */
 export interface DreamuxPlugin {
-  /** Unique across all loaded plugins; a duplicate fails loading. */
+  /** Unique ignoring ASCII case across loaded plugins; spelling is preserved. */
   readonly name: string;
   /**
    * Published to other plugins after every plugin's `server` ran, through
@@ -35,7 +36,7 @@ export interface DreamuxPlugin {
    * {@link DreamuxPluginApis}.
    */
   readonly api?: unknown;
-  /** Validate this plugin's `plugins[]` config block. A throw fails loading. */
+  /** Synchronously validate this plugin's `plugins[]` config block; a throw fails loading. */
   readonly config?: { read(raw: unknown): unknown };
   contribute?(host: ContributeHost): void;
   server?(host: ServerHost): void;
