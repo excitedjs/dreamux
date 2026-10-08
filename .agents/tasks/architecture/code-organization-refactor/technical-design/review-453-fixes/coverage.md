@@ -2,6 +2,21 @@
 
 Recorded 2026-10-08 against the revision-2 [requirement](../../artifacts/review-fixes-20261003.md), [selected solution](final.md), R74/R75/R76 and [deleted-tests ledger](../../artifacts/deleted-tests.md). The TeamLeader checked source and meaningful assertions, all eight actual package summaries and all 199 tested file hashes. All 1,965 historical identities retain a named disposition. Counts and accounting do not certify behavior. R77 stopped the final corrected-tree review before findings; no independent pass is claimed. Current source-based pre-review, local gates and historical dispositions supply the recorded child-delivery evidence.
 
+## CI inventory-fixture evidence (2026-10-08)
+
+The same inert-inventory contract now executes independently for ledger and
+LeDgEr, avoiding a case-insensitive filesystem collision before assertions.
+Both named variants preserve real TeamStore calls, valid/malformed record
+reads, no foreign record reads, illegal entity-query rejection and unchanged
+residue. The extra execution does not add a historical identity or establish
+coverage through a count; all 1,965 original contract/target mappings remain.
+
+The TeamLeader checked all 199 corrected tested hashes and 351 unchanged
+production/guidance paths. Current default tests pass 2,649 with six model
+exclusions and auth-free protocol. Earlier model-enabled evidence remains
+historical with all native source/cases unchanged. Corrected macOS execution
+is a normal-CI gate, not a local claim. R77's stopped review remains stopped.
+
 ## Final closeout evidence and review boundary (2026-10-08)
 
 R77 stops the last workflow at scope confirmation; it produced no findings or

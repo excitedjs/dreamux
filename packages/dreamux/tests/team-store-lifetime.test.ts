@@ -60,46 +60,48 @@ async function fixture() {
 }
 
 describe('Team record lifetime', () => {
-  it('lists valid Teams without reading inert or invalid inventory names and still rejects direct invalid lookups', async () => {
-    const f = await fixture();
-    const owner = await f.store.acquire('team');
-    await owner.create({ ...f.input, status: 'closed' });
-    await owner.release();
-    const foreign = [
-      'ledger',
-      'LeDgEr',
-      'dispatcher',
-      '.tmp',
-      'backup old',
-      'x'.repeat(65),
-    ];
-    for (const name of [...foreign, 'malformed']) {
-      await mkdir(join(f.root, name));
-      await writeFile(join(f.root, name, 'record.json'), 'inert bytes');
-    }
-    await writeFile(join(f.root, 'foreign-file'), 'inert file');
-    const before = (await readdir(f.root)).sort();
-    const reads = vi.mocked(fs.readFile);
-    reads.mockClear();
-    expect((await f.store.list()).map((record) => record.team_id)).toEqual([
-      'team',
-    ]);
-    const readPaths = reads.mock.calls.map(([path]) => String(path));
-    expect(readPaths).toContain(f.path);
-    expect(readPaths).toContain(join(f.root, 'malformed', 'record.json'));
-    for (const name of foreign) {
-      expect(readPaths).not.toContain(join(f.root, name, 'record.json'));
-      await expect(f.store.get(name)).rejects.toThrow();
-      await expect(f.store.acquire(name)).rejects.toThrow();
-      expect(await readFile(join(f.root, name, 'record.json'), 'utf8')).toBe(
-        'inert bytes',
+  it.each(['ledger', 'LeDgEr'])(
+    'lists valid Teams without reading inert or invalid inventory names and still rejects direct invalid lookups (%s)',
+    async (reservedName) => {
+      const f = await fixture();
+      const owner = await f.store.acquire('team');
+      await owner.create({ ...f.input, status: 'closed' });
+      await owner.release();
+      const foreign = [
+        reservedName,
+        'dispatcher',
+        '.tmp',
+        'backup old',
+        'x'.repeat(65),
+      ];
+      for (const name of [...foreign, 'malformed']) {
+        await mkdir(join(f.root, name));
+        await writeFile(join(f.root, name, 'record.json'), 'inert bytes');
+      }
+      await writeFile(join(f.root, 'foreign-file'), 'inert file');
+      const before = (await readdir(f.root)).sort();
+      const reads = vi.mocked(fs.readFile);
+      reads.mockClear();
+      expect((await f.store.list()).map((record) => record.team_id)).toEqual([
+        'team',
+      ]);
+      const readPaths = reads.mock.calls.map(([path]) => String(path));
+      expect(readPaths).toContain(f.path);
+      expect(readPaths).toContain(join(f.root, 'malformed', 'record.json'));
+      for (const name of foreign) {
+        expect(readPaths).not.toContain(join(f.root, name, 'record.json'));
+        await expect(f.store.get(name)).rejects.toThrow();
+        await expect(f.store.acquire(name)).rejects.toThrow();
+        expect(await readFile(join(f.root, name, 'record.json'), 'utf8')).toBe(
+          'inert bytes',
+        );
+      }
+      expect((await readdir(f.root)).sort()).toEqual(before);
+      expect(await readFile(join(f.root, 'foreign-file'), 'utf8')).toBe(
+        'inert file',
       );
-    }
-    expect((await readdir(f.root)).sort()).toEqual(before);
-    expect(await readFile(join(f.root, 'foreign-file'), 'utf8')).toBe(
-      'inert file',
-    );
-  });
+    },
+  );
 
   it('treats a missing collection as empty but propagates an actual inventory IO failure', async () => {
     const f = await fixture();

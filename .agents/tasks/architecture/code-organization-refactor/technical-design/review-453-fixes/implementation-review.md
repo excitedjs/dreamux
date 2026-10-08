@@ -1,5 +1,23 @@
 # PR #453 repair implementation review
 
+## CI fixture TeamLeader pre-review (2026-10-08)
+
+The corrected inventory test runs ledger and LeDgEr in separate real temporary
+roots instead of weakening assertions, skipping a filesystem branch or
+coalescing mkdir. Existing foreign names and all valid/malformed/inert/direct
+query assertions remain in both parameterized cases. Other test bodies are
+unchanged. The TeamLeader verified the single changed package path, all 199
+tested hashes, all 351 production/guidance hashes and actual current package
+results: 2,649 default passes with six exclusions. The original fixture failed
+during directory preparation on macOS; no runtime defect is inferred.
+
+Current repository gates pass locally. Enabled native evidence remains the
+preceding unchanged-source run, distinct from current default execution. The
+normal child CI supplies macOS acceptance separately. R77 still stops the
+final independent workflow; this source/assertion check is not a restarted
+review or independent pass. R74/R75/R76 and the published alpha production
+source remain unchanged.
+
 ## Final review stopped by the operator (2026-10-08)
 
 The operator said “停掉最后这次复审” (R77). The stop returned a terminal

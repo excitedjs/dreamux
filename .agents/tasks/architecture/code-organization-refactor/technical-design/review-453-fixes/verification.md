@@ -2,6 +2,38 @@
 
 Recorded 2026-10-03. This continuation implements the [active requirement](../../artifacts/review-fixes-20261003.md), revision 2 with R76's alias boundary, and [selected solution](final.md). The operator's direct repair instruction and R74/R75 authorize the work; no additional development card is claimed. Parent PR #453 merging into `next` remains outside this delivery authority.
 
+## macOS CI fixture correction (2026-10-08)
+
+[Child CI run](https://github.com/excitedjs/dreamux/actions/runs/37770808837)
+passed Linux but failed the Team inventory fixture on macOS before its owner
+assertions: ledger and LeDgEr were created in one case-insensitive directory.
+The same writer parameterized the case with a fresh real root and TeamStore
+per spelling. Both variants preserve valid-record listing, malformed-record
+reads, no invalid-inventory reads, direct get/acquire rejection, inert bytes
+and unchanged directory contents. Other lifetime and drain assertions remain.
+
+The TeamLeader checked the complete one-test diff, all 199 current tested
+hashes, and all 351 source/guidance path hashes against the published source
+(dereferencing the colocated guidance symlink). No production change occurred.
+All 1,965 historical identities retain their original contracts and targets.
+
+Current repository Rush build, lint, typecheck, typecheck:tests, default test
+and change verification pass. Default tests: 2,649 passed with six model
+exclusions, including actual auth-free protocol. The preceding enabled run's
+2,654 passes and six actual Codex/#63 cases are historical evidence; those
+source/tests are unchanged and model calls were not repeated for this isolated
+fixture correction. Local verification remains Linux/case-sensitive; normal
+CI must verify the corrected macOS execution. The final review stays stopped
+under R77, and no new review or runtime policy is introduced.
+
+R78's alpha artifact was already published from the unchanged production
+source. Its isolated install, tarball integrity, official dependency versions,
+compiled CLI help and public-root imports were verified and handed to the
+designated tester. Publication is not real Feishu/Claude/service acceptance.
+The unversioned installation prefix's CLI --version returns unknown through
+inherited yargs discovery; registry and installed manifests identify the exact
+package. No version behavior change was added.
+
 ## Final local acceptance and operator-stopped review (2026-10-08)
 
 R77 records “停掉最后这次复审”. The final corrected-tree workflow was
