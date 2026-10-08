@@ -122,6 +122,12 @@ before the listed entries, and are not listed; `builtin:bootstrap` is opt-in,
 and an installed build currently fails to load it because its package is not
 published (R56).
 
+Builtin composition names each package's plugin factory export. Configured npm
+plugins continue to select their default or explicit `#export`. The official
+packages' provider defaults and named plugin exports are described by
+[provider runtime](provider-runtime.md#ownership); an explicit official plugin
+entry is still refused as a duplicate of its always-loaded plugin.
+
 Order, all inside `loadConfig` except the last two steps:
 
 1. Parse `plugins[]` (before any import: a malformed entry has no later

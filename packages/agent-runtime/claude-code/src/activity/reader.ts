@@ -27,7 +27,7 @@ const MAX_DECODED_BYTES = 8_388_608;
 const MAX_NATIVE_RECORDS = 20_000;
 const MAX_ELAPSED_MS = 2_000;
 
-/** Page-size bounds. Core validates the returned page independently. */
+/** Provider-owned page-size bounds; Core checks record shape and count only. */
 const DEFAULT_RECORD_LIMIT = 50;
 const MAX_RECORD_LIMIT = 200;
 

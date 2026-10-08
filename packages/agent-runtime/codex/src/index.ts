@@ -1,13 +1,10 @@
 /**
- * `@excitedjs/agent-runtime-codex` — the built-in Codex plugin for Dreamux
- * (`builtin:codex`). Its default export is the Dreamux plugin factory: the
- * plugin contributes the Codex `AgentRuntimeProvider`, which implements the
- * `@excitedjs/dreamux-types` contract. `createCodexAgentRuntimeProvider` is
- * the named export for constructing the bare provider directly (embedders,
- * tests). This package never imports `@excitedjs/dreamux` core.
+ * Package-root default: neutral provider factory for configured npm providers.
+ * The named plugin factory contributes the builtin provider and plugin APIs.
+ * This package never imports Dreamux Core.
  */
 
-export { default } from './plugin.js';
+export { default as createCodexPlugin } from './plugin.js';
 
 export {
   createCodexAgentRuntimeProvider,
@@ -23,3 +20,12 @@ export {
   DEFAULT_SANDBOX_MODE,
   ALLOWED_SANDBOX_MODES,
 } from './config.js';
+
+import type { AgentRuntimeProviderFactory } from '@excitedjs/dreamux-types';
+import type { DispatcherCodexConfig } from './config.js';
+import { createCodexAgentRuntimeProvider } from './provider.js';
+
+const providerFactory: AgentRuntimeProviderFactory<
+  DispatcherCodexConfig
+> = () => createCodexAgentRuntimeProvider();
+export default providerFactory;

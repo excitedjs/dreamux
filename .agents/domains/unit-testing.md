@@ -16,6 +16,12 @@ assert on the observable outcome: a returned value, a call made on a
 collaborator, a state change visible through another public method. Never
 assert on source text, file paths, or a slice of a method body.
 
+An admission-race test must observe both sides of its boundary. A resolved
+delivery promise and zero calls for the late request do not prove that a
+request queued before close was delivered. Record and assert the admitted
+request's actual preparation, submission and payload outside the owner's
+error handling, as well as refusal of the post-close request.
+
 `completion-delivery.test.ts`'s
 `'renders identically whether or not a deliverCompletion callback is attached'`
 case was the template: it built a real `TeammateSubmitInput`, called the real
@@ -31,7 +37,10 @@ whole file was deleted under R43 in the code-organization refactor's Stage 9
 `service/agent/` — broke its import, not a fault in the cases themselves);
 its contract is logged in the
 [deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)
-for restoration at the final test completion on PR #453.
+for final-parent accounting. The surviving rendering protection is restored in
+`/packages/dreamux/tests/completion-delivery.test.ts` as
+`renders identically whether or not a Core completion recipient is attached`;
+the former source-text checks remain retired.
 
 If constructing the real owning object looks impractical — "too heavy to
 construct here" — that is the design defect, not a license to fall back to a
@@ -40,11 +49,73 @@ text scan. `core-event-catalog.test.ts`'s
 publisher with role read from team_id, not asserted'` case documented exactly
 this: unable to construct a full `DispatcherService` (config, registry,
 catalog, admin socket), the test read `dispatcher-service/index.ts` as text
-instead. The fix belongs on the production side — extract a lighter,
-independently constructible seam for the fact under test (here, the
-`publishAgentState` call) — not on the test. This file was likewise deleted
+instead. The replacement must observe actual publication; a source scan does
+not become behavioral evidence because construction is inconvenient. Current
+`/packages/dreamux/tests/core-event-owners.test.ts` constructs the real identity
+store, factory, bus and Team owners and checks committed events and source
+revocation, without adding a production abstraction solely for test setup.
+The old file was likewise deleted
 under R43 in Stage 9 (same ledger: an unrelated earlier-stage directory
 move — `team-collection/` into `service/team/` — broke its import).
+
+## Behavioral lint fixtures and coverage accounting
+
+Calling the real ESLint config with lintText and asserting emitted rule ids
+and error severity is a behavior test. The fixture path selects the source or
+test contract; it is not a scan that pins repository source spelling or layout.
+The source-text prohibition does not retire this contract. For the code-line
+cap, a 701-comment fixture tests no counted code lines, so it cannot prove the
+hard error above 700 code lines. Use actual non-comment, nonblank code and
+assert the positive error; retain separate boundary/counting-mode assertions.
+
+When a coverage ledger mixes such cases with literal source scans, classify
+each case by what it executes and observes. A generic R46/R55 or compiler-gate
+citation cannot cancel a surviving behavioral obligation. Map it to the named
+current assertion or the exact decision that changes that specific contract.
+The code-organization ledger's Stage 1 explicitly retains the source line-cap
+behavior; its physical-line counting assumption is the superseded part.
+
+## Regression traps: isolated hooks and local mirrors
+
+A hook that isolates plugin failures also isolates a failed assertion inside
+its callback. Capture the callback's observed result or error and assert in
+the test body after the hook returns. Recording one observation before an
+in-hook assertion is not enough: a reentrant lookup can fail while the later
+ordinary lookup succeeds, leaving that test green. A missing callback result
+must fail the outside assertion rather than disappear into fixture logging.
+
+Exercise the production parser or smallest real owning seam, not a private
+test-local implementation that only its own tests call. A passing local
+version classifier says nothing about the provider version gate. Likewise,
+an ignored fixture argument creates no distinct event: command arrays dropped
+by a result adapter cannot prove real multi-submit folding. Remove the dead
+dimension, retain the result projection and point the folding obligation to
+the test that actually submits multiple inputs and observes their native end.
+
+## Real Codex execution boundaries
+
+`/packages/dreamux/tests/codex-live.test.ts` checks the installed version and
+initializes a real app-server/thread in a disposable home without operator
+config or authentication. Missing or unsupported Codex fails this check.
+`DREAMUX_SKIP_LIVE_CODEX=1` is an explicit exclusion for an environment that
+intentionally lacks Codex; it does not certify provider compatibility.
+
+The model cases in `codex-native-contracts-live.test.ts`,
+`codex-activity-live.test.ts` and `codex-inbound-live.test.ts` additionally require
+`DREAMUX_RUN_LIVE_MODEL_GATE=1` and usable model authentication. This explicit
+execution boundary lets normal hosted CI check installed/protocol compatibility
+without model credentials. An excluded model case is reported as excluded;
+installation, protocol startup or a default green run cannot substitute for
+the six native model contracts or the issue #63 gate. Record the default run
+and the explicitly enabled model run separately when certifying those contracts.
+
+Use public provider/config exports where they already exist. The integration
+fixtures also observe native RPC acknowledgement and terminal messages and
+intercept Feishu platform IO; those test-only observations currently need
+package internals that have no public equivalent. Internal module movement
+therefore requires updating these probes with the provider change. This is a
+named fixture coupling, not a production dependency or a reason to expose new
+production APIs solely for tests or replace actual native evidence with a fake.
 
 ## What a source-text/structure test looks like, and why it's banned
 
@@ -91,7 +162,7 @@ refactor's own audit:
   for restoration. A future analogous case (a source-text importer scan
   for a fact dependency-cruiser can express natively) gets the same treatment:
   add the cruiser rule, delete the hand-rolled test.
-- **A "behavior" case that still needs a real test.**
+- **A behavioral protection a structure scan cannot prove.**
   `team-dissolve-contract.test.ts` proved "dissolve
   never drains a running turn" by reading `closing.ts`, `team/service.ts`,
   and two other files as text and asserting none of them contain the
@@ -105,7 +176,11 @@ refactor's own audit:
   waiting implementation would have used. This file was also deleted under
   R43 in Stage 9 (an unrelated earlier-stage fold — `TeamWorktreeCleanup`
   merged into `TeamCollection` under Stage 6b — broke its import); its
-  contract is logged in the same ledger for restoration.
+  contract is logged in the same ledger. Current behavior assertions live in
+  `/packages/dreamux/tests/team-dissolve-behavior.test.ts` and
+  `/packages/dreamux/tests/team-dissolve-additional.test.ts`; the
+  [repair coverage accounting](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/coverage.md)
+  distinguishes surviving protections from R62/R67's changed teardown order.
 
 ## The one legitimate exception
 

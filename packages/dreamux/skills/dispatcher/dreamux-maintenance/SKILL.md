@@ -1,6 +1,6 @@
 ---
 name: dreamux-maintenance
-description: "Dreamux host operation notes. Load when diagnosing or operating dreamux serve, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, Workflow run state, cron job stores, restart behavior, current config/state/run/log paths, plugins, bundled-skill injection, Feishu access policy, runtime app-server readiness, a Dreamux upgrade, or post-restart recovery."
+description: "Dreamux host operation notes. Load when diagnosing or operating dreamux serve, uninstall, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, Workflow run state, cron job stores, restart behavior, current config/state/run/log paths, plugins, bundled-skill injection, Feishu access policy, runtime app-server readiness, a Dreamux upgrade, or post-restart recovery."
 ---
 
 # Dreamux Maintenance
@@ -51,7 +51,7 @@ description: "Dreamux host operation notes. Load when diagnosing or operating dr
 
 | Task | Read when | Reference |
 |---|---|---|
-| Service lifecycle, Workflow run state, cron jobs, Team dissolve, and reply diagnosis | Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, Workflow run records or journals, cron job stores, restart behavior, active or cleanup-pending Team dissolve, current state/run/log paths, bundled-skill injection, or runtime app-server readiness. | [Service lifecycle](references/service-lifecycle.md) |
+| Service lifecycle, Workflow run state, cron jobs, Team dissolve, and reply diagnosis | Diagnosing `dreamux serve`, planning `dreamux uninstall`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, Workflow run records or journals, cron job stores, restart behavior, active or cleanup-pending Team dissolve, current state/run/log paths, bundled-skill injection, or runtime app-server readiness. | [Service lifecycle](references/service-lifecycle.md) |
 | Managed Dreamux self-upgrade | The operator explicitly requests a Dreamux upgrade, or an injected restart notice requires the resumed upgrade report. | [Self-upgrade](references/self-upgrade.md) |
 | Host config envelope | Inspecting or safely editing the current `config.json` envelope, path authority, `plugins[]`, Dispatcher/agent/channel wiring, or an opaque external provider or plugin config. | [Config envelope](references/config-envelope.md) |
 | Built-in bootstrap plugin | Enabling `builtin:bootstrap`, or diagnosing its `.workspace/identity.md`, `user.md`, and `bootstrap.md` files and what the Dispatcher and TeamLeaders receive from them. | [Built-in bootstrap](references/builtin-bootstrap.md) |

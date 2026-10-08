@@ -17,8 +17,8 @@ export interface ClaudeCodeRuntimeDeps {
   paths: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];
   systemPromptAppend?: readonly string[] | undefined;
-  skillSources?: readonly AgentRuntimeSkillSource[];
-  disableFeatures?: readonly string[];
+  skillSources: readonly AgentRuntimeSkillSource[];
+  disableFeatures: readonly string[];
   /**
    * The session-bound output schema, applied at spawn via `--json-schema`. It is
    * fixed for the life of this runtime; no submission can change it.

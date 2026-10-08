@@ -3,13 +3,22 @@
 This reference owns current serve/daemon lifecycle, missing-reply, stuck-turn,
 Workflow run-state, and cron job-store diagnosis, plugin doctor lines,
 bundled-skill injection,
-runtime app-server readiness, and same-version restart cautions.
+runtime app-server readiness, uninstall, and same-version restart cautions.
 
 ## Server And Service
 
 - `dreamux serve` is the foreground server entry point. The public
   `dreamux daemon install|uninstall|start|stop|restart` command group manages
   the user service; `serve` is not self-daemonizing.
+- `dreamux uninstall` removes the managed user service and recursively removes
+  `DREAMUX_ROOT`, including other files and directories inside it. Its
+  `--dry-run` checks existence and reports planned removal without enumerating
+  root contents, deleting files, or unregistering the service. It does not
+  guarantee that actual removal will succeed; permission and other filesystem
+  errors still propagate. Paths are normalized before comparison: a removal
+  path inside or containing a provider-derived operator runtime home is refused
+  before any service mutation. Physical symlink aliases are not resolved.
+  `dreamux daemon uninstall` removes only the service.
 - Check launchd or systemd only for service-lifecycle questions. Explain before
   changing units, linger, environment, or shell startup.
 - Use `dreamux doctor` to inspect configuration, provider loading, service
@@ -148,6 +157,17 @@ check for leftover runtime processes after such an exit.
 - Team state lives at
   `~/.dreamux/state/<dispatcher-id>/team/<team-id>/record.json` and is fully
   server-owned. Do not edit, clear, copy, or synthesize it manually.
+- Active, constructing, writing, and cleanup-owning Teams share an in-memory
+  record owner. An admitted leader dissolve holds that owner through its
+  asynchronous worktree precheck and hands the hold to accepted cleanup; a
+  refused precheck or a call joining an accepted dissolve releases its hold.
+  A fully retired closed Team with no pending cleanup or holders
+  is read from disk on its next history, replay, or name lookup. Edits, deletion,
+  or damage then affect that lookup; a missing or invalid record reserves no
+  name. This visibility is not permission to edit server-owned records.
+- Collection inventory ignores non-Team directory names under the existing ID
+  and reserved-name rules. Such entries are not read as Team records or removed
+  by startup, history, or replay; direct requests using an invalid Team ID fail.
 - Dissolve is a submission. The caller's receipt (`{ accepted, team_name,
   status: submitted }`) proves only that the request was accepted; writing the
   record closed, destroying every child resource, and reclaiming the worktree

@@ -42,6 +42,20 @@ that branch's plugin code are part of this task's input.
 
 ## Desired outcome
 
+The active [2026-10-03 review-fix continuation](artifacts/review-fixes-20261003.md)
+requires repairs to the resulting tree and final-parent coverage restoration.
+It also explicitly narrows daemon-lifetime Team record memory authority to
+non-retired owners; fully retired history is read from disk on demand (R74).
+Its acceptance boundaries supersede the prior history snapshot rule only in
+that scope.
+
+On 2026-10-08 the operator said “先和 next 保持一致吧” after the discussed
+uninstall preview and actual-removal differences were explained. R75 changes
+only that uninstall path: existence-only planned-removal preview and recursive
+root deletion follow next again, including other files inside the root.
+Revision 2 of the continuation supersedes the foreign-retention predictor;
+R34 provider protection, R26 addressing and the other repair outcomes remain.
+
 The target below is the audit's proposal (§6) as amended by the
 [rulings](rulings.md). Where they differ, the rulings decide.
 

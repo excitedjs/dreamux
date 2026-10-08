@@ -21,6 +21,7 @@ import {
 
 import {
   dreamuxFeishuGate,
+  pruneExpiredPending,
   type GateAction,
   type GateInbound,
   type GateResult,
@@ -185,37 +186,39 @@ export class FeishuAccess {
       ) {
         return current;
       }
+      const now = Date.now();
+      const pruned = pruneExpiredPending(current, now);
       // Another pending entry for the same sender exists? For a resend from
       // an older entry without a prompt message id, attach the newly-sent
       // card id and refresh the TTL. Otherwise do not clobber a concurrent
       // sender's already-recorded token.
-      const existingKey = Object.entries(current.pending).find(
+      const existingKey = Object.entries(pruned.pending).find(
         ([, e]) => e.sender_id === inbound.sender_id,
       );
       if (existingKey !== undefined) {
-        if (!action.is_resend) return current;
+        if (!action.is_resend) return pruned;
         const [token, existing] = existingKey;
         const bumped: PendingPairingEntry = {
           ...existing,
-          expires_at: Date.now() + PAIRING_TTL_MS,
+          expires_at: now + PAIRING_TTL_MS,
           prompt_message_id: existing.prompt_message_id ?? messageId,
         };
         return {
-          ...current,
-          pending: { ...current.pending, [token]: bumped },
+          ...pruned,
+          pending: { ...pruned.pending, [token]: bumped },
         };
       }
       // Merge with fresh TTL (send succeeded right now).
       const entry: PendingPairingEntry = {
         sender_id: inbound.sender_id,
         chat_id: inbound.chat_id,
-        created_at: Date.now(),
-        expires_at: Date.now() + PAIRING_TTL_MS,
+        created_at: now,
+        expires_at: now + PAIRING_TTL_MS,
         prompt_message_id: messageId,
       };
       return {
-        ...current,
-        pending: { ...current.pending, [action.token]: entry },
+        ...pruned,
+        pending: { ...pruned.pending, [action.token]: entry },
       };
     });
   }

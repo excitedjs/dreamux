@@ -50,7 +50,7 @@ import {
   TeamService,
   type TeamServiceDeps,
 } from './service.js';
-import { TeamStore } from './store.js';
+import { TeamStore, type TeamRecordHandle } from './store.js';
 import { teamSummary } from './team-summary.js';
 import type { TeamsPort } from './teams-port.js';
 import {
@@ -120,17 +120,16 @@ export class TeamCollection implements TeamsPort {
   /**
    * Create one Team under a `team.create` request identity.
    *
-   * The Team record is the whole protocol. Publishing it exclusively is the
-   * single acceptance point: it is what makes the Team exist, what takes the
-   * concrete name, and what durably records the request id and canonical
+   * The Team record is the whole protocol. Publishing through its canonical
+   * serialized owner is the acceptance point: it makes the Team exist, takes the
+   * concrete name, and durably records the request id and canonical
    * payload hash a later replay is decided against.
    *
-   * Before publication nothing is owned — the request is unaccepted, no Team
-   * exists, and the candidate name is free — so a lost process, a rejected
-   * candidate, or a plain retry may simply pick another name. After publication
-   * the same id with the same payload always resolves back to that Team,
-   * including once it is closed; the same id with a different payload is an
-   * idempotency conflict.
+   * Before publication no Team or accepted request exists on disk, so a lost
+   * process, a rejected candidate, or a plain retry may pick another name.
+   * While a valid Team record carries that acceptance, the same id with the
+   * same payload resolves back to that Team, including once it is closed;
+   * the same id with a different payload is an idempotency conflict.
    *
    * Gated by the dispatcher fence like every other `TeamsPort` method: a create
    * admitted right as the dispatcher starts closing still crosses the fence
@@ -250,8 +249,8 @@ export class TeamCollection implements TeamsPort {
    *
    * The records are the only ledger: a creation that failed after publishing
    * one still accepted the request, and a process that died before returning
-   * left the same proof behind. Scanning them is what makes a replay answer
-   * the same way across restarts.
+   * left the same proof behind. While that valid record remains, scanning it
+   * makes a replay answer the same way across restarts.
    */
   private async acceptedRequest(requestId: string): Promise<TeamRecord | null> {
     for (const team of await this.store.list()) {
@@ -376,10 +375,12 @@ export class TeamCollection implements TeamsPort {
 
   private async reclaimTeamWorktree(teamId: string): Promise<void> {
     try {
-      await settleTeamWorktreeCleanup(
-        this.store.handle(teamId),
-        this.worktrees,
-      );
+      const record = await this.store.acquire(teamId);
+      try {
+        await settleTeamWorktreeCleanup(record, this.worktrees);
+      } finally {
+        await record.release();
+      }
     } catch (error) {
       this.opts.log.error(
         {
@@ -550,11 +551,7 @@ export class TeamCollection implements TeamsPort {
     teamId: string,
   ): Promise<TeamService | null> {
     requireLifecycleText(input.intent, 'Team create intent');
-    // A cheap early-out before the expensive workspace preparation. The
-    // authoritative answer is the exclusive record publication below, which
-    // reports the same thing if the name is taken in between.
-    if ((await this.store.get(teamId)) !== null) return null;
-    // Synchronous from here: whoever registers first owns this id, so a second
+    // Whoever registers first owns this id synchronously, so a second
     // create at the same candidate steps aside rather than racing it.
     if (this.constructing.has(teamId)) return null;
     const construction = this.createTeam(input, teamId);
@@ -575,42 +572,52 @@ export class TeamCollection implements TeamsPort {
     input: TeamCreateAtNameInput,
     teamId: string,
   ): Promise<TeamService | null> {
-    const workspace = await this.prepareWorkspace(input, teamId);
-    const serviceInput = {
-      teamId,
-      name: input.name,
-      createRequest: input.createRequest,
-      prompt: input.prompt,
-      deliverCompletionToDispatcher: input.deliverCompletionToDispatcher,
-      leaderAgentRuntime: input.leaderAgentRuntime,
-      intent: input.intent,
-      identity: input.identity,
-      skillSources: input.skillSources,
-      workspace,
-    };
-    let created: TeamService | null;
+    const record = await this.store.acquire(teamId);
+    let transferred = false;
     try {
-      created = await TeamService.createNew(
-        this.depsBase(teamId),
-        serviceInput,
-      );
-    } catch (error) {
-      await this.discardUnclaimedCheckout(teamId, workspace);
-      throw error;
-    }
-    if (created === null) {
-      await this.discardUnclaimedCheckout(teamId, workspace);
-      return null;
-    }
-    this.starting.add(created);
-    try {
-      this.refuseIfClosing(created);
-      await created.startCreated(serviceInput);
+      // Keep the candidate's captured owner from this cheap early-out through
+      // workspace preparation and publication in the same serialized queue.
+      if (record.current !== null) return null;
+      const workspace = await this.prepareWorkspace(input, teamId);
+      const serviceInput = {
+        teamId,
+        name: input.name,
+        createRequest: input.createRequest,
+        prompt: input.prompt,
+        deliverCompletionToDispatcher: input.deliverCompletionToDispatcher,
+        leaderAgentRuntime: input.leaderAgentRuntime,
+        intent: input.intent,
+        identity: input.identity,
+        skillSources: input.skillSources,
+        workspace,
+      };
+      let created: TeamService | null;
+      try {
+        created = await TeamService.createNew(
+          this.depsBase(teamId, record),
+          serviceInput,
+        );
+      } catch (error) {
+        await this.discardUnclaimedCheckout(teamId, workspace);
+        throw error;
+      }
+      if (created === null) {
+        await this.discardUnclaimedCheckout(teamId, workspace);
+        return null;
+      }
+      this.starting.add(created);
+      try {
+        this.refuseIfClosing(created);
+        await created.startCreated(serviceInput);
+      } finally {
+        this.starting.delete(created);
+      }
+      transferred = true;
+      this.track(created, record);
+      return created;
     } finally {
-      this.starting.delete(created);
+      if (!transferred) await record.release();
     }
-    this.track(created);
-    return created;
   }
 
   private async prepareWorkspace(
@@ -706,18 +713,26 @@ export class TeamCollection implements TeamsPort {
    * that ever existed.
    */
   private async rebuild(teamId: string): Promise<TeamService> {
-    const record = await this.mustTeam(teamId);
-    if (record.status === 'closed') {
-      throw new TeamClosedError(
-        `Team ${JSON.stringify(record.team_id)} is closed`,
+    const handle = await this.store.acquire(teamId);
+    let transferred = false;
+    try {
+      const record = handle.current;
+      if (record === null) {
+        throw new TeamNotFoundError(`Team ${JSON.stringify(teamId)} not found`);
+      }
+      if (record.status === 'closed') {
+        throw new TeamClosedError(`Team ${JSON.stringify(teamId)} is closed`);
+      }
+      const service = await TeamService.rebuild(
+        this.depsBase(teamId, handle),
+        record,
       );
+      transferred = true;
+      this.track(service, handle);
+      return service;
+    } finally {
+      if (!transferred) await handle.release();
     }
-    const service = await TeamService.rebuild(
-      this.depsBase(record.team_id),
-      record,
-    );
-    this.track(service);
-    return service;
   }
 
   /**
@@ -747,12 +762,14 @@ export class TeamCollection implements TeamsPort {
    * rather than being called back into from inside the construction it asked
    * for.
    */
-  private track(service: TeamService): void {
-    if (this.live.get(service.id) === service) return;
+  private track(service: TeamService, record: TeamRecordHandle): void {
     this.live.set(service.id, service);
     // The exact instance that ended is the exact instance dropped; a Team
     // rebuilt at the same id afterwards is a different object and stays.
-    void service.closed.then(() => this.evict(service.id, service));
+    void service.closed.then(async () => {
+      this.evict(service.id, service);
+      await record.release();
+    });
     this.refuseIfClosing(service);
   }
 
@@ -780,14 +797,14 @@ export class TeamCollection implements TeamsPort {
     this.live.delete(teamId);
   }
 
-  private depsBase(teamId: string): TeamServiceDeps {
+  private depsBase(teamId: string, record: TeamRecordHandle): TeamServiceDeps {
     return {
       ...this.opts,
       // Each Team gets its own already-resolved root; nothing below rebuilds it.
       teamRoot: this.store.teamRoot(teamId),
       // Bound to this Team's own id: the service can publish and merge its
       // own record but can never address another Team's by id.
-      record: this.store.handle(teamId),
+      record,
     };
   }
 

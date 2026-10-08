@@ -43,8 +43,7 @@ export interface ScopedChannelEventSourceLease {
   revoke(): void;
 }
 
-export class DispatcherCoreEventBus {
-  readonly publisher: DispatcherCoreEventPublisher;
+export class DispatcherCoreEventBus implements DispatcherCoreEventPublisher {
   // The bus's whole subscriber registry: every live Channel session's
   // dispatch handler, keyed by the lease `revoke()` removes it through.
   private readonly sources = new Map<
@@ -57,13 +56,10 @@ export class DispatcherCoreEventBus {
       dispatcherId: string;
       log: DreamuxLogger;
     },
-  ) {
-    this.publisher = Object.freeze({
-      publish: (event: ChannelCoreEvent) => {
-        this.publish(event);
-      },
-      hasSources: () => this.sources.size > 0,
-    });
+  ) {}
+
+  hasSources(): boolean {
+    return this.sources.size > 0;
   }
 
   createSource(channelId: string): ScopedChannelEventSourceLease {
@@ -135,7 +131,7 @@ export class DispatcherCoreEventBus {
    * rather than raised into that operation or allowed to stop delivery to
    * the sessions after it.
    */
-  private publish(event: ChannelCoreEvent): void {
+  publish(event: ChannelCoreEvent): void {
     const sealed = sealChannelCoreEvent(event);
     for (const handler of this.sources.values()) {
       try {

@@ -75,6 +75,14 @@ Automatic collaboration-space provisioning is Channel-owned policy, not host
 config: the Channel that offers the flow owns it, so it is set through that
 Channel's own surface rather than in this envelope.
 
+The official `npm:@excitedjs/agent-runtime-codex`,
+`npm:@excitedjs/agent-runtime-claude-code`, and `npm:@excitedjs/feishu-channel`
+provider refs use the package-root default provider factories. The current
+builtin catalog selects named plugin factories for Codex, Claude Code and
+Feishu, and the default factory for `builtin:bootstrap`. Explicit official plugin refs still conflict
+with the same-name always-loaded plugins; third-party plugin refs use default
+or their explicit `#export`.
+
 External `npm:` provider configs are opaque. Use the provider's schema as the
 authority; do not infer fields from a built-in provider.
 

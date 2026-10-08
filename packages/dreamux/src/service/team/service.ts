@@ -110,7 +110,7 @@ export type TeamServiceDeps = Omit<
    * collection is who must read every Team's record (list/status/history, a
    * closed Team's post-dissolve worktree fact) and probe a candidate name
    * without materializing a Team, so it keeps the id-addressable store; this
-   * Team writes and reads only through the one record `handle()` bound to
+   * Team writes and reads only through the one record acquired and bound to
    * its own id, and can never reach another Team's by id.
    */
   record: TeamRecordHandle;
@@ -437,9 +437,9 @@ export class TeamService implements Team {
   /**
    * Rebuild one Team from its record.
    *
-   * A `running` Team restores its leader from the identity already at the Team
-   * root; a `starting` Team whose leader never became durable finishes what
-   * creation began by asking the TeamMate layer to create it. A Team that is
+   * An aligned leader identity at the Team root is restored without rewriting
+   * it. If no usable aligned identity exists, the Agent layer reconstructs
+   * the leader from this Team record's creation inputs. A Team that is
    * already closed never reaches here — its owner answers from the record.
    */
   static async rebuild(
@@ -455,11 +455,7 @@ export class TeamService implements Team {
         runtimeCwd: record.runtime_cwd,
       },
     });
-    // `record` was already read through the collection's `store.get`/`.list`
-    // (every caller of `rebuild` reads a record before calling it), which
-    // loaded this same Team's `TransactionalStore` — the one `deps.record`
-    // wraps — so `service.mustRecord()` (reading `deps.record` directly)
-    // already answers `record` with no separate assignment.
+    // The collection passes an acquired, initialized record owner.
     deps.dispatcherHooks.team.call(service, { origin: 'rebuild' });
     // Seed members before a fresh leader is created: creating one publishes
     // the aggregate from this roster from the awaited create result, and
@@ -591,14 +587,26 @@ export class TeamService implements Team {
   async dissolve(input: TeamDissolveCommand): Promise<TeamDissolveReceipt> {
     const note = requireLifecycleText(input.note, 'Team dissolve note');
     if (this.dissolveTask !== null) return this.dissolveReceipt();
-    if (!input.force) await this.requireReclaimableWorktree();
-    if (this.dissolveTask !== null) return this.dissolveReceipt();
+    // An admitted leader call can outlive failed initial construction while
+    // awaiting this precheck. Hold its captured owner through that await and
+    // hand the same hold to the accepted task.
+    const record = this.deps.record.retain();
+    try {
+      if (!input.force) await this.requireReclaimableWorktree();
+    } catch (error) {
+      await record.release();
+      throw error;
+    }
+    if (this.dissolveTask !== null) {
+      await record.release();
+      return this.dissolveReceipt();
+    }
     // Published before it runs, so the fence is up from this moment and no
     // caller sees a Team that still looks open. Observed, never awaited: the
     // operation belongs to this Team, so its failure is this Team's to report.
-    const task = Promise.resolve().then(() =>
-      this.runDissolve({ ...input, note }),
-    );
+    const task = Promise.resolve()
+      .then(() => this.runDissolve({ ...input, note }))
+      .finally(() => record.release());
     this.dissolveTask = task;
     void task.catch(() => {});
     return this.dissolveReceipt();
@@ -632,7 +640,7 @@ export class TeamService implements Team {
           team_id: this.id,
           err: errorInfo(error),
         },
-        'Team dissolve failed to write its closed record',
+        'Team dissolve failed to prepare or commit its closed record',
       );
       throw error;
     }
@@ -889,6 +897,7 @@ export class TeamService implements Team {
    * fresh from its own record.
    */
   private publishTeamState(occurredAt: number): void {
+    if (!this.deps.coreEvents.hasSources()) return;
     const team = this.mustRecord();
     this.deps.coreEvents.publish({
       schemaVersion: 1,

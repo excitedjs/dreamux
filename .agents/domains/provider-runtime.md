@@ -29,6 +29,23 @@ A provider any plugin contributes is addressed as `builtin:<name>`, with the
 same ref grammar and catalogs; the plugin mechanism is owned by
 [plugins](plugins.md).
 
+The three official package-root defaults implement the neutral provider factory
+contracts, so configured bare `npm:@excitedjs/agent-runtime-codex`,
+`npm:@excitedjs/agent-runtime-claude-code` and `npm:@excitedjs/feishu-channel`
+refs load providers directly. Named bare constructors keep their own options.
+Each package also exports its explicit plugin factory (`createCodexPlugin`,
+`createClaudeCodePlugin`, `createFeishuPlugin`); builtin plugin composition
+selects that export rather than interpreting a provider as a plugin. There is
+no provider-loader package-name case or configuration rewrite.
+
+Source:
+
+- `/packages/agent-runtime/codex/src/index.ts`
+- `/packages/agent-runtime/claude-code/src/index.ts`
+- `/packages/channel/feishu-channel/src/index.ts`
+- `/packages/dreamux/src/registry/builtins.ts`
+- `/packages/dreamux/src/registry/provider-loader.ts`
+
 The host package, `@excitedjs/dreamux`, depends on the built-in provider
 packages so a default install keeps the built-in path. Provider packages depend
 on `@excitedjs/dreamux-types` and must not depend on `@excitedjs/dreamux`.

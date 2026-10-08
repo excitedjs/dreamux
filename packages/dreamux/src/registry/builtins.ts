@@ -51,16 +51,30 @@ export class UnknownBuiltinProviderPackageError extends RuleViolation {
 }
 
 /**
- * Built-in plugin id -> the package whose default export is its factory. A
+ * Built-in plugin id -> the package and export naming its plugin factory. A
  * plugin is not a provider: this is what `loadPlugins` imports to construct
  * and `contribute()` each always-loaded plugin, not what a provider registers
  * under.
  */
-export const BUILTIN_PLUGIN_PACKAGES: Readonly<Record<string, string>> = {
-  bootstrap: '@excitedjs/dreamux-plugin-bootstrap',
-  feishu: '@excitedjs/feishu-channel',
-  codex: '@excitedjs/agent-runtime-codex',
-  'claude-code': '@excitedjs/agent-runtime-claude-code',
+export const BUILTIN_PLUGIN_PACKAGES: Readonly<
+  Record<string, { package: string; export: string }>
+> = {
+  bootstrap: {
+    package: '@excitedjs/dreamux-plugin-bootstrap',
+    export: 'default',
+  },
+  feishu: {
+    package: '@excitedjs/feishu-channel',
+    export: 'createFeishuPlugin',
+  },
+  codex: {
+    package: '@excitedjs/agent-runtime-codex',
+    export: 'createCodexPlugin',
+  },
+  'claude-code': {
+    package: '@excitedjs/agent-runtime-claude-code',
+    export: 'createClaudeCodePlugin',
+  },
 };
 
 /** Plugins loaded whether or not `plugins[]` lists them. */

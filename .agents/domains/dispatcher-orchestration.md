@@ -233,9 +233,12 @@ Team's own `record.json` is the claim: publishing it is a serialized
 load-decide-write inside the one `TransactionalStore` the collection holds for
 that Team id, and that create is the whole acceptance protocol. Before it the
 candidate name is free and a caller that loses the race against that same
-in-memory queue chooses another; after it the record owns the name for good,
-so closed and not-yet-materialized concrete names are never reused. There is
-no separate claim file.
+in-memory queue chooses another; after it the valid record owns the name,
+including after close. Fully retired history returns to disk reads, so later
+deletion or damage of that record affects existence and name availability;
+active ownership and unfinished cleanup remain memory-authoritative. The
+[Team record owner](state-config-and-files.md#team-records) defines retention
+and release. There is no separate claim file.
 
 Generated TeamLeader, ordinary TeamMate, and Team-member names use the same 4–8
 character suffix contract. Names stay dispatcher-global:

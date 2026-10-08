@@ -1,5 +1,32 @@
 # Deleted tests ledger
 
+## Current accounting (2026-10-03)
+
+The entries below preserve the stage-by-stage deletion evidence and original
+restore recipes. The authorized final-parent repair pass now maps those
+historical obligations to current behavior assertions or precise superseding
+rulings in the [case accounting](../technical-design/review-453-fixes/coverage.md).
+Implementation-review corrections and complete independent verification are
+still in progress. The complete review identified a false generic retirement
+of the real ESLint line-cap behavior; Stage 1 below explicitly retains it.
+That behavior is now restored with real 701-code-line hard-error and
+700-code-line counting-mode assertions. Complete round-4 review identified an
+unrelated runtime-handle mapping for the surviving actual Provider boundary
+obligation. The corrected map now cites the real Provider instance's seven
+neutral capabilities; runtime-handle and namespace evidence stay separate.
+The unrelated R50 attribution is removed. The custom-identity prompt also
+asserts the base fragment before comparing order. Zero-unmapped counts do not
+certify final coverage or parent merge readiness. The isolated-hook identity assertion and dead test-local version mirror are now replaced by outside-hook observations and actual provider version functions; their exact historical rows remain separate from native execution evidence.
+
+The earlier description of `codex-live.test.ts` as having one behavioral case
+collapsed several conditional Vitest selectors into the long handshake/#63
+case. The restored evidence keeps all six real-model contracts separately:
+effort persistence/reset, persistent thread resume, portable structured output,
+activity during an in-flight turn, an unbound native terminal and nonblocking
+inbound through Server/Dispatcher/MCP. The historical model-execution opt-in
+remains separate from auth-free installed/version/protocol compatibility
+checks. An excluded model run supplies no evidence for those six contracts.
+
 This is the ledger for the final test completion on PR #453. Every pull
 request in the code-organization-refactor stack writes no new unit tests and
 repairs none: a test case that no longer passes is deleted outright, never
@@ -2094,8 +2121,10 @@ round-trips through loadConfig (#148)'`, already had its two
 - **File:** `packages/dreamux/tests/uninstall.test.ts` (whole file, 4 cases
   under `describe('dreamux uninstall')`).
   **Contract pinned:** the top-level `dreamux uninstall` guard — what it
-  removes (service unit) versus refuses to touch (config/state/logs), and its
-  confirmation/dry-run behavior.
+  removes (service unit and owned config/state/logs) versus refuses to touch
+  (operator runtime state), and its warning behavior. The earlier inventory
+  summary inverted the owned-path assertion: the historical first test
+  explicitly checks that config/state/logs are absent after removal.
   **Contract survives unchanged; restore verbatim in the final PR** — only
   this file's incidental `resetRuntimeConfig()` `afterEach` (1 call site)
   died with the module it imported from.
@@ -2105,6 +2134,11 @@ round-trips through loadConfig (#148)'`, already had its two
   into `platform/command-runner.ts` (confirmed at head,
   `platform/command-runner.ts:9`/`:45`). Restoring this file needs that
   import moved too.
+  **R75 final-parent correction:** the current owner restores recursive root
+  removal and existence-only preview. R26 changes configuration addressing to
+  DREAMUX_ROOT, and R34 obtains protected runtime locations from providers.
+  The four original behavioral cases remain covered by actual owner tests;
+  none is retired by R75. The final coverage accounting names their assertions.
 
 - **File:** `packages/dreamux/tests/doctor-plugins.test.ts` (whole file, 5
   cases under `describe('pluginDoctorChecks')` and `'runDreamuxDoctor plugin
@@ -4103,7 +4137,7 @@ type` but no longer re-exports them). Holds; restore with the import moved
   (surgical, not a whole-file delete). `'exposes exactly the neutral provider
 facade, no Codex-native surface'` hand-pins the provider's own key allowlist
   (`getCapabilities`, `diagnostic`, `onboard`, `config`, `readRecentActivity`,
-  `createRuntime`). R50 (Stage 8a) added a new neutral
+  `createRuntime`). Stage 8a added a new neutral
   `operatorStateRoot?(env): string` capability to `AgentRuntimeProvider`, and
   this provider now implements it (`operatorStateRoot: resolveCodexHomeDir`).
   The new key is a real, intentional capability, not drift — but adding it to

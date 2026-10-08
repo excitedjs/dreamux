@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "The package default export is now the built-in Feishu plugin factory, which contributes the `feishu` channel provider and publishes an extension api for other plugins (tools, card actions, a per-instance lifecycle, and an instance api). `createFeishuChannelProvider` is unchanged. A config that addresses this package as a channel provider through `npm:@excitedjs/feishu-channel` now fails provider loading, because the default export is no longer a provider factory; use `builtin:feishu`.",
+      "comment": "The named createFeishuPlugin factory contributes the feishu channel provider and publishes its extension API for other plugins. The package-root default remains a neutral provider factory for npm:@excitedjs/feishu-channel; createFeishuChannelProvider is unchanged. Existing provider configuration continues to load.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-channel"
     }

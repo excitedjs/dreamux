@@ -14,6 +14,11 @@ dispatcher state directory from the host and does not import Dreamux core.
 sent-prompt merge, and approval transitions. Inbound asks for policy and domain
 operations; it does not mutate the store. Card sends remain inbound IO outside
 the store queue, followed by a merge against the latest committed state.
+That successful-send transaction first preserves concurrent approval, then
+prunes expired pending entries with one current time and selects a live
+same-sender winner. An expired entry cannot consume the newly sent token;
+retaining an already live winner still commits the pruning. A failed send
+records no new token. Both resend forms retain the existing latest-state merge.
 The store still loads lazily when an operation first needs it.
 
 `@excitedjs/feishu-transport` owns Feishu SDK I/O plus pure parse/render
@@ -501,10 +506,19 @@ locked by a dedicated test (`feishu-gate.test.ts`, `feishu-introduce.test.ts`,
 `feishu-pairing-card.test.ts`). The code-organization refactor deleted all
 three as broken-by-directory-move (R43; see
 [deleted-tests.md](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)'s
-"Final pass" section) and none has been rebuilt yet; the behavior itself is
-unchanged. `/packages/channel/feishu-channel/tests/public-api.test.ts` still
-locks the never-exported-name list.
+"Final pass" section). They are restored as behavior tests at
+`/packages/channel/feishu-channel/tests/feishu-gate.test.ts`,
+`/packages/channel/feishu-channel/tests/feishu-introduce.test.ts`, and
+`/packages/channel/feishu-channel/tests/feishu-pairing-card.test.ts`.
+The gate/introduce authority split and invisible-token contract remain;
+`/packages/channel/feishu-channel/tests/pairing-commit.test.ts` additionally
+checks successful-send expiry pruning and concurrent approval.
+`/packages/channel/feishu-channel/tests/public-api.test.ts` still locks the
+never-exported-name list.
 
-Raw inbound classification currently has no dedicated test lock.
+`/packages/channel/feishu-channel/tests/feishu-bot.test.ts` checks the raw
+transport event's conversion into channel input, including sender/message kinds,
+chat/thread/root/parent ids and mentions. Its platform transport is a fixture;
+this does not establish live Feishu acceptance.
 
 History: [/.agents/tasks/channel/README.md](/.agents/tasks/channel/README.md)

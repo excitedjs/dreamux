@@ -305,7 +305,7 @@ export class FeishuDocumentComments {
     });
     // No row is written and none is removed: this delivery is a cold open, not
     // a subscription, so a rejection on it has nothing to reconcile.
-    const outcome = await this.opts.submitter.submit(null, submission);
+    const outcome = await this.opts.submitter.submit(null, submission, null);
     this.reportDelivery({ ...this.scope(event), team_name: null }, outcome);
   }
 
@@ -315,7 +315,11 @@ export class FeishuDocumentComments {
     submission: FeishuSubmission,
   ): Promise<void> {
     const scope = { ...this.scope(event), team_name: row.team_name };
-    const outcome = await this.opts.submitter.submit(row.team_name, submission);
+    const outcome = await this.opts.submitter.submit(
+      row.team_name,
+      submission,
+      null,
+    );
     if (outcome.status !== 'rejected') {
       this.reportDelivery(scope, outcome);
       return;

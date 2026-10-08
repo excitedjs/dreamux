@@ -1,9 +1,10 @@
 # @excitedjs/agent-runtime-codex
 
 The built-in **Codex** Dreamux plugin, always loaded by
-[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the
-plugin factory: the plugin contributes the Codex `AgentRuntimeProvider`,
-published behind the stable `builtin:codex` alias.
+[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the neutral provider
+factory for `npm:@excitedjs/agent-runtime-codex`. `createCodexPlugin()` is the
+named plugin factory: Dreamux always loads it to contribute `builtin:codex`.
+Named bare-provider constructors retain their own options.
 
 The provider it contributes implements the public `AgentRuntimeProvider`
 contract from

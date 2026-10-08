@@ -110,7 +110,7 @@ export class FeishuInboundRouter implements FeishuInboundDelivery {
     const plan = this.opts.routing.plan(input.target, input.containerChatId);
     const { submission } = input;
     if (plan.kind === 'dispatcher') {
-      return this.opts.submitter.submit(null, submission);
+      return this.opts.submitter.submit(null, submission, null);
     }
     if (plan.kind === 'provision') {
       return this.opts.provisioning.provisionForInbound({
@@ -120,7 +120,11 @@ export class FeishuInboundRouter implements FeishuInboundDelivery {
         submission,
       });
     }
-    const outcome = await this.opts.submitter.submit(plan.teamName, submission);
+    const outcome = await this.opts.submitter.submit(
+      plan.teamName,
+      submission,
+      plan.matched,
+    );
     if (outcome.status !== 'rejected') return outcome;
     // Nothing was admitted, so the message is safe to deliver once more: drop
     // the stale routes and hand it to the Dispatcher Agent, as every
@@ -131,6 +135,6 @@ export class FeishuInboundRouter implements FeishuInboundDelivery {
       plan.teamName,
       rejectedDeliveryNotice(outcome.code),
     );
-    return this.opts.submitter.submit(null, submission);
+    return this.opts.submitter.submit(null, submission, null);
   }
 }

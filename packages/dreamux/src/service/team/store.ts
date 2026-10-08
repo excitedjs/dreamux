@@ -1,25 +1,18 @@
 /**
- * The durable Team store.
- *
- * `team/<team>/record.json` is the single authority for a Team: a valid,
- * readable record is the only proof that Team exists and the only thing that
- * occupies its concrete name. One {@link TransactionalStore} per Team that
- * exists, or that a caller is creating or holding a handle for, holds that
- * file — the committed value in memory, the serialized queue every read or
- * write goes through — so a lookup after the first one serves the held value
- * and a write is the store's own atomic read-decide-replace, not a second
- * reservation mechanism. A name nothing occupies has no store: asking whether
- * it is taken reads the file and answers, and holds nothing.
- *
- * The store is bound to the `team/` collection root its owner resolved, and
- * appends only the concrete Team name to it.
+ * One serialized record owner per retained Team. Active records and unfinished
+ * cleanup stay authoritative in memory; fully retired history is read from disk
+ * on the next acquisition. Construction, services and detached cleanup each
+ * hold the same owner until their work and queued writes settle.
  */
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { TransactionalStore } from '@excitedjs/dreamux-utils';
 
-import type { AgentEntityWorktreeIdentity } from '../agent/identity.js';
+import {
+  RESERVED_AGENT_NAME_SEGMENTS,
+  type AgentEntityWorktreeIdentity,
+} from '../agent/identity.js';
 
 import { isNotFound } from '../../platform/fs-errors.js';
 import { collectionEntityDir } from '../../platform/paths.js';
@@ -30,7 +23,7 @@ import {
   isTeamCreateRequestId,
 } from './create-request.js';
 import type { TeamStatus } from '@excitedjs/dreamux-types';
-import { validateTeamId, type TeamRecord } from './types.js';
+import { TEAM_ID_PATTERN, validateTeamId, type TeamRecord } from './types.js';
 
 /** The merge {@link TeamRecordHandle.update} accepts. */
 export interface TeamRecordUpdate {
@@ -43,7 +36,7 @@ export interface TeamRecordUpdate {
 
 /**
  * The one Team a caller writes and reads through, bound to a concrete Team
- * id at construction (`TeamStore.handle`). `TeamService` holds this instead
+ * id at acquisition (`TeamStore.acquire`). `TeamService` holds this instead
  * of the whole `TeamStore`, so it can publish and merge only its own record
  * and never addresses another Team's by id — the record-shape defaults
  * `create` fills in and the closed-is-terminal merge `update` applies stay
@@ -51,8 +44,12 @@ export interface TeamRecordUpdate {
  * against.
  */
 export interface TeamRecordHandle {
-  /** The last committed value; throws before this Team's first `get`/`create`/`update`. */
+  /** The initialized, last committed value. */
   readonly current: TeamRecord | null;
+  /** Retain this initialized owner for independently settling work. */
+  retain(): TeamRecordHandle;
+  /** Release this acquisition after its queued writes settle. Call once. */
+  release(): Promise<void>;
   create(
     input: Omit<
       TeamRecord,
@@ -63,15 +60,9 @@ export interface TeamRecordHandle {
 }
 
 export class TeamStore {
-  /** One `TransactionalStore` per Team that exists or has a holder (a handle,
-   * a creation in flight), built lazily and held for the life of this
-   * collection — a Team's record is read once and then served from memory
-   * until this Team's own write path replaces it. A store is never evicted:
-   * a handle and the create/update queue both stand on it. Only an ownerless
-   * read of a name with no record leaves nothing here ({@link get}). */
   private readonly stores = new Map<
     string,
-    TransactionalStore<TeamRecord | null>
+    { store: TransactionalStore<TeamRecord | null>; holders: number }
   >();
 
   constructor(
@@ -91,43 +82,55 @@ export class TeamStore {
     return join(this.teamRoot(teamId), 'record.json');
   }
 
-  /**
-   * This Team's own {@link TeamRecordHandle}, for an owner (`TeamService`)
-   * that holds a synchronous reference to it across many calls instead of
-   * making a fresh async round trip through {@link get} each time. `current`
-   * reads the underlying `TransactionalStore` directly (unloaded on first
-   * mint, rather than awaiting a value); `create`/`update` close over this
-   * Team's id so the caller never passes one.
-   */
-  handle(teamId: string): TeamRecordHandle {
-    // A handle is a holder: `storeFor` registers the store even for a name
-    // with no record yet, because `create` publishes through it.
-    const store = this.storeFor(teamId);
+  /** Register and retain before awaiting IO, so concurrent uses share one queue. */
+  async acquire(teamId: string): Promise<TeamRecordHandle> {
+    const id = validateTeamId(teamId);
+    let entry = this.stores.get(id);
+    if (entry === undefined) {
+      entry = {
+        store: new TransactionalStore<TeamRecord | null>({
+          path: this.recordPath(id),
+          load: () => this.loadTeam(id),
+        }),
+        holders: 0,
+      };
+      this.stores.set(id, entry);
+    }
+    const handle = this.retain(id, entry);
+    await entry.store.load();
+    return handle;
+  }
+
+  private retain(
+    id: string,
+    entry: { store: TransactionalStore<TeamRecord | null>; holders: number },
+  ): TeamRecordHandle {
+    entry.holders++;
+    const { store } = entry;
     return {
       get current(): TeamRecord | null {
         return store.current;
       },
       create: (input) => this.publishRecord(store, input),
-      update: (input) => this.mergeRecord(teamId, input),
+      update: (input) => this.mergeRecord(id, store, input),
+      retain: () => this.retain(id, entry),
+      release: async () => {
+        // Child destruction and Git cleanup do not drain a late running patch
+        // queued behind closed. Keep this hold through the record queue barrier.
+        await store.drain();
+        entry.holders--;
+        const record = store.current;
+        if (
+          entry.holders === 0 &&
+          (record === null ||
+            (record.status === 'closed' &&
+              record.worktree.cleanup_state !== 'cleanup-pending')) &&
+          this.stores.get(id) === entry
+        ) {
+          this.stores.delete(id);
+        }
+      },
     };
-  }
-
-  private storeFor(teamId: string): TransactionalStore<TeamRecord | null> {
-    const id = validateTeamId(teamId);
-    return this.stores.get(id) ?? this.hold(id, () => this.loadTeam(id));
-  }
-
-  /** Register the one store for `id`; the caller has just checked none exists. */
-  private hold(
-    id: string,
-    load: () => Promise<TeamRecord | null>,
-  ): TransactionalStore<TeamRecord | null> {
-    const store = new TransactionalStore<TeamRecord | null>({
-      path: this.recordPath(id),
-      load,
-    });
-    this.stores.set(id, store);
-    return store;
   }
 
   /**
@@ -155,31 +158,19 @@ export class TeamStore {
     }
   }
 
-  /**
-   * The Team at this concrete name, or `null` when there is none.
-   *
-   * The name check itself still throws — an invalid team id is a caller
-   * defect, not a missing Team.
-   *
-   * A held store answers from memory. With no store, this reads the file and
-   * registers a store only when a valid record is there: a miss is returned
-   * without being kept, so probing candidate names, malformed residue, and
-   * names that never become a Team leave nothing resident. Registration
-   * happens after the read, so it re-checks for an owner first — a handle or a
-   * create may have registered the store while the read was in flight, and the
-   * store that is already there is the single authority for the answer. The
-   * registered store is seeded with the record just read instead of reading
-   * the file a second time.
-   */
+  /** Read through the current owner, retiring completed cold history afterward. */
   async get(teamId: string): Promise<TeamRecord | null> {
     const id = validateTeamId(teamId);
-    const held = this.stores.get(id);
-    if (held !== undefined) return held.load();
-    const record = await this.loadTeam(id);
-    const owner = this.stores.get(id);
-    if (owner !== undefined) return owner.load();
-    if (record === null) return null;
-    return this.hold(id, async () => record).load();
+    const retained = this.stores.get(id);
+    // A pure read joins initialization, not the owner's write queue. Its
+    // committed snapshot needs no additional write-lifetime hold.
+    if (retained !== undefined) return retained.store.load();
+    const handle = await this.acquire(id);
+    try {
+      return handle.current;
+    } finally {
+      await handle.release();
+    }
   }
 
   async list(): Promise<TeamRecord[]> {
@@ -194,7 +185,12 @@ export class TeamStore {
     }
     const teams: TeamRecord[] = [];
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory()) continue;
+      if (
+        !entry.isDirectory() ||
+        !TEAM_ID_PATTERN.test(entry.name) ||
+        RESERVED_AGENT_NAME_SEGMENTS.has(entry.name.toLowerCase())
+      )
+        continue;
       const team = await this.get(entry.name);
       if (team !== null) teams.push(team);
     }
@@ -214,7 +210,7 @@ export class TeamStore {
    * candidate. Anything else there — malformed, unreadable, half-written —
    * is not a Team and holds no claim on the name, so the new record
    * atomically replaces it. A real filesystem failure is none of those and
-   * surfaces. Reached only through {@link handle}, whose caller already
+   * surfaces. Reached only through {@link acquire}, whose caller already
    * resolved `store` for this Team's id.
    */
   private async publishRecord(
@@ -249,16 +245,17 @@ export class TeamStore {
    * The merge runs inside this Team's own `change`, against the store's true
    * committed value, never a caller-held snapshot: writing an older snapshot
    * back would resurrect a Team from stale memory and silently reclaim a name
-   * that is free again. Reached only through {@link handle} — including the
-   * collection's own direct write for a Team it does not hold a handle open
-   * for (a closed Team's post-dissolve worktree reclamation).
+   * that is free again. Reached only through an acquired record handle —
+   * including recovery reclamation, which holds that handle through cleanup,
+   * update and release without constructing a TeamService.
    */
   private async mergeRecord(
     teamId: string,
+    store: TransactionalStore<TeamRecord | null>,
     input: TeamRecordUpdate,
   ): Promise<TeamRecord> {
     let updated!: TeamRecord;
-    await this.storeFor(teamId).update((current) => {
+    await store.update((current) => {
       if (current === null) {
         throw new TeamNotFoundError(
           `Team ${JSON.stringify(teamId)} no longer has a readable record`,

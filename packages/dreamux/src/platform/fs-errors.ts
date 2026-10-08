@@ -15,19 +15,6 @@ export function isNotFound(err: unknown): boolean {
 }
 
 /**
- * True when an error is a Node `ENOTEMPTY` (non-empty directory rejected a
- * non-recursive remove).
- */
-export function isNotEmptyDir(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'ENOTEMPTY'
-  );
-}
-
-/**
  * Best-effort existence probe — the async replacement for `existsSync`. Treats
  * ANY access failure (including a permission error) as "absent". A caller that
  * must distinguish a missing entry from a real access error checks

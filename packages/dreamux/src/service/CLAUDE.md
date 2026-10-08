@@ -215,6 +215,12 @@ the Team.
   per-command lookup. Leader tools hold their actual children, with no
   `leaderScope` or `runForLeader` lookup. `record.json` keeps its shape and
   field meanings.
+  Construction registers the candidate synchronously, then acquires its record
+  once; an occupied record returns before workspace preparation. The same hold
+  covers publication through the canonical transactional queue and transfers to
+  the service, or drains and releases on failure. Inventory skips directory
+  names outside the existing Team ID/reserved-name contract before reading;
+  direct invalid-name requests still fail.
   Leader tools use the actual Team's `admitLeaderTools(operation)` at the former
   lookup point: dispatcher admission, then the Team's committed closed fact.
   Cron/member/Workflow adapters retrieve their child in that short operation;
@@ -293,6 +299,7 @@ the Team.
   schema and field meanings. `completion-router/` keeps no Turn registry or
   terminal cache; it reads the dispatcher fence before queueing delivery and
   never retracts a delivery already queued.
+
 - **`worktree/`** — `WorktreeManager` (default work dir, reuse-cwd, and managed
   modes), workspace resolution, and the repository-request reader that says
   what a caller may ask for a working directory.
@@ -532,3 +539,16 @@ the Team.
   deletes it. The operator may delete it by hand at their own pace; the
   reserved-name guard exists precisely because that leftover can still be on
   disk beside a live entity directory.
+
+### Team record lifetime
+
+`TeamStore.acquire()` registers before IO and returns an initialized, bound
+handle. Construction transfers its hold to the tracked service; the detached
+dissolve and startup cleanup each hold until settlement. Release drains the
+captured record queue before dropping its holder. A pure read of an already
+retained entry joins initialization and returns the committed snapshot without
+waiting for queued writes or acquiring a write-lifetime hold. Nonclosed and cleanup-pending
+records stay authoritative; ownerless completed history is discarded from
+memory and the next access reads disk. `closed` still signals child destruction
+attempted before physical Git cleanup, so service eviction alone cannot retire
+the record owner. Generic TransactionalStore has no Team lifetime policy.

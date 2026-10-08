@@ -416,29 +416,44 @@ their own config and visible-reply tools.
 node common/scripts/install-run-rush.js test
 ```
 
-- `tests/smoke.test.ts` — fake-Codex dispatcher behavior: access gate,
-  per-message turn/start inbound submission, process-local dedupe, MCP
-  reply-only outbound, thread resume, app-server restart behavior, and
-  approval fail-fast.
+- `tests/channel-service.test.ts`, `tests/channel-input-format.test.ts` and
+  `tests/entity-turn-owner.test.ts` — Channel lifecycle, neutral inbound
+  rendering and turn ownership with controlled provider fixtures.
 - `tests/bin-launcher.test.ts` — real launcher behavior from arbitrary cwd and
   through symlinks.
-- `tests/doctor.test.ts` — standalone doctor checks for config, Codex home,
-  services, provider-owned runtime binaries, and dispatcher workspace skill
-  state.
-- `tests/agent-runtime-provider.test.ts`, `tests/channel-provider.test.ts`,
-  `tests/registry.test.ts`, and `tests/provider-ref.test.ts` — provider ref,
-  registry, Channel provider, and Agent Runtime provider coverage.
-- `tests/teammate-ledger.test.ts`, `tests/teammate-delivery.test.ts`, and
-  `tests/teammate-mcp.test.ts` — server-hosted TeamMate state, delivery, retry,
-  and retrieval coverage.
-- `tests/codex-live.test.ts` — real Codex app-server compatibility checks,
-  plus the issue #63 mid-turn model gate. Set `DREAMUX_SKIP_LIVE_CODEX=1` only
-  when no Codex binary is available locally. Public CI loud-skips the model
-  gate unless `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set in an environment with
-  usable Codex model auth.
-- `tests/claude-code-live.test.ts` — opt-in Claude Code live contract. Set
-  `DREAMUX_RUN_LIVE_CLAUDE_CODE=1` only in an environment with a usable
-  `claude` binary and auth.
+- `tests/doctor-plugins.test.ts`, `tests/onboard.test.ts` and
+  `tests/uninstall.test.ts` — provider diagnostics, onboarding, existence-only
+  uninstall previews and recursive removal of the whole Dreamux root, including
+  other files inside it. Preview changes no files and does not enumerate root
+  contents; actual filesystem removal errors still propagate. After path
+  normalization, a removal path inside or containing a provider-derived
+  operator home is refused before changing the service. Physical symlink
+  aliases are not resolved.
+- `tests/official-provider-entries.test.ts`, `tests/plugin-loader.test.ts` and
+  `tests/provider-ref.test.ts` — package defaults, plugin contributions and
+  configured provider references.
+- `tests/teammate-completion-lifecycle.test.ts`,
+  `tests/completion-delivery-owners.test.ts` and
+  `tests/mcp-delegate-catalog.test.ts` — actual service completion owners and
+  MCP tool reachability, with controlled runtimes.
+- `tests/codex-live.test.ts` — installed-version and real app-server
+  initialization/thread compatibility with an empty home and no model auth.
+  Missing Codex fails unless `DREAMUX_SKIP_LIVE_CODEX=1` explicitly excludes
+  live checks for an environment without Codex.
+- `tests/codex-inbound-live.test.ts`, `tests/codex-native-contracts-live.test.ts`
+  and `tests/codex-activity-live.test.ts` — six native model cases for issue #63
+  non-blocking inbound, effort, resume, structured output and live activity.
+  These require `DREAMUX_RUN_LIVE_MODEL_GATE=1` and usable model auth in both
+  local and CI runs. The default auth-free run explicitly excludes them and
+  does not certify their contracts. The inbound gate uses real Codex and MCP
+  with fake Feishu platform IO.
+  Provider constructors and defaults use public package entries. Native RPC,
+  protocol types, version/initialization probes and Feishu bot IO interception
+  retain test-only internal imports because no public instrumentation seam
+  exposes these facts. Provider changes must preserve those live assertions.
+- `../agent-runtime/claude-code/tests/` contains Claude runtime, session and
+  RPC tests using synthetic protocol and subprocess fixtures. These tests do
+  not certify authenticated Claude model behavior.
 
 ## License
 

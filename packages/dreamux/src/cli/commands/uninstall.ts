@@ -12,7 +12,7 @@ interface UninstallArgv {
 export function createUninstallCommand(): CommandModule<{}, UninstallArgv> {
   return {
     command: 'uninstall',
-    describe: 'Remove files and user service created by onboard',
+    describe: 'Remove the Dreamux root and managed user service',
     builder: (y) =>
       y.option('dry-run', {
         type: 'boolean',

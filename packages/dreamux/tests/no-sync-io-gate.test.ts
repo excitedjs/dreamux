@@ -52,10 +52,40 @@ describe('no-sync-io lint gate (issue #85)', () => {
     expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
   });
 
+  it('flags source files over 700 code lines as a hard error', async () => {
+    const results = await lint(
+      'src/__large_source_fixture__.ts',
+      Array.from(
+        { length: 701 },
+        (_, i) => `export const line${i} = ${i};`,
+      ).join('\n'),
+    );
+    expect(results.flatMap((result) => result.messages)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: 'max-lines', severity: 2 }),
+      ]),
+    );
+  });
+
+  it('allows 700 code lines and excludes blank lines and comments from the source cap', async () => {
+    const results = await lint(
+      'src/__source_boundary_fixture__.ts',
+      Array.from(
+        { length: 700 },
+        (_, i) => `// comment ${i}\n\nexport const line${i} = ${i};`,
+      ).join('\n'),
+    );
+    expect(ruleIds(results)).not.toContain('max-lines');
+    expect(results[0]?.fatalErrorCount).toBe(0);
+  });
+
   it('does not apply the source line-count gate to tests/**', async () => {
     const results = await lint(
       'tests/__large_test_fixture__.ts',
-      Array.from({ length: 701 }, (_, i) => `// line ${i + 1}`).join('\n'),
+      Array.from(
+        { length: 701 },
+        (_, i) => `export const line${i} = ${i};`,
+      ).join('\n'),
     );
     expect(ruleIds(results)).not.toContain('max-lines');
   });

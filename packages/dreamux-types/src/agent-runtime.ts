@@ -441,8 +441,9 @@ export interface AgentRuntimeProvider<TConfig> {
    * against an actively growing session — producing useful records before any
    * completion marker — and against the same session after the live runtime has
    * closed. The provider enforces its own native read bounds and sets
-   * {@link AgentActivityPage.truncated}; Core independently validates record
-   * count, text size, page size, cursor size, and public errors.
+   * {@link AgentActivityPage.truncated}; Core checks page and record shape,
+   * record count, and recognized public errors. Text, page, and cursor size
+   * bounds belong to the provider.
    */
   readRecentActivity(
     query: AgentActivityQuery,

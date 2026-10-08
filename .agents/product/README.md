@@ -239,10 +239,12 @@ the same change that touches it.
 - **The Team record is the only existence fact.** A readable, valid Team record
   means the Team exists and its name is taken; no record (or an invalid one)
   means no Team and a free name. Nothing else — ledgers, claims, identities —
-  competes with it. While the daemon runs, a record deleted or damaged by hand
-  no longer frees the name: the Team's record store holds the last record it
-  loaded in memory for the life of the daemon, so a hand edit to the file on
-  disk is not read until restart.
+  competes with it. Constructing and live Teams, pending record work and
+  unfinished cleanup retain their authoritative value in memory. Fully
+  retired history is read from disk on demand; editing, deleting or damaging
+  that retired record is observable on the next query or name probe. History
+  remains on disk, and records remain server-owned.
+  (R74: [review repairs](/.agents/tasks/architecture/code-organization-refactor/artifacts/review-fixes-20261003.md).)
 - **Dissolve means terminate now and reclaim.** The user pressing dissolve
   wants processes dead and tokens no longer burning: the receipt answers
   `{accepted, status: "submitted"}` as soon as the Team owns the background
@@ -490,6 +492,13 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 
 ## Long operations
 
+- **Operational reads share their owner's close fence.** Dispatcher close
+  refuses Team inventory, status and history, TeamMate reads, and the
+  Dispatcher's Workflow and cron reads. A dissolving Team refuses its member,
+  Workflow and cron reads through the Team fence. Process-level Dispatcher
+  inventory and status still report lifecycle state; closed Team history is
+  readable while its Dispatcher admits reads.
+  (R12/R13: [code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md).)
 - **An accepted Workflow still needs admission for each new TeamMate.** Once
   its Team or Dispatcher starts closing, another construction is refused
   before name allocation, workspace resolution, identity creation, or launch
@@ -509,6 +518,28 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 
 ## Local state and upgrades
 
+- **Uninstall recursively removes the Dreamux root.** `dreamux uninstall`
+  removes the managed service and the state/run/cache/log paths, then the
+  root directory, including other files placed inside that root. Operator-state
+  locations supplied by runtime providers are checked as normalized paths:
+  removal paths inside or containing one are refused before service changes.
+  Physical provider-home aliases are not resolved or separately protected
+  (R76). Dry-run reports a
+  no-write removal plan from existence checks; it does not promise that later
+  filesystem removal will succeed.
+  (R75: “先和 next 保持一致吧”, in the
+  [code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md);
+  owner: [state and files](/.agents/domains/state-config-and-files.md#uninstall-and-preview).)
+- **Daemon startup starts enabled Dispatchers once.** Their channels and
+  scheduled work start with the daemon; their Agent's provider process is
+  created when needed. There is no `dispatcher.start` Command or CLI verb to
+  reopen a stopped Dispatcher in the same process.
+  (R11: [code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md).)
+- **A termination signal ends the serving process.** SIGTERM or SIGINT starts
+  shutdown. Successful shutdown exits 0; a rejected shutdown exits 1. A
+  shutdown still pending after 15 seconds is cut off and exits 1.
+  (Current behavior: [service topology](/.agents/domains/service-topology.md),
+  delivered in [PR #460](https://github.com/excitedjs/dreamux/pull/460).)
 - **Onboard rewrites known configuration wrapper fields.** A non-dry-run
   `dreamux onboard` may discard unknown wrapper fields, including fields on
   untouched entries. Untouched provider-owned `config` contents retain their

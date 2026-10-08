@@ -1,96 +1,75 @@
 /**
- * The issue #63 non-blocking-inbound live gate against a real codex
- * app-server.
- *
- * The behavioral live case (init handshake, thread start, folding a second
- * submit into a running turn, structured output, activity read, the Feishu
- * MCP surface) was deleted as Stage 2a / Item 1 required-ness collateral: its
- * hand-built `AgentRuntimeCreateContext`/`AgentActivityReadContext` fixtures
- * predate `activity`/`logger` becoming required fields and no longer
- * satisfy the type. The skip/fail-loud gate shell that used to wrap that case
- * is deleted with it (Stage 2a gate round 1): with codex on PATH and no skip
- * env var set — the normal case on a workstation with codex installed — the
- * shell's `describe` registered zero `it`s, which vitest reports as a failed
- * suite. See
- * `.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md`
- * (Stage 2a, standing high-risk entry) for the restoration contract, which
- * must rebuild the skip/fail-loud gate around the restored behavioral case
- * rather than reintroducing the same zero-registration shape.
- *
- * What remains here is the version-detection classifier
- * (`classifyDetection`/`versionAtLeast`) the live gate's skip/fail-loud
- * decision depended on — pure logic, unit-tested regardless of whether codex
- * is installed.
+ * Auth-free installed Codex compatibility. Model execution is separately
+ * opted into with DREAMUX_RUN_LIVE_MODEL_GATE=1 in the three model test files.
  */
 
-import { describe, it, expect } from 'vitest';
+import { it, expect } from 'vitest';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+// Test-only internal coupling: raw process/WS/initialize/version probes have no
+// public equivalent for the auth-free boundary; no model submission is involved.
+import { CodexProcess } from '../../agent-runtime/codex/dist/supervisor.js';
+import { CodexWsClient } from '../../agent-runtime/codex/dist/rpc.js';
+import { performInitializeHandshake } from '../../agent-runtime/codex/dist/handshake.js';
+import { codexVersionSatisfies } from '../../agent-runtime/codex/dist/version.js';
+import type { ThreadStartResponse } from '../../agent-runtime/codex/dist/types.js';
 
-export type Detection =
-  { state: 'ok'; version: string } | { state: 'missing'; reason: string };
+const skipLiveCodex = process.env['DREAMUX_SKIP_LIVE_CODEX'] === '1';
+if (skipLiveCodex)
+  console.warn(
+    '[codex-live] DREAMUX_SKIP_LIVE_CODEX=1 excludes installed-version and real protocol checks; Codex compatibility is not certified.',
+  );
 
-/**
- * Pure-ish decision logic, split out so it can be unit-tested without
- * actually executing `codex`. `versionFetcher` is what would normally call
- * `codex --version`; returning `null` (or throwing) means codex is missing.
- */
-export function classifyDetection(rawOutput: string | null): Detection {
-  if (rawOutput === null) {
-    return {
-      state: 'missing',
-      reason: 'codex CLI did not respond to --version',
-    };
-  }
-  const m = rawOutput.match(/(\d+\.\d+\.\d+)/);
-  if (!m)
-    return {
-      state: 'missing',
-      reason: `unparseable codex --version output: ${rawOutput}`,
-    };
-  return { state: 'ok', version: m[1]! };
-}
-
-function versionAtLeast(version: string, min: string): boolean {
-  const actualParts = version
-    .split('.')
-    .map((part) => Number.parseInt(part, 10));
-  const minParts = min.split('.').map((part) => Number.parseInt(part, 10));
-  for (let i = 0; i < Math.max(actualParts.length, minParts.length); i += 1) {
-    const actual = actualParts[i] ?? 0;
-    const expected = minParts[i] ?? 0;
-    if (actual > expected) return true;
-    if (actual < expected) return false;
-  }
-  return true;
-}
-
-// Unit coverage of the classification logic itself — these run regardless of
-// whether codex is installed, and prove that detection behaves as the (now
-// deleted) live gate's skip/fail-loud decision relied on.
-describe('codex detection logic', () => {
-  it('classifies parseable versions as ok', () => {
-    expect(classifyDetection('codex-cli 0.135.0')).toEqual({
-      state: 'ok',
-      version: '0.135.0',
+it.skipIf(skipLiveCodex)(
+  'checks the installed version and initializes a real app-server thread without model auth',
+  async () => {
+    const bin = process.env['CODEX_HOST_CODEX_BIN']?.trim() || 'codex';
+    const { stdout } = await promisify(execFile)(bin, ['--version']);
+    expect(codexVersionSatisfies(stdout)).toBe(true);
+    const dir = await mkdtemp(join(tmpdir(), 'dreamux-codex-protocol-'));
+    const cwd = join(dir, 'cwd');
+    const codexHome = join(dir, 'codex');
+    const socketPath = join(dir, 'rpc.sock');
+    const proc = new CodexProcess({
+      binPath: bin,
+      socketPath,
+      cwd,
+      stdoutLogPath: join(dir, 'stdout.log'),
+      stderrLogPath: join(dir, 'stderr.log'),
+      // No operator config, auth file or model credential environment enters
+      // this process. Initialize/thread creation must work on hosted CI too.
+      env: { PATH: process.env['PATH'], HOME: dir, CODEX_HOME: codexHome },
+      readyTimeoutMs: 15_000,
     });
-    expect(classifyDetection('codex-cli 0.136.0')).toEqual({
-      state: 'ok',
-      version: '0.136.0',
-    });
-    expect(classifyDetection('codex-cli 1.0.0')).toEqual({
-      state: 'ok',
-      version: '1.0.0',
-    });
-  });
-
-  it('classifies missing/unparseable inputs as missing', () => {
-    expect(classifyDetection(null).state).toBe('missing');
-    expect(classifyDetection('not a version string').state).toBe('missing');
-    expect(classifyDetection('').state).toBe('missing');
-  });
-
-  it('compares codex semver versions', () => {
-    expect(versionAtLeast('0.136.0', '0.136.0')).toBe(true);
-    expect(versionAtLeast('0.137.0', '0.136.0')).toBe(true);
-    expect(versionAtLeast('0.135.9', '0.136.0')).toBe(false);
-  });
-});
+    let client: CodexWsClient | undefined;
+    try {
+      await Promise.all([mkdir(cwd), mkdir(codexHome)]);
+      await proc.start();
+      client = new CodexWsClient({ socketPath });
+      await client.ready();
+      const initialized = await performInitializeHandshake(client, {
+        timeoutMs: 15_000,
+      });
+      expect(typeof initialized.userAgent).toBe('string');
+      expect(initialized.userAgent.length).toBeGreaterThan(0);
+      expect(initialized.platformOs).toBeDefined();
+      const started = await client.request<ThreadStartResponse>(
+        'thread/start',
+        { cwd },
+      );
+      expect(typeof started.thread.id).toBe('string');
+      expect(started.thread.id.length).toBeGreaterThan(0);
+    } finally {
+      client?.close();
+      try {
+        await proc.reap();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  },
+  30_000,
+);

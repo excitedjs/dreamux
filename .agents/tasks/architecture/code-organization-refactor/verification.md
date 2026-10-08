@@ -1,4 +1,10 @@
-# Architecture continuation verification
+# Architecture continuation historical verification
+
+The following evidence records the earlier ownership and data-flow passes.
+Current PR #453 repair execution and final-parent coverage are recorded in the
+[review-repair verification](technical-design/review-453-fixes/verification.md).
+Earlier deferrals below describe their original scope, not today's unresolved
+implementation list or a certificate for the resulting parent tree.
 
 Scope: [ownership follow-up](artifacts/ownership-follow-up.md), delivered into
 PR #453 after PR #455. This evidence covers that continuation, not final test
