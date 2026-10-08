@@ -53,7 +53,7 @@ export interface FeishuProvisioningOptions {
   readonly routing: FeishuRouting;
   readonly submitter: FeishuTeamSubmitter;
   readonly commands: FeishuCoreCommands;
-  readonly bindings: Pick<FeishuBindingOperations, 'announceProvisioned'>;
+  readonly bindings: Pick<FeishuBindingOperations, 'presentCommittedBind'>;
 }
 
 /** One target, one policy snapshot, and the message that discovered both. */
@@ -144,11 +144,11 @@ export class FeishuProvisioning {
     if (created.status === 'closed') {
       // Reachable now that the request id is the message id: it means this
       // exact message was already provisioned once and its Team has since been
-      // closed. Core keeps that acceptance permanently, so there is nothing to
-      // retry around — the message is reported unsubmitted and the triggering
-      // conversation gets the in-place failure notice. A *new* message to the
-      // same topic carries a new id and provisions a fresh Team, so a closed
-      // Team never strands a conversation.
+      // closed. Its valid record still carries the acceptance, so there is
+      // nothing to retry around — the message is reported unsubmitted and the
+      // triggering conversation gets the in-place failure notice. A new
+      // message to the same topic carries a new id and provisions a fresh Team,
+      // so a closed Team never strands a conversation.
       return {
         status: 'unsubmitted',
         message: `team.create replayed closed Team ${created.team_name}`,
@@ -160,7 +160,7 @@ export class FeishuProvisioning {
         message: 'team.create returned no Team name',
       };
     }
-    await this.opts.routing.bind({
+    const binding = await this.opts.routing.bind({
       target: input.target,
       teamName: created.team_name,
       display: input.display,
@@ -170,7 +170,8 @@ export class FeishuProvisioning {
       // `provision` plan for one) — the one path that can always set this.
       rootMessageId: input.submission.anchor.messageId,
     });
-    this.opts.bindings.announceProvisioned({
+    this.opts.bindings.presentCommittedBind({
+      ...binding,
       target: input.target,
       display: input.display,
       teamName: created.team_name,
@@ -178,7 +179,11 @@ export class FeishuProvisioning {
       agentRuntime: created.leader_agent_runtime,
       runtimeCwd: created.runtime_cwd,
     });
-    return this.opts.submitter.submit(created.team_name, input.submission);
+    return this.opts.submitter.submit(
+      created.team_name,
+      input.submission,
+      input.target,
+    );
   }
 
   /** A message that arrived while a run was live, delivered once it is done. */
@@ -193,7 +198,11 @@ export class FeishuProvisioning {
         message: `provisioning for ${describeTarget(input.target)} installed no route`,
       };
     }
-    return this.opts.submitter.submit(binding.team_name, input.submission);
+    return this.opts.submitter.submit(
+      binding.team_name,
+      input.submission,
+      input.target,
+    );
   }
 
   private async createTeam(input: ProvisioningRequest): Promise<TeamSummary> {
@@ -206,16 +215,17 @@ export class FeishuProvisioning {
       //
       // The platform redelivering one message replays this same id, so Core's
       // team.create idempotency answers with the Team the first attempt made
-      // instead of building a second one. If that first attempt died between
-      // `team.create` and the routing bind, the replay returns the same Team
-      // summary and this run goes on to install the binding — recovering the
-      // half-finished provisioning rather than duplicating it.
+      // while that Team's valid record carries the acceptance. If that attempt
+      // died between `team.create` and the routing bind, the replay returns the
+      // same Team summary and installs the binding, recovering the unfinished
+      // provisioning without duplicating it.
       //
       // A new message always mints a new id, which is the point. After a Team
       // is dissolved, the next message to that same topic provisions a fresh
-      // Team normally. A thread-scoped id could not: Core keeps a request's
-      // acceptance record permanently, so it would replay `closed` forever and
-      // the topic could never be provisioned again.
+      // Team normally. A thread-scoped id would replay `closed` while the
+      // accepted Team's valid record remains. Once that fully retired record
+      // is deleted or damaged, the same request can create anew, but ordinary
+      // reprovisioning must not depend on losing the historical record.
       //
       // The cost of message scope is that a *different* message arriving after
       // a partial failure creates a second Team. That window is knowingly left

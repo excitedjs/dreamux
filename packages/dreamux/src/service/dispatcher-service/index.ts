@@ -188,7 +188,7 @@ export class DispatcherService implements Dispatcher {
       log: opts.log,
     });
     const conversationProjection = createConversationProjection({
-      coreEvents: this.coreEvents.publisher,
+      coreEvents: this.coreEvents,
       log: opts.log,
       homePathPrefixes: opts.homePathPrefixes,
     });
@@ -197,7 +197,7 @@ export class DispatcherService implements Dispatcher {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       conversationProjection,
       completionDelivery,
-      coreEvents: this.coreEvents.publisher,
+      coreEvents: this.coreEvents,
       worktrees,
       log: opts.log,
     });
@@ -267,7 +267,7 @@ export class DispatcherService implements Dispatcher {
       },
       log: opts.log,
       workflowLog,
-      coreEvents: this.coreEvents.publisher,
+      coreEvents: this.coreEvents,
     });
     // This dispatcher's own Workflow scope: dispatcher-level runs, reporting
     // to the dispatcher's own Agent. Constructed directly, the same shape

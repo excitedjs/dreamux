@@ -77,7 +77,7 @@ export type FeishuSubmission =
   | (FeishuSubmissionBase & {
       readonly kind: 'chat';
       /** The visible Feishu message this turn's presentation hangs under. */
-      readonly anchor: VisibleMessageAnchor;
+      readonly anchor: Omit<VisibleMessageAnchor, 'servingTarget'>;
     })
   | (FeishuSubmissionBase & { readonly kind: 'doc_comment' });
 
@@ -95,7 +95,7 @@ export function chatSubmission(input: {
   attrs: Readonly<Record<string, string>>;
   text: string;
   sourceId: string;
-  anchor: VisibleMessageAnchor;
+  anchor: Omit<VisibleMessageAnchor, 'servingTarget'>;
 }): FeishuChatSubmission {
   return {
     kind: 'chat',

@@ -1,6 +1,6 @@
 # @excitedjs/feishu-channel
 
-This package is the built-in Feishu plugin for Dreamux: its default export is
+This package is the built-in Feishu plugin for Dreamux: its named `createFeishuPlugin` export is
 the plugin factory, and the plugin contributes the Feishu `ChannelProvider`
 (alias `builtin:feishu`, issue #209 slice 5) and publishes the Feishu extension
 api. It sits between
@@ -22,7 +22,7 @@ never on `@excitedjs/dreamux` core.
   `unsubscribe_document`, `list_subscriptions`), plus their parsing and
   handlers. A name may appear twice with different authority — the Dispatcher's
   `bind_channel` names any Team, a TeamLeader's names none and reaches only its
-  own Team — because the catalog a caller is offered *is* the authorization. The
+  own Team — because the catalog a caller is offered _is_ the authorization. The
   document tools need no second definition for the same reason: none of them
   takes a recipient, so the caller is the recipient and can reach nobody else's
   rows. Core owns only the stdio transport; see Boundaries.
@@ -122,6 +122,10 @@ and release. `FeishuInboundRouter` owns delivery fallback, slash routing, and
 the reply root an accepted topic message teaches its route.
 Provisioning retains its first submission inside the guarded per-target run;
 waiters await that submission before reading the new binding.
+After its bind commits, provisioning passes the committed previous Team and
+reply root to `FeishuBindingOperations`. That owner retires a displaced Team's
+presentation before claiming and announcing the new Team, just as manual bind
+does. Same-Team binds do not release the route; failed commits affect no display.
 
 `FeishuCoreCommands` holds the invoker installed after routing loads. COT holds
 the constructed transport client and the session lifecycle. Outbound owns
@@ -136,6 +140,12 @@ before it changes anything; pairing approval is checked as the App Owner
 instead. Tool handlers use one owner view,
 map their own results, and enter the same MCP lifecycle fence for built-in and
 extension calls. No bot/transport factory override is exposed.
+
+`FeishuBindingOperations.presentCommittedBind` owns the shared post-commit
+presentation for manual and provisioned binds: release a displaced Team before
+claiming the new route, send the bound card and offer its first anchor. A receipt
+at the bound target uses the committed root. A manual alternate receipt keeps
+its own topic root or invoking message fallback and never anchors the bound Team.
 
 `FeishuRouting` constructs its own store from dispatcher/channel identity and
 state directory. The session initializes routing before installing its Core
@@ -238,11 +248,13 @@ Design constraints:
   names come from the
   transport's runtime bot info (`/open-apis/bot/v3/info` `app_name`); if
   missing, the channel falls back to the neutral `Dreamux bot` label.
-- Any change to this flow must update the pairing-card regression test (the
-  code-organization refactor deleted it along with its consuming suite as
-  broken-by-move — see `deleted-tests.md`'s "Final pass" section — and it has
-  not been rebuilt yet; rebuild it before relying on it as a lock), the
-  transport tests for new SDK wrappers, and
+- Any change to this flow must preserve the restored behavioral assertions in
+  [pairing-card tests](tests/feishu-pairing-card.test.ts) for card content and
+  approval acknowledgements, [gate tests](tests/feishu-gate.test.ts) and
+  [introduce tests](tests/feishu-introduce.test.ts) for sender access and owner
+  routing, and [pairing commit tests](tests/pairing-commit.test.ts) for
+  send-before-save, expiry and concurrent approval. Update the transport tests
+  for new SDK wrappers and
   `.agents/domains/feishu-pairing-access.md` when the contract changes.
 
 ## Attachment Message Contract
@@ -269,10 +281,14 @@ runtime attachments retain the applicable structured facts.
 - Upstream: `@excitedjs/feishu-transport` low-level Lark operations.
 - Intended downstream: `@excitedjs/dreamux`. Since issue #209 slice 5, Dreamux
   depends on this package at runtime again: `@excitedjs/dreamux` declares it as
-  a dependency and always loads this package's default export as the built-in
+  a dependency and always loads this package's `createFeishuPlugin` export as the built-in
   `feishu` plugin. The plugin contributes the channel provider under the name
   `feishu`, which is what `builtin:feishu` resolves to. The package
   stays `shouldPublish: true` so the published manifest can resolve it — the
   issue #97 failure mode.
 - Dreamux may provide cache roots, limits, and logging hooks, but the channel
   owns how resources are downloaded, cached, represented, and degraded.
+
+The package-root default remains a neutral ChannelProvider factory for existing
+`npm:@excitedjs/feishu-channel` configuration. Named plugin construction shares
+one registry between its contributed provider and extension API.

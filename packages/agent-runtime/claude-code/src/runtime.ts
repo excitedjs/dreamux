@@ -127,7 +127,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     try {
       this.skillAddDirRoot = await materializeClaudeSkillAddDir(
         this.deps.paths.cacheDir(),
-        this.deps.skillSources ?? [],
+        this.deps.skillSources,
       );
       this.assertGeneration(generation);
       // Spawn the resident child up front so the runtime is truly resident

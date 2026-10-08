@@ -1,14 +1,10 @@
 /**
- * `@excitedjs/agent-runtime-claude-code` — the built-in Claude Code plugin for
- * Dreamux (`builtin:claude-code`). Its default export is the Dreamux plugin
- * factory: the plugin contributes the Claude Code `AgentRuntimeProvider`,
- * which implements the `@excitedjs/dreamux-types` contract.
- * `createClaudeCodeAgentRuntimeProvider` is the named export for constructing
- * the bare provider directly (embedders, tests). This package never imports
- * `@excitedjs/dreamux` core.
+ * Package-root default: neutral provider factory for configured npm providers.
+ * The named plugin factory contributes the builtin provider and plugin APIs.
+ * This package never imports Dreamux Core.
  */
 
-export { default } from './plugin.js';
+export { default as createClaudeCodePlugin } from './plugin.js';
 
 export { createClaudeCodeAgentRuntimeProvider } from './provider.js';
 
@@ -20,3 +16,12 @@ export {
   readDispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,
 } from './config.js';
+
+import type { AgentRuntimeProviderFactory } from '@excitedjs/dreamux-types';
+import type { DispatcherClaudeCodeConfig } from './config.js';
+import { createClaudeCodeAgentRuntimeProvider } from './provider.js';
+
+const providerFactory: AgentRuntimeProviderFactory<
+  DispatcherClaudeCodeConfig
+> = () => createClaudeCodeAgentRuntimeProvider();
+export default providerFactory;

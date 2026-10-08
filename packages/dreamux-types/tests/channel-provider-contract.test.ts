@@ -154,4 +154,36 @@ describe('ChannelProvider composes optional capabilities rather than fake method
       >
     >();
   });
+  it('a bare provider that implements only createSession is a valid ChannelProvider', async () => {
+    const instance: ChannelInstance = {
+      session: {
+        async initialize() {},
+        async start() {},
+        async close() {},
+      },
+    };
+    const provider: ChannelProvider<unknown> = {
+      createSession: async () => instance,
+    };
+    expect(
+      await provider.createSession({
+        dispatcher_id: 'test',
+        channel_id: 'test',
+        provider: 'npm:example',
+        config: {},
+        logger: {
+          error() {},
+          warn() {},
+          info() {},
+          debug() {},
+          trace() {},
+          child() {
+            return this;
+          },
+        },
+        state_root: '/state',
+        cache_root: '/cache',
+      }),
+    ).toBe(instance);
+  });
 });

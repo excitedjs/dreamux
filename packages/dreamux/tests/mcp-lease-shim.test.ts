@@ -58,7 +58,7 @@ function spyDelegate(
     name,
     describe: () => {
       describeCalls++;
-      return { identity: { name: `dreamux-${name}`, version: '1.0.0' }, tools };
+      return { tools };
     },
     call: async (call) => {
       calls.push(call);
@@ -167,5 +167,35 @@ describe('McpLeaseRegistry — admission edge', () => {
     const registry = new McpLeaseRegistry();
     const empty = spyDelegate({ tools: [] });
     expect(registry.mint(fakeLease(), empty.delegate)).toBeNull();
+  });
+});
+
+describe('McpLeaseRegistry catalog snapshot', () => {
+  it('mint reads describe() exactly once and freezes a canonical copy, immune to later mutation', () => {
+    const registry = new McpLeaseRegistry();
+    const mutableTools = [
+      { name: 'echo_tool', inputSchema: { type: 'object' } },
+    ];
+    const spy = spyDelegate({ tools: mutableTools });
+    const minted = registry.mint(fakeLease(), spy.delegate)!;
+    expect(spy.describeCallCount()).toBe(1);
+
+    // Mutate what the delegate itself still holds; the registry copied through
+    // Core's own JSON boundary at mint time, so this must not be visible.
+    mutableTools[0]!.name = 'renamed-after-mint';
+    mutableTools.push({
+      name: 'smuggled_tool',
+      inputSchema: { type: 'object' },
+    });
+
+    const catalog = registry.catalog(minted.token);
+    expect(catalog.tools.map((t) => t.name)).toEqual(['echo_tool']);
+    expect(Object.isFrozen(catalog.tools)).toBe(true);
+    expect(Object.isFrozen(catalog.tools[0])).toBe(true);
+    expect(catalog.identity.name).toBe('dreamux-harness-server');
+
+    // describe() is still not asked again by a later read.
+    void registry.catalog(minted.token);
+    expect(spy.describeCallCount()).toBe(1);
   });
 });

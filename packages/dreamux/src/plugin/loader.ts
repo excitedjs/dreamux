@@ -218,14 +218,17 @@ export function readPluginConfigs(
 
 async function constructPlugin(ref: ProviderRef): Promise<DreamuxPlugin> {
   let packageName: string;
+  let exportName: string;
   if (ref.source === 'npm') {
     packageName = ref.package;
+    exportName = ref.export ?? 'default';
   } else {
     const builtin = BUILTIN_PLUGIN_PACKAGES[ref.id];
     if (builtin === undefined) {
       throw new PluginLoadError(ref.raw, 'import', 'unknown built-in plugin');
     }
-    packageName = builtin;
+    packageName = builtin.package;
+    exportName = builtin.export;
   }
   let module: Record<string, unknown>;
   try {
@@ -238,8 +241,6 @@ async function constructPlugin(ref: ProviderRef): Promise<DreamuxPlugin> {
       { cause: err },
     );
   }
-  const exportName =
-    ref.source === 'npm' ? (ref.export ?? 'default') : 'default';
   const factory = module[exportName];
   if (typeof factory !== 'function') {
     throw new PluginLoadError(

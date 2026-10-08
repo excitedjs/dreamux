@@ -105,7 +105,7 @@ export interface GateResult {
 
 type PendingMap = Record<string, PendingPairingEntry>;
 
-function pruneExpiredPending(
+export function pruneExpiredPending(
   state: DispatcherAccessStateV3,
   now: number,
 ): DispatcherAccessStateV3 {

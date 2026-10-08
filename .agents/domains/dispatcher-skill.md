@@ -72,9 +72,13 @@ runtime can resume it from the recorded session.
 
 Dispatcher `team` MCP tools are `create`, `send`, `list`, `status`, `history`,
 and `dissolve`. `create.name_prefix` is only a requested label; use the returned
-concrete, never-reused `team.team_name` for every later Team call. Routing a
-conversation to a Team is not here: it is a channel operation, and the connected
-channel's own MCP server owns those tools and their schemas.
+concrete `team.team_name` for every later Team call. A valid Team record occupies
+that name. Fully retired history is read from disk, so deleting or invalidating
+its record can release that occupation; active and pending owners retain their
+record authority. See [Team Records](state-config-and-files.md#team-records) for
+the ownership and retirement boundary. Routing a conversation to a Team is not
+here: it is a channel operation, and the connected channel's own MCP server owns
+those tools and their schemas.
 
 `dissolve({ team_name, note, force? })` is submitted, not awaited. It answers
 `{ accepted, team_name, status: "submitted" }` as soon as the Team owns the

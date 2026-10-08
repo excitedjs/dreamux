@@ -77,6 +77,7 @@ export class AgentServiceFactory {
     });
     // The first listener publishes the identity fact before any holder's aggregate.
     store.committed.on('committed', (identity) => {
+      if (!this.deps.coreEvents.hasSources()) return;
       this.deps.coreEvents.publish({
         schemaVersion: 1,
         kind: 'teammate.state',

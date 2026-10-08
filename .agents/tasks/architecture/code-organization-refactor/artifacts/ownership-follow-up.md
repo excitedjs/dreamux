@@ -1,5 +1,25 @@
 # PR #453 ownership follow-up
 
+## Current continuation status (2026-10-03)
+
+The eight-area authority and preservation ledger below describe the earlier
+ownership pass. Its no-test restriction and deferred findings are historical
+for that pass, not the authority for the later repair work. The operator's
+direct repair instruction and R74 authorize the
+[review repairs and final-parent coverage](review-fixes-20261003.md).
+
+That implementation restores owner-close/construction concurrency assertions,
+prunes expired pairing entries at successful-send commit, and records a COT
+anchor's serving route so committed route removal retires its inherited
+presentation, including silent removal. PR #460 already resolved generation
+activity, first-bind anchors and config error classification; PR #462 delivered
+R73 admission. The [current verification](../technical-design/review-453-fixes/verification.md)
+and [case accounting](../technical-design/review-453-fixes/coverage.md) supersede
+the earlier open coverage status. Corrections from the first implementation
+review and a complete independent review are still in progress. Parent PR #453
+merge-to-next approval remains separate. The plugin-without-reader config
+policy remains an open product decision; these repairs do not settle it.
+
 ## Authority and scope
 
 Continuation of the existing requirement and rulings, after PR #455 merged

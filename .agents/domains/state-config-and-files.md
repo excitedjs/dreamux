@@ -263,18 +263,55 @@ inputs, the workspace, `status`, `closed_at` / `close_note`, the accepted
 identity, and `worktree_cleanup_force`. Do not edit or manufacture it by hand.
 
 The record is also the Team's own name claim. Publishing it is a serialized
-load-decide-write inside the one `TransactionalStore` the collection holds for
-that Team id for its whole life, and that create is the whole acceptance
+load-decide-write inside the one canonical `TransactionalStore` the collection
+holds for that Team id, and that create is the whole acceptance
 protocol: before it the candidate name is free and a caller that loses the
 race against that same in-memory queue simply picks another; after it the
-record owns the name permanently, including after the Team closes. An
-unreadable residue file this daemon has not loaded yet counts as no Team, so
-it is not protected — the next create overwrites it and wins the name. Once
-this daemon has loaded a valid record for that Team id, that load-decide-write
-protocol is what makes the name permanent: a hand edit or deletion on disk
-after that point changes nothing, because the store's committed in-memory
-value, not a fresh disk read, is what the next `create()` decides against.
-There is no separate claim file.
+valid record owns the name, including after the Team closes. An unreadable
+residue file with no retained owner counts as no Team, so the next create may
+replace it. There is no separate claim file.
+
+Construction acquires one initialized record handle and checks its current
+value before preparing a workspace. That same handle owns publication and
+transfers to the service; an occupied candidate exits without workspace work.
+Inventory scans skip directory names outside the existing Team ID shape or
+reserved-name contract, without reading or changing those entries. A direct
+query for an invalid Team ID still fails validation. Validly named malformed
+records continue through the ordinary record loader.
+
+`TeamStore.acquire()` retains and initializes the canonical entry before
+returning a bound handle; every handle operation uses that captured store.
+Construction transfers its hold to the tracked service. Dissolve retains its
+captured owner before the asynchronous worktree precheck: an admitted initial
+leader call can outlive failed construction. Refusal or joining a concurrently
+accepted task releases that hold; acceptance transfers it to detached cleanup.
+An already-published dissolve joins without another hold. Startup cleanup
+recovery and cold reads also have independently settling holds. Release waits for the existing record queue's drain before dropping
+its hold, then removes the same entry only when no holds remain and the record
+is absent or closed with no `cleanup-pending` fact. A nonclosed record or
+unfinished cleanup remains memory-authoritative even after a failed attempt
+has settled, without keeping a live service or retry task.
+
+Fully retired history therefore returns to disk authority: a later read,
+accepted-request replay or name probe observes edits, deletion or damage to
+that record. A pure read of an existing retained owner joins its initialization and
+returns the committed memory snapshot without creating a write-lifetime hold
+or waiting for unrelated queued writes. Writer release still waits for its
+captured drain: a later writer must stay counted even when an earlier release
+has already captured an older queue tail. Reads of active or unfinished
+records continue to use their committed memory value. Record maintenance remains server-owned; this is an
+observation boundary, not permission to hand-edit state. Retained entries
+scale with nonclosed Teams, unfinished cleanup and actual in-flight uses,
+rather than all historical Teams. History still requires disk IO and a result
+array proportional to the records returned.
+
+Dispatcher startup currently scans Team records separately for worktree
+cleanup recovery, service recovery and admissions after channels open. A
+fully retired record is read again in each pass: stable history of N records
+therefore incurs 3N record reads. These passes do not share a retained history
+snapshot; later phases observe the current records after earlier recovery and
+channel startup. This is a startup IO cost, not a permanent memory bound or a
+measured threefold increase in total startup time.
 
 It carries no dissolve operation — no operation id, no phase, no requester
 generation, no handoff ids, no attempt count, no retry time. A dissolve is an
@@ -632,6 +669,30 @@ Source:
 - `/packages/dreamux/src/daemon/status.ts`
 - `/packages/dreamux/src/daemon/install.ts`
 - `/packages/dreamux/src/platform/file-ledger.ts`
+
+### Uninstall And Preview
+
+`dreamux uninstall` removes the managed service unit, then the state, run,
+cache, log and Dreamux root paths in order. Existing paths are removed
+recursively with force. The root includes its configuration files and any
+other files the operator placed inside it, including under a non-default
+DREAMUX_ROOT. The pre-service safety check refuses normalized removal paths
+inside or containing a normalized provider-derived operator-state location.
+Directly nested provider homes prevent service mutation or deletion. The check
+does not resolve physical provider-home aliases: a home reached by an external
+symlink can have its real contents inside the recursively removed root. R76
+explicitly leaves that layout uncorrected; no special symlink branch is added.
+
+Dry-run performs no deletion and reports planned removal after checking path
+existence. It does not enumerate root contents or predict foreign-content
+retention. A successful preview is not a guarantee that later filesystem
+removal succeeds; actual removal errors propagate. Preview adds no permission
+oracle, removal ledger or unknown-result policy.
+
+Source:
+
+- `/packages/dreamux/src/onboard/uninstall.ts`
+- `/packages/dreamux/tests/uninstall.test.ts`
 
 ### 0.x Upgrade Policy
 

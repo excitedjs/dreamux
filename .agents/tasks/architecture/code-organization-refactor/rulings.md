@@ -320,6 +320,69 @@ before the remaining stages run as one orchestration ("后面所有的PR，你�
 The [decision follow-up](artifacts/product-decisions-20261002.md) records
 current-source evidence, acceptance boundaries, and implementation status.
 
+## Resulting-tree repairs (2026-10-03)
+
+- Repair instruction: “把这些问题修了”, following the completed three-model
+  resulting-tree review of PR #453. Accepted behavior deltas are not defects
+  to reverse; the [review-fix requirement](artifacts/review-fixes-20261003.md)
+  records the concrete repair and coverage scope.
+- R74 retired Team history: asked “完全退休的 Team 记录，是否改为按磁盘读取？”;
+  the operator selected “退休后读盘 (Recommended)”. The question explicitly
+  stated that online/construction/pending-write/cleanup owners retain the store;
+  fully retired history remains on disk, cold reads do not retain it, and hand
+  edits/deletion/damage of retired records become visible on the next read.
+  Name existence follows valid records again for that retired scope. This
+  supersedes the earlier daemon-lifetime snapshot consequence for retired
+  history only; pending operations and active ownership remain serialized and
+  memory-authoritative.
+
+## Uninstall alignment with next (2026-10-08)
+
+- R75 uninstall: “先和 next 保持一致吧”, after the operator was shown next's
+  existence-only preview and recursive whole-root deletion versus this repair
+  tree's foreign-content retention and enumerating predictor. This selects
+  next behavior for the discussed root-uninstall path: preview does not list
+  root contents; actual recursive deletion includes other root files and
+  propagates permission/syscall errors. It supersedes revision 1 repair outcome
+  4 and the proposed unreadable-root alternatives. It does not change R34's
+  provider-derived protection, R26 addressing, R74 Team ownership or unrelated
+  accepted product differences. The [revision-2 requirement](artifacts/review-fixes-20261003.md)
+  and [decision record](technical-design/review-453-fixes/unreadable-root-preview.md)
+  state the source baseline and resulting boundary.
+
+## Provider-home alias review boundary (2026-10-08)
+
+- R76 uninstall provider-home alias: “这个问题不修复，之前我记得决策过。”
+  The operator said this after the TeamLeader explained an external
+  CODEX_HOME alias pointing inside a real DREAMUX_ROOT, the lexical protection
+  check, and next's same recursive deletion consequence. Do not correct that
+  alias scenario or add physical-path resolution to the protection check.
+  Preserve the current normalized-path checks, R75 recursive removal and the
+  existing R59 rejection of a special symlinked-root branch. This records the
+  explicit current decision; it does not infer that every provider-state
+  protection should be removed. Other accepted review corrections continue.
+
+## Final implementation-review stop (2026-10-08)
+
+- R77 final review: “停掉最后这次复审”. The TeamLeader stopped the latest
+  corrected-tree workflow at scope confirmation. It had produced no findings
+  or synthesized result. Do not restart it or treat its stopped result as a
+  review pass. Completed earlier reviews and their accepted corrections remain
+  evidence; the current TeamLeader pre-review and local gates remain recorded
+  separately. This stops that review, not the previously authorized repair,
+  feature-base child delivery or alpha handoff. It gives no new authority to
+  merge parent PR #453 into next, promote stable/beta or claim platform acceptance.
+
+## Direct alpha delivery (2026-10-08)
+
+- R78 delivery: “看起来都是小问题了，直接 push ，发 alpha 包”. Push the
+  tested repair branch and dispatch the existing feature-branch alpha pipeline
+  directly, without restarting review or making alpha wait for child integration.
+  Preserve the mandatory commit hook and release artifact checks. The child PR
+  still carries the repair into PR #453 under its existing normal-CI/merge
+  authority. This does not authorize parent-next merge, stable/beta promotion,
+  raw npm publication or claims of external-platform acceptance.
+
 ## Resolved by the rulings above
 
 - Audit §9 item 27 (per-store corrupt-file policy, journal role): #448's

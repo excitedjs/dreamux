@@ -40,6 +40,7 @@ export interface VisibleMessageAnchor {
   readonly chatId: string;
   readonly messageId: string;
   readonly target: FeishuTarget;
+  readonly servingTarget: FeishuTarget | null;
 }
 
 export type CotOutboxAdmission =
@@ -223,7 +224,9 @@ export class LeaderLifecycleFence {
       this.rememberTarget(key, input.target);
       if (
         state.anchor !== null &&
-        sameTarget(state.anchor.target, input.target)
+        (sameTarget(state.anchor.target, input.target) ||
+          (state.anchor.servingTarget !== null &&
+            sameTarget(state.anchor.servingTarget, input.target)))
       ) {
         interrupt(key, state);
       }
@@ -355,5 +358,7 @@ export function prepareVisibleAnchor(
     chatId: anchor.chatId,
     messageId: anchor.messageId,
     target: { ...anchor.target },
+    servingTarget:
+      anchor.servingTarget === null ? null : { ...anchor.servingTarget },
   };
 }

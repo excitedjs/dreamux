@@ -1,25 +1,10 @@
 /**
- * `@excitedjs/feishu-channel` — the built-in Feishu plugin for Dreamux. Its
- * default export is the plugin factory: the plugin contributes the Feishu
- * `ChannelProvider` (addressed as `builtin:feishu`) and publishes the Feishu
- * extension api. Owns Feishu channel session logic, inbound
- * normalization, access/trust behavior, attachment handling, its own external
- * routing and Collaboration Space policy, and MCP tool backing on top of
- * `@excitedjs/feishu-transport`. Depends on `@excitedjs/dreamux-types` +
- * `@excitedjs/dreamux-utils` + `@excitedjs/feishu-transport` only; never
- * imports `@excitedjs/dreamux` core.
- *
- * This barrel is the package's entire public surface (the sole `package.json`
- * `exports` target): the plugin entry, `createFeishuChannelProvider` (a bare
- * provider with no extensions, for a test or an embedder outside the plugin
- * system), the full extension contract another plugin implements against, and
- * the two names `packages/dreamux/tests/channel-input-format.test.ts` reads as
- * a cross-package consumer. Every other type below internal modules stays a
- * relative import inside this package; re-exporting it here would grow the
- * public contract for no reader.
+ * Package-root default: neutral provider factory for configured npm providers.
+ * The named plugin factory contributes the builtin provider and plugin APIs.
+ * This package never imports Dreamux Core.
  */
 
-export { createFeishuPlugin, default } from './plugin.js';
+export { createFeishuPlugin } from './plugin.js';
 
 export {
   createFeishuChannelProvider,
@@ -53,3 +38,11 @@ export type { FeishuToolResult } from './tools/types.js';
 // need, and nothing else.
 export type { FeishuInboundEvent } from '@excitedjs/feishu-transport';
 export { formatFeishuMessageForRuntime } from './inbound/attachments.js';
+
+import type { ChannelProviderFactory } from '@excitedjs/dreamux-types';
+import type { FeishuChannelConfig } from './provider.js';
+import { createFeishuChannelProvider } from './provider.js';
+
+const providerFactory: ChannelProviderFactory<FeishuChannelConfig> = () =>
+  createFeishuChannelProvider();
+export default providerFactory;

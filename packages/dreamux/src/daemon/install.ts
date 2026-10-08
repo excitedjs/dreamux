@@ -314,7 +314,7 @@ export async function enableSystemdLinger(
 
 /**
  * Unregister and remove the user-level service unit only. Shared by
- * `dreamux uninstall` (also removes config/state/logs) and
+ * `dreamux uninstall` (also recursively removes DREAMUX_ROOT) and
  * `daemon uninstall` (removes nothing else). Unit-file removal is authoritative.
  */
 export async function removeUserService(

@@ -6,6 +6,7 @@ import {
   type FeishuSubmission,
   type FeishuSubmitOutcome,
 } from '../feishu-submit.js';
+import type { FeishuTarget } from '../routing/target.js';
 import type { FeishuLifecycle } from './lifecycle.js';
 
 export class FeishuTeamSubmitter {
@@ -33,6 +34,7 @@ export class FeishuTeamSubmitter {
   async submit(
     teamName: string | null,
     submission: FeishuSubmission,
+    servingTarget: FeishuTarget | null,
   ): Promise<FeishuSubmitOutcome> {
     if (!this.opts.lifecycle.isLive()) {
       return { status: 'error', message: 'Feishu session is not live' };
@@ -43,7 +45,7 @@ export class FeishuTeamSubmitter {
       submission.kind === 'chat'
         ? this.opts.cot.beginInboundSubmission({
             teamName,
-            anchor: submission.anchor,
+            anchor: { ...submission.anchor, servingTarget },
             sourceId: submission.sourceId,
           })
         : null;

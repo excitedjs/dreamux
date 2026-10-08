@@ -1,9 +1,10 @@
 # @excitedjs/agent-runtime-claude-code
 
 The built-in **Claude Code** Dreamux plugin, always loaded by
-[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the
-plugin factory: the plugin contributes the Claude Code `AgentRuntimeProvider`,
-published behind the stable `builtin:claude-code` alias.
+[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the neutral provider
+factory for `npm:@excitedjs/agent-runtime-claude-code`. `createClaudeCodePlugin()` is the
+named plugin factory: Dreamux always loads it to contribute `builtin:claude-code`.
+Named bare-provider constructors retain their own options.
 
 The provider it contributes implements the public `AgentRuntimeProvider`
 contract from

@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "`dreamux uninstall` no longer recursively deletes `DREAMUX_ROOT` (config.json's directory, R26) wholesale. It now deletes the owned state/run/cache/log directories and config.json/config.toml individually, then removes the root itself only with a plain (non-recursive) rmdir, which fails and leaves the root in place when anything else is still in it. Previously, a custom `DREAMUX_ROOT` that held unrelated files or directories had all of them deleted along with the root; the default `~/.dreamux` root is unaffected when it holds only dreamux-owned files.",
+      "comment": "`dreamux uninstall` follows the existing next behavior: dry-run checks existence and reports planned removal without enumerating root contents or writing files; actual uninstall recursively removes the entire DREAMUX_ROOT, including other files and directories inside it. The foreign-retention predictor is removed. Results report removed or missing; permission and other filesystem errors still propagate, including after a successful preview. Normalized removal paths inside or containing a provider-derived operator runtime home are refused before any service mutation. Physical symlink aliases are not resolved. Current root addressing and service removal order remain unchanged.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

@@ -1,5 +1,5 @@
-import { isNotEmptyDir, pathExists } from '../platform/fs-errors.js';
-import { rm, rmdir, unlink } from 'node:fs/promises';
+import { pathExists } from '../platform/fs-errors.js';
+import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, resolve, sep } from 'node:path';
 
@@ -11,7 +11,6 @@ import {
   expandHome,
   globalConfigDir,
   globalConfigFile,
-  legacyGlobalConfigFile,
 } from '../config/config.js';
 import { assertNoLegacyTomlOnly, loadConfig } from '../config/load.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
@@ -20,7 +19,7 @@ import { loadPlugins } from '../plugin/loader.js';
 import { createLogger } from '../platform/logger.js';
 import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
 
-export type UninstallStatus = 'removed' | 'missing' | 'skipped';
+export type UninstallStatus = 'removed' | 'missing';
 
 export interface UninstallEntry {
   path: string;
@@ -106,7 +105,13 @@ export async function runUninstall(
     dryRun,
     protectedRoots,
   );
-  await removeConfigDirectory(configDir, entries, dryRun, protectedRoots);
+  await removeOwnedDirectory(
+    configDir,
+    entries,
+    'dreamux config directory',
+    dryRun,
+    protectedRoots,
+  );
 
   return {
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
@@ -161,50 +166,7 @@ async function removePath(
   entries.push({ path, status: 'removed', reason });
 }
 
-/**
- * The config directory is `DREAMUX_ROOT` itself: it holds `config.json`
- * / the legacy `config.toml` directly, alongside the state/run/cache/log
- * directories already removed above. Unlike those, it must not be `rm -rf`'d
- * wholesale — for a non-default `DREAMUX_ROOT` that would delete anything
- * else the operator keeps in that directory. Delete only the owned config
- * files, then `rmdir` the (now-empty, if nothing foreign was there) root;
- * a non-empty root is left in place rather than forced away.
- */
-async function removeConfigDirectory(
-  configDir: string,
-  entries: UninstallEntry[],
-  dryRun: boolean,
-  protectedRoots: readonly string[],
-): Promise<void> {
-  const reason = 'dreamux config directory';
-  assertSafeOwnedDirectory(configDir, reason, protectedRoots);
-  if (!(await pathExists(configDir))) {
-    entries.push({ path: configDir, status: 'missing', reason });
-    return;
-  }
-  if (dryRun) {
-    entries.push({ path: configDir, status: 'removed', reason });
-    return;
-  }
-  for (const file of [globalConfigFile(), legacyGlobalConfigFile()]) {
-    if (await pathExists(file)) await unlink(file);
-  }
-  try {
-    await rmdir(configDir);
-  } catch (err) {
-    if (isNotEmptyDir(err)) {
-      entries.push({
-        path: configDir,
-        status: 'skipped',
-        reason: `${reason} is not empty`,
-      });
-      return;
-    }
-    throw err;
-  }
-  entries.push({ path: configDir, status: 'removed', reason });
-}
-
+/** Compare normalized paths only; physical symlink aliases are not resolved. */
 function assertSafeOwnedDirectory(
   path: string,
   reason: string,
@@ -221,9 +183,12 @@ function assertSafeOwnedDirectory(
     throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
   }
   for (const protectedRoot of protectedRoots) {
-    if (isSameOrInside(normalized, protectedRoot)) {
+    if (
+      isSameOrInside(normalized, protectedRoot) ||
+      isSameOrInside(protectedRoot, normalized)
+    ) {
       throw new Error(
-        `refusing to remove unsafe ${reason}: ${path} is inside operator agent runtime state ${protectedRoot}`,
+        `refusing to remove unsafe ${reason}: ${path} overlaps operator agent runtime state ${protectedRoot}`,
       );
     }
   }
@@ -234,11 +199,11 @@ function normalizePath(path: string): string {
 }
 
 /**
- * Directories uninstall must never remove, sourced from every always-loaded
+ * Operator state locations for normalized-path checks, from every always-loaded
  * Agent Runtime provider's own `operatorStateRoot` (e.g. Codex's `~/.codex`,
  * Claude Code's `~/.claude`) instead of a host-side hard-coded list — a
- * provider added or removed from the always-loaded set stays correctly
- * protected without an uninstall-side edit. Building the registry this way
+ * provider added or removed from the always-loaded set participates in the
+ * same checks without an uninstall-side edit. Building the registry this way
  * (empty `entries`, same as `onboard/wizard.ts`'s `onboardProviderRegistry`)
  * needs no config file: only the always-loaded plugins register.
  */

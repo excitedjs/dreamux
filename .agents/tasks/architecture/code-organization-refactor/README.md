@@ -7,9 +7,11 @@
   and the provider and Feishu packages one declared layering and one per-domain
   shape, with harness rules that keep it that way
 - State: `done`
-- State scope: the approved R73 continuation is complete. The parent PR #453
-  coverage restoration and other deferred product work remain in intake;
-  this state does not mark those obligations complete.
+- Active continuation, 2026-10-03: [Review fixes and final coverage](/.agents/tasks/architecture/code-organization-refactor/artifacts/review-fixes-20261003.md), revision 2 with R76. R74 retains active record authority and reads retired history from disk. R75 selects next-compatible existence preview and recursive root removal; R76 rejects physical provider-home alias protection. Both complete-review residuals are corrected: the current MCP knowledge page describes valid-record Team name occupation, and the common pre-commit dissolve log now covers preparing or committing the closed record. The TeamLeader checked the exact two-string source/test diff, preserved runtime/cron/retry assertions, all 199 tested hashes and actual eight-package outputs. After the test-only macOS fixture correction, default tests pass 2,649 with six model exclusions. The preceding enabled run passed 2,654 with zero skips and all six actual Codex contracts; those cases and all production bytes remain unchanged, and model calls were not repeated for this fixture edit. All 1,965 historical identities and contract/target mappings remain. [Verification](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/verification.md) and [pre-review](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/implementation-review.md) record evidence and limits. The operator stopped the last corrected-tree review at its scope stage under R77; it produced no findings and is not a review pass. Accepted findings from completed preceding reviews are corrected. Knowledge closeout reconciles the actual tested implementation, product catalog, owning domain pages and maintenance references using recorded TeamLeader source/assertion checks and current local gates. Cron jobs stay cancelled. Feature-base child delivery and subsequent alpha handoff retain their existing authority; parent #453 merging into next is not authorized.
+- Repair solution surface: [Issue #463](https://github.com/excitedjs/dreamux/issues/463) mirrors revision 2 of the selected solution and its final-parent coverage obligation, including R75's root-removal contract. The operator's direct repair instruction and R74/R75 answers supply authority; this is not a claim that an additional issue-approval card was sent. The same implementation developer owns source and tests; the TeamLeader owns task and knowledge closeout.
+- State scope: the active review-fix continuation includes final-parent coverage
+  restoration. The completed R73 continuation below is historical delivery
+  evidence, not the current stage or an assertion that parent coverage is done.
 - Requirement: [Current requirement](/.agents/tasks/architecture/code-organization-refactor/requirement.md)
 - Rulings: [Operator rulings ledger](/.agents/tasks/architecture/code-organization-refactor/rulings.md) (verbatim)
 - Product decisions, 2026-10-02: [Existing-behavior follow-up](/.agents/tasks/architecture/code-organization-refactor/artifacts/product-decisions-20261002.md). R72 accepts onboard discarding unknown wrapper fields; R73's refusal of new Workflow TeamMate construction after owner close is implemented, independently reviewed, and locally validated.
@@ -35,11 +37,9 @@
   verification confirmed the unified leader-tool access correction, hook-first
   assembly, and source documentation with no remaining behavior finding.
   The final four Rush gates passed with 64 files and 710 unchanged tests.
-- Remaining stage: R73 has no unresolved accepted review finding. The other
-  deferred parent product decisions and final coverage restoration remain in
-  intake and are not started by this continuation.
-  The R71 implementation, review, and knowledge closeout are complete; no
-  accepted architecture finding remains unresolved in this delivery.
+- Delivery boundary: R77 stops the final review without a pass or restart. Knowledge is reconciled with the tested tree and the delivered index must carry those exact bytes. R78 authorizes direct push and Actions alpha from the tested repair branch; the feature-base child PR follows normal CI and its existing merge authority separately. R76 rejects correction of provider-home aliases; current normalized-path behavior remains. The [source adjudication](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/implementation-review.md) records each disposition and the documented startup scan limit. R71
+  and R73 have no unresolved accepted findings within their historical delivery
+  scopes; the current resulting-tree review identifies the new continuation.
 - Progress: PR-0, requirement stages 1 through 9, and the R52 plugin lifecycle
   hooks (`dispatcher.hooks.launch`/`.teammateLaunch`/`.createTeam`/`.team`,
   `team.hooks.leaderLaunch`, in `packages/dreamux/src/plugin/hooks.ts`) are
@@ -52,22 +52,59 @@
   file-path tests this stage's own scope named are retired — every deletion
   is logged in the [deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md)
   for the final test completion to restore.
-- Architecture continuation: implementation and independent Codex/Claude, MiMo,
+- Historical ownership-continuation result: implementation and independent Codex/Claude, MiMo,
   and DeepSeek reviews are complete; accepted documentation corrections are
   applied in [PR #457](https://github.com/excitedjs/dreamux/pull/457). The R71
-  continuation completes the broader inter-component data-flow pass. Deferred
-  product decisions and final coverage remain open.
-- Next stage: separately resolve remaining deferred product behavior and
-  complete the parent
-  coverage obligations before #453 targets `next`. The
+  continuation completes the broader inter-component data-flow pass. That
+  delivery did not complete deferred product decisions or final coverage;
+  the active repair continuation above owns the subsequent coverage work.
+- Historical data-flow follow-up: remaining deferred product behavior and
+  parent coverage were separate from that continuation. The
   [review adjudication](/.agents/tasks/architecture/code-organization-refactor/artifacts/data-flow-review.md)
-  records accepted/rejected findings, recovered coverage, and the preserved
-  entry semantics. Delivery follows the existing child-PR ruling.
+  records accepted/rejected findings, recovered review coverage, and the
+  preserved entry semantics. The active repair requirement and verification
+  above now own the remaining implementation/review work. Delivery follows
+  the existing child-PR ruling.
 - Related tasks: absorbs the solution of [Add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md) (issue #448) by operator ruling; builds on the cap ruling recorded in [suppress-owner-close-stop-pushback](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/requirement.md) and the cap decision in [Repository Guardrail Records](/.agents/tasks/architecture/repository-guardrails/README.md); the survey ran on the branch of [PR #453](https://github.com/excitedjs/dreamux/pull/453) (plugin system).
 
 ## Development approval
 
-- Active R73 continuation, 2026-10-02: **granted** against the final requirement
+- R78 direct delivery, 2026-10-08: “看起来都是小问题了，直接 push ，发 alpha 包”.
+  Dispatch the existing alpha pipeline on the tested repair branch after its
+  mandatory-hook commit and push, without restarting review or waiting for child
+  integration. This supersedes the earlier alpha sequencing below, not the
+  release-channel or parent-merge boundaries.
+
+
+- Active review-fix continuation, 2026-10-03: the operator directly instructed
+  “把这些问题修了” and then selected “退休后读盘 (Recommended)” for the sole
+  unsettled product boundary. The [active requirement](/.agents/tasks/architecture/code-organization-refactor/artifacts/review-fixes-20261003.md)
+  records scope and authority. No additional approval card is claimed for this
+  batch; the R73 card below authorized that separate completed continuation.
+
+- Alpha delivery, 2026-10-08: the operator asked to publish an alpha package
+  and give it to the designated tester after completion. This authorizes the
+  existing feature-branch Actions prerelease pipeline and tester notification
+  after knowledge closeout and child delivery, with R77 recording the operator-stopped final review without a pass. It does not authorize
+  parent #453-next merge, stable/beta promotion, local version writes or raw
+  npm publication. Private recipient identifiers remain outside this record.
+
+- R77 final-review stop, 2026-10-08: “停掉最后这次复审”. The final workflow was stopped at scope confirmation before findings were produced. It is not a review pass and will not restart. This stops that review only; existing implementation, child-delivery and alpha authority remain as recorded, without expanding merge or release scope.
+
+- R76 review boundary, 2026-10-08: “这个问题不修复，之前我记得决策过。”
+  This rejects the provider-home alias correction after its same consequence
+  on next was explained. No correction was dispatched. Keep the existing
+  normalized-path checks and continue the four independent accepted cleanup
+  and fixture corrections; the current source adjudication records the scope.
+
+- R75 continuation, 2026-10-08: after the TeamLeader explained both next's
+  existence-only preview and its recursive root removal, the operator said
+  “先和 next 保持一致吧”. This authorizes replacing only the discussed
+  uninstall predictor and foreign-content retention contract within the same
+  repair batch. The other eight outcomes, R74, and feature-base child delivery
+  remain. All scheduled recovery jobs were cancelled at the operator's request.
+
+- Completed R73 continuation, 2026-10-02: **granted** against the final requirement
   and [final solution](/.agents/tasks/architecture/code-organization-refactor/technical-design/workflow-close-admission/final.md), mirrored in [Issue #461](https://github.com/excitedjs/dreamux/issues/461).
   The development-authorization card was sent at 14:57 PRC with the question
   "是否批准按 Issue #461 的最终方案开始本轮 Workflow 修复？". The explicit
@@ -91,9 +128,39 @@
 
 - Status: Granted 2026-09-24. The operator's words: "你先看一下这个重构，然后往 453上开pr，最后跟随453一起合入next 。没问题的话就开始ultracode ，节点都选sonnet 。然后每个pr让devbox 去 review ，逐个合入。"
 - Approved implementation boundary: the [requirement](/.agents/tasks/architecture/code-organization-refactor/requirement.md) as amended by the [rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md), delivered as a stack of pull requests into the PR #453 branch, one at a time. Each is reviewed and merged before the next one starts. Open items in the requirement are put to the operator when the pull request that reaches them starts.
-- Tests: see R43 in the rulings. These pull requests write no new unit tests. The unit tests are completed on PR #453 before it merges to `next`. Every test case a stage deletes is logged in the [deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md), which the final test completion reads to restore coverage.
+- Tests: R43 deferred unit-test restoration during the refactor child stages
+  until the final PR #453 coverage pass before merging to `next`. The active
+  review-fix continuation includes that final-parent restoration obligation.
+  Every deleted case is recorded in the [deleted tests ledger](/.agents/tasks/architecture/code-organization-refactor/artifacts/deleted-tests.md);
+  each surviving obligation needs named restored/current behavioral evidence
+  or an actual superseding ruling.
 
 ## Delivery
+
+- Review-repair child: [PR #464](https://github.com/excitedjs/dreamux/pull/464),
+  based on the PR #453 feature branch. R78 separately authorizes direct alpha
+  publication from the tested repair branch; normal CI and child integration
+  remain GitHub delivery facts, not a final-review pass or parent-next authority.
+
+
+- Review-repair knowledge closeout, 2026-10-08: complete for revision 2,
+  R74/R75/R76 and the R77 review-stop boundary. The
+  [final local evidence](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/verification.md#final-local-acceptance-and-operator-stopped-review-2026-10-08)
+  records owner/assertion checks, current full Rush results, all 1,965
+  historical dispositions and external limits. The final stopped review is not
+  a pass; preceding completed review findings and accepted corrections remain
+  separately recorded. `done` describes implementation and knowledge readiness
+  for the authorized child delivery, not parent PR integration or platform acceptance.
+- Knowledge owners: the product catalog, state/config ownership, service
+  topology, Dispatcher orchestration/MCP, scheduling, channel/access,
+  provider/plugin entries, non-blocking inbound, test policy and glossary were
+  reconciled with the current source. Colocated guidance and the single owning
+  maintenance references accompany source changes. Current routing in root.md
+  needs no change because no new domain or discovery path was introduced.
+  [Owner closeout](/.agents/tasks/architecture/code-organization-refactor/technical-design/review-453-fixes/verification.md#knowledge-owners-reconciled-for-child-delivery)
+  links the current facts. Historical proposals and earlier evidence remain
+  consultation and lineage, not broader implementation authority.
+
 
 - Pull request: This record travels in [PR #453](https://github.com/excitedjs/dreamux/pull/453)
   by operator ruling ("提交进 PR #453 的分支"); the ownership continuation is
@@ -109,4 +176,4 @@
   [product catalog](/.agents/product/README.md), colocated package guidance,
   and the owning maintenance references. No glossary or root routing change
   is needed: this continuation adds no domain or overloaded term. Final
-  product and coverage closeout of the parent task remains open.
+  product and coverage evidence is reconciled in the review-repair continuation below; parent integration remains a separate GitHub/operator boundary.

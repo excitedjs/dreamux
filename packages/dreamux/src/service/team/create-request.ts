@@ -1,12 +1,14 @@
 /**
  * `team.create` request identity.
  *
- * A Team is an expensive, never-reusable resource, so a retried `team.create`
- * carrying an already accepted request id must never produce a second Team and
- * must resolve to the *same* concrete name. The Team record itself carries that
- * identity: exclusive publication of `team/<team>/record.json` is simultaneously
- * the acceptance point, the concrete-name ownership point, and the durable
- * record of which request produced it. There is no second persisted authority.
+ * While a valid Team record carries its acceptance, a retried `team.create` with the same
+ * accepted request id and payload resolves to the same concrete name without
+ * creating another Team. The Team record itself carries that
+ * identity: publication of `team/<team>/record.json` through its canonical
+ * serialized owner is the acceptance point, the concrete-name ownership point,
+ * and the durable record of which request produced it. There is no second
+ * persisted authority. Deleting or damaging a fully retired record removes
+ * that request and name claim, so a later request can create a Team anew.
  *
  * This module owns only the two derived facts that identity needs — the bound on
  * a caller-supplied id, and the canonical payload hash written into the record.

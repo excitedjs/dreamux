@@ -3,7 +3,15 @@ import type { Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeStreamRpc } from '../src/rpc.js';
 import type { ClaudeCodeStreamRpcOptions } from '../src/rpc.js';
-import type { ClaudeProtocolEvent } from '../src/types.js';
+import type {
+  ClaudeProtocolEvent,
+  CommandLifecycleState,
+} from '../src/types.js';
+import type {
+  RuntimeAdmission,
+  RuntimeCompletion,
+  RuntimeSubmission,
+} from '@excitedjs/dreamux-types';
 
 interface Input {
   uuid: string;
@@ -51,6 +59,15 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
       lines.map((line) => `${JSON.stringify(line)}\n`).join(''),
     );
   };
+  const lifecycle = (uuid: string, ...states: CommandLifecycleState[]) => {
+    emit(
+      ...states.map((state) => ({
+        type: 'command_lifecycle',
+        command_uuid: uuid,
+        state,
+      })),
+    );
+  };
   const init = (supported = true) =>
     emit({
       type: 'system',
@@ -58,6 +75,23 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
       session_id: 'session',
       capabilities: supported ? ['msg_lifecycle_v1'] : [],
     });
+  const result = (
+    text: string,
+    uuid?: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    emit({
+      type: 'result',
+      subtype: 'success',
+      result: text,
+      uuid: 'result-uuid',
+      user_message_uuid: uuid,
+      ...extra,
+    });
+  };
+  const assistant = (text: string) =>
+    emit({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  const send = (uuid: string) => accepted(rpc.submit(uuid, uuid));
   const results = () => events.filter((event) => event.kind === 'result');
   const controlOk = (requestId: string) => {
     emit({
@@ -70,9 +104,14 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
     stdin,
     writes,
     controls,
+    events,
     reap,
     emit,
+    lifecycle,
     init,
+    result,
+    assistant,
+    send,
     results,
     controlOk,
   };
@@ -82,6 +121,333 @@ const rpcs: ClaudeCodeStreamRpc[] = [];
 afterEach(() => {
   for (const rpc of rpcs.splice(0)) rpc.stop();
   vi.useRealTimers();
+});
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+async function accepted(
+  admission: Promise<RuntimeAdmission>,
+): Promise<RuntimeSubmission> {
+  const value = await admission;
+  if (value.status !== 'submitted')
+    throw new Error(`expected submitted, received ${value.status}`);
+  return value.submission;
+}
+async function completion(
+  submission: RuntimeSubmission,
+): Promise<RuntimeCompletion> {
+  const settlement = await submission.settled;
+  if (settlement.kind !== 'completion')
+    throw new Error(`expected completion, received ${settlement.kind}`);
+  return settlement.completion;
+}
+const nativeFailure = {
+  type: 'result',
+  subtype: 'error_during_execution',
+  is_error: true,
+  terminal_reason: 'model_error',
+  errors: ['native model failure'],
+};
+/**
+ * What an accepted interrupt leaves behind, captured verbatim from claude
+ * 2.1.263 (fields no reader here consults are elided). Nothing in its shape
+ * marks it as an interrupt: it carries the interrupted command's own uuid and
+ * `is_error: true`, exactly like a genuine execution failure would.
+ */
+function interruptArtifact(commandUuid: string): Record<string, unknown> {
+  return {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    stop_reason: 'tool_use',
+    terminal_reason: 'aborted_tools',
+    errors: [
+      '[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use',
+    ],
+    uuid: 'interrupt-result-uuid',
+    user_message_uuid: commandUuid,
+  };
+}
+
+describe('native usage boundaries', () => {
+  it('forwards native totals before settlement without extra requests or cross-result accumulation', async () => {
+    const order: string[] = [];
+    const events: ClaudeProtocolEvent[] = [];
+    const h = harness({
+      onProtocolEvent: (event) => {
+        events.push(event);
+        if (event.kind === 'result') order.push('result');
+      },
+    });
+    h.init();
+    for (const [index, uuid] of ['A', 'B'].entries()) {
+      const submission = await h.send(uuid);
+      void submission.settled.then(() => {
+        order.push('settle');
+      });
+      h.lifecycle(uuid, 'started');
+      h.emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [],
+          usage: { input_tokens: 500 + index, cache_read_input_tokens: 14_000 },
+        },
+      });
+      h.result('answer', uuid, {
+        modelUsage: {
+          main: { inputTokens: 20_000 + index * 10_000, outputTokens: 69 },
+        },
+      });
+      h.lifecycle(uuid, 'completed');
+      await expect(completion(submission)).resolves.toEqual({
+        status: 'completed',
+        resultText: 'answer',
+      });
+    }
+    expect(
+      events
+        .filter((event) => event.kind === 'result')
+        .map((event) => event.outcome),
+    ).toMatchObject([
+      {
+        tokenUsage: { inputTokens: 20_000, outputTokens: 69 },
+        contextTokens: 14_500,
+      },
+      {
+        tokenUsage: { inputTokens: 30_000, outputTokens: 69 },
+        contextTokens: 14_501,
+      },
+    ]);
+    expect(
+      events
+        .filter((event) => event.kind === 'result')
+        .map((event) => event.uuid),
+    ).toEqual(['result-uuid', 'result-uuid']);
+    expect(order).toEqual(['result', 'settle', 'result', 'settle']);
+    expect(h.writes).toHaveLength(2);
+    expect(h.controls).toEqual([]);
+  });
+
+  it('carries native usage on an interrupted result without creating a completion', async () => {
+    const h = harness();
+    h.init();
+    const submission = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.emit({
+      ...interruptArtifact('A'),
+      modelUsage: { main: { inputTokens: 200, outputTokens: 10 } },
+    });
+    expect(
+      h.events.find((event) => event.kind === 'interrupted'),
+    ).toMatchObject({
+      uuid: 'interrupt-result-uuid',
+      outcome: {
+        tokenUsage: { inputTokens: 200, outputTokens: 10 },
+        contextTokens: null,
+      },
+    });
+    await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.results()).toEqual([]);
+    expect(h.controls).toEqual([]);
+  });
+});
+
+describe('resident request admission and settlement', () => {
+  it('acknowledges input before its answer, then accepts another input before late completed', async () => {
+    const h = harness();
+    const a = await h.send('A');
+    const settled = vi.fn();
+    void a.settled.then(settled);
+    h.lifecycle('A', 'started');
+    h.init();
+    await tick();
+    expect(settled).not.toHaveBeenCalled();
+    h.result('same', 'A');
+    const first = await completion(a);
+    const b = await h.send('B');
+    h.lifecycle('B', 'started');
+    h.lifecycle('A', 'completed');
+    h.result('same', 'B');
+    const second = await completion(b);
+    expect(first).toEqual({ status: 'completed', resultText: 'same' });
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
+    expect(h.writes.map((input) => input.uuid)).toEqual(['A', 'B']);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {},
+    { user_message_uuid: 'internal' },
+    { origin: { kind: 'task-notification' } },
+  ])(
+    'answers consumed background steers regardless of result metadata %j',
+    async (extra) => {
+      const h = harness();
+      h.init();
+      h.assistant('background answer');
+      const b = await h.send('B');
+      const c = await h.send('C');
+      h.lifecycle('B', 'queued', 'started', 'completed');
+      h.lifecycle('C', 'queued', 'started', 'completed');
+      h.result('', undefined, extra);
+      const [first, second] = await Promise.all([completion(b), completion(c)]);
+      expect(first).toEqual({
+        status: 'completed',
+        resultText: 'background answer',
+      });
+      expect(second).toBe(first);
+    },
+  );
+
+  it('retains a completed request until its answer arrives, without gating other inputs', async () => {
+    const h = harness();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started', 'completed');
+    h.init();
+    const settled = vi.fn();
+    void a.settled.then(settled);
+    const b = await h.send('B');
+    h.lifecycle('B', 'queued');
+    await tick();
+    expect(settled).not.toHaveBeenCalled();
+    h.result('A answer');
+    expect(await completion(a)).toMatchObject({ resultText: 'A answer' });
+    h.lifecycle('B', 'started');
+    h.result('B answer');
+    expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
+  });
+
+  it('accepts an immediate native result before the write callback and ignores its late error', async () => {
+    const h = harness();
+    let callback!: WriteCallback;
+    h.stdin.onWrite = (input, cb) => {
+      callback = cb;
+      h.lifecycle(input.uuid, 'started');
+      h.result('early');
+    };
+    const a = await h.send('A');
+    expect(await completion(a)).toMatchObject({ resultText: 'early' });
+    callback(new Error('late write failure'));
+    expect(await completion(a)).toMatchObject({ resultText: 'early' });
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it('treats native consumption as admission even if the write callback later fails', async () => {
+    const h = harness();
+    let callback!: WriteCallback;
+    h.stdin.onWrite = (input, cb) => {
+      callback = cb;
+      h.lifecycle(input.uuid, 'started');
+    };
+    const a = await h.send('A');
+    callback(new Error('late write error'));
+    h.result('accepted natively');
+    expect(await completion(a)).toMatchObject({
+      resultText: 'accepted natively',
+    });
+  });
+
+  it('lets a result callback submit the next request without attributing the previous answer to it', async () => {
+    let next!: Promise<RuntimeSubmission>;
+    const h = harness({
+      onProtocolEvent: (event) => {
+        if (event.kind === 'result' && event.outcome.text === 'A answer')
+          next = h.send('B');
+      },
+    });
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.result('A answer');
+    const b = await next;
+    const settled = vi.fn();
+    void b.settled.then(settled);
+    await tick();
+    expect(settled).not.toHaveBeenCalled();
+    h.lifecycle('B', 'started');
+    h.result('B answer');
+    expect(await completion(a)).toMatchObject({ resultText: 'A answer' });
+    expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
+  });
+
+  it('preserves an observed result when its callback stops the session', async () => {
+    const h = harness({
+      onProtocolEvent: (event) => {
+        if (event.kind === 'result') h.rpc.stop();
+      },
+    });
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.result('observed');
+    expect(await completion(a)).toMatchObject({ resultText: 'observed' });
+  });
+});
+
+describe('supported compatibility inputs', () => {
+  it.each(['queued', 'refused', 'discarded'] as const)(
+    'answers a no-start matching UUID independently of B being %s',
+    async (state) => {
+      const h = harness();
+      const a = await h.send('A');
+      h.init();
+      const b = await h.send('B');
+      h.lifecycle('B', state);
+      h.result('A answer', 'A');
+      expect(await completion(a)).toMatchObject({ resultText: 'A answer' });
+      if (state === 'queued') {
+        const settled = vi.fn();
+        void b.settled.then(settled);
+        await tick();
+        expect(settled).not.toHaveBeenCalled();
+        h.lifecycle('B', 'started');
+        h.result('B answer', 'B');
+        expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
+      } else await expect(b.settled).resolves.toMatchObject({ kind: 'failed' });
+    },
+  );
+
+  it('combines a no-start matching UUID with every started fold member', async () => {
+    const h = harness();
+    const a = await h.send('A');
+    h.init();
+    const b = await h.send('B');
+    h.lifecycle('B', 'started', 'completed');
+    h.result('both', 'A');
+    expect(await completion(b)).toBe(await completion(a));
+  });
+
+  it.each([true])(
+    'never uses a foreign UUID as sole-request fallback with lifecycle=%s',
+    async (supported) => {
+      const h = harness();
+      h.init(supported);
+      const a = await h.send('A');
+      const settled = vi.fn();
+      void a.settled.then(settled);
+      h.result('foreign', 'internal');
+      await tick();
+      expect(settled).not.toHaveBeenCalled();
+      if (supported) {
+        h.result('unbound');
+        await tick();
+        expect(settled).not.toHaveBeenCalled();
+      }
+      h.result('actual', supported ? 'A' : undefined);
+      expect(await completion(a)).toMatchObject({ resultText: 'actual' });
+    },
+  );
+
+  it('uses the older system-subtype lifecycle as consumption evidence', async () => {
+    const h = harness();
+    const a = await h.send('A');
+    h.emit({
+      type: 'system',
+      subtype: 'command_lifecycle',
+      command_uuid: 'A',
+      state: 'started',
+    });
+    h.result('answer');
+    expect(await completion(a)).toMatchObject({ resultText: 'answer' });
+  });
 });
 
 describe('interrupting outstanding work', () => {
@@ -100,9 +466,190 @@ describe('interrupting outstanding work', () => {
     await expect(h.rpc.interrupt('Stopped from Feishu.')).resolves.toBe(false);
     expect(h.controls).toHaveLength(1);
   });
+
+  it('settles an accepted interrupt as stopped, on the artifact and not as a result', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+    expect(h.controls).toEqual([
+      {
+        type: 'control_request',
+        request_id: h.controls[0]!.request_id,
+        request: { subtype: 'interrupt', reason: 'Stopped from Feishu.' },
+      },
+    ]);
+    // Queued input behind the interrupt is claude's to keep: the request names
+    // no cancellation of it.
+    expect(h.controls[0]!.request).not.toHaveProperty('cancel_queued');
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(interrupted).resolves.toBe(true);
+
+    // The measured order, claude 2.1.263: the artifact answers the request and
+    // the command's `cancelled` arrives after it, against nothing outstanding.
+    h.emit(interruptArtifact('A'));
+    h.lifecycle('A', 'cancelled');
+    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.events.map((event) => event.kind)).toContain('interrupted');
+    expect(h.results()).toEqual([]);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it('reads the artifact as the answer even when no control response arrives', async () => {
+    const h = harness();
+    h.init(false);
+    const a = await h.send('A');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+
+    // The artifact is the only native fact proving the requested interrupt
+    // ended this work; the control channel may never answer at all.
+    h.emit(interruptArtifact('A'));
+    await expect(interrupted).resolves.toBe(true);
+    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.results()).toEqual([]);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it('keeps a turn that died of its own error a failure, ask outstanding or not', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(interrupted).resolves.toBe(true);
+
+    // The same `error_during_execution` envelope, and an accepted interrupt
+    // behind it — but the turn names a model error as what ended it. Having
+    // asked does not make the next failure ours.
+    h.emit(nativeFailure);
+    h.lifecycle('A', 'completed');
+    expect(await completion(a)).toMatchObject({ status: 'failed' });
+    expect(h.events.some((event) => event.kind === 'interrupted')).toBe(false);
+    expect(h.results()).toHaveLength(1);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { how: 'stop', settlement: { kind: 'stopped' } },
+    { how: 'fail', settlement: { kind: 'failed' } },
+  ])(
+    'answers an outstanding interrupt when the session ends by $how',
+    async ({ how, settlement }) => {
+      const h = harness();
+      h.init();
+      const a = await h.send('A');
+      h.lifecycle('A', 'started');
+      const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+
+      // Claude never answers the control request; the session ends first. The ask
+      // is answered here or `/stop` waits on a session that is already gone.
+      const failure = new Error('claude stdout closed');
+      if (how === 'stop') h.rpc.stop();
+      else h.rpc.fail(failure);
+
+      if (how === 'stop') await expect(interrupted).resolves.toBe(true);
+      else await expect(interrupted).rejects.toBe(failure);
+      await expect(a.settled).resolves.toMatchObject(settlement);
+    },
+  );
+
+  it('reads an aborted turn as interrupted even after the ask was already spent', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    const interrupted = h.rpc.interrupt('Stopped from Feishu.');
+    h.controlOk(h.controls[0]!.request_id);
+    await expect(interrupted).resolves.toBe(true);
+
+    // A answers normally first, which spends the session's ask.
+    h.result('finished anyway', 'A');
+    expect(await completion(a)).toMatchObject({
+      resultText: 'finished anyway',
+    });
+
+    // B is aborted afterwards. A session-level mark would have been gone by
+    // now and reported this as a failure; the turn's own reason is not.
+    const b = await h.send('B');
+    h.lifecycle('B', 'started');
+    h.emit(interruptArtifact('B'));
+    await expect(b.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.events.map((event) => event.kind)).toContain('interrupted');
+  });
 });
 
 describe('native failure and transport lifetime', () => {
+  it('fails an unconsumed cancelled request without discarding the generating answer', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.assistant('running answer');
+    const b = await h.send('B');
+    h.lifecycle('B', 'queued', 'cancelled');
+    await expect(b.settled).resolves.toMatchObject({
+      kind: 'failed',
+      error: expect.objectContaining({
+        message: 'claude command was cancelled',
+      }),
+    });
+    expect(h.events.some((event) => event.kind === 'interrupted')).toBe(false);
+    h.result('', 'A');
+    expect(await completion(a)).toMatchObject({ resultText: 'running answer' });
+  });
+
+  it('shares the actual failure across initial and folded commands despite their different cancelled order', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    const b = await h.send('B');
+    h.lifecycle('A', 'started');
+    h.lifecycle('B', 'started');
+    h.assistant('partial answer');
+    // Native folds terminalize inside the query; the initial command follows its result.
+    h.lifecycle('B', 'cancelled');
+    const settled = vi.fn();
+    void b.settled.then(settled);
+    await tick();
+    expect(settled).not.toHaveBeenCalled();
+    h.emit(nativeFailure);
+    h.lifecycle('A', 'cancelled');
+    const failed = await completion(a);
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: expect.objectContaining({ message: 'native model failure' }),
+    });
+    expect(await completion(b)).toBe(failed);
+  });
+
+  it('fails every outstanding request on child loss and settles no completion', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    const b = await h.send('B');
+    h.lifecycle('A', 'started');
+    h.lifecycle('B', 'queued');
+    const error = new Error('child exited');
+    h.rpc.fail(error);
+    await expect(a.settled).resolves.toEqual({ kind: 'failed', error });
+    await expect(b.settled).resolves.toEqual({ kind: 'failed', error });
+    expect(h.results()).toEqual([]);
+  });
+
+  it('stops accepted requests and suppresses late native callbacks', async () => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.rpc.stop();
+    const events = [...h.events];
+    h.assistant('late');
+    h.result('late', 'A');
+    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    expect(h.events).toEqual(events);
+  });
+
   it.each(['throw', 'callback'])(
     'reports an ambiguous native write failure through %s',
     async (mode) => {
@@ -130,6 +677,57 @@ describe('native failure and transport lifetime', () => {
 });
 
 describe('idle policy and result contract', () => {
+  it('reaps genuinely silent outstanding requests, including queued input', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    const b = await h.send('B');
+    h.lifecycle('B', 'queued');
+    vi.advanceTimersByTime(1_000);
+    await expect(a.settled).resolves.toMatchObject({ kind: 'failed' });
+    await expect(b.settled).resolves.toMatchObject({ kind: 'failed' });
+    expect(h.reap).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      extra: { session_id: 'foreign' },
+      schema: false,
+      message: 'pinned native session',
+    },
+    { extra: {}, schema: true, message: 'structured_output' },
+    {
+      extra: { subtype: 'error_during_execution', errors: ['model failure'] },
+      schema: false,
+      message: 'model failure',
+    },
+  ])(
+    'fails completion for a violated result contract %j',
+    async ({ extra, schema, message }) => {
+      const h = harness({ outputSchemaEnabled: schema });
+      const a = await h.send('A');
+      h.lifecycle('A', 'started');
+      h.result('answer', 'A', extra);
+      expect(await completion(a)).toMatchObject({
+        status: 'failed',
+        error: expect.objectContaining({
+          message: expect.stringContaining(message),
+        }),
+      });
+    },
+  );
+
+  it('preserves structured null as a successful JSON result', async () => {
+    const h = harness({ outputSchemaEnabled: true });
+    const a = await h.send('A');
+    h.result('unused', 'A', { structured_output: null });
+    expect(await completion(a)).toEqual({
+      status: 'completed',
+      resultText: 'null',
+    });
+  });
+
   it('keeps Remote Control and tool permission replies independent of requests', () => {
     const urls: string[] = [];
     const h = harness({ onRemoteControlUrl: (url) => urls.push(url) });
@@ -158,4 +756,169 @@ describe('idle policy and result contract', () => {
     expect(h.writes).toEqual([]);
     expect(h.results()).toEqual([]);
   });
+});
+
+it.each(['before', 'after'])(
+  'shares one completion for folded inputs with completed %s result',
+  async (order) => {
+    const h = harness();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.init();
+    const b = await h.send('B');
+    h.lifecycle('B', 'queued', 'started');
+    if (order === 'before') {
+      h.lifecycle('A', 'completed');
+      h.lifecycle('B', 'completed');
+    }
+    h.result('folded', 'A');
+    if (order === 'after') {
+      h.lifecycle('A', 'completed');
+      h.lifecycle('B', 'completed');
+    }
+    const [first, second] = await Promise.all([completion(a), completion(b)]);
+    expect(first).toEqual({ status: 'completed', resultText: 'folded' });
+    expect(second).toBe(first);
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(h.results()).toHaveLength(1);
+  },
+);
+
+it.each(['before', 'after'] as const)(
+  'settles a consumed failure with cancelled %s result and preserves the queued request',
+  async (order) => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.assistant('failed partial answer');
+    const b = await h.send('B');
+    h.lifecycle('B', 'queued');
+    if (order === 'before') h.lifecycle('A', 'cancelled');
+    h.emit(nativeFailure);
+    if (order === 'after') h.lifecycle('A', 'cancelled');
+    const failed = await completion(a);
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: expect.objectContaining({ message: 'native model failure' }),
+    });
+    h.lifecycle('B', 'started');
+    h.result('');
+    expect(await completion(b)).toEqual({
+      status: 'completed',
+      resultText: null,
+    });
+    expect(await completion(a)).toBe(failed);
+    expect(h.reap).not.toHaveBeenCalled();
+  },
+);
+
+it('reports an unbound internal failure and clears its text before later input', async () => {
+  const h = harness();
+  h.lifecycle('internal', 'started');
+  h.assistant('failed internal answer');
+  h.emit(nativeFailure);
+  h.lifecycle('internal', 'cancelled');
+  const a = await h.send('A');
+  h.lifecycle('A', 'started');
+  h.result('');
+  expect(await completion(a)).toEqual({
+    status: 'completed',
+    resultText: null,
+  });
+});
+
+it('reports setup failure without guessing a queued owner, then fails the named cancelled request', async () => {
+  const h = harness();
+  h.init();
+  const a = await h.send('A');
+  const b = await h.send('B');
+  h.lifecycle('A', 'queued');
+  h.lifecycle('B', 'queued');
+  h.emit({
+    ...nativeFailure,
+    terminal_reason: 'turn_setup_failed',
+    errors: ['queryParams builder failed'],
+  });
+  expect(h.results()[0]).toMatchObject({
+    outcome: {
+      isError: true,
+      terminalReason: 'turn_setup_failed',
+      errors: ['queryParams builder failed'],
+    },
+  });
+  h.lifecycle('A', 'cancelled');
+  await expect(a.settled).resolves.toMatchObject({
+    kind: 'failed',
+    error: expect.objectContaining({ message: 'claude command was cancelled' }),
+  });
+  const settled = vi.fn();
+  void b.settled.then(settled);
+  await tick();
+  expect(settled).not.toHaveBeenCalled();
+  h.lifecycle('B', 'started');
+  h.result('B answer');
+  expect(await completion(b)).toMatchObject({ resultText: 'B answer' });
+  expect(h.reap).not.toHaveBeenCalled();
+});
+
+it.each([
+  [
+    { type: 'result', subtype: 'error_during_execution' },
+    'error_during_execution',
+  ],
+  [nativeFailure, 'native model failure'],
+  [{ ...nativeFailure, errors: [] }, 'model_error'],
+  [
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      terminal_reason: 'api_error',
+      result: 'Authentication failed',
+    },
+    'Authentication failed',
+  ],
+] as const)(
+  'never retains a consumed request past an error boundary %j',
+  async (failure, message) => {
+    const h = harness();
+    h.init();
+    const a = await h.send('A');
+    h.lifecycle('A', 'started');
+    h.emit(failure);
+    const failed = await completion(a);
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: expect.objectContaining({ message }),
+    });
+    const b = await h.send('B');
+    h.lifecycle('B', 'started');
+    h.result('B answer');
+    expect(await completion(b)).toEqual({
+      status: 'completed',
+      resultText: 'B answer',
+    });
+    expect(await completion(a)).toBe(failed);
+  },
+);
+
+it('resets idle time on every native line and clears it as soon as requests are answered', async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  const a = await h.send('A');
+  h.lifecycle('A', 'started');
+  for (let i = 0; i < 5; i++) {
+    vi.advanceTimersByTime(800);
+    h.assistant('working');
+  }
+  expect(h.reap).not.toHaveBeenCalled();
+  h.result('done');
+  await completion(a);
+  // No completed frame is needed to release the request's deadline.
+  vi.advanceTimersByTime(10_000);
+  h.assistant('background');
+  h.result('background');
+  vi.advanceTimersByTime(10_000);
+  expect(h.reap).not.toHaveBeenCalled();
 });

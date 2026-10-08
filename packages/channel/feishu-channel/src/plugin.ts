@@ -38,8 +38,3 @@ export function createFeishuPlugin(): DreamuxPlugin {
     },
   };
 }
-
-/** The zero-argument plugin factory Dreamux's plugin loader calls. */
-export default function feishuPluginFactory(): DreamuxPlugin {
-  return createFeishuPlugin();
-}

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Preserve newly sent pairing tokens after expiry and retire COT presentations when their serving parent route is released. Restore channel behavior coverage. Retire the displaced presentation after automatic provisioning commits over a concurrent manual bind, preserving same-Team and failed-commit behavior. Remove the unused internal default plugin wrapper. Share the post-commit bind presentation owner across manual and provisioned binding while retaining alternate receipt roots and anchor policy.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

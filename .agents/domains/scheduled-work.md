@@ -142,15 +142,20 @@ own `destroy()` (`stop()` plus deleting its own cron store file), alongside
 every other child service; a `destroy()` failure there is logged, never
 retried, and never reopens the Team, the same as any other post-`closed`
 cleanup step. A successful dissolve cannot let scheduled work reattach to a
-later same-name Team with a fresh leader identity: a closed Team's `team_id`
-is never reused by `team.create` (`record.json` permanently occupies the
-name) and a closed Team is never rebuilt, so no `SchedulerService` is ever
-constructed against that directory again — regardless of whether
+later same-name Team with a fresh leader identity while its valid Team record
+still exists: `record.json` occupies the concrete name and a closed Team is
+never rebuilt, so no `SchedulerService` is constructed for that closed record
+again — regardless of whether
 `destroy()`'s own store-file deletion succeeded. Deleting the store file
 loads it first, so a cron store that fails its own version/shape check at
 that exact moment fails the delete too — one of the dissolve's ordinary
 collected cleanup-step failures, handled the same way as any other resource
 that would not close.
+
+A fully retired record is read from disk on the next lookup. Missing or damaged
+records no longer occupy a name; active and unfinished-cleanup records retain
+their memory authority. That boundary belongs to
+[Team Records](state-config-and-files.md#team-records), not a scheduler tombstone.
 
 Source:
 

@@ -18,7 +18,7 @@ the Feishu channel ships out of the box.
   store, read and written under a host-supplied state directory.
 - **Inbound normalization**: turning Feishu events into agent-facing channel
   results, including the Channel-owned inner body and inline `<attachment>`
-  blocks. Agent runtimes own the outer `<channel source="feishu" …>` envelope.
+  blocks. Core owns the outer `<channel source="feishu" …>` envelope.
 - **Topic routing**: verifying `chat_mode=topic`, projecting `thread_id` as a
   neutral collaboration target, and recording exact per-message targets for
   scoped TeamLeader replies.
@@ -33,34 +33,36 @@ the Feishu channel ships out of the box.
 ## What it does not own
 
 - It never imports `@excitedjs/dreamux` core, and never imports the Lark SDK
-  directly — platform calls go through `@excitedjs/feishu-transport`. Both
-  boundaries are enforced by `tests/import-boundary.test.ts`.
-- Dispatcher lifecycle, agent/Codex process supervision, routing, binding state,
-  authorization, Team lifecycle, and the Feishu MCP **server descriptor** /
-  admin-method routing stay in `@excitedjs/dreamux`. The host supplies the bot
+  directly — platform calls go through `@excitedjs/feishu-transport`. The Core
+  import boundary is enforced by the shared lint configuration.
+- Dispatcher lifecycle, agent process supervision, Team lifecycle, the neutral
+  command port, and MCP lease/shim routing stay in `@excitedjs/dreamux`.
+  Feishu routing, binding state, access policy, and tool definitions belong to
+  this package. The host supplies the bot
   secret / app id and the state / cache directories; the package reconstructs no
   Dreamux host layout or path contract.
 
 ## Public API
 
-- The default-exported plugin factory and `createFeishuPlugin()` — the plugin
+- The default export is the neutral provider factory for
+  `npm:@excitedjs/feishu-channel`. `createFeishuPlugin()` is the named plugin
+  factory. The plugin
   contributes the `feishu` channel provider (`builtin:feishu`) and publishes
   `FeishuApi`, through which another plugin registers Feishu extensions: extra
   MCP tools, card actions, and a per-channel-instance lifecycle with an
   instance api (`FeishuExtension`, `FeishuInstanceApi`).
 - `createFeishuChannelProvider()` — the same provider with no extensions. Its
-  `createSession` returns a contract-valid `ChannelSession` (`reply` /
-  `react` / `resolveTarget` / `tools` / `handleTool` /
-  `messageBelongsToTarget`).
-- The session class plus the gate, chat-bots store, message formatter, MCP tool
-  parser, and production bot adapter helpers used by the core adapter that
-  drives the host-shaped session path.
+  `createSession` returns a `ChannelInstance`: a `session` with
+  `initialize` / `start` / `close`, plus the optional `mcp` capability beside it.
+- The public extension contracts and inbound message formatter support plugin
+  authors and cross-package callers. Session, gate, stores, tool parsers, and
+  bot adapter implementations remain package-internal.
 
-Inbound delivery receipts are status-only (`submitted`, `duplicate`, `stopped`,
-`failed`, or `ambiguous`). `failed` proves pre-admission rejection; `ambiguous`
-means delivery may have crossed the runtime boundary and is terminal for the
-inbound event, so Feishu does not replay it. The Channel contract does not
-expose a Dreamux Turn identifier. The read-only core event stream projects
+Successful submission receipts can carry a Dreamux Turn identifier. The
+channel distinguishes admitted, duplicate, stopped, failed, ambiguous, and
+proven Team-rejection outcomes. A proven pre-admission Team rejection permits
+the bound-route fallback; ambiguous delivery is never replayed. The read-only
+core event stream projects
 sanitized submitted, activity, and settled lifecycle facts for dispatcher and
 TeamLeader conversations; Feishu anchors each presentation to the turn's
 inbound message.

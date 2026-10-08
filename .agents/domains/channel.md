@@ -1138,6 +1138,15 @@ immediate `team.status` round trip. A failure after `team.create` leaves an ordi
 nothing routes to: an accepted orphan an operator can see and use, deliberately
 not compensated.
 
+Manual binding and automatic provisioning use the same BindingOperations
+post-commit presentation path. Automatic provisioning passes the result of
+its committed routing bind to that path. If another Team took the topic while creation was pending,
+the returned previous owner is retired before the created Team claims the
+route and its binding receipt is sent. Rebinding the same Team does not retire
+its presentation. A failed routing commit produces neither release nor claim
+nor receipt; the prior committed route and display remain. The announcement
+uses the bind result's root message instead of re-reading mutable routing.
+
 Idempotency comes from one choice with several consequences: the `team.create`
 `request_id` is the inbound message id, used bare.
 
@@ -1149,8 +1158,9 @@ Idempotency comes from one choice with several consequences: the `team.create`
   it.
 - A new message always mints a new id, so after a Team is dissolved the next
   message to that topic provisions a fresh Team. A thread-scoped id could not:
-  Core keeps a request's acceptance record permanently, so it would replay
-  `closed` forever and the topic could never be provisioned again. A replay whose
+  Core keeps a request's acceptance in its Team record while that valid record
+  exists, so a thread-scoped id would replay `closed` rather than provisioning
+  fresh work. A replay whose
   Team has since closed is reported `unsubmitted` and answered with the in-place
   failure notice.
 - The cost of message scope is that a *different* message arriving after a
@@ -1308,6 +1318,11 @@ state from them at the moment it changes them, and Core publishing a binding fac
 back would mean Core holding one. Workflow, scheduler, and host-maintenance events
 are deliberately absent.
 
+Display producers skip DTO construction when the bus has no current source.
+Committed identity observations and the Team's owned roster still advance, so
+a later subscriber receives subsequent facts from current owners without replay
+or cold roster lookup.
+
 The published catalog is an explicit set of four kinds: `team.state`,
 `teammate.state`, `teammate.input`, and `teammate.activity`. The last two are
 the whole conversation, split by producer: Core says what it admitted, and the
@@ -1439,11 +1454,18 @@ first Channel user message.
 Anchors consult two bounded fences: a leader-wide fence set by Team close and
 endpoint-scoped route fences set by unbind or replacement, each retaining at most
 512 entries. Team starting/running clears both kinds for that leader, while a
-matching re-bind clears its endpoint route fence. Fence matching and route-driven
-interruption compare the anchor's `target`; for an inbound message that is the
-conversation it arrived in, not the binding row that served it, so a topic
-unbound while its parent group still serves it stays fenced for a leader that
-already had COT state until the fence clears. Fencing is the whole of the
+matching re-bind clears its endpoint route fence. Anchor admission checks its
+visible `target`: a topic unbound while its
+parent group still serves it stays fenced for a leader that already had COT
+state until the fence clears. Route-driven interruption also compares the
+anchor's `servingTarget`, captured from the route that actually submitted it.
+Releasing a parent-group route retires a topic card served by that route;
+independently served exact topics survive. A later exact binding does not
+rewrite the provenance of an existing parent-served card. Dispatcher fallback
+has no serving target. Committed route removals retire presentations even when
+their notification is silent; failed commits retire nothing. This fact stays
+inside the existing Channel-owned anchor, with no persisted routing field or
+Core payload. Fencing is the whole of the
 TeamLeader's extra lifecycle policy; the Dispatcher, having no Team, is never
 fenced. Feishu
 ignores Team-member events explicitly and never routes them through a
@@ -1614,7 +1636,9 @@ Source:
 ### Feishu extensions
 
 The Feishu package is the always-loaded built-in plugin `feishu` (mechanism:
-[plugins](plugins.md)). Its default export is the plugin factory; the plugin
+[plugins](plugins.md)). Its named `createFeishuPlugin` export is the plugin
+factory; the package-root default is the neutral provider factory for configured
+`npm:` refs. The plugin
 contributes the `feishu` channel provider, so `builtin:feishu` refs resolve as
 before, and publishes a `FeishuApi` whose `extensions.register` another plugin
 calls from its `hooks.plugin.for('feishu')` tap. Seen on its own, Feishu is a

@@ -109,11 +109,13 @@ export class FeishuBindingOperations {
     target: FeishuTarget,
   ): (messageId: string) => void {
     return (messageId) => {
-      if (this.opts.routing.bindingFor(target)?.team_name !== teamName) return;
+      const binding = this.opts.routing.bindingFor(target);
+      if (binding?.team_name !== teamName) return;
       this.opts.cot.setFallbackAnchorIfAbsent(teamName, {
         chatId: target.chatId,
         messageId,
         target,
+        servingTarget: target,
       });
     };
   }
@@ -177,43 +179,14 @@ export class FeishuBindingOperations {
         ? { requireOwner: input.requireOwner }
         : {}),
     });
-    const displaced =
-      previousTeamName !== null && previousTeamName !== input.teamName;
-    if (displaced) {
-      this.opts.cot.onRouteReleased({ teamName: previousTeamName, target });
-    }
-    this.opts.cot.onRouteClaimed({ teamName: input.teamName, target });
-    const announce = input.announceIn ?? target;
-    // The bound target's own root when the receipt lands there (`null` for a
-    // topic with none yet; the notifier asks the platform then); otherwise
-    // (only `/bind` from inside a topic that binds its parent group) fall
-    // back to that topic's own binding, if any, and last to the message
-    // `/bind` was typed in reply-chain terms, so the receipt still has a root
-    // to reply under without a lookup.
-    const announceReplyTo = sameTarget(announce, target)
-      ? rootMessageId
-      : (this.opts.routing.bindingFor(announce)?.root_message_id ??
-        input.announceMessageId ??
-        null);
-    this.opts.outbound.notify(
-      announce,
-      bindingBoundCard({
-        target,
-        display: input.display,
-        teamName: team.team_name,
-        leaderName: team.leader_name,
-        agentRuntime: team.leader_agent_runtime,
-        runtimeCwd: team.runtime_cwd,
-        ...(displaced ? { previousTeamName } : {}),
-      }),
-      announceReplyTo,
-      // A receipt announced somewhere else (a `/bind` typed in a topic that
-      // binds its parent group) sits in another conversation, and the Team's
-      // first card must not land inside it.
-      sameTarget(announce, target)
-        ? this.offerAsFirstAnchor(input.teamName, target)
-        : undefined,
-    );
+    this.presentCommittedBind({
+      ...input,
+      previousTeamName,
+      rootMessageId,
+      leaderName: team.leader_name,
+      agentRuntime: team.leader_agent_runtime,
+      runtimeCwd: team.runtime_cwd,
+    });
     return { team_name: input.teamName, previous_team_name: previousTeamName };
   }
 
@@ -277,10 +250,6 @@ export class FeishuBindingOperations {
         ? teamDissolvedCard
         : bindingRouteEndedCard;
     for (const route of input.removed) {
-      this.opts.cot.onRouteReleased({
-        teamName: input.teamName,
-        target: route.target,
-      });
       this.opts.outbound.notify(
         route.target,
         card({
@@ -293,25 +262,42 @@ export class FeishuBindingOperations {
     }
   }
 
-  /** Automatic provisioning installed a route; announce it where it serves. */
-  announceProvisioned(input: {
+  /** Present a committed bind, then announce it in the requested conversation. */
+  presentCommittedBind(input: {
+    previousTeamName: string | null;
+    rootMessageId: string | null;
     target: FeishuTarget;
     display: string | null;
     teamName: string;
     leaderName: string;
     agentRuntime: string;
     runtimeCwd: string;
+    announceIn?: FeishuTarget;
+    announceMessageId?: string;
   }): void {
+    const { previousTeamName } = input;
+    const displaced =
+      previousTeamName !== null && previousTeamName !== input.teamName;
+    if (displaced) {
+      this.opts.cot.onRouteReleased({
+        teamName: previousTeamName,
+        target: input.target,
+      });
+    }
     this.opts.cot.onRouteClaimed({
       teamName: input.teamName,
       target: input.target,
     });
-    // `bind` just committed this exact target with the triggering message as
-    // its root, so the fresh row already carries it.
-    const replyTo =
-      this.opts.routing.bindingFor(input.target)?.root_message_id ?? null;
+    const announce = input.announceIn ?? input.target;
+    // The bound target uses its committed root. An alternate receipt uses its
+    // own topic root, then the invoking message, then the notifier's lookup.
+    const replyTo = sameTarget(announce, input.target)
+      ? input.rootMessageId
+      : (this.opts.routing.bindingFor(announce)?.root_message_id ??
+        input.announceMessageId ??
+        null);
     this.opts.outbound.notify(
-      input.target,
+      announce,
       bindingBoundCard({
         target: input.target,
         display: input.display,
@@ -319,9 +305,13 @@ export class FeishuBindingOperations {
         leaderName: input.leaderName,
         agentRuntime: input.agentRuntime,
         runtimeCwd: input.runtimeCwd,
+        ...(displaced ? { previousTeamName } : {}),
       }),
       replyTo,
-      this.offerAsFirstAnchor(input.teamName, input.target),
+      // An alternate receipt must not become the bound Team's first card.
+      sameTarget(announce, input.target)
+        ? this.offerAsFirstAnchor(input.teamName, input.target)
+        : undefined,
     );
   }
 
@@ -366,6 +356,9 @@ export class FeishuBindingOperations {
       );
       // Past the commit: the rows are gone from disk, and what follows is
       // presentation over what they said.
+      for (const route of removed) {
+        this.opts.cot.onRouteReleased({ teamName, target: route.target });
+      }
       if (notice !== 'silent') {
         this.announceRoutesRemoved({ teamName, removed, reason: notice });
       }

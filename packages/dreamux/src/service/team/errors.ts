@@ -58,9 +58,8 @@ export class IdempotencyConflictError extends StatedFailure {
  *
  * A non-forced dissolve asks about the checkout before it accepts anything, so
  * this one *is* an answer: a caller asked, nothing was touched, and the reply
- * has to say what to do about it. The same error is also raised once more from
- * behind the receipt, when work appeared in the window between the two reads;
- * there it only reaches the operator log, and the Team stays open.
+ * has to say what to do about it. After the receipt, cleanup may retain a
+ * newly dirty checkout, but it does not reopen the closed Team.
  */
 export class TeamDissolveBlockedError extends DreamuxError {
   constructor(reason: WorktreeCleanupBlockedReason) {
@@ -73,11 +72,9 @@ export class TeamDissolveBlockedError extends DreamuxError {
 }
 
 /**
- * Why a submitted dissolve failed, for the operator log.
- *
- * This one is never an answer: it is raised behind the receipt, so it exists
- * to say in the log that the Team is still open because the dissolve itself
- * went wrong. It states no next step, because it is answering nobody.
+ * Worktree assessment failed before the terminal Team record was committed.
+ * The same assessment runs during precheck and behind an accepted receipt;
+ * the latter failure is reported in the operator log.
  */
 export class TeamDissolveFailedError extends DreamuxError {
   constructor(message: string) {
