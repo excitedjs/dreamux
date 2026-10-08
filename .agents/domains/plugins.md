@@ -144,7 +144,8 @@ Order, all inside `loadConfig` except the last two steps:
    loaded plugin contributes and Dreamux does not ship fails loading with that
    statement, which is what an operator sees after removing a plugin from
    `plugins[]` while config still addresses its provider.
-4. Run each plugin's synchronous `config.read` on its entry's `config`. A `config` block
+4. Run each plugin's synchronous `config.read` on its entry's `config`.
+   A `config` block
    for a plugin with no `config.read` is ignored: a plugin with no reader has
    nowhere to route the block that would give it effect. An unrecognized key
    on a `plugins[]` entry is ignored, as everywhere else in config.json.

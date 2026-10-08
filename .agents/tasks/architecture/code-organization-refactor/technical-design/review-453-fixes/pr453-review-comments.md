@@ -4,6 +4,8 @@ Recorded 2026-10-09 against the reviewed tree identified by
 [the external review](https://github.com/excitedjs/dreamux/pull/453#pullrequestreview-5459263113).
 This is a follow-up within the existing repair task, not another independent
 review workflow.
+Implementation delivery: [PR #465](https://github.com/excitedjs/dreamux/pull/465),
+targeting the parent feature branch.
 
 ## Authority and limits
 

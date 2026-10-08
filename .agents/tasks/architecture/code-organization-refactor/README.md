@@ -140,6 +140,10 @@
 
 - Parent-delivery authority, 2026-10-08: “先合入 453”. This authorizes normal parent delivery to `next` after required checks and non-author review. It does not permit branch-protection bypass. [PR #453](https://github.com/excitedjs/dreamux/pull/453) remains the delivery surface; its state and CI are GitHub facts.
 
+- External-comment repair child: [PR #465](https://github.com/excitedjs/dreamux/pull/465),
+  based on the PR #453 feature branch. It delivers the source-backed corrections
+  and current knowledge under the operator's direct comment-handling instruction.
+
 - Review-repair child: [PR #464](https://github.com/excitedjs/dreamux/pull/464),
   based on the PR #453 feature branch. R78 separately authorizes direct alpha
   publication from the tested repair branch; normal CI and child integration
