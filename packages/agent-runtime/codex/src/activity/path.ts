@@ -5,13 +5,22 @@ import { createZstdDecompress } from 'node:zlib';
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
 import {
   ActivityError,
+  openActivityFile,
+  type OpenedActivityFile,
   createScanBudget,
   isPathWithin,
   type ScanBudget,
 } from '@excitedjs/dreamux-utils';
 
 import { resolveCodexHomeDir } from '../paths.js';
-import { openCodexRollout, type CodexOpenedRollout } from './opened-file.js';
+
+export const CODEX_ACTIVITY_FILE_MESSAGES = {
+  notFound: 'Codex activity is unavailable for this session',
+  outsideRoot: 'Codex activity is unavailable for this session',
+  notRegularFile: 'Codex activity source is not a regular file',
+  changedWhileOpening: 'Codex activity source changed while opening',
+  unreadable: 'Codex activity is unreadable',
+};
 
 const ROLLOUT_FILENAME =
   /^rollout-[^/]+-[0-9a-f-]{36}(?:_[0-9a-f-]{36})?\.jsonl(?:\.zst)?$/i;
@@ -119,20 +128,10 @@ export async function validateCodexRolloutPath(
 }
 
 export async function locateCodexRollout(
-  locator: string | null | undefined,
   expectedSessionId: string,
   roots: CodexRolloutRoots,
   budget: ScanBudget = createCodexScanBudget(),
 ): Promise<CodexValidatedRollout> {
-  if (locator !== null && locator !== undefined) {
-    try {
-      return await validateCodexRolloutPath(locator, expectedSessionId, roots);
-    } catch (error) {
-      if (!(error instanceof ActivityError) || error.detail !== 'not_found') {
-        throw error;
-      }
-    }
-  }
   const candidates = await discoverRollouts(roots, expectedSessionId, budget);
   for (const candidate of candidates) {
     try {
@@ -187,7 +186,7 @@ export async function findCodexRolloutById(
 }
 
 export async function readCodexRolloutText(
-  opened: CodexOpenedRollout,
+  opened: OpenedActivityFile,
   maxDecodedBytes: number,
 ): Promise<string> {
   if (opened.path.endsWith('.zst') && opened.size > maxDecodedBytes) {
@@ -230,7 +229,7 @@ export async function readCodexRolloutText(
 }
 
 async function readCodexSessionMetadata(
-  opened: CodexOpenedRollout,
+  opened: OpenedActivityFile,
 ): Promise<{ sessionId: string; historyBase: CodexHistoryBase | null }> {
   const source = opened.handle.createReadStream({
     autoClose: false,
@@ -376,7 +375,11 @@ async function validateCodexRollout(input: {
   assertNativeRolloutPath(input.candidate);
   const existing = await existingRepresentation(input.candidate);
   const canonicalRoots = await canonicalExistingRoots(input.roots);
-  const opened = await openCodexRollout(existing, canonicalRoots);
+  const opened = await openActivityFile(
+    existing,
+    canonicalRoots,
+    CODEX_ACTIVITY_FILE_MESSAGES,
+  );
   try {
     const rolloutId = rolloutIdFromPath(opened.path);
     if (

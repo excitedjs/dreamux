@@ -30,11 +30,11 @@
 import type {
   ChannelProvider,
   ChannelProviderFactory,
-  ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 import { type ProviderRegistry } from '../registry/index.js';
 import {
   isRecord,
+  assertOptionalProviderCapabilities,
   loadProviderPackages,
   type ProviderContractContext,
   type ProviderModule,
@@ -76,20 +76,15 @@ export interface LoadChannelProvidersOptions {
   refs: Iterable<string>;
 }
 
-const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<
-  ChannelProvider<unknown>,
-  ProviderFactoryContext
-> = {
-  kind: 'channel',
-  // Ref-only, by contract: Core's registration descriptor stays inside the
-  // loader skeleton, because a Channel provider has nothing to echo back.
-  factoryContext: ({ ref }) => ({ ref }),
-  createLoadError: (ref, message, options) =>
-    new ExternalChannelProviderLoadError(ref, message, options),
-  createContractError: (ref, message) =>
-    new ExternalChannelProviderContractError(ref, message),
-  assertProvider: assertChannelProvider,
-};
+const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<ChannelProvider<unknown>> =
+  {
+    kind: 'channel',
+    createLoadError: (ref, message, options) =>
+      new ExternalChannelProviderLoadError(ref, message, options),
+    createContractError: (ref, message) =>
+      new ExternalChannelProviderContractError(ref, message),
+    assertProvider: assertChannelProvider,
+  };
 
 export async function loadChannelProviders(
   options: LoadChannelProvidersOptions,
@@ -108,47 +103,5 @@ function assertChannelProvider(
   if (typeof candidate.createSession !== 'function') {
     context.fail('provider.createSession must be a function');
   }
-  assertOptionalConfig(candidate.config, context);
-  assertOptionalOnboard(candidate.onboard, context);
-  assertOptionalDiagnostic(candidate.diagnostic, context);
-}
-
-function assertOptionalConfig(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (value === undefined) return;
-  if (!isRecord(value) || typeof value['read'] !== 'function') {
-    context.fail(
-      'provider.config.read must be a function when config is present',
-    );
-  }
-}
-
-function assertOptionalOnboard(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (value === undefined) return;
-  if (!isRecord(value) || typeof value['collect'] !== 'function') {
-    context.fail(
-      'provider.onboard.collect must be a function when onboard is present',
-    );
-  }
-}
-
-function assertOptionalDiagnostic(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (value === undefined) return;
-  if (
-    !isRecord(value) ||
-    typeof value['binChecks'] !== 'function' ||
-    typeof value['runDiagnostic'] !== 'function'
-  ) {
-    context.fail(
-      'provider.diagnostic must expose binChecks and runDiagnostic functions when present',
-    );
-  }
+  assertOptionalProviderCapabilities(candidate, context);
 }

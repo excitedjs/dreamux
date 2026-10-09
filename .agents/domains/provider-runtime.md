@@ -764,9 +764,12 @@ names, unconsumed `system` subtypes) are frozen in
 Provider-native history formats, session discovery, cursor envelopes, and typed
 errors stay inside each runtime package's own `src/activity/`. Both built-ins
 reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral
-digests, bounded scan accounting, exact positional reads, and path containment;
+file opening, digests, bounded scan accounting, exact positional reads, and path containment;
 duplicating those security and determinism primitives in each provider is not an
-accepted boundary. That module owns mechanism only and no record shape.
+accepted boundary. The shared opener checks regular-file identity and canonical
+root containment while keeping the returned handle open for its caller. Providers
+supply their own static error messages and retain native session-evidence decoding
+and discovered-file identity checks. That module owns mechanism only and no record shape.
 `/packages/dreamux/src/service/agent/activity.ts` still validates
 each returned page's shape — record count against what was requested, and
 record/cursor field types — but imposes no byte/char/cursor-length magnitude

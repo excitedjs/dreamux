@@ -7,15 +7,8 @@
  * MVP only ships with a fail-fast approval handler, so no other policy is
  * safe to run) — it is not read from config.
  *
- * `sandboxMode` is validated against the codex 0.134 enum so a typo doesn't
- * reach the daemon (where the only feedback is a fatal early exit).
+ * The provider config reader validates sandbox mode; this module only encodes it.
  */
-
-const ALLOWED_SANDBOX_MODES = new Set([
-  'read-only',
-  'workspace-write',
-  'danger-full-access',
-]);
 
 export interface ParsedCodexArgs {
   approvalPolicy: string;
@@ -31,21 +24,11 @@ export function codexArgsFromConfig(config: {
   sandbox_mode: string;
   extra_args: string[];
 }): ParsedCodexArgs {
-  return validateCodexArgs({
+  return {
     approvalPolicy: 'never',
     sandboxMode: config.sandbox_mode,
     extraArgs: [...config.extra_args],
-  });
-}
-
-function validateCodexArgs(parsed: ParsedCodexArgs): ParsedCodexArgs {
-  if (!ALLOWED_SANDBOX_MODES.has(parsed.sandboxMode)) {
-    throw new Error(
-      `dispatcher startup refused: sandboxMode='${parsed.sandboxMode}' is not one of ` +
-        `${Array.from(ALLOWED_SANDBOX_MODES).join(' | ')} (codex 0.134 enum).`,
-    );
-  }
-  return parsed;
+  };
 }
 
 export function codexArgsToCli(parsed: ParsedCodexArgs): string[] {

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "Reuse the shared activity file opener while preserving native evidence, file identity and provider errors.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code"
+}

@@ -231,14 +231,10 @@ export class WorkflowRun {
   }
 
   async stop(): Promise<WorkflowTerminalStatus> {
-    if (this.terminalIntent === null && this.record.status !== 'running') {
-      return this.record.status as WorkflowTerminalStatus;
-    }
     this.reserveStop();
-    await this.ensureTerminalTask();
-    return (
-      this.terminalRequested ?? (this.record.status as WorkflowTerminalStatus)
-    );
+    const intent = this.terminalIntent!;
+    await this.ensureTerminalTask(intent);
+    return intent.status;
   }
 
   requestStop(): void {
@@ -249,12 +245,9 @@ export class WorkflowRun {
     return this.terminalIntent?.status ?? null;
   }
 
-  /** Gates a new `agent_start` and an `emit` phase/log update: no terminal
-   * intent reserved, and `record.status` — the committed fact, kept even
-   * though a live run cannot leave `running` without first reserving one —
-   * still says `running`. */
+  /** A live run accepts agent/emit messages until terminal intent is reserved. */
   private get terminalAccepting(): boolean {
-    return this.terminalIntent === null && this.record.status === 'running';
+    return this.terminalIntent === null;
   }
 
   private get terminalSuppressDelivery(): boolean {
@@ -262,9 +255,9 @@ export class WorkflowRun {
   }
 
   /** Reserve the `stopped` intent and signal the runner; a no-op once an
-   * intent is already reserved or the run is no longer `running`. */
+   * intent is already reserved. */
   private reserveStop(): void {
-    if (this.terminalIntent !== null || this.record.status !== 'running') {
+    if (this.terminalIntent !== null) {
       return;
     }
     this.terminalIntent = { status: 'stopped', result: null, error: null };
@@ -290,7 +283,7 @@ export class WorkflowRun {
       this.terminalIntent = { status, result, error };
       this.closeOnTerminalIntent(status);
     }
-    return this.ensureTerminalTask();
+    return this.ensureTerminalTask(this.terminalIntent);
   }
 
   /** Fire-and-forget {@link requestTerminal}, for an observed terminal fact
@@ -321,10 +314,8 @@ export class WorkflowRun {
   }
 
   /** The one retryable {@link finalize} task, shared by every caller. */
-  private ensureTerminalTask(): Promise<void> {
+  private ensureTerminalTask(intent: TerminalIntent): Promise<void> {
     if (this.terminalTask !== null) return this.terminalTask;
-    const intent = this.terminalIntent;
-    if (intent === null) return Promise.resolve();
     const task = this.finalize(intent.status, intent.result, intent.error)
       .then(() => {
         this.announceSettled();

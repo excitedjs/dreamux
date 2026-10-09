@@ -523,15 +523,18 @@ describe('cron job store: round-trip through the current schema', () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]!.id).toBe(created.id);
 
-    const updated = await store.update({ id: created.id, title: 'Stand-up' });
+    const updated = await store.update(created.id, () => ({
+      title: 'Stand-up',
+    }));
     expect(updated.title).toBe('Stand-up');
 
-    const fired = await store.setFired({
-      id: created.id,
-      firedAt: 1_700_000_100_000,
-      nextRunAt: 1_700_086_400_000,
-      enabled: true,
-    });
+    const fired = await store.setFired(
+      {
+        id: created.id,
+        firedAt: 1_700_000_100_000,
+      },
+      () => ({ nextRunAt: 1_700_086_400_000, enabled: true }),
+    );
     expect(fired!.last_fired_at).toBe(1_700_000_100_000);
 
     expect(await store.delete(created.id)).toBe(true);

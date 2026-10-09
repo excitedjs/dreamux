@@ -10,6 +10,7 @@ import {
 import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { validateCronSchedule } from './cron-validation.js';
+import { CronJobNotFoundError } from './errors.js';
 import type {
   CronJob,
   CronJobAction,
@@ -70,14 +71,18 @@ export class CronJobStore {
     return cloneJob(job);
   }
 
-  async update(input: CronJobUpdateInput): Promise<CronJob> {
+  async update(
+    id: string,
+    derive: (current: CronJob) => CronJobUpdateInput,
+  ): Promise<CronJob> {
     let next!: CronJob;
     await this.store.update((current) => {
-      const index = current.jobs.findIndex((job) => job.id === input.id);
+      const index = current.jobs.findIndex((job) => job.id === id);
       if (index === -1) {
-        throw new Error(`cron job '${input.id}' does not exist`);
+        throw new CronJobNotFoundError(`cron job '${id}' does not exist`);
       }
       const existing = current.jobs[index]!;
+      const input = derive(existing);
       next = { ...existing, updated_at: Date.now() };
       if (input.title !== undefined) {
         if (input.title === null) delete next.title;
@@ -113,23 +118,29 @@ export class CronJobStore {
     return deleted;
   }
 
-  async setFired(input: {
-    id: string;
-    firedAt: number;
-    nextRunAt: number | null;
-    enabled: boolean;
-  }): Promise<CronJob | null> {
+  async setFired(
+    input: {
+      id: string;
+      firedAt: number;
+    },
+    advance: (
+      current: CronJob,
+    ) => { enabled?: boolean; nextRunAt: number | null } | null,
+  ): Promise<CronJob | null> {
     const file = await this.store.update((current) => {
       const index = current.jobs.findIndex((job) => job.id === input.id);
       if (index === -1) return current;
       const existing = current.jobs[index]!;
+      const derived = advance(existing);
       const next: CronJob = {
         ...existing,
         last_fired_at: input.firedAt,
-        next_run_at: input.nextRunAt,
-        enabled: input.enabled,
         updated_at: input.firedAt,
       };
+      if (derived !== null) {
+        next.next_run_at = derived.nextRunAt;
+        if (derived.enabled !== undefined) next.enabled = derived.enabled;
+      }
       const jobs = [...current.jobs];
       jobs[index] = next;
       return { version: current.version, jobs };
@@ -139,8 +150,8 @@ export class CronJobStore {
   }
 
   /**
-   * Settle a missed fire against the row as it stands right now, not against
-   * whatever the caller read before the fire.
+   * Reconcile a stopped schedule or settle a missed fire against the row as
+   * it stands right now, not against a caller-held snapshot.
    *
    * `advance` is evaluated inside this store's own serialized update against
    * the current persisted job, so a schedule change (or re-enable, or

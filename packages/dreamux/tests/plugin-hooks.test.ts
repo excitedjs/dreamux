@@ -22,6 +22,7 @@ import {
   tapOwners,
 } from '../src/plugin/hooks.js';
 import { PluginLoadError } from '../src/plugin/loader.js';
+import { deferred } from './helpers/controlled-runtime-provider.js';
 
 interface LoggedError {
   fields: Record<string, unknown>;
@@ -91,6 +92,28 @@ describe('isolatedTaps (dispatcher, team)', () => {
     });
   });
 
+  it('observes a rejected promise returned by a sync tap without blocking later taps', async () => {
+    const { log, errors } = recordingLog();
+    const hook = isolatedTaps(new SyncHook<[]>([], 'team'), log);
+    const seen: string[] = [];
+    runAsPlugin('acme', () =>
+      hook.tap('broken', async () => {
+        throw new Error('async sync-tap failure');
+      }),
+    );
+    hook.tap('later', () => {
+      seen.push('later');
+    });
+    hook.call();
+    await Promise.resolve();
+    expect(seen).toEqual(['later']);
+    expect(errors[0]?.fields).toMatchObject({
+      plugin: 'acme',
+      tap: 'broken',
+      hook: 'team',
+    });
+  });
+
   it('runs interceptors a plugin adds', () => {
     const hook = isolatedTaps(
       new SyncHook<[string[]]>(['seen']),
@@ -133,40 +156,6 @@ describe('isolatedTaps (dispatcher, team)', () => {
     expect(errors.map((entry) => entry.fields['plugin'])).toEqual(['alpha']);
   });
 
-  it('keeps existing and later async taps when a register interceptor omits its result, retaining tap ownership', async () => {
-    const { log, errors } = recordingLog();
-    const hook = isolatedTaps(
-      new AsyncSeriesHook<[string[]]>(['seen'], 'created'),
-      log,
-    );
-    runAsPlugin('alpha', () =>
-      hook.tapPromise('first', async (seen) => {
-        seen.push('alpha');
-        throw new Error('alpha failed');
-      }),
-    );
-    const registrations: string[] = [];
-    runAsPlugin('observer', () =>
-      hook.intercept({
-        // @ts-expect-error Tapable types require a result even for observation.
-        register(tap) {
-          registrations.push(tap.name);
-        },
-      }),
-    );
-    runAsPlugin('omega', () =>
-      hook.tapPromise('last', async (seen) => {
-        seen.push('omega');
-      }),
-    );
-    const seen: string[] = [];
-    await hook.promise(seen);
-    expect(registrations).toEqual(['first', 'last']);
-    expect(seen).toEqual(['alpha', 'omega']);
-    expect(tapOwners(hook)).toEqual(['alpha', 'omega']);
-    expect(errors.map((entry) => entry.fields['plugin'])).toEqual(['alpha']);
-  });
-
   it('preserves explicit register replacements and the original tap owner', () => {
     const { log, errors } = recordingLog();
     const hook = isolatedTaps(new SyncHook<[string[]]>(['seen'], 'team'), log);
@@ -191,20 +180,23 @@ describe('isolatedTaps (dispatcher, team)', () => {
   it("owns a tap registered inside another tap, after an await, by the outer tap's plugin", async () => {
     const { log, errors } = recordingLog();
     const outer = isolatedTaps(
-      new AsyncSeriesHook<[{ requestId: string | null }]>(['ctx'], 'created'),
+      new SyncHook<[{ requestId: string | null }]>(['ctx'], 'team'),
       log,
     );
     const inner = isolatedTaps(new SyncHook<[]>([], 'inner'), log);
+    const completed = deferred<void>();
     runAsPlugin('acme', () =>
-      outer.tapPromise('outer', async () => {
+      outer.tap('outer', async () => {
         await Promise.resolve();
         inner.tap('nested', () => {
           throw new Error('nested boom');
         });
+        completed.resolve();
       }),
     );
 
-    await outer.promise({ requestId: null });
+    outer.call({ requestId: null });
+    await completed.promise;
     inner.call();
 
     expect(tapOwners(outer)).toEqual(['acme']);
@@ -257,72 +249,6 @@ describe('loadPhaseTaps (plugin.for(name))', () => {
     }
     expect(caught).toBeInstanceOf(PluginLoadError);
     expect((caught as PluginLoadError).plugin).toBe('mystery');
-  });
-});
-
-describe('isolatedTaps (created)', () => {
-  it('logs a rejection and runs every other tap, promise and callback style', async () => {
-    const { log, errors } = recordingLog();
-    const hook = isolatedTaps(
-      new AsyncSeriesHook<[{ requestId: string | null }]>(['ctx'], 'created'),
-      log,
-    );
-    const seen: string[] = [];
-    hook.tapPromise('alpha', async ({ requestId }) => {
-      seen.push(`alpha:${requestId}`);
-    });
-    hook.tapPromise('broken', async () => {
-      throw new Error('boom');
-    });
-    hook.tapAsync('omega', ({ requestId }, done) => {
-      seen.push(`omega:${requestId}`);
-      done();
-    });
-
-    await hook.promise({ requestId: 'req-1' });
-
-    expect(seen).toEqual(['alpha:req-1', 'omega:req-1']);
-    expect(errors.map((e) => e.fields['tap'])).toEqual(['broken']);
-  });
-
-  it('logs plugin: null for a tap registered outside any plugin context', async () => {
-    const { log, errors } = recordingLog();
-    const hook = isolatedTaps(
-      new AsyncSeriesHook<[{ requestId: string | null }]>(['ctx'], 'created'),
-      log,
-    );
-    hook.tapPromise('lonely', async () => {
-      throw new Error('boom');
-    });
-
-    await hook.promise({ requestId: null });
-
-    expect(errors[0]?.fields).toMatchObject({
-      plugin: null,
-      tap: 'lonely',
-      hook: 'created',
-    });
-  });
-
-  it('catches a tapAsync failure reported through done(err) and still runs the other tap', async () => {
-    const { log, errors } = recordingLog();
-    const hook = isolatedTaps(
-      new AsyncSeriesHook<[{ requestId: string | null }]>(['ctx'], 'created'),
-      log,
-    );
-    const seen: string[] = [];
-    hook.tapAsync('broken', (_ctx, done) => {
-      done(new Error('async boom'));
-    });
-    hook.tapAsync('omega', ({ requestId }, done) => {
-      seen.push(`omega:${requestId}`);
-      done();
-    });
-
-    await hook.promise({ requestId: 'req-1' });
-
-    expect(seen).toEqual(['omega:req-1']);
-    expect(errors.map((e) => e.fields['tap'])).toEqual(['broken']);
   });
 });
 

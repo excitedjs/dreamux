@@ -140,6 +140,10 @@ check for leftover runtime processes after such an exit.
   fully server-owned. Do not edit, copy over, synthesize, or delete a job by
   hand as an operational repair; use `cron_create`, `cron_update`, and
   `cron_delete` in the owning scope.
+- Sparse updates preserve omitted fields from the current stored job. Completion
+  of a submitted fire records `last_fired_at` while preserving a pause or
+  replacement occurrence made during admission. Do not rewrite timestamps or
+  enabled state to repair an in-flight fire; use the owning cron tools.
 - A job's only action is `{ kind: "prompt-agent", prompt }`: it injects its
   prompt into the Dispatcher or TeamLeader that owns the schedule. Cron spawns
   no agent and addresses no Channel, and a job carries no delivery target and

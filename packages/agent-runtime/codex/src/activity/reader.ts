@@ -6,6 +6,8 @@ import type {
 import {
   activityQueryFingerprint,
   ActivityError,
+  openActivityFile,
+  type OpenedActivityFile,
   readBytesAt,
 } from '@excitedjs/dreamux-utils';
 
@@ -17,8 +19,8 @@ import {
   encodeCodexCursor,
   type CodexCursorPosition,
 } from './cursor.js';
-import { openCodexRollout, type CodexOpenedRollout } from './opened-file.js';
 import {
+  CODEX_ACTIVITY_FILE_MESSAGES,
   createCodexScanBudget,
   findCodexRolloutById,
   locateCodexRollout,
@@ -78,7 +80,6 @@ export async function readCodexRecentActivity(
   );
   const discoveryBudget = createCodexScanBudget();
   const tail = await locateCodexRollout(
-    null,
     query.sessionId,
     roots,
     discoveryBudget,
@@ -411,8 +412,12 @@ async function readBoundaryRecordBytes(
 
 async function openValidatedSegment(
   transcript: CodexValidatedRollout,
-): Promise<CodexOpenedRollout> {
-  const opened = await openCodexRollout(transcript.path, [transcript.root]);
+): Promise<OpenedActivityFile> {
+  const opened = await openActivityFile(
+    transcript.path,
+    [transcript.root],
+    CODEX_ACTIVITY_FILE_MESSAGES,
+  );
   if (
     transcript.dev !== -1 &&
     (opened.dev !== transcript.dev || opened.ino !== transcript.ino)

@@ -9,8 +9,7 @@
  *
  * Registration identity is Core's: the descriptor comes from the configured ref
  * this skeleton parsed, never from the loaded provider object. That descriptor
- * stays inside the skeleton — each kind's spec projects the factory context its
- * own published contract promises.
+ * stays inside the skeleton; every factory receives only its configured ref.
  *
  * Kind-specific contract assertions stay with each kind's loader (see
  * `../agent-runtime/external-provider.ts` and
@@ -25,6 +24,7 @@
  */
 
 import { errorMessage as errMessage } from '@excitedjs/dreamux-utils';
+import type { ProviderFactory, NpmProviderRef } from '@excitedjs/dreamux-types';
 import { UnknownBuiltinProviderPackageError } from './builtins.js';
 import { parseProviderRef, type ProviderRef } from './provider-ref.js';
 import type {
@@ -38,45 +38,20 @@ export type ProviderModule = Record<string, unknown> & {
   default?: unknown;
 };
 
-/**
- * A provider package's factory export.
- *
- * The skeleton is deliberately generic over the context: what a factory sees is
- * that kind's published contract, not a skeleton-wide shape. Core keeps its
- * registration descriptor internally and hands each kind only what
- * {@link ProviderPackageLoaderSpec.factoryContext} builds.
- */
-export type ProviderFactory<TProvider, TFactoryContext> = (
-  context: TFactoryContext,
-) => TProvider | Promise<TProvider>;
-
 /** Context handed to a kind-specific contract assertion. */
 export interface ProviderContractContext {
   ref: string;
-  descriptor: ProviderDescriptor;
   /** Throw the kind-specific contract error with a consistent prefix. */
   fail(message: string): never;
 }
 
 /**
- * Per-kind hooks the generic skeleton needs: what its factory export receives,
- * how to format errors, and how to assert the loaded value satisfies that
+ * Per-kind hooks the generic skeleton needs: how to format errors and assert
+ * that the loaded value satisfies that
  * kind's provider contract.
  */
-export interface ProviderPackageLoaderSpec<TProvider, TFactoryContext> {
+export interface ProviderPackageLoaderSpec<TProvider> {
   kind: ProviderKind;
-  /**
-   * Build the context this kind's factory export is called with.
-   *
-   * Core's registration descriptor stays internal to the skeleton; a kind whose
-   * published factory contract is ref-only (the Agent Runtime contract) must
-   * project exactly `{ ref }` here, so the descriptor cannot leak into a
-   * factory that has nothing to echo back.
-   */
-  factoryContext(input: {
-    ref: string;
-    descriptor: ProviderDescriptor;
-  }): TFactoryContext;
   createLoadError(
     ref: string,
     message: string,
@@ -112,10 +87,9 @@ export interface LoadProviderPackagesOptions {
  */
 export async function loadProviderPackages<
   TProvider extends ProviderImplementation,
-  TFactoryContext,
 >(
   options: LoadProviderPackagesOptions,
-  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
+  spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<void> {
   for (const ref of uniqueLoadableRefs(options.refs)) {
     if (options.registry.hasRef(ref.raw)) continue;
@@ -123,28 +97,27 @@ export async function loadProviderPackages<
   }
 }
 
-async function loadOneProviderPackage<
-  TProvider extends ProviderImplementation,
-  TFactoryContext,
->(
+async function loadOneProviderPackage<TProvider extends ProviderImplementation>(
   registry: ProviderRegistry,
   ref: ProviderRef,
-  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
+  spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<void> {
-  const packageName = resolvePackageName(ref);
-  const module = await importProviderModule(ref, packageName, spec);
+  if (ref.source === 'builtin') {
+    throw new UnknownBuiltinProviderPackageError(ref.id);
+  }
+  const module = await importProviderModule(ref, ref.package, spec);
   const factory = selectFactoryExport(ref, module, spec);
   // The registered descriptor is Core's own: parsed from the configured ref,
   // never read back off the loaded implementation.
   const descriptor: ProviderDescriptor = {
-    id: seedDescriptorId(ref),
+    id: ref.raw,
     kind: spec.kind,
     ref,
   };
 
   let provider: TProvider;
   try {
-    provider = await factory(spec.factoryContext({ ref: ref.raw, descriptor }));
+    provider = await factory({ ref: ref.raw });
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,
@@ -155,7 +128,6 @@ async function loadOneProviderPackage<
 
   spec.assertProvider(provider, {
     ref: ref.raw,
-    descriptor,
     fail: (message) => {
       throw spec.createContractError(ref.raw, message);
     },
@@ -164,19 +136,10 @@ async function loadOneProviderPackage<
   registry.register(descriptor, provider);
 }
 
-function resolvePackageName(ref: ProviderRef): string {
-  if (ref.source === 'npm') return ref.package;
-  // A `builtin:` ref only ever reaches here unregistered (see the module
-  // comment): there is no package to resolve it to, only the named failure.
-  // It is thrown as itself, not wrapped in the kind's load error: it is a
-  // refused ref, not a failed load.
-  throw new UnknownBuiltinProviderPackageError(ref.id);
-}
-
-async function importProviderModule<TProvider, TFactoryContext>(
+async function importProviderModule<TProvider>(
   ref: ProviderRef,
   packageName: string,
-  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
+  spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<ProviderModule> {
   try {
     return await defaultImportModule(packageName);
@@ -189,12 +152,12 @@ async function importProviderModule<TProvider, TFactoryContext>(
   }
 }
 
-function selectFactoryExport<TProvider, TFactoryContext>(
-  ref: ProviderRef,
+function selectFactoryExport<TProvider>(
+  ref: NpmProviderRef,
   module: ProviderModule,
-  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
-): ProviderFactory<TProvider, TFactoryContext> {
-  const exportName = ref.source === 'npm' ? ref.export : null;
+  spec: ProviderPackageLoaderSpec<TProvider>,
+): ProviderFactory<TProvider> {
+  const exportName = ref.export;
   const value = exportName === null ? module.default : module[exportName];
   if (typeof value !== 'function') {
     throw spec.createContractError(
@@ -202,11 +165,7 @@ function selectFactoryExport<TProvider, TFactoryContext>(
       `expected ${exportName ?? 'default'} export to be a provider factory function for kind ${JSON.stringify(spec.kind)}`,
     );
   }
-  return value as ProviderFactory<TProvider, TFactoryContext>;
-}
-
-function seedDescriptorId(ref: ProviderRef): string {
-  return ref.source === 'builtin' ? ref.id : ref.raw;
+  return value as ProviderFactory<TProvider>;
 }
 
 function uniqueLoadableRefs(refs: Iterable<string>): ProviderRef[] {
@@ -226,4 +185,53 @@ async function defaultImportModule(
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function assertOptionalProviderCapabilities(
+  value: { config?: unknown; onboard?: unknown; diagnostic?: unknown },
+  context: ProviderContractContext,
+): void {
+  assertOptionalConfig(value.config, context);
+  assertOptionalOnboard(value.onboard, context);
+  assertOptionalDiagnostic(value.diagnostic, context);
+}
+
+function assertOptionalConfig(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || typeof value['read'] !== 'function') {
+    context.fail(
+      'provider.config.read must be a function when config is present',
+    );
+  }
+}
+
+function assertOptionalOnboard(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || typeof value['collect'] !== 'function') {
+    context.fail(
+      'provider.onboard.collect must be a function when onboard is present',
+    );
+  }
+}
+
+function assertOptionalDiagnostic(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (
+    !isRecord(value) ||
+    typeof value['binChecks'] !== 'function' ||
+    typeof value['runDiagnostic'] !== 'function'
+  ) {
+    context.fail(
+      'provider.diagnostic must expose binChecks and runDiagnostic functions when present',
+    );
+  }
 }

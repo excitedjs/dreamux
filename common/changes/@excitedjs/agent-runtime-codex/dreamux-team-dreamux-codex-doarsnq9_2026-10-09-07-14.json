@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Reuse shared activity opening and remove unused restart and argument validation mechanisms.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

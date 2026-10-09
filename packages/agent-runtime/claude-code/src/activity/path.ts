@@ -6,6 +6,9 @@ import { promisify } from 'node:util';
 import type { DreamuxEnvironment } from '@excitedjs/dreamux-types';
 import {
   ActivityError,
+  openActivityFile,
+  readBytesAt,
+  type OpenedActivityFile,
   createScanBudget,
   isPathWithin,
   type ScanBudget,
@@ -13,12 +16,17 @@ import {
 
 import { resolveClaudeConfigHomeDir } from '../paths.js';
 import { claudeNativePathHash } from './native-hash.js';
-import {
-  openClaudeRollout,
-  validateClaudeSessionEvidence,
-} from './opened-file.js';
+
+export const CLAUDE_ACTIVITY_FILE_MESSAGES = {
+  notFound: 'Claude Code activity is unavailable',
+  outsideRoot: 'Claude Code activity is unavailable for this session',
+  notRegularFile: 'Claude Code activity is not a regular file',
+  changedWhileOpening: 'Claude Code activity changed while opening',
+  unreadable: 'Claude Code activity is unreadable',
+};
 
 const MAX_SANITIZED_LENGTH = 200;
+const MAX_METADATA_BYTES = 1_048_576;
 const SESSION_FILENAME = /^[0-9a-f]{8}-[0-9a-f-]{27}\.jsonl$/i;
 const execFileAsync = promisify(execFile);
 const SCAN_BUDGET_EXCEEDED_MESSAGE =
@@ -137,7 +145,11 @@ async function validateClaudeHistoryPath(
     );
   }
   const canonicalProjects = await canonicalExistingRoot(roots.projects);
-  const opened = await openClaudeRollout(candidate, canonicalProjects);
+  const opened = await openActivityFile(
+    candidate,
+    [canonicalProjects],
+    CLAUDE_ACTIVITY_FILE_MESSAGES,
+  );
   try {
     if (opened.size === 0) {
       throw new ActivityError(
@@ -369,4 +381,65 @@ function assertSessionId(sessionId: string): void {
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(sessionId)) {
     throw new ActivityError('invalid', 'Claude Code session id is invalid');
   }
+}
+
+export async function validateClaudeSessionEvidence(
+  opened: OpenedActivityFile,
+  expectedSessionId: string,
+): Promise<void> {
+  const length = Math.min(opened.size, MAX_METADATA_BYTES + 1);
+  const data = await readBytesAt(opened.handle, 0, length);
+  let cursor = 0;
+  while (cursor < data.length) {
+    const newline = data.indexOf(0x0a, cursor);
+    if (newline < 0) {
+      if (opened.size > MAX_METADATA_BYTES) {
+        throw new ActivityError(
+          'invalid',
+          'Claude Code activity metadata record is oversized',
+        );
+      }
+      break;
+    }
+    const raw = data.subarray(cursor, newline).toString('utf8');
+    const value = parseRecord(raw);
+    if (value === null && raw.trim() !== '') {
+      throw new ActivityError(
+        'invalid',
+        'Claude Code activity contains invalid native metadata',
+      );
+    }
+    const sessionId = stringValue(value?.['sessionId']);
+    if (sessionId !== null) {
+      if (sessionId !== expectedSessionId) {
+        throw new ActivityError(
+          'session_mismatch',
+          'Claude Code activity does not belong to the selected session',
+        );
+      }
+      return;
+    }
+    cursor = newline + 1;
+  }
+  throw new ActivityError(
+    'invalid',
+    'Claude Code activity has no authoritative session metadata',
+  );
+}
+
+function parseRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null;
 }

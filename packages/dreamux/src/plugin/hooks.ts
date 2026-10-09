@@ -233,47 +233,34 @@ function reportSkipped(
 
 /**
  * Runtime hooks (`dispatcher`, `team`): a throwing or rejecting tap is logged
- * with its owner and the remaining taps still run. Async taps become promise
- * taps so a failure never reaches the hook's own callback.
+ * with its owner and the remaining taps still run. Promise-returning sync taps
+ * have their rejection observed without turning the hook asynchronous.
  */
-export function isolatedTaps<H extends InterceptableHook>(
+export function isolatedTaps<H extends SyncHook<unknown[]>>(
   hook: H,
   log: DreamuxLogger,
 ): H {
   install(
     hook,
     (tap, owner) => {
-      if (tap.type === 'sync') {
-        return {
-          ...tap,
-          fn: (...args) => {
-            let result: unknown;
-            try {
-              result = asOwner(owner, () => tap.fn(...args));
-            } catch (err) {
-              reportSkipped(log, hook, tap.name, owner, err);
-              return;
-            }
-            // `dispatcher` and `team` are SyncHooks: a plugin can only `.tap`,
-            // but nothing stops that tap's function from being `async`. Its
-            // returned promise is not part of the hook's own return value, so
-            // an unwatched rejection would otherwise crash the process.
-            if (isThenable(result)) {
-              Promise.resolve(result).catch((err: unknown) =>
-                reportSkipped(log, hook, tap.name, owner, err),
-              );
-            }
-          },
-        };
-      }
       return {
         ...tap,
-        type: 'promise',
-        fn: async (...args) => {
+        fn: (...args) => {
+          let result: unknown;
           try {
-            await asOwner(owner, () => invoke(tap, args));
+            result = asOwner(owner, () => tap.fn(...args));
           } catch (err) {
             reportSkipped(log, hook, tap.name, owner, err);
+            return;
+          }
+          // `dispatcher` and `team` are SyncHooks: a plugin can only `.tap`,
+          // but nothing stops that tap's function from being `async`. Its
+          // returned promise is not part of the hook's own return value, so
+          // an unwatched rejection would otherwise crash the process.
+          if (isThenable(result)) {
+            Promise.resolve(result).catch((err: unknown) =>
+              reportSkipped(log, hook, tap.name, owner, err),
+            );
           }
         },
       };
