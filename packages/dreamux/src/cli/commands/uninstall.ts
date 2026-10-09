@@ -7,28 +7,21 @@ import {
 
 interface UninstallArgv {
   dryRun?: boolean;
-  configDir?: string;
 }
 
 export function createUninstallCommand(): CommandModule<{}, UninstallArgv> {
   return {
     command: 'uninstall',
-    describe: 'Remove files and user service created by onboard',
+    describe: 'Remove the Dreamux root and managed user service',
     builder: (y) =>
-      y
-        .option('dry-run', {
-          type: 'boolean',
-          describe:
-            'Print the planned removals without deleting or unregistering',
-        })
-        .option('config-dir', {
-          type: 'string',
-          describe: 'dreamux global config directory',
-        }) as Argv<UninstallArgv>,
+      y.option('dry-run', {
+        type: 'boolean',
+        describe:
+          'Print the planned removals without deleting or unregistering',
+      }) as Argv<UninstallArgv>,
     handler: async (argv) => {
       const result = await runUninstall({
         dryRun: argv.dryRun,
-        configDir: argv.configDir,
       });
       printUninstallResult(result);
     },

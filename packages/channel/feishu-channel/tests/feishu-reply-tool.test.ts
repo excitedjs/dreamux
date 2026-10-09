@@ -5,11 +5,11 @@
  * Mentions are no longer a separate argument — they are written in the body in
  * Feishu's own syntax — so the schema is the place that has to stay closed.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   ChannelCorePort,
@@ -25,14 +25,26 @@ import {
 } from '@excitedjs/feishu-transport';
 
 import { createFeishuBot, type FeishuBot } from '../src/bot.js';
-import { FeishuChannelSession } from '../src/feishu-channel.js';
-import {
-  defaultDispatcherAccessState,
-  saveDispatcherAccess,
-} from '../src/feishu-gate.js';
-import { createFeishuSessionMcp } from '../src/feishu-session-mcp.js';
+import { FeishuChannelSession } from '../src/session/session.js';
+import { defaultDispatcherAccessState } from '../src/access/state.js';
+import { createFeishuSessionMcp } from '../src/tools/session-mcp.js';
 import { findFeishuTool } from '../src/tools/registry.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
+
+vi.mock('../src/bot.js', () => ({ createFeishuBot: vi.fn() }));
+
+function seedAccess(stateDir: string, state: unknown): void {
+  writeFileSync(join(stateDir, 'access.json'), JSON.stringify(state));
+}
+
+function mcpFor(value: FeishuChannelSession, log: DreamuxLogger) {
+  return createFeishuSessionMcp(
+    value.tools,
+    value.extensions,
+    value.lifecycle,
+    log,
+  );
+}
 
 let dir: string;
 let attachDir: string;
@@ -43,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
   rmSync(attachDir, { recursive: true, force: true });
 });
@@ -71,6 +84,7 @@ function recordingLog(lines: Logged[]): DreamuxLogger {
     info: record,
     debug: record,
     trace: record,
+    child: () => recordingLog(lines),
   };
 }
 
@@ -106,15 +120,19 @@ function refusingBot(): FeishuBot {
         response: { status: 400, data: AUDIT_REFUSAL },
       });
     },
-  } as unknown as FeishuTransportOptions['client'];
+  } as unknown as NonNullable<FeishuTransportOptions['client']>;
   const creds = { appId: 'app-1', appSecret: APP_SECRET };
-  return createFeishuBot(
-    { ...creds },
-    { createTransport: () => createFeishuTransport(creds, { client }) },
-  );
+  const transport = createFeishuTransport(creds, { client });
+  return {
+    ...createFakeFeishuBot(),
+    send: transport.send,
+    sendCard: transport.sendCard,
+    close: transport.close,
+  };
 }
 
 function session(bot: FeishuBot, log: DreamuxLogger): FeishuChannelSession {
+  vi.mocked(createFeishuBot).mockReturnValueOnce(bot);
   return new FeishuChannelSession({
     dispatcherId: 'disp-1',
     channelId: 'chan-reply',
@@ -123,7 +141,6 @@ function session(bot: FeishuBot, log: DreamuxLogger): FeishuChannelSession {
     stateDir: dir,
     attachmentCacheDir: attachDir,
     log,
-    botFactory: () => bot,
   });
 }
 
@@ -153,11 +170,13 @@ describe('the reply tool contract', () => {
 
     // The closed schema is what refuses an unknown argument upstream; parsing
     // additionally keeps one from reaching the send path if it ever did.
-    expect(def?.parse({
-      chat_id: 'oc_chat',
-      text: 'hi',
-      mention_user_ids: ['ou_example'],
-    })).toEqual({ chatId: 'oc_chat', text: 'hi' });
+    expect(
+      def?.parse({
+        chat_id: 'oc_chat',
+        text: 'hi',
+        mention_user_ids: ['ou_example'],
+      }),
+    ).toEqual({ chatId: 'oc_chat', text: 'hi' });
   });
 });
 
@@ -165,8 +184,9 @@ describe('replying through the MCP capability', () => {
   it('sends the authored body verbatim, threaded under the source message', async () => {
     const bot = createFakeFeishuBot();
     const value = session(bot, recordingLog([]));
-    const mcp = createFeishuSessionMcp(value, recordingLog([]));
-    const body = 'Done. <at user_id="ou_example">Example</at>\n\n```ts\nok()\n```';
+    const mcp = mcpFor(value, recordingLog([]));
+    const body =
+      'Done. <at user_id="ou_example">Example</at>\n\n```ts\nok()\n```';
 
     const outcome = await mcp.invoke(
       {
@@ -191,15 +211,24 @@ describe('replying through the MCP capability', () => {
     const mcpLines: Logged[] = [];
     const body = 'reach me at nobody@example.com';
     const value = session(refusingBot(), recordingLog(channelLines));
-    const mcp = createFeishuSessionMcp(value, recordingLog(mcpLines));
+    const mcp = mcpFor(value, recordingLog(mcpLines));
 
-    const thrown = await mcp.invoke(
-      {
-        name: 'reply',
-        arguments: { chat_id: 'oc_chat', message_id: 'om_source', text: body },
-      },
-      { dispatcher_id: 'disp-1', channel_id: 'chan-reply', caller },
-    ).then(() => undefined, (err: unknown) => err as Error);
+    const thrown = await mcp
+      .invoke(
+        {
+          name: 'reply',
+          arguments: {
+            chat_id: 'oc_chat',
+            message_id: 'om_source',
+            text: body,
+          },
+        },
+        { dispatcher_id: 'disp-1', channel_id: 'chan-reply', caller },
+      )
+      .then(
+        () => undefined,
+        (err: unknown) => err as Error,
+      );
 
     // Core renders a thrown tool failure as its own message under a generic
     // code, so this message is the whole of what the model gets to act on.
@@ -224,7 +253,7 @@ describe('the pairing resend reminder', () => {
   it('mentions the requester by writing the tag into its own body', async () => {
     const bot = createFakeFeishuBot();
     const now = Date.now();
-    await saveDispatcherAccess(dir, {
+    seedAccess(dir, {
       ...defaultDispatcherAccessState(),
       pending: {
         'pending-token': {
@@ -260,7 +289,9 @@ describe('the pairing resend reminder', () => {
 
     expect(bot.sentMessages).toHaveLength(1);
     const sent = bot.sentMessages[0];
-    expect(sent?.text.startsWith('<at user_id="ou_requester"></at>\n')).toBe(true);
+    expect(sent?.text.startsWith('<at user_id="ou_requester"></at>\n')).toBe(
+      true,
+    );
     expect(sent?.target).toEqual({
       chatId: 'oc_dm',
       replyToMessageId: 'om_prompt',

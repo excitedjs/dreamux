@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add `RuleViolation`, the error a validator throws for a value it checked and refused, and make the shared config validators throw it instead of a plain `Error`, so a host request reader can tell a refused value from a failure of its own. Messages are unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

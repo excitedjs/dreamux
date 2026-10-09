@@ -1,17 +1,51 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+export interface CronPromptAgentAction {
+  kind: 'prompt-agent';
+  prompt: string;
+}
 
-import {
-  mustNonEmptyString,
-  mustString,
-  optionalBooleanField,
-  optionalNullableStringField,
-  optionalStringField,
-  type CommandPayload,
-} from '../../command/payload.js';
+/**
+ * What a cron job does when it fires, and the only thing it has ever done.
+ *
+ * A job injects its prompt into the Dispatcher or TeamLeader that owns the
+ * schedule. It does not spawn an agent and it does not address a Channel: those
+ * were declared shapes with no execution behind them, so the union is the one
+ * action Dreamux actually performs.
+ */
+export type CronJobAction = CronPromptAgentAction;
 
-import type { InboundDeliveryResult } from '../teammate-service/turn-recording.js';
+export interface CronJob {
+  id: string;
+  title?: string | undefined;
+  cron: string;
+  tz: string;
+  recurring: boolean;
+  action: CronJobAction;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+  next_run_at: number | null;
+  last_fired_at: number | null;
+}
 
-import type { CronJob, CronJobStore } from './store.js';
+export interface CronJobCreateInput {
+  title?: string | undefined;
+  cron: string;
+  tz: string;
+  recurring: boolean;
+  action: CronJobAction;
+  nextRunAt: number | null;
+}
+
+export interface CronJobUpdateInput {
+  id: string;
+  title?: string | null | undefined;
+  cron?: string;
+  tz?: string;
+  recurring?: boolean;
+  action?: CronJobAction;
+  enabled?: boolean | undefined;
+  nextRunAt?: number | null;
+}
 
 export interface CronCreateRequest {
   cron: string;
@@ -19,7 +53,6 @@ export interface CronCreateRequest {
   title?: string;
   recurring?: boolean;
   tz?: string;
-  action?: Record<string, unknown>;
 }
 
 export interface CronUpdateRequest {
@@ -29,29 +62,7 @@ export interface CronUpdateRequest {
   title?: string | null;
   recurring?: boolean;
   tz?: string;
-  action?: Record<string, unknown>;
   enabled?: boolean;
-}
-
-export interface SchedulerServiceOptions {
-  ownerId: string;
-  store: CronJobStore;
-  admit<T>(task: () => Promise<T>): Promise<T>;
-  /**
-   * Submit one due fire as an ordinary admitted input.
-   *
-   * No cancellation crosses this call, and no idle question either. The owner
-   * supplies the same submission path any other caller uses; whether the
-   * runtime folds the input into an active turn or starts a new one is the
-   * runtime's decision, made where it is already made.
-   */
-  submitScheduled(input: {
-    jobId: string;
-    prompt: string;
-    sourceId: string;
-  }): Promise<InboundDeliveryResult>;
-  log: DreamuxLogger;
-  now?: () => number;
 }
 
 export interface SchedulerCommands {
@@ -59,39 +70,4 @@ export interface SchedulerCommands {
   create(input: CronCreateRequest): Promise<CronJob>;
   update(input: CronUpdateRequest): Promise<CronJob>;
   delete(id: string): Promise<{ id: string; deleted: boolean }>;
-}
-
-/**
- * Read one cron creation request, as every surface asks it.
- *
- * `action` is deliberately absent: it is an operator-only field the Command
- * surface adds on top of this, and no Agent-facing catalog advertises it. What
- * a job actually does is derived from `prompt` by the scheduler.
- */
-export function cronCreateRequest(params: CommandPayload): CronCreateRequest {
-  return {
-    cron: mustString(params, 'cron'),
-    prompt: mustNonEmptyString(params, 'prompt'),
-    ...optionalStringField(params, 'title'),
-    ...optionalBooleanField(params, 'recurring'),
-    ...optionalStringField(params, 'tz'),
-  };
-}
-
-/** Read one cron update request. `action` is Command-only, as on create. */
-export function cronUpdateRequest(params: CommandPayload): CronUpdateRequest {
-  return {
-    id: cronJobIdParam(params),
-    ...optionalStringField(params, 'cron'),
-    ...optionalStringField(params, 'prompt'),
-    ...optionalNullableStringField(params, 'title'),
-    ...optionalBooleanField(params, 'recurring'),
-    ...optionalStringField(params, 'tz'),
-    ...optionalBooleanField(params, 'enabled'),
-  };
-}
-
-/** Read the job id every per-job operation addresses. */
-export function cronJobIdParam(params: CommandPayload): string {
-  return mustString(params, 'id');
 }

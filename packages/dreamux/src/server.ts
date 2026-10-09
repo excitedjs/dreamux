@@ -6,73 +6,57 @@
  * Dispatchers. Dispatcher agent lifecycle, channel sessions, Teams, and
  * teammates live under dispatcher-local services.
  */
-
-import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
-import { ChannelProviderCatalog } from './channel/catalog.js';
-import {
-  createBuiltinProviderRegistry,
-  type ProviderRegistry,
-} from './registry/index.js';
-import {
-  BUILT_IN_DEFAULTS,
-  type DreamuxConfig,
-} from './config/config.js';
-import { DispatcherStore } from './state/dispatcher-store.js';
-import { resolveHomePathPrefixes } from './platform/home-paths.js';
-import {
-  adminSocketPath,
-  dispatcherCronJobsPath,
-  dispatcherTeamCronJobsPath,
-  dispatcherTeamDir,
-  setRuntimeConfig,
-} from './platform/paths.js';
-import { createLogger } from './platform/logger.js';
-import { errorInfo } from './platform/error-info.js';
+import { mustDispatcherId } from './command/host.js';
+import type { CoreCommandContext } from './command/types.js';
+import type { DispatcherConfig } from './config/config.js';
+import type { DispatcherService } from './service/dispatcher-service/index.js';
+import { DispatcherNotFoundError } from './service/dispatchers/errors.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
   createAdminSocketServer,
   type AdminSocketServer,
 } from './admin/socket.js';
-import { createCoreCommandRegistry } from './command/catalog.js';
-import type { CoreCommandHost } from './command/host.js';
-import { McpLeaseRegistry } from './service/mcp/leases.js';
+import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
+import { ChannelProviderCatalog } from './channel/catalog.js';
 import { CoreCommandPort } from './command/port.js';
-import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import {
-  Dispatchers,
-  type DispatcherService,
-} from './service/index.js';
-import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
-import {
-  detectLegacyDispatcherState,
-  legacyDispatcherStateMessage,
-} from './service/legacy-state.js';
-import { detectLegacyCronJobStore } from './service/scheduler/store.js';
-import { TeamStore } from './service/team-collection/store.js';
+import { dispatcherAgent, type DreamuxConfig } from './config/config.js';
+import type { ConfigService } from './config/service.js';
+import { resolveHomePathPrefixes } from './platform/home-paths.js';
+import { createLogger } from './platform/logger.js';
+import { adminSocketPath } from './platform/paths.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
-} from './service/shutdown-errors.js';
+} from './platform/shutdown-errors.js';
+import { createServerHooks, type ServerHooks } from './plugin/host.js';
+import { ProviderRegistry } from './registry/index.js';
+import { createCoreCommandRegistry } from './server/command-catalog.js';
+import type { CoreCommandHost } from './server/command-host.js';
+import { RestartIntentConsumer } from './service/dispatcher-service/restart-intent.js';
+import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
+import { Dispatchers } from './service/index.js';
+import { McpLeaseRegistry } from './service/mcp/leases.js';
 
 export interface ServerOptions {
   /**
-   * Global dreamux config (typically loaded from ~/.dreamux/config.json by
-   * the CLI entry point). When omitted, the built-in defaults are used —
-   * convenient for tests, but in production the CLI is expected to load
-   * the file and pass it in so user edits take effect.
+   * `config.json`'s single in-process authority (opened by the CLI entry
+   * point and passed in so user edits, and `config.agents.replace` writes,
+   * take effect). Typed as the concrete `ConfigService`, not the narrower
+   * `ConfigReader`: the Server exposes this field whole as
+   * `CoreCommandHost.config`, which the `config.agents.*` Commands need
+   * `readAgents`/`replaceAgents` from, not just `current()`.
    */
-  config?: DreamuxConfig;
+  config: ConfigService;
   /** Override admin socket path (tests). */
   adminSocketPath?: string;
   /**
    * Provider registry whose implementations back the runtime + channel catalogs.
-   * Production hands in the registry returned by loadConfig() (every referenced
-   * builtin/npm provider already loaded); tests either inject the catalogs below
-   * or pre-load this registry. Provider-specific construction seams (codex
-   * process/client factories, etc.) belong to the provider package and are
-   * injected by pre-loading the registry, never by Server — core names no
-   * provider's internals.
+   * Production hands in the same registry that `ConfigService.open()`
+   * (`config/service.js`) already loaded every referenced builtin/npm provider
+   * into; tests either inject the catalogs below or pre-load this registry.
+   * Provider implementations belong to this registry; Server never names a
+   * provider's native process or transport constructors.
    */
   providerRegistry?: ProviderRegistry;
   /** Override runtime provider catalog (tests / future provider composition). */
@@ -91,7 +75,8 @@ export interface ServerOptions {
   logger?: DreamuxLogger;
   /**
    * Per-dispatcher channel logger factory (gate, inbound, outbound, introduce,
-   * dispatcher lifecycle). Defaults to a stderr-only logger per dispatcher; the
+   * dispatcher lifecycle). Called when channel sessions are built, not when a
+   * disabled dispatcher is addressed. Defaults to a stderr-only logger; the
    * CLI injects a factory that writes `logs/channel/<id>.log`.
    */
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
@@ -114,14 +99,14 @@ export interface ServerOptions {
    * operator's real state dir. Detection only — never removed or migrated.
    */
   legacyAdminLockPath?: string | null;
+  /**
+   * Host hooks after `startPlugins`. Omitted by tests and embedded servers
+   * without plugins, which get empty hooks.
+   */
+  hooks?: ServerHooks;
 }
 
-export interface Repos {
-  dispatchers: DispatcherStore;
-}
-
-export class Server {
-  readonly repos: Repos;
+export class Server implements CoreCommandHost {
   private dispatchers_: Dispatchers | null = null;
   /**
    * The admitted Command port every adapter resolves against. The process owns
@@ -136,7 +121,9 @@ export class Server {
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
-  private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  private readonly channelLoggerFactory: (
+    dispatcherId: string,
+  ) => DreamuxLogger;
   /**
    * The one Agent-facing MCP lease registry for this process.
    *
@@ -145,7 +132,7 @@ export class Server {
    * and the MCP transport Commands resolve those tokens with nothing but the
    * token to go on.
    */
-  private readonly mcpLeases: McpLeaseRegistry;
+  readonly mcpLeases: McpLeaseRegistry;
 
   /**
    * The server log, for the adapters that answer a failure they do not own. A
@@ -164,19 +151,20 @@ export class Server {
     return this.dispatchers_;
   }
 
-  constructor(opts: ServerOptions = {}) {
+  constructor(opts: ServerOptions) {
     this.opts = opts;
-    this.providerRegistry =
-      opts.providerRegistry ?? createBuiltinProviderRegistry();
-    const config = opts.config ?? BUILT_IN_DEFAULTS;
+    this.providerRegistry = opts.providerRegistry ?? new ProviderRegistry();
+    const config = opts.config;
     // The catalogs below are pure registry lookups, so when no runtime catalog is
     // injected every referenced provider implementation must already be loaded
-    // (production: the loadConfig registry; tests: an injected catalog or a
-    // pre-loaded registry). Fail loud at construction, not at dispatcher start.
+    // (production: the ConfigService.open registry; tests: an injected catalog
+    // or a pre-loaded registry). Fail loud at construction, not at dispatcher start.
     if (opts.agentRuntimeProviderCatalog === undefined) {
-      assertRuntimeImplementationsLoaded(config, this.providerRegistry);
+      assertRuntimeImplementationsLoaded(
+        config.current(),
+        this.providerRegistry,
+      );
     }
-    setRuntimeConfig(config);
     this.log = opts.logger ?? createLogger({ name: 'server' });
     // Built after the logger it records unclassified tool failures through: an
     // Agent reads only the message, so the whole value belongs in this log.
@@ -190,30 +178,30 @@ export class Server {
     this.channelProviders =
       opts.channelProviderCatalog ??
       new ChannelProviderCatalog({ registry: this.providerRegistry });
-    this.repos = {
-      dispatchers: new DispatcherStore(config),
-    };
     // The Command port is composed before the dispatchers because they hold it:
     // a Channel session invokes Commands through the same admitted port the
     // admin socket does. The host below resolves its targets lazily, so the
     // aggregate it reaches is the one this collection builds on demand.
-    this.commands = new CoreCommandPort(
-      createCoreCommandRegistry(this.commandHost()),
-    );
+    this.commands = new CoreCommandPort(createCoreCommandRegistry(this));
   }
 
-  /**
-   * The narrow process port Commands resolve their targets through. It is the
-   * only thing a domain-owned Command module sees of this class.
-   */
-  private commandHost(): CoreCommandHost {
-    return {
-      summarize: () => this.summarize(),
-      dispatcherRow: (id) => this.repos.dispatchers.get(id),
-      dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
-      dispatcher: (id) => this.getDispatcher(id),
-      mcpLeases: this.mcpLeases,
-    };
+  get config(): ConfigService {
+    return this.opts.config;
+  }
+
+  /** Validate the command address before accessing the collection created by start. */
+  addressedDispatcher(context: CoreCommandContext): DispatcherService {
+    const id = mustDispatcherId(context);
+    this.configuredDispatcher(id);
+    return this.dispatchers.get(id);
+  }
+
+  configuredDispatcher(id: string): DispatcherConfig {
+    const entry = this.config
+      .current()
+      .dispatchers.find((entry) => entry.id === id);
+    if (entry === undefined) throw new DispatcherNotFoundError(id);
+    return entry;
   }
 
   /** Bring up admin socket + all enabled dispatchers. */
@@ -223,28 +211,29 @@ export class Server {
     // Resolve it once here so no projected event pays for it, and so the
     // projection itself stays synchronous.
     const homePathPrefixes = await resolveHomePathPrefixes();
+    // Loaded before `Dispatchers` exists: nothing between here and its
+    // construction needs the collection first, and every `DispatcherService`
+    // it builds afterward receives this same consumer as a plain constructor
+    // value (there is no setter to reach a dispatcher materialized earlier).
+    const restartIntent = await RestartIntentConsumer.load({
+      now: Date.now(),
+      log: this.log,
+    });
     this.dispatchers_ = new Dispatchers({
-      config: this.opts.config ?? BUILT_IN_DEFAULTS,
-      dispatchers: this.repos.dispatchers,
+      config: this.opts.config,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,
+      restartIntent,
       commands: this.commands,
       homePathPrefixes,
       adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory: this.channelLoggerFactory,
-      ...(this.opts.workflowLoggerFactory !== undefined
-        ? { workflowLoggerFactory: this.opts.workflowLoggerFactory }
-        : {}),
+      dispatcherHook: (this.opts.hooks ?? createServerHooks(this.log))
+        .dispatcher,
+      workflowLoggerFactory: this.opts.workflowLoggerFactory,
       log: this.log,
     });
-
-    this.dispatchers.setRestartIntent(
-      await RestartIntentConsumer.load({
-        now: Date.now(),
-        warn: (message) => this.log.warn(message),
-      }),
-    );
 
     // Dispatcher workspace cwd contract (issue #182 PR-4): every enabled
     // dispatcher must declare an explicit, usable `cwd` — there is no fallback
@@ -252,12 +241,6 @@ export class Server {
     // lock or launching anything, and fail the whole start loud (aggregated) so
     // a misconfigured deployment never comes up half-broken.
     await this.assertDispatcherWorkspaces();
-
-    // Pre-#199 local state contract (issue #199 Slice 5): a leftover session
-    // ledger / identities dir / Team audit ledger from an earlier layout is a
-    // hard upgrade blocker — 0.x does not migrate it. Aggregate every
-    // dispatcher's findings and fail the whole start loud before launching.
-    await this.assertNoLegacyDispatcherState();
 
     // Before taking the new run/ admin lock, fail loud if an OLD-version
     // server still holds the pre-#182 state/ admin lock — the two locks are at
@@ -281,33 +264,11 @@ export class Server {
     );
 
     if (this.opts.runtimeSocketSweep !== undefined) {
-      try {
-        const swept = await this.opts.runtimeSocketSweep();
-        this.log.info({ dirs: swept }, 'swept volatile runtime-socket dirs');
-      } catch (err) {
-        this.log.warn(
-          {
-            err: errorInfo(err),
-          },
-          'runtime-socket sweep failed; continuing startup',
-        );
-      }
+      const swept = await this.opts.runtimeSocketSweep();
+      this.log.info({ dirs: swept }, 'swept volatile runtime-socket dirs');
     }
 
-    const rows = this.repos.dispatchers.listEnabled();
-    for (const row of rows) {
-      try {
-        await this.getDispatcher(row.dispatcher_id).start();
-      } catch (err) {
-        this.log.error(
-          {
-            dispatcher_id: row.dispatcher_id,
-            err: errorInfo(err),
-          },
-          'dispatcher failed to start',
-        );
-      }
-    }
+    await this.dispatchers.start();
   }
 
   /**
@@ -317,11 +278,15 @@ export class Server {
    * time. A throw here aborts `start()` before any socket or dispatcher.
    */
   private async assertDispatcherWorkspaces(): Promise<void> {
-    const config = this.opts.config ?? BUILT_IN_DEFAULTS;
+    // ensureDispatcherWorkspace is a call-boundary DreamuxConfig consumer, not
+    // a capability holder (config/service.ts's ConfigReader doc); this whole
+    // preflight loop runs once at boot, before anything could observe a later
+    // config.agents.replace, so one resolved value for the loop is correct.
+    const config = this.opts.config.current();
     const failures: string[] = [];
-    for (const row of this.repos.dispatchers.listEnabled()) {
+    for (const dispatcher of config.dispatchers.filter((d) => d.enabled)) {
       try {
-        await ensureDispatcherWorkspace(config, row.dispatcher_id);
+        await ensureDispatcherWorkspace(config, dispatcher.id);
       } catch (err) {
         failures.push(err instanceof Error ? err.message : String(err));
       }
@@ -332,37 +297,6 @@ export class Server {
           failures.map((message) => `  - ${message}`).join('\n'),
       );
     }
-  }
-
-  /**
-   * Fail loud when any dispatcher still has pre-#199 local state (issue #199
-   * Slice 5). Detection only — the legacy paths are never read for migration,
-   * rewritten, or removed; the operator deletes them and lets the current layout
-   * rebuild. Aggregated like the workspace contract so every stale dispatcher is
-   * reported at once.
-   */
-  private async assertNoLegacyDispatcherState(): Promise<void> {
-    const messages: string[] = [];
-    for (const row of this.repos.dispatchers.list()) {
-      const findings = await detectLegacyDispatcherState(row.dispatcher_id);
-      if (findings.length > 0) {
-        messages.push(legacyDispatcherStateMessage(row.dispatcher_id, findings));
-      }
-      messages.push(...(await detectLegacyCronStores(row.dispatcher_id)));
-    }
-    if (messages.length > 0) {
-      throw new Error(
-        `dreamux serve cannot start — incompatible local state found:\n${messages.join('\n')}`,
-      );
-    }
-  }
-
-  summarize() {
-    return this.dispatchers.summarize();
-  }
-
-  getDispatcher(id: string): DispatcherService {
-    return this.dispatchers.get(id);
   }
 
   /** Graceful shutdown — drain dispatchers and close the admin socket. */
@@ -380,7 +314,6 @@ export class Server {
     this.commands.closeAdmission();
     const dispatchers = this.dispatchers_;
     if (dispatchers !== null) {
-      dispatchers.beginShutdown();
       await collectShutdownFailure(failures, () => dispatchers.shutdown());
     }
     await collectShutdownFailure(failures, () => this.commands.drain());
@@ -393,43 +326,25 @@ export class Server {
   }
 }
 
-async function detectLegacyCronStores(dispatcherId: string): Promise<string[]> {
-  const messages: string[] = [];
-  const dispatcherCron = await detectLegacyCronJobStore(
-    dispatcherCronJobsPath(dispatcherId),
-    dispatcherId,
-  );
-  if (dispatcherCron !== null) messages.push(dispatcherCron);
-  const teams = new TeamStore({
-    root: dispatcherTeamDir(dispatcherId),
-    dispatcherId,
-  });
-  for (const team of await teams.list()) {
-    if (team.status === 'closed') continue;
-    const teamCron = await detectLegacyCronJobStore(
-      dispatcherTeamCronJobsPath(dispatcherId, team.team_id),
-      dispatcherId,
-    );
-    if (teamCron !== null) messages.push(teamCron);
-  }
-  return messages;
-}
-
 /**
  * Every dispatcher's runtime provider must already have a loaded implementation
- * in `registry` (builtin and npm alike load through loadConfig's single dynamic
- * path). A descriptor without an implementation — or a ref that does not resolve
- * at all — means the registry was not the one loadConfig returned. Fail loud.
+ * in `registry` (`config/load.js`'s `readConfigFile`, which both `loadConfig`
+ * and `ConfigService.open` run, contributes every built-in through
+ * `loadPlugins` and then loads any `npm:`-ref provider through
+ * `resolveConfig`'s dynamic path). A descriptor without an implementation — or
+ * a ref that does not resolve at all — means the registry was not one that
+ * path loaded. Fail loud.
  */
 function assertRuntimeImplementationsLoaded(
   config: DreamuxConfig,
   registry: ProviderRegistry,
 ): void {
   for (const dispatcher of config.dispatchers) {
-    const ref = dispatcher.runtime.provider;
+    const ref = dispatcherAgent(config, dispatcher.id).provider;
     let loaded = false;
     try {
-      loaded = registry.getImplementation(registry.resolve(ref).id) !== undefined;
+      loaded =
+        registry.getImplementation(registry.resolve(ref).id) !== undefined;
     } catch {
       loaded = false;
     }
@@ -437,7 +352,8 @@ function assertRuntimeImplementationsLoaded(
     throw new Error(
       `dispatcher '${dispatcher.id}' uses AgentRuntime provider ` +
         `${JSON.stringify(ref)} whose implementation is not loaded; Server was ` +
-        'not constructed with the providerRegistry returned by loadConfig() ' +
+        'not constructed with a providerRegistry that loadConfig() or ' +
+        'ConfigService.open() already loaded providers into ' +
         '(or an injected agentRuntimeProviderCatalog).',
     );
   }

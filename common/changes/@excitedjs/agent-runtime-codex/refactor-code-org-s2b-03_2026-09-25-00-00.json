@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 2b, item 3: enable exactOptionalPropertyTypes. CodexProcessOptions.binPath and HandshakeOptions.timeoutMs (both published: binPath from index.ts's CodexProcessOptions, timeoutMs from performInitializeHandshake's exported HandshakeOptions parameter type) now type as string | undefined and number | undefined so a caller can construct the field with an explicit undefined value, not only omit it. Non-breaking widening; no runtime change.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

@@ -1,0 +1,21 @@
+{
+  "changes": [
+    {
+      "comment": "Fixed the codex doctor to validate the Codex home actually in effect for an agent, instead of always ~/.codex: it now resolves CODEX_HOME (and the OPENAI_API_KEY/CODEX_API_KEY/CODEX_ACCESS_TOKEN auth check) from the same effective env the runtime spawns its Codex child with (ambient env plus the agent's own extra_env), via one CODEX_HOME resolver paths.ts now shares between the runtime spawn path, the activity reader, and the doctor. Previously doctor ignored extra_env entirely and always checked the operator's global ~/.codex, so an operator-configured per-agent CODEX_HOME or auth override produced false doctor failures or false passes. Also removed the dead codexHomeDoctor hook end to end: CodexAgentRuntimeProviderOptions no longer has a codexHomeDoctor field (nothing in this repo ever supplied it), and codex-home.ts's assertDispatcherCodexHomeReady, formatDispatcherCodexHomeErrors, and DispatcherCodexHomeDoctor type, which only existed to serve that hook, are gone from the package's exports along with paths.ts's operatorCodexHome/dispatcherCodexHome/dispatcherCodexConfigPath (replaced by the internal codexSpawnEnv/resolveCodexHomeDir). dispatcherCodexHomeDoctorContext now takes a required env argument, and validateDispatcherCodexHome no longer accepts a bare dispatcher-id string (its only caller already passed a full context). Nothing persisted changes.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    },
+    {
+      "comment": "The package keeps its default neutral provider factory for configured npm provider refs and exports createCodexPlugin for builtin plugin loading. createCodexAgentRuntimeProvider remains the named bare-provider constructor. Internal process, RPC, and diagnostic helpers are no longer public barrel exports; callers inside the package use their owning modules. Existing configured official npm provider refs continue to load.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    },
+    {
+      "comment": "Implemented the new AgentRuntimeProvider.operatorStateRoot capability, returning the operator's default Codex home (resolveCodexHomeDir(process.env), with no per-agent extra_env override applied). Dreamux core's uninstall guard now sources its protected Codex path from this instead of a hard-coded ~/.codex literal: for a default install the protected path is still ~/.codex, but if CODEX_HOME is set in the environment dreamux uninstall runs in, the guard now protects that directory instead.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

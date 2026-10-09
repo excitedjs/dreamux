@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FeishuRouting } from '../src/routing/index.js';
-import { FeishuRoutingStore, routingDocumentFilename } from '../src/routing/store.js';
+import { routingDocumentFilename } from '../src/routing/store.js';
 import { spaceId as deriveSpaceId } from '../src/routing/naming.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
 
@@ -31,16 +31,60 @@ afterEach(() => {
 });
 
 async function makeRouting(channelId = 'chan-1'): Promise<FeishuRouting> {
-  const store = new FeishuRoutingStore({
+  const routing = new FeishuRouting({
     dispatcherId: 'disp-1',
     channelId,
     stateDir: dir,
   });
-  await store.load();
-  return new FeishuRouting({ dispatcherId: 'disp-1', channelId, store });
+  await routing.initialize();
+  return routing;
 }
 
 describe('FeishuRouting — plan() resolution order', () => {
+  it('reports inherited before and after Teams from the serialized binding commits', async () => {
+    const routing = await makeRouting();
+    const parent = chatTarget('oc_parent', 'group');
+    const topic = topicTarget('oc_parent', 'thread_shared');
+    const input = {
+      target: parent,
+      teamName: 'old-parent',
+      display: null,
+      rootMessageId: null,
+      spaceId: null,
+    };
+    await routing.bind(input);
+    // Queue both writes while the currently committed document still names
+    // old-parent. The topic commit must observe the preceding queued write.
+    const parentCommit = routing.bind({ ...input, teamName: 'new-parent' });
+    const topicCommit = routing.bind({
+      ...input,
+      target: topic,
+      teamName: 'exact-team',
+    });
+    await parentCommit;
+    expect(await topicCommit).toEqual({
+      previousTeamName: null,
+      previousServingTeamName: 'new-parent',
+      rootMessageId: null,
+    });
+    const fallbackCommit = routing.bind({
+      ...input,
+      teamName: 'fallback-parent',
+    });
+    const removal = routing.unbind(topic);
+    await fallbackCommit;
+    expect(await removal).toMatchObject({
+      teamName: 'exact-team',
+      nextServingTeamName: 'fallback-parent',
+      target: topic,
+    });
+    expect(routing.plan(topic, topic.chatId)).toEqual({
+      kind: 'bound',
+      teamName: 'fallback-parent',
+      matched: parent,
+    });
+  });
+
   it('an exact topic binding wins over its parent group binding', async () => {
     const routing = await makeRouting();
     const group = chatTarget('oc_group', 'group');
@@ -49,14 +93,14 @@ describe('FeishuRouting — plan() resolution order', () => {
       target: group,
       teamName: 'team-group',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await routing.bind({
       target: topic,
       teamName: 'team-topic',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
@@ -75,7 +119,7 @@ describe('FeishuRouting — plan() resolution order', () => {
       target: group,
       teamName: 'team-group',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
@@ -125,28 +169,23 @@ describe('FeishuRouting — bind/unbind ownership', () => {
       target: targetA,
       teamName: 'shared-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await routing.bind({
       target: targetB,
       teamName: 'shared-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
     const bindings = routing.listBindings();
-    expect(bindings.map((row) => row.chat_id).sort()).toEqual([
-      'oc_a',
-      'oc_b',
-    ]);
-    expect(bindings.every((row) => row.team_name === 'shared-team')).toBe(
-      true,
-    );
+    expect(bindings.map((row) => row.chat_id).sort()).toEqual(['oc_a', 'oc_b']);
+    expect(bindings.every((row) => row.team_name === 'shared-team')).toBe(true);
   });
 
-  it('unbinding one target leaves the Team\'s other binding live', async () => {
+  it("unbinding one target leaves the Team's other binding live", async () => {
     const routing = await makeRouting();
     const targetA = chatTarget('oc_a', 'group');
     const targetB = chatTarget('oc_b', 'group');
@@ -154,19 +193,22 @@ describe('FeishuRouting — bind/unbind ownership', () => {
       target: targetA,
       teamName: 'shared-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await routing.bind({
       target: targetB,
       teamName: 'shared-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
     const removedTeam = await routing.unbind(targetA);
-    expect(removedTeam).toBe('shared-team');
+    expect(removedTeam).toMatchObject({
+      teamName: 'shared-team',
+      target: targetA,
+    });
     expect(routing.bindingFor(targetA)).toBeUndefined();
     expect(routing.bindingFor(targetB)?.team_name).toBe('shared-team');
   });
@@ -184,14 +226,14 @@ describe('FeishuRouting — bind/unbind ownership', () => {
       target,
       teamName: 'team-old',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     const { previousTeamName } = await routing.bind({
       target,
       teamName: 'team-new',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     expect(previousTeamName).toBe('team-old');
@@ -205,7 +247,7 @@ describe('FeishuRouting — bind/unbind ownership', () => {
       target,
       teamName: 'team-self',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
       requireOwner: 'team-self',
     });
@@ -219,7 +261,7 @@ describe('FeishuRouting — bind/unbind ownership', () => {
       target,
       teamName: 'team-self',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await expect(
@@ -227,11 +269,15 @@ describe('FeishuRouting — bind/unbind ownership', () => {
         target,
         teamName: 'team-self',
         display: 'renamed',
-        origin: 'manual',
+        rootMessageId: null,
         spaceId: null,
         requireOwner: 'team-self',
       }),
-    ).resolves.toEqual({ previousTeamName: 'team-self' });
+    ).resolves.toEqual({
+      previousTeamName: 'team-self',
+      previousServingTeamName: 'team-self',
+      rootMessageId: null,
+    });
     expect(routing.bindingFor(target)?.display).toBe('renamed');
   });
 
@@ -242,7 +288,7 @@ describe('FeishuRouting — bind/unbind ownership', () => {
       target,
       teamName: 'team-a',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await expect(
@@ -250,7 +296,7 @@ describe('FeishuRouting — bind/unbind ownership', () => {
         target,
         teamName: 'team-b',
         display: null,
-        origin: 'manual',
+        rootMessageId: null,
         spaceId: null,
         requireOwner: 'team-b',
       }),
@@ -266,7 +312,7 @@ describe('FeishuRouting — bind/unbind ownership', () => {
       target,
       teamName: 'team-a',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await expect(routing.unbind(target, 'team-b')).rejects.toThrow(
@@ -286,21 +332,21 @@ describe('FeishuRouting — forgetTeam', () => {
       target: group,
       teamName: 'closing-team',
       display: 'Group display',
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await routing.bind({
       target: topic,
       teamName: 'closing-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await routing.bind({
       target: other,
       teamName: 'other-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
@@ -371,12 +417,14 @@ describe('FeishuRouting — Collaboration Space policy', () => {
         target: chatTarget('oc_space', 'group'),
         teamName: 'team-a',
         display: null,
-        origin: 'manual',
+        rootMessageId: null,
         spaceId: null,
       }),
     ).rejects.toThrow(/Collaboration Space/);
     expect(routing.listBindings()).toEqual([]);
-    expect(routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space')).toMatchObject({
+    expect(
+      routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space'),
+    ).toMatchObject({
       kind: 'provision',
     });
   });
@@ -395,16 +443,20 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       target: topicTarget('oc_space', 'omt_one'),
       teamName: 'team-a',
       display: null,
-      origin: 'space',
+      rootMessageId: null,
       spaceId: space.space_id,
     });
-    expect(routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space')).toMatchObject({
+    expect(
+      routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space'),
+    ).toMatchObject({
       kind: 'bound',
       teamName: 'team-a',
     });
     // The sibling topic is untouched: one provisioned topic never speaks for
     // the rest of the Space, which is what binding the chat itself would do.
-    expect(routing.plan(topicTarget('oc_space', 'omt_two'), 'oc_space')).toMatchObject({
+    expect(
+      routing.plan(topicTarget('oc_space', 'omt_two'), 'oc_space'),
+    ).toMatchObject({
       kind: 'provision',
     });
   });
@@ -420,7 +472,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       target: chatTarget('oc_space', 'group'),
       teamName: 'team-a',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await expect(
@@ -445,7 +497,9 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       identity: null,
       repo: null,
     });
-    expect(routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space')).toMatchObject({
+    expect(
+      routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space'),
+    ).toMatchObject({
       kind: 'provision',
     });
   });
@@ -464,7 +518,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       target: topicTarget('oc_space', 'omt_one'),
       teamName: 'team-a',
       display: null,
-      origin: 'space',
+      rootMessageId: null,
       spaceId: space.space_id,
     });
     const renamed = await routing.bindSpace({
@@ -476,7 +530,9 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       repo: null,
     });
     expect(renamed.space_name).toBe('space-renamed');
-    expect(routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space')).toMatchObject({
+    expect(
+      routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space'),
+    ).toMatchObject({
       kind: 'bound',
       teamName: 'team-a',
     });
@@ -507,27 +563,31 @@ describe('FeishuRouting — Collaboration Space policy', () => {
         version: 1,
         dispatcher_id: 'disp-1',
         channel_id: 'chan-1',
-        bindings: [{
-          target: { kind: 'group', chat_id: containerChatId },
-          display: null,
-          team_name: 'team-a',
-          origin: 'manual',
-          space_id: null,
-          created_at: 1,
-          updated_at: 1,
-        }],
-        spaces: [{
-          space_id,
-          space_name: 'space',
-          container_chat_id: containerChatId,
-          display: null,
-          generation: 1,
-          leader_agent_runtime: 'codex',
-          identity: null,
-          repo: null,
-          created_at: 1,
-          updated_at: 1,
-        }],
+        bindings: [
+          {
+            target: { kind: 'group', chat_id: containerChatId },
+            display: null,
+            team_name: 'team-a',
+            rootMessageId: null,
+            space_id: null,
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
+        spaces: [
+          {
+            space_id,
+            space_name: 'space',
+            container_chat_id: containerChatId,
+            display: null,
+            generation: 1,
+            leader_agent_runtime: 'codex',
+            identity: null,
+            repo: null,
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
         updated_at: 1,
       }),
     );
@@ -536,8 +596,9 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     // It loads: validation is shape-only, so this cannot block a channel start.
     expect(routing.listSpaces()).toHaveLength(1);
     // And it is broken in exactly the way the refusals exist to prevent.
-    expect(routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId))
-      .toMatchObject({ kind: 'bound', teamName: 'team-a' });
+    expect(
+      routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId),
+    ).toMatchObject({ kind: 'bound', teamName: 'team-a' });
 
     await expect(
       routing.bindSpace({
@@ -567,9 +628,9 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     // hit the same guard. That is the distinction this test exists to pin.
     expect(routing.listSpaces()).toHaveLength(1);
     expect(renamed.space_id).toBe(space_id);
-    expect(renamed.generation).toBe(1);
-    expect(routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId))
-      .toMatchObject({ kind: 'provision' });
+    expect(
+      routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId),
+    ).toMatchObject({ kind: 'provision' });
   });
 
   it('unbindSpace removes only the space policy; nothing about existing bindings changes', async () => {
@@ -587,7 +648,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       target,
       teamName: 'space-team',
       display: null,
-      origin: 'space',
+      rootMessageId: null,
       spaceId: routing.spaceForContainer('oc_x')?.space_id ?? null,
     });
 
@@ -615,7 +676,10 @@ describe('FeishuRouting — document subscriptions', () => {
     });
 
     expect(
-      routing.subscribersFor('doc_tok').map((row) => row.team_name).sort(),
+      routing
+        .subscribersFor('doc_tok')
+        .map((row) => row.team_name)
+        .sort(),
     ).toEqual([null, 'team-a']);
     expect(routing.listSubscriptions('team-a')).toHaveLength(1);
     expect(routing.listSubscriptions(null)).toHaveLength(1);
@@ -641,7 +705,7 @@ describe('FeishuRouting — document subscriptions', () => {
     expect(routing.subscribersFor('doc_tok')).toHaveLength(1);
   });
 
-  it('unsubscribe removes only the caller\'s own row', async () => {
+  it("unsubscribe removes only the caller's own row", async () => {
     const routing = await makeRouting();
     await routing.subscribe({
       fileToken: 'doc_tok',
@@ -656,8 +720,9 @@ describe('FeishuRouting — document subscriptions', () => {
 
     await expect(routing.unsubscribe('doc_tok', 'team-a')).resolves.toBe(true);
 
-    expect(routing.subscribersFor('doc_tok').map((row) => row.team_name))
-      .toEqual([null]);
+    expect(
+      routing.subscribersFor('doc_tok').map((row) => row.team_name),
+    ).toEqual([null]);
   });
 
   it('unsubscribing a document nobody followed is an answer, not a failure', async () => {
@@ -671,7 +736,7 @@ describe('FeishuRouting — document subscriptions', () => {
       target: chatTarget('oc_g', 'group'),
       teamName: 'closing-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await routing.subscribe({
@@ -689,8 +754,9 @@ describe('FeishuRouting — document subscriptions', () => {
 
     expect(removed).toHaveLength(1);
     expect(subscriptions.map((row) => row.file_token)).toEqual(['doc_closing']);
-    expect(routing.subscribersFor('doc_closing').map((row) => row.team_name))
-      .toEqual(['other-team']);
+    expect(
+      routing.subscribersFor('doc_closing').map((row) => row.team_name),
+    ).toEqual(['other-team']);
   });
 
   it('forgetTeam commits for a Team that holds only subscriptions', async () => {

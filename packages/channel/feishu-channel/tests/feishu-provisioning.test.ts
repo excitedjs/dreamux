@@ -8,7 +8,7 @@
  * rather than delivering the message to the Dispatcher Agent).
  *
  * These tests drive `FeishuProvisioning` against a real `FeishuRouting` +
- * `FeishuRoutingStore` (so "nothing beyond Space policy and completed
+ * its held transactional store (so "nothing beyond Space policy and completed
  * bindings is persisted" is checked against the actual on-disk document, not
  * a mock) with fakes for the Core `invoke` port and the submitter.
  */
@@ -18,15 +18,29 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DreamuxLogger, JsonValue, TeamSummary } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  JsonValue,
+  TeamSummary,
+} from '@excitedjs/dreamux-types';
 
 import { teamSummary } from './helpers/team-status.js';
 
 import { FeishuProvisioning } from '../src/feishu-provisioning.js';
 import { FeishuRouting } from '../src/routing/index.js';
-import { FeishuRoutingStore, routingDocumentFilename } from '../src/routing/store.js';
-import { topicTarget } from '../src/routing/target.js';
-import type { FeishuChatSubmission, FeishuSubmitOutcome } from '../src/feishu-submit.js';
+import {
+  readRoutingDocument,
+  routingDocumentFilename,
+} from '../src/routing/store.js';
+import { FeishuCoreCommands } from '../src/feishu-core-commands.js';
+import { FeishuTeamSubmitter } from '../src/session/submitter.js';
+import { FeishuCotAdapter } from '../src/cot/adapter.js';
+import { createFeishuLifecycle } from '../src/session/lifecycle.js';
+import { topicTarget, type FeishuTarget } from '../src/routing/target.js';
+import type {
+  FeishuChatSubmission,
+  FeishuSubmitOutcome,
+} from '../src/feishu-submit.js';
 
 let dir: string;
 
@@ -44,6 +58,7 @@ const silentLog: DreamuxLogger = {
   info: () => undefined,
   debug: () => undefined,
   trace: () => undefined,
+  child: () => silentLog,
 };
 
 function submission(sourceId: string): FeishuChatSubmission {
@@ -53,7 +68,11 @@ function submission(sourceId: string): FeishuChatSubmission {
     text: 'hello',
     reminder: '',
     sourceId,
-    anchor: { chatId: 'oc_container', messageId: `m-${sourceId}`, target: topicTarget('oc_container', 'thread_1') },
+    anchor: {
+      chatId: 'oc_container',
+      messageId: `m-${sourceId}`,
+      target: topicTarget('oc_container', 'thread_1'),
+    },
   };
 }
 
@@ -61,7 +80,11 @@ interface Harness {
   routing: FeishuRouting;
   provisioning: FeishuProvisioning;
   invokeCalls: Array<{ command: string; payload: JsonValue }>;
-  submitCalls: Array<{ teamName: string; sourceId: string }>;
+  submitCalls: Array<{
+    teamName: string;
+    sourceId: string;
+    servingTarget: FeishuTarget | null;
+  }>;
   announceCalls: Array<{
     teamName: string;
     leaderName: string;
@@ -75,14 +98,12 @@ interface Harness {
 }
 
 async function harness(): Promise<Harness> {
-  const store = new FeishuRoutingStore({
+  const routing = new FeishuRouting({
     dispatcherId: 'disp-1',
     channelId: 'chan-1',
     stateDir: dir,
   });
-  await store.load();
-  const routing = new FeishuRouting({ dispatcherId: 'disp-1', channelId: 'chan-1', store });
-
+  await routing.initialize();
   const state: Harness = {
     routing,
     provisioning: undefined as unknown as FeishuProvisioning,
@@ -93,19 +114,8 @@ async function harness(): Promise<Harness> {
     createResult: teamSummary('space-team-1'),
     submitResult: { status: 'submitted', turnId: 'turn-1' },
   };
-
-  const provisioning = new FeishuProvisioning({
-    dispatcherId: 'disp-1',
-    channelId: 'chan-1',
-    log: silentLog,
-    routing,
-    submitter: {
-      submit: async (teamName, sub) => {
-        state.trace.push('team.submit');
-        state.submitCalls.push({ teamName, sourceId: sub.sourceId });
-        return state.submitResult;
-      },
-    },
+  const commands = new FeishuCoreCommands();
+  commands.initialize({
     invoke: async (command, payload) => {
       state.trace.push(command);
       state.invokeCalls.push({ command, payload });
@@ -115,21 +125,53 @@ async function harness(): Promise<Harness> {
       }
       throw new Error(`unexpected command ${command}`);
     },
-    announce: (input) => {
-      state.trace.push('announce');
-      state.announceCalls.push({
-        teamName: input.teamName,
-        leaderName: input.leaderName,
-        agentRuntime: input.agentRuntime,
-        runtimeCwd: input.runtimeCwd,
+  });
+  const lifecycle = createFeishuLifecycle();
+  const cot = new FeishuCotAdapter({
+    dispatcherId: 'disp-1',
+    channelId: 'chan-1',
+    log: silentLog,
+    cotClient: undefined,
+    lifecycle,
+  });
+  const submitter = new FeishuTeamSubmitter({ lifecycle, cot, commands });
+  vi.spyOn(submitter, 'submit').mockImplementation(
+    async (teamName, sub, servingTarget) => {
+      if (teamName === null) throw new Error('provisioning must name its Team');
+      state.trace.push('team.submit');
+      state.submitCalls.push({
+        teamName,
+        sourceId: sub.sourceId,
+        servingTarget,
       });
+      return state.submitResult;
+    },
+  );
+  state.provisioning = new FeishuProvisioning({
+    dispatcherId: 'disp-1',
+    channelId: 'chan-1',
+    log: silentLog,
+    routing,
+    submitter,
+    commands,
+    bindings: {
+      presentCommittedBind: (input) => {
+        state.trace.push('announce');
+        state.announceCalls.push({
+          teamName: input.teamName,
+          leaderName: input.leaderName,
+          agentRuntime: input.agentRuntime,
+          runtimeCwd: input.runtimeCwd,
+        });
+      },
     },
   });
-  state.provisioning = provisioning;
   return state;
 }
 
-function space(overrides: Partial<Parameters<FeishuRouting['bindSpace']>[0]> = {}) {
+function space(
+  overrides: Partial<Parameters<FeishuRouting['bindSpace']>[0]> = {},
+) {
   return {
     spaceName: 'space-a',
     containerChatId: 'oc_container',
@@ -163,9 +205,16 @@ describe('FeishuProvisioning — happy-path ordering', () => {
     expect(h.invokeCalls.map((call) => call.command)).toEqual(['team.create']);
     expect(h.routing.bindingFor(target)?.team_name).toBe('space-team-1');
     expect(h.announceCalls).toEqual([
-      { teamName: 'space-team-1', leaderName: 'space-team-1-leader', agentRuntime: 'trae-gpt', runtimeCwd: '/workspace/space-team-1' },
+      {
+        teamName: 'space-team-1',
+        leaderName: 'space-team-1-leader',
+        agentRuntime: 'trae-gpt',
+        runtimeCwd: '/workspace/space-team-1',
+      },
     ]);
-    expect(h.submitCalls).toEqual([{ teamName: 'space-team-1', sourceId: 'msg-1' }]);
+    expect(h.submitCalls).toEqual([
+      { teamName: 'space-team-1', sourceId: 'msg-1', servingTarget: target },
+    ]);
     expect(h.trace).toEqual(['team.create', 'bind', 'announce', 'team.submit']);
   });
 
@@ -187,9 +236,9 @@ describe('FeishuProvisioning — happy-path ordering', () => {
       submission: submission('m2'),
     });
 
-    const requestIds = h.invokeCalls.filter((c) => c.command === 'team.create').map(
-      (c) => (c.payload as Record<string, unknown>)['request_id'],
-    );
+    const requestIds = h.invokeCalls
+      .filter((c) => c.command === 'team.create')
+      .map((c) => (c.payload as Record<string, unknown>)['request_id']);
     // Bare message ids, not a composite: a Feishu message id is already
     // globally unique, so nothing is prefixed onto it.
     expect(requestIds).toEqual(['m1', 'm2']);
@@ -217,9 +266,9 @@ describe('FeishuProvisioning — happy-path ordering', () => {
       submission: submission('redelivered'),
     });
 
-    const requestIds = h.invokeCalls.filter((c) => c.command === 'team.create').map(
-      (c) => (c.payload as Record<string, unknown>)['request_id'],
-    );
+    const requestIds = h.invokeCalls
+      .filter((c) => c.command === 'team.create')
+      .map((c) => (c.payload as Record<string, unknown>)['request_id']);
     expect(requestIds).toEqual(['redelivered', 'redelivered']);
   });
 
@@ -240,7 +289,9 @@ describe('FeishuProvisioning — happy-path ordering', () => {
 
     expect(outcome).toEqual({ status: 'submitted', turnId: 'turn-1' });
     expect(h.routing.bindingFor(target)?.team_name).toBe('space-team-1');
-    expect(h.invokeCalls.filter((c) => c.command === 'team.create')).toHaveLength(1);
+    expect(
+      h.invokeCalls.filter((c) => c.command === 'team.create'),
+    ).toHaveLength(1);
   });
 });
 
@@ -276,8 +327,17 @@ describe('FeishuProvisioning — concurrency: one run per target', () => {
     const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
     expect(firstOutcome).toEqual({ status: 'submitted', turnId: 'turn-1' });
     expect(secondOutcome).toEqual({ status: 'submitted', turnId: 'turn-1' });
-    expect(h.invokeCalls.filter((c) => c.command === 'team.create')).toHaveLength(1);
-    expect(h.submitCalls.map((c) => c.sourceId).sort()).toEqual(['first', 'second']);
+    expect(
+      h.invokeCalls.filter((c) => c.command === 'team.create'),
+    ).toHaveLength(1);
+    expect(h.submitCalls.map((c) => c.sourceId).sort()).toEqual([
+      'first',
+      'second',
+    ]);
+    expect(h.submitCalls).toEqual([
+      { teamName: 'shared-team', sourceId: 'first', servingTarget: target },
+      { teamName: 'shared-team', sourceId: 'second', servingTarget: target },
+    ]);
     expect(h.routing.bindingFor(target)?.team_name).toBe('shared-team');
   });
 });
@@ -304,12 +364,11 @@ describe('FeishuProvisioning — interrupted run leaves at most an accepted orph
 
     // A fresh store/routing instance — standing in for a process restart —
     // sees only the Space policy, no binding and no trace of the failed run.
-    const freshStore = new FeishuRoutingStore({
+    const freshDoc = await readRoutingDocument({
       dispatcherId: 'disp-1',
       channelId: 'chan-1',
       stateDir: dir,
     });
-    const freshDoc = await freshStore.load();
     expect(freshDoc.bindings).toEqual([]);
     expect(freshDoc.spaces).toHaveLength(1);
   });
@@ -325,7 +384,10 @@ describe('FeishuProvisioning — interrupted run leaves at most an accepted orph
       display: null,
       submission: submission('empty-name'),
     });
-    expect(outcome).toEqual({ status: 'unsubmitted', message: 'team.create returned no Team name' });
+    expect(outcome).toEqual({
+      status: 'unsubmitted',
+      message: 'team.create returned no Team name',
+    });
     expect(h.submitCalls).toEqual([]);
   });
 
@@ -342,7 +404,9 @@ describe('FeishuProvisioning — interrupted run leaves at most an accepted orph
     });
     expect(outcome.status).toBe('unsubmitted');
     expect(h.submitCalls).toEqual([]);
-    expect(h.routing.bindingFor(topicTarget('oc_container', 'thread_closed'))).toBeUndefined();
+    expect(
+      h.routing.bindingFor(topicTarget('oc_container', 'thread_closed')),
+    ).toBeUndefined();
   });
 });
 
@@ -358,15 +422,33 @@ describe('FeishuProvisioning — no persisted saga/outbox/cursor', () => {
     });
 
     const filename = routingDocumentFilename('chan-1');
-    const onDisk = JSON.parse(readFileSync(join(dir, filename), 'utf8')) as Record<string, unknown>;
+    const onDisk = JSON.parse(
+      readFileSync(join(dir, filename), 'utf8'),
+    ) as Record<string, unknown>;
     expect(Object.keys(onDisk).sort()).toEqual(
-      ['bindings', 'channel_id', 'dispatcher_id', 'spaces', 'subscriptions', 'updated_at', 'version'].sort(),
+      [
+        'bindings',
+        'channel_id',
+        'dispatcher_id',
+        'spaces',
+        'subscriptions',
+        'updated_at',
+        'version',
+      ].sort(),
     );
     // And no binding row carries any provisioning-progress field beyond the
     // final product shape.
     const binding = (onDisk['bindings'] as Array<Record<string, unknown>>)[0];
     expect(Object.keys(binding).sort()).toEqual(
-      ['created_at', 'display', 'origin', 'space_id', 'target', 'team_name', 'updated_at'].sort(),
+      [
+        'created_at',
+        'display',
+        'root_message_id',
+        'space_id',
+        'target',
+        'team_name',
+        'updated_at',
+      ].sort(),
     );
   });
 });
@@ -419,7 +501,9 @@ describe('FeishuProvisioning — creation-time reply address', () => {
   it('preserves a configured identity in full and appends the guidance after it', async () => {
     const h = await harness();
     const configured = 'You are the release captain.\nSpeak plainly.';
-    const spaceRecord = await h.routing.bindSpace(space({ identity: configured }));
+    const spaceRecord = await h.routing.bindSpace(
+      space({ identity: configured }),
+    );
 
     await h.provisioning.provisionForInbound({
       space: spaceRecord,
@@ -457,8 +541,9 @@ describe('FeishuProvisioning — creation-time reply address', () => {
     const identities = h.invokeCalls
       .filter((call) => call.command === 'team.create')
       .map((call) => {
-        const leader = (call.payload as Record<string, unknown>)['leader'] as
-          Record<string, unknown>;
+        const leader = (call.payload as Record<string, unknown>)[
+          'leader'
+        ] as Record<string, unknown>;
         return String(leader['identity']);
       });
     expect(identities[0]).toContain('message_id: m-m1');

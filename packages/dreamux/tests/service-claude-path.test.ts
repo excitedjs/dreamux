@@ -14,8 +14,8 @@ import {
   managedServiceEnvironment,
   validateManagedServiceLaunch,
   type ServiceInstallAnswers,
-} from '../src/onboard/service.js';
-import type { CommandRunner } from '../src/onboard/types.js';
+} from '../src/daemon/environment.js';
+import type { CommandRunner } from '../src/platform/command-runner.js';
 
 class ServiceRunner implements CommandRunner {
   readonly checks: Array<{ command: string; args: string[] }> = [];
@@ -36,7 +36,6 @@ function answers(
   overrides: Partial<ServiceInstallAnswers> = {},
 ): ServiceInstallAnswers {
   return {
-    configDir: '/home/op/.dreamux',
     providerBinChecks: [
       {
         name: 'runtime-a',

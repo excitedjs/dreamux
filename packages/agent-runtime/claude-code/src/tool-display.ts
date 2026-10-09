@@ -21,9 +21,17 @@ export interface ToolDisplay {
   readonly items: readonly string[];
 }
 
-const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, items: [] };
+const UNKNOWN: ToolDisplay = {
+  action: null,
+  summary: null,
+  invocation: null,
+  items: [],
+};
 
-export function toolDisplay(name: string | null | undefined, args: JsonValue | null): ToolDisplay {
+export function toolDisplay(
+  name: string | null | undefined,
+  args: JsonValue | null,
+): ToolDisplay {
   const input = inputRecord(args);
   const field = (key: string): string | null => {
     const value = input[key];
@@ -50,23 +58,68 @@ export function toolDisplay(name: string | null | undefined, args: JsonValue | n
       return fileTool('edit', field('notebook_path'));
     case 'Grep':
     case 'Glob':
-      return { action: 'search', summary: field('pattern'), invocation: null, items: [] };
+      return {
+        action: 'search',
+        summary: field('pattern'),
+        invocation: null,
+        items: [],
+      };
     case 'WebSearch':
-      return { action: 'search', summary: field('query'), invocation: null, items: [] };
+      return {
+        action: 'search',
+        summary: field('query'),
+        invocation: null,
+        items: [],
+      };
     case 'ToolSearch':
-      return { action: null, summary: field('query'), invocation: null, items: [] };
+      return {
+        action: null,
+        summary: field('query'),
+        invocation: null,
+        items: [],
+      };
     case 'WebFetch':
-      return { action: null, summary: field('url'), invocation: null, items: [] };
+      return {
+        action: null,
+        summary: field('url'),
+        invocation: null,
+        items: [],
+      };
     case 'Agent':
-      return { action: null, summary: field('description'), invocation: field('prompt'), items: [] };
+      return {
+        action: null,
+        summary: field('description'),
+        invocation: field('prompt'),
+        items: [],
+      };
     case 'Skill':
-      return { action: null, summary: field('skill'), invocation: null, items: [] };
+      return {
+        action: null,
+        summary: field('skill'),
+        invocation: null,
+        items: [],
+      };
     case 'TaskCreate':
-      return { action: null, summary: field('subject'), invocation: null, items: [] };
+      return {
+        action: null,
+        summary: field('subject'),
+        invocation: null,
+        items: [],
+      };
     case 'REPL':
-      return { action: 'run', summary: field('description'), invocation: field('code'), items: [] };
+      return {
+        action: 'run',
+        summary: field('description'),
+        invocation: field('code'),
+        items: [],
+      };
     case 'Workflow':
-      return { action: null, summary: field('name'), invocation: field('script'), items: [] };
+      return {
+        action: null,
+        summary: field('name'),
+        invocation: field('script'),
+        items: [],
+      };
     default:
       return UNKNOWN;
   }
@@ -74,10 +127,17 @@ export function toolDisplay(name: string | null | undefined, args: JsonValue | n
 
 /** A file tool is labelled by the one path it touches, which is also its one item. */
 function fileTool(action: 'read' | 'edit', path: string | null): ToolDisplay {
-  return { action, summary: path, invocation: null, items: path === null ? [] : [path] };
+  return {
+    action,
+    summary: path,
+    invocation: null,
+    items: path === null ? [] : [path],
+  };
 }
 
-function inputRecord(args: JsonValue | null): Readonly<Record<string, JsonValue>> {
+function inputRecord(
+  args: JsonValue | null,
+): Readonly<Record<string, JsonValue>> {
   return args !== null && typeof args === 'object' && !Array.isArray(args)
     ? (args as Readonly<Record<string, JsonValue>>)
     : {};

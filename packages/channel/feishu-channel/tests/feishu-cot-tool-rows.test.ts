@@ -21,13 +21,14 @@ import {
   toolCallResultEvents,
   toolResultOutput,
   toolCallStartEvents,
-} from '../src/feishu-cot-events.js';
+} from '../src/cot/card.js';
 
 type ToolCall = Extract<RuntimeActivity, { kind: 'tool.call' }>;
 
 function toolCall(overrides: Partial<ToolCall>): ToolCall {
   return {
-    kind: 'tool.call', occurredAt: 1,
+    kind: 'tool.call',
+    occurredAt: 1,
     id: 'call-1',
     toolName: 'Bash',
     action: 'run',
@@ -60,40 +61,69 @@ describe('runtime-labelled tool rows', () => {
   it('pairs a result with its start using the same native id', () => {
     const call = toolCall({ id: 'native-call' });
     const [start] = toolCallStartEvents(call);
-    const [result] = toolCallResultEvents({ ...call, status: 'completed', result: 'ok' });
+    const [result] = toolCallResultEvents({
+      ...call,
+      status: 'completed',
+      result: 'ok',
+    });
     const startContent = start!.content as { toolCallId: string };
-    expect(result!.content).toMatchObject({ toolCallId: startContent.toolCallId });
+    expect(result!.content).toMatchObject({
+      toolCallId: startContent.toolCallId,
+    });
   });
 
   it('shows a failed call error ahead of its result', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'failed', result: { detail: 'result body' }, error: 'error body',
-    }));
-    expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: 'error body' }]);
-  });
-
-  it.each([{ rows: [1, 2] }, [1, 2]])('renders structured arguments and results as JSON: %j', (value) => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'completed', arguments: value, result: value,
-    }));
-    const code = JSON.stringify(value, null, 2);
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'failed',
+        result: { detail: 'result body' },
+        error: 'error body',
+      }),
+    );
     expect(segmentsOf(result!)).toEqual([
-      { type: 'code', language: 'json', code }, RESULT,
-      { type: 'code', language: 'json', code },
+      RESULT,
+      { type: 'text', text: 'error body' },
     ]);
   });
 
+  it.each([{ rows: [1, 2] }, [1, 2]])(
+    'renders structured arguments and results as JSON: %j',
+    (value) => {
+      const [result] = toolCallResultEvents(
+        toolCall({
+          status: 'completed',
+          arguments: value,
+          result: value,
+        }),
+      );
+      const code = JSON.stringify(value, null, 2);
+      expect(segmentsOf(result!)).toEqual([
+        { type: 'code', language: 'json', code },
+        RESULT,
+        { type: 'code', language: 'json', code },
+      ]);
+    },
+  );
+
   it.each([42, true])('renders a scalar result as JSON text: %j', (value) => {
-    const [result] = toolCallResultEvents(toolCall({ status: 'completed', result: value }));
-    expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: JSON.stringify(value) }]);
+    const [result] = toolCallResultEvents(
+      toolCall({ status: 'completed', result: value }),
+    );
+    expect(segmentsOf(result!)).toEqual([
+      RESULT,
+      { type: 'text', text: JSON.stringify(value) },
+    ]);
   });
 
   it('titles a run row with the runtime summary, icons it, and sends no raw arguments', () => {
-    const events = toolCallStartEvents(toolCall({
-      summary: 'Show working tree status',
-      invocation: 'git status --short',
-      arguments: '{"command":"git status --short","description":"Show working tree status"}',
-    }));
+    const events = toolCallStartEvents(
+      toolCall({
+        summary: 'Show working tree status',
+        invocation: 'git status --short',
+        arguments:
+          '{"command":"git status --short","description":"Show working tree status"}',
+      }),
+    );
     expect(eventTypes(events)).toEqual(['TOOL_CALL_START', 'TOOL_CALL_END']);
     expect(events[0]!.content).toEqual({
       toolCallId: expect.any(String),
@@ -108,14 +138,27 @@ describe('runtime-labelled tool rows', () => {
       toolName: 'exec_command',
       summary: 'node --check script.mjs',
       invocation: 'node --check script.mjs\necho done',
-      arguments: JSON.stringify("/usr/bin/zsh -lc 'node --check script.mjs\necho done'"),
+      arguments: JSON.stringify(
+        "/usr/bin/zsh -lc 'node --check script.mjs\necho done'",
+      ),
     });
     const [start] = toolCallStartEvents(call);
-    expect(start!.content).toMatchObject({ icon: 'bash', title: 'node --check script.mjs' });
-    const [result] = toolCallResultEvents({ ...call, status: 'completed', result: 'done' });
+    expect(start!.content).toMatchObject({
+      icon: 'bash',
+      title: 'node --check script.mjs',
+    });
+    const [result] = toolCallResultEvents({
+      ...call,
+      status: 'completed',
+      result: 'done',
+    });
     expect(result!.content).toMatchObject({
       content: [
-        { type: 'code', language: 'bash', code: 'node --check script.mjs\necho done' },
+        {
+          type: 'code',
+          language: 'bash',
+          code: 'node --check script.mjs\necho done',
+        },
         RESULT,
         { type: 'text', text: 'done' },
       ],
@@ -123,29 +166,43 @@ describe('runtime-labelled tool rows', () => {
   });
 
   it('leads a read row with a verb and the read icon', () => {
-    const [start] = toolCallStartEvents(toolCall({
-      toolName: 'Read',
-      action: 'read',
-      summary: 'src/a.ts',
-    }));
-    expect(start!.content).toMatchObject({ toolCallName: 'Read', icon: 'read', title: 'Read src/a.ts' });
+    const [start] = toolCallStartEvents(
+      toolCall({
+        toolName: 'Read',
+        action: 'read',
+        summary: 'src/a.ts',
+      }),
+    );
+    expect(start!.content).toMatchObject({
+      toolCallName: 'Read',
+      icon: 'read',
+      title: 'Read src/a.ts',
+    });
   });
 
   it('leads a listing row with List and the search icon', () => {
-    const [start] = toolCallStartEvents(toolCall({
-      toolName: 'Bash',
-      action: 'list_files',
-      summary: 'src',
-    }));
-    expect(start!.content).toMatchObject({ toolCallName: 'List', icon: 'search', title: 'List src' });
+    const [start] = toolCallStartEvents(
+      toolCall({
+        toolName: 'Bash',
+        action: 'list_files',
+        summary: 'src',
+      }),
+    );
+    expect(start!.content).toMatchObject({
+      toolCallName: 'List',
+      icon: 'search',
+      title: 'List src',
+    });
   });
 
   it('titles a row the runtime labelled but named no action for with that label alone', () => {
-    const [start] = toolCallStartEvents(toolCall({
-      toolName: 'Skill',
-      action: null,
-      summary: 'team-workflow',
-    }));
+    const [start] = toolCallStartEvents(
+      toolCall({
+        toolName: 'Skill',
+        action: null,
+        summary: 'team-workflow',
+      }),
+    );
     // No `Skill: ` prefix: the label is already a whole label, and the row
     // shows the tool's name beside it anyway.
     expect(start!.content).toEqual({
@@ -156,11 +213,13 @@ describe('runtime-labelled tool rows', () => {
   });
 
   it('names a call nothing could label by its whole name, behind the generic app icon', () => {
-    const events = toolCallStartEvents(toolCall({
-      toolName: 'mcp__other__thing',
-      action: null,
-      arguments: '{"x":1}',
-    }));
+    const events = toolCallStartEvents(
+      toolCall({
+        toolName: 'mcp__other__thing',
+        action: null,
+        arguments: '{"x":1}',
+      }),
+    );
     // The name as the runtime spelled it: the leaf alone loses which server a
     // foreign tool came from, and two servers may offer the same leaf.
     expect(eventTypes(events)).toEqual(['TOOL_CALL_START', 'TOOL_CALL_END']);
@@ -174,7 +233,9 @@ describe('runtime-labelled tool rows', () => {
   it('spells out a long name rather than cutting it at a length of its own', () => {
     const toolName = `mcp__${'server-with-a-long-name'.repeat(3)}__do_the_thing`;
     expect(toolName.length).toBeGreaterThan(80);
-    const [start] = toolCallStartEvents(toolCall({ toolName: toolName, action: null }));
+    const [start] = toolCallStartEvents(
+      toolCall({ toolName: toolName, action: null }),
+    );
     expect(start!.content).toEqual({
       toolCallId: expect.any(String),
       toolCallName: toolName,
@@ -182,27 +243,34 @@ describe('runtime-labelled tool rows', () => {
     });
   });
 
-
   it("presents the Channel's own tools by the same rule as any other MCP tool", () => {
-    for (const toolName of ['mcp__chan-cot__reply', 'channel-chan-cot.react', 'feishu.list_chat_bots']) {
-      const [start] = toolCallStartEvents(toolCall({
-        toolName: toolName,
-        action: null,
-        arguments: '{"chat_id":"oc_1","text":"hi"}',
-      }));
+    for (const toolName of [
+      'mcp__chan-cot__reply',
+      'channel-chan-cot.react',
+      'feishu.list_chat_bots',
+    ]) {
+      const [start] = toolCallStartEvents(
+        toolCall({
+          toolName: toolName,
+          action: null,
+          arguments: '{"chat_id":"oc_1","text":"hi"}',
+        }),
+      );
       expect(start!.content).toEqual({
         toolCallId: expect.any(String),
         toolCallName: toolName,
         icon: 'app-default_outlined',
       });
     }
-    const [result] = toolCallResultEvents(toolCall({
-      toolName: 'mcp__chan-cot__reply',
-      action: null,
-      status: 'completed',
-      arguments: '{"chat_id":"oc_1","text":"hi"}',
-      result: '{"message_ids":["om_1"]}',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        toolName: 'mcp__chan-cot__reply',
+        action: null,
+        status: 'completed',
+        arguments: '{"chat_id":"oc_1","text":"hi"}',
+        result: '{"message_ids":["om_1"]}',
+      }),
+    );
     // No fixed Completed line: a tool with no notation of its own shows its
     // whole structured input as JSON, and the output expands like any other
     // tool's — also a structured value, so also pretty-printed.
@@ -213,17 +281,23 @@ describe('runtime-labelled tool rows', () => {
         code: '{\n  "chat_id": "oc_1",\n  "text": "hi"\n}',
       },
       RESULT,
-      { type: 'code', language: 'json', code: '{\n  "message_ids": [\n    "om_1"\n  ]\n}' },
+      {
+        type: 'code',
+        language: 'json',
+        code: '{\n  "message_ids": [\n    "om_1"\n  ]\n}',
+      },
     ]);
   });
 
   it('expands a result into the invocation as a code segment and a text output as text', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'completed',
-      summary: 'Show working tree status',
-      invocation: 'git status --short',
-      result: ' M src/a.ts\n?? src/b.ts',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'completed',
+        summary: 'Show working tree status',
+        invocation: 'git status --short',
+        result: ' M src/a.ts\n?? src/b.ts',
+      }),
+    );
     expect(result!.content).toMatchObject({
       role: 'tool',
       content: [
@@ -236,16 +310,18 @@ describe('runtime-labelled tool rows', () => {
   });
 
   it('keeps the indentation and column alignment of a text output with no-break spaces', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'completed',
-      result: [
-        'DIST_TAGS={',
-        '  "latest": "0.23.0"',
-        '}',
-        'drwxr-xr-x  2 me  4096 src',
-        'a single space between words stays a space',
-      ].join('\n'),
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'completed',
+        result: [
+          'DIST_TAGS={',
+          '  "latest": "0.23.0"',
+          '}',
+          'drwxr-xr-x  2 me  4096 src',
+          'a single space between words stays a space',
+        ].join('\n'),
+      }),
+    );
     // Each space that begins a line or sits in a run of two or more becomes
     // U+00A0; the single spaces stay, so a long line still wraps at them.
     expect(segmentsOf(result!)).toEqual([
@@ -264,70 +340,112 @@ describe('runtime-labelled tool rows', () => {
   });
 
   it('measures the cut after the spaces were converted', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'completed',
-      result: '  x\n'.repeat(3_000),
-    }));
-    const shown = (segmentsOf(result!) as Array<{ type: string; text: string }>)[1]!;
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'completed',
+        result: '  x\n'.repeat(3_000),
+      }),
+    );
+    const shown = (
+      segmentsOf(result!) as Array<{ type: string; text: string }>
+    )[1]!;
     expect(shown.text.startsWith('\u00a0\u00a0x\n')).toBe(true);
     expect(shown.text.endsWith('… (truncated)')).toBe(true);
     // Two bytes per converted space, counted inside the event limit.
-    expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(
+      Buffer.byteLength(JSON.stringify(result!.content), 'utf8'),
+    ).toBeLessThanOrEqual(4_096);
   });
 
-  it.each(['', 'one', ...['\n', '\r\n'].flatMap((separator) => {
-    const ten = Array.from({ length: 10 }, (_, i) => `line-${i}`).join(separator);
-    return [ten, ten + separator];
-  })])('keeps at most ten content lines unchanged: %j', (output) => {
-    expect(toolResultOutput(output)).toEqual(output === '' ? null : { kind: 'text', text: output });
+  it.each([
+    '',
+    'one',
+    ...['\n', '\r\n'].flatMap((separator) => {
+      const ten = Array.from({ length: 10 }, (_, i) => `line-${i}`).join(
+        separator,
+      );
+      return [ten, ten + separator];
+    }),
+  ])('keeps at most ten content lines unchanged: %j', (output) => {
+    expect(toolResultOutput(output)).toEqual(
+      output === '' ? null : { kind: 'text', text: output },
+    );
   });
 
-  it.each(['\n', '\r\n'])('cuts the eleventh content line, including an empty one, with %j', (separator) => {
-    const ten = Array.from({ length: 10 }, (_, i) => `line-${i}`).join(separator);
-    for (const eleventh of ['line-eleven', separator]) {
-      const [event] = toolCallResultEvents(toolCall({
-        status: 'completed', result: ten + separator + eleventh,
-      }));
-      expect(segmentsOf(event!)).toEqual([
-        RESULT,
-        { type: 'text', text: ten + separator + '… (truncated)' },
-      ]);
-    }
-  });
-
-  it.each([Array.from({ length: 12 }, (_, i) => i), { values: Array.from({ length: 12 }, (_, i) => i) }])(
-    'keeps all lines of a JSON object or array', (value) => {
-      const [event] = toolCallResultEvents(toolCall({ status: 'completed', result: JSON.stringify(value) }));
-      expect(segmentsOf(event!)).toEqual([
-        RESULT,
-        { type: 'code', language: 'json', code: JSON.stringify(value, null, 2) },
-      ]);
+  it.each(['\n', '\r\n'])(
+    'cuts the eleventh content line, including an empty one, with %j',
+    (separator) => {
+      const ten = Array.from({ length: 10 }, (_, i) => `line-${i}`).join(
+        separator,
+      );
+      for (const eleventh of ['line-eleven', separator]) {
+        const [event] = toolCallResultEvents(
+          toolCall({
+            status: 'completed',
+            result: ten + separator + eleventh,
+          }),
+        );
+        expect(segmentsOf(event!)).toEqual([
+          RESULT,
+          { type: 'text', text: ten + separator + '… (truncated)' },
+        ]);
+      }
     },
   );
+
+  it.each([
+    Array.from({ length: 12 }, (_, i) => i),
+    { values: Array.from({ length: 12 }, (_, i) => i) },
+  ])('keeps all lines of a JSON object or array', (value) => {
+    const [event] = toolCallResultEvents(
+      toolCall({ status: 'completed', result: JSON.stringify(value) }),
+    );
+    expect(segmentsOf(event!)).toEqual([
+      RESULT,
+      { type: 'code', language: 'json', code: JSON.stringify(value, null, 2) },
+    ]);
+  });
 
   it('treats a JSON scalar with multiline whitespace as text and cuts its source lines', () => {
     const scalar = '42' + '\n'.repeat(11);
     expect(JSON.parse(scalar)).toBe(42);
-    expect(toolResultOutput(scalar)).toEqual({ kind: 'text', text: '42' + '\n'.repeat(10) + '… (truncated)' });
+    expect(toolResultOutput(scalar)).toEqual({
+      kind: 'text',
+      text: '42' + '\n'.repeat(10) + '… (truncated)',
+    });
   });
 
   it.each([
     '  ' + '界'.repeat(2_000) + '\nshort'.repeat(10),
-    JSON.stringify({ values: Array.from({ length: 12 }, () => '界'.repeat(1_000)) }),
-  ])('still applies the event byte limit after classification and line cutting', (output) => {
-    const [event] = toolCallResultEvents(toolCall({ status: 'completed', result: output }));
-    const shown = (segmentsOf(event!) as Array<{ text?: string; code?: string }>)[1]!;
-    expect(shown.text ?? shown.code).toContain('… (truncated)');
-    expect(Buffer.byteLength(JSON.stringify(event!.content), 'utf8')).toBeLessThanOrEqual(4_096);
-  });
+    JSON.stringify({
+      values: Array.from({ length: 12 }, () => '界'.repeat(1_000)),
+    }),
+  ])(
+    'still applies the event byte limit after classification and line cutting',
+    (output) => {
+      const [event] = toolCallResultEvents(
+        toolCall({ status: 'completed', result: output }),
+      );
+      const shown = (
+        segmentsOf(event!) as Array<{ text?: string; code?: string }>
+      )[1]!;
+      expect(shown.text ?? shown.code).toContain('… (truncated)');
+      expect(
+        Buffer.byteLength(JSON.stringify(event!.content), 'utf8'),
+      ).toBeLessThanOrEqual(4_096);
+    },
+  );
 
   it('pretty-prints an output that parses as JSON in a json code segment, its spaces untouched', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      toolName: 'mcp__teammate__spawn',
-      action: null,
-      status: 'completed',
-      result: '{"teammate":{"name":"tm-1","status":"running"},"status":"submitted"}',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        toolName: 'mcp__teammate__spawn',
+        action: null,
+        status: 'completed',
+        result:
+          '{"teammate":{"name":"tm-1","status":"running"},"status":"submitted"}',
+      }),
+    );
     expect(segmentsOf(result!)).toEqual([
       RESULT,
       {
@@ -348,73 +466,100 @@ describe('runtime-labelled tool rows', () => {
 
   it('shows an output that is not a JSON object or array as text, a bare scalar included', () => {
     for (const output of ['42', 'true', 'ok', '{"unterminated": 1']) {
-      const [result] = toolCallResultEvents(toolCall({ status: 'completed', result: output }));
-      expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: output }]);
+      const [result] = toolCallResultEvents(
+        toolCall({ status: 'completed', result: output }),
+      );
+      expect(segmentsOf(result!)).toEqual([
+        RESULT,
+        { type: 'text', text: output },
+      ]);
     }
   });
 
   it("cuts a long single-line output at Feishu's per-event content limit, with the marker", () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'completed',
-      result: 'x'.repeat(10_000),
-    }));
-    const shown = (segmentsOf(result!) as Array<{ type: string; text: string }>)[1]!;
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'completed',
+        result: 'x'.repeat(10_000),
+      }),
+    );
+    const shown = (
+      segmentsOf(result!) as Array<{ type: string; text: string }>
+    )[1]!;
     expect(shown.type).toBe('text');
     expect(shown.text.endsWith('… (truncated)')).toBe(true);
     // Past the old 1,024-byte soft cap, inside the 4,096-byte event limit.
     expect(Buffer.byteLength(shown.text, 'utf8')).toBeGreaterThan(1_024);
-    expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(
+      Buffer.byteLength(JSON.stringify(result!.content), 'utf8'),
+    ).toBeLessThanOrEqual(4_096);
   });
 
-  it("passes a long title through whole and cuts it only at the event limit", () => {
+  it('passes a long title through whole and cuts it only at the event limit', () => {
     const long = 'Run the whole suite '.repeat(40).trim();
     const [start] = toolCallStartEvents(toolCall({ summary: long }));
     expect(start!.content).toMatchObject({ title: long });
-    const [huge] = toolCallStartEvents(toolCall({ summary: 't'.repeat(10_000) }));
+    const [huge] = toolCallStartEvents(
+      toolCall({ summary: 't'.repeat(10_000) }),
+    );
     const title = (huge!.content as { title: string }).title;
     expect(title.endsWith('… (truncated)')).toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(huge!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(
+      Buffer.byteLength(JSON.stringify(huge!.content), 'utf8'),
+    ).toBeLessThanOrEqual(4_096);
   });
 
   it('shows the files a read was about as pills, and nothing else', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      toolName: 'Read',
-      action: 'read',
-      status: 'completed',
-      summary: 'src/a.ts',
-      items: ['src/a.ts'],
-      result: 'export const a = 1;',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        toolName: 'Read',
+        action: 'read',
+        status: 'completed',
+        summary: 'src/a.ts',
+        items: ['src/a.ts'],
+        result: 'export const a = 1;',
+      }),
+    );
     expect(result!.content).toMatchObject({
       content: { type: 'list', items: [{ text: 'src/a.ts', icon: 'read' }] },
     });
   });
 
   it('shows the files a patch touched as pills, without the diff or the output', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      toolName: 'apply_patch',
-      action: 'edit',
-      status: 'completed',
-      summary: 'src/a.ts, src/b.ts',
-      invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
-      items: ['src/a.ts', 'src/b.ts'],
-      result: 'applied',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        toolName: 'apply_patch',
+        action: 'edit',
+        status: 'completed',
+        summary: 'src/a.ts, src/b.ts',
+        invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
+        items: ['src/a.ts', 'src/b.ts'],
+        result: 'applied',
+      }),
+    );
     expect(result!.content).toMatchObject({
-      content: { type: 'list', items: [{ text: 'src/a.ts', icon: 'write' }, { text: 'src/b.ts', icon: 'write' }] },
+      content: {
+        type: 'list',
+        items: [
+          { text: 'src/a.ts', icon: 'write' },
+          { text: 'src/b.ts', icon: 'write' },
+        ],
+      },
     });
   });
 
   it('shows a failed edit as its pills alone, like the one that succeeded', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      toolName: 'Edit',
-      action: 'edit',
-      status: 'failed',
-      summary: 'src/a.ts',
-      invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
-      items: ['src/a.ts'],
-      result: 'file not found',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        toolName: 'Edit',
+        action: 'edit',
+        status: 'failed',
+        summary: 'src/a.ts',
+        invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
+        items: ['src/a.ts'],
+        result: 'file not found',
+      }),
+    );
     // A call that named what it was about is presented by that list, whatever
     // its status: the pills already say what it touched, and the client cannot
     // fold the diff away beside them.
@@ -426,59 +571,97 @@ describe('runtime-labelled tool rows', () => {
 
   it('truncates a first item longer than the whole pill budget into one pill instead of hiding it', () => {
     const long = `packages/example/src/${'deeply-nested-'.repeat(50)}module.ts`;
-    const [result] = toolCallResultEvents(toolCall({
-      action: 'edit',
-      status: 'completed',
-      items: [long, 'src/b.ts'],
-    }));
-    const list = (result!.content as { content: { type: string; items: Array<{ text: string }>; more?: { text: string } } }).content;
+    const [result] = toolCallResultEvents(
+      toolCall({
+        action: 'edit',
+        status: 'completed',
+        items: [long, 'src/b.ts'],
+      }),
+    );
+    const list = (
+      result!.content as {
+        content: {
+          type: string;
+          items: Array<{ text: string }>;
+          more?: { text: string };
+        };
+      }
+    ).content;
     expect(list.type).toBe('list');
     expect(list.items).toHaveLength(1);
     expect(list.items[0]!.text.endsWith('… (truncated)')).toBe(true);
-    expect(Buffer.byteLength(list.items[0]!.text, 'utf8')).toBeLessThanOrEqual(512);
+    expect(Buffer.byteLength(list.items[0]!.text, 'utf8')).toBeLessThanOrEqual(
+      512,
+    );
     expect(list.more).toEqual({ text: '+1' });
   });
 
   it('folds the files past the pill budget into one +N pill', () => {
-    const paths = Array.from({ length: 40 }, (_, i) => `packages/example/src/deeply/nested/module-${String(i).padStart(2, '0')}.ts`);
-    const [result] = toolCallResultEvents(toolCall({
-      action: 'edit',
-      status: 'completed',
-      items: paths,
-    }));
-    const list = (result!.content as { content: { type: string; items?: unknown[]; more?: { text: string } } }).content;
+    const paths = Array.from(
+      { length: 40 },
+      (_, i) =>
+        `packages/example/src/deeply/nested/module-${String(i).padStart(2, '0')}.ts`,
+    );
+    const [result] = toolCallResultEvents(
+      toolCall({
+        action: 'edit',
+        status: 'completed',
+        items: paths,
+      }),
+    );
+    const list = (
+      result!.content as {
+        content: { type: string; items?: unknown[]; more?: { text: string } };
+      }
+    ).content;
     expect(list.type).toBe('list');
     expect(list.items!.length).toBeGreaterThan(0);
     expect(list.items!.length).toBeLessThan(paths.length);
-    expect(list.more).toEqual({ text: `+${paths.length - list.items!.length}` });
+    expect(list.more).toEqual({
+      text: `+${paths.length - list.items!.length}`,
+    });
   });
 
   it.each([
-    { output: 'command failed', segment: { type: 'text', text: 'command failed' } },
+    {
+      output: 'command failed',
+      segment: { type: 'text', text: 'command failed' },
+    },
     {
       output: '{"error":"command failed"}',
-      segment: { type: 'code', language: 'json', code: '{\n  "error": "command failed"\n}' },
+      segment: {
+        type: 'code',
+        language: 'json',
+        code: '{\n  "error": "command failed"\n}',
+      },
     },
-  ])('shows the actual failure output without an extra status line: $output', ({ output, segment }) => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'failed',
-      summary: 'Run the tests',
-      invocation: 'npm test',
-      result: output,
-    }));
-    expect(segmentsOf(result!)).toEqual([
-      { type: 'code', language: 'bash', code: 'npm test' },
-      RESULT,
-      segment,
-    ]);
-  });
+  ])(
+    'shows the actual failure output without an extra status line: $output',
+    ({ output, segment }) => {
+      const [result] = toolCallResultEvents(
+        toolCall({
+          status: 'failed',
+          summary: 'Run the tests',
+          invocation: 'npm test',
+          result: output,
+        }),
+      );
+      expect(segmentsOf(result!)).toEqual([
+        { type: 'code', language: 'bash', code: 'npm test' },
+        RESULT,
+        segment,
+      ]);
+    },
+  );
 
   it('still opens a result area for a failure that returned no output', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'failed',
-      summary: 'Run the tests',
-      invocation: 'npm test',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'failed',
+        summary: 'Run the tests',
+        invocation: 'npm test',
+      }),
+    );
     expect(segmentsOf(result!)).toEqual([
       { type: 'code', language: 'bash', code: 'npm test' },
       RESULT,
@@ -496,14 +679,19 @@ describe('runtime-labelled tool rows', () => {
 
   it('shows Complete in the result area when a call succeeded with nothing to show', () => {
     const [result] = toolCallResultEvents(toolCall({ status: 'completed' }));
-    expect(segmentsOf(result!)).toEqual([RESULT, { type: 'text', text: 'Complete' }]);
+    expect(segmentsOf(result!)).toEqual([
+      RESULT,
+      { type: 'text', text: 'Complete' },
+    ]);
   });
 
   it('shows Complete after the arguments when a call succeeded and returned nothing', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'completed',
-      invocation: 'git add -A',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'completed',
+        invocation: 'git add -A',
+      }),
+    );
     expect(segmentsOf(result!)).toEqual([
       { type: 'code', language: 'bash', code: 'git add -A' },
       RESULT,
@@ -512,37 +700,45 @@ describe('runtime-labelled tool rows', () => {
   });
 
   it('prefers the invocation to the full arguments for every tool, not only Bash', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      toolName: 'Agent',
-      action: null,
-      status: 'completed',
-      summary: 'Review the diff',
-      invocation: 'Review the diff and report only real defects.',
-      arguments: JSON.stringify({
-        description: 'Review the diff',
-        prompt: 'Review the diff and report only real defects.',
-        subagent_type: 'general-purpose',
+    const [result] = toolCallResultEvents(
+      toolCall({
+        toolName: 'Agent',
+        action: null,
+        status: 'completed',
+        summary: 'Review the diff',
+        invocation: 'Review the diff and report only real defects.',
+        arguments: JSON.stringify({
+          description: 'Review the diff',
+          prompt: 'Review the diff and report only real defects.',
+          subagent_type: 'general-purpose',
+        }),
+        result: 'no defects found',
       }),
-      result: 'no defects found',
-    }));
+    );
     // The prompt is what the call was; the JSON around it repeats the title
     // and adds routing nobody reads. `text`, because only a `run` action
     // claims to be a shell command line.
     expect(segmentsOf(result!)).toEqual([
-      { type: 'code', language: 'text', code: 'Review the diff and report only real defects.' },
+      {
+        type: 'code',
+        language: 'text',
+        code: 'Review the diff and report only real defects.',
+      },
       RESULT,
       { type: 'text', text: 'no defects found' },
     ]);
   });
 
   it('falls back to the structured input only when there is no invocation', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      toolName: 'mcp__probe__lookup',
-      action: null,
-      status: 'completed',
-      arguments: '{"id":7,"deep":{"on":true}}',
-      result: 'ok',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        toolName: 'mcp__probe__lookup',
+        action: null,
+        status: 'completed',
+        arguments: '{"id":7,"deep":{"on":true}}',
+        result: 'ok',
+      }),
+    );
     expect(segmentsOf(result!)).toEqual([
       {
         type: 'code',
@@ -557,12 +753,14 @@ describe('runtime-labelled tool rows', () => {
   it.each(['42', 'a bare string the runtime passed', '{"unterminated": 1'])(
     'shows structured input that is not an object or an array as text code: %j',
     (args) => {
-      const [result] = toolCallResultEvents(toolCall({
-        toolName: 'mcp__probe__lookup',
-        action: null,
-        status: 'completed',
-        arguments: args,
-      }));
+      const [result] = toolCallResultEvents(
+        toolCall({
+          toolName: 'mcp__probe__lookup',
+          action: null,
+          status: 'completed',
+          arguments: args,
+        }),
+      );
       expect(segmentsOf(result!)).toEqual([
         { type: 'code', language: 'text', code: args },
         RESULT,
@@ -575,11 +773,13 @@ describe('runtime-labelled tool rows', () => {
     // Core hands this layer the real command on purpose: a masked one is a
     // command nobody can judge. Nothing here rewrites paths or masks values.
     const command = 'echo "token: dummy" > /tmp/cot-output.txt';
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'completed',
-      invocation: command,
-      result: 'ok',
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'completed',
+        invocation: command,
+        result: 'ok',
+      }),
+    );
     expect(segmentsOf(result!)).toEqual([
       { type: 'code', language: 'bash', code: command },
       RESULT,
@@ -588,28 +788,44 @@ describe('runtime-labelled tool rows', () => {
   });
 
   it('fits a long argument and a long output into one event, cutting both', () => {
-    const [result] = toolCallResultEvents(toolCall({
-      status: 'failed',
-      invocation: `echo ${'界'.repeat(3_000)}`,
-      result: '界'.repeat(3_000),
-    }));
-    const shown = segmentsOf(result!) as Array<{ type: string; text?: string; code?: string }>;
-    expect(shown.map((segment) => segment.type)).toEqual(['code', 'text', 'text']);
+    const [result] = toolCallResultEvents(
+      toolCall({
+        status: 'failed',
+        invocation: `echo ${'界'.repeat(3_000)}`,
+        result: '界'.repeat(3_000),
+      }),
+    );
+    const shown = segmentsOf(result!) as Array<{
+      type: string;
+      text?: string;
+      code?: string;
+    }>;
+    expect(shown.map((segment) => segment.type)).toEqual([
+      'code',
+      'text',
+      'text',
+    ]);
     expect(shown[0]!.code!.endsWith('… (truncated)')).toBe(true);
     expect(shown[1]).toEqual(RESULT);
     expect(shown[2]!.text!.endsWith('… (truncated)')).toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(
+      Buffer.byteLength(JSON.stringify(result!.content), 'utf8'),
+    ).toBeLessThanOrEqual(4_096);
   });
 
   it('falls back to the status alone when even the pills do not fit', () => {
     // The known list-budget limitation: many short items pass the pill budget
     // and still overflow the event, and the row then says only how it ended.
-    const [result] = toolCallResultEvents(toolCall({
-      action: 'edit',
-      status: 'failed',
-      items: Array.from({ length: 150 }, (_, i) => `f${i}`),
-    }));
+    const [result] = toolCallResultEvents(
+      toolCall({
+        action: 'edit',
+        status: 'failed',
+        items: Array.from({ length: 150 }, (_, i) => `f${i}`),
+      }),
+    );
     expect(segmentsOf(result!)).toEqual({ type: 'text', text: 'Failed' });
-    expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(
+      Buffer.byteLength(JSON.stringify(result!.content), 'utf8'),
+    ).toBeLessThanOrEqual(4_096);
   });
 });

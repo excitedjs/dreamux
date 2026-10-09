@@ -260,6 +260,9 @@ jobs:
       # Enforce the issue #85 synchronous-blocking-IO ban (n/no-sync + import /
       # syntax backstops, shared via @excitedjs/eslint-config). src/** is a hard
       # error on any *Sync IO; tests/** is audited via reasoned disables.
+      # Each package's lint script also runs `prettier --check` against the
+      # repo-root /.prettierrc.json config, after ESLint; generated files and
+      # Markdown are excluded via the script's own CLI args.
       - name: rush lint
         run: node common/scripts/install-run-rush.js lint
       - name: install codex for live compatibility test

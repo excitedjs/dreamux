@@ -1,4 +1,7 @@
+import { renderLaunchdPlist, renderSystemdUnit } from '../src/daemon/unit.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { vi } from 'vitest';
+import * as filesystem from 'node:fs/promises';
 import {
   chmodSync,
   existsSync,
@@ -12,21 +15,18 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { parse as parsePlist } from 'plist';
 
-import { controlUserService } from '../src/daemon/service-control.js';
+import { controlUserService } from '../src/daemon/control.js';
 import { runDaemonInstall, runDaemonUninstall } from '../src/daemon/install.js';
 import {
   managedServiceEnvironment,
-  renderLaunchdPlist,
-  renderSystemdUnit,
   resolveServiceExecutable,
   withUserLocalBinPath,
   type ServiceNodeProbe,
-} from '../src/onboard/service.js';
-import type { CommandRunner } from '../src/onboard/types.js';
+} from '../src/daemon/environment.js';
+import type { CommandRunner } from '../src/platform/command-runner.js';
 import {
   buildServicePath,
   probeStandardExecDirs,
-  resetRuntimeConfig,
   stateRoot,
   standardExecDirs,
   systemExecDirs,
@@ -44,13 +44,18 @@ class FakeRunner implements CommandRunner {
   launchdLoaded = false;
   readonly calls: Call[] = [];
 
-  async run(command: string, args: string[], options: { dryRun?: boolean } = {}): Promise<void> {
+  async run(
+    command: string,
+    args: string[],
+    options: { dryRun?: boolean } = {},
+  ): Promise<void> {
     if (options.dryRun) return;
     this.calls.push({ command, args });
   }
 
   async check(command: string, args: string[]): Promise<boolean> {
-    if (command === 'launchctl' && args[0] === 'print') return this.launchdLoaded;
+    if (command === 'launchctl' && args[0] === 'print')
+      return this.launchdLoaded;
     return false;
   }
 
@@ -66,16 +71,19 @@ describe('daemon service control', () => {
     ['start', ['--user', 'start', 'dreamux.service']],
     ['stop', ['--user', 'stop', 'dreamux.service']],
     ['restart', ['--user', 'restart', 'dreamux.service']],
-  ] as const)('maps systemd %s to the right systemctl call', async (verb, args) => {
-    const runner = new FakeRunner();
-    const result = await controlUserService(verb, {
-      runner,
-      platform: 'linux',
-      homeDir: SYSTEMD_HOME,
-    });
-    expect(result.platform).toBe('systemd');
-    expect(runner.calls).toEqual([{ command: 'systemctl', args }]);
-  });
+  ] as const)(
+    'maps systemd %s to the right systemctl call',
+    async (verb, args) => {
+      const runner = new FakeRunner();
+      const result = await controlUserService(verb, {
+        runner,
+        platform: 'linux',
+        homeDir: SYSTEMD_HOME,
+      });
+      expect(result.platform).toBe('systemd');
+      expect(runner.calls).toEqual([{ command: 'systemctl', args }]);
+    },
+  );
 
   it('restarts a loaded launchd service with kickstart -k', async () => {
     const runner = new FakeRunner();
@@ -87,7 +95,10 @@ describe('daemon service control', () => {
       uid: 501,
     });
     expect(runner.calls).toEqual([
-      { command: 'launchctl', args: ['kickstart', '-k', 'gui/501/dev.excited.dreamux'] },
+      {
+        command: 'launchctl',
+        args: ['kickstart', '-k', 'gui/501/dev.excited.dreamux'],
+      },
     ]);
   });
 
@@ -101,7 +112,10 @@ describe('daemon service control', () => {
       uid: 501,
     });
     expect(runner.calls).toEqual([
-      { command: 'launchctl', args: ['bootout', 'gui/501/dev.excited.dreamux'] },
+      {
+        command: 'launchctl',
+        args: ['bootout', 'gui/501/dev.excited.dreamux'],
+      },
     ]);
   });
 
@@ -120,7 +134,12 @@ describe('daemon service control', () => {
         args: [
           'bootstrap',
           'gui/501',
-          join(SYSTEMD_HOME, 'Library', 'LaunchAgents', 'dev.excited.dreamux.plist'),
+          join(
+            SYSTEMD_HOME,
+            'Library',
+            'LaunchAgents',
+            'dev.excited.dreamux.plist',
+          ),
         ],
       },
     ]);
@@ -144,19 +163,30 @@ describe('daemon uninstall (service-only)', () => {
     mkdirSync(unitDir, { recursive: true });
     writeFileSync(join(unitDir, 'dreamux.service'), '[Unit]\n');
 
-    const result = await runDaemonUninstall({ runner, platform: 'linux', homeDir: home });
+    const result = await runDaemonUninstall({
+      runner,
+      platform: 'linux',
+      homeDir: home,
+    });
 
     expect(result).toMatchObject({ platform: 'systemd', removed: true });
     expect(existsSync(join(unitDir, 'dreamux.service'))).toBe(false);
     expect(runner.calls).toEqual([
-      { command: 'systemctl', args: ['--user', 'disable', '--now', 'dreamux.service'] },
+      {
+        command: 'systemctl',
+        args: ['--user', 'disable', '--now', 'dreamux.service'],
+      },
       { command: 'systemctl', args: ['--user', 'daemon-reload'] },
     ]);
   });
 
   it('reports a missing unit without failing', async () => {
     const runner = new FakeRunner();
-    const result = await runDaemonUninstall({ runner, platform: 'linux', homeDir: home });
+    const result = await runDaemonUninstall({
+      runner,
+      platform: 'linux',
+      homeDir: home,
+    });
     expect(result).toMatchObject({ platform: 'systemd', removed: false });
   });
 });
@@ -168,14 +198,19 @@ class InstallRunner implements CommandRunner {
   readonly calls: Call[] = [];
   lingerEnableOk = true;
 
-  async run(command: string, args: string[], options: { dryRun?: boolean } = {}): Promise<void> {
+  async run(
+    command: string,
+    args: string[],
+    options: { dryRun?: boolean } = {},
+  ): Promise<void> {
     if (options.dryRun) return;
     this.calls.push({ command, args });
   }
 
   async check(command: string, args: string[]): Promise<boolean> {
     if (args[0] === '--help') return true;
-    if (command === 'loginctl' && args[0] === 'enable-linger') return this.lingerEnableOk;
+    if (command === 'loginctl' && args[0] === 'enable-linger')
+      return this.lingerEnableOk;
     return false;
   }
 
@@ -217,17 +252,16 @@ describe('managed service working directory ownership', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-service-working-dir-'));
     oldHome = process.env['HOME'];
-    oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
+    oldConfigDir = process.env['DREAMUX_ROOT'];
     process.env['HOME'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
-    process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
+    process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
   });
 
   afterEach(() => {
     restoreEnv('HOME', oldHome);
-    restoreEnv('DREAMUX_CONFIG_DIR', oldConfigDir);
-    resetRuntimeConfig();
+    restoreEnv('DREAMUX_ROOT', oldConfigDir);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -270,7 +304,6 @@ describe('managed service working directory ownership', () => {
   it('reports the missing working directory without creating it on dry-run', async () => {
     const workingDirectory = stateRoot();
     const runner = new WorkingDirectoryOrderRunner(workingDirectory);
-    const probed: string[] = [];
 
     const result = await runDaemonInstall({
       runner,
@@ -278,15 +311,11 @@ describe('managed service working directory ownership', () => {
       homeDir: join(root, 'home'),
       dryRun: true,
       env: { ...process.env },
-      execDirProbe: async (path) => {
-        probed.push(path);
-        return false;
-      },
     });
 
     expect(existsSync(workingDirectory)).toBe(false);
     expect(runner.registrationChecks).toEqual([]);
-    expect(probed).toEqual([LINUXBREW_BIN]);
+
     expect(result.files).toContainEqual({
       path: workingDirectory,
       status: 'created',
@@ -336,17 +365,16 @@ describe('daemon install (stable service Node, issue #83)', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-daemon-install-'));
     oldHome = process.env['HOME'];
-    oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
+    oldConfigDir = process.env['DREAMUX_ROOT'];
     process.env['HOME'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
-    process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
+    process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
   });
 
   afterEach(() => {
     restoreEnv('HOME', oldHome);
-    restoreEnv('DREAMUX_CONFIG_DIR', oldConfigDir);
-    resetRuntimeConfig();
+    restoreEnv('DREAMUX_ROOT', oldConfigDir);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -408,10 +436,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
 const localBin = (home: string) => join(home, '.local', 'bin');
 const LINUXBREW_BIN = '/home/linuxbrew/.linuxbrew/bin';
 
-function linuxFallbackDirs(
-  home: string,
-  includeLinuxbrew = false,
-): string[] {
+function linuxFallbackDirs(home: string, includeLinuxbrew = false): string[] {
   return [
     ...standardExecDirs({ platform: 'linux', homeDir: home, env: {} }),
     ...(includeLinuxbrew ? [LINUXBREW_BIN] : []),
@@ -502,27 +527,47 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
   it('userLocalBinDirs honors XDG_BIN_HOME then $HOME/.local/bin', () => {
     const home = '/home/example';
     // Without XDG_BIN_HOME: only $HOME/.local/bin.
-    expect(userLocalBinDirs({ platform: 'linux', homeDir: home, env: {} })).toEqual([
-      localBin(home),
-    ]);
+    expect(
+      userLocalBinDirs({ platform: 'linux', homeDir: home, env: {} }),
+    ).toEqual([localBin(home)]);
     // With XDG_BIN_HOME: it leads, then $HOME/.local/bin.
     expect(
-      userLocalBinDirs({ platform: 'linux', homeDir: home, env: { XDG_BIN_HOME: '/opt/userbin' } }),
+      userLocalBinDirs({
+        platform: 'linux',
+        homeDir: home,
+        env: { XDG_BIN_HOME: '/opt/userbin' },
+      }),
     ).toEqual(['/opt/userbin', localBin(home)]);
     // Empty XDG_BIN_HOME is treated as unset.
     expect(
-      userLocalBinDirs({ platform: 'linux', homeDir: home, env: { XDG_BIN_HOME: '' } }),
+      userLocalBinDirs({
+        platform: 'linux',
+        homeDir: home,
+        env: { XDG_BIN_HOME: '' },
+      }),
     ).toEqual([localBin(home)]);
   });
 
   it('systemExecDirs are deterministic and exclude optional Homebrew prefixes', () => {
-    expect(systemExecDirs('darwin')).toEqual(['/usr/local/bin', '/usr/bin', '/bin']);
-    expect(systemExecDirs('linux')).toEqual(['/usr/local/bin', '/usr/bin', '/bin']);
+    expect(systemExecDirs('darwin')).toEqual([
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+    ]);
+    expect(systemExecDirs('linux')).toEqual([
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+    ]);
   });
 
   it('standardExecDirs combines user-local + system in order', () => {
     const home = '/home/example';
-    const dirs = standardExecDirs({ platform: 'linux', homeDir: home, env: {} });
+    const dirs = standardExecDirs({
+      platform: 'linux',
+      homeDir: home,
+      env: {},
+    });
     expect(dirs).toEqual([
       localBin(home),
       '/usr/local/bin',
@@ -533,40 +578,24 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
 
   it('adds the platform Homebrew candidate only when the async probe finds it', async () => {
     const home = '/home/example';
-    const absentProbes: string[] = [];
-    await expect(
-      probeStandardExecDirs(
-        { platform: 'linux', homeDir: home, env: {} },
-        async (path) => {
-          absentProbes.push(path);
-          return false;
-        },
-      ),
-    ).resolves.toEqual(linuxFallbackDirs(home));
-    expect(absentProbes).toEqual([LINUXBREW_BIN]);
 
-    const presentProbes: string[] = [];
     await expect(
-      probeStandardExecDirs(
-        { platform: 'linux', homeDir: home, env: {} },
-        async (path) => {
-          presentProbes.push(path);
-          return true;
-        },
-      ),
+      probeStandardExecDirs({ platform: 'linux', homeDir: home, env: {} }),
+    ).resolves.toEqual(linuxFallbackDirs(home));
+
+    homebrewPresent = true;
+    await expect(
+      probeStandardExecDirs({ platform: 'linux', homeDir: home, env: {} }),
     ).resolves.toEqual(linuxFallbackDirs(home, true));
-    expect(presentProbes).toEqual([LINUXBREW_BIN]);
 
     const darwinHome = '/Users/example';
-    const darwinProbes: string[] = [];
+
     await expect(
-      probeStandardExecDirs(
-        { platform: 'darwin', homeDir: darwinHome, env: {} },
-        async (path) => {
-          darwinProbes.push(path);
-          return true;
-        },
-      ),
+      probeStandardExecDirs({
+        platform: 'darwin',
+        homeDir: darwinHome,
+        env: {},
+      }),
     ).resolves.toEqual([
       localBin(darwinHome),
       '/usr/local/bin',
@@ -574,7 +603,6 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
       '/bin',
       '/opt/homebrew/bin',
     ]);
-    expect(darwinProbes).toEqual(['/opt/homebrew/bin']);
   });
 });
 
@@ -651,7 +679,6 @@ describe('provider binary resolution from captured session PATH', () => {
     delete process.env['DREAMUX_ROOT'];
     if (oldPath === undefined) delete process.env['PATH'];
     else process.env['PATH'] = oldPath;
-    resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -670,10 +697,7 @@ describe('provider binary resolution from captured session PATH', () => {
     // With the session PATH captured via withUserLocalBinPath, it resolves.
     const resolved = await resolveServiceExecutable(
       'local-agent',
-      withUserLocalBinPath(
-        { PATH: sessionPath },
-        linuxFallbackDirs(home),
-      ),
+      withUserLocalBinPath({ PATH: sessionPath }, linuxFallbackDirs(home)),
     );
     expect(resolved).toBe(binPath);
   });
@@ -685,10 +709,7 @@ describe('provider binary resolution from captured session PATH', () => {
     // Session PATH does not include .local/bin; the fallback dirs do.
     const resolved = await resolveServiceExecutable(
       'local-agent',
-      withUserLocalBinPath(
-        { PATH: '/usr/bin:/bin' },
-        linuxFallbackDirs(home),
-      ),
+      withUserLocalBinPath({ PATH: '/usr/bin:/bin' }, linuxFallbackDirs(home)),
     );
     expect(resolved).toBe(binPath);
   });
@@ -699,7 +720,6 @@ describe('captured session PATH appears in systemd and launchd service config', 
 
   function baseAnswers(env: NodeJS.ProcessEnv) {
     return {
-      configDir: join(home, '.dreamux'),
       dreamuxBin: '/usr/local/bin/dreamux',
       nodeBin: '/usr/local/bin/node',
       providerBinChecks: [],
@@ -717,10 +737,11 @@ describe('captured session PATH appears in systemd and launchd service config', 
       '/tmp/stdout.log',
       '/tmp/stderr.log',
     );
-    const pathLine = unit
-      .split('\n')
-      .find((l) => l.startsWith('Environment=PATH='))
-      ?.slice('Environment=PATH='.length) ?? '';
+    const pathLine =
+      unit
+        .split('\n')
+        .find((l) => l.startsWith('Environment=PATH='))
+        ?.slice('Environment=PATH='.length) ?? '';
     const parts = pathLine.split(delimiter);
     // Stable dirs lead.
     expect(parts[0]).toBe('/usr/local/bin'); // dirname(nodeBin)
@@ -764,19 +785,18 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-rerun-path-'));
     oldHome = process.env['HOME'];
-    oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
+    oldConfigDir = process.env['DREAMUX_ROOT'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
-    process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
+    process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
   });
 
   afterEach(() => {
     restoreEnv('HOME', oldHome);
-    restoreEnv('DREAMUX_CONFIG_DIR', oldConfigDir);
+    restoreEnv('DREAMUX_ROOT', oldConfigDir);
     restoreEnv('PATH', oldPath);
-    resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -785,7 +805,9 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    const line = unit.split('\n').find((l) => l.startsWith('Environment=PATH='));
+    const line = unit
+      .split('\n')
+      .find((l) => l.startsWith('Environment=PATH='));
     return line?.slice('Environment=PATH='.length) ?? '';
   }
 
@@ -798,9 +820,10 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
     const home = join(root, 'home');
 
     // First install with session PATH A.
-    const pathA = [join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'), '/usr/bin'].join(
-      delimiter,
-    );
+    const pathA = [
+      join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'),
+      '/usr/bin',
+    ].join(delimiter);
     await runDaemonInstall({
       runner,
       platform: 'linux',
@@ -809,12 +832,15 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
       env: { PATH: pathA, HOME: home, CODEX_HOST_CODEX_BIN: process.execPath },
     });
     const unitPathA = readUnitPath();
-    expect(unitPathA).toContain(join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'));
+    expect(unitPathA).toContain(
+      join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'),
+    );
 
     // Second install with session PATH B (different nvm version).
-    const pathB = [join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin'), '/usr/bin'].join(
-      delimiter,
-    );
+    const pathB = [
+      join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin'),
+      '/usr/bin',
+    ].join(delimiter);
     await runDaemonInstall({
       runner,
       platform: 'linux',
@@ -823,8 +849,12 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
       env: { PATH: pathB, HOME: home, CODEX_HOST_CODEX_BIN: process.execPath },
     });
     const unitPathB = readUnitPath();
-    expect(unitPathB).toContain(join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin'));
-    expect(unitPathB).not.toContain(join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'));
+    expect(unitPathB).toContain(
+      join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin'),
+    );
+    expect(unitPathB).not.toContain(
+      join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'),
+    );
     expect(unitPathB).not.toBe(unitPathA);
   });
 
@@ -840,7 +870,6 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
       HOME: home,
       CODEX_HOST_CODEX_BIN: process.execPath,
     };
-    const probes: string[] = [];
 
     await runDaemonInstall({
       runner,
@@ -848,27 +877,19 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
       homeDir: home,
       nodeProbe,
       env,
-      execDirProbe: async (path) => {
-        probes.push(path);
-        return false;
-      },
     });
-    expect(probes).toEqual([LINUXBREW_BIN]);
+
     expect(readUnitPath().split(delimiter)).not.toContain(LINUXBREW_BIN);
 
-    probes.length = 0;
+    homebrewPresent = true;
     await runDaemonInstall({
       runner,
       platform: 'linux',
       homeDir: home,
       nodeProbe,
       env,
-      execDirProbe: async (path) => {
-        probes.push(path);
-        return true;
-      },
     });
-    expect(probes).toEqual([LINUXBREW_BIN]);
+
     expect(readUnitPath().split(delimiter)).toContain(LINUXBREW_BIN);
   });
 });
@@ -887,12 +908,12 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-ambient-path-'));
     oldHome = process.env['HOME'];
-    oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
+    oldConfigDir = process.env['DREAMUX_ROOT'];
     oldPath = process.env['PATH'];
     oldCodexBin = process.env['CODEX_HOST_CODEX_BIN'];
     process.env['HOME'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
-    process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
+    process.env['DREAMUX_ROOT'] = join(root, 'config');
     // Normal CLI use: the host codex binary is in the ambient environment.
     process.env['CODEX_HOST_CODEX_BIN'] = process.execPath;
     writeInstallConfig(join(root, 'config'));
@@ -900,10 +921,9 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
 
   afterEach(() => {
     restoreEnv('HOME', oldHome);
-    restoreEnv('DREAMUX_CONFIG_DIR', oldConfigDir);
+    restoreEnv('DREAMUX_ROOT', oldConfigDir);
     restoreEnv('PATH', oldPath);
     restoreEnv('CODEX_HOST_CODEX_BIN', oldCodexBin);
-    resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -918,7 +938,9 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
     // the captured session PATH, not from standardExecDirs.
     const nvmBin = join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin');
     const pyenvShims = join(home, '.pyenv', 'shims');
-    process.env['PATH'] = [nvmBin, pyenvShims, '/usr/bin', '/bin'].join(delimiter);
+    process.env['PATH'] = [nvmBin, pyenvShims, '/usr/bin', '/bin'].join(
+      delimiter,
+    );
 
     // No env option: normal CLI use falls back to process.env.
     await runDaemonInstall({
@@ -946,7 +968,9 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
     const home = join(root, 'home');
     const nvmBin = join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin');
     const pyenvShims = join(home, '.pyenv', 'shims');
-    process.env['PATH'] = [nvmBin, pyenvShims, '/usr/bin', '/bin'].join(delimiter);
+    process.env['PATH'] = [nvmBin, pyenvShims, '/usr/bin', '/bin'].join(
+      delimiter,
+    );
 
     // No env option: normal CLI use falls back to process.env.
     await runDaemonInstall({
@@ -957,8 +981,16 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
       uid: 501,
     });
 
-    const plistPath = join(home, 'Library', 'LaunchAgents', 'dev.excited.dreamux.plist');
-    const plist = parsePlist(readFileSync(plistPath, 'utf8')) as Record<string, any>;
+    const plistPath = join(
+      home,
+      'Library',
+      'LaunchAgents',
+      'dev.excited.dreamux.plist',
+    );
+    const plist = parsePlist(readFileSync(plistPath, 'utf8')) as Record<
+      string,
+      any
+    >;
     const servicePath: string = plist['EnvironmentVariables']['PATH'] ?? '';
     const parts = servicePath.split(delimiter);
     expect(parts[0]).toBe(dirname(process.execPath));
@@ -974,7 +1006,14 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
       isExecutable: async () => false,
     };
     const home = join(root, 'home');
-    const explicitNvm = join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin');
+    const explicitNvm = join(
+      home,
+      '.nvm',
+      'versions',
+      'node',
+      'v24.1.0',
+      'bin',
+    );
     const explicitEnv = {
       PATH: [explicitNvm, '/usr/bin', '/bin'].join(delimiter),
       HOME: home,
@@ -993,7 +1032,9 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
     // Explicit env PATH is captured.
     expect(unitPath).toContain(explicitNvm);
     // Ambient process.env PATH (set in a different test) is NOT leaked in.
-    expect(unitPath).not.toContain(join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'));
+    expect(unitPath).not.toContain(
+      join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'),
+    );
   });
 });
 
@@ -1006,22 +1047,21 @@ describe('daemon install resolves bare provider bins and includes them in the se
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-provider-bin-'));
     oldHome = process.env['HOME'];
-    oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
+    oldConfigDir = process.env['DREAMUX_ROOT'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
-    process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
+    process.env['DREAMUX_ROOT'] = join(root, 'config');
   });
 
   afterEach(() => {
     if (oldHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = oldHome;
     delete process.env['DREAMUX_ROOT'];
-    if (oldConfigDir === undefined) delete process.env['DREAMUX_CONFIG_DIR'];
-    else process.env['DREAMUX_CONFIG_DIR'] = oldConfigDir;
+    if (oldConfigDir === undefined) delete process.env['DREAMUX_ROOT'];
+    else process.env['DREAMUX_ROOT'] = oldConfigDir;
     if (oldPath === undefined) delete process.env['PATH'];
     else process.env['PATH'] = oldPath;
-    resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -1054,7 +1094,9 @@ describe('daemon install resolves bare provider bins and includes them in the se
     expect(servicePath).toContain(localBin(home));
     expect(servicePath).toContain(dirname(process.execPath));
     // De-duplicated: the user-local bin dir appears exactly once.
-    expect(servicePath.split(delimiter).filter((p) => p === localBin(home))).toHaveLength(1);
+    expect(
+      servicePath.split(delimiter).filter((p) => p === localBin(home)),
+    ).toHaveLength(1);
     expect(binPath).toBe(join(localBin(home), 'local-agent'));
   });
 });
@@ -1103,3 +1145,26 @@ function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
 }
+
+// Control only the external filesystem entries; production PATH discovery runs unchanged.
+let homebrewPresent = false;
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...real, access: vi.fn(real.access) };
+});
+const actualAccess = (
+  await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+).access;
+beforeEach(() => {
+  homebrewPresent = false;
+  vi.spyOn(filesystem, 'access').mockImplementation(async (path, mode) => {
+    if (path === LINUXBREW_BIN || path === '/opt/homebrew/bin') {
+      if (homebrewPresent) return;
+      throw Object.assign(new Error('missing Homebrew fixture'), {
+        code: 'ENOENT',
+      });
+    }
+    return actualAccess(path, mode);
+  });
+});
+afterEach(() => vi.restoreAllMocks());

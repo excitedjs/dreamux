@@ -10,12 +10,14 @@
  * lease already bound, and passes it as `requireOwner`, so the TeamLeader
  * handler can only ever act on routes that are free or already its own.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { makeToolSession } from './helpers/feishu-tool-session.js';
+import { FeishuSessionExtensions } from '../src/feishu-extensions.js';
+import { createFeishuLifecycle } from '../src/session/lifecycle.js';
 
 import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
 
-import type { FeishuChannelSession } from '../src/feishu-channel.js';
-import { createFeishuSessionMcp } from '../src/feishu-session-mcp.js';
+import { createFeishuSessionMcp } from '../src/tools/session-mcp.js';
 
 import {
   bindChannelDef,
@@ -42,11 +44,11 @@ interface RecordedBind {
   target: FeishuTarget;
   teamName: string;
   display: string | null;
-  requireOwner?: string;
+  requireOwner?: string | undefined;
 }
 interface RecordedUnbind {
   target: FeishuTarget;
-  requireOwner?: string;
+  requireOwner?: string | undefined;
 }
 
 function fakeSession(): FeishuToolSession & {
@@ -55,87 +57,65 @@ function fakeSession(): FeishuToolSession & {
 } {
   const binds: RecordedBind[] = [];
   const unbinds: RecordedUnbind[] = [];
-  return {
-    askUserQuestion: async () => ({ request_id: 'ask-1' }),
-    logger: {
-      error: () => undefined,
-      warn: () => undefined,
-      info: () => undefined,
-      debug: () => undefined,
-      trace: () => undefined,
-    },
-    channelId: 'chan-1',
-    async sendText() {
-      throw new Error('not used');
-    },
-    async react() {
-      throw new Error('not used');
-    },
-    async listKnownChatBots() {
-      throw new Error('not used');
-    },
-    async subscribeDocument() {
-      throw new Error('not used');
-    },
-    async unsubscribeDocument() {
-      throw new Error('not used');
-    },
-    listSubscriptions() {
-      return [];
-    },
-    async bindChannel(input) {
+  const tools = makeToolSession({
+    bindChannel: async (input) => {
       binds.push(input);
       return { team_name: input.teamName, previous_team_name: null };
     },
-    async unbindChannel(target, requireOwner) {
+    unbindChannel: async (target, requireOwner) => {
       unbinds.push({ target, requireOwner });
       return { team_name: 'released-team' };
     },
-    listBindings() {
-      return [];
-    },
-    async bindSpace() {
-      throw new Error('not used');
-    },
-    async unbindSpace() {
-      return null;
-    },
-    getSpace() {
-      return undefined;
-    },
-    listSpaces() {
-      return [];
-    },
-    binds,
-    unbinds,
-  };
+  });
+  return Object.assign(tools, { binds, unbinds });
 }
 
-function ctx(caller: ChannelMcpCaller, session: FeishuToolSession): FeishuToolContext {
+function ctx(
+  caller: ChannelMcpCaller,
+  session: FeishuToolSession,
+): FeishuToolContext {
   return { caller, session };
 }
 
 describe('bind_channel — Dispatcher vs TeamLeader are disjoint definitions', () => {
-  it.each([null, '', 'omt_topic'])('converts the wire thread id %s directly into the same bind and unbind target', async (threadId) => {
-    const session = fakeSession();
-    const raw = { chat_id: 'oc_target', thread_id: threadId, team_name: 'team-a' };
-    await bindChannelDef.handle(ctx(dispatcher, session), bindChannelDef.parse(raw));
-    await unbindChannelDef.handle(ctx(dispatcher, session), unbindChannelDef.parse(raw));
-    const target = threadId === null || threadId === ''
-      ? { kind: 'group', chatId: 'oc_target' }
-      : { kind: 'topic', chatId: 'oc_target', threadId };
-    expect(session.binds[0]!.target).toEqual(target);
-    expect(session.unbinds[0]!.target).toEqual(target);
-  });
+  it.each([null, '', 'omt_topic'])(
+    'converts the wire thread id %s directly into the same bind and unbind target',
+    async (threadId) => {
+      const session = fakeSession();
+      const raw = {
+        chat_id: 'oc_target',
+        thread_id: threadId,
+        team_name: 'team-a',
+      };
+      await bindChannelDef.handle(
+        ctx(dispatcher, session),
+        bindChannelDef.parse(raw),
+      );
+      await unbindChannelDef.handle(
+        ctx(dispatcher, session),
+        unbindChannelDef.parse(raw),
+      );
+      const target =
+        threadId === null || threadId === ''
+          ? { kind: 'group', chatId: 'oc_target' }
+          : { kind: 'topic', chatId: 'oc_target', threadId };
+      expect(session.binds[0]!.target).toEqual(target);
+      expect(session.unbinds[0]!.target).toEqual(target);
+    },
+  );
 
   it('the TeamLeader input schema has no team_name property at all', () => {
-    const props = (leaderBindChannelDef.inputSchema as { properties: Record<string, unknown> })
-      .properties;
+    const props = (
+      leaderBindChannelDef.inputSchema as {
+        properties: Record<string, unknown>;
+      }
+    ).properties;
     expect(Object.hasOwn(props, 'team_name')).toBe(false);
     // The Dispatcher schema does require one.
-    const dispatcherProps = (
-      bindChannelDef.inputSchema as { properties: Record<string, unknown>; required: string[] }
-    );
+    const dispatcherProps = bindChannelDef.inputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
     expect(dispatcherProps.required).toContain('team_name');
   });
 
@@ -182,12 +162,15 @@ describe('bind_channel — Dispatcher vs TeamLeader are disjoint definitions', (
 
 describe('unbind_channel — TeamLeader self-release', () => {
   it('the TeamLeader input schema has no team_name property', () => {
-    const props = (leaderUnbindChannelDef.inputSchema as { properties: Record<string, unknown> })
-      .properties;
+    const props = (
+      leaderUnbindChannelDef.inputSchema as {
+        properties: Record<string, unknown>;
+      }
+    ).properties;
     expect(Object.hasOwn(props, 'team_name')).toBe(false);
   });
 
-  it('the TeamLeader definition releases only its own Team\'s routes', async () => {
+  it("the TeamLeader definition releases only its own Team's routes", async () => {
     const session = fakeSession();
     const input = leaderUnbindChannelDef.parse({ chat_id: 'oc_mine' });
     await leaderUnbindChannelDef.handle(ctx(teamLeader, session), input);
@@ -203,7 +186,10 @@ describe('unbind_channel — TeamLeader self-release', () => {
     await unbindChannelDef.handle(ctx(dispatcher, session), input);
 
     expect(session.unbinds).toEqual([
-      { target: { kind: 'group', chatId: 'oc_anyones' }, requireOwner: undefined },
+      {
+        target: { kind: 'group', chatId: 'oc_anyones' },
+        requireOwner: undefined,
+      },
     ]);
   });
 });
@@ -218,7 +204,6 @@ describe('list_bindings — query parameters narrow one table read', () => {
     return {
       ...input,
       display: null,
-      origin: 'manual',
       space_name: null,
       created_at: 1,
       updated_at: 1,
@@ -226,15 +211,36 @@ describe('list_bindings — query parameters narrow one table read', () => {
   }
 
   const rows: readonly FeishuBindingView[] = [
-    row({ target_kind: 'group', chat_id: 'oc_space', thread_id: null, team_name: 'alpha' }),
-    row({ target_kind: 'topic', chat_id: 'oc_space', thread_id: 'omt_one', team_name: 'beta' }),
-    row({ target_kind: 'topic', chat_id: 'oc_space', thread_id: 'omt_two', team_name: 'alpha' }),
-    row({ target_kind: 'group', chat_id: 'oc_other', thread_id: null, team_name: 'beta' }),
+    row({
+      target_kind: 'group',
+      chat_id: 'oc_space',
+      thread_id: null,
+      team_name: 'alpha',
+    }),
+    row({
+      target_kind: 'topic',
+      chat_id: 'oc_space',
+      thread_id: 'omt_one',
+      team_name: 'beta',
+    }),
+    row({
+      target_kind: 'topic',
+      chat_id: 'oc_space',
+      thread_id: 'omt_two',
+      team_name: 'alpha',
+    }),
+    row({
+      target_kind: 'group',
+      chat_id: 'oc_other',
+      thread_id: null,
+      team_name: 'beta',
+    }),
   ];
 
   /** Each matched row as `chat_id#thread_id`, in table order. */
   async function matched(args: unknown): Promise<string[]> {
-    const session: FeishuToolSession = { ...fakeSession(), listBindings: () => rows };
+    const session = fakeSession();
+    vi.spyOn(session.routing, 'listBindings').mockReturnValue(rows);
     const result = await listBindingsDef.handle(
       ctx(dispatcher, session),
       listBindingsDef.parse(args),
@@ -254,7 +260,7 @@ describe('list_bindings — query parameters narrow one table read', () => {
     expect(await matched(undefined)).toHaveLength(4);
   });
 
-  it('team_name returns that Team\'s routes, and an empty answer for a Team with none', async () => {
+  it("team_name returns that Team's routes, and an empty answer for a Team with none", async () => {
     expect(await matched({ team_name: 'alpha' })).toEqual([
       'oc_space#',
       'oc_space#omt_two',
@@ -262,7 +268,7 @@ describe('list_bindings — query parameters narrow one table read', () => {
     expect(await matched({ team_name: 'no-such-team' })).toEqual([]);
   });
 
-  it('chat_id returns the chat\'s own row together with every topic under it', async () => {
+  it("chat_id returns the chat's own row together with every topic under it", async () => {
     expect(await matched({ chat_id: 'oc_space' })).toEqual([
       'oc_space#',
       'oc_space#omt_one',
@@ -271,7 +277,9 @@ describe('list_bindings — query parameters narrow one table read', () => {
   });
 
   it('thread_id pinpoints one topic', async () => {
-    expect(await matched({ thread_id: 'omt_one' })).toEqual(['oc_space#omt_one']);
+    expect(await matched({ thread_id: 'omt_one' })).toEqual([
+      'oc_space#omt_one',
+    ]);
   });
 
   it('target_kind is the only way to ask for whole-chat rows alone', async () => {
@@ -290,12 +298,15 @@ describe('list_bindings — query parameters narrow one table read', () => {
       'oc_space#',
       'oc_space#omt_two',
     ]);
-    expect(await matched({ chat_id: 'oc_other', team_name: 'alpha' })).toEqual([]);
+    expect(await matched({ chat_id: 'oc_other', team_name: 'alpha' })).toEqual(
+      [],
+    );
   });
 
   it('rejects a target_kind no binding can be installed with, naming what is accepted', () => {
-    expect(() => listBindingsDef.parse({ target_kind: 'p2p' }))
-      .toThrow(/target_kind must be one of: group, topic/);
+    expect(() => listBindingsDef.parse({ target_kind: 'p2p' })).toThrow(
+      /target_kind must be one of: group, topic/,
+    );
   });
 
   it('advertises the four filters as optional', () => {
@@ -316,37 +327,53 @@ describe('list_bindings — query parameters narrow one table read', () => {
     // The registry advertises `def.inputSchema` and resolves the same object to
     // serve the call, so this is what proves the schema a Dispatcher reads is
     // the one its arguments are parsed against.
-    const session: FeishuToolSession = { ...fakeSession(), listBindings: () => rows };
+    const session = fakeSession();
+    vi.spyOn(session.routing, 'listBindings').mockReturnValue(rows);
 
-    const result = await mcpFor(session).invoke({
-      name: 'list_bindings',
-      arguments: { team_name: 'alpha', target_kind: 'topic' },
-    }, { dispatcher_id: 'd1', channel_id: 'chan-1', caller: dispatcher });
+    const result = await mcpFor(session).invoke(
+      {
+        name: 'list_bindings',
+        arguments: { team_name: 'alpha', target_kind: 'topic' },
+      },
+      { dispatcher_id: 'd1', channel_id: 'chan-1', caller: dispatcher },
+    );
 
     expect(result).toMatchObject({
       ok: true,
       value: {
-        bindings: [expect.objectContaining({ chat_id: 'oc_space', thread_id: 'omt_two' })],
+        bindings: [
+          expect.objectContaining({
+            chat_id: 'oc_space',
+            thread_id: 'omt_two',
+          }),
+        ],
       },
     });
   });
 
   it('refuses a bad filter through the registered catalog without claiming success', async () => {
-    const result = await mcpFor(fakeSession()).invoke({
-      name: 'list_bindings',
-      arguments: { target_kind: 'p2p' },
-    }, { dispatcher_id: 'd1', channel_id: 'chan-1', caller: dispatcher });
+    const result = await mcpFor(fakeSession()).invoke(
+      {
+        name: 'list_bindings',
+        arguments: { target_kind: 'p2p' },
+      },
+      { dispatcher_id: 'd1', channel_id: 'chan-1', caller: dispatcher },
+    );
 
     expect(result).toMatchObject({
       ok: false,
-      message: expect.stringContaining('target_kind must be one of: group, topic'),
+      message: expect.stringContaining(
+        'target_kind must be one of: group, topic',
+      ),
     });
   });
 });
 
 function mcpFor(session: FeishuToolSession) {
   return createFeishuSessionMcp(
-    { toolSession: () => session } as unknown as FeishuChannelSession,
+    session,
+    new FeishuSessionExtensions(undefined, session.logger),
+    createFeishuLifecycle(),
     session.logger,
   );
 }
@@ -355,13 +382,16 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
   const context = { dispatcher_id: 'd1', channel_id: 'chan-1', caller };
 
   it('adds notification guidance alongside the successful binding value', async () => {
-    const result = await mcpFor(fakeSession()).invoke({
-      name: 'bind_channel',
-      arguments: {
-        chat_id: 'oc_target',
-        ...(caller.kind === 'dispatcher' ? { team_name: 'my-team' } : {}),
+    const result = await mcpFor(fakeSession()).invoke(
+      {
+        name: 'bind_channel',
+        arguments: {
+          chat_id: 'oc_target',
+          ...(caller.kind === 'dispatcher' ? { team_name: 'my-team' } : {}),
+        },
       },
-    }, context);
+      context,
+    );
 
     expect(result).toEqual({
       ok: true,
@@ -371,63 +401,93 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
         team_name: 'my-team',
         previous_team_name: null,
       },
-      text: expect.stringMatching(/^Binding succeeded\..*automatically.*notification card/),
+      text: expect.stringMatching(
+        /^Binding succeeded\..*automatically.*notification card/,
+      ),
     });
     expect(result).toMatchObject({
-      text: expect.stringContaining('no additional user notification is needed'),
+      text: expect.stringContaining(
+        'no additional user notification is needed',
+      ),
     });
   });
 
-  it.each(['my-team', null])('adds unbinding guidance only for a removed route (%s)', async (teamName) => {
-    const session = fakeSession();
-    session.unbindChannel = async () => ({ team_name: teamName });
-    const result = await mcpFor(session).invoke({
-      name: 'unbind_channel',
-      arguments: { chat_id: 'oc_target' },
-    }, context);
-
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        chat_id: 'oc_target',
-        thread_id: null,
-        unbound: teamName !== null,
+  it.each(['my-team', null])(
+    'adds unbinding guidance only for a removed route (%s)',
+    async (teamName) => {
+      const session = fakeSession();
+      vi.spyOn(session.bindings, 'unbindChannel').mockResolvedValue({
         team_name: teamName,
-      },
-    });
-    if (teamName === null) {
-      expect(result).not.toHaveProperty('text');
-    } else {
-      expect(result).toMatchObject({
-        text: expect.stringMatching(/^Unbinding succeeded\..*automatically.*notification card/),
       });
-      expect(result).toMatchObject({
-        text: expect.stringContaining('no additional user notification is needed'),
-      });
-    }
-  });
+      const result = await mcpFor(session).invoke(
+        {
+          name: 'unbind_channel',
+          arguments: { chat_id: 'oc_target' },
+        },
+        context,
+      );
 
-  it.each(['bind_channel', 'unbind_channel'])('does not claim success for a refused %s call', async (name) => {
-    const result = await mcpFor(fakeSession()).invoke({ name, arguments: {} }, context);
-    expect(result).toMatchObject({ ok: false, message: expect.stringContaining('chat_id') });
-    expect(result).not.toHaveProperty('text');
-  });
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          chat_id: 'oc_target',
+          thread_id: null,
+          unbound: teamName !== null,
+          team_name: teamName,
+        },
+      });
+      if (teamName === null) {
+        expect(result).not.toHaveProperty('text');
+      } else {
+        expect(result).toMatchObject({
+          text: expect.stringMatching(
+            /^Unbinding succeeded\..*automatically.*notification card/,
+          ),
+        });
+        expect(result).toMatchObject({
+          text: expect.stringContaining(
+            'no additional user notification is needed',
+          ),
+        });
+      }
+    },
+  );
+
+  it.each(['bind_channel', 'unbind_channel'])(
+    'does not claim success for a refused %s call',
+    async (name) => {
+      const result = await mcpFor(fakeSession()).invoke(
+        { name, arguments: {} },
+        context,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('chat_id'),
+      });
+      expect(result).not.toHaveProperty('text');
+    },
+  );
 
   it('does not attach binding guidance to other tools', async () => {
-    const result = await mcpFor(fakeSession()).invoke({
-      name: 'ask_user_question',
-      arguments: {
-        chat_id: 'oc_target',
-        questions: [{
-          header: 'Choice',
-          question: 'Which option?',
-          options: [
-            { label: 'First', description: 'The first option' },
-            { label: 'Second', description: 'The second option' },
+    const result = await mcpFor(fakeSession()).invoke(
+      {
+        name: 'ask_user_question',
+        arguments: {
+          chat_id: 'oc_target',
+          questions: [
+            {
+              header: 'Choice',
+              question: 'Which option?',
+              options: [
+                { label: 'First', description: 'The first option' },
+                { label: 'Second', description: 'The second option' },
+              ],
+            },
           ],
-        }],
+        },
       },
-    }, context);
+      context,
+    );
     expect(result.ok).toBe(true);
     expect(result).not.toHaveProperty('text');
   });

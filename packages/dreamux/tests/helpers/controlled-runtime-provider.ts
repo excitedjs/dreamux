@@ -25,6 +25,7 @@ export function deferred<T>(): Deferred<T> {
 }
 
 export interface ControlledRuntimePlan {
+  readonly continuity?: 'fresh' | 'resumed';
   readonly delayedAdmission?: Promise<RuntimeAdmission>;
   readonly stopBarrier?: Promise<void>;
   readonly stopFailures?: readonly Error[];
@@ -41,7 +42,7 @@ export class ControlledRuntime {
 
   constructor(
     readonly context: AgentRuntimeCreateContext<unknown>,
-    plan: ControlledRuntimePlan,
+    private readonly plan: ControlledRuntimePlan,
   ) {
     this.delayedAdmission = plan.delayedAdmission ?? null;
     this.stopBarrier = plan.stopBarrier ?? null;
@@ -49,7 +50,7 @@ export class ControlledRuntime {
   }
 
   readonly runtime: AgentRuntime = {
-    start: async () => ({ continuity: 'fresh' }),
+    start: async () => ({ continuity: this.plan.continuity ?? 'fresh' }),
     submit: (input) => this.submit(input),
     interrupt: async () => ({ status: 'idle' }),
     stop: () => this.stop(),

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the plugin contract: `DreamuxPlugin`, `ContributeHost`, `ServerHost`, the `Dispatcher` and `Team` interfaces plugin hooks receive, `LaunchDraft`, and the `DreamuxPluginApis` declaration-merge map. The package now has one dependency, `tapable`, used by type only for the hook types the contract names.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

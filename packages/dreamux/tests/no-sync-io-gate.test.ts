@@ -5,7 +5,8 @@
  * through this package's `eslint.config.js`) against in-memory fixtures so the
  * gate's behaviour is pinned, not just assumed:
  *   - `src/**` is a hard error on any `*Sync` IO (`n/no-sync`);
- *   - `src/**` files over 700 physical lines are a hard error (`max-lines`);
+ *   - `src/**` files over 700 code lines (blank lines and comments excluded)
+ *     are a hard error (`max-lines`);
  *   - `tests/**` exempts `n/no-sync` (sync `fs` fixtures are allowed) but still
  *     bans synchronous `child_process` via `no-restricted-imports`;
  *   - an `eslint-disable` without a reason is itself an error
@@ -51,19 +52,40 @@ describe('no-sync-io lint gate (issue #85)', () => {
     expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
   });
 
-  it('flags source files over 700 physical lines', async () => {
+  it('flags source files over 700 code lines as a hard error', async () => {
     const results = await lint(
       'src/__large_source_fixture__.ts',
-      Array.from({ length: 701 }, (_, i) => `// line ${i + 1}`).join('\n'),
+      Array.from(
+        { length: 701 },
+        (_, i) => `export const line${i} = ${i};`,
+      ).join('\n'),
     );
-    expect(ruleIds(results)).toContain('max-lines');
-    expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
+    expect(results.flatMap((result) => result.messages)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: 'max-lines', severity: 2 }),
+      ]),
+    );
+  });
+
+  it('allows 700 code lines and excludes blank lines and comments from the source cap', async () => {
+    const results = await lint(
+      'src/__source_boundary_fixture__.ts',
+      Array.from(
+        { length: 700 },
+        (_, i) => `// comment ${i}\n\nexport const line${i} = ${i};`,
+      ).join('\n'),
+    );
+    expect(ruleIds(results)).not.toContain('max-lines');
+    expect(results[0]?.fatalErrorCount).toBe(0);
   });
 
   it('does not apply the source line-count gate to tests/**', async () => {
     const results = await lint(
       'tests/__large_test_fixture__.ts',
-      Array.from({ length: 701 }, (_, i) => `// line ${i + 1}`).join('\n'),
+      Array.from(
+        { length: 701 },
+        (_, i) => `export const line${i} = ${i};`,
+      ).join('\n'),
     );
     expect(ruleIds(results)).not.toContain('max-lines');
   });
@@ -119,7 +141,7 @@ describe('no-sync-io lint gate (issue #85)', () => {
       [
         "import { mkdtempSync } from 'node:fs';",
         "import { tmpdir } from 'node:os';",
-        "export const dir = mkdtempSync(tmpdir());",
+        'export const dir = mkdtempSync(tmpdir());',
         '',
       ].join('\n'),
     );
@@ -213,10 +235,13 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
     expect(gatedProjects.map((p) => p.packageName)).toContain(
       '@excitedjs/agent-runtime-codex',
     );
+    expect(gatedProjects.map((p) => p.packageName)).toContain(
+      '@excitedjs/dreamux-plugin-bootstrap',
+    );
   });
 
   it.each(gatedProjects.map((p) => [p.packageName, p.projectFolder] as const))(
-    '%s: n/no-sync fires on synchronous fs IO in src/**, using that package\'s OWN eslint.config.js',
+    "%s: n/no-sync fires on synchronous fs IO in src/**, using that package's OWN eslint.config.js",
     async (_name, projectFolder) => {
       // Each package gets its own `new ESLint({ cwd })` rooted at ITS package
       // directory, so this resolves and exercises that package's real
@@ -237,8 +262,12 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
         ].join('\n'),
         { filePath: join(pkgRoot, 'src/__cross_pkg_gate_fixture__.ts') },
       );
-      const rules = results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
-      expect(rules, `${projectFolder} src/** sync-IO gate`).toContain('n/no-sync');
+      const rules = results.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
+      );
+      expect(rules, `${projectFolder} src/** sync-IO gate`).toContain(
+        'n/no-sync',
+      );
     },
   );
 
@@ -252,15 +281,18 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
         [
           "import { mkdtempSync } from 'node:fs';",
           "import { tmpdir } from 'node:os';",
-          "export const dir = mkdtempSync(tmpdir());",
+          'export const dir = mkdtempSync(tmpdir());',
           '',
         ].join('\n'),
         { filePath: join(pkgRoot, 'tests/__cross_pkg_gate_fixture__.ts') },
       );
-      const fsRules = fsResults.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
-      expect(fsRules, `${projectFolder} tests/** sync-fs exemption`).not.toContain(
-        'n/no-sync',
+      const fsRules = fsResults.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
       );
+      expect(
+        fsRules,
+        `${projectFolder} tests/** sync-fs exemption`,
+      ).not.toContain('n/no-sync');
 
       const cpResults = await eslint.lintText(
         [
@@ -270,7 +302,9 @@ describe('the sync-IO gate is wired into every package, not just @excitedjs/drea
         ].join('\n'),
         { filePath: join(pkgRoot, 'tests/__cross_pkg_gate_cp_fixture__.ts') },
       );
-      const cpRules = cpResults.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
+      const cpRules = cpResults.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
+      );
       expect(
         cpRules,
         `${projectFolder} tests/** sync child_process ban`,
@@ -295,11 +329,33 @@ describe('the core/provider import-boundary rules are wired via the same real es
     expect(rules).toContain('no-restricted-imports');
   });
 
+  it('core (@excitedjs/dreamux) flags a static import of the built-in bootstrap plugin package as no-restricted-imports', async () => {
+    // Same invariant as the provider ban, applied to a plugin package: core
+    // reaches @excitedjs/dreamux-plugin-bootstrap only through the dynamic
+    // loader, never a static import.
+    const pkgRoot = join(REPO_ROOT, 'packages/dreamux');
+    const eslint = new ESLint({ cwd: pkgRoot });
+    const results = await eslint.lintText(
+      [
+        "import createBootstrapPlugin from '@excitedjs/dreamux-plugin-bootstrap';",
+        'export const plugin = createBootstrapPlugin;',
+        '',
+      ].join('\n'),
+      { filePath: join(pkgRoot, 'src/__core_bootstrap_boundary_fixture__.ts') },
+    );
+    const rules = results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
+    expect(rules).toContain('no-restricted-imports');
+  });
+
   it.each([
     ['@excitedjs/agent-runtime-codex', 'packages/agent-runtime/codex'],
-    ['@excitedjs/agent-runtime-claude-code', 'packages/agent-runtime/claude-code'],
+    [
+      '@excitedjs/agent-runtime-claude-code',
+      'packages/agent-runtime/claude-code',
+    ],
     ['@excitedjs/feishu-channel', 'packages/channel/feishu-channel'],
     ['@excitedjs/feishu-transport', 'packages/channel/feishu-transport'],
+    ['@excitedjs/dreamux-plugin-bootstrap', 'packages/plugins/bootstrap'],
   ] as const)(
     '%s flags a static import of @excitedjs/dreamux core as no-restricted-imports',
     async (_name, projectFolder) => {
@@ -313,7 +369,9 @@ describe('the core/provider import-boundary rules are wired via the same real es
         ].join('\n'),
         { filePath: join(pkgRoot, 'src/__provider_boundary_fixture__.ts') },
       );
-      const rules = results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
+      const rules = results.flatMap((r) =>
+        r.messages.map((m) => m.ruleId ?? ''),
+      );
       expect(rules, `${projectFolder} provider-import-boundary`).toContain(
         'no-restricted-imports',
       );

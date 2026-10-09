@@ -14,15 +14,11 @@
  *   - MCP server list passthrough (exact, unmutated) into the rendered config
  *   - the provider's public surface staying the neutral AgentRuntimeProvider
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CodexRuntime } from '../src/runtime.js';
-import { TurnManager } from '../src/turn-manager.js';
-import { CodexReasoningEffort } from '../src/reasoning-effort.js';
-import {
-  createCodexAgentRuntimeProvider,
-  codexRuntimeArgsForMcpServers,
-} from '../src/provider.js';
+import { createCodexAgentRuntimeProvider } from '../src/provider.js';
+import { codexMcpServerArgs } from '../src/mcp-config.js';
 import { compileCodexOutputSchema } from '../src/output-schema-codec.js';
 import { defaultDispatcherCodexConfig } from '../src/config.js';
 import type { CodexRuntimeDeps } from '../src/runtime-deps.js';
@@ -37,7 +33,9 @@ import {
   waitFor,
 } from './helpers/codex-runtime-fakes.js';
 import type {
+  AgentRuntimeProvider,
   AgentRuntimeCreateContext,
+  DreamuxLogger,
   AgentRuntimeIdentity,
   AgentRuntimeMcpServer,
   RuntimeActivity,
@@ -45,6 +43,20 @@ import type {
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
+vi.mock('../src/rpc.js', () => ({ CodexWsClient: vi.fn() }));
+vi.mock('../src/supervisor.js', () => ({ CodexProcess: vi.fn() }));
+beforeEach(() => {
+  vi.mocked(CodexWsClient).mockReset();
+  vi.mocked(CodexProcess).mockReset();
+});
+const logger: DreamuxLogger = {
+  info() {},
+  warn() {},
+  error() {},
+  debug() {},
+  trace() {},
+  child: () => logger,
+};
 type NativeTurnEnd = Extract<RuntimeActivity, { kind: 'turn.ended' }>;
 
 function identity(
@@ -59,26 +71,44 @@ function makeDeps(
     process?: FakeCodexProcess;
     client?: FakeCodexWsClient;
   } = {},
-): { deps: CodexRuntimeDeps; process: FakeCodexProcess; client: FakeCodexWsClient } {
-  const process = overrides.process ?? new FakeCodexProcess();
-  const client = overrides.client ?? new FakeCodexWsClient();
+): {
+  deps: CodexRuntimeDeps;
+  process: FakeCodexProcess;
+  client: FakeCodexWsClient;
+} {
+  const {
+    process: suppliedProcess,
+    client: suppliedClient,
+    ...runtimeOverrides
+  } = overrides;
+  const process = suppliedProcess ?? new FakeCodexProcess();
+  const client = suppliedClient ?? new FakeCodexWsClient();
+  vi.mocked(CodexProcess).mockImplementation(
+    () => process as unknown as CodexProcess,
+  );
+  vi.mocked(CodexWsClient).mockImplementation(
+    () => client as unknown as CodexWsClient,
+  );
   const deps: CodexRuntimeDeps = {
     cwd: '/fake/cwd',
-    state: overrides.state ?? noopStateSink(),
-    activitySink: overrides.activitySink ?? (() => undefined),
-    codec: overrides.codec ?? null,
+    state: noopStateSink(),
+    activitySink: () => undefined,
+    codec: null,
     paths: FAKE_PATHS,
-    allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
-    codexProcessFactory: () => process as unknown as CodexProcess,
-    codexClientFactory: () => client as unknown as CodexWsClient,
-    ...overrides,
+    skillSources: [],
+    codexBinPath: '/fake/codex',
+    extraArgs: [],
+    logger,
+    ...runtimeOverrides,
   };
   return { deps, process, client };
 }
 
 function requireSubmitted(admission: RuntimeAdmission): RuntimeSubmission {
   if (admission.status !== 'submitted') {
-    throw new Error(`expected submitted admission, got ${admission.status}: ${JSON.stringify(admission)}`);
+    throw new Error(
+      `expected submitted admission, got ${admission.status}: ${JSON.stringify(admission)}`,
+    );
   }
   return admission.submission;
 }
@@ -103,8 +133,12 @@ describe('CodexRuntime start() continuity', () => {
 
     expect(outcome).toEqual({ continuity: 'resumed' });
     expect(client.methods).toEqual(['initialize', 'thread/resume']);
-    const resumeRequest = client.requests.find((r) => r.method === 'thread/resume');
-    expect((resumeRequest?.params as { threadId: string }).threadId).toBe('thread-existing');
+    const resumeRequest = client.requests.find(
+      (r) => r.method === 'thread/resume',
+    );
+    expect((resumeRequest?.params as { threadId: string }).threadId).toBe(
+      'thread-existing',
+    );
     await runtime.stop();
   });
 
@@ -132,7 +166,9 @@ describe('CodexRuntime developerInstructions re-supply', () => {
 
     const start = client.requests.find((r) => r.method === 'thread/start');
     expect(start?.params).toMatchObject({
-      developerInstructions: expect.stringContaining('TeamLeader identity fragment'),
+      developerInstructions: expect.stringContaining(
+        'TeamLeader identity fragment',
+      ),
     });
     await runtime.stop();
   });
@@ -144,7 +180,9 @@ describe('CodexRuntime developerInstructions re-supply', () => {
 
     const resume = client.requests.find((r) => r.method === 'thread/resume');
     expect(resume?.params).toMatchObject({
-      developerInstructions: expect.stringContaining('TeamLeader identity fragment'),
+      developerInstructions: expect.stringContaining(
+        'TeamLeader identity fragment',
+      ),
     });
     await runtime.stop();
   });
@@ -161,7 +199,9 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     await runtime.start();
 
     const start = client.requests.find((r) => r.method === 'thread/start');
-    expect(start?.params).toMatchObject({ baseInstructions: 'complete replacement prompt' });
+    expect(start?.params).toMatchObject({
+      baseInstructions: 'complete replacement prompt',
+    });
     expect(start?.params).not.toHaveProperty('developerInstructions');
     await runtime.stop();
   });
@@ -181,22 +221,27 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     let processIndex = 0;
 
     const state = new RecordingStateSink();
+    vi.mocked(CodexProcess).mockImplementation(
+      () => processes[processIndex++]! as unknown as CodexProcess,
+    );
+    vi.mocked(CodexWsClient).mockImplementation(() => {
+      const c = clients[clientCount++];
+      if (c === undefined) throw new Error('no more fake clients scripted');
+      return c as unknown as CodexWsClient;
+    });
     const deps: CodexRuntimeDeps = {
       cwd: '/fake/cwd',
       state,
       activitySink: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
-      allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
+      skillSources: [],
+      codexBinPath: '/fake/codex',
+      extraArgs: [],
+      logger,
       systemPromptAppend: append,
       restartBackoffBaseMs: 0,
       restartBackoffMaxMs: 0,
-      codexProcessFactory: () => processes[processIndex++]! as unknown as CodexProcess,
-      codexClientFactory: () => {
-        const c = clients[clientCount++];
-        if (c === undefined) throw new Error('no more fake clients scripted');
-        return c as unknown as CodexWsClient;
-      },
     };
     const runtime = new CodexRuntime(identity(null), deps);
     const outcome = await runtime.start();
@@ -209,9 +254,13 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     await waitFor(() => client2.methods.includes('thread/resume'));
     await waitFor(() => client2.methods.includes('thread/start'));
 
-    const fallbackStart = client2.requests.find((r) => r.method === 'thread/start');
+    const fallbackStart = client2.requests.find(
+      (r) => r.method === 'thread/start',
+    );
     expect(fallbackStart?.params).toMatchObject({
-      developerInstructions: expect.stringContaining('TeamLeader identity fragment'),
+      developerInstructions: expect.stringContaining(
+        'TeamLeader identity fragment',
+      ),
     });
     // The loss must be published before the replacement session.
     const kinds = state.updates.map((u) => u.kind);
@@ -236,7 +285,10 @@ describe('CodexRuntime state sink ordering and durability', () => {
       'session',
       'status',
     ]);
-    expect(state.updates[0]).toMatchObject({ kind: 'status', status: 'starting' });
+    expect(state.updates[0]).toMatchObject({
+      kind: 'status',
+      status: 'starting',
+    });
     expect(state.updates[2]).toMatchObject({ kind: 'status', status: 'ready' });
     await runtime.stop();
   });
@@ -328,7 +380,9 @@ describe('CodexRuntime stop() semantics', () => {
   });
 
   it('rolls back all partial ownership when the native process fails to start', async () => {
-    const process = new FakeCodexProcess({ failStartWith: new Error('spawn failed') });
+    const process = new FakeCodexProcess({
+      failStartWith: new Error('spawn failed'),
+    });
     const { deps } = makeDeps({ process });
     const runtime = new CodexRuntime(identity(null), deps);
 
@@ -339,9 +393,14 @@ describe('CodexRuntime stop() semantics', () => {
     // a fresh start attempt must be able to create a brand new process.
     const retryProcess = new FakeCodexProcess();
     const retryClient = new FakeCodexWsClient();
-    const { deps: retryDeps } = makeDeps({ process: retryProcess, client: retryClient });
+    const { deps: retryDeps } = makeDeps({
+      process: retryProcess,
+      client: retryClient,
+    });
     const retryRuntime = new CodexRuntime(identity(null), retryDeps);
-    await expect(retryRuntime.start()).resolves.toMatchObject({ continuity: 'fresh' });
+    await expect(retryRuntime.start()).resolves.toMatchObject({
+      continuity: 'fresh',
+    });
     await retryRuntime.stop();
   });
 
@@ -376,11 +435,14 @@ describe('CodexRuntime submit() and settlement', () => {
 
     await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
     const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
-    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
-    expect(client.requests.find((request) => request.method === 'turn/interrupt'))
-      .toMatchObject({
-        params: { threadId: 'fresh-thread-1', turnId: 'turn-1' },
-      });
+    await expect(runtime.interrupt()).resolves.toEqual({
+      status: 'interrupted',
+    });
+    expect(
+      client.requests.find((request) => request.method === 'turn/interrupt'),
+    ).toMatchObject({
+      params: { threadId: 'fresh-thread-1', turnId: 'turn-1' },
+    });
 
     client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
     await submission.settled;
@@ -405,13 +467,24 @@ describe('CodexRuntime submit() and settlement', () => {
     await runtime.start();
 
     const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
-    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+    await expect(runtime.interrupt()).resolves.toEqual({
+      status: 'interrupted',
+    });
     client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
     await submission.settled;
 
     expect(activity).toEqual([
-      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'turn-1' },
-      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+      {
+        kind: 'turn.interrupted',
+        occurredAt: expect.any(Number),
+        id: 'turn-1',
+      },
+      {
+        kind: 'turn.ended',
+        occurredAt: expect.any(Number),
+        status: 'interrupted',
+        reason: null,
+      },
     ]);
     await runtime.stop();
   });
@@ -439,7 +512,12 @@ describe('CodexRuntime submit() and settlement', () => {
       'assistant.message',
       'turn.ended',
     ]);
-    expect(activity[0]).toEqual({ kind: 'assistant.message', occurredAt: expect.any(Number), id: 'item-turn-1', text: 'done' });
+    expect(activity[0]).toEqual({
+      kind: 'assistant.message',
+      occurredAt: expect.any(Number),
+      id: 'item-turn-1',
+      text: 'done',
+    });
     expect(activity[1]).toMatchObject({ status: 'completed', reason: null });
     await runtime.stop();
   });
@@ -455,12 +533,17 @@ describe('CodexRuntime submit() and settlement', () => {
 
     requireSubmitted(await runtime.submit({ text: 'first' }));
     requireSubmitted(await runtime.submit({ text: 'second' }));
-    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+    await expect(runtime.interrupt()).resolves.toEqual({
+      status: 'interrupted',
+    });
 
-    expect(client.requests.filter((request) => request.method === 'turn/interrupt'))
-      .toEqual([expect.objectContaining({
+    expect(
+      client.requests.filter((request) => request.method === 'turn/interrupt'),
+    ).toEqual([
+      expect.objectContaining({
         params: { threadId: 'fresh-thread-1', turnId: 'turn-newer' },
-      })]);
+      }),
+    ]);
     client.emitCompleted('fresh-thread-1', 'turn-older', 'first done');
     client.emitCompleted('fresh-thread-1', 'turn-newer', 'second done');
     await runtime.stop();
@@ -477,8 +560,11 @@ describe('CodexRuntime submit() and settlement', () => {
     // Both admitted onto the wire without either settling first.
     expect(client.methods.filter((m) => m === 'turn/start')).toHaveLength(2);
 
-    const threadId = (client.requests.find((r) => r.method === 'thread/start')!.params as never as { threadId?: string }).threadId
-      ?? 'fresh-thread-1';
+    const threadId =
+      (
+        client.requests.find((r) => r.method === 'thread/start')!
+          .params as never as { threadId?: string }
+      ).threadId ?? 'fresh-thread-1';
     client.emitCompleted(threadId, 'turn-1', 'first result');
     client.emitCompleted(threadId, 'turn-2', 'second result');
 
@@ -510,7 +596,9 @@ describe('CodexRuntime submit() and settlement', () => {
     await runtime.start();
 
     const first = requireSubmitted(await runtime.submit({ text: 'first' }));
-    const second = requireSubmitted(await runtime.submit({ text: 'folded in' }));
+    const second = requireSubmitted(
+      await runtime.submit({ text: 'folded in' }),
+    );
     expect(client.methods.filter((m) => m === 'turn/start')).toHaveLength(2);
 
     client.emitCompleted('fresh-thread-1', 'turn-folded', 'shared result');
@@ -519,7 +607,10 @@ describe('CodexRuntime submit() and settlement', () => {
     const secondSettlement = await second.settled;
     expect(firstSettlement.kind).toBe('completion');
     expect(secondSettlement.kind).toBe('completion');
-    if (firstSettlement.kind === 'completion' && secondSettlement.kind === 'completion') {
+    if (
+      firstSettlement.kind === 'completion' &&
+      secondSettlement.kind === 'completion'
+    ) {
       // Same completion object, not merely equal values: both members of a
       // folded native turn share one settlement fact.
       expect(secondSettlement.completion).toBe(firstSettlement.completion);
@@ -537,7 +628,9 @@ describe('CodexRuntime submit() and settlement', () => {
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
 
-    const submission = requireSubmitted(await runtime.submit({ text: 'do the thing' }));
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'do the thing' }),
+    );
     client.emitTurnFailed('fresh-thread-1', 'turn-1', 'model refused');
 
     const settlement = await submission.settled;
@@ -574,7 +667,9 @@ describe('CodexRuntime submit() and settlement', () => {
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
 
-    const submission = requireSubmitted(await runtime.submit({ text: 'in flight' }));
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'in flight' }),
+    );
     await runtime.stop();
 
     const settlement = await submission.settled;
@@ -592,7 +687,13 @@ describe('CodexRuntime submit() and settlement', () => {
  */
 describe('CodexRuntime token usage', () => {
   const usage = (inputTokens = 28_568, outputTokens = 69) => ({
-    total: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, cachedInputTokens: 10_000, reasoningOutputTokens: 10 },
+    total: {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      cachedInputTokens: 10_000,
+      reasoningOutputTokens: 10,
+    },
     last: { totalTokens: 14_500 },
     modelContextWindow: 29_000,
   });
@@ -601,7 +702,9 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => { activity.push(fact); },
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -611,7 +714,11 @@ describe('CodexRuntime token usage', () => {
     client.emitTokenUsage('foreign-thread', 'turn-other', usage(999_999, 10));
     expect(activity).toEqual([]);
     client.emitCompleted('fresh-thread-1', 'turn-1', 'first answer');
-    expect(activity.map((fact) => fact.kind)).toEqual(['assistant.message', 'token.usage', 'turn.ended']);
+    expect(activity.map((fact) => fact.kind)).toEqual([
+      'assistant.message',
+      'token.usage',
+      'turn.ended',
+    ]);
     expect(activity.at(-2)).toEqual({
       kind: 'token.usage',
       occurredAt: expect.any(Number),
@@ -620,26 +727,41 @@ describe('CodexRuntime token usage', () => {
       outputTokens: 69,
       context: { usedTokens: 14_500, windowTokens: 29_000 },
     });
-    await expect(first.settled).resolves.toMatchObject({ completion: { resultText: 'first answer' } });
+    await expect(first.settled).resolves.toMatchObject({
+      completion: { resultText: 'first answer' },
+    });
 
     const second = requireSubmitted(await runtime.submit({ text: 'second' }));
     client.emitTokenUsage('fresh-thread-1', 'turn-2', usage(40_000, 100));
     client.emitTurnFailed('fresh-thread-1', 'turn-2', 'model failed');
     expect(activity.at(-2)).toMatchObject({
-      kind: 'token.usage', id: 'turn-2', inputTokens: 40_000, outputTokens: 100,
+      kind: 'token.usage',
+      id: 'turn-2',
+      inputTokens: 40_000,
+      outputTokens: 100,
     });
-    expect(activity.at(-1)).toMatchObject({ kind: 'turn.ended', status: 'failed', reason: 'model failed' });
+    expect(activity.at(-1)).toMatchObject({
+      kind: 'turn.ended',
+      status: 'failed',
+      reason: 'model failed',
+    });
     await second.settled;
-    const usageCount = activity.filter((fact) => fact.kind === 'token.usage').length;
+    const usageCount = activity.filter(
+      (fact) => fact.kind === 'token.usage',
+    ).length;
     await runtime.stop();
-    expect(activity.filter((fact) => fact.kind === 'token.usage')).toHaveLength(usageCount);
+    expect(activity.filter((fact) => fact.kind === 'token.usage')).toHaveLength(
+      usageCount,
+    );
   });
 
   it('preserves the interrupt marker before usage and the native interrupted end', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => { activity.push(fact); },
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -647,16 +769,29 @@ describe('CodexRuntime token usage', () => {
     client.emitTokenUsage('fresh-thread-1', 'turn-1', usage());
     client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
     expect(activity).toEqual([
-      { kind: 'turn.interrupted', occurredAt: expect.any(Number), id: 'turn-1' },
       {
-        kind: 'token.usage', occurredAt: expect.any(Number), id: 'turn-1',
-        inputTokens: 28_568, outputTokens: 69,
+        kind: 'turn.interrupted',
+        occurredAt: expect.any(Number),
+        id: 'turn-1',
+      },
+      {
+        kind: 'token.usage',
+        occurredAt: expect.any(Number),
+        id: 'turn-1',
+        inputTokens: 28_568,
+        outputTokens: 69,
         context: { usedTokens: 14_500, windowTokens: 29_000 },
       },
-      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+      {
+        kind: 'turn.ended',
+        occurredAt: expect.any(Number),
+        status: 'interrupted',
+        reason: null,
+      },
     ]);
     await expect(submission.settled).resolves.toMatchObject({
-      kind: 'completion', completion: { status: 'completed', resultText: null },
+      kind: 'completion',
+      completion: { status: 'completed', resultText: null },
     });
     await runtime.stop();
   });
@@ -665,7 +800,9 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => { activity.push(fact); },
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -674,49 +811,37 @@ describe('CodexRuntime token usage', () => {
     await waitFor(() => client.hasBlocked('turn/start'));
     client.emitTokenUsage('fresh-thread-1', 'turn-early', usage());
     client.emitCompleted('fresh-thread-1', 'turn-early', 'answer');
-    expect(activity.at(-2)).toMatchObject({ kind: 'token.usage', id: 'turn-early' });
+    expect(activity.at(-2)).toMatchObject({
+      kind: 'token.usage',
+      id: 'turn-early',
+    });
     expect(activity.at(-1)).toMatchObject({ kind: 'turn.ended' });
     client.emitCompleted('fresh-thread-1', 'turn-early', 'answer');
-    expect(activity.filter((fact) => fact.kind === 'token.usage' && fact.id === 'turn-early')).toHaveLength(1);
+    expect(
+      activity.filter(
+        (fact) => fact.kind === 'token.usage' && fact.id === 'turn-early',
+      ),
+    ).toHaveLength(1);
     client.release('turn/start', { turn: { id: 'turn-early' } });
     await requireSubmitted(await admission).settled;
     await runtime.stop();
-  });
-
-  it('clears the latest snapshot when the collector changes threads', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
-    const activity: RuntimeActivity[] = [];
-    let threadId = 'thread-A';
-    const manager = new TurnManager({
-      dispatcherId: 'agent-1', getThreadId: () => threadId,
-      client: client as unknown as CodexWsClient, codec: null,
-      reasoning: new CodexReasoningEffort(client as unknown as CodexWsClient,
-        { model: 'test-model', reasoningEffort: 'low' }, false, '/fake/cwd'),
-      activitySink: (fact) => { activity.push(fact); },
-    });
-    const first = requireSubmitted(await manager.submitInput({ text: 'first' }));
-    client.emitTokenUsage(threadId, 'turn-1', usage());
-    client.emitCompleted(threadId, 'turn-1', 'answer');
-    await first.settled;
-    activity.length = 0;
-    threadId = 'thread-B';
-    const second = requireSubmitted(await manager.submitInput({ text: 'second' }));
-    client.emitCompleted(threadId, 'turn-2', 'answer');
-    await second.settled;
-    expect(activity.map((fact) => fact.kind)).toEqual(['assistant.message', 'turn.ended']);
-    await manager.stop();
   });
 
   it('omits context entirely when codex holds no positive window size, so the line stays n/a', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => { activity.push(fact); },
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
     const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
-    client.emitTokenUsage('fresh-thread-1', 'turn-1', { ...usage(), modelContextWindow: null });
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', {
+      ...usage(),
+      modelContextWindow: null,
+    });
     client.emitCompleted('fresh-thread-1', 'turn-1', 'answer');
     await submission.settled;
     expect(activity.at(-2)).toEqual({
@@ -734,12 +859,17 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => { activity.push(fact); },
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
     const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
-    client.emitTokenUsage('fresh-thread-1', 'turn-1', { ...usage(), modelContextWindow: 0 });
+    client.emitTokenUsage('fresh-thread-1', 'turn-1', {
+      ...usage(),
+      modelContextWindow: 0,
+    });
     client.emitCompleted('fresh-thread-1', 'turn-1', 'answer');
     await submission.settled;
     const token = activity.at(-2);
@@ -751,7 +881,9 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => { activity.push(fact); },
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -759,7 +891,9 @@ describe('CodexRuntime token usage', () => {
     client.emitTokenUsage('fresh-thread-1', 'turn-1', usage());
     client.emitCompleted('fresh-thread-1', 'turn-1', 'first answer');
     await first.settled;
-    expect(activity.filter((fact) => fact.kind === 'token.usage')).toHaveLength(1);
+    expect(activity.filter((fact) => fact.kind === 'token.usage')).toHaveLength(
+      1,
+    );
 
     // Turn 2 fails on the same thread before any tokenUsage notification: its
     // end must not re-label turn 1's counters as turn 2's usage.
@@ -767,10 +901,16 @@ describe('CodexRuntime token usage', () => {
     client.emitTurnFailed('fresh-thread-1', 'turn-2', 'model failed');
     await second.settled;
     expect(activity.map((fact) => fact.kind)).toEqual([
-      'assistant.message', 'token.usage', 'turn.ended',
+      'assistant.message',
+      'token.usage',
+      'turn.ended',
       'turn.ended',
     ]);
-    expect(activity.some((fact) => fact.kind === 'token.usage' && fact.id === 'turn-2')).toBe(false);
+    expect(
+      activity.some(
+        (fact) => fact.kind === 'token.usage' && fact.id === 'turn-2',
+      ),
+    ).toBe(false);
     await runtime.stop();
   });
 });
@@ -792,7 +932,9 @@ describe('CodexRuntime native turn end', () => {
     await runtime.start();
 
     const first = requireSubmitted(await runtime.submit({ text: 'first' }));
-    const second = requireSubmitted(await runtime.submit({ text: 'folded in' }));
+    const second = requireSubmitted(
+      await runtime.submit({ text: 'folded in' }),
+    );
     client.emitCompleted('fresh-thread-1', 'turn-folded', 'shared result');
     await first.settled;
     await second.settled;
@@ -800,7 +942,10 @@ describe('CodexRuntime native turn end', () => {
     expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
     // No logical membership: the fact names no submission, turn id, or target.
     expect(Object.keys(nativeEnds[0]!).sort()).toEqual([
-      'kind', 'occurredAt', 'reason', 'status',
+      'kind',
+      'occurredAt',
+      'reason',
+      'status',
     ]);
     expect(Object.isFrozen(nativeEnds[0])).toBe(true);
     await runtime.stop();
@@ -825,7 +970,10 @@ describe('CodexRuntime native turn end', () => {
     await first.settled;
     await second.settled;
 
-    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
+    expect(nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
     await runtime.stop();
   });
 
@@ -864,7 +1012,9 @@ describe('CodexRuntime native turn end', () => {
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
 
-    const submission = requireSubmitted(await runtime.submit({ text: 'do the thing' }));
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'do the thing' }),
+    );
     client.emitTurnFailed('fresh-thread-1', 'turn-1', 'model refused');
     await submission.settled;
 
@@ -875,17 +1025,26 @@ describe('CodexRuntime native turn end', () => {
   it('decodes command display on start and completion without changing raw arguments', async () => {
     const activity: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
-    const { deps } = makeDeps({ client, activitySink: (fact) => { activity.push(fact); } });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
+    });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
-    const submission = requireSubmitted(await runtime.submit({ text: 'check the script' }));
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'check the script' }),
+    );
     const command = "/usr/bin/zsh -lc 'node --check script.mjs\necho done'";
     for (const phase of ['started', 'completed'] as const) {
       client.emitItem('fresh-thread-1', 'turn-1', phase, {
         type: 'commandExecution',
         id: 'exec-1',
         command,
-        commandActions: [{ type: 'unknown', command: 'node --check script.mjs' }],
+        commandActions: [
+          { type: 'unknown', command: 'node --check script.mjs' },
+        ],
         status: phase === 'started' ? 'inProgress' : 'completed',
         aggregatedOutput: phase === 'completed' ? 'done' : null,
       });
@@ -914,11 +1073,21 @@ describe('CodexRuntime native turn end', () => {
   it('projects what a web search asked for, which it states outside an argument member', async () => {
     const activity: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
-    const { deps } = makeDeps({ client, activitySink: (fact) => { activity.push(fact); } });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
+    });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
-    const submission = requireSubmitted(await runtime.submit({ text: 'look it up' }));
-    const action = { type: 'search', queries: ['rust async traits', 'pin projection'] };
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'look it up' }),
+    );
+    const action = {
+      type: 'search',
+      queries: ['rust async traits', 'pin projection'],
+    };
     for (const phase of ['started', 'completed'] as const) {
       client.emitItem('fresh-thread-1', 'turn-1', phase, {
         type: 'webSearch',
@@ -954,10 +1123,17 @@ describe('CodexRuntime native turn end', () => {
   it('leaves out the action a plain web search reports as null', async () => {
     const activity: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
-    const { deps } = makeDeps({ client, activitySink: (fact) => { activity.push(fact); } });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
+    });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
-    const submission = requireSubmitted(await runtime.submit({ text: 'look it up' }));
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'look it up' }),
+    );
     // A query-only search states its action as null, not as an absent member;
     // showing `"action": null` in the row's arguments would be noise.
     client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
@@ -966,20 +1142,22 @@ describe('CodexRuntime native turn end', () => {
       query: 'rust async traits',
       action: null,
     });
-    expect(activity.filter((fact) => fact.kind === 'tool.call')).toEqual([{
-      kind: 'tool.call',
-      occurredAt: expect.any(Number),
-      id: 'search-1',
-      toolName: 'web_search',
-      action: 'search',
-      summary: 'rust async traits',
-      invocation: null,
-      items: [],
-      status: 'completed',
-      arguments: { query: 'rust async traits' },
-      result: null,
-      error: null,
-    }]);
+    expect(activity.filter((fact) => fact.kind === 'tool.call')).toEqual([
+      {
+        kind: 'tool.call',
+        occurredAt: expect.any(Number),
+        id: 'search-1',
+        toolName: 'web_search',
+        action: 'search',
+        summary: 'rust async traits',
+        invocation: null,
+        items: [],
+        status: 'completed',
+        arguments: { query: 'rust async traits' },
+        result: null,
+        error: null,
+      },
+    ]);
     client.emitCompleted('fresh-thread-1', 'turn-1', 'found it');
     await submission.settled;
     await runtime.stop();
@@ -1015,13 +1193,19 @@ describe('CodexRuntime native turn end', () => {
       'assistant.message',
       'turn.ended',
     ]);
-    expect(activity.at(-1)).toMatchObject({ status: 'completed', reason: null });
+    expect(activity.at(-1)).toMatchObject({
+      status: 'completed',
+      reason: null,
+    });
     await runtime.stop();
     // stop() reports its own interrupted end without asking whether a turn was
     // open; the runtime keeps no such answer, and a consumer with nothing open
     // ignores it.
-    expect(activity.filter((fact) => fact.kind === 'turn.ended').map((fact) => fact.status))
-      .toEqual(['completed', 'interrupted']);
+    expect(
+      activity
+        .filter((fact) => fact.kind === 'turn.ended')
+        .map((fact) => fact.status),
+    ).toEqual(['completed', 'interrupted']);
   });
 
   it('reports the end while an admission is still in flight', async () => {
@@ -1051,7 +1235,10 @@ describe('CodexRuntime native turn end', () => {
     client.rejectBlocked('turn/start', new Error('connection dropped'));
     expect((await admission).status).toBe('ambiguous');
     await runtime.stop();
-    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+    expect(nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'interrupted',
+    ]);
   });
 
   it('ends a turn codex only ever sent items for, when stop() tears it down', async () => {
@@ -1080,7 +1267,10 @@ describe('CodexRuntime native turn end', () => {
     });
     await runtime.stop();
 
-    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+    expect(nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'interrupted',
+    ]);
   });
 
   it('ends a turn codex only ever sent items for, when the protocol fails', async () => {
@@ -1107,7 +1297,10 @@ describe('CodexRuntime native turn end', () => {
     client.emitUnscopedError('fresh-thread-1', 'codex daemon internal error');
     await waitFor(() => nativeEnds.length === 2);
 
-    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+    expect(nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'failed',
+    ]);
     expect(nativeEnds.at(-1)!.reason).toContain('codex daemon internal error');
     await runtime.stop();
   });
@@ -1125,11 +1318,21 @@ describe('CodexRuntime native turn end', () => {
     await runtime.start();
 
     requireSubmitted(await runtime.submit({ text: 'work' }));
-    client.emitItem('fresh-thread-1', 'turn-1', 'started', { type: 'contextCompaction', id: 'compact-1' });
+    client.emitItem('fresh-thread-1', 'turn-1', 'started', {
+      type: 'contextCompaction',
+      id: 'compact-1',
+    });
     expect(events).toEqual([]);
-    client.emitItem('fresh-thread-1', 'turn-1', 'completed', { type: 'contextCompaction', id: 'compact-1' });
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'contextCompaction',
+      id: 'compact-1',
+    });
     expect(events).toEqual([
-      { kind: 'context.compacted', occurredAt: expect.any(Number), id: 'compact-1' },
+      {
+        kind: 'context.compacted',
+        occurredAt: expect.any(Number),
+        id: 'compact-1',
+      },
     ]);
     await runtime.stop();
   });
@@ -1166,7 +1369,9 @@ describe('CodexRuntime native turn end', () => {
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
 
-    const submission = requireSubmitted(await runtime.submit({ text: 'in flight' }));
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'in flight' }),
+    );
     await runtime.stop();
     await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
     // A second stop() is a no-op at the runtime: nothing is torn down twice,
@@ -1174,7 +1379,12 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
 
     expect(events).toEqual([
-      { kind: 'turn.ended', occurredAt: expect.any(Number), status: 'interrupted', reason: null },
+      {
+        kind: 'turn.ended',
+        occurredAt: expect.any(Number),
+        status: 'interrupted',
+        reason: null,
+      },
     ]);
   });
 
@@ -1198,7 +1408,10 @@ describe('CodexRuntime native turn end', () => {
     await submission.settled;
     await runtime.stop();
 
-    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+    expect(nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'interrupted',
+    ]);
   });
 });
 
@@ -1206,12 +1419,21 @@ describe('CodexRuntime outputSchema binding', () => {
   const schema = {
     type: 'object',
     additionalProperties: false,
-    properties: { values: { type: 'object', additionalProperties: false, properties: {}, required: [] } },
+    properties: {
+      values: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {},
+        required: [],
+      },
+    },
     required: ['values'],
   } as const;
 
   it('binds the schema once at create time and reapplies the SAME wire schema to every native turn', async () => {
-    const codec = compileCodexOutputSchema(schema as unknown as Record<string, unknown>);
+    const codec = compileCodexOutputSchema(
+      schema as unknown as Record<string, unknown>,
+    );
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({ client, codec });
     const runtime = new CodexRuntime(identity(null), deps);
@@ -1223,7 +1445,9 @@ describe('CodexRuntime outputSchema binding', () => {
     const turnStarts = client.requests.filter((r) => r.method === 'turn/start');
     expect(turnStarts).toHaveLength(2);
     for (const request of turnStarts) {
-      expect((request.params as { outputSchema?: unknown }).outputSchema).toEqual(codec.wireSchema);
+      expect(
+        (request.params as { outputSchema?: unknown }).outputSchema,
+      ).toEqual(codec.wireSchema);
     }
     // AgentRuntimeSubmissionInput carries only `text` — there is structurally
     // no field a caller could use to vary the schema per submit.
@@ -1236,7 +1460,9 @@ describe('CodexRuntime outputSchema binding', () => {
     // it fails the submission — it does not turn codex's completed turn into a
     // failure on the display line.
     const nativeEnds: NativeTurnEnd[] = [];
-    const codec = compileCodexOutputSchema(schema as unknown as Record<string, unknown>);
+    const codec = compileCodexOutputSchema(
+      schema as unknown as Record<string, unknown>,
+    );
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
@@ -1249,7 +1475,11 @@ describe('CodexRuntime outputSchema binding', () => {
     await runtime.start();
 
     const submission = requireSubmitted(await runtime.submit({ text: 'go' }));
-    client.emitCompleted('fresh-thread-1', 'turn-1', 'not the encoded envelope');
+    client.emitCompleted(
+      'fresh-thread-1',
+      'turn-1',
+      'not the encoded envelope',
+    );
     await expect(submission.settled).resolves.toMatchObject({
       kind: 'completion',
       completion: { status: 'failed' },
@@ -1260,7 +1490,9 @@ describe('CodexRuntime outputSchema binding', () => {
   });
 
   it('restores the codec-encoded assistant text before it reaches settlement', async () => {
-    const codec = compileCodexOutputSchema(schema as unknown as Record<string, unknown>);
+    const codec = compileCodexOutputSchema(
+      schema as unknown as Record<string, unknown>,
+    );
     const client = new FakeCodexWsClient({ autoComplete: true });
     const { deps } = makeDeps({ client, codec });
     const runtime = new CodexRuntime(identity(null), deps);
@@ -1269,7 +1501,10 @@ describe('CodexRuntime outputSchema binding', () => {
     const submission = requireSubmitted(await runtime.submit({ text: 'go' }));
     const settlement = await submission.settled;
     expect(settlement.kind).toBe('completion');
-    if (settlement.kind === 'completion' && settlement.completion.status === 'completed') {
+    if (
+      settlement.kind === 'completion' &&
+      settlement.completion.status === 'completed'
+    ) {
       expect(settlement.completion.resultText).toBe('{"values":{}}');
     }
     await runtime.stop();
@@ -1287,15 +1522,18 @@ describe('MCP server list passthrough encoding', () => {
     let capturedArgs: string[] | undefined;
     const process = new FakeCodexProcess();
     const client = new FakeCodexWsClient();
-    const provider = createCodexAgentRuntimeProvider({
-      codexProcessFactory: (opts: CodexProcessOptions) => {
-        capturedArgs = opts.extraArgs;
-        return process as unknown as CodexProcess;
-      },
-      codexClientFactory: () => client as unknown as CodexWsClient,
+    vi.mocked(CodexProcess).mockImplementation((opts: CodexProcessOptions) => {
+      capturedArgs = opts.extraArgs;
+      return process as unknown as CodexProcess;
     });
+    vi.mocked(CodexWsClient).mockImplementation(
+      () => client as unknown as CodexWsClient,
+    );
+    const provider = createCodexAgentRuntimeProvider();
 
-    const context: AgentRuntimeCreateContext<ReturnType<typeof defaultDispatcherCodexConfig>> = {
+    const context: AgentRuntimeCreateContext<
+      ReturnType<typeof defaultDispatcherCodexConfig>
+    > = {
       identity: identity(null),
       config: defaultDispatcherCodexConfig(),
       cwd: '/fake/cwd',
@@ -1304,6 +1542,8 @@ describe('MCP server list passthrough encoding', () => {
       disabledFeatures: [],
       paths: FAKE_PATHS,
       state: noopStateSink(),
+      activity: () => undefined,
+      logger,
     };
     const runtime = await provider.createRuntime(context);
     await runtime.start();
@@ -1314,7 +1554,7 @@ describe('MCP server list passthrough encoding', () => {
     // block itself is the exact same rendering the pure encoder would produce
     // from the exact same list — the provider never discovers, appends, or
     // mutates servers before handing them to the encoder.
-    const expected = codexRuntimeArgsForMcpServers(servers);
+    const expected = codexMcpServerArgs(servers);
     expect(capturedArgs!.slice(-expected.length)).toEqual(expected);
     const joined = capturedArgs!.join(' ');
     expect(joined).toContain('weird \\"name\\".with.dots 中文');
@@ -1323,28 +1563,33 @@ describe('MCP server list passthrough encoding', () => {
 });
 
 describe('AgentRuntimeProvider public surface', () => {
-  it('exposes exactly the neutral provider facade, no Codex-native surface', () => {
-    const provider = createCodexAgentRuntimeProvider();
-    expect(typeof provider.getCapabilities).toBe('function');
+  it('provides actual Codex capabilities through the neutral Provider contract', async () => {
+    const provider: AgentRuntimeProvider<unknown> =
+      createCodexAgentRuntimeProvider();
+    expect(provider.getCapabilities()).toEqual({ tags: [] });
     expect(typeof provider.readRecentActivity).toBe('function');
     expect(typeof provider.createRuntime).toBe('function');
-    // Optional neutral capabilities this provider declares.
-    expect(provider.config).toBeDefined();
-    expect(provider.onboard).toBeDefined();
-    expect(provider.diagnostic).toBeDefined();
-    // No provider-private surface (thread ids, native config, etc.) is exposed
-    // on the facade itself — it holds only the documented neutral keys.
-    const keys = new Set(Object.keys(provider));
-    for (const key of keys) {
-      expect([
-        'getCapabilities',
-        'diagnostic',
-        'onboard',
-        'config',
-        'readRecentActivity',
-        'createRuntime',
-      ]).toContain(key);
-    }
+    expect(typeof provider.operatorStateRoot).toBe('function');
+    expect(
+      provider.operatorStateRoot!({
+        HOME: '/operator',
+        CODEX_HOME: '/chosen-codex',
+      }),
+    ).toBe('/chosen-codex');
+    expect(typeof provider.onboard?.collect).toBe('function');
+    expect(typeof provider.diagnostic?.binChecks).toBe('function');
+    expect(typeof provider.diagnostic?.runDiagnostic).toBe('function');
+    expect(
+      await provider.config!.read(
+        {},
+        {
+          file: 'config.json',
+          prefix: 'agents.test.config',
+          providerRef: 'builtin:codex',
+          agentId: 'test',
+        },
+      ),
+    ).toEqual(defaultDispatcherCodexConfig());
   });
 
   it('createRuntime() resolves to a handle typed as the neutral AgentRuntime interface', async () => {
@@ -1356,12 +1601,22 @@ describe('AgentRuntimeProvider public surface', () => {
     // so this file fails to typecheck if the assignment ever needs a method
     // `AgentRuntime` does not declare.
     const provider = createCodexAgentRuntimeProvider();
-    const { deps } = makeDeps();
     const runtimeHandle: import('@excitedjs/dreamux-types').AgentRuntime =
-      new CodexRuntime(identity(null), deps);
+      await provider.createRuntime({
+        identity: identity(null),
+        config: defaultDispatcherCodexConfig(),
+        cwd: '/fake/cwd',
+        mcpServers: [],
+        skillSources: [],
+        disabledFeatures: [],
+        paths: FAKE_PATHS,
+        state: noopStateSink(),
+        activity: () => undefined,
+        logger,
+      });
     expect(typeof runtimeHandle.start).toBe('function');
     expect(typeof runtimeHandle.submit).toBe('function');
     expect(typeof runtimeHandle.stop).toBe('function');
-    expect(typeof provider.createRuntime).toBe('function');
+    expect(typeof runtimeHandle.interrupt).toBe('function');
   });
 });

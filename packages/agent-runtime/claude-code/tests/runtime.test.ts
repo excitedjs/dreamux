@@ -25,21 +25,22 @@
  *    stalled submission as `stopped`; a failed `start()` rolls back the
  *    partially-created session.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Writable } from 'node:stream';
 import { ClaudeCodeStreamRpc } from '../src/rpc.js';
 
 import { createClaudeCodeAgentRuntimeProvider } from '../src/provider.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config.js';
-import type {
-  ClaudeCodeSession,
-  ClaudeCodeSessionFactory,
-  ClaudeCodeSessionSpec,
+import {
+  createDefaultClaudeCodeSession,
+  type ClaudeCodeSession,
+  type ClaudeCodeSessionSpec,
 } from '../src/supervisor.js';
-import type { TurnOutcome, TurnSubmitOptions } from '../src/types.js';
+import type { TurnOutcome } from '../src/types.js';
 import { STATE_LEASE_REVOKED_ERROR_NAME } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
+  DreamuxLogger,
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
@@ -53,12 +54,30 @@ import type {
 
 // ─── Fake resident session ──────────────────────────────────────────────────
 
+vi.mock('../src/supervisor.js', () => ({
+  createDefaultClaudeCodeSession: vi.fn(),
+}));
+beforeEach(() => {
+  vi.mocked(createDefaultClaudeCodeSession).mockReset();
+});
+const logger: DreamuxLogger = {
+  info() {},
+  warn() {},
+  error() {},
+  debug() {},
+  trace() {},
+  child: () => logger,
+};
 interface FakeSessionBehavior {
   failStart?: (spec: ClaudeCodeSessionSpec) => Error | null | undefined;
   /** Acknowledged input with no reply until the test supplies native frames. */
   holdResult?: boolean;
   acknowledgeWrite?: (callback: (error?: Error | null) => void) => void;
-  onSubmit?: (session: FakeSession, prompt: string, commandUuid: string) => void;
+  onSubmit?: (
+    session: FakeSession,
+    prompt: string,
+    commandUuid: string,
+  ) => void;
 }
 
 /** Fake transport and process lifecycle around the actual request owner. */
@@ -76,32 +95,39 @@ class FakeSession implements ClaudeCodeSession {
     readonly spec: ClaudeCodeSessionSpec,
     private readonly behavior: FakeSessionBehavior,
   ) {
-    this.rpc = new ClaudeCodeStreamRpc(new Writable({
-      write: (chunk: Buffer, _encoding, callback) => {
-        const frame = JSON.parse(chunk.toString()) as Record<string, unknown>;
-        if (frame['type'] === 'control_request') {
-          this.controlRequests.push(frame as { request_id: string });
-          callback();
-          return;
-        }
-        const message = frame as unknown as {
-          uuid: string; message: { content: Array<{ text: string }> };
-        };
-        const prompt = message.message.content[0]!.text;
-        this.submits.push({ prompt, commandUuid: message.uuid });
-        if (this.behavior.acknowledgeWrite) this.behavior.acknowledgeWrite(callback);
-        else callback();
-        if (this.behavior.holdResult) return;
-        if (this.behavior.onSubmit) this.behavior.onSubmit(this, prompt, message.uuid);
-        else fireDefaultResult(this, message.uuid, { text: `echo:${prompt}` });
+    this.rpc = new ClaudeCodeStreamRpc(
+      new Writable({
+        write: (chunk: Buffer, _encoding, callback) => {
+          const frame = JSON.parse(chunk.toString()) as Record<string, unknown>;
+          if (frame['type'] === 'control_request') {
+            this.controlRequests.push(frame as { request_id: string });
+            callback();
+            return;
+          }
+          const message = frame as unknown as {
+            uuid: string;
+            message: { content: Array<{ text: string }> };
+          };
+          const prompt = message.message.content[0]!.text;
+          this.submits.push({ prompt, commandUuid: message.uuid });
+          if (this.behavior.acknowledgeWrite)
+            this.behavior.acknowledgeWrite(callback);
+          else callback();
+          if (this.behavior.holdResult) return;
+          if (this.behavior.onSubmit)
+            this.behavior.onSubmit(this, prompt, message.uuid);
+          else
+            fireDefaultResult(this, message.uuid, { text: `echo:${prompt}` });
+        },
+      }),
+      {
+        sessionId: spec.sessionId,
+        outputSchemaEnabled: spec.outputSchemaEnabled,
+        turnTimeoutMs: spec.turnTimeoutMs,
+        reapOnTimeout: (error) => this.fail(error),
+        onProtocolEvent: spec.onProtocolEvent,
       },
-    }), {
-      sessionId: spec.sessionId,
-      outputSchemaEnabled: spec.outputSchemaEnabled,
-      turnTimeoutMs: spec.turnTimeoutMs,
-      reapOnTimeout: (error) => this.fail(error),
-      onProtocolEvent: spec.onProtocolEvent,
-    });
+    );
   }
 
   async start(): Promise<void> {
@@ -110,8 +136,8 @@ class FakeSession implements ClaudeCodeSession {
     this.alive = true;
   }
 
-  submit(prompt: string, options?: TurnSubmitOptions, commandUuid?: string): Promise<RuntimeAdmission> {
-    return this.rpc.submit(prompt, options, commandUuid);
+  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission> {
+    return this.rpc.submit(prompt, commandUuid);
   }
 
   interrupt(reason: string): Promise<boolean> {
@@ -129,8 +155,12 @@ class FakeSession implements ClaudeCodeSession {
     this.onExitHandler?.(error);
   }
 
-  isAlive(): boolean { return this.alive; }
-  setOnExit(handler: (error: Error) => void): void { this.onExitHandler = handler; }
+  isAlive(): boolean {
+    return this.alive;
+  }
+  setOnExit(handler: (error: Error) => void): void {
+    this.onExitHandler = handler;
+  }
   async stop(): Promise<void> {
     this.stopCalls += 1;
     this.alive = false;
@@ -143,8 +173,16 @@ function fireDefaultResult(
   commandUuid: string,
   overrides: Partial<TurnOutcome> = {},
 ): void {
-  session.emit({ type: 'command_lifecycle', command_uuid: commandUuid, state: 'started' });
-  session.emit({ type: 'system', subtype: 'init', capabilities: ['msg_lifecycle_v1'] });
+  session.emit({
+    type: 'command_lifecycle',
+    command_uuid: commandUuid,
+    state: 'started',
+  });
+  session.emit({
+    type: 'system',
+    subtype: 'init',
+    capabilities: ['msg_lifecycle_v1'],
+  });
   session.emit({
     type: 'result',
     user_message_uuid: commandUuid,
@@ -152,26 +190,38 @@ function fireDefaultResult(
     result: overrides.text ?? 'ok',
     session_id: overrides.sessionId,
     errors: overrides.errors ?? [],
-    ...(session.spec.outputSchemaEnabled ? { structured_output: { ok: true } } : {}),
+    ...(session.spec.outputSchemaEnabled
+      ? { structured_output: { ok: true } }
+      : {}),
   });
-  session.emit({ type: 'command_lifecycle', command_uuid: commandUuid, state: 'completed' });
+  session.emit({
+    type: 'command_lifecycle',
+    command_uuid: commandUuid,
+    state: 'completed',
+  });
 }
 
 function fireAssistantText(session: FakeSession, text: string): void {
-  session.emit({ type: 'assistant', message: { id: 'msg-1', content: [{ type: 'text', text }] } });
+  session.emit({
+    type: 'assistant',
+    message: { id: 'msg-1', content: [{ type: 'text', text }] },
+  });
 }
 
 class Harness {
   readonly sessions: FakeSession[] = [];
   readonly stateCalls: AgentRuntimeStateUpdate[] = [];
   /** Every native turn end this runtime reported, in order. */
-  readonly nativeEnds: Array<Extract<RuntimeActivity, { kind: 'turn.ended' }>> = [];
+  readonly nativeEnds: Array<Extract<RuntimeActivity, { kind: 'turn.ended' }>> =
+    [];
   behavior: FakeSessionBehavior = {};
   /** Set per test to make the leased state sink reject a specific update kind. */
   rejectStateKind: AgentRuntimeStateUpdate['kind'] | null = null;
   rejectStateWith: (() => Error) | null = null;
 
-  readonly sessionFactory: ClaudeCodeSessionFactory = (spec) => {
+  readonly sessionFactory = (
+    spec: ClaudeCodeSessionSpec,
+  ): ClaudeCodeSession => {
     const session = new FakeSession(spec, this.behavior);
     this.sessions.push(session);
     return session;
@@ -186,19 +236,25 @@ class Harness {
   readonly state: AgentRuntimeStateSink = {
     publish: async (update) => {
       this.stateCalls.push(update);
-      if (this.rejectStateKind !== null && update.kind === this.rejectStateKind) {
-        throw (this.rejectStateWith ?? (() => new Error('state publish failed')))();
+      if (
+        this.rejectStateKind !== null &&
+        update.kind === this.rejectStateKind
+      ) {
+        throw (
+          this.rejectStateWith ?? (() => new Error('state publish failed'))
+        )();
       }
     },
   };
 
-  context(overrides: {
-    sessionId?: string | null;
-    systemPrompt?: AgentRuntimeSystemPrompt;
-    mcpServers?: readonly AgentRuntimeMcpServer[];
-    outputSchema?: JsonSchema;
-    generateSessionId?: () => string;
-  } = {}): AgentRuntimeCreateContext<
+  context(
+    overrides: {
+      sessionId?: string | null;
+      systemPrompt?: AgentRuntimeSystemPrompt;
+      mcpServers?: readonly AgentRuntimeMcpServer[];
+      outputSchema?: JsonSchema;
+    } = {},
+  ): AgentRuntimeCreateContext<
     ReturnType<typeof defaultDispatcherClaudeCodeConfig>
   > {
     return {
@@ -219,20 +275,20 @@ class Harness {
         : {}),
       paths: this.paths,
       state: this.state,
+      logger,
       activity: (activity) => {
         if (activity.kind === 'turn.ended') this.nativeEnds.push(activity);
       },
     };
   }
 
-  async createRuntime(overrides: Parameters<Harness['context']>[0] = {}): Promise<AgentRuntime> {
-    const provider = createClaudeCodeAgentRuntimeProvider({
-      sessionFactory: this.sessionFactory,
-      resolveBinPath: (bin) => bin,
-      ...(overrides.generateSessionId !== undefined
-        ? { generateSessionId: overrides.generateSessionId }
-        : {}),
-    });
+  async createRuntime(
+    overrides: Parameters<Harness['context']>[0] = {},
+  ): Promise<AgentRuntime> {
+    vi.mocked(createDefaultClaudeCodeSession).mockImplementation(
+      this.sessionFactory,
+    );
+    const provider = createClaudeCodeAgentRuntimeProvider();
     return provider.createRuntime(this.context(overrides));
   }
 }
@@ -240,7 +296,9 @@ class Harness {
 const runtimesToStop: AgentRuntime[] = [];
 
 afterEach(async () => {
-  await Promise.allSettled(runtimesToStop.splice(0).map((runtime) => runtime.stop()));
+  await Promise.allSettled(
+    runtimesToStop.splice(0).map((runtime) => runtime.stop()),
+  );
 });
 
 /** Let detached state writes and exit cleanup finish before inspecting them. */
@@ -263,9 +321,11 @@ describe('ClaudeCodeRuntime system prompt', () => {
       h.createRuntime({
         systemPrompt: {
           replace: 'a full replacement base prompt Claude Code cannot use',
-          append: ['operation-owned Workflow fragment', 'persisted TeamMate identity'],
+          append: [
+            'operation-owned Workflow fragment',
+            'persisted TeamMate identity',
+          ],
         },
-        generateSessionId: () => 'fresh-native-id',
       }),
     );
     await runtime.start();
@@ -275,6 +335,8 @@ describe('ClaudeCodeRuntime system prompt', () => {
     expect(i).toBeGreaterThanOrEqual(0);
     const content = args[i + 1]!;
     expect(content).not.toContain('a full replacement base prompt');
+    expect(content).toContain('operation-owned Workflow fragment');
+    expect(content).toContain('persisted TeamMate identity');
     expect(content.indexOf('operation-owned Workflow fragment')).toBeLessThan(
       content.indexOf('persisted TeamMate identity'),
     );
@@ -290,7 +352,10 @@ describe('ClaudeCodeRuntime system prompt', () => {
       h.createRuntime({
         sessionId: 'existing-native-session',
         systemPrompt: {
-          append: ['operation-owned Workflow fragment', 'persisted TeamMate identity'],
+          append: [
+            'operation-owned Workflow fragment',
+            'persisted TeamMate identity',
+          ],
         },
       }),
     );
@@ -298,7 +363,10 @@ describe('ClaudeCodeRuntime system prompt', () => {
     const args = h.sessions[0]!.spec.args;
     expect(args).toContain('--resume');
     expect(args[args.indexOf('--resume') + 1]).toBe('existing-native-session');
+    expect(args).toContain('--append-system-prompt');
     const content = args[args.indexOf('--append-system-prompt') + 1]!;
+    expect(content).toContain('operation-owned Workflow fragment');
+    expect(content).toContain('persisted TeamMate identity');
     expect(content.indexOf('operation-owned Workflow fragment')).toBeLessThan(
       content.indexOf('persisted TeamMate identity'),
     );
@@ -319,9 +387,7 @@ describe('ClaudeCodeRuntime resume/session continuity', () => {
 
   it('reports fresh continuity for a null create-context session', async () => {
     const h = new Harness();
-    const runtime = await tracked(
-      h.createRuntime({ sessionId: null, generateSessionId: () => 'fresh-native-id' }),
-    );
+    const runtime = await tracked(h.createRuntime({ sessionId: null }));
     const outcome = await runtime.start();
     expect(outcome.continuity).toBe('fresh');
     const args = h.sessions[0]!.spec.args;
@@ -332,7 +398,9 @@ describe('ClaudeCodeRuntime resume/session continuity', () => {
   it('fails start() loudly on a failed resume rather than silently starting a fresh session', async () => {
     const h = new Harness();
     h.behavior.failStart = (spec) =>
-      spec.args.includes('--resume') ? new Error('native resume rejected') : null;
+      spec.args.includes('--resume')
+        ? new Error('native resume rejected')
+        : null;
     const runtime = await tracked(
       h.createRuntime({ sessionId: 'existing-native-session' }),
     );
@@ -411,7 +479,9 @@ describe('ClaudeCodeRuntime submit contract', () => {
     const h = new Harness();
     h.behavior.failStart = () => new Error('spawn failed');
     const runtime = await tracked(h.createRuntime());
-    const startFailure = expect(runtime.start()).rejects.toThrow('spawn failed');
+    const startFailure = expect(runtime.start()).rejects.toThrow(
+      'spawn failed',
+    );
     const admissionPromise = runtime.submit({ text: 'racing spawn' });
 
     // Interrupt must neither await the spawn it did not initiate nor inherit
@@ -463,7 +533,9 @@ describe('ClaudeCodeRuntime submit contract', () => {
     expect(h.sessions).toHaveLength(1);
 
     await runtime.stop();
-    await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+    await expect(admission.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
   });
 
   it('forwards submitted text to the native turn verbatim, with no wrapping or native syntax injected', async () => {
@@ -501,7 +573,11 @@ describe('ClaudeCodeRuntime settlement', () => {
   it('settles a failed turn when the native result carries an error', async () => {
     const h = new Harness();
     h.behavior.onSubmit = (spec, _prompt, commandUuid) => {
-      fireDefaultResult(spec, commandUuid!, { isError: true, errors: ['native failure'], text: '' });
+      fireDefaultResult(spec, commandUuid!, {
+        isError: true,
+        errors: ['native failure'],
+        text: '',
+      });
     };
     const runtime = await tracked(h.createRuntime());
     await runtime.start();
@@ -522,7 +598,9 @@ describe('ClaudeCodeRuntime settlement', () => {
     const admission = await runtime.submit({ text: 'hangs' });
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await runtime.stop();
-    await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+    await expect(admission.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
   });
 });
 
@@ -556,7 +634,10 @@ describe('ClaudeCodeRuntime native turn end', () => {
     if (second.status !== 'submitted') throw new Error('expected submitted');
     await second.submission.settled;
     await drain();
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
+    expect(h.nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
   });
 
   it('reports two ends when a steered submission gets its own result in the same resident session', async () => {
@@ -580,7 +661,10 @@ describe('ClaudeCodeRuntime native turn end', () => {
     // A later input uses the same resident session after the first result.
     const second = await runtime.submit({ text: 'two' });
     if (second.status !== 'submitted') throw new Error('expected submitted');
-    expect(session.submits.map((input) => input.prompt)).toEqual(['one', 'two']);
+    expect(session.submits.map((input) => input.prompt)).toEqual([
+      'one',
+      'two',
+    ]);
     const steeredUuid = session.submits[1]!.commandUuid!;
 
     // claude did not fold it: the steered command starts and is answered by a
@@ -628,7 +712,11 @@ describe('ClaudeCodeRuntime native turn end', () => {
     });
 
     // One result answers both started commands: one native turn, one end.
-    session.emit({ type: 'result', subtype: 'success', result: 'one answer for both' });
+    session.emit({
+      type: 'result',
+      subtype: 'success',
+      result: 'one answer for both',
+    });
     const [s1, s2] = await Promise.all([
       first.submission.settled,
       second.submission.settled,
@@ -654,7 +742,9 @@ describe('ClaudeCodeRuntime native turn end', () => {
     if (admission.status !== 'submitted') throw new Error('expected submitted');
 
     await runtime.stop();
-    await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+    await expect(admission.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
     // A second stop() is idempotent and must not re-report the same end.
     await runtime.stop();
 
@@ -735,7 +825,10 @@ describe('ClaudeCodeRuntime native turn end', () => {
     await runtime.stop();
     await drain();
 
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+    expect(h.nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'interrupted',
+    ]);
   });
 
   it('reports failed for a native turn the run died on with nothing left to settle', async () => {
@@ -755,7 +848,10 @@ describe('ClaudeCodeRuntime native turn end', () => {
     session.fail(new Error('protocol connection lost'));
     await drain();
 
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+    expect(h.nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'failed',
+    ]);
     expect(h.nativeEnds.at(-1)!.reason).toBe('protocol connection lost');
   });
 
@@ -770,7 +866,10 @@ describe('ClaudeCodeRuntime native turn end', () => {
 
     expect(h.nativeEnds).toHaveLength(1);
     expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual([
-      'kind', 'occurredAt', 'reason', 'status',
+      'kind',
+      'occurredAt',
+      'reason',
+      'status',
     ]);
     expect(Object.isFrozen(h.nativeEnds[0])).toBe(true);
   });
@@ -801,7 +900,9 @@ describe('ClaudeCodeRuntime admission and stop convergence', () => {
     h.behavior.holdResult = true;
     let acknowledge!: (error?: Error | null) => void;
     let notifyWrite!: () => void;
-    const written = new Promise<void>((resolve) => { notifyWrite = resolve; });
+    const written = new Promise<void>((resolve) => {
+      notifyWrite = resolve;
+    });
     h.behavior.acknowledgeWrite = (callback) => {
       acknowledge = callback;
       notifyWrite();
@@ -809,40 +910,55 @@ describe('ClaudeCodeRuntime admission and stop convergence', () => {
     const runtime = await tracked(h.createRuntime());
     await runtime.start();
     const a = runtime.submit({ text: 'A' });
-    const b = runtime.submit({ text: 'B' });
     await written;
+    const b = runtime.submit({ text: 'B' });
     const settled: string[] = [];
     void a.then(() => settled.push('A'));
     void b.then(() => settled.push('B'));
     await runtime.stop();
-    expect(settled).toEqual(['A', 'B']);
+    expect(settled).toHaveLength(2);
+    expect(new Set(settled)).toEqual(new Set(['A', 'B']));
     await expect(a).resolves.toMatchObject({ status: 'ambiguous' });
     await expect(b).resolves.toEqual({ status: 'stopped' });
     acknowledge();
-    await expect(runtime.submit({ text: 'late' })).resolves.toEqual({ status: 'stopped' });
+    await expect(runtime.submit({ text: 'late' })).resolves.toEqual({
+      status: 'stopped',
+    });
     expect(h.sessions[0]!.submits.map((input) => input.prompt)).toEqual(['A']);
     expect(h.nativeEnds.map((event) => event.status)).toEqual(['interrupted']);
   });
 
   it('does not mark an early child exit ready, and resumes the same identity for subsequent input', async () => {
     const h = new Harness();
-    h.behavior.onSubmit = (session) => session.fail(new Error('exit before write acknowledgement'));
-    const runtime = await tracked(h.createRuntime({ sessionId: 'existing-native-session' }));
+    h.behavior.onSubmit = (session) =>
+      session.fail(new Error('exit before write acknowledgement'));
+    const runtime = await tracked(
+      h.createRuntime({ sessionId: 'existing-native-session' }),
+    );
     await runtime.start();
-    await expect(runtime.submit({ text: 'uncertain' })).resolves.toMatchObject({ status: 'ambiguous' });
+    await expect(runtime.submit({ text: 'uncertain' })).resolves.toMatchObject({
+      status: 'ambiguous',
+    });
     await drain();
-    expect(h.stateCalls.at(-1)).toMatchObject({ kind: 'status', status: 'degraded' });
+    expect(h.stateCalls.at(-1)).toMatchObject({
+      kind: 'status',
+      status: 'degraded',
+    });
     expect(h.nativeEnds.map((event) => event.status)).toEqual(['failed']);
-    h.behavior.onSubmit = undefined;
+    delete h.behavior.onSubmit;
     const next = await runtime.submit({ text: 'next input' });
     if (next.status !== 'submitted') throw new Error('expected submitted');
     await expect(next.submission.settled).resolves.toMatchObject({
-      kind: 'completion', completion: { status: 'completed', resultText: 'echo:next input' },
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'echo:next input' },
     });
     expect(h.sessions).toHaveLength(2);
     expect(h.sessions[1]!.spec.sessionId).toBe('existing-native-session');
     expect(h.sessions[1]!.spec.args).toContain('--resume');
-    expect(h.stateCalls.at(-1)).toMatchObject({ kind: 'status', status: 'ready' });
+    expect(h.stateCalls.at(-1)).toMatchObject({
+      kind: 'status',
+      status: 'ready',
+    });
   });
 
   it('waits for admission awaiting durable session publication and prevents its later write', async () => {
@@ -852,9 +968,13 @@ describe('ClaudeCodeRuntime admission and stop convergence', () => {
     h.sessions[0]!.fail(new Error('restart required'));
     await drain();
     let releasePublish!: () => void;
-    const publication = new Promise<void>((resolve) => { releasePublish = resolve; });
+    const publication = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
     let notifyPublish!: () => void;
-    const publishing = new Promise<void>((resolve) => { notifyPublish = resolve; });
+    const publishing = new Promise<void>((resolve) => {
+      notifyPublish = resolve;
+    });
     const publish = h.state.publish;
     h.state.publish = async (update) => {
       if (update.kind === 'session') {
@@ -866,7 +986,9 @@ describe('ClaudeCodeRuntime admission and stop convergence', () => {
     const admission = runtime.submit({ text: 'waiting for persistence' });
     await publishing;
     let stopReturned = false;
-    const stopping = runtime.stop().then(() => { stopReturned = true; });
+    const stopping = runtime.stop().then(() => {
+      stopReturned = true;
+    });
     await drain();
     expect(stopReturned).toBe(false);
     expect(h.sessions[1]!.isAlive()).toBe(false);
@@ -874,7 +996,10 @@ describe('ClaudeCodeRuntime admission and stop convergence', () => {
     await stopping;
     await expect(admission).resolves.toEqual({ status: 'stopped' });
     expect(h.sessions[1]!.submits).toEqual([]);
-    expect(h.stateCalls.at(-1)).toMatchObject({ kind: 'status', status: 'stopped' });
+    expect(h.stateCalls.at(-1)).toMatchObject({
+      kind: 'status',
+      status: 'stopped',
+    });
   });
 });
 
@@ -890,7 +1015,10 @@ describe('ClaudeCodeRuntime leased state sink', () => {
       'session',
       'status',
     ]);
-    expect(h.stateCalls[0]).toMatchObject({ kind: 'status', status: 'starting' });
+    expect(h.stateCalls[0]).toMatchObject({
+      kind: 'status',
+      status: 'starting',
+    });
     expect(h.stateCalls[2]).toMatchObject({ kind: 'status', status: 'ready' });
   });
 

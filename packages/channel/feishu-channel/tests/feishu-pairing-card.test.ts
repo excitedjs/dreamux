@@ -1,3 +1,8 @@
+import {
+  DREAMUX_ACTION_KEY,
+  DREAMUX_PAIRING_CARD_ACTION,
+  DREAMUX_PAIRING_TOKEN_KEY,
+} from '../src/card-actions.js';
 /**
  * Owner-Only Pairing Approval Card (see package CLAUDE.md).
  *
@@ -15,11 +20,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPairingApprovalCard,
   buildPairingSuccessCard,
-  DREAMUX_ACTION_KEY,
-  DREAMUX_PAIRING_CARD_ACTION,
-  DREAMUX_PAIRING_TOKEN_KEY,
   rawCardActionResponse,
-} from '../src/feishu-pairing-card.js';
+} from '../src/cards/pairing.js';
 
 /** Recursively collect every string leaf in a card tree, card text included. */
 function stringLeaves(value: unknown, out: string[] = []): string[] {
@@ -46,49 +48,61 @@ describe('buildPairingApprovalCard — the token never becomes visible card text
 
   it('places the token only under the action button value, keyed by the documented constants', () => {
     const rendered = card() as {
-      elements: Array<{
-        tag: string;
-        actions?: Array<{
-          value?: Record<string, string>;
+      body: {
+        elements: Array<{
+          tag: string;
+          behaviors?: Array<{ type: string; value: Record<string, string> }>;
         }>;
-      }>;
+      };
     };
-    const actionElement = rendered.elements.find((el) => el.tag === 'action');
-    expect(actionElement).toBeDefined();
-    const button = actionElement?.actions?.[0];
-    expect(button?.value).toEqual({
-      [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-      [DREAMUX_PAIRING_TOKEN_KEY]: token,
-    });
+    const button = rendered.body.elements.find((el) => el.tag === 'button');
+    expect(button).toBeDefined();
+    expect(button?.behaviors).toEqual([
+      {
+        type: 'callback',
+        value: {
+          [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
+          [DREAMUX_PAIRING_TOKEN_KEY]: token,
+        },
+      },
+    ]);
   });
 
   it('never emits the raw token as a string anywhere outside the button value field', () => {
     const rendered = card() as {
-      elements: Array<{
-        tag: string;
-        text?: unknown;
-        actions?: Array<{ text?: unknown; value?: Record<string, string> }>;
-      }>;
-    };
-    // Strip the one legitimate carrier (the button's `value` map) before
-    // scanning every remaining string leaf in the tree for a token leak.
-    const withoutTokenCarrier = rendered.elements.map((el) => {
-      if (el.tag !== 'action') return el;
-      return {
-        ...el,
-        actions: el.actions?.map(({ value: _value, ...rest }) => rest),
+      body: {
+        elements: Array<{ tag: string; behaviors?: Array<{ value: unknown }> }>;
       };
-    });
-    const leaves = stringLeaves(withoutTokenCarrier);
-    expect(leaves.some((leaf) => leaf.includes(token))).toBe(false);
+    };
+    const sanitized = {
+      ...rendered,
+      body: {
+        ...rendered.body,
+        elements: rendered.body.elements.map((el) =>
+          el.tag === 'button'
+            ? {
+                ...el,
+                behaviors: el.behaviors?.map(
+                  ({ value: _value, ...rest }) => rest,
+                ),
+              }
+            : el,
+        ),
+      },
+    };
+    expect(stringLeaves(sanitized).some((leaf) => leaf.includes(token))).toBe(
+      false,
+    );
   });
 
   it('uses a distinct Chinese/English pair via i18n_content rather than concatenating both languages', () => {
     const rendered = card() as {
       header: { title: { content: string; i18n_content: { en_us: string } } };
-      elements: Array<{
-        text?: { content: string; i18n_content?: { en_us: string } };
-      }>;
+      body: {
+        elements: Array<{
+          text?: { content: string; i18n_content?: { en_us: string } };
+        }>;
+      };
     };
     expect(rendered.header.title.content).toContain('用户请求访问');
     expect(rendered.header.title.content).not.toContain('User requests');
@@ -99,7 +113,7 @@ describe('buildPairingApprovalCard — the token never becomes visible card text
       '用户请求访问',
     );
 
-    const body = rendered.elements.find((el) => el.text !== undefined);
+    const body = rendered.body.elements.find((el) => el.text !== undefined);
     expect(body?.text?.content).toContain('仅 App Owner 可以点击批准');
     expect(body?.text?.i18n_content?.en_us).toContain(
       'Only the App Owner can approve',
@@ -108,12 +122,10 @@ describe('buildPairingApprovalCard — the token never becomes visible card text
 
   it('@-mentions the requester with the card Markdown <at> form', () => {
     const rendered = card() as {
-      elements: Array<{ text?: { content: string } }>;
+      body: { elements: Array<{ text?: { content: string } }> };
     };
-    const body = rendered.elements.find((el) => el.text !== undefined);
-    expect(body?.text?.content).toContain(
-      '<at id="ou_requester_123"></at>',
-    );
+    const body = rendered.body.elements.find((el) => el.text !== undefined);
+    expect(body?.text?.content).toContain('<at id="ou_requester_123"></at>');
   });
 
   it('strips markup-significant characters from a hostile requester open_id instead of forging the <at> tag', () => {
@@ -121,8 +133,8 @@ describe('buildPairingApprovalCard — the token never becomes visible card text
       token,
       botDisplayName: 'Dreamux bot',
       requesterOpenId: 'ou"><script>x</script>',
-    }) as { elements: Array<{ text?: { content: string } }> };
-    const body = hostile.elements.find((el) => el.text !== undefined);
+    }) as { body: { elements: Array<{ text?: { content: string } }> } };
+    const body = hostile.body.elements.find((el) => el.text !== undefined);
     // The malicious characters are stripped from the id, not escaped —
     // either way, no `<script>` tag survives, and the wrapping `<at ...>`
     // stays exactly one legitimate tag.
@@ -152,15 +164,27 @@ describe('buildPairingSuccessCard', () => {
 
   it('distinguishes a fresh approval from a duplicate (already-allowed) approval in both languages', () => {
     const fresh = buildPairingSuccessCard({ duplicate: false }) as {
-      elements: Array<{ text?: { content: string; i18n_content?: { en_us: string } } }>;
+      body: {
+        elements: Array<{
+          text?: { content: string; i18n_content?: { en_us: string } };
+        }>;
+      };
     };
     const dup = buildPairingSuccessCard({ duplicate: true }) as {
-      elements: Array<{ text?: { content: string; i18n_content?: { en_us: string } } }>;
+      body: {
+        elements: Array<{
+          text?: { content: string; i18n_content?: { en_us: string } };
+        }>;
+      };
     };
-    const freshBody = fresh.elements.find((el) => el.text !== undefined)?.text;
-    const dupBody = dup.elements.find((el) => el.text !== undefined)?.text;
+    const freshBody = fresh.body.elements.find(
+      (el) => el.text !== undefined,
+    )?.text;
+    const dupBody = dup.body.elements.find((el) => el.text !== undefined)?.text;
     expect(freshBody?.content).not.toBe(dupBody?.content);
-    expect(freshBody?.i18n_content?.en_us).not.toBe(dupBody?.i18n_content?.en_us);
+    expect(freshBody?.i18n_content?.en_us).not.toBe(
+      dupBody?.i18n_content?.en_us,
+    );
   });
 });
 

@@ -1,22 +1,23 @@
+import { configCommands } from '../src/config/commands.js';
 /**
  * Coverage cell C (registry half): the single unrestricted Core Command
  * registry — one catalog, no second authority, canonicalized but
  * size-unbounded results.
  *
  * These tests build the registry the same way `Server` does —
- * `createCoreCommandRegistry(host)` over a hand-built `CoreCommandHost` — so
+ * `createCoreCommandRegistry(host)` over the actual configured `Server` — so
  * the catalog under test is the one every adapter actually shares, not a
  * description of it.
  */
 import { describe, expect, it } from 'vitest';
 
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { CoreCommandDefinition } from '../src/command/types.js';
 
 import { CoreCommands } from '../src/command/registry.js';
 import { dispatcherCommands } from '../src/service/dispatchers/commands.js';
 import { channelCommands } from '../src/service/channel-service/commands.js';
-import { teamCommands } from '../src/service/team-collection/commands.js';
-import { teammateCommands } from '../src/service/teammate-collection/commands.js';
+import { teamCommands } from '../src/service/team/commands.js';
+import { teammateCommands } from '../src/service/agent/commands.js';
 import { workflowCommands } from '../src/service/workflow-service/commands.js';
 import { schedulerCommands } from '../src/service/scheduler/commands.js';
 import { mcpCommands } from '../src/service/mcp/commands.js';
@@ -24,6 +25,7 @@ import { serverCommands } from '../src/server-commands.js';
 import { BOOLEAN, NO_INPUT, objectSchema } from '../src/command/schema.js';
 import {
   createCommandHarness,
+  registryNames,
   harnessDispatcherRow,
   HARNESS_DISPATCHER_ID,
 } from './helpers/command-harness.js';
@@ -38,7 +40,8 @@ const FROZEN_NAMESPACE_TABLE = [
   'server.status',
   'dispatcher.list',
   'dispatcher.status',
-  'dispatcher.start',
+  'config.agents.get',
+  'config.agents.replace',
   'dispatcher.submit',
   'dispatcher.interrupt',
   'channel.list',
@@ -77,6 +80,7 @@ const FROZEN_NAMESPACE_TABLE = [
  * domain — none of which the current architecture owns.
  */
 const DELETED_NAMES = [
+  'dispatcher.start',
   'dispatcher.stop',
   'team.bind_channel',
   'team.transfer_back',
@@ -91,31 +95,34 @@ const DELETED_NAMES = [
 ];
 
 describe('createCoreCommandRegistry — the catalog', () => {
-  it('registers exactly the frozen namespace table, no more and no less', () => {
-    const harness = createCommandHarness();
-    expect([...harness.registry.names()].sort()).toEqual(FROZEN_NAMESPACE_TABLE);
+  it('registers exactly the frozen namespace table, no more and no less', async () => {
+    const harness = await createCommandHarness();
+    expect([...registryNames(harness.registry)].sort()).toEqual(
+      FROZEN_NAMESPACE_TABLE,
+    );
   });
 
-  it('never answers to a deleted Command name', () => {
-    const harness = createCommandHarness();
-    const names = new Set(harness.registry.names());
+  it('never answers to a deleted Command name', async () => {
+    const harness = await createCommandHarness();
+    const names = new Set(registryNames(harness.registry));
     for (const deleted of DELETED_NAMES) {
       expect(names.has(deleted)).toBe(false);
     }
     // Nothing in the whole Core Collaboration Space family survived, not only
     // the three spot-checked names above.
-    expect([...names].some((name) => name.startsWith('collaboration_space.'))).toBe(
-      false,
-    );
+    expect(
+      [...names].some((name) => name.startsWith('collaboration_space.')),
+    ).toBe(false);
   });
 
-  it('every domain module contributes names inside its own dotted namespace', () => {
+  it('every domain module contributes names inside its own dotted namespace', async () => {
     // A stray Command registered under the wrong prefix (e.g. a Team action
     // spelled `teammate.*`) would pass the frozen-table check above only by
     // coincidence of an equal *count*; this proves each module's own names
     // carry its own prefix.
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const byPrefix: Record<string, string> = {
+      'config.': 'config.',
       'server.': 'server.status',
       'dispatcher.': 'dispatcher.',
       'channel.': 'channel.',
@@ -125,83 +132,113 @@ describe('createCoreCommandRegistry — the catalog', () => {
       'scheduler.cron.': 'scheduler.cron.',
       'mcp.': 'mcp.',
     };
-    for (const name of harness.registry.names()) {
-      const owningPrefix = Object.keys(byPrefix).find((prefix) => name.startsWith(prefix));
+    for (const name of registryNames(harness.registry)) {
+      const owningPrefix = Object.keys(byPrefix).find((prefix) =>
+        name.startsWith(prefix),
+      );
       expect(owningPrefix, `unexpected namespace for ${name}`).toBeDefined();
     }
   });
 });
 
 describe('CoreCommands — one authority, not a second one', () => {
-  const noop: Pick<CoreCommandDefinition<string, unknown, unknown>, 'parse' | 'execute'> = {
+  const noop: Pick<
+    CoreCommandDefinition<string, unknown, unknown>,
+    'parse' | 'execute'
+  > = {
     parse: (payload) => payload,
     execute: async () => ({}),
   };
 
-  function minimal(name: string): CoreCommandDefinition<string, unknown, unknown> {
-    return { name, version: 1, input: NO_INPUT, output: objectSchema({}), ...noop };
+  function minimal(
+    name: string,
+  ): CoreCommandDefinition<string, unknown, unknown> {
+    return {
+      name,
+      version: 1,
+      input: NO_INPUT,
+      output: objectSchema({}),
+      ...noop,
+    };
   }
 
-  it('rejects two definitions registered under the same name', () => {
-    expect(() => new CoreCommands([minimal('dup.name'), minimal('dup.name')])).toThrow(
-      /dup\.name.*registered twice/,
-    );
+  it('rejects two definitions registered under the same name', async () => {
+    expect(
+      () => new CoreCommands([minimal('dup.name'), minimal('dup.name')]),
+    ).toThrow(/dup\.name.*registered twice/);
   });
 
-  it('fails loud at construction on a malformed declared input schema, before any invocation', () => {
+  it('fails loud at construction on a malformed declared input schema, before any invocation', async () => {
     const malformed: CoreCommandDefinition<string, unknown, unknown> = {
       name: 'bad.input',
       version: 1,
       // `type: 'not-a-real-type'` is not a JSON Schema this validator accepts.
-      input: { type: 'not-a-real-type' } as unknown as ReturnType<typeof objectSchema>,
+      input: { type: 'not-a-real-type' } as unknown as ReturnType<
+        typeof objectSchema
+      >,
       output: objectSchema({}),
       ...noop,
     };
     expect(() => new CoreCommands([malformed])).toThrow(/bad\.input/);
   });
 
-  it('fails loud at construction on a malformed declared output schema', () => {
+  it('fails loud at construction on a malformed declared output schema', async () => {
     const malformed: CoreCommandDefinition<string, unknown, unknown> = {
       name: 'bad.output',
       version: 1,
       input: NO_INPUT,
-      output: { type: 'not-a-real-type' } as unknown as ReturnType<typeof objectSchema>,
+      output: { type: 'not-a-real-type' } as unknown as ReturnType<
+        typeof objectSchema
+      >,
       ...noop,
     };
     expect(() => new CoreCommands([malformed])).toThrow(/bad\.output/);
   });
 
   it('rejects an unknown Command name with its own stable UNKNOWN_METHOD code', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
-      harness.registry.invoke({ source: 'admin_socket' }, 'not.a.real.command', {}),
+      harness.registry.invoke(
+        { source: 'admin_socket' },
+        'not.a.real.command',
+        {},
+      ),
     ).rejects.toMatchObject({ code: 'UNKNOWN_METHOD' });
   });
 
-  it('carries no exposure/audience property, allowlist, or capability-negotiation hook on any definition', () => {
+  it('carries no exposure/audience property, allowlist, or capability-negotiation hook on any definition', async () => {
     // `CoreCommandDefinition` (dreamux-types/command.ts) declares exactly
     // name/version/input/output/parse/execute. Reading every domain module's
     // own definitions directly — the real objects the catalog concatenates,
     // not a description of them — proves no domain module smuggled a second
     // property onto the shared contract.
-    const host = createCommandHarness().host;
-    const allowedKeys = new Set(['name', 'version', 'input', 'output', 'parse', 'execute']);
+    const host = (await createCommandHarness()).host;
+    const allowedKeys = new Set([
+      'name',
+      'version',
+      'input',
+      'output',
+      'parse',
+      'execute',
+    ]);
     const allDefinitions = [
       ...serverCommands(host),
+      ...configCommands(host.config),
       ...dispatcherCommands(host),
       ...channelCommands(host),
       ...teamCommands(host),
       ...teammateCommands(host),
       ...workflowCommands(host),
       ...schedulerCommands(host),
-      ...mcpCommands(host),
+      ...mcpCommands(host.mcpLeases),
     ];
     expect(allDefinitions.length).toBeGreaterThan(0);
     for (const definition of allDefinitions) {
       for (const key of Object.keys(definition)) {
-        expect(allowedKeys.has(key), `${definition.name} declared unexpected key '${key}'`).toBe(
-          true,
-        );
+        expect(
+          allowedKeys.has(key),
+          `${definition.name} declared unexpected key '${key}'`,
+        ).toBe(true);
       }
     }
   });
@@ -223,13 +260,17 @@ describe('result canonicalization — no registry-wide output byte cap', () => {
     const approxBytes = JSON.stringify(bigSummary).length;
     expect(approxBytes).toBeGreaterThan(256 * 1024);
 
-    const harness = createCommandHarness({ summarize: async () => bigSummary as never });
+    const harness = await createCommandHarness({
+      summarize: async () => bigSummary as never,
+    });
     const result = await harness.registry.invoke(
       { source: 'admin_socket' },
       'server.status',
       {},
     );
-    expect((result as { dispatchers: unknown[] }).dispatchers).toHaveLength(5_000);
+    expect((result as { dispatchers: unknown[] }).dispatchers).toHaveLength(
+      5_000,
+    );
   });
 
   it('reports a JSON-representable result that violates its OWN declared output schema as INTERNAL', async () => {
@@ -249,7 +290,11 @@ describe('result canonicalization — no registry-wide output byte cap', () => {
     };
     const registry = new CoreCommands([schemaViolator]);
     await expect(
-      registry.invoke({ source: 'admin_socket' }, 'harness.schema_violating_output', {}),
+      registry.invoke(
+        { source: 'admin_socket' },
+        'harness.schema_violating_output',
+        {},
+      ),
     ).rejects.toMatchObject({ code: 'INTERNAL' });
   });
 
@@ -274,7 +319,7 @@ describe('result canonicalization — no registry-wide output byte cap', () => {
 
 describe('dispatcher-scoped Commands resolve through the host, not a second lookup', () => {
   it('dispatcher.status reads the addressed dispatcher_id from context, never from the payload', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const result = await harness.registry.invoke(
       { source: 'admin_socket', dispatcher_id: HARNESS_DISPATCHER_ID },
       'dispatcher.status',
@@ -284,7 +329,9 @@ describe('dispatcher-scoped Commands resolve through the host, not a second look
   });
 
   it('fails loud with DISPATCHER_NOT_FOUND for a dispatcher_id the host does not carry — never INTERNAL', async () => {
-    const harness = createCommandHarness({ dispatcherRow: harnessDispatcherRow() });
+    const harness = await createCommandHarness({
+      dispatcherRow: harnessDispatcherRow(),
+    });
     await expect(
       harness.registry.invoke(
         { source: 'admin_socket', dispatcher_id: 'no-such-dispatcher' },
@@ -295,9 +342,35 @@ describe('dispatcher-scoped Commands resolve through the host, not a second look
   });
 
   it('a dispatcher-scoped Command with no dispatcher_id at all is BAD_REQUEST, not a silent default', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
-      harness.registry.invoke({ source: 'admin_socket' }, 'dispatcher.status', {}),
+      harness.registry.invoke(
+        { source: 'admin_socket' },
+        'dispatcher.status',
+        {},
+      ),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
+});
+
+// The delegate catalog is carried by leases; tools never become Core Commands.
+it('at the composition root, no individual agent-facing tool name is ever a registered Command', async () => {
+  const harness = await createCommandHarness();
+  const names = registryNames(harness.registry);
+  expect(names.filter((name) => name.startsWith('mcp.'))).toEqual([
+    'mcp.describe',
+    'mcp.toolcall',
+  ]);
+  for (const name of [
+    'team_spawn',
+    'teammate_spawn',
+    'team_send',
+    'workflow_run',
+    'reply',
+  ]) {
+    expect(names).not.toContain(name);
+    await expect(
+      harness.registry.invoke({ source: 'admin_socket' }, name, {}),
+    ).rejects.toMatchObject({ code: 'UNKNOWN_METHOD' });
+  }
 });

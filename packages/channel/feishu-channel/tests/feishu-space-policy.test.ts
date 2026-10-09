@@ -1,7 +1,6 @@
 /**
  * Collaboration Space policy snapshot semantics (COVERAGE CELL F; TeamLeader
- * failure ledger item 17): `generation` names a policy revision, not a
- * cancellation token. A Team creation accepted before a policy update keeps
+ * failure ledger item 17): policy revisions never cancel admitted work. A Team creation accepted before a policy update keeps
  * running under the snapshot it captured; a creation accepted after uses the
  * new snapshot; existing Teams are never rewritten; `unbind_collaboration_space`
  * stops only *future* provisioning and cancels nothing already accepted.
@@ -15,7 +14,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
 
@@ -23,9 +22,15 @@ import { teamSummary } from './helpers/team-status.js';
 
 import { FeishuProvisioning } from '../src/feishu-provisioning.js';
 import { FeishuRouting } from '../src/routing/index.js';
-import { FeishuRoutingStore } from '../src/routing/store.js';
+import { FeishuCoreCommands } from '../src/feishu-core-commands.js';
+import { FeishuTeamSubmitter } from '../src/session/submitter.js';
+import { FeishuCotAdapter } from '../src/cot/adapter.js';
+import { createFeishuLifecycle } from '../src/session/lifecycle.js';
 import { topicTarget } from '../src/routing/target.js';
-import type { FeishuChatSubmission, FeishuSubmitOutcome } from '../src/feishu-submit.js';
+import type {
+  FeishuChatSubmission,
+  FeishuSubmitOutcome,
+} from '../src/feishu-submit.js';
 
 let dir: string;
 
@@ -34,6 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -43,16 +49,50 @@ const silentLog: DreamuxLogger = {
   info: () => undefined,
   debug: () => undefined,
   trace: () => undefined,
+  child: () => silentLog,
 };
 
 async function makeRouting(): Promise<FeishuRouting> {
-  const store = new FeishuRoutingStore({
+  const routing = new FeishuRouting({
     dispatcherId: 'disp-1',
     channelId: 'chan-1',
     stateDir: dir,
   });
-  await store.load();
-  return new FeishuRouting({ dispatcherId: 'disp-1', channelId: 'chan-1', store });
+  await routing.initialize();
+  return routing;
+}
+function fixtureProvisioning(opts: {
+  dispatcherId: string;
+  channelId: string;
+  log: DreamuxLogger;
+  routing: FeishuRouting;
+  submitter: { submit(): Promise<FeishuSubmitOutcome> };
+  invoke(command: string, payload: JsonValue): Promise<JsonValue>;
+  announce(): void;
+}): FeishuProvisioning {
+  const commands = new FeishuCoreCommands();
+  commands.initialize({ invoke: opts.invoke });
+  const lifecycle = createFeishuLifecycle();
+  const cot = new FeishuCotAdapter({
+    dispatcherId: opts.dispatcherId,
+    channelId: opts.channelId,
+    log: opts.log,
+    lifecycle,
+    cotClient: undefined,
+  });
+  const submitter = new FeishuTeamSubmitter({ lifecycle, cot, commands });
+  vi.spyOn(submitter, 'submit').mockImplementation(() =>
+    opts.submitter.submit(),
+  );
+  return new FeishuProvisioning({
+    dispatcherId: opts.dispatcherId,
+    channelId: opts.channelId,
+    log: opts.log,
+    routing: opts.routing,
+    commands,
+    submitter,
+    bindings: { presentCommittedBind: opts.announce },
+  });
 }
 
 function submission(sourceId: string): FeishuChatSubmission {
@@ -62,55 +102,13 @@ function submission(sourceId: string): FeishuChatSubmission {
     text: 'hi',
     reminder: '',
     sourceId,
-    anchor: { chatId: 'oc_c', messageId: `m-${sourceId}`, target: topicTarget('oc_c', 't') },
+    anchor: {
+      chatId: 'oc_c',
+      messageId: `m-${sourceId}`,
+      target: topicTarget('oc_c', 't'),
+    },
   };
 }
-
-describe('bindSpace — generation advances only on creation-fact changes', () => {
-  it('a display-only rename does not advance the generation', async () => {
-    const routing = await makeRouting();
-    const created = await routing.bindSpace({
-      spaceName: 'space-a',
-      containerChatId: 'oc_c',
-      display: null,
-      leaderAgentRuntime: 'codex',
-      identity: null,
-      repo: null,
-    });
-    expect(created.generation).toBe(1);
-
-    const renamed = await routing.bindSpace({
-      spaceName: 'space-a',
-      containerChatId: 'oc_c',
-      display: 'New display',
-      leaderAgentRuntime: 'codex',
-      identity: null,
-      repo: null,
-    });
-    expect(renamed.generation).toBe(1);
-  });
-
-  it('changing the leader_agent_runtime advances the generation', async () => {
-    const routing = await makeRouting();
-    await routing.bindSpace({
-      spaceName: 'space-a',
-      containerChatId: 'oc_c',
-      display: null,
-      leaderAgentRuntime: 'codex',
-      identity: null,
-      repo: null,
-    });
-    const rebound = await routing.bindSpace({
-      spaceName: 'space-a',
-      containerChatId: 'oc_c',
-      display: null,
-      leaderAgentRuntime: 'claude-code',
-      identity: null,
-      repo: null,
-    });
-    expect(rebound.generation).toBe(2);
-  });
-});
 
 describe('Provisioning snapshot immutability', () => {
   it('a run holding the old snapshot keeps its captured leader_agent_runtime even after the policy is rebound mid-run', async () => {
@@ -126,7 +124,7 @@ describe('Provisioning snapshot immutability', () => {
 
     const invokeCalls: JsonValue[] = [];
     let resolveCreate!: (v: JsonValue) => void;
-    const provisioning = new FeishuProvisioning({
+    const provisioning = fixtureProvisioning({
       dispatcherId: 'disp-1',
       channelId: 'chan-1',
       log: silentLog,
@@ -193,13 +191,16 @@ describe('Provisioning snapshot immutability', () => {
     });
 
     const invokeCalls: JsonValue[] = [];
-    const provisioning = new FeishuProvisioning({
+    const provisioning = fixtureProvisioning({
       dispatcherId: 'disp-1',
       channelId: 'chan-1',
       log: silentLog,
       routing,
       submitter: {
-        submit: async (): Promise<FeishuSubmitOutcome> => ({ status: 'submitted', turnId: 't2' }),
+        submit: async (): Promise<FeishuSubmitOutcome> => ({
+          status: 'submitted',
+          turnId: 't2',
+        }),
       },
       invoke: async (_command, payload) => {
         invokeCalls.push(payload);
@@ -241,13 +242,16 @@ describe('unbindSpace — stops future provisioning only', () => {
     });
 
     let resolveCreate!: (v: JsonValue) => void;
-    const provisioning = new FeishuProvisioning({
+    const provisioning = fixtureProvisioning({
       dispatcherId: 'disp-1',
       channelId: 'chan-1',
       log: silentLog,
       routing,
       submitter: {
-        submit: async (): Promise<FeishuSubmitOutcome> => ({ status: 'submitted', turnId: 't3' }),
+        submit: async (): Promise<FeishuSubmitOutcome> => ({
+          status: 'submitted',
+          turnId: 't3',
+        }),
       },
       invoke: async () => {
         return new Promise<JsonValue>((resolve) => {
@@ -272,12 +276,15 @@ describe('unbindSpace — stops future provisioning only', () => {
     resolveCreate(teamSummary('surviving-team') as unknown as JsonValue);
     const outcome = await run;
     expect(outcome).toEqual({ status: 'submitted', turnId: 't3' });
-    expect(routing.bindingFor(topicTarget('oc_c', 'thread-surviving'))?.team_name).toBe(
-      'surviving-team',
-    );
+    expect(
+      routing.bindingFor(topicTarget('oc_c', 'thread-surviving'))?.team_name,
+    ).toBe('surviving-team');
 
     // And the next inbound message to the same container no longer provisions.
-    const plan = routing.plan(topicTarget('oc_c', 'thread-after-unbind'), 'oc_c');
+    const plan = routing.plan(
+      topicTarget('oc_c', 'thread-after-unbind'),
+      'oc_c',
+    );
     expect(plan.kind).toBe('dispatcher');
   });
 });

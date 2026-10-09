@@ -29,11 +29,7 @@ import {
   subscribeDocumentDef,
   unsubscribeDocumentDef,
 } from './document-tools.js';
-import {
-  listChatBotsDef,
-  reactDef,
-  replyDef,
-} from './messaging-tools.js';
+import { listChatBotsDef, reactDef, replyDef } from './messaging-tools.js';
 import {
   bindChannelDef,
   leaderBindChannelDef,
@@ -96,7 +92,17 @@ export function findFeishuTool(
 export function feishuToolRegistrations(
   caller: ChannelMcpCaller,
 ): readonly ChannelMcpToolRegistration[] {
-  return feishuToolsFor(caller).map((def) => ({
+  return feishuToolsFor(caller).map(toolRegistration);
+}
+
+/**
+ * The neutral registration for one tool descriptor. Shared with extension
+ * tools, which carry the same descriptor fields and also target the session.
+ */
+export function toolRegistration(
+  def: Omit<FeishuToolDef, 'handle' | 'parse'>,
+): ChannelMcpToolRegistration {
+  return {
     tool: {
       name: def.name,
       title: def.title,
@@ -105,10 +111,11 @@ export function feishuToolRegistrations(
       outputSchema: def.outputSchema,
       annotations: def.annotations,
     },
-    target: 'session' as const,
-  }));
+    target: 'session',
+  };
 }
 
+// eslint-disable-next-line no-restricted-syntax -- convenience re-export so a consumer of this registry module needs no separate import from ./types.js
 export type {
   ChannelLogger,
   FeishuListChatBotsResult,

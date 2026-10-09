@@ -125,7 +125,8 @@ Estimated net reduction on the Claude side: 30 to 40 lines.
 ## 2. Channel-body suppression state
 
 - **Status:** Delivered 2026-09-02 — removed completely.
-- **File:** [`/packages/channel/feishu-channel/src/feishu-cot-state.ts`](/packages/channel/feishu-channel/src/feishu-cot-state.ts)
+- **File:** [`/packages/channel/feishu-channel/src/cot/recipients.ts`](/packages/channel/feishu-channel/src/cot/recipients.ts)
+  (renamed from `feishu-cot-state.ts` in the code-organization refactor)
 
 `suppressedUserTurns` is a per-recipient set with a 64-entry cap and an
 eviction rule, consumed one-shot, whose only job is to hide the copy of the
@@ -140,7 +141,7 @@ mostly inert.
 - **Status:** Delivered 2026-09-02 — the capability stays, the process-global
   cache is gone, and all three defects are repaired.
 - **Files:** [`/packages/dreamux/src/platform/home-paths.ts`](/packages/dreamux/src/platform/home-paths.ts),
-  [`/packages/dreamux/src/channel/conversation-projection.ts`](/packages/dreamux/src/channel/conversation-projection.ts)
+  [`/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`](/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts)
 
 `home-paths.ts` holds a module-level mutable cache resolved once from
 `Server.start()`, plus a reset hook for tests. Callers that run before that

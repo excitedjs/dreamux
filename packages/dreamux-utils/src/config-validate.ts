@@ -1,17 +1,17 @@
 /**
- * Neutral config validation primitives.
+ * Shared JSON-shape validation helpers for Dreamux config readers.
  *
- * Extracted from `config/config.ts` so that per-runtime config readers (each
- * builtin's `agent-runtime/builtin/<name>/config.ts`) can validate their own
- * config blocks without importing `config/config.ts` — importing the host
- * config module from a builtin would re-form the builtin -> config import
- * cycle. These helpers are runtime-agnostic: they only know about JSON shapes
- * and produce `dreamux config error in <file>: ...` messages.
+ * Any code that reads a config block validates it with these: each provider
+ * package's own `config.ts` for its provider's block, and the host's config
+ * module and plugin loader for theirs. They are runtime-agnostic — they know
+ * only JSON shapes — and every rejection they throw is a {@link RuleViolation}
+ * carrying a `dreamux config error in <file>: ...` message, so a host reader
+ * that received the value from a caller can tell a refused value from a
+ * failure of its own.
  */
 
-export function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
+import { isPlainObject } from './json-shape.js';
+import { RuleViolation } from './rule-violation.js';
 
 export function describeType(v: unknown): string {
   if (v === null) return 'null';
@@ -19,32 +19,9 @@ export function describeType(v: unknown): string {
   return typeof v;
 }
 
-export function rejectUnknownKeys(
-  obj: Record<string, unknown>,
-  allowed: Set<string>,
-  file: string,
-  prefix: string,
-): void {
-  for (const key of Object.keys(obj)) {
-    if (allowed.has(key)) continue;
-    const name = `${prefix}${key}`;
-    if (/^dispatchers\[\d+\]\.$/.test(prefix) && (key === 'feishu' || key === 'codex')) {
-      throw new Error(
-        `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
-          'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
-          'dispatchers[].channels[] for the channel and a named agents[] entry referenced via ' +
-          'dispatchers[].agentRuntime for the runtime, then restart.',
-      );
-    }
-    throw new Error(
-      `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema`,
-    );
-  }
-}
-
 function ensureString(v: unknown, key: string, file: string): string {
   if (typeof v !== 'string') {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${key} must be a string (got ${describeType(v)})`,
     );
   }
@@ -63,7 +40,7 @@ function requireString(
   return ensureString(v, `${prefix}${key}`, file);
 }
 
-export function requireNonEmptyString(
+export function readNonEmptyString(
   obj: Record<string, unknown>,
   key: string,
   file: string,
@@ -71,7 +48,7 @@ export function requireNonEmptyString(
 ): string {
   const value = requireString(obj, key, '', file, prefix);
   if (value.trim() !== '') return value;
-  throw new Error(
+  throw new RuleViolation(
     `dreamux config error in ${file}: ${prefix}${key} must be a non-empty string`,
   );
 }
@@ -97,12 +74,12 @@ export function readOptionalBoolean(
   const v = obj[key];
   if (v === undefined) return fallback;
   if (typeof v === 'boolean') return v;
-  throw new Error(
+  throw new RuleViolation(
     `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
   );
 }
 
-export function requireStringArray(
+export function readStringArray(
   obj: Record<string, unknown>,
   key: string,
   fallback: string[],
@@ -112,13 +89,13 @@ export function requireStringArray(
   const v = obj[key];
   if (v === undefined) return fallback;
   if (!Array.isArray(v)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}${key} must be an array of strings (got ${describeType(v)})`,
     );
   }
   return v.map((item, i) => {
     if (typeof item !== 'string') {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}${key}[${i}] must be a string (got ${describeType(item)})`,
       );
     }
@@ -126,7 +103,7 @@ export function requireStringArray(
   });
 }
 
-export function requireStringRecord(
+export function readStringRecord(
   obj: Record<string, unknown>,
   key: string,
   fallback: Record<string, string>,
@@ -136,14 +113,14 @@ export function requireStringRecord(
   const v = obj[key];
   if (v === undefined) return { ...fallback };
   if (!isPlainObject(v)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}${key} must be an object of strings (got ${describeType(v)})`,
     );
   }
   const out: Record<string, string> = {};
   for (const [entryKey, entryValue] of Object.entries(v)) {
     if (typeof entryValue !== 'string') {
-      throw new Error(
+      throw new RuleViolation(
         `dreamux config error in ${file}: ${prefix}${key}.${entryKey} must be a string (got ${describeType(entryValue)})`,
       );
     }
@@ -161,12 +138,12 @@ function readInt(
   const v = obj[key];
   if (v === undefined) return null;
   if (typeof v === 'number' && Number.isInteger(v)) return v;
-  throw new Error(
+  throw new RuleViolation(
     `dreamux config error in ${file}: ${prefix}${key} must be an integer (got ${describeType(v)})`,
   );
 }
 
-export function requirePositiveInt(
+export function readPositiveInt(
   obj: Record<string, unknown>,
   key: string,
   fallback: number,
@@ -176,7 +153,7 @@ export function requirePositiveInt(
   const n = readInt(obj, key, file, prefix);
   if (n === null) return fallback;
   if (n <= 0) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${prefix}${key} must be > 0 (got ${n})`,
     );
   }
@@ -191,7 +168,7 @@ export function readProviderConfigObject(
 ): Record<string, unknown> {
   if (rawConfig === undefined && options.allowMissing === true) return {};
   if (!isPlainObject(rawConfig)) {
-    throw new Error(
+    throw new RuleViolation(
       `dreamux config error in ${file}: ${name} must be an object (got ${describeType(rawConfig)})`,
     );
   }

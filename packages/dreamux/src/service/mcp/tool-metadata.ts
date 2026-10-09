@@ -11,6 +11,10 @@
  * and what a result projects to. This module only spells the shapes those share.
  */
 
+import type { JsonSchema } from '@excitedjs/dreamux-types';
+
+import { objectSchema } from '../../command/schema.js';
+
 /**
  * Standard MCP tool annotations as plain JSON.
  *
@@ -76,10 +80,10 @@ export function toolMetadata(input: {
   name: string;
   title: string;
   description: string;
-  properties: Record<string, unknown>;
+  properties: Record<string, JsonSchema>;
   required: string[];
   /** Additional object-schema constraints such as `anyOf`. */
-  inputConstraints?: Record<string, unknown>;
+  inputConstraints?: Record<string, unknown> | undefined;
   outputSchema: Record<string, unknown>;
   annotations: McpToolAnnotations;
 }): McpToolDescriptor {
@@ -88,10 +92,7 @@ export function toolMetadata(input: {
     title: input.title,
     description: input.description,
     inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: input.properties,
-      required: input.required,
+      ...objectSchema(input.properties, input.required),
       ...(input.inputConstraints ?? {}),
     },
     outputSchema: input.outputSchema,
@@ -100,92 +101,31 @@ export function toolMetadata(input: {
 }
 
 /**
- * A closed JSON Schema object. Top-level Dreamux output objects are closed
- * unless a tool intentionally exposes a JSON-valued extension field.
+ * Build one tool descriptor from its scalar parts. The one canonical wrapper
+ * around {@link toolMetadata} every MCP delegate calls, so a delegate spells
+ * a tool's shape once instead of carrying its own private copy of this
+ * wiring.
  */
-export function closedObjectSchema(
-  properties: Record<string, unknown>,
+export function tool(
+  name: string,
+  description: string,
+  properties: Record<string, JsonSchema>,
   required: string[],
-): Record<string, unknown> {
-  return {
-    type: 'object',
-    additionalProperties: false,
+  meta: {
+    title: string;
+    output: Record<string, unknown>;
+    annotations: McpToolAnnotations;
+    inputConstraints?: Record<string, unknown> | undefined;
+  },
+): McpToolDescriptor {
+  return toolMetadata({
+    name,
+    title: meta.title,
+    description,
     properties,
     required,
-  };
-}
-
-/**
- * A permissive object schema for a rich, evolving nested domain DTO (a teammate
- * status row, a team view, a cron job, …). The top-level output object stays
- * closed around its known keys; the deep DTO shapes are validated only as
- * "an object" so an additive domain field cannot break MCP output validation.
- */
-export const OPEN_OBJECT: Record<string, unknown> = { type: 'object' };
-
-/** An array schema over `items`. */
-export function arrayOf(items: Record<string, unknown>): Record<string, unknown> {
-  return { type: 'array', items };
-}
-
-/** Canonical top-level admission status for prompt-submission receipts. */
-export const SUBMISSION_STATUS_SCHEMA: Record<string, unknown> = {
-  type: 'string',
-  enum: ['submitted', 'duplicate', 'stopped', 'failed', 'ambiguous'],
-};
-
-/** Optional public error text accompanying failed or ambiguous admission. */
-export const SUBMISSION_ERROR_SCHEMA: Record<string, unknown> = {
-  type: 'string',
-};
-
-/** The repo input shared by the Team and TeamMate MCP creation tools. */
-export function repoInputSchema(): Record<string, unknown> {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      mode: {
-        type: 'string',
-        enum: ['reuse-cwd', 'managed'],
-        description:
-          'reuse-cwd runs in an existing directory; managed creates a git ' +
-          'worktree from a source repository.',
-      },
-      path: {
-        type: 'string',
-        minLength: 1,
-        maxLength: 4096,
-        description:
-          'reuse-cwd: the directory to run in. managed: the source ' +
-          'repository; defaults to this agent\'s workspace.',
-      },
-      base_ref: {
-        type: 'string',
-        minLength: 1,
-        maxLength: 256,
-        description:
-          'managed: the ref a newly created branch starts from; default ' +
-          'HEAD; ignored when branch already exists.',
-      },
-      branch: {
-        type: 'string',
-        minLength: 1,
-        maxLength: 256,
-        description:
-          'managed: the branch to create or check out; defaults to ' +
-          'dreamux/<teammate_name> for a TeamMate or dreamux/team-<team_name> ' +
-          'for a Team, using the concrete allocated name.',
-      },
-      cleanup: {
-        type: 'string',
-        enum: ['keep', 'delete-on-close'],
-        description:
-          'managed: delete-on-close (the default) removes the worktree when ' +
-          'the agent closes or its Team dissolves and the tree is clean; keep ' +
-          'leaves it in place.',
-      },
-    },
-    required: ['mode'],
-  };
+    inputConstraints: meta.inputConstraints,
+    outputSchema: meta.output,
+    annotations: meta.annotations,
+  });
 }

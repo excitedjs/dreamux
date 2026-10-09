@@ -15,9 +15,9 @@ import {
   runMcpServer,
   type McpToolDefinition,
 } from '../src/mcp/server.js';
-import { validateMcpToolCatalog } from '../src/mcp/catalog.js';
-import { createTeamMcpDelegate } from '../src/service/team-collection/mcp-delegate.js';
-import { teammateToolDescriptors } from '../src/service/teammate-collection/mcp-tool-descriptors.js';
+import { validateMcpToolCatalog } from '../src/service/mcp/catalog.js';
+import { createTeamMcpDelegate } from '../src/service/team/mcp.js';
+import { createTeamMateMcpDelegate } from '../src/service/agent/mcp.js';
 import {
   callTool,
   connectMcpClient,
@@ -76,17 +76,28 @@ function deferred<T>(): {
 
 describe('creation tool repo validation over MCP', () => {
   for (const name of ['spawn', 'create'] as const) {
-    const catalog = name === 'spawn'
-      ? teammateToolDescriptors('dispatcher')
-      : createTeamMcpDelegate({
-          dispatcher: {} as never,
-          caller: { kind: 'dispatcher' },
-        }).describe().tools;
-    const descriptor = validateMcpToolCatalog(catalog, name)
-      .find((tool) => tool.name === name)!;
-    const args: Record<string, unknown> = name === 'spawn'
-      ? { name_prefix: 'worker', intent: 'review', prompt: 'review the changes' }
-      : { name_prefix: 'workers', intent: 'review', leader_agent_runtime: 'test-runtime' };
+    const catalog =
+      name === 'spawn'
+        ? createTeamMateMcpDelegate({
+            kind: 'dispatcher',
+            dispatcher: {} as never,
+          }).describe().tools
+        : createTeamMcpDelegate({ teams: {} as never }).describe().tools;
+    const descriptor = validateMcpToolCatalog(catalog, name).find(
+      (tool) => tool.name === name,
+    )!;
+    const args: Record<string, unknown> =
+      name === 'spawn'
+        ? {
+            name_prefix: 'worker',
+            intent: 'review',
+            prompt: 'review the changes',
+          }
+        : {
+            name_prefix: 'workers',
+            intent: 'review',
+            leader_agent_runtime: 'test-runtime',
+          };
 
     for (const version of DREAMUX_SUPPORTED_PROTOCOL_VERSIONS) {
       it(`${name} rejects repo.slug before dispatch over ${version}`, async () => {
@@ -96,15 +107,16 @@ describe('creation tool repo validation over MCP', () => {
           handler: async (input) => {
             received.push(input);
             return {
-              structured: name === 'spawn'
-                ? { teammate: {}, status: 'submitted' }
-                : {
-                    status: 'created',
-                    team_name: 'workers-a1b2',
-                    leader_name: 'leader-a1b2',
-                    leader_agent_runtime: 'test-runtime',
-                    runtime_cwd: '/tmp/project',
-                  },
+              structured:
+                name === 'spawn'
+                  ? { teammate: {}, status: 'submitted' }
+                  : {
+                      status: 'created',
+                      team_name: 'workers-a1b2',
+                      leader_name: 'leader-a1b2',
+                      leader_agent_runtime: 'test-runtime',
+                      runtime_cwd: '/tmp/project',
+                    },
             };
           },
         };
@@ -163,15 +175,19 @@ describe('shared MCP protocol conformance', () => {
     );
     try {
       expect(connection.client.getProtocolEra()).toBe('modern');
-      expect(connection.client.getNegotiatedProtocolVersion()).toBe('2026-07-28');
+      expect(connection.client.getNegotiatedProtocolVersion()).toBe(
+        '2026-07-28',
+      );
       expect(connection.client.getDiscoverResult()).toMatchObject({
         supportedVersions: ['2026-07-28'],
         capabilities: { tools: {} },
       });
-      expect((await listedTools(connection.client)).map((tool) => tool.name)).toEqual([
-        'echo',
-      ]);
-      await expect(callTool(connection.client, 'echo', { value: 'modern' })).resolves.toEqual({
+      expect(
+        (await listedTools(connection.client)).map((tool) => tool.name),
+      ).toEqual(['echo']);
+      await expect(
+        callTool(connection.client, 'echo', { value: 'modern' }),
+      ).resolves.toEqual({
         _meta: {
           'io.modelcontextprotocol/serverInfo': {
             name: 'dreamux-conformance-test',
@@ -205,7 +221,9 @@ describe('shared MCP protocol conformance', () => {
           annotations: ECHO_TOOL.annotations,
         });
         expect(tool).not.toHaveProperty('successText');
-        await expect(callTool(connection.client, 'echo', { value: version })).resolves.toEqual({
+        await expect(
+          callTool(connection.client, 'echo', { value: version }),
+        ).resolves.toEqual({
           content: [],
           structuredContent: { echoed: version },
         });
@@ -216,7 +234,8 @@ describe('shared MCP protocol conformance', () => {
   }
 
   it('counter-offers 2025-11-25 instead of negotiating 2024-11-05', async () => {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     const run = serve(serverTransport);
     const client = new Client(
       { name: 'old-offer-test', version: '1.0.0' },
@@ -236,7 +255,8 @@ describe('shared MCP protocol conformance', () => {
   });
 
   it('rejects an unsupported modern revision with the SDK -32022 error', async () => {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     const run = serve(serverTransport);
     const client = new Client(
       { name: 'future-version-test', version: '1.0.0' },
@@ -246,17 +266,19 @@ describe('shared MCP protocol conformance', () => {
       },
     );
     try {
-      await expect(client.connect(clientTransport)).rejects.toSatisfy((error: unknown) => {
-        expect(error).toBeInstanceOf(UnsupportedProtocolVersionError);
-        expect(error).toMatchObject({
-          code: ProtocolErrorCode.UnsupportedProtocolVersion,
-          data: {
-            requested: '2027-01-01',
-            supported: ['2026-07-28'],
-          },
-        });
-        return true;
-      });
+      await expect(client.connect(clientTransport)).rejects.toSatisfy(
+        (error: unknown) => {
+          expect(error).toBeInstanceOf(UnsupportedProtocolVersionError);
+          expect(error).toMatchObject({
+            code: ProtocolErrorCode.UnsupportedProtocolVersion,
+            data: {
+              requested: '2027-01-01',
+              supported: ['2026-07-28'],
+            },
+          });
+          return true;
+        },
+      );
     } finally {
       await clientTransport.close();
       await run;
@@ -325,7 +347,9 @@ describe('shared MCP protocol conformance', () => {
     );
     try {
       await expect(
-        callTool(connection.client, 'echo_with_success_text', { value: 'valid' }),
+        callTool(connection.client, 'echo_with_success_text', {
+          value: 'valid',
+        }),
       ).resolves.toEqual({
         content: [{ type: 'text', text: 'Operation-specific success text.' }],
         structuredContent: { echoed: 'valid' },
@@ -336,7 +360,8 @@ describe('shared MCP protocol conformance', () => {
   });
 
   it('does not recognize the retired bare initialized notification', async () => {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     const run = serve(serverTransport);
     const received: JSONRPCMessage[] = [];
     clientTransport.onmessage = (message) => received.push(message);
@@ -368,7 +393,9 @@ describe('shared MCP protocol conformance', () => {
         return { structured: { echoed: args['value'] } };
       },
     };
-    const connection = await connectMcpClient((transport) => serve(transport, [tool]));
+    const connection = await connectMcpClient((transport) =>
+      serve(transport, [tool]),
+    );
     try {
       const controller = new AbortController();
       const call = callTool(

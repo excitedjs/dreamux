@@ -1,10 +1,11 @@
+import { createFeishuLifecycle } from '../src/session/lifecycle.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createFeishuInboundWork,
   runFeishuInboundWork,
   type FeishuInboundWorkContext,
-} from '../src/feishu-inbound-work.js';
+} from '../src/inbound/work.js';
 
 const works: FeishuInboundWorkContext[] = [];
 
@@ -13,20 +14,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function session(controller: AbortController): {
-  signal: AbortSignal;
-  isCurrent(): boolean;
-} {
-  return {
-    signal: controller.signal,
-    isCurrent: () => !controller.signal.aborted,
-  };
-}
-
 describe('Feishu inbound work fencing', () => {
   it('does not start a queued operation after the session is revoked', async () => {
-    const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller));
+    const controller = createFeishuLifecycle();
+    const work = createFeishuInboundWork(controller);
     works.push(work);
     let calls = 0;
 
@@ -44,8 +35,8 @@ describe('Feishu inbound work fencing', () => {
   it('classifies an operation bounded by the message deadline deterministically', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
-    const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 25 });
+    const controller = createFeishuLifecycle();
+    const work = createFeishuInboundWork(controller, { timeoutMs: 25 });
     works.push(work);
 
     const result = runFeishuInboundWork(
@@ -61,19 +52,21 @@ describe('Feishu inbound work fencing', () => {
   it('classifies an already-expired operation-local deadline as a resource timeout', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
-    const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 100 });
+    const controller = createFeishuLifecycle();
+    const work = createFeishuInboundWork(controller, { timeoutMs: 100 });
     works.push(work);
     let calls = 0;
 
-    await expect(runFeishuInboundWork(
-      work,
-      async () => {
-        calls += 1;
-        return 'unexpected';
-      },
-      Date.now(),
-    )).rejects.toBeInstanceOf(Error);
+    await expect(
+      runFeishuInboundWork(
+        work,
+        async () => {
+          calls += 1;
+          return 'unexpected';
+        },
+        Date.now(),
+      ),
+    ).rejects.toBeInstanceOf(Error);
     expect(calls).toBe(0);
   });
 
@@ -87,8 +80,8 @@ describe('Feishu inbound work fencing', () => {
   it('disposes a value that resolves after the deadline through onLateValue, exactly once', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
-    const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 10 });
+    const controller = createFeishuLifecycle();
+    const work = createFeishuInboundWork(controller, { timeoutMs: 10 });
     works.push(work);
 
     let releaseOperation: (value: string) => void = () => undefined;
@@ -125,8 +118,8 @@ describe('Feishu inbound work fencing', () => {
   it('never calls onLateValue when the operation settles before the deadline', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
-    const controller = new AbortController();
-    const work = createFeishuInboundWork(session(controller), { timeoutMs: 1_000 });
+    const controller = createFeishuLifecycle();
+    const work = createFeishuInboundWork(controller, { timeoutMs: 1_000 });
     works.push(work);
     const lateValues: string[] = [];
 

@@ -11,7 +11,7 @@ import type {
   TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
-import type { VisibleMessageAnchor } from './feishu-cot-state.js';
+import type { VisibleMessageAnchor } from './cot/recipients.js';
 import type {
   FeishuSlashCommandInvocation,
   FeishuSlashCommandReply,
@@ -77,12 +77,35 @@ export type FeishuSubmission =
   | (FeishuSubmissionBase & {
       readonly kind: 'chat';
       /** The visible Feishu message this turn's presentation hangs under. */
-      readonly anchor: VisibleMessageAnchor;
+      readonly anchor: Omit<VisibleMessageAnchor, 'servingTarget'>;
     })
   | (FeishuSubmissionBase & { readonly kind: 'doc_comment' });
 
 /** A submission that came from a chat, and therefore carries a visible anchor. */
 export type FeishuChatSubmission = Extract<FeishuSubmission, { kind: 'chat' }>;
+
+/**
+ * The one place a chat-sourced submission is assembled — the ordinary inbound
+ * pipeline and every card-driven delivery (an ask-user answer, an extension's
+ * forwarded card action) both hand this their own `attrs`/`text`/`sourceId`/
+ * `anchor` and get back the same envelope shape, instead of each writing out
+ * `kind: 'chat'` and the standing reminder by hand.
+ */
+export function chatSubmission(input: {
+  attrs: Readonly<Record<string, string>>;
+  text: string;
+  sourceId: string;
+  anchor: Omit<VisibleMessageAnchor, 'servingTarget'>;
+}): FeishuChatSubmission {
+  return {
+    kind: 'chat',
+    attrs: input.attrs,
+    text: input.text,
+    reminder: CHANNEL_REMINDER,
+    sourceId: input.sourceId,
+    anchor: input.anchor,
+  };
+}
 
 export type FeishuSubmitOutcome =
   | { readonly status: 'submitted'; readonly turnId: string | null }
@@ -142,7 +165,8 @@ export type FeishuSubmitOutcome =
  * else.
  */
 export interface SubmitOutcomeReport {
-  readonly kind: 'submitted' | 'not_admitted' | 'rejected' | 'ambiguous' | 'failed';
+  readonly kind:
+    'submitted' | 'not_admitted' | 'rejected' | 'ambiguous' | 'failed';
   readonly level: 'info' | 'warn' | 'error';
   readonly fields: Readonly<Record<string, unknown>>;
 }
@@ -194,13 +218,6 @@ export function describeSubmitOutcome(
   }
 }
 
-export interface FeishuTeamSubmitter {
-  submit(
-    teamName: string,
-    submission: FeishuSubmission,
-  ): Promise<FeishuSubmitOutcome>;
-}
-
 /**
  * Read Core's answer to a submit Command as one of this Channel's outcomes.
  *
@@ -221,10 +238,14 @@ export function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
   }
 }
 
-export function submissionProvesNoAdmission(outcome: FeishuSubmitOutcome): boolean {
-  return outcome.status === 'rejected' ||
+export function submissionProvesNoAdmission(
+  outcome: FeishuSubmitOutcome,
+): boolean {
+  return (
+    outcome.status === 'rejected' ||
     outcome.status === 'failed' ||
-    outcome.status === 'stopped';
+    outcome.status === 'stopped'
+  );
 }
 
 /** Read a rejected Command's code without assuming an error class. */
@@ -239,10 +260,31 @@ export function errorMessage(error: unknown): string {
 }
 
 export interface FeishuInboundDelivery {
+  /**
+   * Tell routing that an accepted message sits in `target`, so a topic route
+   * that has no reply root yet can take one from it.
+   *
+   * `rootId` is the topic root the event names, when it names one; without it
+   * the message itself is the address. Never rejects: a route that cannot
+   * record a root costs a later notice its landing, not this message its
+   * delivery.
+   */
+  learnTopicRoot(input: {
+    target: FeishuTarget;
+    messageId: string;
+    rootId: string | undefined;
+  }): Promise<void>;
   command(input: {
     command: FeishuSlashCommandInvocation;
     target: FeishuTarget;
     containerChatId: string | null;
+    /**
+     * The message the command was parsed from. A command whose own effect
+     * announces into a conversation with no root of its own yet (a topic
+     * `/bind` is typed in but does not itself bind) can still reply under
+     * this, instead of that announcement going unsent.
+     */
+    messageId: string;
   }): Promise<FeishuSlashCommandReply>;
   /**
    * Route one built submission and answer with what Core said.

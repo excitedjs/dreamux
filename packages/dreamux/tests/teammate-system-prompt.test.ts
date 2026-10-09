@@ -1,251 +1,165 @@
-/**
- * What an Agent of a TeammateCollection is launched with, and in what order.
- *
- * The join itself is one small function (`teammate-collection/system-prompt.ts`),
- * but calling it directly would say nothing about which identity the collection
- * hands it, or on which paths. So the prompt is read the way a provider reads
- * it: drive a real `TeammateCollection` through its own construction paths
- * against a minimal fake Agent Runtime provider, and inspect the launch context
- * that provider is handed.
- *
- * Three orders exist and all three are covered (final.md §3.6 and ruling R9 of
- * the refine-model-facing-surfaces task record): a
- * Team-scoped TeamMate, a dispatcher-scoped TeamMate — which is told none of
- * it, because it has no TeamLeader — and a Team-scoped workflow agent, whose
- * operation contributes an append of its own between the two.
- */
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { TeammateCollection } from '../src/service/agent/index.js';
+import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/run.js';
+import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 
-import { afterEach, describe, expect, it } from 'vitest';
+const IDENTITY = 'You are the release reviewer.';
 
-import type {
-  AgentRuntimeCreateContext,
-  AgentRuntimeProvider,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
-
-import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
-import {
-  AgentEntityCollectionStore,
-  AgentNameRegistry,
-} from '../src/service/agent-entity/identity-store.js';
-import { AGENT_TASK_SOURCE } from '../src/service/submission-sources.js';
-import { TeammateCollection } from '../src/service/teammate-collection/index.js';
-import { AdmissionLedger } from '../src/service/teammate-service/admission-ledger.js';
-import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/agent-policy.js';
-import {
-  reuseCwdWorktree,
-  type WorktreeManager,
-} from '../src/service/worktree/manager.js';
-import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
-
-const DISPATCHER = 'flow';
-const TEAM = 'alpha';
-const RUNTIME_ID = 'fake-runtime';
-/** Fixed so an allocated name is exact rather than approximately asserted. */
-const SUFFIX = 'test';
-const IDENTITY = 'You review with a bias for deletion.';
-
-const silentLog = {
-  error: () => {},
-  warn: () => {},
-  info: () => {},
-  debug: () => {},
-  trace: () => {},
-  child: () => silentLog,
-} as unknown as DreamuxLogger;
-
-const roots: string[] = [];
-
-afterEach(async () => {
-  for (const root of roots.splice(0)) {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-interface Harness {
-  readonly root: string;
-  readonly store: AgentEntityCollectionStore;
-  readonly collection: TeammateCollection;
-  /** Every context the provider was asked to build a runtime from. */
-  readonly launches: AgentRuntimeCreateContext<unknown>[];
-}
-
-/** A real collection over a temp-dir store, bound to the given scope. */
-async function harness(teamScope: string | null): Promise<Harness> {
-  const root = await mkdtemp(join(tmpdir(), 'dreamux-teammate-system-prompt-'));
-  roots.push(root);
-
-  // The minimal provider: it records the context Core launches it with and
-  // accepts one submission, because the launch only happens on the way to a
-  // submission. Anything Core calls that is not here fails loudly.
-  const launches: AgentRuntimeCreateContext<unknown>[] = [];
-  const provider = {
-    getCapabilities: () => ({ tags: [], publicConfig: null }),
-    readRecentActivity: async () => ({ records: [], truncated: false }),
-    async createRuntime(context: AgentRuntimeCreateContext<unknown>) {
-      launches.push(context);
-      return {
-        async start() {
-          return { continuity: 'fresh' as const };
-        },
-        async submit() {
-          const pending = controllableRuntimeSubmission();
-          pending.complete(null);
-          return { status: 'submitted' as const, submission: pending.submission };
-        },
-        async stop() {},
-      };
-    },
-  } as unknown as AgentRuntimeProvider<unknown>;
-
-  const config: DreamuxConfig = {
-    agents: {
-      [RUNTIME_ID]: { provider: 'fake', config: {} } as unknown as ResolvedAgentConfig,
-    },
-    dispatchers: [],
-  };
-
-  const teamMateRoot = join(root, 'teammate');
-  const store = new AgentEntityCollectionStore({
-    root: teamMateRoot,
-    dispatcherId: DISPATCHER,
-    log: silentLog,
-  });
-  const collection = new TeammateCollection({
-    dispatcherId: DISPATCHER,
-    teamScope,
-    config,
-    agentRuntimeProviders: {
-      resolve: () => ({ implementation: provider }),
-    } as unknown as AgentRuntimeProviderCatalog,
-    // No path below reaches the worktree manager: a record that already holds a
-    // reuse-cwd workspace never re-prepares one, and a Team's workflow agent is
-    // handed its Team's directory as a loan. An empty object makes a reach a
-    // loud failure rather than a silent pass.
-    worktrees: {} as unknown as WorktreeManager,
-    store,
-    names: new AgentNameRegistry({
-      teamMateRoot,
-      teamRoot: join(root, 'team'),
-      dispatcherId: DISPATCHER,
-      log: silentLog,
-    }),
-    admissions: new AdmissionLedger(),
-    suffixGenerator: () => SUFFIX,
-    log: silentLog,
-  });
-  return { root, store, collection, launches };
-}
-
-/**
- * Launch one ordinary TeamMate: the record exists, and a send starts it. This
- * is the path every TeamMate an Agent spawned takes on its next turn.
- */
-async function launchedTeamMate(input: {
-  teamScope: string | null;
-  name: string;
-  identityPrompt: string | null;
-}): Promise<AgentRuntimeCreateContext<unknown>> {
-  const built = await harness(input.teamScope);
-  await built.store.entity(input.name).create({
-    name: input.name,
-    teamId: input.teamScope,
-    agentRuntime: RUNTIME_ID,
-    sourceCwd: built.root,
-    sourceRepo: null,
-    cwd: built.root,
-    runtimeCwd: built.root,
-    worktree: reuseCwdWorktree(built.root),
-    intent: 'review the change',
-    identityPrompt: input.identityPrompt,
-    status: 'stopped',
-  });
-
-  await built.collection.send({ name: input.name, prompt: 'go' });
-
-  expect(built.launches).toHaveLength(1);
-  return built.launches[0]!;
-}
-
-/**
- * Launch one Team-scoped workflow agent, the way a Team's Workflow does:
- * `createLocked` with the operation's own append and the Team's workspace
- * loan, then one submission through the handle it holds.
- */
-async function launchedWorkflowAgent(): Promise<{
-  readonly name: string;
-  readonly launch: AgentRuntimeCreateContext<unknown>;
-}> {
-  const built = await harness(TEAM);
-  const handle = await built.collection.createLocked(
-    {
-      name: 'agent',
-      prompt: 'go',
-      intent: 'Workflow run-a agent 1',
-      agentRuntime: RUNTIME_ID,
+describe('TeamMate prompts at the provider launch boundary', () => {
+  it('leads a Team-scoped TeamMate with its membership and completion recipient, then operator identity', async () => {
+    const fixture = await dispatcherFixture();
+    await fixture.host.start();
+    const created = await fixture.teams.createFromRequest(
+      teamRequest('member-prompt'),
+    );
+    const team = await fixture.teams.open(created.team_name);
+    const spawned = await team.teammates.spawn({
+      name: 'reviewer',
+      prompt: 'Review',
+      intent: 'Review',
+      agentRuntime: 'controlled',
       identity: IDENTITY,
-      sharedWorkspace: {
-        sourceCwd: built.root,
-        sourceRepo: null,
-        runtimeCwd: built.root,
-      },
-    },
-    { systemPromptAppend: [WORKFLOW_AGENT_SYSTEM_PROMPT] },
-  );
-  await handle.submit({ prompt: 'go', source: AGENT_TASK_SOURCE });
-
-  expect(built.launches).toHaveLength(1);
-  return { name: handle.name, launch: built.launches[0]! };
-}
-
-describe('the system prompt an Agent of a TeammateCollection is launched with', () => {
-  it('leads a Team-scoped TeamMate with who it is and where its output goes, then the operator identity', async () => {
-    const launch = await launchedTeamMate({
-      teamScope: TEAM,
-      name: 'tm-mate-test',
-      identityPrompt: IDENTITY,
     });
-
-    expect(launch.systemPrompt?.append).toEqual([
-      'You are TeamMate "tm-mate-test" of Dreamux Team "alpha". Your TeamLeader ' +
-        'receives what you output when your turn ends.',
+    expect(fixture.provider.runtimes).toHaveLength(1);
+    expect(fixture.provider.runtimes[0]!.context.systemPrompt?.append).toEqual([
+      `You are TeamMate "${spawned.teammate.name}" of Dreamux Team "${created.team_name}". Your TeamLeader receives what you output when your turn ends.`,
       IDENTITY,
     ]);
   });
 
-  it('tells a dispatcher-scoped TeamMate nothing but the operator identity', async () => {
-    const launch = await launchedTeamMate({
-      teamScope: null,
-      name: 'mate-test',
-      identityPrompt: IDENTITY,
+  it('tells a dispatcher-scoped TeamMate only the operator identity', async () => {
+    const fixture = await dispatcherFixture();
+    await fixture.host.start();
+    await fixture.host.teammates.spawn({
+      name: 'reviewer',
+      prompt: 'Review',
+      intent: 'Review',
+      agentRuntime: 'controlled',
+      identity: IDENTITY,
     });
-
-    // It reports to the Dispatcher that spawned it, not to a TeamLeader, so
-    // there is no Team-membership fact to state.
-    expect(launch.systemPrompt?.append).toEqual([IDENTITY]);
+    expect(fixture.provider.runtimes[0]!.context.systemPrompt?.append).toEqual([
+      IDENTITY,
+    ]);
   });
 
-  it('gives a dispatcher-scoped TeamMate without an identity no system prompt at all', async () => {
-    const launch = await launchedTeamMate({
-      teamScope: null,
-      name: 'plain-test',
-      identityPrompt: null,
+  it('gives a dispatcher-scoped TeamMate without an identity no system prompt', async () => {
+    const fixture = await dispatcherFixture();
+    await fixture.host.start();
+    await fixture.host.teammates.spawn({
+      name: 'plain',
+      prompt: 'Review',
+      intent: 'Review',
+      agentRuntime: 'controlled',
     });
-
-    expect(launch.systemPrompt).toBeUndefined();
+    expect(fixture.provider.runtimes[0]!.context.systemPrompt).toBeUndefined();
   });
 
-  it('tells a Team-scoped workflow agent who it is, then the workflow contract, then the identity — and nothing about its TeamLeader receiving its output', async () => {
-    const { name, launch } = await launchedWorkflowAgent();
+  it('orders Workflow membership, operation contract, plugin instruction, and identity without a leader completion claim', async () => {
+    const fixture = await dispatcherFixture();
+    await fixture.host.start();
+    const created = await fixture.teams.createFromRequest(
+      teamRequest('workflow-prompt'),
+    );
+    fixture.host.hooks.teammateLaunch.tapPromise(
+      'workflow-plugin',
+      async (draft, scope) => {
+        expect(scope.teamId).toBe(created.team_name);
+        draft.instructions.push('Plugin workflow instruction');
+      },
+    );
+    const team = await fixture.teams.open(created.team_name);
+    if (!(team.teammates instanceof TeammateCollection))
+      throw new Error('expected real teammate collection');
+    const handle = await team.teammates.createLocked(
+      {
+        name: 'agent',
+        prompt: 'Return a value',
+        intent: 'Workflow agent',
+        agentRuntime: 'controlled',
+        identity: IDENTITY,
+      },
+      {
+        systemPromptAppend: [WORKFLOW_AGENT_SYSTEM_PROMPT],
+      },
+    );
+    try {
+      expect(
+        (await handle.submit({ prompt: 'Return a value', source: 'task' }))
+          .status,
+      ).toBe('submitted');
+      expect(
+        fixture.provider.runtimes[0]!.context.systemPrompt?.append,
+      ).toEqual([
+        `You are TeamMate "${handle.name}" of Dreamux Team "${created.team_name}".`,
+        WORKFLOW_AGENT_SYSTEM_PROMPT,
+        'Plugin workflow instruction',
+        IDENTITY,
+      ]);
+    } finally {
+      handle.unlock();
+    }
+  });
 
-    expect(name).toBe('tm-agent-test');
-    expect(launch.systemPrompt?.append).toEqual([
-      'You are TeamMate "tm-agent-test" of Dreamux Team "alpha".',
-      WORKFLOW_AGENT_SYSTEM_PROMPT,
+  it('keeps successful plugin instructions in order before identity and discards a failing tap draft', async () => {
+    const fixture = await dispatcherFixture();
+    await fixture.host.start();
+    fixture.host.hooks.teammateLaunch.tapPromise(
+      'alpha',
+      async (draft, scope) => {
+        expect(scope.teamId).toBeNull();
+        draft.instructions.push('from alpha');
+      },
+    );
+    fixture.host.hooks.teammateLaunch.tapPromise('broken', async (draft) => {
+      draft.instructions.push('half written');
+      throw new Error('read failed');
+    });
+    fixture.host.hooks.teammateLaunch.tapPromise('omega', async (draft) => {
+      draft.instructions.push('from omega');
+    });
+    await fixture.host.teammates.spawn({
+      name: 'reviewer',
+      prompt: 'Review',
+      intent: 'Review',
+      agentRuntime: 'controlled',
+      identity: IDENTITY,
+    });
+    expect(fixture.provider.runtimes[0]!.context.systemPrompt?.append).toEqual([
+      'from alpha',
+      'from omega',
+      IDENTITY,
+    ]);
+  });
+
+  it('runs the launch hook for spawn and closed-agent reopen, but not another send to the same Agent', async () => {
+    const fixture = await dispatcherFixture();
+    await fixture.host.start();
+    const tap = vi.fn(async () => {});
+    fixture.host.hooks.teammateLaunch.tapPromise('count-constructions', tap);
+    const first = await fixture.host.teammates.spawn({
+      name: 'reviewer',
+      prompt: 'First',
+      intent: 'Review',
+      agentRuntime: 'controlled',
+      identity: IDENTITY,
+    });
+    await fixture.host.teammates.send({
+      name: first.teammate.name,
+      prompt: 'Second',
+    });
+    expect(tap).toHaveBeenCalledTimes(1);
+    expect(fixture.provider.runtimes).toHaveLength(1);
+    await fixture.host.teammates.close({
+      name: first.teammate.name,
+      note: 'Pause review',
+    });
+    await fixture.host.teammates.send({
+      name: first.teammate.name,
+      prompt: 'Resume',
+    });
+    expect(tap).toHaveBeenCalledTimes(2);
+    expect(fixture.provider.runtimes).toHaveLength(2);
+    expect(fixture.provider.runtimes[1]!.context.systemPrompt?.append).toEqual([
       IDENTITY,
     ]);
   });

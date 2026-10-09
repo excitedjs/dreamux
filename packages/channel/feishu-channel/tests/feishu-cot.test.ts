@@ -23,10 +23,14 @@
  * Every identifier here is a placeholder; no real Feishu chat, message, or user
  * id appears in this file.
  */
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
   DreamuxLogger,
+  ChannelCoreEvent,
   TeamStateEvent,
   RuntimeActivity,
   TeammateActivityEvent,
@@ -34,12 +38,18 @@ import type {
   TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 
+import type { FeishuInboundEvent } from '@excitedjs/feishu-transport';
+import { FeishuCotAdapter } from '../src/cot/adapter.js';
+import { FEISHU_COT_OPENING_LABELS } from '../src/cot/card.js';
+import type { VisibleMessageAnchor } from '../src/cot/recipients.js';
 import {
-  FeishuCotAdapter,
-  FEISHU_COT_OPENING_LABELS,
-} from '../src/feishu-cot-adapter.js';
-import { FeishuCotSessionSeam } from '../src/feishu-cot-session.js';
-import type { VisibleMessageAnchor } from '../src/feishu-cot-state.js';
+  createFeishuLifecycle,
+  type OwnedFeishuLifecycle,
+} from '../src/session/lifecycle.js';
+import { FeishuChannelSession } from '../src/session/session.js';
+import { createFeishuBot } from '../src/bot.js';
+import { defaultDispatcherAccessState } from '../src/access/state.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
 import {
   cotTerminalCount,
@@ -52,6 +62,7 @@ import {
   type FakeCotClient,
 } from './helpers/fake-feishu-cot.js';
 
+vi.mock('../src/bot.js', () => ({ createFeishuBot: vi.fn() }));
 function expectOpeningTexts(
   card: FakeCotCard,
   expectedAfterOpening: readonly string[],
@@ -67,6 +78,7 @@ const silentLog: DreamuxLogger = {
   info: () => undefined,
   debug: () => undefined,
   trace: () => undefined,
+  child: () => silentLog,
 };
 
 /**
@@ -87,7 +99,7 @@ function anchorAt(
   messageId: string,
   target = chatTarget(chatId, 'group'),
 ): VisibleMessageAnchor {
-  return { chatId, messageId, target };
+  return { chatId, messageId, target, servingTarget: null };
 }
 
 interface RecipientScope {
@@ -118,7 +130,11 @@ const LEADER: Recipient = {
 
 const DISPATCHER: Recipient = {
   label: 'Dispatcher',
-  scope: { teammateName: 'dispatcher-agent', role: 'dispatcher', teamName: null },
+  scope: {
+    teammateName: 'dispatcher-agent',
+    role: 'dispatcher',
+    teamName: null,
+  },
 };
 
 let sequence = 0;
@@ -157,7 +173,8 @@ function activity(
 
 function message(recipient: Recipient, content: string): TeammateActivityEvent {
   return activity(recipient, {
-    kind: 'assistant.message', occurredAt: 1,
+    kind: 'assistant.message',
+    occurredAt: 1,
     id: `event-${(sequence += 1)}`,
     text: content,
   });
@@ -169,7 +186,8 @@ function toolCall(
   status: 'started' | 'completed' | 'failed',
 ): TeammateActivityEvent {
   return activity(recipient, {
-    kind: 'tool.call', occurredAt: 1,
+    kind: 'tool.call',
+    occurredAt: 1,
     id: callId,
     toolName: 'Read',
     action: 'read',
@@ -189,7 +207,8 @@ function nativeEnd(
   reason: string | null = null,
 ): TeammateActivityEvent {
   return activity(recipient, {
-    kind: 'turn.ended', occurredAt: 1,
+    kind: 'turn.ended',
+    occurredAt: 1,
     status,
     reason,
   });
@@ -222,7 +241,8 @@ function harness(): Harness {
     dispatcherId: 'disp-cot',
     channelId: 'chan-cot',
     log: silentLog,
-    cotClient: () => cot,
+    cotClient: cot,
+    lifecycle: createFeishuLifecycle(),
   });
   return { adapter, cot };
 }
@@ -235,13 +255,12 @@ function submitInbound(
 ): void {
   const sourceId = `message-${turnId}`;
   const lease = adapter.beginInboundSubmission({
-    teamName: recipient.scope.role === 'dispatcher'
-      ? null
-      : recipient.scope.teamName,
+    teamName:
+      recipient.scope.role === 'dispatcher' ? null : recipient.scope.teamName,
     anchor,
     sourceId,
   });
-  adapter.onInput(
+  adapter.handle(
     input(recipient, 'the already visible inbound', 'feishu', sourceId),
   );
   lease?.release();
@@ -266,7 +285,7 @@ describe.each([LEADER, DISPATCHER])(
         'turn-1',
         anchorAt('oc_home', 'om_user_1'),
       );
-      adapter.onActivity(message(recipient, 'working on it'));
+      adapter.handle(message(recipient, 'working on it'));
       await settle();
 
       expect(cot.cards).toHaveLength(1);
@@ -288,9 +307,7 @@ describe.each([LEADER, DISPATCHER])(
 
       for (const [index, anchor] of targets.entries()) {
         submitInbound(adapter, recipient, `turn-${index}`, anchor);
-        adapter.onActivity(
-          message(recipient, `reply ${index}`),
-        );
+        adapter.handle(message(recipient, `reply ${index}`));
         await settle();
       }
 
@@ -303,30 +320,37 @@ describe.each([LEADER, DISPATCHER])(
         'om_3',
       ]);
       // Every superseded card completed; exactly one is still open.
-      expect(cot.cards.map(cotTerminal)).toEqual([
-        'done',
-        'done',
-        null,
-      ]);
+      expect(cot.cards.map(cotTerminal)).toEqual(['done', 'done', null]);
 
       await adapter.close();
     });
 
     it('replaces the anchor on submit, mid native turn, and keeps writing into the successor card', async () => {
       const { adapter, cot } = harness();
-      submitInbound(adapter, recipient, 'turn-a', anchorAt('oc_home', 'om_first'));
-      adapter.onActivity(message(recipient, 'first thought'));
+      submitInbound(
+        adapter,
+        recipient,
+        'turn-a',
+        anchorAt('oc_home', 'om_first'),
+      );
+      adapter.handle(message(recipient, 'first thought'));
       await settle();
 
       // The operator writes again before anything settled or ended.
-      submitInbound(adapter, recipient, 'turn-b', anchorAt('oc_other', 'om_second'));
-      adapter.onActivity(
-        message(recipient, 'still the same native turn'),
+      submitInbound(
+        adapter,
+        recipient,
+        'turn-b',
+        anchorAt('oc_other', 'om_second'),
       );
+      adapter.handle(message(recipient, 'still the same native turn'));
       await settle();
 
       expect(cot.cards).toHaveLength(2);
-      const [first, second] = cot.cards as [typeof cot.cards[0], typeof cot.cards[0]];
+      const [first, second] = cot.cards as [
+        (typeof cot.cards)[0],
+        (typeof cot.cards)[0],
+      ];
       expect(cotTerminal(first)).toBe('done');
       expectOpeningTexts(first, ['first thought']);
       // The still-running native turn keeps producing, into the card the
@@ -342,19 +366,19 @@ describe.each([LEADER, DISPATCHER])(
       const { adapter, cot } = harness();
       // Two logical submissions the provider folded into one native turn.
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onActivity(message(recipient, 'part one'));
-      adapter.onActivity(message(recipient, 'part two'));
+      adapter.handle(message(recipient, 'part one'));
+      adapter.handle(message(recipient, 'part two'));
       await settle();
       expect(cot.cards).toHaveLength(1);
 
-      adapter.onActivity(nativeEnd(recipient, 'completed'));
+      adapter.handle(nativeEnd(recipient, 'completed'));
       await settle();
 
       const card = cot.cards[0]!;
       expect(cotTerminal(card)).toBe('done');
       expect(cotTerminalCount(card)).toBe(1);
       // A second end is not a second terminal, and opens nothing.
-      adapter.onActivity(nativeEnd(recipient, 'completed'));
+      adapter.handle(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
       expect(cotTerminalCount(card)).toBe(1);
@@ -365,20 +389,20 @@ describe.each([LEADER, DISPATCHER])(
     it('ignores a native turn end while no card is open, and leaves the anchor able to open one', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onActivity(nativeEnd(recipient, 'completed'));
+      adapter.handle(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
       expect(cotTerminal(cot.cards[0]!)).toBe('done');
 
       // The anchor still stands, but nothing is open. A terminal has nothing to
       // finish, so it produces no card at all — not even one opened to close.
-      adapter.onActivity(nativeEnd(recipient, 'interrupted'));
-      adapter.onActivity(nativeEnd(recipient, 'completed'));
+      adapter.handle(nativeEnd(recipient, 'interrupted'));
+      adapter.handle(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
 
       // An opening activity, by contrast, does open one at that same anchor.
-      adapter.onActivity(message(recipient, 'still talking'));
+      adapter.handle(message(recipient, 'still talking'));
       await settle();
       expect(cot.cards).toHaveLength(2);
       expect(cot.cards[1]!.originMessageId).toBe('om_1');
@@ -392,7 +416,7 @@ describe.each([LEADER, DISPATCHER])(
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
       await settle();
 
-      adapter.onActivity(nativeEnd(recipient, 'interrupted'));
+      adapter.handle(nativeEnd(recipient, 'interrupted'));
       await settle();
 
       expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
@@ -404,7 +428,7 @@ describe.each([LEADER, DISPATCHER])(
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
       await settle();
 
-      adapter.onActivity(nativeEnd(recipient, 'failed'));
+      adapter.handle(nativeEnd(recipient, 'failed'));
       await settle();
 
       // AG-UI puts the failure terminal in its own event: a `RUN_FINISHED`
@@ -426,8 +450,8 @@ describe.each([LEADER, DISPATCHER])(
     it('shows a tool row and its result on the open card', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onActivity(toolCall(recipient, 'call-1', 'started'));
-      adapter.onActivity(toolCall(recipient, 'call-1', 'completed'));
+      adapter.handle(toolCall(recipient, 'call-1', 'started'));
+      adapter.handle(toolCall(recipient, 'call-1', 'completed'));
       await settle();
 
       const card = cot.cards[0]!;
@@ -443,17 +467,17 @@ describe.each([LEADER, DISPATCHER])(
       // A task brief, a runtime answer, a tool row, and a native end, all
       // before any anchor exists. Nothing is filtered by source or kind —
       // there is simply nowhere to put a card.
-      adapter.onInput(input(recipient, 'a task brief', 'task'));
-      adapter.onActivity(message(recipient, 'an answer'));
-      adapter.onActivity(toolCall(recipient, 'call-0', 'started'));
-      adapter.onActivity(nativeEnd(recipient, 'completed'));
+      adapter.handle(input(recipient, 'a task brief', 'task'));
+      adapter.handle(message(recipient, 'an answer'));
+      adapter.handle(toolCall(recipient, 'call-0', 'started'));
+      adapter.handle(nativeEnd(recipient, 'completed'));
       await settle();
 
       expect(cot.cards).toHaveLength(0);
 
       // And the moment an anchor exists, the very next fact is shown.
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onActivity(message(recipient, 'now visible'));
+      adapter.handle(message(recipient, 'now visible'));
       await settle();
       expectOpeningTexts(cot.cards[0]!, ['now visible']);
 
@@ -465,7 +489,7 @@ describe.each([LEADER, DISPATCHER])(
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
       // An input Core admitted but no runtime accepted ends its own card and
       // says why, because nothing else will ever close it.
-      adapter.onActivity(
+      adapter.handle(
         nativeEnd(recipient, 'failed', 'the agent runtime is not running'),
       );
       await settle();
@@ -494,12 +518,11 @@ describe.each([LEADER, DISPATCHER])(
         dispatcherId: 'disp-cot',
         channelId: 'chan-cot',
         log: silentLog,
-        cotClient: () => cot,
+        cotClient: cot,
+        lifecycle: createFeishuLifecycle(),
       });
-      restarted.onActivity(
-        message(recipient, 'after the restart'),
-      );
-      restarted.onActivity(nativeEnd(recipient, 'completed'));
+      restarted.handle(message(recipient, 'after the restart'));
+      restarted.handle(nativeEnd(recipient, 'completed'));
       await settle();
 
       expect(cot.cards).toHaveLength(1);
@@ -512,17 +535,20 @@ describe('Feishu COT — the two recipients are independent presentations', () =
   it('a TeamLeader and the Dispatcher each own their own anchor and card', async () => {
     const { adapter, cot } = harness();
 
-    submitInbound(adapter, LEADER, 'turn-leader', anchorAt('oc_team', 'om_team_1'));
+    submitInbound(
+      adapter,
+      LEADER,
+      'turn-leader',
+      anchorAt('oc_team', 'om_team_1'),
+    );
     submitInbound(
       adapter,
       DISPATCHER,
       'turn-dispatcher',
       anchorAt('oc_dm', 'om_dm_1'),
     );
-    adapter.onActivity(message(LEADER, 'leader says'));
-    adapter.onActivity(
-      message(DISPATCHER, 'dispatcher says'),
-    );
+    adapter.handle(message(LEADER, 'leader says'));
+    adapter.handle(message(DISPATCHER, 'dispatcher says'));
     await settle();
 
     expect(cot.cards).toHaveLength(2);
@@ -530,7 +556,7 @@ describe('Feishu COT — the two recipients are independent presentations', () =
     expectOpeningTexts(cot.cards[1]!, ['dispatcher says']);
 
     // One recipient's native turn ending closes only that recipient's card.
-    adapter.onActivity(nativeEnd(LEADER, 'completed'));
+    adapter.handle(nativeEnd(LEADER, 'completed'));
     await settle();
     expect(cotTerminal(cot.cards[0]!)).toBe('done');
     expect(cotTerminal(cot.cards[1]!)).toBeNull();
@@ -542,11 +568,15 @@ describe('Feishu COT — the two recipients are independent presentations', () =
     const { adapter, cot } = harness();
     const member: Recipient = {
       label: 'member',
-      scope: { teammateName: 'alpha-worker', role: 'teammate', teamName: 'alpha' },
+      scope: {
+        teammateName: 'alpha-worker',
+        role: 'teammate',
+        teamName: 'alpha',
+      },
     };
 
-    adapter.onInput(input(member, 'member brief', 'task', 'other-source'));
-    adapter.onActivity(message(member, 'member output'));
+    adapter.handle(input(member, 'member brief', 'task', 'other-source'));
+    adapter.handle(message(member, 'member output'));
     await settle();
 
     expect(cot.cards).toHaveLength(0);
@@ -566,9 +596,7 @@ describe('Feishu COT — anchor initialization', () => {
     await settle();
     expect(cot.cards).toHaveLength(0);
 
-    adapter.onActivity(
-      message(LEADER, 'the Team speaks first'),
-    );
+    adapter.handle(message(LEADER, 'the Team speaks first'));
     await settle();
 
     expect(cot.cards).toHaveLength(1);
@@ -585,11 +613,11 @@ describe('Feishu COT — anchor initialization', () => {
       'alpha',
       anchorAt('oc_team', 'om_bind_card'),
     );
-    adapter.onActivity(nativeEnd(LEADER, 'completed'));
+    adapter.handle(nativeEnd(LEADER, 'completed'));
     await settle();
 
     // The next card still hangs under the user's message, not the bind card.
-    adapter.onActivity(message(LEADER, 'later output'));
+    adapter.handle(message(LEADER, 'later output'));
     await settle();
 
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
@@ -610,14 +638,17 @@ describe('Feishu COT — anchor initialization', () => {
     );
     // A restart notice reaching the Dispatcher before any user message is an
     // ordinary system input with nowhere to go.
-    adapter.onInput(input(DISPATCHER, 'the server restarted', 'system'));
-    adapter.onActivity(
-      message(DISPATCHER, 'acknowledged'),
-    );
+    adapter.handle(input(DISPATCHER, 'the server restarted', 'system'));
+    adapter.handle(message(DISPATCHER, 'acknowledged'));
     await settle();
     expect(cot.cards).toHaveLength(0);
 
-    submitInbound(adapter, DISPATCHER, 'turn-user', anchorAt('oc_dm', 'om_dm_1'));
+    submitInbound(
+      adapter,
+      DISPATCHER,
+      'turn-user',
+      anchorAt('oc_dm', 'om_dm_1'),
+    );
     await settle();
     expect(cot.cards).toHaveLength(1);
     expect(cot.cards[0]!.originMessageId).toBe('om_dm_1');
@@ -627,13 +658,11 @@ describe('Feishu COT — anchor initialization', () => {
 });
 
 describe('Feishu COT — narrow Channel-body suppression', () => {
-  it('hides this Channel\'s recognized turn body once and displays another turn', async () => {
+  it("hides this Channel's recognized turn body once and displays another turn", async () => {
     const { adapter, cot } = harness();
     submitInbound(adapter, LEADER, 'turn-channel', anchorAt('oc_team', 'om_1'));
-    adapter.onInput(input(LEADER, 'another producer body', 'task'));
-    adapter.onActivity(
-      message(LEADER, 'the projected answer'),
-    );
+    adapter.handle(input(LEADER, 'another producer body', 'task'));
+    adapter.handle(message(LEADER, 'the projected answer'));
     await settle();
 
     expectOpeningTexts(cot.cards[0]!, [
@@ -650,12 +679,12 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     submitInbound(adapter, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
     await settle();
 
-    adapter.onTeamState(teamState('alpha', 'alpha-leader', 'closed'));
+    adapter.handle(teamState('alpha', 'alpha-leader', 'closed'));
     await settle();
     expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
 
     // Fenced: later facts, and even a fresh anchor, present nothing.
-    adapter.onActivity(message(LEADER, 'too late'));
+    adapter.handle(message(LEADER, 'too late'));
     submitInbound(adapter, LEADER, 'turn-2', anchorAt('oc_team', 'om_2'));
     await settle();
     expect(cot.cards).toHaveLength(1);
@@ -668,8 +697,8 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     submitInbound(adapter, DISPATCHER, 'turn-1', anchorAt('oc_dm', 'om_1'));
     await settle();
 
-    adapter.onTeamState(teamState('alpha', 'alpha-leader', 'closed'));
-    adapter.onActivity(message(DISPATCHER, 'still going'));
+    adapter.handle(teamState('alpha', 'alpha-leader', 'closed'));
+    adapter.handle(message(DISPATCHER, 'still going'));
     await settle();
 
     expect(cot.cards).toHaveLength(1);
@@ -682,7 +711,12 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
   it('a removed route interrupts the card anchored in it, and a re-claimed route restores presentation', async () => {
     const { adapter, cot } = harness();
     const target = chatTarget('oc_team', 'group');
-    submitInbound(adapter, LEADER, 'turn-1', anchorAt('oc_team', 'om_1', target));
+    submitInbound(
+      adapter,
+      LEADER,
+      'turn-1',
+      anchorAt('oc_team', 'om_1', target),
+    );
     await settle();
 
     adapter.onRouteReleased({ teamName: 'alpha', target });
@@ -690,12 +724,22 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
 
     // While unbound, that target may not anchor this Team again.
-    submitInbound(adapter, LEADER, 'turn-2', anchorAt('oc_team', 'om_2', target));
+    submitInbound(
+      adapter,
+      LEADER,
+      'turn-2',
+      anchorAt('oc_team', 'om_2', target),
+    );
     await settle();
     expect(cot.cards).toHaveLength(1);
 
     adapter.onRouteClaimed({ teamName: 'alpha', target });
-    submitInbound(adapter, LEADER, 'turn-3', anchorAt('oc_team', 'om_3', target));
+    submitInbound(
+      adapter,
+      LEADER,
+      'turn-3',
+      anchorAt('oc_team', 'om_3', target),
+    );
     await settle();
     expect(cot.cards).toHaveLength(2);
     expect(cot.cards[1]!.originMessageId).toBe('om_3');
@@ -708,7 +752,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     cot.createError = new Error('platform refused');
 
     submitInbound(adapter, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
-    adapter.onActivity(message(LEADER, 'never displayed'));
+    adapter.handle(message(LEADER, 'never displayed'));
     await settle();
     expect(cot.cards).toHaveLength(0);
 
@@ -736,7 +780,7 @@ describe('Feishu COT — a failed card leaves the standing anchor alone', () => 
 
     // No new inbound, no new anchor — just the next thing the runtime says.
     cot.createError = null;
-    adapter.onActivity(message(LEADER, 'after the failure'));
+    adapter.handle(message(LEADER, 'after the failure'));
     await settle();
 
     expect(cot.cards).toHaveLength(1);
@@ -757,7 +801,7 @@ describe('Feishu COT — a failed card leaves the standing anchor alone', () => 
     expect(cotTexts(cot.cards[0]!)).toEqual([]);
 
     cot.appendError = null;
-    adapter.onActivity(message(LEADER, 'after the failure'));
+    adapter.handle(message(LEADER, 'after the failure'));
     await settle();
 
     expect(cot.cards).toHaveLength(2);
@@ -776,7 +820,7 @@ describe('Feishu COT — a failed card leaves the standing anchor alone', () => 
     expect(cot.cards).toHaveLength(0);
 
     cot.createError = null;
-    adapter.onActivity(nativeEnd(LEADER, 'completed'));
+    adapter.handle(nativeEnd(LEADER, 'completed'));
     await settle();
     expect(cot.cards).toHaveLength(0);
 
@@ -785,45 +829,48 @@ describe('Feishu COT — a failed card leaves the standing anchor alone', () => 
 });
 
 /** The seam is the only thing that decides which Core facts reach a card. */
-describe('FeishuCotSessionSeam — default-show, without a source whitelist', () => {
-  function seamHarness(): {
-    seam: FeishuCotSessionSeam;
+describe('Feishu COT adapter — default-show, without a source whitelist', () => {
+  function adapterHarness(): {
+    seam: FeishuCotAdapter;
     cot: FakeCotClient;
-    setCurrent(value: boolean): void;
+    lifecycle: OwnedFeishuLifecycle;
   } {
     const cot = createFakeCotClient();
-    let current = true;
-    const seam = new FeishuCotSessionSeam({
+    const lifecycle = createFeishuLifecycle();
+    const seam = new FeishuCotAdapter({
       dispatcherId: 'disp-cot',
       channelId: 'chan-cot',
       log: silentLog,
-      cotClient: () => cot,
+      cotClient: cot,
+      lifecycle,
     });
-    seam.start(() => current);
-    return { seam, cot, setCurrent: (value) => { current = value; } };
+    return { seam, cot, lifecycle };
   }
 
-  function submitThroughSeam(
-    seam: FeishuCotSessionSeam,
+  function submitThroughAdapter(
+    seam: FeishuCotAdapter,
     recipient: Recipient,
     turnId: string,
     anchor: VisibleMessageAnchor,
   ): void {
     const sourceId = `message-${turnId}`;
-    const lease = seam.beginInboundSubmission(
-      recipient.scope.role === 'dispatcher' ? null : recipient.scope.teamName,
+    const lease = seam.beginInboundSubmission({
+      teamName:
+        recipient.scope.role === 'dispatcher' ? null : recipient.scope.teamName,
       anchor,
       sourceId,
+    });
+    seam.handle(
+      input(recipient, 'the already visible inbound', 'feishu', sourceId),
     );
-    seam.handle(input(recipient, 'the already visible inbound', 'feishu', sourceId));
     lease?.release();
   }
 
   it.each(['task', 'task-notification', 'a-future-source'])(
     'shows a %s input body once the recipient has an anchor',
     async (source) => {
-      const { seam, cot } = seamHarness();
-      submitThroughSeam(
+      const { seam, cot } = adapterHarness();
+      submitThroughAdapter(
         seam,
         LEADER,
         'turn-channel',
@@ -861,7 +908,11 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     {
       what: 'a restart notice',
       event: (): TeammateInputEvent =>
-        input(LEADER, 'The Dreamux dispatcher restarted; your session …', 'system'),
+        input(
+          LEADER,
+          'The Dreamux dispatcher restarted; your session …',
+          'system',
+        ),
       shown: 'SYSTEM RESTARTED',
     },
     {
@@ -889,8 +940,13 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
       shown: 'WORKFLOW FINISHED',
     },
   ])('reduces $what to one line on the card', async ({ event, shown }) => {
-    const { seam, cot } = seamHarness();
-    submitThroughSeam(seam, LEADER, 'turn-channel', anchorAt('oc_team', 'om_1'));
+    const { seam, cot } = adapterHarness();
+    submitThroughAdapter(
+      seam,
+      LEADER,
+      'turn-channel',
+      anchorAt('oc_team', 'om_1'),
+    );
     await settle();
 
     seam.handle(event());
@@ -902,8 +958,8 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
   });
 
   it('forwards the turn end, which is the only terminal a card has', async () => {
-    const { seam, cot } = seamHarness();
-    submitThroughSeam(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
+    const { seam, cot } = adapterHarness();
+    submitThroughAdapter(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
     await settle();
 
     seam.handle(message(LEADER, 'still working'));
@@ -918,13 +974,15 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
   });
 
   it('shows an input body whose sourceId this session did not send', async () => {
-    const { seam, cot } = seamHarness();
-    const lease = seam.beginInboundSubmission(
-      'alpha',
-      anchorAt('oc_team', 'om_1'),
-      'message-own',
+    const { seam, cot } = adapterHarness();
+    const lease = seam.beginInboundSubmission({
+      teamName: 'alpha',
+      anchor: anchorAt('oc_team', 'om_1'),
+      sourceId: 'message-own',
+    });
+    seam.handle(
+      input(LEADER, 'another producer body', 'task', 'message-other'),
     );
-    seam.handle(input(LEADER, 'another producer body', 'task', 'message-other'));
     lease?.release();
     await settle();
     expect(cot.cards).toHaveLength(1);
@@ -934,11 +992,11 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
   });
 
   it('presents nothing once the session fence is no longer current', async () => {
-    const { seam, cot, setCurrent } = seamHarness();
-    submitThroughSeam(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
+    const { seam, cot, lifecycle } = adapterHarness();
+    submitThroughAdapter(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
     await settle();
 
-    setCurrent(false);
+    lifecycle.abort();
     seam.handle(message(LEADER, 'after the fence'));
     seam.handle(nativeEnd(LEADER, 'completed'));
     await settle();
@@ -948,28 +1006,104 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
   });
 
   it('is inert before start and after close', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'dreamux-cot-state-'));
+    const attachmentCacheDir = await mkdtemp(
+      join(tmpdir(), 'dreamux-cot-cache-'),
+    );
     const cot = createFakeCotClient();
-    const seam = new FeishuCotSessionSeam({
+    const bot = createFakeFeishuBot('cot-lifecycle');
+    bot.setCot(cot);
+    vi.mocked(createFeishuBot).mockReturnValueOnce(bot);
+    const session = new FeishuChannelSession({
       dispatcherId: 'disp-cot',
       channelId: 'chan-cot',
+      appId: 'app',
+      appSecret: '',
+      stateDir,
+      attachmentCacheDir,
       log: silentLog,
-      cotClient: () => cot,
     });
-
-    submitThroughSeam(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
-    await settle();
-    expect(cot.cards).toHaveLength(0);
-
-    seam.start(() => true);
-    submitThroughSeam(seam, LEADER, 'turn-2', anchorAt('oc_team', 'om_2'));
-    await settle();
-    expect(cot.cards).toHaveLength(1);
-
-    await seam.close();
-    expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
-    submitThroughSeam(seam, LEADER, 'turn-3', anchorAt('oc_team', 'om_3'));
-    seam.handle(message(LEADER, 'after close'));
-    await settle();
-    expect(cot.cards).toHaveLength(1);
+    let publish: (event: ChannelCoreEvent) => void | Promise<void> = () =>
+      undefined;
+    let closed = false;
+    const inbound: FeishuInboundEvent = {
+      messageId: 'om_1',
+      chatId: 'oc_team',
+      chatType: 'group',
+      senderId: 'ou_human',
+      senderType: 'user',
+      senderName: 'Human',
+      messageType: 'text',
+      rawContent: JSON.stringify({ text: '@_user_1 hello' }),
+      text: '@_user_1 hello',
+      resources: [],
+      mentions: [
+        { key: '@_user_1', name: 'Dreamux', id: { open_id: bot.botOpenId! } },
+      ],
+      createTime: '1',
+      raw: {},
+    };
+    try {
+      await writeFile(
+        join(stateDir, 'access.json'),
+        JSON.stringify({
+          ...defaultDispatcherAccessState(),
+          allow_users: ['ou_human'],
+          group: {
+            policy: 'allowlist',
+            allow_chats: ['oc_team'],
+            require_mention: true,
+          },
+        }),
+      );
+      await session.initialize({
+        invoke: {
+          invoke: async (command) => {
+            if (command !== 'team.submit')
+              throw new Error(`unexpected ${command}`);
+            return { status: 'submitted', turn_id: 'turn-live' };
+          },
+        },
+        events: {
+          subscribe(listener) {
+            publish = listener;
+            return { unsubscribe: () => undefined };
+          },
+        },
+      });
+      await session.routing.bind({
+        target: chatTarget('oc_team', 'group'),
+        teamName: 'alpha',
+        display: null,
+        spaceId: null,
+        rootMessageId: null,
+      });
+      await expect(bot.inject(inbound)).rejects.toThrow('fake bot not started');
+      await publish(message(LEADER, 'before start'));
+      await settle();
+      expect(cot.cards).toHaveLength(0);
+      await session.start();
+      await bot.inject({ ...inbound, messageId: 'om_2' });
+      await settle();
+      expect(cot.cards).toHaveLength(1);
+      expect(cot.cards[0]!.originMessageId).toBe('om_2');
+      await session.close();
+      closed = true;
+      expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
+      const eventCount = cot.cards[0]!.events.length;
+      await publish(message(LEADER, 'after close'));
+      await expect(
+        bot.inject({ ...inbound, messageId: 'om_3' }),
+      ).rejects.toThrow('fake bot not started');
+      await settle();
+      expect(cot.cards).toHaveLength(1);
+      expect(cot.cards[0]!.events).toHaveLength(eventCount);
+    } finally {
+      if (!closed) await session.close();
+      await Promise.all([
+        rm(stateDir, { recursive: true, force: true }),
+        rm(attachmentCacheDir, { recursive: true, force: true }),
+      ]);
+    }
   });
 });

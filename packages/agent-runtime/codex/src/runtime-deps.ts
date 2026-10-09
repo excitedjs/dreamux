@@ -7,8 +7,6 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { CodexOutputSchemaCodec } from './output-schema-codec.js';
-import type { CodexWsClient } from './rpc.js';
-import type { CodexProcess, CodexProcessOptions } from './supervisor.js';
 
 /**
  * How this package constructs one resident Codex runtime.
@@ -21,8 +19,8 @@ import type { CodexProcess, CodexProcessOptions } from './supervisor.js';
  */
 export interface CodexRuntimeDeps {
   cwd: string;
-  systemPromptReplace?: string;
-  systemPromptAppend?: readonly string[];
+  systemPromptReplace?: string | undefined;
+  systemPromptAppend?: readonly string[] | undefined;
   state: AgentRuntimeStateSink;
   paths: AgentRuntimePathContext;
   /**
@@ -30,21 +28,13 @@ export interface CodexRuntimeDeps {
    * fixed for the life of this runtime; no submission can change it.
    */
   codec: CodexOutputSchemaCodec | null;
-  allocateSocketPath: (id: string) => string;
-  skillSources?: readonly AgentRuntimeSkillSource[];
-  injectEnv?: Record<string, string>;
-  codexBinPath?: string;
-  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
-  codexClientFactory?: (socketPath: string) => CodexWsClient;
-  codexHomeDoctor?: (info: {
-    runtimeId: string;
-    cwd: string;
-  }) => void | Promise<void>;
-  resolveExtraArgs?: () => string[];
+  skillSources: readonly AgentRuntimeSkillSource[];
+  codexBinPath: string;
+  extraArgs: string[];
   handshakeTimeoutMs?: number;
   extraEnv?: Record<string, string>;
-  restartBackoffBaseMs?: number;
-  restartBackoffMaxMs?: number;
-  logger?: DreamuxLogger;
+  restartBackoffBaseMs?: number | undefined;
+  restartBackoffMaxMs?: number | undefined;
+  logger: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
 }

@@ -61,7 +61,7 @@ inventory adds no routing or provider-tool authority to Core.
 Source:
 
 - `/packages/dreamux/src/service/channel-service/commands.ts`
-- `/packages/dreamux/src/service/channel-service/types.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
 
 ### Channel sessions
 
@@ -76,10 +76,16 @@ external input, `start()` opens external I/O, and `close()` stops it and awaits
 the Channel-owned mutation tail. That split is what makes
 subscribe-before-admission provable.
 
-For Feishu, the session owns long-connection event handling through `FeishuBot`,
-access and mention gating, `/introduce` trust changes, known/trusted peer-bot
-state, inbound formatting and attachment normalization, channel-owned
-conversation display state, and the Feishu MCP tool backing.
+For Feishu, the session composes and closes the bot, access, routing, outbound,
+display, and tool owners. `FeishuTeamSubmitter` owns liveness, the COT anchor,
+Core submission, and anchor retirement/release. `FeishuInboundRouter` owns
+delivery/fallback and slash routing. Provisioning holds the submitter and keeps
+the first submission inside its `inFlight` and `guarded` operation: waiters
+must not proceed after route publication but before that submission settles.
+Outbound owns where every send lands and binding notices; card actions observe ask-user registry expiry
+and own settlement IO. Tools hold actual owners rather than session callbacks.
+COT holds the already-created client and lifecycle; Core Commands hold the
+invoker received at initialize. Neither needs a getter back into the session.
 
 Everything a Channel reaches Core through is the `ChannelCorePort`: the shared
 Command invoker and one read-only, dispatcher-scoped event source. A Channel
@@ -90,7 +96,9 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
-- `/packages/channel/feishu-channel/src/feishu-channel.ts`
+- `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/session/submitter.ts`
+- `/packages/channel/feishu-channel/src/inbound/router.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`
 
@@ -209,7 +217,10 @@ required, because a chat tool needs a destination and AskUserQuestion has no
 such concept; a `message_id` is optional. When supplied, that exact id addresses
 an interactive-card reply, just as it does for `reply`, without an observed-message
 lookup or anchor substitution. Without it the card is created in the named chat;
-in a topic group it opens a topic of its own.
+in a topic group it opens a topic of its own — except in a Collaboration Space
+chat, where the shared address guard sends it under the caller's bound topic or
+refuses it (see *An agent's `chat_id`/`message_id` is trusted* under Team binding and
+authorization).
 
 Question rounds store their sent card id, not a precomputed routing target. On
 submission or cancellation, the card callback identifies the answered card. Feishu
@@ -263,11 +274,36 @@ the selection is visible solely because the whole card is repainted from the
 server's answer map. There is no `form`, because a form batches its inputs until
 submit and would cost each question the ability to settle on its own.
 
-Anyone in the chat may answer the card, and that is a decision rather than an
-oversight: asked whether a non-asker clicking should be gated, the operator
-ruled "不需要限制，所有人都可以点". The answer carries the clicker's open_id as
-`sender_id`, so who answered is never lost — but no authorization check stands
-between a group member and the card.
+Only a person the conversation's inbound access policy admits may answer the
+card. A click is decided by the same gate table an inbound message from that
+person meets, before the round changes state (an extension's card action is
+held to the same check before its handler runs), so trusted groups still admit
+by group policy and nobody has to be in `allow_users` for that. A refused
+click gets an error toast and changes nothing. This replaces the earlier rule
+that anyone in the chat may answer, which the operator had ruled when asked
+whether a non-asker clicking should be gated ("不需要限制，所有人都可以点");
+on 2026-09-30 the operator ruled "卡片点击应该走和入站消息一样的门禁", and the
+earlier ruling no longer stands. The event carries no chat kind, and the gate's rules differ
+for a direct chat and a group, so the click is decided for both kinds and the
+kind is established only when the two decisions differ. It comes from the chat
+itself, never from the access lists being judged (a direct chat wrongly listed in
+`group.allow_chats` must still be judged as the direct chat it is): the kind an
+admitted inbound message this session routed in that chat reported (a group
+message dropped for lacking a mention, an untrusted bot's message, or a consumed
+`/introduce` teaches nothing), kept by the same targeting owner as the
+per-chat mode cache topic detection uses (a group event records only the kind,
+apart from the mode, since it does not say whether the group is in topic mode). Only
+when no inbound event has said does the click ask Feishu, through the chat-get lookup that
+cache also fills. A person admitted in both or in neither kind never triggers
+the lookup. When the decision does depend on the kind and none of these can say,
+the click is refused: the lookup needs the same group information read
+permission topic detection does, but unlike topic detection it does not degrade
+to an ordinary group, because there is no safe default kind once the two
+decisions differ. Counting
+the click as addressing the bot, so that a group requiring mentions does not
+refuse every click, is this implementation's reading and not a ruling. Pairing approval is
+outside this check and stays the App Owner's. The answer carries the clicker's
+open_id as `sender_id`, so who answered is never lost.
 
 A round exists only once its card does. The registry builds the round and the
 card together but puts neither in play until the send lands, so a send that
@@ -314,14 +350,15 @@ Source:
 - `/packages/channel/feishu-channel/src/tools/registry.ts`
 - `/packages/channel/feishu-channel/src/tools/messaging-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/ask-user-question.ts`
-- `/packages/channel/feishu-channel/src/feishu-ask-user.ts`
-- `/packages/channel/feishu-channel/src/feishu-ask-user-card.ts`
+- `/packages/channel/feishu-channel/src/ask-user/registry.ts`
+- `/packages/channel/feishu-channel/src/cards/ask-user.ts`
+- `/packages/channel/feishu-channel/src/card-actions.ts`
 - `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/space-tools.ts`
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux/src/mcp/server.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/mcp/`
 
 ### Targets and chat-mode discovery
@@ -352,33 +389,41 @@ Space policy could be registered on. Missing group-information permission, a
 missing or unknown chat mode, a timeout, and an API failure each warn in the
 channel log and fall back to the group route. Operators using Feishu topic
 collaboration must grant the bot a group information read permission accepted by
-the chat-get API, such as `im:chat:readonly`.
+the chat-get API, such as `im:chat:readonly`. A card click uses the same lookup
+only as a last resort: when the access gate decides a direct chat and a group
+differently for the clicker and neither the operator's `group.allow_chats` nor
+an earlier inbound direct-chat event already gives the chat's kind. It fails
+closed there instead; a person the policy treats alike in both kinds never
+triggers it.
 
-Cache and concurrency are precise, and the two ledgers are not the same shape:
+Cache and concurrency are precise:
 
 - successfully resolved chat modes are cached for the life of the session, with
   no eviction; unsuccessful lookups are not cached at all, so a later accepted
-  inbound retries;
+  inbound retries. An accepted direct-chat inbound event also enters its chat as
+  `p2p` without a lookup, because the event states it (a group event cannot
+  state topic versus ordinary mode, so it enters no mode; it records only that
+  the chat is a group, kept apart for the card-click gate);
 - concurrent lookups for one chat share a single in-flight request, which is
-  removed once it settles;
-- the observed-message ledger is bounded at 4,096 entries and evicts the oldest;
-  it and the per-target anchor ledger are display and addressing aids, never
-  authority.
+  removed once it settles.
 
 Target projection runs only for an accepted inbound: the access and pairing gate
 decides first, so a rejected or gate-consumed message reaches no chat API call
-and writes no ledger entry.
+and populates no cache entry.
 
 Source:
 
 - `/packages/channel/feishu-channel/src/routing/target.ts`
-- `/packages/channel/feishu-channel/src/feishu-target-router.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
+- `/packages/channel/feishu-channel/src/inbound/target.ts`
+- `/packages/channel/feishu-channel/src/inbound/pipeline.ts`
 - `/packages/dreamux-types/src/channel.ts`
 
 ### Inbound routing
 
-Routing is one small service over the Channel's own document. Every read is
+`FeishuRouting` in `/packages/channel/feishu-channel/src/routing/index.ts`
+constructs its own document store from the session's location and identifiers.
+The session calls its initialization before installing subscriptions or
+extensions, and its close after draining those writers. Every read is
 synchronous against the last committed document, and every write is a commit, so
 a caller told a route exists is being told what disk says. The plan is one of
 three answers: `bound` (with the row that answered, which may be the parent
@@ -426,11 +471,10 @@ Source:
 
 - `/packages/channel/feishu-channel/src/routing/index.ts`
 - `/packages/channel/feishu-channel/src/feishu-submit.ts`
-- `/packages/channel/feishu-channel/src/feishu-channel.ts`
-- `/packages/channel/feishu-channel/src/feishu-message.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-ops.ts`
-- `/packages/dreamux/src/service/team-collection/commands.ts`
-- `/packages/dreamux/src/service/channel-submission.ts`
+- `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/inbound/attachments.ts`
+- `/packages/dreamux/src/service/team/commands.ts`
+- `/packages/dreamux/src/service/agent/channel-submission.ts`
 - `/packages/dreamux/src/service/submission-sources.ts`
 
 ### Feishu event routes
@@ -575,8 +619,8 @@ Source:
 
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-channel/src/feishu-document-comments.ts`
-- `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
-- `/packages/channel/feishu-channel/src/feishu-message-render.ts`
+- `/packages/channel/feishu-channel/src/access/index.ts`
+- `/packages/channel/feishu-channel/src/inbound/render.ts`
 - `/packages/channel/feishu-channel/src/tools/document-tools.ts`
 - `/packages/channel/feishu-transport/src/parse/comment.ts`
 - `/packages/channel/feishu-transport/src/transport/doc-comment.ts`
@@ -588,9 +632,9 @@ The Feishu Channel answers `/bind`, `/dissolve`, `/help`, `/stop`, and `/teams`
 itself. They are one command table, not five special cases, and nothing about
 them reaches a model: a recognized command is consumed, so no submission is
 built, no turn is created, and no COT anchor is opened for it. `/bind` can
-still leave a binding card behind that becomes a Team's fallback anchor, which
-is the binding operation's doing rather than the command's — see *Card
-placement* below.
+still leave a binding card behind that becomes a Team's first COT anchor, which
+is the binding operation's doing rather than the command's — see *Routing
+notification cards*.
 
 A table row is `usage`, `summary`, and `execute`. The first two exist so `/help`
 renders the table rather than a second list that can drift from it: a row the
@@ -686,10 +730,11 @@ rows state intent and let the owning layer refuse:
 A command that runs a Core Command answers for that one Command. `/bind` is the
 exception that writes routing state, and it writes it through the same
 `bindChannel` the MCP tool uses rather than through a path of its own. No
-command *removes* a route: only two proofs do that, and they meet in one capability,
-`FeishuRouteReconciliation`, because they commit the same durable rows: Core's
-final `team.state` closed event, and a delivery this Channel already routed
-coming back rejected. A rejected command is not a third proof — `TEAM_CLOSED` is
+command *removes* a route: only two proofs do that, and they meet in one
+capability, `FeishuBindingOperations.forgetTeamRoutes`, because they commit the
+same durable rows: Core's final `team.state` closed event, and a delivery this
+Channel already routed coming back rejected. A rejected command is not a third
+proof — `TEAM_CLOSED` is
 raised for a dissolve that is still pending, and a dissolve that then fails
 lowers the fence again and leaves the Team open with its binding correct.
 
@@ -722,9 +767,10 @@ one chat and never fails the card.
 Source:
 
 - `/packages/channel/feishu-channel/src/feishu-slash-commands.ts`
-- `/packages/channel/feishu-channel/src/feishu-route-reconciliation.ts`
-- `/packages/channel/feishu-channel/src/feishu-running-teams-card.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
+- `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/routing/operations.ts`
+- `/packages/channel/feishu-channel/src/cards/running-teams.ts`
+- `/packages/channel/feishu-channel/src/inbound/pipeline.ts`
 - `/packages/channel/feishu-channel/src/introduce.ts`
 
 ### Inbound content fidelity
@@ -837,12 +883,12 @@ Source:
 - `/packages/channel/feishu-transport/src/transport/message-read.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
 - `/packages/channel/feishu-channel/src/feishu-bounded-operation.ts`
-- `/packages/channel/feishu-channel/src/feishu-inbound-enrichment.ts`
-- `/packages/channel/feishu-channel/src/feishu-inbound-work.ts`
-- `/packages/channel/feishu-channel/src/feishu-reply-ancestry.ts`
-- `/packages/channel/feishu-channel/src/feishu-message.ts`
-- `/packages/channel/feishu-channel/src/feishu-message-render.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
+- `/packages/channel/feishu-channel/src/inbound/enrich.ts`
+- `/packages/channel/feishu-channel/src/inbound/work.ts`
+- `/packages/channel/feishu-channel/src/inbound/reply-ancestry.ts`
+- `/packages/channel/feishu-channel/src/inbound/attachments.ts`
+- `/packages/channel/feishu-channel/src/inbound/render.ts`
+- `/packages/channel/feishu-channel/src/inbound/pipeline.ts`
 
 ### Routing document
 
@@ -850,9 +896,15 @@ The Feishu document lives at
 `~/.dreamux/state/<dispatcher-id>/feishu-routing.<channel-slug>.<digest>.json`,
 one file per configured channel id, written `0600`. It holds three sections in
 one consistency domain: `bindings[]`, the target routes actually installed, each
-carrying its Team name, its `manual` or `space` origin, and its optional space
-id; `spaces[]`, the registered Collaboration Space policies with their creation
-facts; and `subscriptions[]`, the documents a recipient follows, each a
+carrying its Team name, its optional space id, and `root_message_id` — the
+visible message a topic-kind binding's own conversation replies under, so a
+Channel-authored card for that topic lands there instead of at a guess. Automatic
+provisioning sets it at bind time; a topic bound through a path with no message
+id to hand (or written before roots were persisted) starts `null` and is filled
+once, and a rebind that carries no root keeps the one the row holds, decided
+inside the same commit; it is always `null` for a `group`/`p2p` binding; `spaces[]`, the registered
+Collaboration Space policies with their creation facts; and `subscriptions[]`,
+the documents a recipient follows, each a
 `(file_token, file_type, team_name, created_at)` row whose `team_name` is `null`
 for the Dispatcher Agent. A space policy is what entitles a binding to be
 installed, and a Team closing removes the bindings that named it *and* the
@@ -877,16 +929,43 @@ the rows through `bind_channel` / `bind_collaboration_space`. `subscriptions` is
 the one section a document may legitimately lack — a file written before it
 existed loses no fact, so it reads as `[]` and the version stays `1` — while a
 present-but-malformed one fails loud like the two beside it. Core's own removed
-routing state is detected, not read: `channel-bindings.json` and
-`collaboration-spaces.json` at the dispatcher root fail loud as old state.
+routing state — `channel-bindings.json` and `collaboration-spaces.json` at the
+dispatcher root — is no longer detected or read (R47): a leftover from before
+a Channel owned this state is inert residue that does not block `dreamux
+serve` or show up in `dreamux doctor`.
 
 Source:
 
 - `/packages/channel/feishu-channel/src/routing/store.ts`
 - `/packages/channel/feishu-channel/src/routing/document.ts`
-- `/packages/dreamux/src/service/legacy-state.ts`
 
 ### Team binding and authorization
+
+**An agent's `chat_id`/`message_id` is trusted, with one guard that every send
+shares.** Nothing checks that a supplied pair names the conversation the calling
+Team is actually bound to — the model is expected to echo the ids its own
+inbound `<channel>` envelope carried, and `FeishuOutbound` sends to whatever
+chat it is given, replying under `message_id` when one is supplied. The one
+exception is address-less: inside a chat that carries a Collaboration Space, a
+message with no `message_id` does not open a fresh top-level message (which
+would seat a new topic on the sender's behalf) — it lands under the calling
+Team's own bound topic's persisted `root_message_id` when exactly one topic
+names that Team, and is refused with an instruction to pass a `message_id`
+otherwise. Every other Feishu chat keeps the no-guard behavior.
+
+That rule is one private step of `FeishuOutbound` (`resolveTarget`), and both
+`sendText` and `sendCard` pass through it, so `reply`, `ask_user_question` and
+an extension's `sendCard` are addressed identically. What varies is the sender:
+an `agent` (a TeamLeader, or the Dispatcher Agent, which owns no Team and is
+always refused an address it did not name) derives; the `channel` never does.
+An MCP caller becomes a sender in one place (`agentSender`), and an extension's
+`sendCard` takes the caller its tool handler received as an optional `caller` —
+a background call has none and so must name its `replyTo` in a Space chat. The
+Channel's own sends (an answer to an inbound message, a `/introduce`
+acknowledgement, a binding, unbinding, dissolution, or space notice) are sent as
+the `channel`, so the `bind_space` receipt stays a chat-level message in the
+container and an unbind or dissolve notice, sent after its route row is gone,
+replies under the root preserved when the row was deleted.
 
 Binding a conversation to a Team is the Channel's own decision, made with that
 Channel's own tools. Team MCP has no `bind_channel` and no `transfer_back`: only
@@ -917,8 +996,8 @@ caller can reach the document without passing it.
 
 The rule is deliberately narrow. Only `kind: 'group'` is refused; one topic
 inside the Space stays an ordinary bindable target, which is exactly what
-automatic provisioning installs (`feishu-provisioning.ts`, `origin: 'space'`).
-Refusing topics too would break the mechanism the rule exists to protect.
+automatic provisioning installs (`feishu-provisioning.ts`). Refusing topics too
+would break the mechanism the rule exists to protect.
 
 **The reverse order is refused too.** `bindSpace` used to check only
 `document.spaces`, for a duplicate space *name*, so registering a Space on a
@@ -997,20 +1076,20 @@ model-facing tool schema, so a runtime cannot name a scope it was not given.
 
 Source:
 
-- `/packages/channel/feishu-channel/src/feishu-session-bindings.ts`
+- `/packages/channel/feishu-channel/src/routing/operations.ts`
 - `/packages/channel/feishu-channel/src/routing/index.ts`
 - `/packages/channel/feishu-channel/src/routing/store.ts`
 - `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/registry.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
 
 ### Collaboration Spaces and provisioning
 
 A Collaboration Space is a Channel product flow, not a Core entity. Core has no
 Collaboration Space service, no space store, and no `collaboration_space` Command
-namespace; the operator config no longer accepts a `collaborationSpace` block,
-and a leftover one is a loud config error.
+namespace; the operator config no longer reads a `collaborationSpace` block, and
+a leftover one is tolerated and ignored, like any other retired key.
 
 For Feishu a Space is a registered topic group whose child topics are provisioned
 automatically. Its four Dispatcher-only tools register an existing external
@@ -1059,6 +1138,15 @@ immediate `team.status` round trip. A failure after `team.create` leaves an ordi
 nothing routes to: an accepted orphan an operator can see and use, deliberately
 not compensated.
 
+Manual binding and automatic provisioning use the same BindingOperations
+post-commit presentation path. Automatic provisioning passes the result of
+its committed routing bind to that path. If another Team took the topic while creation was pending,
+the returned previous owner is retired before the created Team claims the
+route and its binding receipt is sent. Rebinding the same Team does not retire
+its presentation. A failed routing commit produces neither release nor claim
+nor receipt; the prior committed route and display remain. The announcement
+uses the bind result's root message instead of re-reading mutable routing.
+
 Idempotency comes from one choice with several consequences: the `team.create`
 `request_id` is the inbound message id, used bare.
 
@@ -1070,8 +1158,9 @@ Idempotency comes from one choice with several consequences: the `team.create`
   it.
 - A new message always mints a new id, so after a Team is dissolved the next
   message to that topic provisions a fresh Team. A thread-scoped id could not:
-  Core keeps a request's acceptance record permanently, so it would replay
-  `closed` forever and the topic could never be provisioned again. A replay whose
+  Core keeps a request's acceptance in its Team record while that valid record
+  exists, so a thread-scoped id would replay `closed` rather than provisioning
+  fresh work. A replay whose
   Team has since closed is reported `unsubmitted` and answered with the in-place
   failure notice.
 - The cost of message scope is that a *different* message arriving after a
@@ -1089,9 +1178,11 @@ thing that prevents two Teams for one topic, and it is enough, because a process
 that dies mid-run leaves no Team the next process could duplicate a route for. A
 waiter that finds no installed route answers `unsubmitted`.
 
-A policy `generation` advances when the policy is rebound with different creation
-facts; it cancels nothing — a creation already under way keeps the snapshot it
-captured, and only a creation that starts afterwards sees the new one.
+`FeishuSpaceRecord` carries no policy `generation` counter: its only reader was
+the `bind_space`/`get_space`/`list_spaces` output schemas surfacing it
+verbatim, so it named a fact no decision turned on and was deleted (R38).
+`bindSpace` still replaces the stored policy outright on a rebind; nothing
+tracks which revision an already-running creation captured.
 
 Source:
 
@@ -1101,7 +1192,6 @@ Source:
 - `/packages/channel/feishu-channel/src/routing/naming.ts`
 - `/packages/channel/feishu-channel/src/tools/space-tools.ts`
 - `/packages/dreamux/src/config/config.ts`
-- `/packages/dreamux/src/service/legacy-state.ts`
 
 ### Routing notification cards
 
@@ -1137,11 +1227,24 @@ to the members of the bound conversation; the user-visible half of that disclosu
 [`/.agents/product/README.md`](/.agents/product/README.md).
 
 Where a card goes follows the target, except that a bind may say otherwise. A
-route card for a topic replies under the newest message this session has seen in
-that topic, and falls back to the parent chat when it has seen none. A route
-card for a group is sent to the group. Collaboration Space cards always send a
-fresh top-level card to the container chat, which in a Feishu topic group
-creates a new topic.
+route card for a topic replies under that topic's own persisted
+`root_message_id`, read off the binding row rather than guessed. A topic route
+with no root yet gets one two ways, and neither guesses. First, the first
+message accepted in a bound topic teaches its route: the root the event names,
+else that message, which is then the topic's first and its own root — written by
+`FeishuRouting.fillTopicRoot`, which fills only a null field and touches nothing
+else, so `/bind` or `/dissolve` typed in a pre-existing topic finds its root
+already there. Second, a notice that has no message address at all (a tool bind
+of a topic, a route removed by a Dispatcher-side dissolve before any message
+arrived) asks Feishu for the topic's root by topic id — the earliest message
+the topic lists, or the `root_id` it carries — and remembers it on the row when
+the row still exists. Only when that read is unavailable or fails is the
+notification skipped and logged: it never falls back to the parent chat and
+never opens a new topic, and a bind that was allowed does not start failing
+for it. A route card for a group is sent to the group, where a fresh top-level
+message is the only option. Collaboration Space cards always send a fresh
+top-level card to the container chat, which in a Feishu topic group creates a
+new topic.
 
 `bindChannel` takes an optional `announceIn`, defaulting to the target it bound.
 A `/bind` supplies the conversation the command was typed in, which is how an
@@ -1149,18 +1252,43 @@ operator who types it inside a topic hears back in that topic instead of
 watching the card open a topic of its own; an MCP-initiated bind supplies
 nothing, because a tool call has no conversation to answer into. What the card
 *describes* is always the bound target, and route release and claim always use
-the bound target too — only the destination moves.
+the bound target too — only the destination moves. When `announceIn` differs
+from the bound target (only a `/bind` typed inside a topic that binds its
+parent group), the receipt replies under the announce target's own root when
+it already has a binding, else under the message `/bind` was typed in reply-
+chain terms, else it follows the same read-or-skip rule — it is a receipt about
+the bind, not itself part of the newly bound conversation.
 
-A card sent somewhere other than the target it announces is a receipt, not an
-anchor, and is sent with no anchor Team. This is load-bearing rather than tidy:
-a topic can hold a binding row of its own in an ordinary chat, so a `/bind`
-typed in a topic that another Team answers would otherwise seat the newly bound
-Team's COT fallback anchor inside that other Team's conversation.
-`LeaderLifecycleFence.blocksAnchor` does not catch it — it fences a closed
-leader, or a target a leader released, and a fence one Team raised says nothing
-about another. The address half still moves with the card: the message is
-observed as the newest one seen in the target it was actually sent to, which is
-simply true.
+The committed routing owner reports the exact replaced row separately from
+the Team that served the target before binding, including parent inheritance.
+Presentation release uses the latter; `previous_team_name` and the receipt
+card still describe only an exact replaced binding. Taking over an inherited
+topic therefore retires the old Team's card without changing the public
+previous-binding response.
+
+A bind or provisioning card that was actually sent is also its Team's first
+chain-of-thought anchor, under three conditions. The card must be on screen:
+the offer is made from the send's own success, so a skipped, failed, or
+session-cancelled notice offers nothing. The TeamLeader must still have no
+anchor when the send finishes, not merely when the bind committed: the card
+only initializes, so an inbound message that arrived while it was in flight
+keeps the anchor it took, and a leader whose Team closed takes nothing. Nor
+does one whose route no longer serves the card's conversation when it lands:
+the offer is checked against the routing document then, because the leader
+fence remembers a released target only for a leader that already had COT
+state. And the card must have landed in the bound
+target itself, so a receipt announced elsewhere (a `/bind` typed in a topic
+that binds its parent group) anchors nothing, as do unbind, dissolve, and space
+notices. That condition is load-bearing: a topic can hold a binding row of its
+own in an ordinary chat, so without it a `/bind` typed in a topic another Team
+answers would seat the newly bound Team's first card inside that other Team's
+conversation, and the lifecycle fences, which are per leader, would not stop it.
+The Dispatcher never takes an anchor from a card.
+
+That is a different fact from the topic's persisted `root_message_id`: the root
+is where the Channel's own cards reply, the anchor is where a Team's first card
+displays, and nothing restores an anchor from the persisted root. After a
+restart a TeamLeader has none until its first inbound message.
 
 Delivery is best-effort and live-session-only. The send is never awaited by the
 operation that caused it, so a card that does not arrive leaves the routing
@@ -1174,23 +1302,21 @@ work before closing the bot, so a hung card request cannot hold dispatcher
 shutdown. Cancellation cannot retract a request already accepted by Feishu, so a
 retry can duplicate a remotely accepted card.
 
-A successfully sent card is also observed into the message ledger, which makes it
-an address this Channel can reply into later and, for a bind, the fallback anchor
-for that Team's first conversation card.
-
 Source:
 
-- `/packages/channel/feishu-channel/src/feishu-binding-notification-card.ts`
-- `/packages/channel/feishu-channel/src/feishu-session-bindings.ts`
-- `/packages/channel/feishu-channel/src/feishu-channel.ts`
-- `/packages/channel/feishu-channel/src/feishu-target-router.ts`
+- `/packages/channel/feishu-channel/src/cards/binding-notification.ts`
+- `/packages/channel/feishu-channel/src/routing/operations.ts`
+- `/packages/channel/feishu-channel/src/outbound/index.ts`
+- `/packages/channel/feishu-channel/src/cot/adapter.ts`
+- `/packages/channel/feishu-channel/src/session/session.ts`
+- `/packages/channel/feishu-channel/src/inbound/target.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
 
 ### Dispatcher-scoped core events
 
 Each `DispatcherService` owns one in-process `DispatcherCoreEventBus`. It is a
 best-effort distribution helper, not a fact owner or store. Existing owners
-publish after their normal write point: `TeamStore` publishes Team status and
+publish after their normal write point: `TeamService` publishes Team status and
 concrete leader changes; `AgentIdentityStore` publishes TeamLeader and TeamMate
 status changes; the conversation projection publishes display-only input and
 activity facts for the dispatcher agent and TeamLeaders. Routing produces no
@@ -1198,6 +1324,11 @@ core event — a Channel already owns its routing records, so it describes its o
 state from them at the moment it changes them, and Core publishing a binding fact
 back would mean Core holding one. Workflow, scheduler, and host-maintenance events
 are deliberately absent.
+
+Display producers skip DTO construction when the bus has no current source.
+Committed identity observations and the Team's owned roster still advance, so
+a later subscriber receives subsequent facts from current owners without replay
+or cold roster lookup.
 
 The published catalog is an explicit set of four kinds: `team.state`,
 `teammate.state`, `teammate.input`, and `teammate.activity`. The last two are
@@ -1232,14 +1363,11 @@ terminal, carrying the producer's own reason when it has one. Core publishes
 that same terminal itself for an input no runtime ever accepted, because such
 an input still opened a surface that nothing else would close.
 
-The seal's catalog is declared as a total record over the event union, so a new
-kind that is not listed fails to compile rather than being published and
-silently dropped. Sealing is the one place
-a fact becomes deliverable: an event outside the set, an event whose
-`schemaVersion` is not `1`, or one without a finite `occurredAt` is dropped and
-logged rather than thrown, because producers publish synchronously from inside
-operations whose durable work has already succeeded. A sealed event is deeply
-frozen, so nothing can rewrite it after it has been broadcast.
+Every `ChannelCoreEvent` is built by its producer as a fresh typed object
+literal, so kind, schema version, and shape are already the compiler's to
+guarantee — there is no second, runtime catalog check. Sealing is the one
+place a fact becomes deliverable: it deep-freezes the event so nothing can
+rewrite it after it has been broadcast.
 
 A Channel session receives one read-only `ChannelEventSource` with a single
 `subscribe(listener)` and an idempotent `unsubscribe()`. One subscription receives
@@ -1272,7 +1400,7 @@ synchronous projection bounded; a reaction needing asynchronous persistence fenc
 its in-memory authority synchronously and serializes the durable write on a
 Channel-owned mutation tail that `ChannelSession.close` awaits. The bus does not
 become a new state owner, and providers never receive core service/store instances
-or raw `EventEmitter` management methods.
+or raw listener-management surface.
 
 Core installs the source during `initialize`, before `start` opens external input,
 which is what makes subscribe-before-admission provable. Stop and start-failure
@@ -1283,12 +1411,12 @@ Source:
 
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
+- `/packages/dreamux/src/service/team/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
-- `/packages/dreamux/src/channel/conversation-projection.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 ### Feishu conversation display
@@ -1325,18 +1453,32 @@ anchorless rather than restoring its predecessor, while an ambiguous outcome
 proves nothing and leaves the new anchor standing. A Reply is outbound only: its
 receipt never
 creates, replaces, defers, or retires an anchor and never opens, moves, or closes
-a card. A visible Team bind card may initialize a TeamLeader that has no standing
-anchor and never replaces one, while the Dispatcher has no installation or
-restart anchor and stays anchorless until its first Channel user message.
+a card. A bind card that was sent may initialize a TeamLeader that has no standing
+anchor and never replaces one (see *Routing notification cards*), while the
+Dispatcher has no installation or restart anchor and stays anchorless until its
+first Channel user message.
 
 Anchors consult two bounded fences: a leader-wide fence set by Team close and
 endpoint-scoped route fences set by unbind or replacement, each retaining at most
 512 entries. Team starting/running clears both kinds for that leader, while a
-matching re-bind clears its endpoint route fence. Fence matching and route-driven
-interruption use the anchor's authoritative binding endpoint, not its visible
-target fallbacks. Fencing is the whole of the TeamLeader's extra lifecycle
-policy; the Dispatcher, having no Team, is never fenced. Feishu ignores
-Team-member events explicitly and never routes them through a recipient's state.
+matching re-bind clears its endpoint route fence. Removing an exact topic
+binding retires the presentation it produced, then claims the committed
+parent fallback at that visible target so fresh submissions are admitted,
+including when the fallback serves the same Team. This does not revive the
+old anchor or rewrite its provenance. Anchor admission checks its visible
+`target`. Route-driven interruption also compares the
+anchor's `servingTarget`, captured from the route that actually submitted it.
+Releasing a parent-group route retires a topic card served by that route;
+independently served exact topics survive. A later exact binding does not
+rewrite the provenance of an existing parent-served card. Dispatcher fallback
+has no serving target. Committed route removals retire presentations even when
+their notification is silent; failed commits retire nothing. This fact stays
+inside the existing Channel-owned anchor, with no persisted routing field or
+Core payload. Fencing is the whole of the
+TeamLeader's extra lifecycle policy; the Dispatcher, having no Team, is never
+fenced. Feishu
+ignores Team-member events explicitly and never routes them through a
+recipient's state.
 
 Once a recipient has an anchor, Core-projected assistant text, tool calls and
 results, the lines the Channel renders itself from text-free activities — the
@@ -1364,7 +1506,7 @@ The Channel suppresses only its own already-visible inbound body by comparing
 `sourceId` with the bounded set it issued; a source ID's presence alone proves
 nothing. Before an anchor exists, there is no place to send a card.
 
-`/packages/channel/feishu-channel/src/feishu-cot-presentation.ts` owns the existing
+`/packages/channel/feishu-channel/src/cot/card.ts` owns the existing
 action names and title words: read/list_files/search/edit map to Read/List/Search/Edit
 and prefix a supplied summary with that word. The run action uses Bash as its
 untitled name and its summary without a prefix. The edit action also covers Write.
@@ -1486,18 +1628,115 @@ surface remain.
 
 Source:
 
-- `/packages/dreamux/src/channel/conversation-projection.ts`
+- `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`
 - `/packages/dreamux-utils/src/redaction.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 - `/packages/dreamux/src/platform/home-paths.ts`
-- `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`
-- `/packages/channel/feishu-channel/src/feishu-cot-state.ts`
-- `/packages/channel/feishu-channel/src/feishu-cot-session.ts`
-- `/packages/channel/feishu-channel/src/feishu-cot-events.ts`
-- `/packages/channel/feishu-channel/src/feishu-cot-outbox.ts`
-- `/packages/channel/feishu-channel/src/feishu-cot-io.ts`
+- `/packages/channel/feishu-channel/src/cot/adapter.ts`
+- `/packages/channel/feishu-channel/src/cot/recipients.ts`
+- `/packages/channel/feishu-channel/src/cot/card.ts`
+- `/packages/channel/feishu-channel/src/cot/bytes.ts`
+- `/packages/channel/feishu-channel/src/cot/diagnostics.ts`
+- `/packages/channel/feishu-channel/src/cot/io.ts`
+- `/packages/channel/feishu-channel/src/cot/inbound-correlations.ts`
 - `/packages/channel/feishu-transport/src/transport/cot.ts`
+
+### Feishu extensions
+
+The Feishu package is the always-loaded built-in plugin `feishu` (mechanism:
+[plugins](plugins.md)). Its named `createFeishuPlugin` export is the plugin
+factory; the package-root default is the neutral provider factory for configured
+`npm:` refs. The plugin
+contributes the `feishu` channel provider, so `builtin:feishu` refs resolve as
+before, and publishes a `FeishuApi` whose `extensions.register` another plugin
+calls from its `hooks.plugin.for('feishu')` tap. Seen on its own, Feishu is a
+small plugin system: its own registry, a per-instance lifecycle, and an
+instance api handed to each extension. Core only hands the api over.
+`createFeishuChannelProvider` stays a named export and builds a provider with
+an empty extension registry.
+
+- **Registry.** One per plugin instance. `register` rejects a blank (trimmed)
+  extension name, tool name, or card action key; a duplicate extension name; a
+  tool name already served to the same caller kind (by a built-in Feishu tool,
+  another extension, or another tool of the same extension; the same name for
+  a different caller kind is allowed, as the built-ins already do); and a card
+  action key equal to a built-in Feishu action (pairing approval,
+  `ask_user_question`), another extension's key, or another key of the same
+  extension. A blank key would claim every click whose card value carries no
+  `dreamux_action`, because the dispatcher reads a missing key as `''`. Every
+  error names both sources (a blank name or key names the extension and its
+  index instead, since the value itself is not a name). Registration happens
+  in the last step of plugin loading, so a collision fails `serve`.
+- **Tools and card actions.** Extension tools are appended to the caller's
+  `channel-feishu` catalog and dispatched when no built-in tool matches. A card
+  action is dispatched by the button value's `dreamux_action` key before the
+  built-in handler, and only after the click passes the same access policy an
+  inbound message from that person meets (a person the policy does not admit
+  never reaches the handler, so a handler checks no clicker of its own); the
+  handler may be async but Feishu's callback window is a
+  few seconds, so long work must be detached — a card action's `handle`
+  returns `{ response, forward? }`: `response` is the card callback's own
+  answer, and `forward`, when present, is delivered afterwards, detached, to
+  whichever Team or Dispatcher Agent owns the card's conversation (Feishu
+  resolves that owner from the card's own message and delivers through the
+  same path an ask-user answer's settlement uses; the extension states only
+  what to say, never a Team name or a delivery mechanism of its own). Handlers
+  receive that Feishu instance's state `S`: two Feishu channels get two
+  states. A tool or card action is unreachable until this instance's
+  `initialize` has filled that extension's state — the same "no such tool" (or
+  unclaimed card action) refusal a caller sees for a name nothing registered,
+  covering the window between a session starting and every extension's
+  `initialize` completing.
+- **Lifecycle.** Per Feishu channel session: `initialize` after the routing
+  store loaded (local IO only; of the instance api only `owner` works here),
+  `start` after the bot connection is live (the first point outbound calls
+  work; timers start here), `close` after new extension tool calls and card
+  actions are refused and in-flight work settled, in reverse registration
+  order, before the routing store drains. In-flight work includes a running
+  `start` and an instance-api `bindTeam` (which writes routing after an
+  awaited Core read), so a close landing mid-`start` waits for it and then
+  closes what it opened, and no bind lands after the store drained; that
+  `session.start()` then rejects with "closed during startup". An `initialize`,
+  `start` or card-action throw is logged with `feishu_extension` as "Feishu
+  extension <step> failed" and then propagates: an `initialize` or `start`
+  throw fails that session like any other start failure, taking that
+  Dispatcher's Feishu channel down; a card-action throw reaches the Lark SDK,
+  which cannot name its owner. A `close` throw is logged the same way and
+  teardown continues. After teardown begins every outbound api call rejects as
+  aborted.
+- **State root.** `<Feishu plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension>/<channel
+  segment>`, not created for the extension. The plugin's own state dir is
+  `ServerHost.stateDir`, host-owned and scoped by plugin name alone, handed to
+  the Feishu plugin's `server()` and captured there for the extensions
+  mechanism to root under; it is a different directory tree from the channel
+  instance's `state_root` that `access.json`/`chat-bots.json`/the routing
+  document sit under, so an extension cannot overwrite Feishu's own files —
+  structurally, not merely by naming convention. `<channel segment>` is the
+  same slug-plus-digest of the channel id that the routing document filename
+  carries, so two Feishu channels on one Dispatcher never share a directory.
+- **Instance api.** Bound to one session lifecycle: `owner(target)` (the Team
+  the routing plan says owns the conversation, a topic inheriting its group's
+  binding, else `null`), `readMessageRoute`, `bindTeam` (the same validation,
+  COT fences, and bound notification as the binding tools, without the
+  ownership check), `sendCard` (no idempotency key, no mode; an optional
+  `caller` is the MCP caller a tool handler received, which the shared address
+  guard needs to place a card with no `replyTo` in a Space chat; the returned
+  target is read back from Feishu because a reply lands in the replied-to
+  topic), and `editCard`. The api carries no submit/delivery capability: a
+  card action forwards to a Team through its `handle` return, not through the
+  instance api (see Tools and card actions above).
+- **Doctor.** Extension tools and card actions are listed in the diagnostic line
+  of each configured Feishu channel, and only there; with no Dispatcher using a
+  `feishu` channel they are not listed. Core gains no Feishu knowledge for it.
+
+Source:
+
+- `/packages/channel/feishu-channel/src/plugin.ts`
+- `/packages/channel/feishu-channel/src/extension.ts`
+- `/packages/channel/feishu-channel/src/feishu-extensions.ts`
+- `/packages/channel/feishu-channel/src/provider.ts`
+- `/packages/channel/feishu-channel/src/routing/store.ts`
 
 ### Feishu access contracts
 
@@ -1544,21 +1783,18 @@ non-empty inbound `thread_id` is included in the opaque display attrs rendered
 into the model-visible `<channel>` envelope without acquiring a topic container or
 topic routing semantics.
 
-The egress side follows the same rule from the other direction. TeamLeader egress
-resolution uses the observed-message ledger, rejects conflicting chat/thread
-selectors, and authorizes message ownership against the exact topic rather than
-the enclosing chat; reply execution uses Feishu's source-message reply API, which
-preserves the authorized topic. After exact ownership succeeds a TeamLeader may
-also be authorized by the target's explicit group binding fallback, so a
-group-bound leader can reply to observed topic messages while a leader bound only
-to another topic stays out of scope. Standalone `thread_id` selectors are rejected
-because Feishu does not expose them as a safe send-to-topic primitive on this
-transport seam.
+The egress side has no `thread_id` selector to key on in the first place: the
+`reply` tool takes `chat_id` and an optional `message_id`, never a bare thread
+selector, and Feishu's own reply-to-message API is what lands the send in the
+right topic when a `message_id` names one — there is no separate topic-key
+concept to keep in step with the ingress side (see *The `reply` tool trusts the
+`chat_id`/`message_id` it is given* above for the one case this Channel does
+narrow).
 
 Source:
 
-- `/packages/channel/feishu-channel/src/feishu-target-router.ts`
-- `/packages/channel/feishu-channel/src/feishu-inbound-anchor.ts`
+- `/packages/channel/feishu-channel/src/inbound/target.ts`
+- `/packages/channel/feishu-channel/src/cot/adapter.ts`
 - `/packages/channel/feishu-transport/src/parse/content.ts`
 
 History: [/.agents/tasks/channel/README.md](/.agents/tasks/channel/README.md)

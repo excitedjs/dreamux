@@ -183,4 +183,4 @@ and one central fact lives outside the narrative documentation entirely.
 - [`/packages/agent-runtime/claude-code/src/runtime.ts`](/packages/agent-runtime/claude-code/src/runtime.ts)
 - [`/packages/agent-runtime/codex/src/turn-manager.ts`](/packages/agent-runtime/codex/src/turn-manager.ts)
 - [`/packages/dreamux-types/src/agent-runtime.ts`](/packages/dreamux-types/src/agent-runtime.ts)
-- [`/packages/dreamux/src/channel/conversation-projection.ts`](/packages/dreamux/src/channel/conversation-projection.ts)
+- [`/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`](/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts)

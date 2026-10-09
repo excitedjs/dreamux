@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "`dreamux serve` now always exits on SIGTERM or SIGINT: a shutdown that fails is logged and the process exits with status 1, and a shutdown that has not settled by a fixed deadline is cut off and the process exits with status 1, where a failed shutdown used to leave the process running. Under systemd (`Restart=on-failure`), a failed or cut-off shutdown that was not requested through `systemctl stop` therefore restarts the service, and a runtime child process can outlive a daemon cut off this way, as after a manager kill. A value refused by config validation in an online config replace is now reported as a bad request rather than an internal failure. An unknown `builtin:` provider ref in a replace payload is classified the same way, and its message no longer reads as an external-provider load failure; `serve`, `doctor` and `onboard` print the same reworded message for such a ref. The `repo` input of Dispatcher `spawn` and Team `create` carries its field descriptions and length bounds, defined once beside the repo request reader; because the canonical `spawn` and `team.create` commands validate against that same schema, an empty or over-long repo path, base ref or branch is now rejected as a bad request over the admin socket and the Channel port as well. `last` on a running agent, including a TeamMate a `send` is still reopening, reads the provider, config and session of the runtime that is running instead of the current config. Two lifecycle fixes: a Workflow handle lock taken while an agent is created is released when that agent closes before the handle is handed over, and looking up an absent Team no longer leaves a store cached for that id.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

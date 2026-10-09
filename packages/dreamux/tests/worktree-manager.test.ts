@@ -1,15 +1,22 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WorktreeManager } from '../src/service/worktree/manager.js';
-import { TeamStore } from '../src/service/team-collection/store.js';
-import { TeamWorktreeCleanup } from '../src/service/team-collection/worktree-cleanup.js';
-import type { TeamRecord } from '../src/service/team-collection/types.js';
+import { TeamStore } from '../src/service/team/store.js';
+import { settleTeamWorktreeCleanup } from '../src/service/team/service.js';
+import type { TeamRecord } from '../src/service/team/types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -141,22 +148,28 @@ describe('WorktreeManager.prepare(): entity-based naming', () => {
           teammateName: name,
           cwd: repo,
           dispatcherWorkspace: workspace,
-          request: { mode: 'managed', ...(branch === undefined ? {} : { branch }) },
+          request: {
+            mode: 'managed',
+            ...(branch === undefined ? {} : { branch }),
+          },
         });
         const expectedBranch = branch ?? `dreamux/${name}`;
         expect(basename(result.runtimeCwd)).toBe(name);
         expect(result.worktree.slug).toBe(name);
         expect(result.worktree.branch).toBe(expectedBranch);
         expect(result.worktree.cleanup).toBe('delete-on-close');
-        expect((await git(result.runtimeCwd, ['branch', '--show-current'])).trim())
-          .toBe(expectedBranch);
-        expect(await readFile(join(result.runtimeCwd, 'a.txt'), 'utf8')).toBe('hello\n');
+        expect(
+          (await git(result.runtimeCwd, ['branch', '--show-current'])).trim(),
+        ).toBe(expectedBranch);
+        expect(await readFile(join(result.runtimeCwd, 'a.txt'), 'utf8')).toBe(
+          'hello\n',
+        );
       });
     }
   }
 });
 
-describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery', () => {
+describe('settleTeamWorktreeCleanup(): cleanup-pending is record-only recovery', () => {
   let root: string;
 
   beforeEach(async () => {
@@ -171,7 +184,10 @@ describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery'
     teamId: string;
     worktree: TeamRecord['worktree'];
     force: boolean;
-  }): Omit<TeamRecord, 'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'> {
+  }): Omit<
+    TeamRecord,
+    'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
+  > {
     return {
       dispatcher_id: 'flow',
       team_id: input.teamId,
@@ -194,12 +210,6 @@ describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery'
   }
 
   it('reclaims a cleanup-pending managed worktree from the record alone, without ever constructing a TeamService', async () => {
-    // This test file never imports `TeamService` at all — the absence is the
-    // proof. `TeamWorktreeCleanup` is given only a `TeamStore` and a
-    // `WorktreeManager`, exactly the durable-fact-recovery contract in
-    // `.agents/tasks/architecture/minimize-provider-boundaries/`
-    // (`worktree-cleanup.ts` doc comment): "there is no live Team left to
-    // construct."
     const repo = await initRepo(root);
     const workspace = join(root, 'workspace');
     await mkdir(workspace, { recursive: true });
@@ -215,7 +225,8 @@ describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery'
 
     const teamStoreRoot = join(root, 'state', 'team');
     const store = new TeamStore({ root: teamStoreRoot, dispatcherId: 'flow' });
-    const created = await store.create(
+    const handle = await store.acquire('team-alpha');
+    const created = await handle.create(
       baseTeamInput({
         teamId: 'team-alpha',
         worktree: { ...prepared.worktree, cleanup_state: 'cleanup-pending' },
@@ -224,8 +235,8 @@ describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery'
     );
     expect(created).not.toBeNull();
 
-    const cleanup = new TeamWorktreeCleanup({ store, worktrees: manager });
-    await cleanup.settle('team-alpha');
+    await settleTeamWorktreeCleanup(handle, manager);
+    await handle.release();
 
     // The physical checkout is gone…
     expect(await pathIsDirectory(prepared.worktree.path)).toBe(false);
@@ -240,7 +251,8 @@ describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery'
     const repo = await initRepo(root);
     const teamStoreRoot = join(root, 'state', 'team');
     const store = new TeamStore({ root: teamStoreRoot, dispatcherId: 'flow' });
-    const created = await store.create(
+    const handle = await store.acquire('team-beta');
+    const created = await handle.create(
       baseTeamInput({
         teamId: 'team-beta',
         worktree: {
@@ -258,15 +270,105 @@ describe('TeamWorktreeCleanup.settle(): cleanup-pending is record-only recovery'
     );
     expect(created).not.toBeNull();
 
-    const cleanup = new TeamWorktreeCleanup({
-      store,
-      worktrees: new WorktreeManager(),
-    });
-    await cleanup.settle('team-beta');
+    const manager = new WorktreeManager();
+    const cleanup = vi.spyOn(manager, 'cleanup');
+    const update = vi.spyOn(handle, 'update');
+    await settleTeamWorktreeCleanup(handle, manager);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    await handle.release();
 
     const after = await store.get('team-beta');
     expect(after!.updated_at).toBe(created!.updated_at);
     expect(after!.worktree.cleanup_state).toBe('not-managed');
+  });
+
+  it('reclaims a dirty pending checkout using durable force authorization and clears it', async () => {
+    const repo = await initRepo(root);
+    const workspace = join(root, 'workspace');
+    await mkdir(workspace);
+    const manager = new WorktreeManager();
+    const prepared = await manager.prepare({
+      dispatcherId: 'flow',
+      teammateName: 'team-force',
+      cwd: repo,
+      dispatcherWorkspace: workspace,
+      request: { mode: 'managed', cleanup: 'delete-on-close' },
+    });
+    await writeFile(
+      join(prepared.runtimeCwd, 'untracked.txt'),
+      'authorized discard\n',
+    );
+    const store = new TeamStore({
+      root: join(root, 'state', 'team'),
+      dispatcherId: 'flow',
+    });
+    const handle = await store.acquire('team-force');
+    await handle.create({
+      ...baseTeamInput({
+        teamId: 'team-force',
+        worktree: { ...prepared.worktree, cleanup_state: 'cleanup-pending' },
+        force: true,
+      }),
+      repo_cwd: repo,
+      source_repo: repo,
+    });
+    await handle.update({ cleanupForce: true });
+    await handle.release();
+    const recoveryStore = new TeamStore({
+      root: join(root, 'state', 'team'),
+      dispatcherId: 'flow',
+    });
+    const recovered = await recoveryStore.acquire('team-force');
+    expect(recovered.current?.worktree_cleanup_force).toBe(true);
+    await settleTeamWorktreeCleanup(recovered, manager);
+    await recovered.release();
+    expect(await pathIsDirectory(prepared.runtimeCwd)).toBe(false);
+    expect(await recoveryStore.get('team-force')).toMatchObject({
+      worktree_cleanup_force: false,
+      worktree: { cleanup_state: 'deleted', cleanup_error: null },
+    });
+  });
+
+  it('leaves pending cleanup and force authorization unchanged when reclaim refuses an unrelated repository', async () => {
+    const repo = await initRepo(root);
+    const unrelated = await initRepo(join(root, 'unrelated'));
+    const store = new TeamStore({
+      root: join(root, 'state', 'team'),
+      dispatcherId: 'flow',
+    });
+    const handle = await store.acquire('team-retry');
+    await handle.create({
+      ...baseTeamInput({
+        teamId: 'team-retry',
+        force: true,
+        worktree: {
+          mode: 'managed',
+          slug: 'team-retry',
+          path: unrelated,
+          branch: 'dreamux/team-retry',
+          base_ref: 'HEAD',
+          cleanup: 'delete-on-close',
+          cleanup_state: 'cleanup-pending',
+          cleanup_error: null,
+        },
+      }),
+      repo_cwd: repo,
+      source_repo: repo,
+    });
+    await handle.update({ cleanupForce: true });
+    const recordPath = join(store.teamRoot('team-retry'), 'record.json');
+    const before = await readFile(recordPath, 'utf8');
+    await expect(
+      settleTeamWorktreeCleanup(handle, new WorktreeManager()),
+    ).rejects.toThrow(/not a registered worktree/);
+    expect(await readFile(recordPath, 'utf8')).toBe(before);
+    expect(handle.current).toMatchObject({
+      worktree_cleanup_force: true,
+      worktree: { cleanup_state: 'cleanup-pending' },
+    });
+    expect(await pathIsDirectory(unrelated)).toBe(true);
+    await handle.release();
   });
 });
 
@@ -302,7 +404,9 @@ describe('WorktreeManager: force cleanup bounds', () => {
     };
     const result = await manager.cleanup(identity, { force: true });
     expect(result.cleanup_state).toBe('retained-error');
-    expect(result.cleanup_error).toMatch(/refusing to remove the source repository/);
+    expect(result.cleanup_error).toMatch(
+      /refusing to remove the source repository/,
+    );
     // The repo is untouched: still a readable git repo with its commit.
     expect(await pathIsDirectory(repo)).toBe(true);
     expect((await git(repo, ['log', '--oneline'])).trim()).not.toBe('');
@@ -370,6 +474,11 @@ describe('WorktreeManager: force cleanup bounds', () => {
     const forced = await manager.cleanup(identity, { force: true });
     expect(forced.cleanup_state).toBe('deleted');
     expect(await pathIsDirectory(prepared.worktree.path)).toBe(false);
+    expect(await readFile(join(repo, 'a.txt'), 'utf8')).toBe('hello\n');
+    expect((await git(repo, ['log', '--oneline'])).trim()).not.toBe('');
+    expect(
+      (await git(repo, ['branch', '--list', prepared.worktree.branch!])).trim(),
+    ).not.toBe('');
   });
 });
 

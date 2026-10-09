@@ -34,7 +34,12 @@ describe('claudeCodeMcpConfig', () => {
 
   it('carries a descriptor env through unchanged, and omits the key entirely when a descriptor has none', () => {
     const servers: AgentRuntimeMcpServer[] = [
-      { name: 'with-env', command: 'bin', args: [], env: { TOKEN: 'secret-value' } },
+      {
+        name: 'with-env',
+        command: 'bin',
+        args: [],
+        env: { TOKEN: 'secret-value' },
+      },
       { name: 'without-env', command: 'bin', args: [] },
     ];
     const config = claudeCodeMcpConfig(servers);
@@ -54,7 +59,8 @@ describe('claudeCodeMcpConfig', () => {
     ];
     const config = claudeCodeMcpConfig(servers);
     config.mcpServers['server']!.args.push('--mutated');
-    (config.mcpServers['server']!.env as Record<string, string>)['KEY'] = 'mutated';
+    (config.mcpServers['server']!.env as Record<string, string>)['KEY'] =
+      'mutated';
     expect(args).toEqual(['--one']);
     expect(env).toEqual({ KEY: 'value' });
   });

@@ -7,13 +7,13 @@
 - **Source:** https://github.com/excitedjs/dreamux/issues/63
 - **Affects:** `/packages/agent-runtime/codex/src/turn-manager.ts`,
   `/packages/agent-runtime/codex/src/events.ts`,
-  `/packages/channel/feishu-channel/src/feishu-channel.ts`,
-  `/packages/channel/feishu-channel/src/feishu-message.ts`,
-  `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`,
+  `/packages/channel/feishu-channel/src/session/session.ts`,
+  `/packages/channel/feishu-channel/src/inbound/attachments.ts`,
+  `/packages/channel/feishu-channel/src/cot/adapter.ts`,
   `/packages/dreamux/src/service/dispatcher-service/index.ts`,
-  `/packages/dreamux/src/channel/conversation-projection.ts`,
+  `/packages/dreamux/src/service/dispatcher-core-events/conversation-projection.ts`,
   `/packages/dreamux/tests/codex-live.test.ts`,
-  `/packages/agent-runtime/codex/tests/codex-runtime.test.ts`
+  `/packages/dreamux/tests/codex-inbound-live.test.ts`
 
 ## Regression Trap (read before touching codex busy/idle or `turn-manager.ts`)
 
@@ -122,11 +122,15 @@ Fake-Codex tests must cover:
 - no stale-`activeTurnId` / `NoActiveTurn` fallback test remains, because
   dreamux no longer calls `turn/steer`.
 
-The live Codex integration gate must start a real Codex app-server, put the
-dispatcher into a turn blocked on a short synchronous operation, inject a
+The live Codex integration gate in
+`/packages/dreamux/tests/codex-inbound-live.test.ts` must start a real Codex
+app-server, put the dispatcher into a turn blocked on a short synchronous
+operation, inject a
 Feishu inbound during that mid-turn window, and prove:
 
-- dreamux submits the second inbound with `turn/start`;
+- dreamux receives the second inbound's `turn/start` acknowledgement while the
+  blocking command is still unfinished, before both its `item/completed` and
+  the native `turn/completed`;
 - Codex folds that input into the current active turn rather than rejecting,
   queuing behind completion, or starting a parallel turn;
 - the folded marker is processed after the synchronous operation returns and
@@ -136,6 +140,10 @@ Feishu inbound during that mid-turn window, and prove:
 This live gate remains the load-bearing proof. COT rendering tests complement it
 but do not replace it; static review and fake tests alone are not enough for
 issue #63.
+
+Its authenticated execution requires the explicit model gate described in
+[Unit testing](/.agents/domains/unit-testing.md#real-codex-execution-boundaries).
+Default hosted compatibility checks that exclude model work do not prove #63.
 
 The pre-issue-#63 queueing shape and the original imperative change plan are
 preserved in

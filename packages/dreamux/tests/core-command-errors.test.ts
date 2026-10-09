@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { CoreCommandDefinition } from '../src/command/types.js';
 
 import {
   DreamuxError,
@@ -32,7 +32,7 @@ import {
   IdempotencyConflictError,
   TeamClosedError,
   TeamNotFoundError,
-} from '../src/service/team-collection/errors.js';
+} from '../src/service/team/errors.js';
 import {
   adminContext,
   channelContext,
@@ -44,25 +44,25 @@ import {
 } from './helpers/command-harness.js';
 
 describe('the generic failure vocabulary', () => {
-  it('ValidationError carries BAD_REQUEST', () => {
+  it('ValidationError carries BAD_REQUEST', async () => {
     expect(new ValidationError('bad').code).toBe('BAD_REQUEST');
   });
 
-  it('TransportError carries TRANSPORT_ERROR, never BAD_REQUEST', () => {
+  it('TransportError carries TRANSPORT_ERROR, never BAD_REQUEST', async () => {
     const error = new TransportError('framing failed');
     expect(error.code).toBe('TRANSPORT_ERROR');
     expect(error.code).not.toBe('BAD_REQUEST');
   });
 
-  it('InternalError carries INTERNAL', () => {
+  it('InternalError carries INTERNAL', async () => {
     expect(new InternalError('unclassified').code).toBe('INTERNAL');
   });
 
-  it('ServerShuttingDownError carries its own stable code', () => {
+  it('ServerShuttingDownError carries its own stable code', async () => {
     expect(new ServerShuttingDownError().code).toBe('SERVER_SHUTTING_DOWN');
   });
 
-  it('there is no DomainError base class exported alongside DreamuxError', () => {
+  it('there is no DomainError base class exported alongside DreamuxError', async () => {
     // The three generic subclasses and the business errors all extend
     // DreamuxError directly (platform/errors.ts). A `DomainError`
     // intermediate would be a second, undocumented authority for what a
@@ -72,8 +72,15 @@ describe('the generic failure vocabulary', () => {
     expect('DomainError' in platformErrors).toBe(false);
   });
 
-  it('a DreamuxError carries no layer, category, or retry taxonomy — only a stable code and a message', () => {
-    const forbiddenKeys = ['layer', 'category', 'retryable', 'retry', 'audience', 'scope'];
+  it('a DreamuxError carries no layer, category, or retry taxonomy — only a stable code and a message', async () => {
+    const forbiddenKeys = [
+      'layer',
+      'category',
+      'retryable',
+      'retry',
+      'audience',
+      'scope',
+    ];
     const instances: DreamuxError[] = [
       new ValidationError('x'),
       new TransportError('x'),
@@ -91,7 +98,7 @@ describe('the generic failure vocabulary', () => {
     }
   });
 
-  it('business errors extend StatedFailure, and StatedFailure is the ONLY step to DreamuxError', () => {
+  it('business errors extend StatedFailure, and StatedFailure is the ONLY step to DreamuxError', async () => {
     // A business failure states its own reason and action, so it stands on the
     // one documented intermediate — and on nothing else. Pinning both links is
     // what "no undocumented authority for a failure's shape" means now that
@@ -111,7 +118,7 @@ describe('the generic failure vocabulary', () => {
     );
   });
 
-  it('every stated failure is constructed with an action, and no other failure has one', () => {
+  it('every stated failure is constructed with an action, and no other failure has one', async () => {
     for (const stated of [
       new ValidationError('x'),
       new ServerShuttingDownError(),
@@ -128,7 +135,7 @@ describe('the generic failure vocabulary', () => {
     }
   });
 
-  it('each business error keeps its own distinct, operation-independent code', () => {
+  it('each business error keeps its own distinct, operation-independent code', async () => {
     const codes = new Set([
       new TeamNotFoundError('x').code,
       new TeamClosedError('x').code,
@@ -144,7 +151,7 @@ describe('the generic failure vocabulary', () => {
 
 describe('a known business error survives to the caller with its own code — through both adapters', () => {
   it('TeamNotFoundError (team.dissolve) keeps TEAM_NOT_FOUND, never INTERNAL or BAD_REQUEST', async () => {
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         dissolveTeam: async () => {
           throw new TeamNotFoundError("no Team 'ghost'");
@@ -169,7 +176,10 @@ describe('a known business error survives to the caller with its own code — th
       });
 
       await expect(
-        lease.port.invoke.invoke('team.dissolve', { team_name: 'ghost', note: 'cleanup' }),
+        lease.port.invoke.invoke('team.dissolve', {
+          team_name: 'ghost',
+          note: 'cleanup',
+        }),
       ).rejects.toMatchObject({
         code: 'TEAM_NOT_FOUND',
         message: "no Team 'ghost'",
@@ -181,7 +191,7 @@ describe('a known business error survives to the caller with its own code — th
   });
 
   it('TeamClosedError (team.submit to a closed Team) keeps TEAM_CLOSED, distinct from TEAM_NOT_FOUND', async () => {
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         submitToTeamLeader: async () => {
           throw new TeamClosedError("Team 'alpha' is closed");
@@ -203,7 +213,10 @@ describe('a known business error survives to the caller with its own code — th
       });
 
       await expect(
-        lease.port.invoke.invoke('team.submit', { team_name: 'alpha', text: 'hello' }),
+        lease.port.invoke.invoke('team.submit', {
+          team_name: 'alpha',
+          text: 'hello',
+        }),
       ).rejects.toMatchObject({
         code: 'TEAM_CLOSED',
         message: "Team 'alpha' is closed",
@@ -214,10 +227,12 @@ describe('a known business error survives to the caller with its own code — th
   });
 
   it('IdempotencyConflictError (team.create replay) keeps IDEMPOTENCY_CONFLICT, not INTERNAL', async () => {
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         createTeam: async () => {
-          throw new IdempotencyConflictError('request_id replayed with a different payload');
+          throw new IdempotencyConflictError(
+            'request_id replayed with a different payload',
+          );
         },
       },
     });
@@ -233,11 +248,15 @@ describe('a known business error survives to the caller with its own code — th
   });
 
   it('DispatcherNotFoundError (any dispatcher-scoped Command) keeps DISPATCHER_NOT_FOUND', async () => {
-    const harness = createCommandHarness({ dispatcherRow: null });
+    const harness = await createCommandHarness({ dispatcherRow: null });
     const admin = await startHarnessAdminSocket(harness);
     try {
-      const viaAdmin = await admin.send('dispatcher.status', { dispatcher_id: 'harness-d1' });
-      expect((viaAdmin as { error: { code: string } }).error.code).toBe('DISPATCHER_NOT_FOUND');
+      const viaAdmin = await admin.send('dispatcher.status', {
+        dispatcher_id: 'harness-d1',
+      });
+      expect((viaAdmin as { error: { code: string } }).error.code).toBe(
+        'DISPATCHER_NOT_FOUND',
+      );
     } finally {
       await admin.close();
     }
@@ -245,7 +264,7 @@ describe('a known business error survives to the caller with its own code — th
 
   it('an unclassified thrown Error becomes INTERNAL, keeping the words it already had', async () => {
     const raw = 'EACCES: permission denied, open /Users/ops/.dreamux/state/x';
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         createTeam: async () => {
           throw new Error(raw);
@@ -288,7 +307,7 @@ describe('a known business error survives to the caller with its own code — th
     class StoreCorrupt extends Error {
       override readonly name = 'StoreCorrupt';
     }
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         teammates: {
           close: async () => {
@@ -299,7 +318,7 @@ describe('a known business error survives to the caller with its own code — th
     });
     await expect(
       harness.registry.invoke(
-        { source: 'admin', dispatcher_id: 'harness-d1' } as never,
+        { source: 'admin_socket', dispatcher_id: 'harness-d1' } as never,
         'teammate.close',
         { name: 'mate-9z', note: 'done' } as never,
       ),
@@ -309,19 +328,21 @@ describe('a known business error survives to the caller with its own code — th
 
 describe('admin.sock transport failures vs server-side invalid params', () => {
   it('an unframeable line (bad JSON) is TRANSPORT_ERROR, never BAD_REQUEST', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     try {
       const response = await admin.sendRaw('{not valid json');
       expect(response.ok).toBe(false);
-      expect((response as { error: { code: string } }).error.code).toBe('TRANSPORT_ERROR');
+      expect((response as { error: { code: string } }).error.code).toBe(
+        'TRANSPORT_ERROR',
+      );
     } finally {
       await admin.close();
     }
   });
 
   it('a well-framed request with a malformed params shape is BAD_REQUEST, not TRANSPORT_ERROR', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     try {
       // The envelope itself parses fine as JSON; `params` being a string
@@ -329,10 +350,16 @@ describe('admin.sock transport failures vs server-side invalid params', () => {
       // catches before any Command is reached — still ValidationError, since
       // the request *did* reach a transport boundary that could read it.
       const response = await admin.sendRaw(
-        JSON.stringify({ id: 'req-x', method: 'server.status', params: 'oops' }),
+        JSON.stringify({
+          id: 'req-x',
+          method: 'server.status',
+          params: 'oops',
+        }),
       );
       expect(response.ok).toBe(false);
-      expect((response as { error: { code: string } }).error.code).toBe('BAD_REQUEST');
+      expect((response as { error: { code: string } }).error.code).toBe(
+        'BAD_REQUEST',
+      );
     } finally {
       await admin.close();
     }
@@ -345,7 +372,7 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
     // server-side: a Command failure is not a transport failure. It reaches
     // the client as a *different* class from TransportError, still carrying
     // the server's own stable code.
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         dissolveTeam: async () => {
           throw new TeamNotFoundError("no Team 'ghost'");
@@ -378,12 +405,14 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       socketPath: '/tmp/dreamux-command-harness-no-such-socket.sock',
       timeoutMs: 2_000,
     });
-    await expect(invoker.invoke('server.status', {})).rejects.toSatisfy((error: unknown) => {
-      expect(error).toBeInstanceOf(TransportError);
-      expect((error as TransportError).code).toBe('TRANSPORT_ERROR');
-      expect(error).not.toBeInstanceOf(AdminClientError);
-      return true;
-    });
+    await expect(invoker.invoke('server.status', {})).rejects.toSatisfy(
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(TransportError);
+        expect((error as TransportError).code).toBe('TRANSPORT_ERROR');
+        expect(error).not.toBeInstanceOf(AdminClientError);
+        return true;
+      },
+    );
   });
 
   it('a malformed reply line is TransportError — the request never delivered an answer', async () => {
@@ -393,7 +422,10 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       });
     });
     try {
-      const invoker = adminJsonInvoker({ socketPath: stub.socketPath, timeoutMs: 2_000 });
+      const invoker = adminJsonInvoker({
+        socketPath: stub.socketPath,
+        timeoutMs: 2_000,
+      });
       await expect(invoker.invoke('server.status', {})).rejects.toMatchObject({
         code: 'TRANSPORT_ERROR',
       });
@@ -407,7 +439,10 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       // Accept, then say nothing — the request never gets a response line.
     });
     try {
-      const invoker = adminJsonInvoker({ socketPath: stub.socketPath, timeoutMs: 200 });
+      const invoker = adminJsonInvoker({
+        socketPath: stub.socketPath,
+        timeoutMs: 200,
+      });
       await expect(invoker.invoke('server.status', {})).rejects.toMatchObject({
         code: 'TRANSPORT_ERROR',
       });
@@ -423,7 +458,10 @@ describe('the real admin client (src/admin/client.ts) — connection/timeout/mal
       });
     });
     try {
-      const invoker = adminJsonInvoker({ socketPath: stub.socketPath, timeoutMs: 2_000 });
+      const invoker = adminJsonInvoker({
+        socketPath: stub.socketPath,
+        timeoutMs: 2_000,
+      });
       await expect(invoker.invoke('server.status', {})).rejects.toMatchObject({
         code: 'TRANSPORT_ERROR',
       });
@@ -461,20 +499,26 @@ describe('CoreCommandPort — the shared admission fence', () => {
     const { port, executed } = harnessPort();
     port.closeAdmission();
 
-    await expect(port.invoke({ source: 'admin_socket' }, 'harness.slow', {})).rejects.toThrow(
-      ServerShuttingDownError,
-    );
+    await expect(
+      port.invoke({ source: 'admin_socket' }, 'harness.slow', {}),
+    ).rejects.toThrow(ServerShuttingDownError);
     expect(executed).not.toHaveBeenCalled();
   });
 
   it('an invocation admitted before the fence keeps running, and drain() waits for it to settle', async () => {
     const { port, release, executed } = harnessPort();
-    const inFlight = port.invoke({ source: 'admin_socket' }, 'harness.slow', {});
+    const inFlight = port.invoke(
+      { source: 'admin_socket' },
+      'harness.slow',
+      {},
+    );
     port.closeAdmission();
 
     // Racing the fence: a second call issued right after closeAdmission is
     // refused outright — never an ambiguous partial mutation.
-    await expect(port.invoke({ source: 'channel' }, 'harness.slow', {})).rejects.toMatchObject({
+    await expect(
+      port.invoke({ source: 'channel' }, 'harness.slow', {}),
+    ).rejects.toMatchObject({
       code: 'SERVER_SHUTTING_DOWN',
     });
     expect(executed).not.toHaveBeenCalled();
@@ -495,7 +539,7 @@ describe('CoreCommandPort — the shared admission fence', () => {
   });
 
   it('a request racing the fence never surfaces as a Team error or INTERNAL — only ServerShuttingDownError', async () => {
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         dissolveTeam: async () => {
           throw new Error('would have been a business failure, never reached');
@@ -519,16 +563,20 @@ describe('CoreCommandPort — the shared admission fence', () => {
   });
 
   it('the fence is the same object both adapters call through: closing it once refuses both', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const admin: HarnessAdminSocket = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
     try {
       harness.port.closeAdmission();
 
       const viaAdmin = await admin.send('server.status');
-      expect((viaAdmin as { error: { code: string } }).error.code).toBe('SERVER_SHUTTING_DOWN');
+      expect((viaAdmin as { error: { code: string } }).error.code).toBe(
+        'SERVER_SHUTTING_DOWN',
+      );
 
-      await expect(lease.port.invoke.invoke('server.status', {})).rejects.toMatchObject({
+      await expect(
+        lease.port.invoke.invoke('server.status', {}),
+      ).rejects.toMatchObject({
         code: 'SERVER_SHUTTING_DOWN',
       });
     } finally {

@@ -7,6 +7,10 @@
  * record projected into a stable wire shape.
  */
 import { describe, expect, it } from 'vitest';
+import {
+  makeToolSession,
+  type ToolOverrides,
+} from './helpers/feishu-tool-session.js';
 
 import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
 
@@ -17,7 +21,10 @@ import {
   unbindSpaceDef,
 } from '../src/tools/space-tools.js';
 import type { FeishuSpaceRecord } from '../src/routing/document.js';
-import type { FeishuToolContext, FeishuToolSession } from '../src/tools/types.js';
+import type {
+  FeishuToolContext,
+  FeishuToolSession,
+} from '../src/tools/types.js';
 
 const dispatcher: ChannelMcpCaller = { kind: 'dispatcher' };
 const teamLeader: ChannelMcpCaller = {
@@ -32,7 +39,6 @@ function space(overrides: Partial<FeishuSpaceRecord> = {}): FeishuSpaceRecord {
     space_name: 'space-a',
     container_chat_id: 'oc_container',
     display: null,
-    generation: 1,
     leader_agent_runtime: 'codex',
     identity: null,
     repo: null,
@@ -43,68 +49,26 @@ function space(overrides: Partial<FeishuSpaceRecord> = {}): FeishuSpaceRecord {
 }
 
 function fakeSession(
-  overrides: Partial<FeishuToolSession> = {},
+  overrides: Partial<ToolOverrides> = {},
 ): FeishuToolSession {
-  return {
-    askUserQuestion: async () => ({ request_id: 'ask-1' }),
-    logger: {
-      error: () => undefined,
-      warn: () => undefined,
-      info: () => undefined,
-      debug: () => undefined,
-      trace: () => undefined,
-    },
-    channelId: 'chan-1',
-    async sendText() {
-      throw new Error('not used');
-    },
-    async react() {
-      throw new Error('not used');
-    },
-    async listKnownChatBots() {
-      throw new Error('not used');
-    },
-    async subscribeDocument() {
-      throw new Error('not used');
-    },
-    async unsubscribeDocument() {
-      throw new Error('not used');
-    },
-    listSubscriptions() {
-      return [];
-    },
-    async bindChannel() {
-      throw new Error('not used');
-    },
-    async unbindChannel() {
-      throw new Error('not used');
-    },
-    listBindings() {
-      return [];
-    },
-    async bindSpace() {
-      throw new Error('not used');
-    },
-    async unbindSpace() {
-      return null;
-    },
-    getSpace() {
-      return undefined;
-    },
-    listSpaces() {
-      return [];
-    },
-    ...overrides,
-  };
+  return makeToolSession(overrides);
 }
 
-function ctx(caller: ChannelMcpCaller, session: FeishuToolSession): FeishuToolContext {
+function ctx(
+  caller: ChannelMcpCaller,
+  session: FeishuToolSession,
+): FeishuToolContext {
   return { caller, session };
 }
 
 describe('Collaboration Space tools — Dispatcher-only catalog', () => {
   it('none of the four tools are ever offered to a TeamLeader', () => {
-    for (const def of [bindSpaceDef, unbindSpaceDef, getSpaceDef, listSpacesDef]) {
+    for (const def of [
+      bindSpaceDef,
+      unbindSpaceDef,
+      getSpaceDef,
+      listSpacesDef,
+    ]) {
       expect(def.callers).toEqual(['dispatcher']);
       expect(def.callers).not.toContain('team_leader');
     }
@@ -117,7 +81,10 @@ describe('bind_collaboration_space', () => {
     const session = fakeSession({
       async bindSpace(input) {
         received = input;
-        return space({ leader_agent_runtime: input.leaderAgentRuntime, display: input.display });
+        return space({
+          leader_agent_runtime: input.leaderAgentRuntime,
+          display: input.display,
+        });
       },
     });
     const input = bindSpaceDef.parse({
@@ -161,7 +128,11 @@ describe('unbind_collaboration_space', () => {
   });
 
   it('reports unbound: false when there was nothing to remove', async () => {
-    const session = fakeSession({ async unbindSpace() { return null; } });
+    const session = fakeSession({
+      async unbindSpace() {
+        return null;
+      },
+    });
     const result = await unbindSpaceDef.handle(
       ctx(dispatcher, session),
       unbindSpaceDef.parse({ space_name: 'never-bound' }),
@@ -182,7 +153,6 @@ describe('get_collaboration_space', () => {
           thread_id: 'thread_1',
           display: null,
           team_name: 'team-x',
-          origin: 'space',
           space_name: 'space-a',
           created_at: 1,
           updated_at: 1,
@@ -193,7 +163,6 @@ describe('get_collaboration_space', () => {
           thread_id: null,
           display: null,
           team_name: 'team-y',
-          origin: 'manual',
           space_name: null,
           created_at: 1,
           updated_at: 1,
@@ -205,12 +174,20 @@ describe('get_collaboration_space', () => {
       getSpaceDef.parse({ space_name: 'space-a' }),
     );
     expect(result['targets']).toEqual([
-      { chat_id: 'oc_container', thread_id: 'thread_1', display: null, team_name: 'team-x' },
+      {
+        chat_id: 'oc_container',
+        thread_id: 'thread_1',
+        display: null,
+        team_name: 'team-x',
+      },
     ]);
   });
 
   it('answers a null space and empty targets for an unregistered name', async () => {
-    const session = fakeSession({ getSpace: () => undefined, listBindings: () => [] });
+    const session = fakeSession({
+      getSpace: () => undefined,
+      listBindings: () => [],
+    });
     const result = await getSpaceDef.handle(
       ctx(dispatcher, session),
       getSpaceDef.parse({ space_name: 'nope' }),
@@ -221,12 +198,15 @@ describe('get_collaboration_space', () => {
 
 describe('list_collaboration_spaces', () => {
   it('lists every registered space, projected to the wire shape', async () => {
-    const session = fakeSession({ listSpaces: () => [space(), space({ space_name: 'space-b' })] });
+    const session = fakeSession({
+      listSpaces: () => [space(), space({ space_name: 'space-b' })],
+    });
     const result = await listSpacesDef.handle(ctx(dispatcher, session), {});
-    expect((result['spaces'] as unknown[]).map((s) => (s as { space_name: string }).space_name)).toEqual([
-      'space-a',
-      'space-b',
-    ]);
+    expect(
+      (result['spaces'] as unknown[]).map(
+        (s) => (s as { space_name: string }).space_name,
+      ),
+    ).toEqual(['space-a', 'space-b']);
   });
 });
 
@@ -236,7 +216,10 @@ describe('list_collaboration_spaces', () => {
 describe('Collaboration Space tools ignore caller identity beyond authorization', () => {
   it('get_collaboration_space answers the same regardless of caller identity, when called directly', async () => {
     const record = space();
-    const session = fakeSession({ getSpace: () => record, listBindings: () => [] });
+    const session = fakeSession({
+      getSpace: () => record,
+      listBindings: () => [],
+    });
     const asDispatcher = await getSpaceDef.handle(
       ctx(dispatcher, session),
       getSpaceDef.parse({ space_name: 'space-a' }),

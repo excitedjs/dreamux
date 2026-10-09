@@ -7,10 +7,11 @@
  * registry wrapper, and everything else that used to be a method is a named
  * capability that a Channel either has or does not.
  *
- * MCP is composed outside the base session. `describe` is answered here from a
- * static caller-scoped catalog, and every registration targets the live
- * instance — Core takes an instance's capability at build time, so a session
- * tool is available from creation rather than from connection.
+ * MCP is composed outside the base session. `describe` is answered here from
+ * the static caller-scoped catalog plus the tools of the registered Feishu
+ * extensions, and every registration targets the live instance — Core takes
+ * an instance's capability at build time, so a session tool is available from
+ * creation rather than from connection.
  */
 import { join } from 'node:path';
 
@@ -19,15 +20,14 @@ import type {
   ChannelMcpCaller,
   ChannelMcpToolRegistration,
   ChannelProvider,
-  ChannelProviderFactory,
   ChannelSessionCreateContext,
-  DreamuxLogger,
 } from '@excitedjs/dreamux-types';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
 
-import { FeishuChannelSession } from './feishu-channel.js';
-import type { FeishuBot } from './bot.js';
-import { createFeishuSessionMcp } from './feishu-session-mcp.js';
+import { FeishuExtensionRegistry } from './feishu-extensions.js';
+import { FeishuChannelSession } from './session/session.js';
 import { feishuToolRegistrations } from './tools/registry.js';
+import { createFeishuSessionMcp } from './tools/session-mcp.js';
 
 /** Validated Feishu channel config the neutral session is constructed from. */
 export interface FeishuChannelConfig {
@@ -35,51 +35,18 @@ export interface FeishuChannelConfig {
   appSecret: string;
 }
 
+/** A Feishu channel provider with no extensions (tests and embedders). */
+export function createFeishuChannelProvider(): ChannelProvider<FeishuChannelConfig> {
+  return buildFeishuChannelProvider(new FeishuExtensionRegistry());
+}
+
 /**
- * Minimal `console.error`-backed logger the channel falls back to when the host
- * injects none (the standalone / generic-loader path; core always injects its
- * pino logger). Pino-shaped (fields-first) like the neutral `DreamuxLogger`, so
- * the session and transport consume it with no adapter. Owned here as
- * implementation code — never in declaration-only `dreamux-types`.
+ * The provider over one extension registry: its catalog adds the extensions'
+ * tools, and every session it creates runs them. The Feishu plugin owns the
+ * registry it passes here.
  */
-function consoleFallbackLogger(dispatcherId: string): DreamuxLogger {
-  const sink =
-    (level: string) =>
-    (fields: Record<string, unknown> | string, message?: string): void => {
-      const prefix = `[feishu ${dispatcherId}] ${level}`;
-      if (typeof fields === 'string') {
-        console.error(prefix, fields);
-        return;
-      }
-      // Never dump the whole fields bag — it can carry credentials and this
-      // fallback has no `redact` policy (core's injected pino does). Surface
-      // only `err`, matching the runtime packages' console fallbacks.
-      const err = fields['err'];
-      if (err !== undefined) console.error(prefix, message ?? '', err);
-      else console.error(prefix, message ?? '');
-    };
-  return {
-    error: sink('error'),
-    warn: sink('warn'),
-    info: sink('info'),
-    debug: () => {},
-    trace: () => {},
-  };
-}
-
-/** Options for {@link createFeishuChannelProvider}. */
-export interface CreateFeishuChannelProviderOptions {
-  /**
-   * Test seam: build the underlying `FeishuBot` instead of opening a real Lark
-   * connection. Mirrors the agent-runtime provider factories' process/session
-   * seams. Receives the validated channel config so a test can key a bot by its
-   * app identity (e.g. per-channel multi-bot routing). Omitted in production.
-   */
-  botFactory?: (config: FeishuChannelConfig) => FeishuBot;
-}
-
-export function createFeishuChannelProvider(
-  options: CreateFeishuChannelProviderOptions = {},
+export function buildFeishuChannelProvider(
+  extensions: FeishuExtensionRegistry,
 ): ChannelProvider<FeishuChannelConfig> {
   return {
     config: {
@@ -88,24 +55,18 @@ export function createFeishuChannelProvider(
         // The Feishu channel owns its config validation: the host no longer
         // pre-validates Feishu app credentials. The bot secret is
         // config-sourced, so a non-empty app_secret is required at config-load
-        // time to preserve fail-loud — not deferred to session start.
-        const unknown = Object.keys(obj).filter(
-          (key) => key !== 'app_id' && key !== 'app_secret',
-        );
-        if (unknown.length > 0) {
-          throw new Error(
-            `feishu channel config has unknown key(s): ${unknown
-              .map((key) => `'${key}'`)
-              .join(', ')}. Allowed: app_id, app_secret.`,
-          );
-        }
+        // time to preserve fail-loud — not deferred to session start. Unknown
+        // fields are tolerated, not rejected (R21): only a missing or
+        // wrong-type app_id/app_secret fails loading.
         const appId = obj['app_id'];
         const appSecret = obj['app_secret'];
         if (typeof appId !== 'string' || appId.trim() === '') {
-          throw new Error('feishu channel config requires a non-empty app_id');
+          throw new RuleViolation(
+            'feishu channel config requires a non-empty app_id',
+          );
         }
         if (typeof appSecret !== 'string' || appSecret.trim() === '') {
-          throw new Error(
+          throw new RuleViolation(
             'feishu channel config requires a non-empty app_secret',
           );
         }
@@ -124,7 +85,10 @@ export function createFeishuChannelProvider(
         _config: FeishuChannelConfig,
         context: { caller: ChannelMcpCaller },
       ): readonly ChannelMcpToolRegistration[] {
-        return feishuToolRegistrations(context.caller);
+        return [
+          ...feishuToolRegistrations(context.caller),
+          ...extensions.registrationsFor(context.caller),
+        ];
       },
     },
     onboard: {
@@ -147,7 +111,9 @@ export function createFeishuChannelProvider(
       async runDiagnostic() {
         return {
           ok: true,
-          detail: 'Feishu channel has no host-managed diagnostics',
+          detail:
+            'Feishu channel has no host-managed diagnostics; extensions: ' +
+            describeExtensions(extensions),
           errors: [],
         };
       },
@@ -162,16 +128,15 @@ export function createFeishuChannelProvider(
       // when it went missing. The host owns this path; if it did not supply
       // one, that is a wiring fault to state now, not to paper over.
       const stateDir = context.state_root;
-      if (typeof stateDir !== 'string' || stateDir === '') {
+      if (!stateDir) {
         throw new Error(
           'Feishu channel requires an explicit state_root in its session ' +
             'create context. It stores durable routing state and must never ' +
             'fall back to the process working directory.',
         );
       }
-      const cacheRoot = context.cache_root ?? stateDir;
-      const log =
-        context.logger ?? consoleFallbackLogger(context.dispatcher_id);
+      const cacheRoot = context.cache_root;
+      const log = context.logger;
       const session = new FeishuChannelSession({
         dispatcherId: context.dispatcher_id,
         channelId: context.channel_id,
@@ -182,21 +147,38 @@ export function createFeishuChannelProvider(
         // per-dispatcher cache root. Effective path is unchanged.
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log,
-        ...(options.botFactory !== undefined
-          ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
-          : {}),
+        extensions,
       });
-      return { session, mcp: createFeishuSessionMcp(session, log) };
+      return {
+        session,
+        mcp: createFeishuSessionMcp(
+          session.tools,
+          session.extensions,
+          session.lifecycle,
+          log,
+        ),
+      };
     },
   };
 }
 
 /**
- * Default export — the factory Dreamux core's generic channel package-loader
- * selects for the `builtin:feishu` ref.
+ * `none`, or each extension with its tools (and the caller kinds each is
+ * offered to) and its card action keys.
  */
-const feishuChannelProviderFactory:
-  ChannelProviderFactory<FeishuChannelConfig> = () =>
-    createFeishuChannelProvider();
-
-export default feishuChannelProviderFactory;
+function describeExtensions(extensions: FeishuExtensionRegistry): string {
+  const listed = extensions.list();
+  if (listed.length === 0) return 'none';
+  return listed
+    .map((ext) => {
+      const tools = ext.tools
+        .map((tool) => `${tool.name}[${tool.callers.join(',')}]`)
+        .join(', ');
+      const actions = ext.cardActions.map((action) => action.key).join(', ');
+      return (
+        `${ext.name} (tools: ${tools === '' ? 'none' : tools}; ` +
+        `card actions: ${actions === '' ? 'none' : actions})`
+      );
+    })
+    .join('; ');
+}

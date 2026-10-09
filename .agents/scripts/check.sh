@@ -13,6 +13,9 @@
 #   5. every task record under .agents/tasks/ carries a well-formed state that
 #      can still be true after its own pull request merges, and no file there
 #      cites a commit of this repository by hash
+#   6. every backticked `*.ts` filename cited by a packages/**/CLAUDE.md
+#      resolves (path-suffix match) against a real file anywhere under
+#      packages/ (src/ or tests/, any package)
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.
@@ -246,6 +249,29 @@ if [ ! -f "$task_checker" ]; then
 elif ! python3 "$task_checker" check-all --repo-root "$REPO_ROOT"; then
   errors=$((errors + 1))
 fi
+
+# ---------- 6) packages/**/CLAUDE.md backticked *.ts citations resolve ----------
+# A CLAUDE.md's prose names real filenames as the source moves; a name that
+# stops matching any file anywhere under packages/ is a citation nothing
+# points at. Resolve each backticked `*.ts` token as a path-suffix match
+# against the whole packages/ tree (src/ and tests/ alike, any package) —
+# a CLAUDE.md legitimately cites its own tests/ files and a sibling
+# package's contract file (e.g. dreamux-utils/src/os.ts from another
+# package's CLAUDE.md). A bare basename (`index.ts`) matches almost
+# anything in a large tree; that under-catch is accepted rather than
+# building a per-directory-scoped resolver. Fix a flagged citation by
+# rewording the doc, never by exempting the path here.
+while IFS= read -r claude_md; do
+  full_claude_md="$REPO_ROOT/$claude_md"
+
+  while IFS= read -r ts_token; do
+    [ -n "$ts_token" ] || continue
+    match="$(find "$REPO_ROOT/packages" -type f -not -path '*/node_modules/*' -not -path '*/dist/*' -path "*/$ts_token" 2>/dev/null)"
+    [ -n "$match" ] && continue
+    echo "stale .ts reference in $claude_md -> $ts_token (no match under packages/)" >&2
+    errors=$((errors + 1))
+  done < <(perl -ne 'while (m{`([A-Za-z0-9_./-]+\.ts)`}g) { print "$1\n" }' "$full_claude_md")
+done < <(git -C "$REPO_ROOT" ls-files 'packages/*/CLAUDE.md' 'packages/*/*/CLAUDE.md' 'packages/*/*/*/CLAUDE.md')
 
 if [ "$errors" -gt 0 ]; then
   echo "" >&2

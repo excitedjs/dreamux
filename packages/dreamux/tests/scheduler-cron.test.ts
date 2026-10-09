@@ -1,503 +1,363 @@
-/**
- * Coverage cell E — scheduler half.
- *
- * Behavioral proof, against the real `CronJobStore` where the contract lives
- * at the file boundary, and against `SchedulerService` (with a hand-built
- * `CronJobStore` double only where precise call-timing control is the point)
- * where the contract is about ordering and generation, not persistence shape.
- */
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { CronJobStore } from '../src/service/scheduler/store.js';
-import { SchedulerService } from '../src/service/scheduler/service.js';
-import { schedulerCommands } from '../src/service/scheduler/commands.js';
-import type { SchedulerServiceOptions } from '../src/service/scheduler/types.js';
-import { LegacyStateError } from '../src/service/legacy-state.js';
-import type { CoreCommandHost } from '../src/command/host.js';
-import { validateJsonSchema, SchemaViolation } from '../src/command/validate.js';
+import { createLogger } from '../src/platform/logger.js';
+import { LegacyStateError } from '../src/platform/errors.js';
+import { WorkFence } from '../src/platform/work-fence.js';
 import {
-  fakeCronStore,
-  gate,
-  silentLog,
-  testCronJob,
-  waitUntil,
-} from './helpers/workflow-harness.js';
-
+  SchemaViolation,
+  validateJsonSchema,
+} from '../src/command/validate.js';
+import { CronJobStore } from '../src/service/scheduler/store.js';
+import { SchedulerService } from '../src/service/scheduler/index.js';
+import { schedulerCommands } from '../src/service/scheduler/commands.js';
+import type { CronJob } from '../src/service/scheduler/types.js';
+import type { TeammateSubmitInput } from '../src/service/agent/submission.js';
+import type { TurnAdmission } from '../src/service/agent/turn.js';
+import { deferred } from './helpers/controlled-runtime-provider.js';
 let root: string;
-
+const scopes: Array<{ service: SchedulerService; fence: WorkFence }> = [];
+const releases: Array<() => void> = [];
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'dreamux-cron-'));
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
 });
-
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  for (const release of releases.splice(0)) release();
+  for (const { service } of scopes) service.stop();
+  try {
+    for (const { fence } of scopes.splice(0)) await fence.drain();
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    await rm(root, { recursive: true, force: true });
+  }
 });
-
-function cronJobsPath(): string {
-  return join(root, 'cron-jobs.json');
+const path = () => join(root, 'cron-jobs.json');
+const store = () => new CronJobStore(path());
+const submitted = (): TurnAdmission => ({
+  status: 'submitted',
+  turn: {
+    id: 'scheduled',
+    settled: Promise.resolve({ status: 'completed', resultText: null }),
+  },
+});
+function job(overrides: Partial<CronJob> = {}): CronJob {
+  return {
+    id: 'job-a',
+    cron: '* * * * *',
+    tz: 'UTC',
+    recurring: true,
+    action: { kind: 'prompt-agent', prompt: 'do the thing' },
+    enabled: true,
+    created_at: 1,
+    updated_at: 1,
+    next_run_at: Date.now() + 30,
+    last_fired_at: null,
+    ...overrides,
+  };
 }
-
-async function writeRawStoreFile(body: unknown): Promise<void> {
-  const fs = await import('node:fs/promises');
-  await fs.writeFile(cronJobsPath(), `${JSON.stringify(body, null, 2)}\n`, {
+async function seed(...jobs: unknown[]) {
+  await writeFile(path(), JSON.stringify({ version: 1, jobs }), {
     mode: 0o600,
   });
 }
-
-function passthroughAdmit(): SchedulerServiceOptions['admit'] {
-  return (task) => task();
+function scheduler(
+  submitInput: (input: TeammateSubmitInput) => Promise<TurnAdmission>,
+) {
+  const fence = new WorkFence('dispatcher-1');
+  const service = new SchedulerService({
+    ownerId: 'dispatcher-1',
+    cronJobsPath: path(),
+    fence,
+    recipient: { submitInput },
+    log: createLogger({ destination: { write() {} } }),
+  });
+  scopes.push({ service, fence });
+  return { service, fence };
 }
-
-describe('cron job store — prompt-agent-only schema, fail loud on the removed shapes', () => {
+async function waitUntil(predicate: () => boolean | Promise<boolean>) {
+  const end = performance.now() + 2000;
+  while (!(await predicate())) {
+    if (performance.now() > end) throw new Error('condition did not settle');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+async function fire(service: SchedulerService) {
+  await service.start();
+  await vi.advanceTimersByTimeAsync(30);
+}
+function createSchema() {
+  const definition = schedulerCommands({} as never).find(
+    (item) => item.name === 'scheduler.cron.create',
+  );
+  if (!definition) throw new Error('missing cron create');
+  return definition.input;
+}
+describe('cron persistence and command boundaries', () => {
   it('rejects a persisted job carrying the removed spawn-teammate action kind', async () => {
-    await writeRawStoreFile({
-      version: 1,
-      jobs: [
-        {
-          id: 'job-legacy',
-          dispatcher_id: 'dispatcher-1',
-          cron: '*/5 * * * *',
-          tz: 'UTC',
-          recurring: true,
-          action: { kind: 'spawn-teammate', name: 'x', prompt: 'go' },
-          enabled: true,
-          created_at: 1,
-          updated_at: 1,
-          next_run_at: null,
-          last_fired_at: null,
-        },
-      ],
+    await seed({
+      ...job(),
+      action: { kind: 'spawn-teammate', name: 'x', prompt: 'go' },
     });
-    const store = new CronJobStore({
-      cronJobsPath: cronJobsPath(),
-      dispatcherId: 'dispatcher-1',
-    });
-
-    await expect(store.list()).rejects.toThrow(LegacyStateError);
-    await expect(store.list()).rejects.toThrow(/removed spawn-teammate action/);
-  });
-
-  it('rejects a persisted job carrying the removed top-level deliver field', async () => {
-    await writeRawStoreFile({
-      version: 1,
-      jobs: [
-        {
-          id: 'job-legacy',
-          dispatcher_id: 'dispatcher-1',
-          cron: '*/5 * * * *',
-          tz: 'UTC',
-          recurring: true,
-          action: { kind: 'prompt-agent', prompt: 'go' },
-          deliver: { target: 'some-chat' },
-          enabled: true,
-          created_at: 1,
-          updated_at: 1,
-          next_run_at: null,
-          last_fired_at: null,
-        },
-      ],
-    });
-    const store = new CronJobStore({
-      cronJobsPath: cronJobsPath(),
-      dispatcherId: 'dispatcher-1',
-    });
-
-    await expect(store.list()).rejects.toThrow(LegacyStateError);
-    await expect(store.list()).rejects.toThrow(/removed deliver field/);
-  });
-
-  it('accepts a persisted prompt-agent job unchanged, as a control for the two rejections above', async () => {
-    await writeRawStoreFile({
-      version: 1,
-      jobs: [
-        {
-          id: 'job-ok',
-          dispatcher_id: 'dispatcher-1',
-          cron: '*/5 * * * *',
-          tz: 'UTC',
-          recurring: true,
-          action: { kind: 'prompt-agent', prompt: 'go', intent: 'daily check' },
-          enabled: true,
-          created_at: 1,
-          updated_at: 1,
-          next_run_at: null,
-          last_fired_at: null,
-        },
-      ],
-    });
-    const store = new CronJobStore({
-      cronJobsPath: cronJobsPath(),
-      dispatcherId: 'dispatcher-1',
-    });
-
-    const jobs = await store.list();
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]?.action).toEqual({ kind: 'prompt-agent', prompt: 'go', intent: 'daily check' });
-  });
-
-  it('rejects a top-level removed deliver field on the scheduler.cron.create command payload itself', () => {
-    // `SchedulerService.create()`'s own TS input type has no `deliver` field
-    // (it never reads one), and the nested `action` DTO is deliberately an
-    // open OBJECT (per `command/schema.ts`'s own doc comment) so field-level
-    // rejection inside `action` is not this layer's job. The one place a
-    // caller-supplied top-level `deliver` sibling is provably rejected before
-    // it can reach the service is the closed (`additionalProperties: false`)
-    // JSON Schema the create Command declares — the actual external "create
-    // payload" boundary a Channel/MCP caller submits through.
-    const definitions = schedulerCommands({} as unknown as CoreCommandHost);
-    const create = definitions.find((def) => def.name === 'scheduler.cron.create');
-    expect(create).toBeDefined();
-
-    const payloadWithDeliver = {
-      cron: '*/5 * * * *',
-      prompt: 'go',
-      deliver: { target: 'some-chat' },
-    };
-    expect(() => validateJsonSchema(payloadWithDeliver, create!.input)).toThrow(SchemaViolation);
-
-    // Control: the same payload without the removed field validates cleanly.
-    const { deliver: _unused, ...payloadWithoutDeliver } = payloadWithDeliver;
-    expect(() => validateJsonSchema(payloadWithoutDeliver, create!.input)).not.toThrow();
-  });
-});
-
-describe('SchedulerService.create — prompt-agent-only payload, fail loud before any durable write', () => {
-  it('rejects an action.kind other than prompt-agent', async () => {
-    const store = new CronJobStore({
-      cronJobsPath: cronJobsPath(),
-      dispatcherId: 'dispatcher-1',
-    });
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store,
-      admit: passthroughAdmit(),
-      submitScheduled: vi.fn(async () => ({ status: 'submitted' as const })),
-      log: silentLog(),
-    });
-    await service.start();
-
-    await expect(
-      service.create({
-        cron: '*/5 * * * *',
-        prompt: 'go',
-        action: { kind: 'spawn-teammate', name: 'x' },
-      }),
-    ).rejects.toThrow(/action\.kind must be 'prompt-agent'/);
-
-    // Fail-loud before any write: nothing durable was created.
-    expect((await store.list())).toHaveLength(0);
-  });
-});
-
-// A recurring cron is real 5-field granularity (>= 1 real minute apart), so
-// `reconcile()` on `start()` treats any persisted `next_run_at` that is not
-// strictly in the future as a miss and reschedules it a full cron period
-// ahead rather than firing it (see "no missed-fire replay" below) — a fire
-// can only be observed quickly by seeding `next_run_at` a few milliseconds
-// ahead of the real clock, so `reconcile()` preserves it unchanged and the
-// timer's own real-time recheck converges normally.
-function dueSoon(): number {
-  return Date.now() + 30;
-}
-
-describe('timer generation: a stopped timer cannot fire', () => {
-  it('drops a fire whose generation was captured before stop() bumped it', async () => {
-    const job = testCronJob({ id: 'job-a', next_run_at: dueSoon() });
-    const fake = fakeCronStore([job]);
-    const submitScheduled = vi.fn(async () => ({ status: 'submitted' as const }));
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store: fake.store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
-    });
-
-    // Hold the store.get() inside dispatch() open so the test can stop() the
-    // scheduler in the window between "timer fired" and "generation checked".
-    const hold = gate();
-    fake.queueGetGate(hold.promise);
-
-    await service.start();
-    await waitUntil(() => fake.getCalls >= 1);
-    service.stop(); // bumps lifecycleGeneration while dispatch() is paused on get()
-    hold.release();
-
-    // Give the resumed dispatch() a moment to observe the stale generation
-    // and return without submitting.
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(submitScheduled).not.toHaveBeenCalled();
-  });
-});
-
-describe('timer generation: durable revalidation immediately before submission', () => {
-  it('never submits a job that was disabled during the window between the two store reads', async () => {
-    const job = testCronJob({ id: 'job-a', next_run_at: dueSoon() });
-    const fake = fakeCronStore([job]);
-    const submitScheduled = vi.fn(async () => ({ status: 'submitted' as const }));
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store: fake.store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
-    });
-
-    // First get() (inside dispatch()) resolves immediately; second get()
-    // (inside submitDue(), the read "immediately before submission") is held
-    // open so the test can durably disable the job in that exact window.
-    fake.queueGetGate(Promise.resolve());
-    const hold = gate();
-    fake.queueGetGate(hold.promise);
-
-    await service.start();
-    await waitUntil(() => fake.getCalls >= 2);
-    const current = fake.jobs.get('job-a')!;
-    fake.jobs.set('job-a', { ...current, enabled: false });
-    hold.release();
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(submitScheduled).not.toHaveBeenCalled();
-  });
-});
-
-describe('no missed-fire replay: a past-due next_run_at on start() re-arms, it does not fire', () => {
-  it('reconcile() treats a next_run_at already in the past as a miss and reschedules strictly ahead, never submitting for it', async () => {
-    const missedAt = Date.now() - 60_000; // a whole recurring period in the past
-    const job = testCronJob({ id: 'job-a', next_run_at: missedAt });
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [job] });
-    const submitScheduled = vi.fn(async () => ({ status: 'submitted' as const }));
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
-    });
-
-    await service.start();
-    // Give the timer loop several ticks worth of wall-clock time to prove
-    // this is a durable "never fires for the missed occurrence", not merely
-    // "hasn't fired yet".
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    service.stop();
-
-    expect(submitScheduled).not.toHaveBeenCalled();
-    const after = await store.get('job-a');
-    expect(after?.last_fired_at).toBeNull();
-    // Re-armed strictly into the future, not left pointing at the missed
-    // instant and not replayed as an immediate fire.
-    expect(after?.next_run_at).not.toBeNull();
-    expect(after?.next_run_at).toBeGreaterThan(Date.now() - 1);
-    expect(after?.next_run_at).toBeGreaterThan(missedAt);
-  });
-});
-
-describe('immediate fire and fold: no busy check, no held fire, no scheduler-specific signal', () => {
-  it('submits with exactly {jobId, prompt, sourceId} and nothing else', async () => {
-    const job = testCronJob({
-      id: 'job-a',
-      next_run_at: dueSoon(),
-      action: { kind: 'prompt-agent', prompt: 'the prompt', intent: 'the intent' },
-    });
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [job] });
-    const submitScheduled = vi.fn(
-      async (_input: { jobId: string; prompt: string; sourceId: string }) => ({
-        status: 'submitted' as const,
-      }),
+    await expect(store().list()).rejects.toThrow(LegacyStateError);
+    await expect(store().list()).rejects.toThrow(
+      /removed spawn-teammate action/,
     );
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
-    });
-
-    await service.start();
-    await waitUntil(() => submitScheduled.mock.calls.length >= 1);
-    await waitUntil(async () => (await store.get('job-a'))?.last_fired_at !== null);
-    service.stop();
-
-    expect(submitScheduled).toHaveBeenCalledTimes(1);
-    const call = submitScheduled.mock.calls[0]![0] as Record<string, unknown>;
-    expect(Object.keys(call).sort()).toEqual(['jobId', 'prompt', 'sourceId']);
-    expect(call['jobId']).toBe('job-a');
-    expect(call['prompt']).toBe('the prompt');
-    expect(typeof call['sourceId']).toBe('string');
   });
-
-  it('fires a second due job while the first is still awaiting submission — no serialization', async () => {
-    const dueAt = dueSoon();
-    const jobA = testCronJob({ id: 'job-a', next_run_at: dueAt });
-    const jobB = testCronJob({ id: 'job-b', next_run_at: dueAt });
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [jobA, jobB] });
-
-    const aHold = gate();
-    const submitScheduled = vi.fn(async (input: { jobId: string }) => {
-      if (input.jobId === 'job-a') await aHold.promise;
-      return { status: 'submitted' as const };
+  it('ignores the removed persisted deliver and dispatcher_id fields under R21', async () => {
+    await seed({
+      ...job(),
+      deliver: { target: 'some-chat' },
+      dispatcher_id: 'legacy-owner',
     });
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
+    const [found] = await store().list();
+    expect(found).toEqual(job());
+    expect(found).not.toHaveProperty('deliver');
+    expect(found).not.toHaveProperty('dispatcher_id');
+  });
+  it('accepts a persisted prompt-agent job and ignores its removed intent field', async () => {
+    await seed({
+      ...job(),
+      action: { kind: 'prompt-agent', prompt: 'go', intent: 'daily check' },
     });
-
-    await service.start();
-    // job-b must reach submitScheduled (and this scheduler must record its
-    // fire) even though job-a's own submitScheduled call is still pending —
-    // proof there is no shared queue or busy gate at the scheduler.
-    await waitUntil(() =>
-      submitScheduled.mock.calls.some((call) => call[0].jobId === 'job-b'));
-    await waitUntil(async () => (await store.get('job-b'))?.last_fired_at !== null);
-    const jobBAfter = await store.get('job-b');
-    expect(jobBAfter?.last_fired_at).not.toBeNull();
-
-    aHold.release();
-    await waitUntil(() =>
-      submitScheduled.mock.calls.some((call) => call[0].jobId === 'job-a'));
-    // Let job-a's own setFired write settle before the test (and its
-    // afterEach temp-dir removal) proceeds, so a concurrent atomic-write temp
-    // file can never race the directory cleanup.
-    await waitUntil(async () => (await store.get('job-a'))?.last_fired_at !== null);
-    service.stop();
+    expect((await store().list())[0]?.action).toEqual({
+      kind: 'prompt-agent',
+      prompt: 'go',
+    });
+  });
+  it('rejects top-level deliver on the cron create command with a valid control', () => {
+    expect(() =>
+      validateJsonSchema(
+        { cron: '*/5 * * * *', prompt: 'go', deliver: { target: 'chat' } },
+        createSchema(),
+      ),
+    ).toThrow(SchemaViolation);
+    expect(() =>
+      validateJsonSchema({ cron: '*/5 * * * *', prompt: 'go' }, createSchema()),
+    ).not.toThrow();
+  });
+  it('rejects a caller-supplied spawn action at the current command boundary before any durable write', async () => {
+    expect(() =>
+      validateJsonSchema(
+        {
+          cron: '*/5 * * * *',
+          prompt: 'go',
+          action: { kind: 'spawn-teammate', name: 'x' },
+        },
+        createSchema(),
+      ),
+    ).toThrow(SchemaViolation);
+    expect(await store().list()).toEqual([]);
   });
 });
-
-describe('pre-admission failure and ambiguous admission keep generic semantics', () => {
-  it('a failed submission is not retried and records no fire', async () => {
-    const dueAt = dueSoon();
-    const job = testCronJob({ id: 'job-a', next_run_at: dueAt });
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [job] });
-    const submitScheduled = vi.fn(async () => ({
-      status: 'failed' as const,
+describe('timer generation and durable revalidation', () => {
+  it('drops a fire whose generation was captured before stop bumped it', async () => {
+    await seed(job());
+    const submit = vi.fn(async () => submitted());
+    const { service, fence } = scheduler(submit);
+    const entered = deferred<void>(),
+      release = deferred<void>();
+    releases.push(() => release.resolve());
+    const original = CronJobStore.prototype.get;
+    vi.spyOn(CronJobStore.prototype, 'get').mockImplementationOnce(
+      async function (this: CronJobStore, id: string) {
+        entered.resolve();
+        await release.promise;
+        return original.call(this, id);
+      },
+    );
+    await fire(service);
+    await entered.promise;
+    service.stop();
+    release.resolve();
+    await fence.drain();
+    expect(submit).not.toHaveBeenCalled();
+  });
+  it('never submits a job disabled before its single current store read resolves', async () => {
+    await seed(job());
+    const submit = vi.fn(async () => submitted());
+    const { service, fence } = scheduler(submit);
+    const entered = deferred<void>(),
+      release = deferred<void>();
+    releases.push(() => release.resolve());
+    const original = CronJobStore.prototype.get;
+    vi.spyOn(CronJobStore.prototype, 'get').mockImplementationOnce(
+      async function (this: CronJobStore, id: string) {
+        entered.resolve();
+        await release.promise;
+        return original.call(this, id);
+      },
+    );
+    await fire(service);
+    await entered.promise;
+    await service.update({ id: 'job-a', enabled: false });
+    release.resolve();
+    await fence.drain();
+    expect(submit).not.toHaveBeenCalled();
+    expect((await store().get('job-a'))?.enabled).toBe(false);
+  });
+  it('rearms a missed recurring occurrence strictly into the future without replay', async () => {
+    const missedAt = Date.now() - 60000;
+    await seed(job({ next_run_at: missedAt }));
+    const submit = vi.fn(async () => submitted());
+    const { service, fence } = scheduler(submit);
+    await service.start();
+    await vi.advanceTimersByTimeAsync(150);
+    await fence.drain();
+    expect(submit).not.toHaveBeenCalled();
+    const current = await store().get('job-a');
+    expect(current?.last_fired_at).toBeNull();
+    expect(current?.next_run_at).toBeGreaterThan(Date.now());
+    expect(current?.next_run_at).toBeGreaterThan(missedAt);
+  });
+});
+describe('ordinary input admission without a scheduler queue', () => {
+  it('submits exactly the ordinary source text and sourceId fields', async () => {
+    await seed(job({ action: { kind: 'prompt-agent', prompt: 'the prompt' } }));
+    const submit = vi.fn(async (_input: TeammateSubmitInput) => submitted());
+    const { service, fence } = scheduler(submit);
+    await fire(service);
+    await fence.drain();
+    expect(submit).toHaveBeenCalledTimes(1);
+    const input = submit.mock.calls[0]![0];
+    expect(Object.keys(input).sort()).toEqual(['source', 'sourceId', 'text']);
+    expect(input.source).toBe('cron');
+    expect(input.text).toBe('the prompt');
+    expect(typeof input.sourceId).toBe('string');
+    expect((await store().get('job-a'))?.last_fired_at).not.toBeNull();
+  });
+  it('fires a second due job while the first awaits submission', async () => {
+    await seed(
+      job({ action: { kind: 'prompt-agent', prompt: 'first' } }),
+      job({ id: 'job-b', action: { kind: 'prompt-agent', prompt: 'second' } }),
+    );
+    const release = deferred<void>();
+    releases.push(() => release.resolve());
+    const submit = vi.fn(async (input: TeammateSubmitInput) => {
+      if (input.text === 'first') await release.promise;
+      return submitted();
+    });
+    const { service, fence } = scheduler(submit);
+    await fire(service);
+    await waitUntil(
+      async () =>
+        ((await store().get('job-b'))?.last_fired_at ?? null) !== null,
+    );
+    expect(submit.mock.calls.map((call) => call[0].text)).toEqual([
+      'first',
+      'second',
+    ]);
+    expect((await store().get('job-a'))?.last_fired_at).toBeNull();
+    release.resolve();
+    await fence.drain();
+    expect((await store().get('job-a'))?.last_fired_at).not.toBeNull();
+  });
+  it('does not retry a proven pre-admission failure and records no fire', async () => {
+    const dueAt = Date.now() + 30;
+    await seed(job({ next_run_at: dueAt }));
+    const submit = vi.fn(async (): Promise<TurnAdmission> => ({
+      status: 'failed',
       error: new Error('runtime unavailable'),
     }));
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
-    });
-
-    await service.start();
-    await waitUntil(() => submitScheduled.mock.calls.length >= 1);
-    // Give the miss-rearm a moment to land, then confirm no retry ever fires.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    service.stop();
-
-    expect(submitScheduled).toHaveBeenCalledTimes(1);
-    const after = await store.get('job-a');
-    expect(after?.last_fired_at).toBeNull();
-    // Recurring job: missed fire re-arms a later occurrence rather than
-    // disabling the schedule.
-    expect(after?.next_run_at).not.toBeNull();
-    expect(after?.next_run_at).toBeGreaterThan(dueAt);
+    const { service, fence } = scheduler(submit);
+    await fire(service);
+    await fence.drain();
+    await vi.advanceTimersByTimeAsync(150);
+    await fence.drain();
+    expect(submit).toHaveBeenCalledTimes(1);
+    const current = await store().get('job-a');
+    expect(current?.last_fired_at).toBeNull();
+    expect(current?.next_run_at).toBeGreaterThan(dueAt);
   });
-
-  it('an ambiguous submission is recorded as a fire and is not retried', async () => {
-    const dueAt = dueSoon();
-    const job = testCronJob({ id: 'job-a', next_run_at: dueAt });
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [job] });
-    const submitScheduled = vi.fn(async () => ({
-      status: 'ambiguous' as const,
-      error: new Error('duplicate admission window'),
+  it('records an ambiguous admission as a fire without retry', async () => {
+    const dueAt = Date.now() + 30;
+    await seed(job({ next_run_at: dueAt }));
+    const submit = vi.fn(async (): Promise<TurnAdmission> => ({
+      status: 'ambiguous',
+      error: new Error('unknown admission'),
     }));
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
-    });
-
-    await service.start();
-    await waitUntil(() => submitScheduled.mock.calls.length >= 1);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    service.stop();
-
-    expect(submitScheduled).toHaveBeenCalledTimes(1);
-    const after = await store.get('job-a');
-    expect(after?.last_fired_at).not.toBeNull();
-    expect(after?.last_fired_at).toBeGreaterThanOrEqual(dueAt);
-    expect(after?.next_run_at).toBeGreaterThan(dueAt);
+    const { service, fence } = scheduler(submit);
+    await fire(service);
+    await fence.drain();
+    await vi.advanceTimersByTimeAsync(150);
+    await fence.drain();
+    expect(submit).toHaveBeenCalledTimes(1);
+    const current = await store().get('job-a');
+    expect(current?.last_fired_at).toBeGreaterThanOrEqual(dueAt);
+    expect(current?.next_run_at).toBeGreaterThan(dueAt);
   });
 });
-
-describe('store deletion ordering (scheduler side of Team dissolve)', () => {
-  it('a scheduler started after deleteStoreFile re-arms nothing because the store is gone', async () => {
-    const job = testCronJob({ id: 'job-a', next_run_at: dueSoon() });
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [job] });
-
-    const submitScheduled = vi.fn(async () => ({ status: 'submitted' as const }));
-    const service = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store,
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
+describe('cron store deletion ordering', () => {
+  it('a scheduler started after destroy rearms nothing', async () => {
+    await seed(job());
+    const submit = vi.fn(async () => submitted());
+    const first = scheduler(submit);
+    await first.service.destroy();
+    await expect(readFile(path())).rejects.toMatchObject({ code: 'ENOENT' });
+    const second = scheduler(submit);
+    await fire(second.service);
+    await second.fence.drain();
+    expect(submit).not.toHaveBeenCalled();
+    expect((await second.service.list()).jobs).toEqual([]);
+  });
+  it('setFired queued before deleteStoreFile leaves the store deleted', async () => {
+    await seed(job());
+    const current = store();
+    const write = current.setFired({
+      id: 'job-a',
+      firedAt: 1,
+      nextRunAt: null,
+      enabled: false,
     });
-    service.stop(); // dissolve stops the scheduler before deleting its store
-    await service.deleteStoreFile();
-    await expect(readFile(cronJobsPath())).rejects.toMatchObject({ code: 'ENOENT' });
-
-    // A later start() (e.g. reopenAdmission() after a failed dissolve commit)
-    // reads the now-empty store and arms nothing.
-    const restarted = new SchedulerService({
-      ownerId: 'dispatcher-1',
-      store: new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' }),
-      admit: passthroughAdmit(),
-      submitScheduled,
-      log: silentLog(),
+    const remove = current.deleteStoreFile();
+    const [written] = await Promise.all([write, remove]);
+    expect(written?.id).toBe('job-a');
+    await expect(readFile(path())).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await current.list()).toEqual([]);
+  });
+  it('deleteStoreFile queued before setFired leaves setFired a durable no-op', async () => {
+    await seed(job());
+    const current = store();
+    const remove = current.deleteStoreFile();
+    const write = current.setFired({
+      id: 'job-a',
+      firedAt: 1,
+      nextRunAt: null,
+      enabled: false,
     });
-    await restarted.start();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    restarted.stop();
-
-    expect(submitScheduled).not.toHaveBeenCalled();
-    expect((await restarted.list()).jobs).toHaveLength(0);
+    const [, written] = await Promise.all([remove, write]);
+    expect(written).toBeNull();
+    await expect(readFile(path())).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await current.list()).toEqual([]);
   });
-
-  it('setFired enqueued before deleteStoreFile still leaves the store deleted', async () => {
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [testCronJob({ id: 'job-a' })] });
-
-    // No await between the two calls: `runExclusive` enqueues synchronously
-    // at call time, so this ordering is deterministic — setFired's write
-    // lands, then the delete removes what it just wrote.
-    const setFired = store.setFired({ id: 'job-a', firedAt: 1, nextRunAt: null, enabled: false });
-    const deleted = store.deleteStoreFile();
-    const [setFiredResult] = await Promise.all([setFired, deleted]);
-
-    expect(setFiredResult?.id).toBe('job-a');
-    await expect(readFile(cronJobsPath())).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await store.list()).toEqual([]);
+});
+it.each([
+  { name: 'disable', patch: { enabled: false } },
+  { name: 'reschedule', patch: { cron: '*/5 * * * *' } },
+  { name: 'one-shot conversion', patch: { recurring: false } },
+])('missed rearm preserves a concurrent $name', async ({ patch }) => {
+  await seed(job());
+  const entered = deferred<void>(),
+    result = deferred<TurnAdmission>();
+  releases.push(() =>
+    result.resolve({ status: 'failed', error: new Error('cleanup') }),
+  );
+  const submit = vi.fn(async () => {
+    entered.resolve();
+    return result.promise;
   });
-
-  it('deleteStoreFile enqueued before setFired leaves setFired a durable no-op', async () => {
-    const store = new CronJobStore({ cronJobsPath: cronJobsPath(), dispatcherId: 'dispatcher-1' });
-    await writeRawStoreFile({ version: 1, jobs: [testCronJob({ id: 'job-a' })] });
-
-    const deleted = store.deleteStoreFile();
-    const setFired = store.setFired({ id: 'job-a', firedAt: 1, nextRunAt: null, enabled: false });
-    const [, setFiredResult] = await Promise.all([deleted, setFired]);
-
-    expect(setFiredResult).toBeNull();
-    await expect(readFile(cronJobsPath())).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await store.list()).toEqual([]);
+  const { service, fence } = scheduler(submit);
+  await fire(service);
+  await entered.promise;
+  const committed = await service.update({ id: 'job-a', ...patch });
+  result.resolve({
+    status: 'failed',
+    error: new Error('pre-admission failure'),
   });
+  await fence.drain();
+  expect(await store().get('job-a')).toEqual(committed);
+  expect(submit).toHaveBeenCalledTimes(1);
 });

@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,28 +10,24 @@ import type {
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 
-import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
-import { ChannelProviderCatalog } from '../src/channel/catalog.js';
-import type { DreamuxConfig } from '../src/config/config.js';
-import {
-  getRuntimeConfig,
-  setRuntimeConfig,
-  workflowRunRecordPath,
-} from '../src/platform/paths.js';
+import { globalConfigFile } from '../src/config/config.js';
+import { ConfigService } from '../src/config/service.js';
+import { createFakeChannelProvider } from './helpers/fake-channel-provider.js';
+import { workflowRunRecordPath } from '../src/platform/paths.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
 import { Server } from '../src/server.js';
 import type { DispatcherService } from '../src/service/dispatcher-service/index.js';
-import { teamCreatePayloadHash } from '../src/service/team-collection/create-request.js';
-import { createTeamMateMcpDelegate } from '../src/service/teammate-collection/mcp-delegate.js';
-import type { TeamService } from '../src/service/team-service/index.js';
-import type { TeammateCollection } from '../src/service/teammate-collection/index.js';
-import type { TeammateService } from '../src/service/teammate-service/index.js';
+import { teamCreatePayloadHash } from '../src/service/team/create-request.js';
+import { createTeamMateMcpDelegate } from '../src/service/agent/mcp.js';
+import type { TeamService } from '../src/service/team/service.js';
+import { TeammateCollection } from '../src/service/agent/index.js';
+import { TeamCollection } from '../src/service/team/index.js';
+import type { AgentService } from '../src/service/agent/service.js';
+import type { TeamCreateCommand } from '@excitedjs/dreamux-types';
 import { CHANNEL_SOURCE } from '../src/service/submission-sources.js';
 import { adminContext } from './helpers/command-harness.js';
-import {
-  controllableRuntimeSubmission,
-} from './helpers/runtime-submission.js';
+import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
 import {
   ControlledRuntime,
   ControlledRuntimeProvider,
@@ -40,7 +36,7 @@ import {
 
 const DISPATCHER_ID = 'completion-lifecycle';
 const AGENT_RUNTIME_ID = 'controlled';
-const PROVIDER_REF = 'npm:@example/completion-lifecycle-runtime';
+const PROVIDER_REF = 'builtin:controlled';
 const ACTIVE_WORKFLOW_SCRIPT = `
 export const meta = {
   name: 'lifecycle-stop',
@@ -49,13 +45,14 @@ export const meta = {
 return await agent('wait for owner teardown');
 `;
 
-const silentLogger = {
+const silentLogger: DreamuxLogger = {
   error: () => {},
   warn: () => {},
   info: () => {},
   debug: () => {},
   trace: () => {},
-} as DreamuxLogger;
+  child: () => silentLogger,
+};
 
 const hosts: LifecycleHost[] = [];
 
@@ -68,9 +65,16 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
     const { server, dispatcher } = await host.start(provider);
-    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const dispatcherRuntime = await startDispatcherRecipient(
+      dispatcher,
+      provider,
+    );
 
-    const direct = await spawnDispatcherTeammate(dispatcher, provider, 'direct-model');
+    const direct = await spawnDispatcherTeammate(
+      dispatcher,
+      provider,
+      'direct-model',
+    );
     const dispatcherDelegate = createTeamMateMcpDelegate({
       kind: 'dispatcher',
       dispatcher,
@@ -87,7 +91,11 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
       },
     });
 
-    const admin = await spawnDispatcherTeammate(dispatcher, provider, 'direct-admin');
+    const admin = await spawnDispatcherTeammate(
+      dispatcher,
+      provider,
+      'direct-admin',
+    );
     await expect(
       server.commands.invoke(adminContext(DISPATCHER_ID), 'teammate.close', {
         name: admin.result.teammate.name,
@@ -111,12 +119,15 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     );
     const leaderDelegate = createTeamMateMcpDelegate({
       kind: 'team_leader',
-      team: () => dispatcher.team(team.team_name),
+      team: await openTeam(dispatcher, team.team_name),
     });
     await expect(
       leaderDelegate.call({
         name: 'close',
-        arguments: { name: member.result.teammate.name, note: 'leader is done' },
+        arguments: {
+          name: member.result.teammate.name,
+          note: 'leader is done',
+        },
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -133,18 +144,16 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
     const { dispatcher } = await host.start(provider);
-    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const dispatcherRuntime = await startDispatcherRecipient(
+      dispatcher,
+      provider,
+    );
     const leaderIndex = provider.runtimes.length;
-    const creating = dispatcher.createTeam({
-      requestId: 'dissolve-request',
-      payloadHash: teamCreatePayloadHash({ scenario: 'dissolve' }),
-      options: {
-        namePrefix: 'dissolve-team',
-        leaderAgentRuntime: AGENT_RUNTIME_ID,
-        intent: 'exercise Team dissolve',
-        prompt: 'pending leader task',
-      },
-    });
+    const creating = createTeam(
+      dispatcher,
+      'dissolve-team',
+      'pending leader task',
+    );
     const leaderRuntime = await runtimeAt(provider, leaderIndex);
     const team = await creating;
     await spawnTeamMember(
@@ -155,8 +164,7 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     );
 
     await expect(
-      dispatcher.dissolveTeam({
-        teamId: team.team_name,
+      dispatcher.teams.dissolve(team.team_name, {
         note: 'dissolve test complete',
         force: true,
       }),
@@ -166,7 +174,7 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
       status: 'submitted',
     });
     await vi.waitFor(async () => {
-      const row = (await dispatcher.listTeams()).find(
+      const row = (await dispatcher.teams.list()).find(
         (candidate) => candidate.team_name === team.team_name,
       );
       expect(row?.status).toBe('closed');
@@ -180,14 +188,17 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
     const { dispatcher } = await host.start(provider);
-    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const dispatcherRuntime = await startDispatcherRecipient(
+      dispatcher,
+      provider,
+    );
     const team = await createTeam(dispatcher, 'workflow-dissolve');
     const leaderRuntime = await startTeamLeaderRecipient(
       dispatcher,
       provider,
       team.team_name,
     );
-    const leader = await dispatcher.team(team.team_name);
+    const leader = await openTeam(dispatcher, team.team_name);
     const agentIndex = provider.runtimes.length;
     const accepted = await leader.workflows.run({
       script: ACTIVE_WORKFLOW_SCRIPT,
@@ -196,14 +207,13 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     await workflowAgent.submitStarted.promise;
 
     await expect(
-      dispatcher.dissolveTeam({
-        teamId: team.team_name,
+      dispatcher.teams.dissolve(team.team_name, {
         note: 'stop active Team Workflow',
         force: true,
       }),
     ).resolves.toMatchObject({ accepted: true, status: 'submitted' });
     await vi.waitFor(async () => {
-      const row = (await dispatcher.listTeams()).find(
+      const row = (await dispatcher.teams.list()).find(
         (candidate) => candidate.team_name === team.team_name,
       );
       expect(row?.status).toBe('closed');
@@ -228,7 +238,10 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
     const { dispatcher } = await host.start(provider);
-    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const dispatcherRuntime = await startDispatcherRecipient(
+      dispatcher,
+      provider,
+    );
     const lateAdmission = deferred<RuntimeAdmission>();
     const stopError = new Error('native stop failed');
     provider.planNext({
@@ -273,16 +286,11 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
       'restart-direct',
     );
     const leaderIndex = firstProvider.runtimes.length;
-    const creating = first.dispatcher.createTeam({
-      requestId: 'restart-request',
-      payloadHash: teamCreatePayloadHash({ scenario: 'restart' }),
-      options: {
-        namePrefix: 'restart-team',
-        leaderAgentRuntime: AGENT_RUNTIME_ID,
-        intent: 'exercise host restart',
-        prompt: 'pending leader work at shutdown',
-      },
-    });
+    const creating = createTeam(
+      first.dispatcher,
+      'restart-team',
+      'pending leader work at shutdown',
+    );
     const firstLeaderRuntime = await runtimeAt(firstProvider, leaderIndex);
     const team = await creating;
     await spawnTeamMember(
@@ -321,23 +329,21 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
     const { server, dispatcher } = await host.start(provider);
-    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const dispatcherRuntime = await startDispatcherRecipient(
+      dispatcher,
+      provider,
+    );
     const direct = await spawnDispatcherTeammate(
       dispatcher,
       provider,
       'fenced-direct',
     );
     const leaderIndex = provider.runtimes.length;
-    const creating = dispatcher.createTeam({
-      requestId: 'fenced-team-request',
-      payloadHash: teamCreatePayloadHash({ scenario: 'dispatcher-fence' }),
-      options: {
-        namePrefix: 'fenced-team',
-        leaderAgentRuntime: AGENT_RUNTIME_ID,
-        intent: 'exercise the dispatcher fence',
-        prompt: 'pending leader work',
-      },
-    });
+    const creating = createTeam(
+      dispatcher,
+      'fenced-team',
+      'pending leader work',
+    );
     const leaderRuntime = await runtimeAt(provider, leaderIndex);
     const team = await creating;
     const member = await spawnTeamMember(
@@ -372,7 +378,10 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
     const { server, dispatcher } = await host.start(provider);
-    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const dispatcherRuntime = await startDispatcherRecipient(
+      dispatcher,
+      provider,
+    );
     const team = await createTeam(dispatcher, 'restart-under-fence');
     await startTeamLeaderRecipient(dispatcher, provider, team.team_name);
 
@@ -387,13 +396,13 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const service = await materializedTeamService(dispatcher, team.team_name);
     const releaseAdmittedTask = deferred<void>();
     const admittedTaskStarted = deferred<void>();
-    const admitted = dispatcher.admitOperation(async () => {
+    const admitted = dispatcher.fence.admit(async () => {
       admittedTaskStarted.resolve();
       await releaseAdmittedTask.promise;
-      return service.submitToLeader({
+      return service.submitInput({
         source: CHANNEL_SOURCE,
         text: 'work admitted before the dispatcher fence',
-        initiator: dispatcherAgent,
+        completionRecipient: dispatcherAgent,
       });
     });
     await admittedTaskStarted.promise;
@@ -418,7 +427,10 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     const host = await createHost();
     const provider = new ControlledRuntimeProvider();
     const { server, dispatcher } = await host.start(provider);
-    const dispatcherRuntime = await startDispatcherRecipient(dispatcher, provider);
+    const dispatcherRuntime = await startDispatcherRecipient(
+      dispatcher,
+      provider,
+    );
     const agentIndex = provider.runtimes.length;
     const accepted = await dispatcher.workflows.run({
       script: ACTIVE_WORKFLOW_SCRIPT,
@@ -448,90 +460,91 @@ interface StartedServer {
   readonly dispatcher: DispatcherService;
 }
 
+/** Reopen the same file-backed installation with a new real process owner. */
 class LifecycleHost {
   private readonly running = new Set<Server>();
   private socketSequence = 0;
-
-  constructor(
-    readonly root: string,
-    private readonly workspace: string,
-    private readonly config: DreamuxConfig,
-    private readonly previousConfig: DreamuxConfig,
-    private readonly previousRoot: string | undefined,
-  ) {}
-
+  constructor(readonly root: string) {}
   async start(provider: AgentRuntimeProvider<unknown>): Promise<StartedServer> {
     const registry = new ProviderRegistry();
-    registry.register({
-      id: PROVIDER_REF,
-      kind: 'agentRuntime',
-      ref: parseProviderRef(PROVIDER_REF),
-    });
-    registry.registerImplementation(PROVIDER_REF, provider);
+    registry.register(
+      {
+        id: 'controlled',
+        kind: 'agentRuntime',
+        ref: parseProviderRef(PROVIDER_REF),
+      },
+      provider,
+    );
+    registry.register(
+      {
+        id: 'fixture',
+        kind: 'channel',
+        ref: parseProviderRef('builtin:fixture'),
+      },
+      createFakeChannelProvider().provider,
+    );
+    const config = await ConfigService.open({ providerRegistry: registry });
     const server = new Server({
-      config: this.config,
+      config,
       providerRegistry: registry,
-      agentRuntimeProviderCatalog: new AgentRuntimeProviderCatalog({ registry }),
-      channelProviderCatalog: new ChannelProviderCatalog({ registry }),
       adminSocketPath: join(this.root, `admin-${this.socketSequence++}.sock`),
       logger: silentLogger,
+      channelLoggerFactory: () => silentLogger,
+      workflowLoggerFactory: () => silentLogger,
     });
-    await server.start();
     this.running.add(server);
-    return { server, dispatcher: server.getDispatcher(DISPATCHER_ID) };
+    await server.start();
+    return { server, dispatcher: server.dispatchers.get(DISPATCHER_ID) };
   }
-
   async stop(server: Server): Promise<void> {
-    try {
-      await server.shutdown();
-    } finally {
-      this.running.delete(server);
-    }
+    await server.shutdown();
+    this.running.delete(server);
   }
-
   async close(): Promise<void> {
-    for (const server of [...this.running]) {
-      await server.shutdown();
+    try {
+      for (const server of this.running) await server.shutdown();
+    } finally {
+      this.running.clear();
+      await rm(this.root, { recursive: true, force: true });
+      vi.unstubAllEnvs();
     }
-    this.running.clear();
-    setRuntimeConfig(this.previousConfig);
-    if (this.previousRoot === undefined) delete process.env['DREAMUX_ROOT'];
-    else process.env['DREAMUX_ROOT'] = this.previousRoot;
-    await rm(this.root, { recursive: true, force: true });
-    await rm(this.workspace, { recursive: true, force: true });
   }
 }
 
 async function createHost(): Promise<LifecycleHost> {
   const root = await mkdtemp(join(tmpdir(), 'dreamux-completion-lifecycle-'));
-  const workspace = await mkdtemp(join(tmpdir(), 'dreamux-completion-workspace-'));
-  const previousConfig = getRuntimeConfig();
-  const previousRoot = process.env['DREAMUX_ROOT'];
-  process.env['DREAMUX_ROOT'] = root;
-  const runtime = { provider: PROVIDER_REF, config: {} };
-  const config: DreamuxConfig = {
-    agents: { [AGENT_RUNTIME_ID]: runtime },
+  vi.stubEnv('DREAMUX_ROOT', join(root, 'state'));
+  const config = {
+    agents: [{ id: AGENT_RUNTIME_ID, provider: PROVIDER_REF, config: {} }],
     dispatchers: [
       {
         id: DISPATCHER_ID,
-        cwd: workspace,
+        cwd: root,
         enabled: true,
         workspace: { enabled: false },
-        channels: [],
+        channels: [{ id: 'fixture', provider: 'builtin:fixture', config: {} }],
         agentRuntime: AGENT_RUNTIME_ID,
-        runtime,
       },
     ],
   };
-  const host = new LifecycleHost(
-    root,
-    workspace,
-    config,
-    previousConfig,
-    previousRoot,
-  );
+  const file = globalConfigFile();
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(config), { mode: 0o600 });
+  const host = new LifecycleHost(root);
   hosts.push(host);
   return host;
+}
+
+function teamCollection(dispatcher: DispatcherService): TeamCollection {
+  if (!(dispatcher.teams instanceof TeamCollection))
+    throw new Error('expected the actual Team collection');
+  return dispatcher.teams;
+}
+function openTeam(
+  dispatcher: DispatcherService,
+  id: string,
+): Promise<TeamService> {
+  return teamCollection(dispatcher).open(id);
 }
 
 async function runtimeAt(
@@ -565,8 +578,7 @@ async function startTeamLeaderRecipient(
   teamId: string,
 ): Promise<ControlledRuntime> {
   const index = provider.runtimes.length;
-  const submitting = dispatcher.submitToTeamLeader({
-    teamId,
+  const submitting = dispatcher.teams.submitToLeader(teamId, {
     source: CHANNEL_SOURCE,
     text: 'start TeamLeader recipient',
     deliverCompletionToDispatcher: false,
@@ -577,15 +589,25 @@ async function startTeamLeaderRecipient(
   return runtime;
 }
 
-async function createTeam(dispatcher: DispatcherService, prefix: string) {
-  return dispatcher.createTeam({
-    requestId: `${prefix}-request`,
-    payloadHash: teamCreatePayloadHash({ prefix }),
-    options: {
-      namePrefix: prefix,
-      leaderAgentRuntime: AGENT_RUNTIME_ID,
-      intent: `exercise ${prefix}`,
+async function createTeam(
+  dispatcher: DispatcherService,
+  prefix: string,
+  prompt?: string,
+) {
+  const command: TeamCreateCommand = {
+    request_id: `${prefix}-request`,
+    name_prefix: prefix,
+    intent: `exercise ${prefix}`,
+    leader: {
+      agent_runtime: AGENT_RUNTIME_ID,
+      ...(prompt === undefined ? {} : { prompt }),
     },
+  };
+  return dispatcher.teams.createFromRequest({
+    requestId: command.request_id,
+    payloadHash: teamCreatePayloadHash(command),
+    command,
+    deliverCompletionToDispatcher: true,
   });
 }
 
@@ -610,9 +632,9 @@ async function spawnTeamMember(
   teamId: string,
   name: string,
 ) {
-  const team = await dispatcher.team(teamId);
+  const team = await openTeam(dispatcher, teamId);
   const index = provider.runtimes.length;
-  const spawning = team.spawnTeamMate({
+  const spawning = team.teammates.spawn({
     name,
     prompt: `pending work for ${name}`,
     intent: `exercise ${name}`,
@@ -625,40 +647,28 @@ function completionInputs(runtime: ControlledRuntime): string[] {
   return runtime.inputs.filter(isCompletionInput);
 }
 
-/** Exercise the owner-only lifecycle operation without stopping its recipient. */
+/** Reach public concrete-owner capabilities, without private-field casts. */
 function materializedDispatcherTeammate(
   dispatcher: DispatcherService,
-): TeammateService {
-  const collection = (
-    dispatcher as unknown as { readonly _teammates: TeammateCollection }
-  )._teammates;
-  const entities = collection.materializedEntities();
+): AgentService {
+  if (!(dispatcher.teammates instanceof TeammateCollection))
+    throw new Error('expected actual TeamMate collection');
+  const entities = dispatcher.teammates.materializedEntities();
   expect(entities).toHaveLength(1);
   return entities[0]!;
 }
-
 function materializedDispatcherAgent(
   dispatcher: DispatcherService,
-): TeammateService {
-  const inputSources = (
-    dispatcher as unknown as {
-      readonly inputSources: { readonly agent: TeammateService | null };
-    }
-  ).inputSources;
-  expect(inputSources.agent).not.toBeNull();
-  return inputSources.agent!;
+): AgentService {
+  const agent = dispatcher.dispatcherAgent.current;
+  if (agent === null) throw new Error('expected materialized Dispatcher Agent');
+  return agent;
 }
-
 function materializedTeamService(
   dispatcher: DispatcherService,
   teamId: string,
 ): Promise<TeamService> {
-  const teams = (
-    dispatcher as unknown as {
-      readonly teams: { open(id: string): Promise<TeamService> };
-    }
-  ).teams;
-  return teams.open(teamId);
+  return openTeam(dispatcher, teamId);
 }
 
 async function hasSettled(promise: Promise<unknown>): Promise<boolean> {

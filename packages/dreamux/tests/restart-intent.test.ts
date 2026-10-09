@@ -1,5 +1,22 @@
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+const log: DreamuxLogger = {
+  error() {},
+  warn() {},
+  info() {},
+  debug() {},
+  trace() {},
+  child() {
+    return log;
+  },
+};
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,8 +25,7 @@ import {
   DEFAULT_RESTART_INTENT_TTL_MS,
   notifyResumedRestart,
   RestartIntentConsumer,
-  writeRestartIntent,
-} from '../src/daemon/restart-intent.js';
+} from '../src/service/dispatcher-service/restart-intent.js';
 
 describe('restart intent marker', () => {
   let dir: string;
@@ -25,7 +41,8 @@ describe('restart intent marker', () => {
   });
 
   it('writes and reads a marker, then consumes per target exactly once', async () => {
-    await writeRestartIntent({
+    await notifyResumedRestart({
+      runControl: async () => {},
       targets: ['flow', 'ops'],
       announce: 'Restart completed.',
       now: 1_000,
@@ -33,7 +50,11 @@ describe('restart intent marker', () => {
     });
     expect(existsSync(path)).toBe(true);
 
-    const consumer = await RestartIntentConsumer.load({ now: 2_000, path });
+    const consumer = await RestartIntentConsumer.load({
+      log,
+      now: 2_000,
+      path,
+    });
     // Loading deletes the file (single reader).
     expect(existsSync(path)).toBe(false);
 
@@ -46,7 +67,8 @@ describe('restart intent marker', () => {
   });
 
   it('defaults the announce text and dedupes/trims targets', async () => {
-    await writeRestartIntent({
+    await notifyResumedRestart({
+      runControl: async () => {},
       targets: ['flow', ' flow ', '', 'ops'],
       now: 0,
       path,
@@ -60,33 +82,50 @@ describe('restart intent marker', () => {
   });
 
   it('ignores a marker past its TTL at load time', async () => {
-    await writeRestartIntent({ targets: ['flow'], now: 0, path });
+    await notifyResumedRestart({
+      runControl: async () => {},
+      targets: ['flow'],
+      now: 0,
+      path,
+    });
     const consumer = await RestartIntentConsumer.load({
+      log,
       now: DEFAULT_RESTART_INTENT_TTL_MS + 1,
       path,
     });
     expect(existsSync(path)).toBe(false);
-    expect(consumer.claim('flow', DEFAULT_RESTART_INTENT_TTL_MS + 1)).toBeNull();
+    expect(
+      consumer.claim('flow', DEFAULT_RESTART_INTENT_TTL_MS + 1),
+    ).toBeNull();
   });
 
   it('re-checks the TTL at claim time for late starters', async () => {
-    await writeRestartIntent({ targets: ['flow'], ttlMs: 100, now: 0, path });
-    const consumer = await RestartIntentConsumer.load({ now: 50, path });
-    // Within TTL at load, but claimed after expiry.
-    expect(consumer.hasTarget('flow', 50)).toBe(true);
-    expect(consumer.hasTarget('flow', 200)).toBe(false);
-    expect(consumer.claim('flow', 200)).toBeNull();
-  });
-
-  it('probes targets without consuming and uses claim TTL semantics', async () => {
-    await writeRestartIntent({
+    await notifyResumedRestart({
+      runControl: async () => {},
       targets: ['flow'],
-      announce: 'Restart completed.',
-      ttlMs: 100,
       now: 0,
       path,
     });
-    const consumer = await RestartIntentConsumer.load({ now: 50, path });
+    const consumer = await RestartIntentConsumer.load({ log, now: 50, path });
+    // Within TTL at load, but claimed after expiry.
+    expect(consumer.hasTarget('flow', 50)).toBe(true);
+    expect(consumer.hasTarget('flow', DEFAULT_RESTART_INTENT_TTL_MS + 1)).toBe(
+      false,
+    );
+    expect(
+      consumer.claim('flow', DEFAULT_RESTART_INTENT_TTL_MS + 1),
+    ).toBeNull();
+  });
+
+  it('probes targets without consuming and uses claim TTL semantics', async () => {
+    await notifyResumedRestart({
+      runControl: async () => {},
+      targets: ['flow'],
+      announce: 'Restart completed.',
+      now: 0,
+      path,
+    });
+    const consumer = await RestartIntentConsumer.load({ log, now: 50, path });
 
     expect(consumer.hasTarget('flow', 50)).toBe(true);
     expect(consumer.hasTarget('other', 50)).toBe(false);
@@ -129,7 +168,15 @@ describe('restart intent marker', () => {
     const consumer = await RestartIntentConsumer.load({
       now: 0,
       path,
-      warn: (m) => warnings.push(m),
+      log: {
+        ...log,
+        warn: (
+          _context: Record<string, unknown> | string,
+          message?: string,
+        ) => {
+          warnings.push(message ?? '');
+        },
+      },
     });
     expect(consumer.claim('flow', 0)).toBeNull();
     // Missing marker is the common case (no restart notice requested): quiet.
@@ -142,7 +189,15 @@ describe('restart intent marker', () => {
     const consumer = await RestartIntentConsumer.load({
       now: 0,
       path,
-      warn: (m) => warnings.push(m),
+      log: {
+        ...log,
+        warn: (
+          _context: Record<string, unknown> | string,
+          message?: string,
+        ) => {
+          warnings.push(message ?? '');
+        },
+      },
     });
     expect(existsSync(path)).toBe(false);
     expect(consumer.claim('flow', 0)).toBeNull();
@@ -166,7 +221,15 @@ describe('restart intent marker', () => {
     const consumer = await RestartIntentConsumer.load({
       now: 0,
       path,
-      warn: (m) => warnings.push(m),
+      log: {
+        ...log,
+        warn: (
+          _context: Record<string, unknown> | string,
+          message?: string,
+        ) => {
+          warnings.push(message ?? '');
+        },
+      },
     });
     expect(existsSync(path)).toBe(false);
     expect(consumer.claim('flow', 0)).toBeNull();
@@ -191,7 +254,15 @@ describe('restart intent marker', () => {
     const consumer = await RestartIntentConsumer.load({
       now: 0,
       path,
-      warn: (m) => warnings.push(m),
+      log: {
+        ...log,
+        warn: (
+          _context: Record<string, unknown> | string,
+          message?: string,
+        ) => {
+          warnings.push(message ?? '');
+        },
+      },
     });
     expect(existsSync(path)).toBe(false);
     expect(consumer.claim('flow', 0)).toBeNull();
@@ -215,7 +286,15 @@ describe('restart intent marker', () => {
     const consumer = await RestartIntentConsumer.load({
       now: 0,
       path,
-      warn: (m) => warnings.push(m),
+      log: {
+        ...log,
+        warn: (
+          _context: Record<string, unknown> | string,
+          message?: string,
+        ) => {
+          warnings.push(message ?? '');
+        },
+      },
     });
     expect(existsSync(path)).toBe(false);
     expect(consumer.claim('flow', 0)).toBeNull();

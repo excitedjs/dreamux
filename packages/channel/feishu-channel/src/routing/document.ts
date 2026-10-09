@@ -31,17 +31,23 @@ export interface FeishuTargetRecord {
 }
 
 /**
- * `origin` records who is entitled to remove this row without an operator
- * saying so: a `manual` row is an explicit decision and only an explicit
- * `unbind_channel` or a Team closing takes it away, while a `space` row is the
- * default binding automatic provisioning installed for one child target.
+ * `root_message_id` is the visible message a topic-kind binding's own
+ * conversation replies under. A Channel-authored card for a topic (a binding
+ * notice, a route-removal notice) replies to it instead of guessing a landing
+ * place. Automatic provisioning sets it at bind time; a topic bound through a
+ * path with no message id to hand (an MCP `bind_channel` naming a topic this
+ * session never saw, an extension's `bindTeam`) or written before roots were
+ * persisted starts with `null` and is filled once, by the first message
+ * accepted in the topic or by a notice that had to ask the platform. It is
+ * always `null` for a `group`/`p2p` binding, which has no single "root"
+ * message.
  */
 export interface FeishuBindingRecord {
   target: FeishuTargetRecord;
   display: string | null;
   team_name: string;
-  origin: 'manual' | 'space';
   space_id: string | null;
+  root_message_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -54,19 +60,12 @@ export interface FeishuSpaceRepoPolicy {
 /**
  * A registered Feishu container whose child targets are provisioned
  * automatically.
- *
- * `generation` names the current policy snapshot: it advances whenever the
- * policy is rebound with different creation facts, so an operator can see
- * which revision a Team was created under. It cancels nothing. A creation
- * already under way keeps the snapshot it captured; only a creation that
- * starts after the update sees the new one.
  */
 export interface FeishuSpaceRecord {
   space_id: string;
   space_name: string;
   container_chat_id: string;
   display: string | null;
-  generation: number;
   leader_agent_runtime: string;
   identity: string | null;
   repo: FeishuSpaceRepoPolicy | null;

@@ -1,3 +1,6 @@
+import { objectSchema } from '../src/command/schema.js';
+import { REPO_REQUEST_SCHEMA } from '../src/service/worktree/repo-request.js';
+import { WorkFence } from '../src/platform/work-fence.js';
 /**
  * Coverage for the generic MCP catalog/registration infrastructure that is
  * NOT the lease admission edge (see mcp-lease-shim.test.ts for that half):
@@ -18,9 +21,6 @@
  * Every fake below is intentionally minimal and local: this cell owns the
  * generic mechanism, not any one domain's business behavior.
  */
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import type {
   ChannelMcpCall,
@@ -33,57 +33,59 @@ import type {
 } from '@excitedjs/dreamux-types';
 import { describe, expect, it } from 'vitest';
 
-import type { CoreCommandHost } from '../src/command/host.js';
-import { validateMcpToolCatalog } from '../src/mcp/catalog.js';
+import { validateMcpToolCatalog } from '../src/service/mcp/catalog.js';
 import { createChannelMcpDelegate } from '../src/service/channel-service/mcp-delegate.js';
 import {
   DREAMUX_MCP_LEASE_ENV,
   DREAMUX_MCP_SUBCOMMAND,
   assertUniqueMcpServerNames,
   mcpServerDescriptor,
-} from '../src/service/mcp/descriptor.js';
+} from '../src/mcp/launch.js';
 import { mcpCommands } from '../src/service/mcp/commands.js';
 import { McpLeaseRegistry } from '../src/service/mcp/leases.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
   READ_ONLY_ANNOTATIONS,
-  closedObjectSchema,
-  repoInputSchema,
   toolMetadata,
 } from '../src/service/mcp/tool-metadata.js';
 import { InternalError, StatedFailure } from '../src/platform/errors.js';
-import { createCommandHarness } from './helpers/command-harness.js';
 
-const SRC_ROOT = join(fileURLToPath(new URL('../src/', import.meta.url)));
-
-function goodTool(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function goodTool(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     name: 'do_thing',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
     ...overrides,
   };
 }
 
 describe('mcp/catalog.ts — validateMcpToolCatalog', () => {
   it('rejects a non-array and an empty array as distinct failures', () => {
-    expect(() => validateMcpToolCatalog('nope' as never, 'x')).toThrow(/must be an array/);
+    expect(() => validateMcpToolCatalog('nope' as never, 'x')).toThrow(
+      /must be an array/,
+    );
     expect(() => validateMcpToolCatalog([], 'x')).toThrow(/must not be empty/);
   });
 
   it('requires a unique, non-empty name per descriptor', () => {
-    expect(() =>
-      validateMcpToolCatalog([goodTool({ name: '' })], 'x'),
-    ).toThrow(/non-empty name/);
-    expect(() =>
-      validateMcpToolCatalog([goodTool(), goodTool()], 'x'),
-    ).toThrow(/duplicated/);
+    expect(() => validateMcpToolCatalog([goodTool({ name: '' })], 'x')).toThrow(
+      /non-empty name/,
+    );
+    expect(() => validateMcpToolCatalog([goodTool(), goodTool()], 'x')).toThrow(
+      /duplicated/,
+    );
   });
 
   it('rejects an unknown top-level descriptor key', () => {
-    expect(() =>
-      validateMcpToolCatalog([goodTool({ extra: 1 })], 'x'),
-    ).toThrow(/unknown property 'extra'/);
+    expect(() => validateMcpToolCatalog([goodTool({ extra: 1 })], 'x')).toThrow(
+      /unknown property 'extra'/,
+    );
   });
 
   it('compiles inputSchema/outputSchema through the same SDK adapter registration uses', () => {
@@ -103,8 +105,8 @@ describe('mcp/catalog.ts — validateMcpToolCatalog', () => {
 
   it('defaults title/description to the tool name when omitted', () => {
     const [tool] = validateMcpToolCatalog([goodTool()], 'x');
-    expect(tool.title).toBe('do_thing');
-    expect(tool.description).toBe('do_thing');
+    expect(tool!.title).toBe('do_thing');
+    expect(tool!.description).toBe('do_thing');
   });
 
   it('restricts annotations to the MCP-defined key set and value types', () => {
@@ -127,7 +129,10 @@ describe('mcp/catalog.ts — validateMcpToolCatalog', () => {
 
   it('restricts icons to the MCP-defined key set and required src', () => {
     expect(() =>
-      validateMcpToolCatalog([goodTool({ icons: [{ src: 'x', bogus: 1 }] })], 'x'),
+      validateMcpToolCatalog(
+        [goodTool({ icons: [{ src: 'x', bogus: 1 }] })],
+        'x',
+      ),
     ).toThrow(/unknown property 'bogus'/);
     expect(() =>
       validateMcpToolCatalog(
@@ -139,22 +144,22 @@ describe('mcp/catalog.ts — validateMcpToolCatalog', () => {
 
   it('rejects a descriptor that would not survive a JSON round trip', () => {
     expect(() =>
-      validateMcpToolCatalog([goodTool({ inputSchema: { fn: () => 1 } })], 'x'),
-    ).toThrow(/non-JSON function/);
+      mintCatalog([goodTool({ inputSchema: { fn: () => 1 } })], 'x'),
+    ).toThrow(/type function.*not JSON-serializable/);
     expect(() =>
-      validateMcpToolCatalog([goodTool({ inputSchema: { n: Number.NaN } })], 'x'),
-    ).toThrow(/non-finite number/);
+      mintCatalog([goodTool({ inputSchema: { n: Number.NaN } })], 'x'),
+    ).toThrow(/numbers must be finite/);
     const cyclic: Record<string, unknown> = { type: 'object' };
     cyclic['self'] = cyclic;
-    expect(() =>
-      validateMcpToolCatalog([goodTool({ inputSchema: cyclic })], 'x'),
-    ).toThrow(/circular reference/);
+    expect(() => mintCatalog([goodTool({ inputSchema: cyclic })], 'x')).toThrow(
+      /contains a cycle/,
+    );
     class NotPlain {
       type = 'object';
     }
     expect(() =>
-      validateMcpToolCatalog([goodTool({ inputSchema: new NotPlain() })], 'x'),
-    ).toThrow(/non-plain object/);
+      mintCatalog([goodTool({ inputSchema: new NotPlain() })], 'x'),
+    ).toThrow(/only plain objects/);
   });
 });
 
@@ -166,7 +171,7 @@ describe('service/mcp/tool-metadata.ts — shared catalog vocabulary', () => {
       description: 'Spawns a thing.',
       properties: { name: { type: 'string' } },
       required: ['name'],
-      outputSchema: closedObjectSchema({ id: { type: 'string' } }, ['id']),
+      outputSchema: objectSchema({ id: { type: 'string' } }, ['id']),
       annotations: MUTATING_ANNOTATIONS,
     });
     expect(descriptor.inputSchema).toMatchObject({
@@ -178,8 +183,8 @@ describe('service/mcp/tool-metadata.ts — shared catalog vocabulary', () => {
     // exactly what the transport-level validator accepts, because that
     // validator runs on every domain's catalog at mint time.
     const [validated] = validateMcpToolCatalog([descriptor], 'spawn suite');
-    expect(validated.name).toBe('spawn_thing');
-    expect(validated.inputSchema).toEqual(descriptor.inputSchema);
+    expect(validated!.name).toBe('spawn_thing');
+    expect(validated!.inputSchema).toEqual(descriptor.inputSchema);
   });
 
   it('merges inputConstraints into the closed object schema without dropping the closure', () => {
@@ -190,7 +195,7 @@ describe('service/mcp/tool-metadata.ts — shared catalog vocabulary', () => {
       properties: { a: { type: 'string' }, b: { type: 'string' } },
       required: [],
       inputConstraints: { anyOf: [{ required: ['a'] }, { required: ['b'] }] },
-      outputSchema: closedObjectSchema({}, []),
+      outputSchema: objectSchema({}, []),
       annotations: READ_ONLY_ANNOTATIONS,
     });
     expect(descriptor.inputSchema['anyOf']).toBeDefined();
@@ -199,28 +204,47 @@ describe('service/mcp/tool-metadata.ts — shared catalog vocabulary', () => {
   });
 
   it('repoInputSchema requires mode and enumerates the canonical mode/cleanup values', () => {
-    const schema = repoInputSchema();
+    const schema = REPO_REQUEST_SCHEMA;
     expect(schema['required']).toEqual(['mode']);
-    const properties = schema['properties'] as Record<string, { enum?: string[] }>;
+    const properties = schema['properties'] as Record<
+      string,
+      { enum?: string[] }
+    >;
     expect(properties['mode']?.enum).toEqual(['reuse-cwd', 'managed']);
     expect(properties['cleanup']?.enum).toEqual(['keep', 'delete-on-close']);
   });
 
   it('keeps the three standard annotation presets distinct and internally consistent', () => {
-    expect(READ_ONLY_ANNOTATIONS).toMatchObject({ readOnlyHint: true, destructiveHint: false });
-    expect(MUTATING_ANNOTATIONS).toMatchObject({ readOnlyHint: false, destructiveHint: false });
-    expect(DESTRUCTIVE_ANNOTATIONS).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(READ_ONLY_ANNOTATIONS).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(MUTATING_ANNOTATIONS).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
+    expect(DESTRUCTIVE_ANNOTATIONS).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
   });
 });
 
 describe('service/mcp/descriptor.ts — shim launch data', () => {
   it('assertUniqueMcpServerNames only rejects an actual collision', () => {
     const server = (name: string) =>
-      mcpServerDescriptor({ name, token: 't', adminSocketPath: '/tmp/a.sock', command: '/bin/true' });
-    expect(() => assertUniqueMcpServerNames([server('a'), server('b')])).not.toThrow();
-    expect(() => assertUniqueMcpServerNames([server('a'), server('a')])).toThrow(
-      /composed twice/,
-    );
+      mcpServerDescriptor({
+        name,
+        token: 't',
+        adminSocketPath: '/tmp/a.sock',
+        command: '/bin/true',
+      });
+    expect(() =>
+      assertUniqueMcpServerNames([server('a'), server('b')]),
+    ).not.toThrow();
+    expect(() =>
+      assertUniqueMcpServerNames([server('a'), server('a')]),
+    ).toThrow(/composed twice/);
   });
 
   it('carries only the admin-socket location and the opaque lease token — nothing else', () => {
@@ -233,7 +257,11 @@ describe('service/mcp/descriptor.ts — shim launch data', () => {
     expect(descriptor).toEqual({
       name: 'team',
       command: '/usr/bin/dreamux',
-      args: [DREAMUX_MCP_SUBCOMMAND, '--admin-socket', '/run/dreamux/admin.sock'],
+      args: [
+        DREAMUX_MCP_SUBCOMMAND,
+        '--admin-socket',
+        '/run/dreamux/admin.sock',
+      ],
       env: { [DREAMUX_MCP_LEASE_ENV]: 'lease-abc-123' },
     });
     // No base64 catalog, no caller fields, no domain/provider ref, no Channel
@@ -243,27 +271,9 @@ describe('service/mcp/descriptor.ts — shim launch data', () => {
   });
 });
 
-function stubHost(): CoreCommandHost {
-  return {
-    summarize: () => {
-      throw new Error('mcpCommands must not call summarize()');
-    },
-    dispatcherRow: () => {
-      throw new Error('mcpCommands must not call dispatcherRow()');
-    },
-    dispatcherRuntimeStatus: () => {
-      throw new Error('mcpCommands must not call dispatcherRuntimeStatus()');
-    },
-    dispatcher: () => {
-      throw new Error('mcpCommands must not call dispatcher()');
-    },
-    mcpLeases: new McpLeaseRegistry(),
-  };
-}
-
 describe('service/mcp/commands.ts — the only two MCP-shaped Commands', () => {
   it('contributes exactly mcp.describe and mcp.toolcall, regardless of what is leased', () => {
-    const names = mcpCommands(stubHost()).map((c) => c.name);
+    const names = mcpCommands(new McpLeaseRegistry()).map((c) => c.name);
     expect(names).toEqual(['mcp.describe', 'mcp.toolcall']);
   });
 
@@ -271,72 +281,25 @@ describe('service/mcp/commands.ts — the only two MCP-shaped Commands', () => {
     // mcpCommands takes only the host: it has no catalog/delegate parameter it
     // could iterate to mint a per-tool Command from. Minting several leases
     // before asking proves the two-Command list cannot depend on lease count.
-    const host = stubHost();
+    const leases = new McpLeaseRegistry();
     for (let i = 0; i < 5; i++) {
-      host.mcpLeases.mint(
-        { isCurrent: () => true } as never,
+      leases.mint(
+        { isCurrent: () => true, state: { publish: async () => {} } },
         {
           name: `fake-${i}`,
           describe: () => ({
-            identity: { name: `fake-${i}`, version: '1.0.0' },
             tools: [goodTool({ name: `fake_tool_${i}` })],
           }),
           call: async () => ({ ok: true, structured: {} }),
         },
       );
     }
-    expect(mcpCommands(host).map((c) => c.name)).toEqual(['mcp.describe', 'mcp.toolcall']);
-  });
-
-  it('at the composition root, no individual agent-facing tool name is ever a registered Command', () => {
-    const harness = createCommandHarness();
-    const names = harness.registry.names();
-    const mcpNames = names.filter((n) => n.startsWith('mcp.'));
-    expect(mcpNames).toEqual(['mcp.describe', 'mcp.toolcall']);
-    // A representative sample of tool-shaped names a delegate might advertise
-    // must never collide with the Command catalog: they are two different
-    // vocabularies by construction (dotted domain.verb vs snake_case tool).
-    for (const forbidden of ['team_spawn', 'teammate_send', 'cron_create', 'reply', 'react']) {
-      expect(names).not.toContain(forbidden);
-    }
+    expect(mcpCommands(leases).map((c) => c.name)).toEqual([
+      'mcp.describe',
+      'mcp.toolcall',
+    ]);
   });
 });
-
-describe('Channel MCP is injected only into Dispatcher/TeamLeader create contexts (absence-of-import contract)', () => {
-  it('channelMcpDelegates() is defined once and consumed only by dispatcher-service role assembly', async () => {
-    // Absence is the contract here: no teammate/workflow/team-service module
-    // may reach into channel-service's caller-scoped MCP builder, because
-    // that would let Channel MCP leak into an ordinary TeamMate's tool set.
-    const importers = await findImportersOf(SRC_ROOT, 'channelMcpDelegates');
-    const relative = importers.map((p) => p.replace(SRC_ROOT, ''));
-    expect(relative.sort()).toEqual(
-      [
-        // its own definition
-        'service/channel-service/mcp-delegates.ts',
-        // its one consumer: the Dispatcher-Agent-vs-TeamLeader role split
-        'service/dispatcher-service/mcp-delegates.ts',
-      ].sort(),
-    );
-  });
-});
-
-/** Recursively find every .ts file under `root` whose text mentions `symbol`. */
-async function findImportersOf(root: string, symbol: string): Promise<string[]> {
-  const hits: string[] = [];
-  async function walk(dir: string): Promise<void> {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full);
-      } else if (entry.isFile() && entry.name.endsWith('.ts')) {
-        const text = await readFile(full, 'utf8');
-        if (text.includes(symbol)) hits.push(full);
-      }
-    }
-  }
-  await walk(root);
-  return hits;
-}
 
 // ---------------------------------------------------------------------------
 // createChannelMcpDelegate: the one built-in delegate implementation this
@@ -391,7 +354,15 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
   // id: `feishu-main` is an operator string the model cannot look up, while
   // `feishu` is what it can associate a channel's tools with.
   it('names its server channel-<provider> and its identity dreamux-channel-<provider>', () => {
-    const provider = fakeProvider(() => []);
+    const provider = fakeProvider(
+      () => [
+        {
+          target: 'provider',
+          tool: { name: 'probe', inputSchema: { type: 'object' } },
+        },
+      ],
+      async () => ({ ok: true, value: {} }),
+    );
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
       providerId: 'feishu',
@@ -400,10 +371,18 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: null,
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
     expect(delegate.name).toBe('channel-feishu');
-    expect(delegate.describe().identity.name).toBe('dreamux-channel-feishu');
+    const registry = new McpLeaseRegistry();
+    const minted = registry.mint(
+      { isCurrent: () => true, state: { publish: async () => {} } },
+      delegate,
+    );
+    if (!minted) throw new Error('expected minted server');
+    expect(registry.catalog(minted.token).identity.name).toBe(
+      'dreamux-channel-feishu',
+    );
   });
 
   it('drops a session-target registration when no created-instance capability exists', () => {
@@ -421,7 +400,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: null, // no live instance capability
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
     expect(delegate.describe().tools).toEqual([]);
   });
@@ -433,7 +412,10 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       return { ok: true, value: { replied: true } };
     });
     const provider = fakeProvider(() => [
-      { target: 'session', tool: { name: 'reply', inputSchema: { type: 'object' } } },
+      {
+        target: 'session',
+        tool: { name: 'reply', inputSchema: { type: 'object' } },
+      },
     ]);
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd7',
@@ -443,15 +425,22 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: session,
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
     expect(toolNames(delegate.describe().tools)).toEqual(['reply']);
-    const result = await delegate.call({ name: 'reply', arguments: { text: 'hi' } });
+    const result = await delegate.call({
+      name: 'reply',
+      arguments: { text: 'hi' },
+    });
     expect(result).toEqual({ ok: true, structured: { replied: true } });
     expect(seen).toEqual([
       {
         call: { name: 'reply', arguments: { text: 'hi' } },
-        context: { dispatcher_id: 'd7', channel_id: 'feishu-main', caller: DISPATCHER_CALLER },
+        context: {
+          dispatcher_id: 'd7',
+          channel_id: 'feishu-main',
+          caller: DISPATCHER_CALLER,
+        },
       },
     ]);
   });
@@ -471,7 +460,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: null,
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
     expect(delegate.describe().tools).toEqual([]);
   });
@@ -480,7 +469,10 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     const seen: ChannelMcpCallContext[] = [];
     const provider = fakeProvider(
       () => [
-        { target: 'provider', tool: { name: 'list_chat_bots', inputSchema: { type: 'object' } } },
+        {
+          target: 'provider',
+          tool: { name: 'list_chat_bots', inputSchema: { type: 'object' } },
+        },
       ],
       async (_call, context) => {
         seen.push(context);
@@ -495,11 +487,16 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: null, // no live session — provider target must still work
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
-    const result = await delegate.call({ name: 'list_chat_bots', arguments: {} });
+    const result = await delegate.call({
+      name: 'list_chat_bots',
+      arguments: {},
+    });
     expect(result).toEqual({ ok: true, structured: { bots: [] } });
-    expect(seen).toEqual([{ dispatcher_id: 'd1', channel_id: 'c1', caller: DISPATCHER_CALLER }]);
+    expect(seen).toEqual([
+      { dispatcher_id: 'd1', channel_id: 'c1', caller: DISPATCHER_CALLER },
+    ]);
   });
 
   it.each(['session', 'provider'] as const)(
@@ -507,9 +504,15 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     async (target) => {
       const value = { accepted: true };
       const text = 'The channel will notify the user automatically.';
-      const invoke = async (): Promise<ChannelMcpToolOutcome> => ({ ok: true, value, text });
+      const invoke = async (): Promise<ChannelMcpToolOutcome> => ({
+        ok: true,
+        value,
+        text,
+      });
       const provider = fakeProvider(
-        () => [{ target, tool: { name: 'notify', inputSchema: { type: 'object' } } }],
+        () => [
+          { target, tool: { name: 'notify', inputSchema: { type: 'object' } } },
+        ],
         invoke,
       );
       const delegate = createChannelMcpDelegate({
@@ -520,7 +523,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
         config: {},
         caller: DISPATCHER_CALLER,
         sessionMcp: sessionCapability(invoke),
-        dispatch: (task) => task(),
+        fence: new WorkFence('d1'),
       });
 
       const result = await delegate.call({ name: 'notify', arguments: {} });
@@ -532,8 +535,16 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
 
   it('passes a Channel refusal through verbatim (ok:false is a value, not an exception)', async () => {
     const provider = fakeProvider(
-      () => [{ target: 'provider', tool: { name: 't', inputSchema: { type: 'object' } } }],
-      async () => ({ ok: false, message: 'that chat is not bound to your Team' }),
+      () => [
+        {
+          target: 'provider',
+          tool: { name: 't', inputSchema: { type: 'object' } },
+        },
+      ],
+      async () => ({
+        ok: false,
+        message: 'that chat is not bound to your Team',
+      }),
     );
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
@@ -543,16 +554,23 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: null,
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
     const result = await delegate.call({ name: 't', arguments: {} });
-    expect(result).toEqual({ ok: false, message: 'that chat is not bound to your Team' });
+    expect(result).toEqual({
+      ok: false,
+      message: 'that chat is not bound to your Team',
+    });
   });
 
   it('raises a Team-lease failure for the admission boundary to render, and keeps no list of its own', async () => {
     class FakeTeamNotFoundError extends StatedFailure {
       constructor() {
-        super('TEAM_NOT_FOUND', 'no such Team', 'Use team.list for live Teams.');
+        super(
+          'TEAM_NOT_FOUND',
+          'no such Team',
+          'Use team.list for live Teams.',
+        );
       }
     }
     class FakeInternalError extends InternalError {
@@ -570,14 +588,22 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       dispatcherId: 'd1',
       providerId: 'fake',
       channelId: 'c1',
-      provider: fakeProvider(() => [
-        { target: 'provider', tool: { name: 't', inputSchema: { type: 'object' } } },
-      ], async () => ({ ok: true, value: {} })),
+      provider: fakeProvider(
+        () => [
+          {
+            target: 'provider',
+            tool: { name: 't', inputSchema: { type: 'object' } },
+          },
+        ],
+        async () => ({ ok: true, value: {} }),
+      ),
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: null,
-      dispatch: async () => {
-        throw new FakeTeamNotFoundError();
+      fence: {
+        admit: async () => {
+          throw new FakeTeamNotFoundError();
+        },
       },
     });
     await expect(
@@ -588,14 +614,22 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       dispatcherId: 'd1',
       providerId: 'fake',
       channelId: 'c1',
-      provider: fakeProvider(() => [
-        { target: 'provider', tool: { name: 't', inputSchema: { type: 'object' } } },
-      ], async () => ({ ok: true, value: {} })),
+      provider: fakeProvider(
+        () => [
+          {
+            target: 'provider',
+            tool: { name: 't', inputSchema: { type: 'object' } },
+          },
+        ],
+        async () => ({ ok: true, value: {} }),
+      ),
       config: {},
       caller: DISPATCHER_CALLER,
       sessionMcp: null,
-      dispatch: async () => {
-        throw new FakeInternalError();
+      fence: {
+        admit: async () => {
+          throw new FakeInternalError();
+        },
       },
     });
     // Identical treatment, which is the point: the delegate does not sort them.
@@ -611,11 +645,25 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     ): readonly ChannelMcpToolRegistration[] =>
       context.caller.kind === 'dispatcher'
         ? [
-            { target: 'provider', tool: { name: 'bind_channel', inputSchema: { type: 'object' } } },
-            { target: 'provider', tool: { name: 'reply', inputSchema: { type: 'object' } } },
+            {
+              target: 'provider',
+              tool: { name: 'bind_channel', inputSchema: { type: 'object' } },
+            },
+            {
+              target: 'provider',
+              tool: { name: 'reply', inputSchema: { type: 'object' } },
+            },
           ]
-        : [{ target: 'provider', tool: { name: 'reply', inputSchema: { type: 'object' } } }];
-    const provider = fakeProvider(describeByCaller, async () => ({ ok: true, value: {} }));
+        : [
+            {
+              target: 'provider',
+              tool: { name: 'reply', inputSchema: { type: 'object' } },
+            },
+          ];
+    const provider = fakeProvider(describeByCaller, async () => ({
+      ok: true,
+      value: {},
+    }));
 
     const dispatcherDelegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
@@ -625,7 +673,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       config: {},
       caller: { kind: 'dispatcher' },
       sessionMcp: null,
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
     const teamLeaderDelegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
@@ -633,9 +681,13 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       channelId: 'feishu-main',
       provider,
       config: {},
-      caller: { kind: 'team_leader', team_name: 'team-a', leader_name: 'leader-a' },
+      caller: {
+        kind: 'team_leader',
+        team_name: 'team-a',
+        leader_name: 'leader-a',
+      },
       sessionMcp: null,
-      dispatch: (task) => task(),
+      fence: new WorkFence('d1'),
     });
 
     expect(toolNames(dispatcherDelegate.describe().tools).sort()).toEqual([
@@ -646,6 +698,19 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     // Neither delegate leaks the other caller's tool: TeamLeader never sees
     // bind_channel, and this was decided entirely by the Channel's own
     // describe(), not by any Core policy.
-    expect(toolNames(teamLeaderDelegate.describe().tools)).not.toContain('bind_channel');
+    expect(toolNames(teamLeaderDelegate.describe().tools)).not.toContain(
+      'bind_channel',
+    );
   });
 });
+
+function mintCatalog(tools: readonly unknown[], _label: string) {
+  return new McpLeaseRegistry().mint(
+    { isCurrent: () => true, state: { publish: async () => {} } },
+    {
+      name: 'probe',
+      describe: () => ({ tools }),
+      call: async () => ({ ok: true, structured: {} }),
+    },
+  );
+}

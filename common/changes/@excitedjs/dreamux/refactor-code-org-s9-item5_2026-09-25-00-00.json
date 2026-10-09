@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 9, item 5: fixed the two remaining singleton dependency-cruiser violations. service/dispatcher-service/types.ts held DispatcherServiceOptions, a constructor deps bag referencing command/types.ts's CoreCommandRegistry (plus several other concrete classes), not a data-only types file; it moves to dispatcher-service/index.ts beside the DispatcherService constructor it configures, the same shape this stage already used for scheduler/index.ts's SchedulerServiceOptions and team/service.ts's TeamServiceDeps, leaving types.ts holding only DispatcherSummary/DispatcherRuntimeStatus and satisfying types-file-not-to-command naturally. service/scheduler/commands.ts's real, necessary need for service/team/'s TeamsPort and optionalTeamNameParam (a cron job can be Team-scoped) now has its own file-level layer placement in .dependency-cruiser.cjs positioned after service-team, mirroring the existing state/dispatcher-store.ts and src/mcp/(server|launch).ts file-level carve-outs; config-only, no code moved. Internal reorg only; no runtime or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

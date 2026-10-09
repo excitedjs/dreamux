@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,23 +11,47 @@ import type {
   ChannelEventSubscription,
   DreamuxLogger,
   JsonValue,
+  JsonInvoker,
 } from '@excitedjs/dreamux-types';
 import type { Mention } from '@excitedjs/feishu-transport';
 
-import { FeishuChannelSession } from '../src/feishu-channel.js';
+import { FeishuChannelSession } from '../src/session/session.js';
+import { createFeishuBot, type FeishuBot } from '../src/bot.js';
+import { FeishuCoreCommands } from '../src/feishu-core-commands.js';
+import { FeishuInboundRouter } from '../src/inbound/router.js';
 import {
   detectFeishuSlashCommand,
   dispatchFeishuSlashCommand,
   type FeishuSlashCommandName,
 } from '../src/feishu-slash-commands.js';
 import { trustIntroducedBots } from '../src/chat-bots-store.js';
-import { defaultDispatcherAccessState, saveDispatcherAccess } from '../src/feishu-gate.js';
-import { chatTarget, topicTarget, type FeishuTarget } from '../src/routing/target.js';
+import {
+  defaultDispatcherAccessState,
+  type DispatcherAccessStateV3,
+} from '../src/access/state.js';
+import {
+  chatTarget,
+  topicTarget,
+  type FeishuTarget,
+} from '../src/routing/target.js';
 import { bindChannelDef } from '../src/tools/routing-tools.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import { createFakeCotClient } from './helpers/fake-feishu-cot.js';
 import { teamSummary } from './helpers/team-status.js';
 
+vi.mock('../src/bot.js', () => ({ createFeishuBot: vi.fn() }));
+function newSession(
+  bot: FeishuBot,
+  options: ConstructorParameters<typeof FeishuChannelSession>[0],
+) {
+  vi.mocked(createFeishuBot).mockReturnValueOnce(bot);
+  return new FeishuChannelSession(options);
+}
+async function seedAccess(stateDir: string, state: DispatcherAccessStateV3) {
+  await writeFile(join(stateDir, 'access.json'), JSON.stringify(state), {
+    mode: 0o600,
+  });
+}
 const mention: Mention = {
   key: '@_user_10',
   name: 'Dreamux',
@@ -57,18 +82,31 @@ function detect(input: {
  * end-to-end bind test read this list, so neither can drift from the other.
  */
 const NUMERIC_LOOKING_TEAM_NAMES = [
-  'MyTeam', '123', '1e5', '0x1f', '2.50', '10.00', '1.', '12.', '0.0',
+  'MyTeam',
+  '123',
+  '1e5',
+  '0x1f',
+  '2.50',
+  '10.00',
+  '1.',
+  '12.',
+  '0.0',
 ];
 
 describe('Feishu slash command recognition', () => {
   it.each(NUMERIC_LOOKING_TEAM_NAMES)(
-    'preserves the exact bind argument %s', (name) => {
-      expect(detect({ text: `/BIND ${name}` })).toEqual({ name: 'bind', args: [name] });
+    'preserves the exact bind argument %s',
+    (name) => {
+      expect(detect({ text: `/BIND ${name}` })).toEqual({
+        name: 'bind',
+        args: [name],
+      });
     },
   );
 
   it.each(['--foo', '-abc', '--', '---', '--a=b', '-', '\\'])(
-    'parses %s without throwing outside command dispatch', (argument) => {
+    'parses %s without throwing outside command dispatch',
+    (argument) => {
       expect(() => detect({ text: `/bind ${argument}` })).not.toThrow();
       expect(detect({ text: `/bind ${argument}` })?.name).toBe('bind');
     },
@@ -80,17 +118,20 @@ describe('Feishu slash command recognition', () => {
   });
 
   it('recognizes a mention-prefixed command longest-key-first', () => {
-    expect(detect({
-      text: '@_user_10 /stop',
-      chatType: 'group',
-      botMentioned: true,
-      mentions: [{ ...mention, key: '@_user_1' }, mention],
-    })).toEqual({ name: 'stop', args: [] });
+    expect(
+      detect({
+        text: '@_user_10 /stop',
+        chatType: 'group',
+        botMentioned: true,
+        mentions: [{ ...mention, key: '@_user_1' }, mention],
+      }),
+    ).toEqual({ name: 'stop', args: [] });
   });
 
   it('parses trailing text and matches the command name case-insensitively', () => {
     expect(detect({ text: '/STOP now please' })).toEqual({
-      name: 'stop', args: ['now', 'please'],
+      name: 'stop',
+      args: ['now', 'please'],
     });
   });
 
@@ -107,17 +148,22 @@ describe('Feishu slash command recognition', () => {
   });
 
   it('recognizes a direct-message command without a mention', () => {
-    expect(detect({ text: '/dissolve' })).toEqual({ name: 'dissolve', args: [] });
+    expect(detect({ text: '/dissolve' })).toEqual({
+      name: 'dissolve',
+      args: [],
+    });
   });
 
   it('leaves a trusted bot command-shaped message on ordinary delivery', () => {
-    expect(detect({
-      text: '@_user_10 /dissolve',
-      chatType: 'group',
-      botMentioned: true,
-      senderKind: 'bot',
-      mentions: [mention],
-    })).toBeNull();
+    expect(
+      detect({
+        text: '@_user_10 /dissolve',
+        chatType: 'group',
+        botMentioned: true,
+        senderKind: 'bot',
+        mentions: [mention],
+      }),
+    ).toBeNull();
   });
 });
 
@@ -127,28 +173,55 @@ describe('Feishu slash command recognition', () => {
  * supply what `/teams` reads.
  */
 type DispatchContext = Parameters<typeof dispatchFeishuSlashCommand>[1];
+type DispatchFixture = Pick<DispatchContext, 'plan' | 'bindings'> & {
+  invoke: JsonInvoker['invoke'];
+  target?: DispatchContext['target'];
+  messageId?: string;
+  bindChannel?: DispatchContext['bindingOperations']['bindChannel'];
+  resolveChatName?: NonNullable<DispatchContext['bot']['resolveChatName']>;
+};
 function dispatch(
   command: FeishuSlashCommandName,
-  context: Pick<DispatchContext, 'plan' | 'invoke' | 'bindings'> & Partial<DispatchContext>,
+  context: DispatchFixture,
   trailing = 'now please',
 ) {
   const invocation = detect({ text: `/${command} ${trailing}` });
   if (invocation === null) throw new Error(`unrecognized command /${command}`);
+  const commands = new FeishuCoreCommands();
+  commands.initialize({ invoke: context.invoke });
   return dispatchFeishuSlashCommand(invocation, {
-    target: chatTarget('oc_command', 'group'),
-    bindChannel: async () => { throw new Error('unexpected bind'); },
-    resolveChatName: async () => undefined,
-    ...context,
+    target: context.target ?? chatTarget('oc_command', 'group'),
+    messageId: context.messageId ?? 'om_command',
+    bindingOperations: {
+      bindChannel:
+        context.bindChannel ??
+        (async () => {
+          throw new Error('unexpected bind');
+        }),
+    },
+    bot: {
+      resolveChatName: context.resolveChatName ?? (async () => undefined),
+    },
+    commands,
+    plan: context.plan,
+    bindings: context.bindings,
   });
 }
 
 describe('Feishu slash command dispatch', () => {
   it('shows its own usage for a bind with no argument and does not bind', async () => {
-    const bindChannel = vi.fn<DispatchContext['bindChannel']>();
-    const reply = await dispatch('bind', {
-      plan: { kind: 'dispatcher', reason: 'no_binding' },
-      bindings: [], invoke: async () => ({}), bindChannel,
-    }, '');
+    const bindChannel =
+      vi.fn<DispatchContext['bindingOperations']['bindChannel']>();
+    const reply = await dispatch(
+      'bind',
+      {
+        plan: { kind: 'dispatcher', reason: 'no_binding' },
+        bindings: [],
+        invoke: async () => ({}),
+        bindChannel,
+      },
+      '',
+    );
     expect(reply).toEqual({ kind: 'text', text: 'Usage: /bind <team_name>' });
     expect(bindChannel).not.toHaveBeenCalled();
   });
@@ -156,17 +229,21 @@ describe('Feishu slash command dispatch', () => {
   it('lists every command with its English usage and summary', async () => {
     const reply = await dispatch('help', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
-      bindings: [], invoke: async () => { throw new Error('help must not call Core'); },
+      bindings: [],
+      invoke: async () => {
+        throw new Error('help must not call Core');
+      },
     });
     const expected: Record<FeishuSlashCommandName, string> = {
       bind: '- `/bind <team_name>` — Route this group to a Team.',
-      dissolve: '- `/dissolve` — Dissolve this conversation\'s bound Team.',
+      dissolve: "- `/dissolve` — Dissolve this conversation's bound Team.",
       help: '- `/help` — Show this list.',
       stop: '- `/stop` — Interrupt the current turn in this conversation.',
       teams: '- `/teams` — List running Teams.',
     };
     expect(reply).toEqual({
-      kind: 'text', text: ['**Dreamux commands**', ...Object.values(expected)].join('\n'),
+      kind: 'text',
+      text: ['**Dreamux commands**', ...Object.values(expected)].join('\n'),
     });
     for (const name of Object.keys(expected)) {
       expect(detect({ text: `/${name}` })?.name).toBe(name);
@@ -176,17 +253,23 @@ describe('Feishu slash command dispatch', () => {
   it('targets a bound Team for stop and renders idle distinctly', async () => {
     const calls: Array<{ command: string; payload: JsonValue }> = [];
     const reply = await dispatch('stop', {
-      plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
+      plan: {
+        kind: 'bound',
+        teamName: 'alpha',
+        matched: chatTarget('oc_a', 'group'),
+      },
       bindings: [],
       invoke: async (command, payload) => {
         calls.push({ command, payload });
         return { status: 'idle' };
       },
     });
-    expect(calls).toEqual([{
-      command: 'team.interrupt',
-      payload: { team_name: 'alpha' },
-    }]);
+    expect(calls).toEqual([
+      {
+        command: 'team.interrupt',
+        payload: { team_name: 'alpha' },
+      },
+    ]);
     expect(reply).toEqual({ kind: 'text', text: 'No turn is running.' });
   });
 
@@ -205,16 +288,25 @@ describe('Feishu slash command dispatch', () => {
 
   it('answers every Core command failure with one line', async () => {
     for (const command of ['stop', 'teams', 'dissolve'] as const) {
-      const plan = command === 'dissolve'
-        ? { kind: 'bound' as const, teamName: 'alpha', matched: chatTarget('oc_a', 'group') }
-        : { kind: 'dispatcher' as const, reason: 'no_binding' as const };
-      await expect(dispatch(command, {
-        plan,
-        bindings: [],
-        invoke: async () => { throw new Error('Core unavailable'); },
-      // Every command reports a failure the same way, including `/dissolve`:
-      // a Core it never reached did not refuse anything.
-      })).resolves.toEqual({
+      const plan =
+        command === 'dissolve'
+          ? {
+              kind: 'bound' as const,
+              teamName: 'alpha',
+              matched: chatTarget('oc_a', 'group'),
+            }
+          : { kind: 'dispatcher' as const, reason: 'no_binding' as const };
+      await expect(
+        dispatch(command, {
+          plan,
+          bindings: [],
+          invoke: async () => {
+            throw new Error('Core unavailable');
+          },
+          // Every command reports a failure the same way, including `/dissolve`:
+          // a Core it never reached did not refuse anything.
+        }),
+      ).resolves.toEqual({
         kind: 'text',
         text: `Command /${command} failed: Core unavailable`,
       });
@@ -222,31 +314,47 @@ describe('Feishu slash command dispatch', () => {
   });
 
   it('answers an accepted dissolve with nothing, and every other outcome with words', async () => {
-    await expect(dispatch('dissolve', {
-      plan: { kind: 'dispatcher', reason: 'not_bindable' },
-      bindings: [],
-      invoke: async () => ({}),
-    })).resolves.toEqual({
+    await expect(
+      dispatch('dissolve', {
+        plan: { kind: 'dispatcher', reason: 'not_bindable' },
+        bindings: [],
+        invoke: async () => ({}),
+      }),
+    ).resolves.toEqual({
       kind: 'text',
       text: 'This conversation has no bound Team.',
     });
-    await expect(dispatch('dissolve', {
-      plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
-      bindings: [],
-      invoke: async () => ({
-        accepted: true,
-        team_name: 'alpha',
-        status: 'submitted',
+    await expect(
+      dispatch('dissolve', {
+        plan: {
+          kind: 'bound',
+          teamName: 'alpha',
+          matched: chatTarget('oc_a', 'group'),
+        },
+        bindings: [],
+        invoke: async () => ({
+          accepted: true,
+          team_name: 'alpha',
+          status: 'submitted',
+        }),
+        // The Team's close reaches this Channel as a `team.state` closed event,
+        // which removes the routes and announces that to the conversation. A
+        // receipt here would be a second message about the one event.
       }),
-    // The Team's close reaches this Channel as a `team.state` closed event,
-    // which removes the routes and announces that to the conversation. A
-    // receipt here would be a second message about the one event.
-    })).resolves.toEqual({ kind: 'silent' });
-    await expect(dispatch('dissolve', {
-      plan: { kind: 'bound', teamName: 'alpha', matched: chatTarget('oc_a', 'group') },
-      bindings: [],
-      invoke: async () => { throw new Error('worktree is dirty'); },
-    })).resolves.toEqual({
+    ).resolves.toEqual({ kind: 'silent' });
+    await expect(
+      dispatch('dissolve', {
+        plan: {
+          kind: 'bound',
+          teamName: 'alpha',
+          matched: chatTarget('oc_a', 'group'),
+        },
+        bindings: [],
+        invoke: async () => {
+          throw new Error('worktree is dirty');
+        },
+      }),
+    ).resolves.toEqual({
       kind: 'text',
       text: 'Command /dissolve failed: worktree is dirty',
     });
@@ -255,27 +363,34 @@ describe('Feishu slash command dispatch', () => {
   it('filters running Teams and renders stable colors with current chat names', async () => {
     const input = {
       plan: { kind: 'dispatcher', reason: 'not_bindable' } as const,
-      bindings: [{
-        target_kind: 'group' as const,
-        chat_id: 'oc_a',
-        thread_id: null,
-        display: null,
-        team_name: 'alpha',
-        origin: 'space' as const,
-        space_name: 'space',
-        created_at: 1,
-        updated_at: 1,
-      }],
+      bindings: [
+        {
+          target_kind: 'group' as const,
+          chat_id: 'oc_a',
+          thread_id: null,
+          display: null,
+          team_name: 'alpha',
+          space_name: 'space',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
       resolveChatName: async () => 'Current chat name',
       invoke: async () => ({
         teams: [
           {
-            team_name: 'alpha', status: 'running', intent: 'Ship it',
-            source_repo: '/repos/example', leader_agent_runtime: 'codex',
+            team_name: 'alpha',
+            status: 'running',
+            intent: 'Ship it',
+            source_repo: '/repos/example',
+            leader_agent_runtime: 'codex',
           },
           {
-            team_name: 'closed', status: 'closed', intent: null,
-            source_repo: null, leader_agent_runtime: 'claude-code',
+            team_name: 'closed',
+            status: 'closed',
+            intent: null,
+            source_repo: null,
+            leader_agent_runtime: 'claude-code',
           },
         ],
       }),
@@ -292,23 +407,31 @@ describe('Feishu slash command dispatch', () => {
   it('falls back to the chat id when one current-name lookup fails', async () => {
     const reply = await dispatch('teams', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
-      bindings: [{
-        target_kind: 'group',
-        chat_id: 'oc_fallback',
-        thread_id: null,
-        display: null,
-        team_name: 'alpha',
-        origin: 'space',
-        space_name: 'space',
-        created_at: 1,
-        updated_at: 1,
-      }],
-      resolveChatName: async () => { throw new Error('lookup unavailable'); },
+      bindings: [
+        {
+          target_kind: 'group',
+          chat_id: 'oc_fallback',
+          thread_id: null,
+          display: null,
+          team_name: 'alpha',
+          space_name: 'space',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+      resolveChatName: async () => {
+        throw new Error('lookup unavailable');
+      },
       invoke: async () => ({
-        teams: [{
-          team_name: 'alpha', status: 'running', intent: null,
-          source_repo: null, leader_agent_runtime: 'codex',
-        }],
+        teams: [
+          {
+            team_name: 'alpha',
+            status: 'running',
+            intent: null,
+            source_repo: null,
+            leader_agent_runtime: 'codex',
+          },
+        ],
       }),
     });
     expect(JSON.stringify(reply)).toContain('oc_fallback');
@@ -319,10 +442,15 @@ describe('Feishu slash command dispatch', () => {
       plan: { kind: 'dispatcher', reason: 'no_binding' },
       bindings: [],
       invoke: async () => ({
-        teams: [{
-          team_name: 'alpha_*', status: 'running', intent: '</text_tag>*intent*_',
-          source_repo: '/repos/<unsafe>', leader_agent_runtime: 'codex</text_tag>_*',
-        }],
+        teams: [
+          {
+            team_name: 'alpha_*',
+            status: 'running',
+            intent: '</text_tag>*intent*_',
+            source_repo: '/repos/<unsafe>',
+            leader_agent_runtime: 'codex</text_tag>_*',
+          },
+        ],
       }),
     });
     if (reply.kind !== 'card') throw new Error('expected card reply');
@@ -333,7 +461,9 @@ describe('Feishu slash command dispatch', () => {
         elements: Array<{
           header: { title: { content: string } };
           elements: Array<{
-            columns: Array<{ elements: Array<{ elements: Array<{ content: string }> }> }>;
+            columns: Array<{
+              elements: Array<{ elements: Array<{ content: string }> }>;
+            }>;
           }>;
         }>;
       };
@@ -342,7 +472,9 @@ describe('Feishu slash command dispatch', () => {
     const tile = panel.elements[0]!.columns[0]!.elements[0]!;
 
     expect(tile.elements[0]!.content).toContain('codex\\</text\\_tag\\>\\_\\*');
-    expect(tile.elements[1]!.content).toContain('\\</text\\_tag\\>\\*intent\\*\\_');
+    expect(tile.elements[1]!.content).toContain(
+      '\\</text\\_tag\\>\\*intent\\*\\_',
+    );
     expect(tile.elements[1]!.content).not.toContain('</text_tag>*intent*_');
     expect(panel.header.title.content).toContain('\\<unsafe\\>');
   });
@@ -352,7 +484,6 @@ describe('Feishu slash command dispatch', () => {
       chat_id: 'oc_group',
       display: null,
       team_name: 'alpha',
-      origin: 'space' as const,
       space_name: 'space',
       created_at: 1,
       updated_at: 1,
@@ -365,10 +496,15 @@ describe('Feishu slash command dispatch', () => {
       ],
       resolveChatName: async () => 'Topic group',
       invoke: async () => ({
-        teams: [{
-          team_name: 'alpha', status: 'running', intent: null,
-          source_repo: null, leader_agent_runtime: 'codex',
-        }],
+        teams: [
+          {
+            team_name: 'alpha',
+            status: 'running',
+            intent: null,
+            source_repo: null,
+            leader_agent_runtime: 'codex',
+          },
+        ],
       }),
     });
     if (reply.kind !== 'card') throw new Error('expected card reply');
@@ -376,7 +512,9 @@ describe('Feishu slash command dispatch', () => {
       body: {
         elements: Array<{
           elements: Array<{
-            columns: Array<{ elements: Array<{ elements: Array<{ content: string }> }> }>;
+            columns: Array<{
+              elements: Array<{ elements: Array<{ content: string }> }>;
+            }>;
           }>;
         }>;
       };
@@ -388,14 +526,16 @@ describe('Feishu slash command dispatch', () => {
       '[📍 Topic group](https://applink.feishu.cn/client/thread/open' +
         '?open_chat_id=oc_group&open_thread_id=omt_topic' +
         '&openchatid=oc_group&openthreadid=omt_topic&thread_position=-1)' +
-        ' <font color=\'grey\'>· omt\\_topic</font>',
+        " <font color='grey'>· omt\\_topic</font>",
     ]);
   });
 });
 
 const tempDirs: string[] = [];
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  vi.restoreAllMocks();
+  for (const dir of tempDirs.splice(0))
+    rmSync(dir, { recursive: true, force: true });
 });
 
 const silentLog: DreamuxLogger = {
@@ -404,73 +544,121 @@ const silentLog: DreamuxLogger = {
   info: () => undefined,
   debug: () => undefined,
   trace: () => undefined,
+  child: () => silentLog,
 };
+
+async function runCommand(
+  session: FeishuChannelSession,
+  bot: ReturnType<typeof createFakeFeishuBot>,
+  stateDir: string,
+  target: FeishuTarget,
+  name: FeishuSlashCommandName,
+) {
+  await seedAccess(stateDir, {
+    ...defaultDispatcherAccessState(),
+    allow_users: ['ou_human'],
+    group: {
+      policy: 'allowlist',
+      allow_chats: [target.chatId],
+      require_mention: true,
+    },
+  });
+  const observed = vi.spyOn(FeishuInboundRouter.prototype, 'command');
+  await session.start();
+  await bot.inject({
+    messageId: 'om_command',
+    chatId: target.chatId,
+    chatType: target.kind === 'p2p' ? 'p2p' : 'group',
+    ...(target.threadId === undefined ? {} : { threadId: target.threadId }),
+    senderId: 'ou_human',
+    senderType: 'user',
+    senderName: 'Human',
+    messageType: 'text',
+    rawContent: JSON.stringify({ text: `@_user_1 /${name}` }),
+    text: `@_user_1 /${name}`,
+    resources: [],
+    mentions: [
+      { key: '@_user_1', name: 'Dreamux', id: { open_id: bot.botOpenId! } },
+    ],
+    createTime: '1',
+    raw: {},
+  });
+  expect(observed).toHaveBeenCalledTimes(1);
+  return observed.mock.results[0]!.value;
+}
 
 describe('Feishu slash command routing side effects', () => {
   it.each([
     { command: 'stop' as const, code: 'TEAM_NOT_FOUND' },
     { command: 'dissolve' as const, code: 'TEAM_CLOSED' },
-  ])('answers /$command for $code and leaves the binding to the paths that own it', async ({ command, code }) => {
-    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-command-state-'));
-    const attachmentCacheDir = mkdtempSync(join(tmpdir(), 'dreamux-command-cache-'));
-    tempDirs.push(stateDir, attachmentCacheDir);
-    const bot = createFakeFeishuBot('commands');
-    const session = new FeishuChannelSession({
-      dispatcherId: 'disp',
-      channelId: 'channel',
-      appId: 'app',
-      appSecret: '',
-      stateDir,
-      attachmentCacheDir,
-      log: silentLog,
-      botFactory: () => bot,
-    });
-    await session.initialize({
-      invoke: {
-        invoke: async () => {
-          throw Object.assign(new Error('Team unavailable'), { code });
+  ])(
+    'answers /$command for $code and leaves the binding to the paths that own it',
+    async ({ command, code }) => {
+      const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-command-state-'));
+      const attachmentCacheDir = mkdtempSync(
+        join(tmpdir(), 'dreamux-command-cache-'),
+      );
+      tempDirs.push(stateDir, attachmentCacheDir);
+      const bot = createFakeFeishuBot('commands');
+      const session = newSession(bot, {
+        dispatcherId: 'disp',
+        channelId: 'channel',
+        appId: 'app',
+        appSecret: '',
+        stateDir,
+        attachmentCacheDir,
+        log: silentLog,
+      });
+      await session.initialize({
+        invoke: {
+          invoke: async () => {
+            throw Object.assign(new Error('Team unavailable'), { code });
+          },
         },
-      },
-      events: {
-        subscribe(): ChannelEventSubscription {
-          return { unsubscribe: () => undefined };
+        events: {
+          subscribe(): ChannelEventSubscription {
+            return { unsubscribe: () => undefined };
+          },
         },
-      },
-    });
-    const target = chatTarget('oc_bound', 'group');
-    await session.routing.bind({
-      target,
-      teamName: 'alpha',
-      display: null,
-      origin: 'manual',
-      spaceId: null,
-    });
+      });
+      const target = chatTarget('oc_bound', 'group');
+      await session.routing.bind({
+        target,
+        teamName: 'alpha',
+        display: null,
+        rootMessageId: null,
+        spaceId: null,
+      });
 
-    const reply = await session.command({
-      command: { name: command, args: [] },
-      target,
-      containerChatId: null,
-    });
+      const reply = await runCommand(session, bot, stateDir, target, command);
 
-    expect(reply).toMatchObject({ kind: 'text', text: expect.stringContaining('Team unavailable') });
-    // A rejected command proves nothing durable: TEAM_CLOSED is also raised for
-    // a dissolve that is still pending and may yet fail. The binding survives
-    // for the final team.state event or the next rejected delivery to remove,
-    // so whichever of them empties the rows still has its announcement to make.
-    expect(session.routing.bindingFor(target)).toMatchObject({ team_name: 'alpha' });
-    await session.close();
-  });
+      expect(reply).toMatchObject({
+        kind: 'text',
+        text: expect.stringContaining('Team unavailable'),
+      });
+      // A rejected command proves nothing durable: TEAM_CLOSED is also raised for
+      // a dissolve that is still pending and may yet fail. The binding survives
+      // for the final team.state event or the next rejected delivery to remove,
+      // so whichever of them empties the rows still has its announcement to make.
+      expect(session.routing.bindingFor(target)).toMatchObject({
+        team_name: 'alpha',
+      });
+      await session.close();
+    },
+  );
 
   it('calls a class-style bot chat-name resolver with the bot as this', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-command-state-'));
-    const attachmentCacheDir = mkdtempSync(join(tmpdir(), 'dreamux-command-cache-'));
+    const attachmentCacheDir = mkdtempSync(
+      join(tmpdir(), 'dreamux-command-cache-'),
+    );
     tempDirs.push(stateDir, attachmentCacheDir);
     const bot = createFakeFeishuBot('commands');
     bot.resolveChatName = async function (chatId): Promise<string> {
       if (this !== bot) throw new Error('lost bot receiver');
       return `Bound ${chatId}`;
     };
-    const session = new FeishuChannelSession({
+    const session = newSession(bot, {
       dispatcherId: 'disp',
       channelId: 'channel',
       appId: 'app',
@@ -478,15 +666,19 @@ describe('Feishu slash command routing side effects', () => {
       stateDir,
       attachmentCacheDir,
       log: silentLog,
-      botFactory: () => bot,
     });
     await session.initialize({
       invoke: {
         invoke: async () => ({
-          teams: [{
-            team_name: 'alpha', status: 'running', intent: null,
-            source_repo: null, leader_agent_runtime: 'codex',
-          }],
+          teams: [
+            {
+              team_name: 'alpha',
+              status: 'running',
+              intent: null,
+              source_repo: null,
+              leader_agent_runtime: 'codex',
+            },
+          ],
         }),
       },
       events: {
@@ -500,15 +692,11 @@ describe('Feishu slash command routing side effects', () => {
       target,
       teamName: 'alpha',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
-    const reply = await session.command({
-      command: { name: 'teams', args: [] },
-      target,
-      containerChatId: null,
-    });
+    const reply = await runCommand(session, bot, stateDir, target, 'teams');
 
     expect(JSON.stringify(reply)).toContain('Bound oc\\\\_bound');
     await session.close();
@@ -518,7 +706,9 @@ describe('Feishu slash command routing side effects', () => {
 describe('Feishu slash command inbound placement', () => {
   it('does not provision or open a COT anchor in a collaboration-space topic', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-command-state-'));
-    const attachmentCacheDir = mkdtempSync(join(tmpdir(), 'dreamux-command-cache-'));
+    const attachmentCacheDir = mkdtempSync(
+      join(tmpdir(), 'dreamux-command-cache-'),
+    );
     tempDirs.push(stateDir, attachmentCacheDir);
     const bot = createFakeFeishuBot('commands');
     bot.setChatMode('oc_space', 'topic');
@@ -539,7 +729,7 @@ describe('Feishu slash command inbound placement', () => {
         },
       },
     };
-    await saveDispatcherAccess(stateDir, {
+    await seedAccess(stateDir, {
       ...defaultDispatcherAccessState(),
       allow_users: ['ou_human'],
       group: {
@@ -548,7 +738,7 @@ describe('Feishu slash command inbound placement', () => {
         require_mention: false,
       },
     });
-    const session = new FeishuChannelSession({
+    const session = newSession(bot, {
       dispatcherId: 'disp',
       channelId: 'channel',
       appId: 'app',
@@ -556,7 +746,6 @@ describe('Feishu slash command inbound placement', () => {
       stateDir,
       attachmentCacheDir,
       log: silentLog,
-      botFactory: () => bot,
     });
     await session.initialize(port);
     await session.routing.bindSpace({
@@ -580,11 +769,13 @@ describe('Feishu slash command inbound placement', () => {
       rawContent: JSON.stringify({ text: '@_user_1 /teams' }),
       text: '@_user_1 /teams',
       resources: [],
-      mentions: [{
-        key: '@_user_1',
-        name: 'Dreamux',
-        id: { open_id: bot.botOpenId },
-      }],
+      mentions: [
+        {
+          key: '@_user_1',
+          name: 'Dreamux',
+          id: { open_id: bot.botOpenId! },
+        },
+      ],
       createTime: '1',
       raw: {},
     });
@@ -605,11 +796,13 @@ describe('Feishu slash command inbound placement', () => {
       rawContent: JSON.stringify({ text: '@_user_1 /stop' }),
       text: '@_user_1 /stop',
       resources: [],
-      mentions: [{
-        key: '@_user_1',
-        name: 'Dreamux',
-        id: { open_id: bot.botOpenId },
-      }],
+      mentions: [
+        {
+          key: '@_user_1',
+          name: 'Dreamux',
+          id: { open_id: bot.botOpenId! },
+        },
+      ],
       createTime: '2',
       raw: {},
     });
@@ -624,11 +817,13 @@ describe('Feishu slash command inbound placement', () => {
 
   it('delivers a trusted bot command-shaped message as ordinary inbound', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-command-state-'));
-    const attachmentCacheDir = mkdtempSync(join(tmpdir(), 'dreamux-command-cache-'));
+    const attachmentCacheDir = mkdtempSync(
+      join(tmpdir(), 'dreamux-command-cache-'),
+    );
     tempDirs.push(stateDir, attachmentCacheDir);
     const bot = createFakeFeishuBot('commands');
     const calls: Array<{ command: string; payload: JsonValue }> = [];
-    const session = new FeishuChannelSession({
+    const session = newSession(bot, {
       dispatcherId: 'disp',
       channelId: 'channel',
       appId: 'app',
@@ -636,9 +831,8 @@ describe('Feishu slash command inbound placement', () => {
       stateDir,
       attachmentCacheDir,
       log: silentLog,
-      botFactory: () => bot,
     });
-    await saveDispatcherAccess(stateDir, {
+    await seedAccess(stateDir, {
       ...defaultDispatcherAccessState(),
       group: {
         policy: 'allowlist',
@@ -646,7 +840,9 @@ describe('Feishu slash command inbound placement', () => {
         require_mention: true,
       },
     });
-    await trustIntroducedBots(stateDir, 'oc_bots', [{ openId: 'ou_peer' }]);
+    await trustIntroducedBots(session.tools.chatBotsStore, 'oc_bots', [
+      { openId: 'ou_peer' },
+    ]);
     await session.initialize({
       invoke: {
         invoke: async (command, payload) => {
@@ -673,11 +869,13 @@ describe('Feishu slash command inbound placement', () => {
       rawContent: JSON.stringify({ text: '@_user_1 /dissolve' }),
       text: '@_user_1 /dissolve',
       resources: [],
-      mentions: [{
-        key: '@_user_1',
-        name: 'Dreamux',
-        id: { open_id: bot.botOpenId },
-      }],
+      mentions: [
+        {
+          key: '@_user_1',
+          name: 'Dreamux',
+          id: { open_id: bot.botOpenId! },
+        },
+      ],
       createTime: '1',
       raw: {},
     });
@@ -698,17 +896,27 @@ async function bindHarness(target = chatTarget('oc_bind', 'group')) {
   if (target.kind === 'topic') bot.setChatMode(target.chatId, 'topic');
   const cot = createFakeCotClient();
   bot.setCot(cot);
-  await saveDispatcherAccess(stateDir, {
+  await seedAccess(stateDir, {
     ...defaultDispatcherAccessState(),
     allow_users: ['ou_human'],
-    group: { policy: 'allowlist', allow_chats: [target.chatId], require_mention: true },
+    group: {
+      policy: 'allowlist',
+      allow_chats: [target.chatId],
+      require_mention: true,
+    },
   });
   const calls: Array<{ command: string; payload: JsonValue }> = [];
   let status: 'running' | 'closed' | 'missing' = 'running';
-  const listeners: Array<(event: ChannelCoreEvent) => void | Promise<void>> = [];
-  const session = new FeishuChannelSession({
-    dispatcherId: 'disp', channelId: 'channel', appId: 'app', appSecret: '',
-    stateDir, attachmentCacheDir, log: silentLog, botFactory: () => bot,
+  const listeners: Array<(event: ChannelCoreEvent) => void | Promise<void>> =
+    [];
+  const session = newSession(bot, {
+    dispatcherId: 'disp',
+    channelId: 'channel',
+    appId: 'app',
+    appSecret: '',
+    stateDir,
+    attachmentCacheDir,
+    log: silentLog,
   });
   await session.initialize({
     invoke: {
@@ -718,11 +926,16 @@ async function bindHarness(target = chatTarget('oc_bind', 'group')) {
         if (command !== 'team.status') throw new Error(`unexpected ${command}`);
         const teamName = (payload as { team_name: string }).team_name;
         if (status === 'missing') {
-          throw Object.assign(new Error(`Team ${JSON.stringify(teamName)} does not exist`), {
-            code: 'TEAM_NOT_FOUND',
-          });
+          throw Object.assign(
+            new Error(`Team ${JSON.stringify(teamName)} does not exist`),
+            {
+              code: 'TEAM_NOT_FOUND',
+            },
+          );
         }
-        return JSON.parse(JSON.stringify(teamSummary(teamName, status))) as JsonValue;
+        return JSON.parse(
+          JSON.stringify(teamSummary(teamName, status)),
+        ) as JsonValue;
       },
     },
     events: {
@@ -733,37 +946,65 @@ async function bindHarness(target = chatTarget('oc_bind', 'group')) {
     },
   });
   await session.start();
-  const command = vi.spyOn(session, 'command');
+  const command = vi.spyOn(FeishuInboundRouter.prototype, 'command');
   let ordinal = 0;
   return {
-    session, bot, cot, calls, command,
-    setStatus(value: typeof status) { status = value; },
+    session,
+    bot,
+    cot,
+    calls,
+    command,
+    setStatus(value: typeof status) {
+      status = value;
+    },
     async seed(bound: FeishuTarget, teamName: string) {
-      await session.routing.bind({ target: bound, teamName, display: null, origin: 'manual', spaceId: null });
+      await session.routing.bind({
+        target: bound,
+        teamName,
+        display: null,
+        rootMessageId: null,
+        spaceId: null,
+      });
     },
     async inject(text: string) {
       const messageId = `om_bind_${++ordinal}`;
       await bot.inject({
-        messageId, chatId: target.chatId,
+        messageId,
+        chatId: target.chatId,
         chatType: target.kind === 'p2p' ? 'p2p' : 'group',
         ...(target.threadId === undefined ? {} : { threadId: target.threadId }),
-        senderId: 'ou_human', senderType: 'user', senderName: 'Human',
-        messageType: 'text', rawContent: JSON.stringify({ text: `@_user_1 ${text}` }),
-        text: `@_user_1 ${text}`, resources: [],
-        mentions: [{ key: '@_user_1', name: 'Dreamux', id: { open_id: bot.botOpenId } }],
-        createTime: String(ordinal), raw: {},
+        senderId: 'ou_human',
+        senderType: 'user',
+        senderName: 'Human',
+        messageType: 'text',
+        rawContent: JSON.stringify({ text: `@_user_1 ${text}` }),
+        text: `@_user_1 ${text}`,
+        resources: [],
+        mentions: [
+          { key: '@_user_1', name: 'Dreamux', id: { open_id: bot.botOpenId! } },
+        ],
+        createTime: String(ordinal),
+        raw: {},
       });
       return messageId;
     },
     async speak(teamName: string) {
-      // A fake send is recorded before its result reaches notification bookkeeping.
-      const messageId = bot.sentCards.at(-1)!.messageIds[0]!;
-      await vi.waitFor(() => expect(session.handle.targetRouter.targetForMessage(messageId)).toBeDefined());
-      for (const listener of listeners) await listener({
-        schemaVersion: 1, kind: 'teammate.activity', occurredAt: 1,
-        role: 'team_leader', teamName: teamName, teammateName: `${teamName}-leader`,
-        activity: { kind: 'assistant.message', occurredAt: 1, id: `event-${teamName}`, text: 'Hello' },
-      });
+      await session.lifecycle.drain();
+      for (const listener of listeners)
+        await listener({
+          schemaVersion: 1,
+          kind: 'teammate.activity',
+          occurredAt: 1,
+          role: 'team_leader',
+          teamName: teamName,
+          teammateName: `${teamName}-leader`,
+          activity: {
+            kind: 'assistant.message',
+            occurredAt: 1,
+            id: `event-${teamName}`,
+            text: 'Hello',
+          },
+        });
     },
   };
 }
@@ -773,73 +1014,108 @@ describe('/bind through ordinary Feishu inbound', () => {
     const h = await bindHarness();
     await h.inject('/bind alpha');
     await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
-    expect(h.session.routing.listBindings()).toMatchObject([{
-      target_kind: 'group', chat_id: 'oc_bind', thread_id: null, team_name: 'alpha',
-    }]);
+    expect(h.session.routing.listBindings()).toMatchObject([
+      {
+        target_kind: 'group',
+        chat_id: 'oc_bind',
+        thread_id: null,
+        team_name: 'alpha',
+      },
+    ]);
     expect(h.bot.sentCards[0]!.target).toEqual({ chatId: 'oc_bind' });
     expect(h.bot.sentMessages).toEqual([]);
     expect(await h.command.mock.results[0]!.value).toEqual({ kind: 'silent' });
-    expect(h.calls).toEqual([{ command: 'team.status', payload: { team_name: 'alpha' } }]);
+    expect(h.calls).toEqual([
+      { command: 'team.status', payload: { team_name: 'alpha' } },
+    ]);
     await h.session.close();
   });
 
   it.each(NUMERIC_LOOKING_TEAM_NAMES)(
-    'binds the exact Team name %s', async (name) => {
+    'binds the exact Team name %s',
+    async (name) => {
       const h = await bindHarness();
       await h.inject(`/bind ${name}`);
       expect(h.session.routing.listBindings()[0]?.team_name).toBe(name);
-      expect(h.calls).toEqual([{ command: 'team.status', payload: { team_name: name } }]);
+      expect(h.calls).toEqual([
+        { command: 'team.status', payload: { team_name: name } },
+      ]);
       await h.session.close();
     },
   );
 
-  it.each([false, true])('binds the whole chat and announces in the requesting topic (topic already bound: %s)', async (bound) => {
-    const topic = topicTarget('oc_topic_group', 'omt_topic');
-    const group = chatTarget(topic.chatId, 'group');
-    const h = await bindHarness(topic);
-    if (bound) await h.seed(topic, 'team-a');
-    const messageId = await h.inject('/bind team-b');
-    await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
-    expect(h.session.routing.bindingFor(group)?.team_name).toBe('team-b');
-    expect(h.session.routing.bindingFor(topic)?.team_name).toBe(bound ? 'team-a' : undefined);
-    expect(h.bot.sentCards[0]!.target).toEqual({ chatId: topic.chatId, replyToMessageId: messageId });
-    expect(h.bot.sentMessages).toEqual([]);
-    expect(await h.command.mock.results[0]!.value).toEqual({ kind: 'silent' });
-    await h.speak('team-b');
-    expect(h.session.handle.targetRouter.targetForMessage(h.bot.sentCards[0]!.messageIds[0]!)).toEqual(topic);
-    await h.session.close();
-    expect(h.cot.cards).toEqual([]);
-  });
+  it.each([false, true])(
+    'binds the whole chat and announces in the requesting topic (topic already bound: %s)',
+    async (bound) => {
+      const topic = topicTarget('oc_topic_group', 'omt_topic');
+      const group = chatTarget(topic.chatId, 'group');
+      const h = await bindHarness(topic);
+      if (bound) await h.seed(topic, 'team-a');
+      const messageId = await h.inject('/bind team-b');
+      await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
+      expect(h.session.routing.bindingFor(group)?.team_name).toBe('team-b');
+      expect(h.session.routing.bindingFor(topic)?.team_name).toBe(
+        bound ? 'team-a' : undefined,
+      );
+      expect(h.bot.sentCards[0]!.target).toEqual({
+        chatId: topic.chatId,
+        replyToMessageId: messageId,
+      });
+      expect(h.bot.sentMessages).toEqual([]);
+      expect(await h.command.mock.results[0]!.value).toEqual({
+        kind: 'silent',
+      });
+      await h.speak('team-b');
+      expect(h.bot.sentCards[0]!.messages[0]).toMatchObject({
+        chatId: topic.chatId,
+        threadId: topic.threadId,
+      });
+      await h.session.close();
+      expect(h.cot.cards).toEqual([]);
+    },
+  );
 
   // `/bind` binds the containing chat from either place, so both invocations
   // reach `FeishuRouting.bind` with the same group target and are refused by
   // the routing document rather than by this command. The Team is live, so a
   // green assertion here cannot be the closed/missing-Team refusal wearing
   // the Space refusal's name.
-  it.each(['group', 'topic'] as const)('refuses a registered Collaboration Space from a %s target without changing routing', async (kind) => {
-    const target = kind === 'topic' ? topicTarget('oc_space_bind', 'omt_topic') : chatTarget('oc_space_bind', 'group');
-    const h = await bindHarness(target);
-    await h.session.routing.bindSpace({
-      spaceName: 'space', containerChatId: target.chatId, display: null,
-      leaderAgentRuntime: 'codex', identity: null, repo: null,
-    });
-    // A topic inside the Space, which is what provisioning installs and the
-    // one thing binding the chat itself would have taken over. Seeding the
-    // container group is no longer possible — that is the rule under test.
-    await h.seed(topicTarget(target.chatId, 'omt_provisioned'), 'team-a');
-    const before = h.session.routing.listBindings();
-    await h.inject('/bind team-b');
-    expect(h.bot.sentMessages[0]?.text).toBe(
-      'Command /bind failed: This Feishu chat is a Collaboration Space, ' +
-      'which gives each of its topics its own Team. Binding the chat itself ' +
-      'would take over every topic in it and stop new ones from getting a ' +
-      'Team. Bind a chat that is not a Collaboration Space.',
-    );
-    expect(h.session.routing.listBindings()).toEqual(before);
-    expect(h.calls).toEqual([{ command: 'team.status', payload: { team_name: 'team-b' } }]);
-    expect(h.bot.sentCards).toEqual([]);
-    await h.session.close();
-  });
+  it.each(['group', 'topic'] as const)(
+    'refuses a registered Collaboration Space from a %s target without changing routing',
+    async (kind) => {
+      const target =
+        kind === 'topic'
+          ? topicTarget('oc_space_bind', 'omt_topic')
+          : chatTarget('oc_space_bind', 'group');
+      const h = await bindHarness(target);
+      await h.session.routing.bindSpace({
+        spaceName: 'space',
+        containerChatId: target.chatId,
+        display: null,
+        leaderAgentRuntime: 'codex',
+        identity: null,
+        repo: null,
+      });
+      // A topic inside the Space, which is what provisioning installs and the
+      // one thing binding the chat itself would have taken over. Seeding the
+      // container group is no longer possible — that is the rule under test.
+      await h.seed(topicTarget(target.chatId, 'omt_provisioned'), 'team-a');
+      const before = h.session.routing.listBindings();
+      await h.inject('/bind team-b');
+      expect(h.bot.sentMessages[0]?.text).toBe(
+        'Command /bind failed: This Feishu chat is a Collaboration Space, ' +
+          'which gives each of its topics its own Team. Binding the chat itself ' +
+          'would take over every topic in it and stop new ones from getting a ' +
+          'Team. Bind a chat that is not a Collaboration Space.',
+      );
+      expect(h.session.routing.listBindings()).toEqual(before);
+      expect(h.calls).toEqual([
+        { command: 'team.status', payload: { team_name: 'team-b' } },
+      ]);
+      expect(h.bot.sentCards).toEqual([]);
+      await h.session.close();
+    },
+  );
 
   it('rebinds directly and names the displaced Team on the sole notification', async () => {
     const h = await bindHarness();
@@ -847,25 +1123,35 @@ describe('/bind through ordinary Feishu inbound', () => {
     await h.inject('/bind team-b');
     await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
     expect(h.session.routing.listBindings()[0]?.team_name).toBe('team-b');
-    expect(JSON.stringify(h.bot.sentCards[0]!.card)).toContain('Previous Team: team-a');
+    expect(JSON.stringify(h.bot.sentCards[0]!.card)).toContain(
+      'Previous Team: team-a',
+    );
     expect(h.bot.sentMessages).toEqual([]);
     await h.session.close();
   });
 
   it.each([
     ['missing', 'Team "unavailable" does not exist'],
-    ['closed', 'Team "unavailable" is closed and can no longer answer here. Bind an open Team instead.'],
-  ] as const)('reports the owning layer\'s %s error and preserves routing', async (status, message) => {
-    const h = await bindHarness();
-    await h.seed(chatTarget('oc_bind', 'group'), 'team-a');
-    const before = h.session.routing.listBindings();
-    h.setStatus(status);
-    await h.inject('/bind unavailable');
-    expect(h.bot.sentMessages[0]?.text).toBe(`Command /bind failed: ${message}`);
-    expect(h.session.routing.listBindings()).toEqual(before);
-    expect(h.bot.sentCards).toEqual([]);
-    await h.session.close();
-  });
+    [
+      'closed',
+      'Team "unavailable" is closed and can no longer answer here. Bind an open Team instead.',
+    ],
+  ] as const)(
+    "reports the owning layer's %s error and preserves routing",
+    async (status, message) => {
+      const h = await bindHarness();
+      await h.seed(chatTarget('oc_bind', 'group'), 'team-a');
+      const before = h.session.routing.listBindings();
+      h.setStatus(status);
+      await h.inject('/bind unavailable');
+      expect(h.bot.sentMessages[0]?.text).toBe(
+        `Command /bind failed: ${message}`,
+      );
+      expect(h.session.routing.listBindings()).toEqual(before);
+      expect(h.bot.sentCards).toEqual([]);
+      await h.session.close();
+    },
+  );
 
   it('refuses a direct message without writing a row or calling Core', async () => {
     const h = await bindHarness(chatTarget('oc_dm', 'p2p'));
@@ -875,7 +1161,7 @@ describe('/bind through ordinary Feishu inbound', () => {
     expect(h.bot.sentCards).toEqual([]);
     expect(h.bot.sentMessages[0]?.text).toBe(
       'Command /bind failed: A Feishu direct message chat cannot be bound to a Team. ' +
-      'Bind a group, or a topic inside one.',
+        'Bind a group, or a topic inside one.',
     );
     await h.session.close();
   });
@@ -889,15 +1175,21 @@ describe('/bind through ordinary Feishu inbound', () => {
     const group = chatTarget(topic.chatId, 'group');
     await h.seed(group, 'team-a');
     const caller = { kind: 'dispatcher' } as const;
-    const result = await bindChannelDef.handle({ caller, session: h.session.toolSession(caller) },
-      bindChannelDef.parse({ chat_id: group.chatId, team_name: 'team-b' }));
+    const result = await bindChannelDef.handle(
+      { caller, session: h.session.tools },
+      bindChannelDef.parse({ chat_id: group.chatId, team_name: 'team-b' }),
+    );
     await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
     expect(result['previous_team_name']).toBe('team-a');
     expect(h.bot.sentCards[0]!.target).toEqual({ chatId: group.chatId });
-    expect(JSON.stringify(h.bot.sentCards[0]!.card)).toContain('Previous Team: team-a');
+    expect(JSON.stringify(h.bot.sentCards[0]!.card)).toContain(
+      'Previous Team: team-a',
+    );
     await h.speak('team-b');
     await vi.waitFor(() => expect(h.cot.cards).toHaveLength(1));
-    expect(h.cot.cards[0]!.originMessageId).toBe(h.bot.sentCards[0]!.messageIds[0]);
+    expect(h.cot.cards[0]!.originMessageId).toBe(
+      h.bot.sentCards[0]!.messageIds[0],
+    );
     await h.session.close();
   });
 });

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "dispatcher.submit and team.submit now report SUBMIT_FAILED / SUBMIT_AMBIGUOUS instead of TEAM_SUBMIT_FAILED / TEAM_SUBMIT_AMBIGUOUS for a failed or ambiguous submission. The shared submit receipt covers both callers, and a Dispatcher's own Agent submission has no Team involved, so the wire code no longer names Team.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

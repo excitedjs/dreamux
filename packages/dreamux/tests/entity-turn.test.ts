@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { RuntimeCompletion, RuntimeSubmission } from '@excitedjs/dreamux-types';
+import type {
+  RuntimeCompletion,
+  RuntimeSubmission,
+} from '@excitedjs/dreamux-types';
 
 import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
-import type { TurnCompletionDelivery } from '../src/service/teammate-service/turn-recording.js';
-import { EntityTurn } from '../src/service/teammate-service/turn-recording.js';
-import { EntityTurnCoordinator } from '../src/service/teammate-service/turn-coordinator.js';
+import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
+import { createLogger } from '../src/platform/logger.js';
+import { WorkFence } from '../src/platform/work-fence.js';
+import { EntityTurn } from '../src/service/agent/turn.js';
 import {
   completedCompletion,
   controllableRuntimeSubmission,
@@ -23,11 +27,12 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
       status: 'completed',
       resultText: 'done',
     });
-    await turn.delivery;
+    await turn.ensureDelivery();
     expect(delivery).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledWith(completion, {
       kind: 'teammate',
       source: 'reviewer',
+      role: 'teammate',
       status: 'completed',
       result: 'done',
     });
@@ -54,7 +59,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     ).toBe(false);
 
     await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
-    await turn.delivery;
+    await turn.ensureDelivery();
     expect(turn.isSettled()).toBe(true);
     expect(delivery).not.toHaveBeenCalled();
 
@@ -73,13 +78,14 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     expect(runtime.stop()).toBe(true);
 
     await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
-    await turn.delivery;
+    await turn.ensureDelivery();
     // The waiting Agent asked for the work; that it was stopped is news only
     // this turn has. There is no native token to fold on, so none is invented.
     expect(delivery).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledWith(null, {
       kind: 'teammate',
       source: 'reviewer',
+      role: 'teammate',
       status: 'stopped',
       result: null,
     });
@@ -93,10 +99,11 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
       markStarted = resolve;
     });
     const delivery = vi.fn(
-      () => new Promise<void>((resolve) => {
-        finishDelivery = resolve;
-        markStarted();
-      }),
+      () =>
+        new Promise<void>((resolve) => {
+          finishDelivery = resolve;
+          markStarted();
+        }),
     );
     let owed = true;
     const turn = makeTurn(runtime.submission, delivery, () => owed);
@@ -106,7 +113,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     owed = false;
     finishDelivery();
 
-    await turn.delivery;
+    await turn.ensureDelivery();
     expect(delivery).toHaveBeenCalledTimes(1);
   });
 
@@ -122,11 +129,12 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     expect(settled.status).toBe('failed');
     if (settled.status !== 'failed') throw new Error('expected failed outcome');
     expect(settled.error).toBe(runtimeError);
-    await turn.delivery;
+    await turn.ensureDelivery();
     expect(delivery).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledWith(null, {
       kind: 'teammate',
       source: 'reviewer',
+      role: 'teammate',
       status: 'failed',
       result: null,
     });
@@ -147,11 +155,12 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     expect(settled.status).toBe('failed');
     if (settled.status !== 'failed') throw new Error('expected failed outcome');
     expect(settled.error).toBe(rejection);
-    await turn.delivery;
+    await turn.ensureDelivery();
     expect(delivery).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledWith(null, {
       kind: 'teammate',
       source: 'reviewer',
+      role: 'teammate',
       status: 'failed',
       result: null,
     });
@@ -173,7 +182,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     );
     const turn = makeTurn(runtime.submission, delivery);
 
-    const observedDelivery = turn.delivery;
+    const observedDelivery = turn.ensureDelivery();
     runtime.complete('done');
     await invoked;
     expect(delivery).toHaveBeenCalledTimes(1);
@@ -181,7 +190,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
 
     rejectDelivery(new Error('delivery unavailable'));
     await expect(observedDelivery).rejects.toThrow(/delivery unavailable/);
-    await expect(turn.delivery).rejects.toThrow(/delivery unavailable/);
+    await expect(turn.ensureDelivery()).rejects.toThrow(/delivery unavailable/);
     expect(delivery).toHaveBeenCalledTimes(1);
   });
 
@@ -197,10 +206,11 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
 
     // The token is provider-owned and frozen: a later mutation attempt cannot
     // rewrite what this turn already reported or what it hands to delivery.
-    expect(() => Object.assign(completion, { resultText: 'mutated' }))
-      .toThrow(TypeError);
+    expect(() => Object.assign(completion, { resultText: 'mutated' })).toThrow(
+      TypeError,
+    );
 
-    await turn.delivery;
+    await turn.ensureDelivery();
     expect(settled).toEqual({
       status: 'completed',
       resultText: 'first',
@@ -211,6 +221,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     expect(deliveredFact).toEqual({
       kind: 'teammate',
       source: 'reviewer',
+      role: 'teammate',
       status: 'completed',
       result: 'first',
     });
@@ -229,11 +240,12 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     expect(settled.status).toBe('failed');
     if (settled.status !== 'failed') throw new Error('expected failed outcome');
     expect(settled.error).toBe(providerError);
-    await turn.delivery;
+    await turn.ensureDelivery();
     expect(delivery).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledWith(completion, {
       kind: 'teammate',
       source: 'reviewer',
+      role: 'teammate',
       status: 'failed',
       result: null,
     });
@@ -244,64 +256,51 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     const delivery = deliveryMock();
     const turn = makeTurn(runtime.submission, delivery);
 
-    const beforeSettlement = [turn.delivery, turn.ensureDelivery()];
+    const beforeSettlement = [turn.ensureDelivery(), turn.ensureDelivery()];
     runtime.complete('done');
     await Promise.all(beforeSettlement);
-    await Promise.all([turn.delivery, turn.ensureDelivery()]);
-    await turn.delivery;
+    await Promise.all([turn.ensureDelivery(), turn.ensureDelivery()]);
+    await turn.ensureDelivery();
 
     expect(delivery).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('EntityTurnCoordinator reads the entity fence when a turn settles', () => {
-  it('retains a late-attached Turn for settlement without reporting it', async () => {
-    let attach!: (admission: {
-      status: 'submitted';
-      submission: RuntimeSubmission;
-    }) => void;
-    const providerAdmission = new Promise<{
-      status: 'submitted';
-      submission: RuntimeSubmission;
-    }>((resolve) => {
-      attach = resolve;
-    });
-    const runtime = controllableRuntimeSubmission();
-    const delivery = deliveryMock();
-    let owed = true;
-    const coordinator = new EntityTurnCoordinator({
-      identity: () => ({ name: 'reviewer' }) as never,
-      isActive: () => true,
-      owesCompletion: () => owed,
-    });
-
-    // Admitted while the entity still owed news; the provider answers only
-    // after the entity's fence went up.
-    const admission = coordinator.submitRuntimeTurn(
-      () => providerAdmission,
-      delivery,
-    );
-    owed = false;
-    attach({ status: 'submitted', submission: runtime.submission });
-
-    const result = await admission;
-    expect(result.status).toBe('submitted');
-    await expect(coordinator.convergeRetainedTurns()).rejects.toThrow(
-      /1 unsettled submission/u,
-    );
-
-    runtime.complete('late result');
-    await coordinator.convergeRetainedTurns();
-    expect(delivery).not.toHaveBeenCalled();
-  });
-});
-
 function makeTurn(
   submission: RuntimeSubmission,
-  delivery: TurnCompletionDelivery | null,
+  delivery:
+    | ((
+        token: RuntimeCompletion | null,
+        fact: PreparedCompletionFact,
+      ) => Promise<void>)
+    | null,
   owed: () => boolean = () => true,
 ): EntityTurn {
-  return new EntityTurn(submission, 'reviewer', delivery, owed);
+  const policy = new CompletionDeliveryPolicy({
+    dispatcherId: 'test',
+    fence: new WorkFence('test'),
+    log: createLogger({ destination: { write() {} } }),
+  });
+  const actual = policy.deliverRuntime.bind(policy);
+  vi.spyOn(policy, 'deliverRuntime').mockImplementation(
+    async (recipient, token, fact) => {
+      await delivery?.(token, fact);
+      await actual(recipient, token, fact);
+    },
+  );
+  const recipient = {
+    prepareCompletion: async () => ({
+      submit: async () => ({ status: 'accepted' as const }),
+    }),
+  };
+  return new EntityTurn(
+    submission,
+    'reviewer',
+    'teammate',
+    recipient,
+    { owesCompletion: owed },
+    policy,
+  );
 }
 
 function deliveryMock() {

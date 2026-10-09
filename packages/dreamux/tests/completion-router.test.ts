@@ -12,6 +12,7 @@ import {
 
 const completion: PreparedCompletionFact = {
   kind: 'teammate',
+  role: 'teammate',
   source: 'worker',
   status: 'completed',
   result: 'done',
@@ -33,7 +34,9 @@ class ScriptedInitiator implements CompletionInitiator {
     return Object.freeze({
       submit: async () => {
         this.submitCalls += 1;
-        const outcome = this.outcomes.shift() ?? { status: 'accepted' as const };
+        const outcome = this.outcomes.shift() ?? {
+          status: 'accepted' as const,
+        };
         if (outcome instanceof Error) throw outcome;
         return outcome;
       },
@@ -48,7 +51,7 @@ function policy(
   return new CompletionDeliveryPolicy({
     dispatcherId: 'flow',
     log: noopLog(),
-    accepting,
+    fence: { isClosing: () => !accepting() },
     attemptTimeoutMs,
   });
 }
@@ -65,25 +68,40 @@ describe('CompletionDeliveryPolicy', () => {
     const firstStarted = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
+    const calls: Array<{
+      stage: 'prepare' | 'submit';
+      payload: PreparedCompletionFact;
+    }> = [];
     const gated: CompletionInitiator = {
-      prepareCompletion: async () => ({
-        submit: async () => {
-          await firstStarted;
-          return { status: 'accepted' as const };
-        },
-      }),
+      prepareCompletion: async (received) => {
+        calls.push({ stage: 'prepare', payload: received });
+        return {
+          submit: async () => {
+            calls.push({ stage: 'submit', payload: received });
+            await firstStarted;
+            return { status: 'accepted' as const };
+          },
+        };
+      },
     };
     const late = new ScriptedInitiator([{ status: 'accepted' }]);
 
     // Queued while the dispatcher still accepted work: the fence going up
     // afterwards does not retract it.
     const queued = router.deliver(gated, completion);
+    expect(calls).toEqual([]);
     accepting = false;
     const dropped = router.deliver(late, completion);
     releaseFirst();
 
     await expect(dropped).resolves.toBeUndefined();
     await queued;
+    expect(calls).toEqual([
+      { stage: 'prepare', payload: completion },
+      { stage: 'submit', payload: completion },
+    ]);
+    expect(calls[0]!.payload).toBe(completion);
+    expect(calls[1]!.payload).toBe(completion);
     expect(late.prepareCalls).toBe(0);
     expect(late.submitCalls).toBe(0);
   });
@@ -150,7 +168,9 @@ describe('CompletionDeliveryPolicy', () => {
       },
     };
 
-    await expect(policy().deliver(initiator, completion)).resolves.toBeUndefined();
+    await expect(
+      policy().deliver(initiator, completion),
+    ).resolves.toBeUndefined();
   });
 
   it('bounds preparation and observes a rejection that arrives after timeout', async () => {
@@ -196,13 +216,17 @@ describe('CompletionDeliveryPolicy', () => {
   it('reuses one prepared payload while bounding every proven-safe retry', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const second = deferred<CompletionDeliveryResult>();
-    const outcomes: Array<CompletionDeliveryResult | Promise<CompletionDeliveryResult>> = [
+    const outcomes: Array<
+      CompletionDeliveryResult | Promise<CompletionDeliveryResult>
+    > = [
       { status: 'failed', error: new Error('safe first failure') },
       second.promise,
     ];
     const prepared = Object.freeze({
-      submit: vi.fn(async (): Promise<CompletionDeliveryResult> =>
-        outcomes.shift() ?? { status: 'accepted' }),
+      submit: vi.fn(
+        async (): Promise<CompletionDeliveryResult> =>
+          outcomes.shift() ?? { status: 'accepted' },
+      ),
     });
     const initiator: CompletionInitiator = {
       prepareCompletion: vi.fn(async () => prepared),
@@ -213,7 +237,10 @@ describe('CompletionDeliveryPolicy', () => {
     await vi.advanceTimersByTimeAsync(100);
     await delivery;
 
-    second.resolve({ status: 'failed', error: new Error('late second failure') });
+    second.resolve({
+      status: 'failed',
+      error: new Error('late second failure'),
+    });
     await Promise.resolve();
     expect(initiator.prepareCompletion).toHaveBeenCalledTimes(1);
     expect(prepared.submit).toHaveBeenCalledTimes(2);

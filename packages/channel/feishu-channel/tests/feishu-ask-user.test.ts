@@ -1,3 +1,13 @@
+import {
+  FeishuCardActions,
+  type FeishuCardActionsOptions,
+} from '../src/session/card-actions.js';
+import {
+  DREAMUX_ASK_CANCEL_ACTION,
+  DREAMUX_ASK_OTHER_ACTION,
+  DREAMUX_ASK_PICK_ACTION,
+  DREAMUX_ASK_SUBMIT_ACTION,
+} from '../src/card-actions.js';
 /**
  * `ask_user_question`: the round outlives the tool call, and the server owns
  * the answer.
@@ -15,36 +25,34 @@
  * model to wait for the user's next message. The expiry repaint must stay
  * inside Feishu's 14-day message-patch window.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { FeishuCardActionEvent } from '../src/bot.js';
+import type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 import {
   ASK_USER_CARD_TTL_MS,
   createAskUserRegistry,
   type AskUserExpiry,
   type AskUserRegistry,
-  type AskUserTimers,
-} from '../src/feishu-ask-user.js';
+} from '../src/ask-user/registry.js';
 import {
   ASK_USER_CANCEL_LABEL,
   buildAskUserCard,
   buildAskUserClosedCard,
   buildAskUserSubmittedCard,
-  DREAMUX_ASK_CANCEL_ACTION,
   DREAMUX_ASK_OPTION_KEY,
-  DREAMUX_ASK_OTHER_ACTION,
-  DREAMUX_ASK_PICK_ACTION,
   DREAMUX_ASK_QUESTION_KEY,
   DREAMUX_ASK_REQUEST_KEY,
-  DREAMUX_ASK_SUBMIT_ACTION,
   type AskUserQuestionSpec,
-} from '../src/feishu-ask-user-card.js';
-import { DREAMUX_ACTION_KEY } from '../src/feishu-pairing-card.js';
+} from '../src/cards/ask-user.js';
+import { DREAMUX_ACTION_KEY } from '../src/card-actions.js';
 import {
   ASK_USER_NEXT_INSTRUCTION,
   askUserQuestionDef,
 } from '../src/tools/ask-user-question.js';
-import type { FeishuToolContext, FeishuToolSession } from '../src/tools/types.js';
+import type {
+  FeishuToolContext,
+  FeishuToolSession,
+} from '../src/tools/types.js';
 
 const QUESTIONS: readonly AskUserQuestionSpec[] = [
   {
@@ -65,7 +73,8 @@ const QUESTIONS: readonly AskUserQuestionSpec[] = [
   },
 ];
 
-const EXPLANATION = '# Context\n\n- Compare the options with <at user_id="ou_reader">Reader</at>.';
+const EXPLANATION =
+  '# Context\n\n- Compare the options with <at user_id="ou_reader">Reader</at>.';
 
 function expectExplanation(card: unknown, withoutText: unknown): void {
   const original = withoutText as { body: { elements: unknown[] } };
@@ -73,7 +82,10 @@ function expectExplanation(card: unknown, withoutText: unknown): void {
     ...original,
     body: {
       ...original.body,
-      elements: [{ tag: 'markdown', content: EXPLANATION }, ...original.body.elements],
+      elements: [
+        { tag: 'markdown', content: EXPLANATION },
+        ...original.body.elements,
+      ],
     },
   });
 }
@@ -95,28 +107,21 @@ function event(
 /** Every string leaf in a card tree, so a repaint can be asserted on text. */
 function stringLeaves(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') out.push(value);
-  else if (Array.isArray(value)) for (const item of value) stringLeaves(item, out);
+  else if (Array.isArray(value))
+    for (const item of value) stringLeaves(item, out);
   else if (value !== null && typeof value === 'object') {
     for (const item of Object.values(value)) stringLeaves(item, out);
   }
   return out;
 }
 
-function manualTimers(): AskUserTimers & { fire(): void } {
-  const queued: (() => void)[] = [];
-  return {
-    set(fn) {
-      queued.push(fn);
-      return queued.length - 1;
-    },
-    clear(handle) {
-      queued[handle as number] = () => undefined;
-    },
-    fire() {
-      for (const fn of [...queued]) fn();
-    },
-  };
-}
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
 
 /**
  * Open a round and put it in play, which is what a successful send does. A
@@ -128,7 +133,11 @@ function openRound(
   messageId: string | undefined = undefined,
 ): string {
   const opened = registry.open({ questions: QUESTIONS });
-  opened.activate(messageId);
+  opened.activate(
+    messageId === undefined
+      ? undefined
+      : { messageId, chatId: 'oc_test', threadId: undefined },
+  );
   return opened.requestId;
 }
 
@@ -150,10 +159,18 @@ function pickOption(
 
 describe('ask-user registry', () => {
   it('keeps the explanation above the questions through picks and free-text repaints', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const opened = registry.open({ text: EXPLANATION, questions: QUESTIONS });
-    opened.activate('om_card');
-    const view = { requestId: opened.requestId, questions: QUESTIONS, answers: new Map() };
+    opened.activate({
+      messageId: 'om_card',
+      chatId: 'oc_test',
+      threadId: undefined,
+    });
+    const view = {
+      requestId: opened.requestId,
+      questions: QUESTIONS,
+      answers: new Map(),
+    };
     expectExplanation(opened.card, buildAskUserCard(view));
 
     const value = {
@@ -163,17 +180,25 @@ describe('ask-user registry', () => {
     };
     const picked = registry.apply(event(DREAMUX_ASK_PICK_ACTION, value));
     if (picked.kind !== 'response') throw new Error('expected a response');
-    expectExplanation(picked.response.card?.data, buildAskUserCard({
-      ...view,
-      answers: new Map([[0, { kind: 'option', index: 1 }]]),
-    }));
+    expectExplanation(
+      picked.response.card?.data,
+      buildAskUserCard({
+        ...view,
+        answers: new Map([[0, { kind: 'option', index: 1 }]]),
+      }),
+    );
 
-    const other = registry.apply(event(DREAMUX_ASK_OTHER_ACTION, value, 'Use Postgres'));
+    const other = registry.apply(
+      event(DREAMUX_ASK_OTHER_ACTION, value, 'Use Postgres'),
+    );
     if (other.kind !== 'response') throw new Error('expected a response');
-    expectExplanation(other.response.card?.data, buildAskUserCard({
-      ...view,
-      answers: new Map([[0, { kind: 'other', text: 'Use Postgres' }]]),
-    }));
+    expectExplanation(
+      other.response.card?.data,
+      buildAskUserCard({
+        ...view,
+        answers: new Map([[0, { kind: 'other', text: 'Use Postgres' }]]),
+      }),
+    );
 
     const cleared = registry.apply(event(DREAMUX_ASK_OTHER_ACTION, value, ''));
     if (cleared.kind !== 'response') throw new Error('expected a response');
@@ -183,37 +208,49 @@ describe('ask-user registry', () => {
   it.each(['submitted', 'cancelled'] as const)(
     'keeps the explanation on the %s card, without repeating it to the model',
     (outcome) => {
-      const registry = createAskUserRegistry({ timers: manualTimers() });
+      const registry = createAskUserRegistry();
       const opened = registry.open({ text: EXPLANATION, questions: QUESTIONS });
-      opened.activate('om_card');
+      opened.activate({
+        messageId: 'om_card',
+        chatId: 'oc_test',
+        threadId: undefined,
+      });
       pickOption(registry, opened.requestId, 0, 0);
-      const settled = registry.apply(event(
-        outcome === 'submitted' ? DREAMUX_ASK_SUBMIT_ACTION : DREAMUX_ASK_CANCEL_ACTION,
-        { [DREAMUX_ASK_REQUEST_KEY]: opened.requestId },
-      ));
+      const settled = registry.apply(
+        event(
+          outcome === 'submitted'
+            ? DREAMUX_ASK_SUBMIT_ACTION
+            : DREAMUX_ASK_CANCEL_ACTION,
+          { [DREAMUX_ASK_REQUEST_KEY]: opened.requestId },
+        ),
+      );
       if (settled.kind !== 'settled') throw new Error('expected settled');
-      const withoutText = outcome === 'submitted'
-        ? buildAskUserSubmittedCard({
-          requestId: opened.requestId,
-          questions: QUESTIONS,
-          answers: new Map([[0, { kind: 'option', index: 0 }]]),
-        })
-        : buildAskUserClosedCard('cancelled');
+      const withoutText =
+        outcome === 'submitted'
+          ? buildAskUserSubmittedCard({
+              requestId: opened.requestId,
+              questions: QUESTIONS,
+              answers: new Map([[0, { kind: 'option', index: 0 }]]),
+            })
+          : buildAskUserClosedCard('cancelled');
       expectExplanation(settled.response.card?.data, withoutText);
       expect(settled.settlement.text).not.toContain(EXPLANATION);
     },
   );
 
   it('keeps the explanation on the expired card, without repeating it to the model', () => {
-    const timers = manualTimers();
     const expired: AskUserExpiry[] = [];
-    const registry = createAskUserRegistry({
-      timers,
-      onExpire: (expiry) => expired.push(expiry),
+    const registry = createAskUserRegistry();
+    registry.events.on('expired', (expiry) => {
+      expired.push(expiry);
     });
-    registry.open({ text: EXPLANATION, questions: QUESTIONS }).activate('om_card');
+    registry.open({ text: EXPLANATION, questions: QUESTIONS }).activate({
+      messageId: 'om_card',
+      chatId: 'oc_test',
+      threadId: undefined,
+    });
 
-    timers.fire();
+    vi.advanceTimersByTime(ASK_USER_CARD_TTL_MS);
 
     expect(expired).toHaveLength(1);
     expectExplanation(expired[0]?.card, buildAskUserClosedCard('expired'));
@@ -221,7 +258,7 @@ describe('ask-user registry', () => {
   });
 
   it('records a pick server-side and repaints the card as selected', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const requestId = openRound(registry);
 
     const applied = registry.apply(
@@ -242,7 +279,7 @@ describe('ask-user registry', () => {
   });
 
   it('lets free text answer a question, and replace a picked option', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const requestId = openRound(registry);
     registry.apply(
       event(DREAMUX_ASK_PICK_ACTION, {
@@ -264,7 +301,9 @@ describe('ask-user registry', () => {
     );
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     expect(settled.kind).toBe('settled');
     if (settled.kind !== 'settled') return;
@@ -274,7 +313,7 @@ describe('ask-user registry', () => {
   });
 
   it('clearing the free-text box takes the answer back', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const requestId = openRound(registry);
     registry.apply(
       event(
@@ -295,33 +334,43 @@ describe('ask-user registry', () => {
     pickOption(registry, requestId, 1, 0);
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     expect(settled.settlement.text).toContain('(left unanswered)');
   });
 
   it('cancel tells the model to stop asking, not that a button was pressed', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const requestId = openRound(registry);
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_CANCEL_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_CANCEL_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     expect(settled.settlement.outcome).toBe('cancelled');
-    expect(settled.settlement.text).toContain('Do not send another question card');
+    expect(settled.settlement.text).toContain(
+      'Do not send another question card',
+    );
   });
 
   it('settles a round exactly once, so a double click cannot deliver twice', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const requestId = openRound(registry);
     pickOption(registry, requestId, 0, 0);
     const first = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     const second = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
 
     expect(first.kind).toBe('settled');
@@ -331,7 +380,7 @@ describe('ask-user registry', () => {
   });
 
   it('answers a click on a round it no longer has instead of going silent', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     openRound(registry);
     registry.abandonAll();
 
@@ -343,11 +392,10 @@ describe('ask-user registry', () => {
   });
 
   it('leaves nothing behind when the card never reached the chat', () => {
-    const timers = manualTimers();
     const expired: AskUserExpiry[] = [];
-    const registry = createAskUserRegistry({
-      timers,
-      onExpire: (expiry) => expired.push(expiry),
+    const registry = createAskUserRegistry();
+    registry.events.on('expired', (expiry) => {
+      expired.push(expiry);
     });
     // The send threw, so `activate` was never reached.
     const opened = registry.open({ questions: QUESTIONS });
@@ -360,18 +408,20 @@ describe('ask-user registry', () => {
     expect(applied.kind).toBe('response');
     // And no clock is running: a round with no card must never tell the model
     // that a question it never asked went unanswered.
-    timers.fire();
+    vi.advanceTimersByTime(ASK_USER_CARD_TTL_MS);
     expect(expired).toHaveLength(0);
   });
 
   it('refuses a submit with nothing chosen instead of spending the round', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const opened = registry.open({ questions: QUESTIONS });
     opened.activate(undefined);
     const { requestId } = opened;
 
     const empty = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     expect(empty.kind).toBe('response');
     if (empty.kind !== 'response') return;
@@ -390,7 +440,9 @@ describe('ask-user registry', () => {
       }),
     );
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     // One question answered, one not: still a submit, and still worth sending.
@@ -398,18 +450,31 @@ describe('ask-user registry', () => {
     expect(settled.settlement.text).toContain('(left unanswered)');
   });
 
-  it('leaves other cards alone', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
-    expect(registry.apply(event('approve_pairing', {})).kind).toBe('ignored');
+  it('leaves other cards alone', async () => {
+    const registry = createAskUserRegistry();
+    const apply = vi.spyOn(registry, 'apply');
+    const extensions: Pick<FeishuCardActionsOptions['extensions'], 'action'> = {
+      action: () => undefined,
+    };
+    const actions = new FeishuCardActions({
+      askUser: registry,
+      extensions,
+    } as FeishuCardActionsOptions);
+    await expect(
+      actions.handle(event('unrelated_extension_action', {})),
+    ).resolves.toEqual({});
+    expect(apply).not.toHaveBeenCalled();
   });
 
   it('anchors the answer on the real card, never on the dedup id', () => {
-    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const registry = createAskUserRegistry();
     const requestId = openRound(registry);
     pickOption(registry, requestId, 0, 0);
 
     const settled = registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
     if (settled.kind !== 'settled') throw new Error('expected settled');
     // `sourceId` is synthetic so one round settles once; it is not a Feishu
@@ -425,15 +490,14 @@ describe('ask-user registry', () => {
   });
 
   it('falls back to the id recorded at send time when a round expires', () => {
-    const timers = manualTimers();
     const expired: AskUserExpiry[] = [];
-    const registry = createAskUserRegistry({
-      timers,
-      onExpire: (expiry) => expired.push(expiry),
+    const registry = createAskUserRegistry();
+    registry.events.on('expired', (expiry) => {
+      expired.push(expiry);
     });
     openRound(registry, 'om_sent');
 
-    timers.fire();
+    vi.advanceTimersByTime(ASK_USER_CARD_TTL_MS);
     // No click means no event to read the card id from — only what the send
     // recorded — and nobody to attribute the (absent) answer to.
     expect(expired[0]?.settlement.cardMessageId).toBe('om_sent');
@@ -441,15 +505,14 @@ describe('ask-user registry', () => {
   });
 
   it('closes an unanswered round and tells the model to stand still', () => {
-    const timers = manualTimers();
     const expired: AskUserExpiry[] = [];
-    const registry = createAskUserRegistry({
-      timers,
-      onExpire: (expiry) => expired.push(expiry),
+    const registry = createAskUserRegistry();
+    registry.events.on('expired', (expiry) => {
+      expired.push(expiry);
     });
     openRound(registry, 'om_card');
 
-    timers.fire();
+    vi.advanceTimersByTime(ASK_USER_CARD_TTL_MS);
 
     expect(expired).toHaveLength(1);
     expect(expired[0]?.settlement.outcome).toBe('expired');
@@ -461,37 +524,47 @@ describe('ask-user registry', () => {
   });
 
   it('does not expire a round a click already settled', () => {
-    const timers = manualTimers();
     const expired: AskUserExpiry[] = [];
-    const registry = createAskUserRegistry({
-      timers,
-      onExpire: (expiry) => expired.push(expiry),
+    const registry = createAskUserRegistry();
+    registry.events.on('expired', (expiry) => {
+      expired.push(expiry);
     });
     const requestId = openRound(registry);
     pickOption(registry, requestId, 0, 0);
     registry.apply(
-      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      }),
     );
 
-    timers.fire();
+    vi.advanceTimersByTime(ASK_USER_CARD_TTL_MS);
     expect(expired).toHaveLength(0);
   });
 
   it('allows 24 hours to answer, inside the 14-day message-patch window', () => {
     expect(ASK_USER_CARD_TTL_MS).toBe(24 * 60 * 60 * 1000);
     expect(ASK_USER_CARD_TTL_MS).toBeLessThan(14 * 24 * 60 * 60 * 1000);
-    const timers = manualTimers();
-    const set = vi.spyOn(timers, 'set');
-    openRound(createAskUserRegistry({ timers }));
-    expect(set).toHaveBeenCalledWith(expect.any(Function), ASK_USER_CARD_TTL_MS);
+    const expired: AskUserExpiry[] = [];
+    const registry = createAskUserRegistry();
+    registry.events.on('expired', (expiry) => {
+      expired.push(expiry);
+    });
+    openRound(registry, 'om_card');
+    vi.advanceTimersByTime(ASK_USER_CARD_TTL_MS - 1);
+    expect(expired).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(expired).toHaveLength(1);
+    expect(expired[0]?.settlement.outcome).toBe('expired');
   });
 });
 
 describe('ask_user_question tool', () => {
-  function context(session: Partial<FeishuToolSession>): FeishuToolContext {
+  function context(
+    cardActions: FeishuToolSession['cardActions'],
+  ): FeishuToolContext {
     return {
       caller: { kind: 'dispatcher' } as FeishuToolContext['caller'],
-      session: session as FeishuToolSession,
+      session: { cardActions } as FeishuToolSession,
     };
   }
 
@@ -560,23 +633,30 @@ describe('ask_user_question tool', () => {
 
   it('parses and passes the explanation to the session unchanged', async () => {
     const askUserQuestion = vi.fn().mockResolvedValue({ request_id: 'r1' });
-    const parsed = askUserQuestionDef.parse({ ...validArgs, text: EXPLANATION });
+    const parsed = askUserQuestionDef.parse({
+      ...validArgs,
+      text: EXPLANATION,
+    });
     expect(parsed.text).toBe(EXPLANATION);
     await askUserQuestionDef.handle(context({ askUserQuestion }), parsed);
     expect(askUserQuestion).toHaveBeenCalledWith({
+      sender: { kind: 'agent', teamName: null },
       chatId: 'oc_test',
       questions: validArgs.questions,
       text: EXPLANATION,
     });
   });
 
-  it.each([undefined, null, ''])('omits an empty explanation (%s)', async (text) => {
-    const askUserQuestion = vi.fn().mockResolvedValue({ request_id: 'r1' });
-    const parsed = askUserQuestionDef.parse({ ...validArgs, text });
-    expect(parsed).not.toHaveProperty('text');
-    await askUserQuestionDef.handle(context({ askUserQuestion }), parsed);
-    expect(askUserQuestion.mock.calls[0]?.[0]).not.toHaveProperty('text');
-  });
+  it.each([undefined, null, ''])(
+    'omits an empty explanation (%s)',
+    async (text) => {
+      const askUserQuestion = vi.fn().mockResolvedValue({ request_id: 'r1' });
+      const parsed = askUserQuestionDef.parse({ ...validArgs, text });
+      expect(parsed).not.toHaveProperty('text');
+      await askUserQuestionDef.handle(context({ askUserQuestion }), parsed);
+      expect(askUserQuestion.mock.calls[0]?.[0]).not.toHaveProperty('text');
+    },
+  );
 
   it('needs a chat and questions, and offers a message and explanation', () => {
     const schema = askUserQuestionDef.inputSchema as {

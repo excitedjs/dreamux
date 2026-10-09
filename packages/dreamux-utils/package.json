@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/dreamux-utils",
   "version": "0.5.1",
-  "description": "Pure shared utilities for Dreamux providers and host: neutral config-validation primitives, OS/filesystem helpers, completion-body resolution, and inbound-turn render helpers. Depends on nothing: not on @excitedjs/dreamux core, and not on @excitedjs/dreamux-types, which is the type set external providers compile against.",
+  "description": "Pure shared utilities for Dreamux providers and host: neutral config-validation primitives, OS/filesystem helpers, and completion-body resolution. Depends on nothing: not on @excitedjs/dreamux core, and not on @excitedjs/dreamux-types, which is the type set external providers compile against.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -30,7 +30,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
-    "lint": "eslint .",
+    "lint": "eslint . && prettier --check . '!**/*.md' '!**/dist/**' '!**/CHANGELOG.json' '!**/.rush/**'",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
@@ -40,6 +40,7 @@
     "@excitedjs/eslint-config": "workspace:*",
     "@types/node": "^22.10.0",
     "eslint": "^9.39.0",
+    "prettier": "^3.9.9",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }

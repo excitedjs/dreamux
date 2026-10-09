@@ -1,9 +1,7 @@
 /**
- * Internal server entry point for `dreamux serve`.
- *
- * Usage:
- *   dreamux serve                  # run in foreground; logs to stderr
- *   dreamux serve --help
+ * `dreamux serve`'s implementation: {@link runServe} runs in-process inside
+ * the `dreamux` CLI process — `cli/commands/serve.ts` calls it directly, no
+ * child process involved. It logs to stderr for a foreground run.
  *
  * Configuration sources:
  *   - ~/.dreamux/config.json — named agents[], dispatcher declarations, and
@@ -12,17 +10,24 @@
  *     referenced via dispatchers[].agentRuntime
  *   - built-in defaults compiled into the binary
  *
+ * Plugins (the optional top-level plugins[] plus the always-loaded built-in
+ * plugins) load and contribute providers inside ConfigService.open; their
+ * `server` entries run once the file logger exists, before the Server is
+ * constructed, so every host hook is tapped before the first Dispatcher exists.
+ *
  * Per-dispatcher channel secrets live in the dreamux JSON config.
  */
 
 import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
-import { loadConfig } from '../config/config.js';
-import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { ConfigService } from '../config/service.js';
+import { ProviderRegistry } from '../registry/index.js';
+import { startPlugins } from '../plugin/host.js';
 import { createLogger } from '../platform/logger.js';
-import { errorInfo } from '../platform/error-info.js';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import {
+  adminSocketLockPath,
   adminSocketPath,
   channelLogDir,
   channelLogPath,
@@ -35,25 +40,32 @@ import {
 } from '../platform/paths.js';
 import { sweepRuntimeSocketDirs } from '../platform/runtime-sockets.js';
 
-async function main(): Promise<void> {
-  if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    printHelp();
-    return;
-  }
+/**
+ * Upper bound on a signal-initiated shutdown. A healthy shutdown reaps each
+ * runtime child within a couple of seconds (SIGTERM, then SIGKILL, one second
+ * each), so this only fires for a shutdown that is stuck. It stays below both
+ * service managers' default stop timeouts (launchd's ExitTimeOut is 20s,
+ * systemd's TimeoutStopSec is 90s; the installed units set neither), so the
+ * daemon reports its own hang before the manager kills it.
+ */
+const SHUTDOWN_DEADLINE_MS = 15_000;
 
-  // Seed a registry with the builtin provider DESCRIPTORS and hand it to
-  // loadConfig, which loads every referenced provider implementation — builtin
-  // AND npm, both kinds — through the single dynamic loader before parsing
-  // agents[]/channels[] (each entry's config is parsed through its provider's
-  // readConfig, so the implementation must be present first). `builtin:*` is
-  // just an alias the loader resolves to a package name; there is no separate
-  // static builtin-registration path. The populated registry then backs the
-  // Server's runtime + channel catalogs (Server builds them from it).
-  const providerRegistry = createBuiltinProviderRegistry();
+export async function runServe(): Promise<void> {
+  // Hand an empty registry to ConfigService.open, which loads plugins first —
+  // contributing codex/claude-code/feishu, the always-loaded built-ins, each
+  // with its descriptor and implementation registered together — then loads
+  // any npm:-ref provider agents[]/channels[] name, before parsing them (each
+  // entry's config is parsed through its provider's readConfig, so the
+  // implementation must be present first). The populated registry then backs
+  // the Server's runtime + channel catalogs (Server builds them from it).
+  const providerRegistry = new ProviderRegistry();
 
-  // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
+  // Open ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile } = await loadConfig({ providerRegistry });
+  // The ConfigService is this process's single authority over config.json for
+  // the rest of its life — every long-lived object that needs the current
+  // config holds it, rather than a DreamuxConfig value read once here.
+  const configService = await ConfigService.open({ providerRegistry });
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
@@ -64,72 +76,50 @@ async function main(): Promise<void> {
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a
   // foreground `serve` stays visible.
   const logger = createLogger({ name: 'server', filePath: serverLogPath() });
-  logger.info({ config_file: configFile }, 'loaded global config');
+  logger.info({ config_file: configService.file }, 'loaded global config');
+  const { hooks } = startPlugins(configService.plugins, logger);
 
   const server = new Server({
-    config,
+    config: configService,
     providerRegistry,
+    hooks,
     logger,
     channelLoggerFactory: (id) =>
       createLogger({ name: `channel/${id}`, filePath: channelLogPath(id) }),
     workflowLoggerFactory: (id) =>
       createLogger({ name: `workflow/${id}`, filePath: workflowLogPath(id) }),
     runtimeSocketSweep: () => sweepRuntimeSocketDirs(),
-    legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
+    legacyAdminLockPath: adminSocketLockPath(legacyAdminSocketPath()),
   });
   await server.start();
   logger.info({ admin_socket: adminSocketPath() }, 'server up');
 
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.info({ signal }, 'received signal');
-    await server.shutdown();
-    process.exit(0);
-  };
+  // A termination signal always ends the process, whatever shutdown does: a
+  // rejected shutdown exits non-zero, and a shutdown that never settles (it
+  // drains admitted work, and a runtime start has no timeout of its own) is cut
+  // off by the deadline, which does not depend on the shutdown promise. A
+  // dispatcher's own close retry serves a daemon that keeps running after a
+  // failed start; it is not a reason for the process to outlive a signal.
   const requestShutdown = (signal: string): void => {
-    void shutdown(signal).catch((error: unknown) => {
+    logger.info({ signal }, 'received signal');
+    setTimeout(() => {
       logger.error(
-        { signal, err: errorInfo(error) },
-        'server shutdown failed; process remains fenced for teardown retry',
+        { signal, deadline_ms: SHUTDOWN_DEADLINE_MS },
+        'server shutdown did not settle before its deadline; exiting',
       );
-    });
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS);
+    server.shutdown().then(
+      () => process.exit(0),
+      (error: unknown) => {
+        logger.error(
+          { signal, err: errorInfo(error) },
+          'server shutdown failed; exiting',
+        );
+        process.exit(1);
+      },
+    );
   };
   process.on('SIGTERM', () => requestShutdown('SIGTERM'));
   process.on('SIGINT', () => requestShutdown('SIGINT'));
 }
-
-function printHelp(): void {
-  console.log(`dreamux serve — local dreamux server
-
-Usage:
-  dreamux serve [--help]
-
-Global config:
-  ~/.dreamux/config.json    Created by 'dreamux onboard'. Override with the
-                            DREAMUX_CONFIG_DIR env var. Edit and restart to
-                            apply. Holds named agents[], dispatcher
-                            declarations (channels[] + agentRuntime), and
-                            channel secrets.
-
-Runtime data:
-  ~/.dreamux/run/           volatile run files: admin socket + lock, one-shot
-                            restart marker, and runtime rendezvous sockets.
-                            Safe to clear while no server is running.
-  ~/.dreamux/state/         durable server state: per-dispatcher status/access
-                            files and TeamMate records.
-  ~/.dreamux/logs/          server, channel, agent runtime, and MCP
-                            shim logs.
-
-Environment overrides:
-  DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
-
-Dispatcher declarations:
-  Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
-  Provider refs load through the registry before config validation.
-  Built-in refs are resolved through the same provider loading path as npm:<package>[#export].
-`);
-}
-
-main().catch((err) => {
-  console.error('[server] fatal:', err);
-  process.exit(1);
-});

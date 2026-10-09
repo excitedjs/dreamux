@@ -13,7 +13,31 @@ import {
   isBuiltinRef,
   parseProviderRef,
 } from './provider-ref.js';
-import type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeProvider,
+  ChannelProvider,
+  ProviderDescriptor,
+  ProviderKind,
+} from '@excitedjs/dreamux-types';
+
+/**
+ * A runnable provider implementation: the shape `register()` accepts for its
+ * `implementation` argument. Either neutral contract is valid regardless of
+ * `descriptor.kind` — the registry does not itself correlate the two, so this
+ * is a union, not a `descriptor.kind`-keyed mapping; a completely wrong
+ * implementation object (not a provider at all) is a compile error at the
+ * `register()` call site instead of only surfacing later at
+ * `getImplementation()`'s manual cast. Kind/contract agreement for the two
+ * package-loader call sites is enforced by each kind's `assertProvider`
+ * (`agent-runtime/external-provider.ts`, `channel/external-channel-provider.ts`)
+ * before `register()` runs; for the plugin-contribution call site
+ * (`registerBuiltinProvider`, called from `plugin/loader.ts`'s `contribute()`)
+ * there is no `assertProvider` step, so the typed `ContributeHost` closures in
+ * `plugin/loader.ts` (`channelProviders.contribute` / `agentRuntimeProviders.contribute`)
+ * are the only place that pairing is checked.
+ */
+export type ProviderImplementation =
+  AgentRuntimeProvider<unknown> | ChannelProvider<unknown>;
 
 /**
  * Provider kind and descriptor structural shapes are published by
@@ -21,7 +45,11 @@ import type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types'
  * `../registry/index.js` stay stable (issue #209). The registry runtime stays
  * in this package.
  */
-export type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types';
+// eslint-disable-next-line no-restricted-syntax -- neutral-contract type re-export documented above, so in-repo imports from ../registry/index.js keep resolving these names (issue #209)
+export type {
+  ProviderDescriptor,
+  ProviderKind,
+} from '@excitedjs/dreamux-types';
 
 /** Thrown when registering a provider id that is already registered. */
 export class DuplicateProviderError extends Error {
@@ -36,14 +64,6 @@ export class DuplicateProviderRefError extends Error {
   constructor(readonly ref: string) {
     super(`provider ref ${JSON.stringify(ref)} is already registered`);
     this.name = 'DuplicateProviderRefError';
-  }
-}
-
-/** Thrown when registering a runnable implementation for the same provider twice. */
-export class DuplicateProviderImplementationError extends Error {
-  constructor(readonly id: string) {
-    super(`provider ${JSON.stringify(id)} already has a runnable implementation`);
-    this.name = 'DuplicateProviderImplementationError';
   }
 }
 
@@ -70,8 +90,10 @@ export class ReservedExternalProviderError extends Error {
 }
 
 /**
- * In-process registry of provider descriptors. Construct an empty one and
- * register providers, or use `createBuiltinProviderRegistry` for the builtins.
+ * In-process registry of provider descriptors. Construct an empty one
+ * (`new ProviderRegistry()` is what every host entry point starts from
+ * before `loadPlugins` contributes the built-in providers) and register
+ * providers into it.
  */
 export class ProviderRegistry {
   private readonly providers = new Map<string, ProviderDescriptor>();
@@ -79,9 +101,19 @@ export class ProviderRegistry {
   private readonly implementations = new Map<string, unknown>();
 
   /**
-   * Register a provider. Throws {@link DuplicateProviderError} on a repeated id.
+   * Register a provider descriptor together with its runnable implementation.
+   * Every caller registers both in the same call — a built-in provider from
+   * its plugin's `contribute()`, an `npm:`-ref provider the first time its
+   * package loader resolves it — so there is no descriptor-only, completed-
+   * later registration state to support.
+   *
+   * Throws {@link DuplicateProviderError} / {@link DuplicateProviderRefError}
+   * on a repeated id/ref.
    */
-  register(descriptor: ProviderDescriptor): void {
+  register(
+    descriptor: ProviderDescriptor,
+    implementation: ProviderImplementation,
+  ): void {
     if (this.providers.has(descriptor.id)) {
       throw new DuplicateProviderError(descriptor.id);
     }
@@ -91,6 +123,7 @@ export class ProviderRegistry {
     }
     this.providers.set(descriptor.id, descriptor);
     this.providersByRef.set(canonicalRef, descriptor);
+    this.implementations.set(descriptor.id, implementation);
   }
 
   has(id: string): boolean {
@@ -104,16 +137,6 @@ export class ProviderRegistry {
   hasRef(ref: string | ProviderRef): boolean {
     const parsed = typeof ref === 'string' ? parseProviderRef(ref) : ref;
     return this.providersByRef.has(formatProviderRef(parsed));
-  }
-
-  registerImplementation(providerId: string, implementation: unknown): void {
-    if (!this.providers.has(providerId)) {
-      throw new UnknownBuiltinProviderError(providerId);
-    }
-    if (this.implementations.has(providerId)) {
-      throw new DuplicateProviderImplementationError(providerId);
-    }
-    this.implementations.set(providerId, implementation);
   }
 
   getImplementation(providerId: string): unknown | undefined {

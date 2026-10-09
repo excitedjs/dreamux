@@ -48,12 +48,12 @@ const mutating = { readOnlyHint: false, destructiveHint: false } as const;
  */
 const DELIVERY_RULE =
   'Feishu delivers a document comment to this bot only when the bot would be ' +
-  'notified itself, and what satisfies that is the platform\'s rule rather ' +
-  'than a list this tool holds. One case delivers all of a document\'s ' +
-  'comments: a document written under this bot\'s identity. Every comment on ' +
+  "notified itself, and what satisfies that is the platform's rule rather " +
+  "than a list this tool holds. One case delivers all of a document's " +
+  "comments: a document written under this bot's identity. Every comment on " +
   'it arrives — mentioned or not, anchored to a passage or on the whole ' +
   'document, opening a thread or replying in one — because the bot owns it, ' +
-  'and ownership is what decides: collaborator access on someone else\'s ' +
+  "and ownership is what decides: collaborator access on someone else's " +
   'document, even full access, delivers none of that. What has been observed ' +
   'on a document someone else wrote is narrower: a comment or reply that ' +
   '@-mentions this bot while the app has permission on the document, or a ' +
@@ -82,7 +82,7 @@ interface SubscribeInput {
 
 export const subscribeDocumentDef: FeishuToolDef<SubscribeInput> = {
   name: 'subscribe_document',
-  title: 'Follow a Feishu document\'s comments',
+  title: "Follow a Feishu document's comments",
   description:
     'Follow one Feishu document so its comment events reach you. ' +
     DELIVERY_RULE +
@@ -119,11 +119,13 @@ export const subscribeDocumentDef: FeishuToolDef<SubscribeInput> = {
     };
   },
   async handle(ctx, input): Promise<FeishuToolResult> {
-    return { ...await ctx.session.subscribeDocument({
-      document: input.document,
-      type: input.type,
-      teamName: callerRecipient(ctx),
-    }) };
+    return {
+      ...(await ctx.session.docComments.subscribe({
+        document: input.document,
+        type: input.type,
+        teamName: callerRecipient(ctx),
+      })),
+    };
   },
 };
 
@@ -150,10 +152,12 @@ export const unsubscribeDocumentDef: FeishuToolDef<{ document: string }> = {
     return { document: requireString(obj, 'document') };
   },
   async handle(ctx, input): Promise<FeishuToolResult> {
-    return { ...await ctx.session.unsubscribeDocument({
-      document: input.document,
-      teamName: callerRecipient(ctx),
-    }) };
+    return {
+      ...(await ctx.session.docComments.unsubscribe({
+        document: input.document,
+        teamName: callerRecipient(ctx),
+      })),
+    };
   },
 };
 
@@ -195,7 +199,7 @@ export const listSubscriptionsDef: FeishuToolDef<Record<string, never>> = {
   async handle(ctx): Promise<FeishuToolResult> {
     return {
       channel_id: ctx.session.channelId,
-      subscriptions: ctx.session
+      subscriptions: ctx.session.routing
         .listSubscriptions(callerRecipient(ctx))
         .map((row) => ({ ...row })),
     };

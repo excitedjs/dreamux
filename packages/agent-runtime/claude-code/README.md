@@ -1,10 +1,13 @@
 # @excitedjs/agent-runtime-claude-code
 
-The built-in **Claude Code** Agent Runtime provider for
-[Dreamux](https://github.com/excitedjs/dreamux), published behind the stable
-`builtin:claude-code` alias.
+The built-in **Claude Code** Dreamux plugin, always loaded by
+[Dreamux](https://github.com/excitedjs/dreamux). Its default export is the neutral provider
+factory for `npm:@excitedjs/agent-runtime-claude-code`. `createClaudeCodePlugin()` is the
+named plugin factory: Dreamux always loads it to contribute `builtin:claude-code`.
+Named bare-provider constructors retain their own options.
 
-It implements the public `AgentRuntimeProvider` contract from
+The provider it contributes implements the public `AgentRuntimeProvider`
+contract from
 [`@excitedjs/dreamux-types`](../../dreamux-types) against a resident `claude`
 stream-json child: process supervision, the stream-json wire protocol (line
 framing, result aggregation, control-request replies), pending-request idle
@@ -26,11 +29,19 @@ come from `@excitedjs/dreamux-utils`.
 
 ## Loading
 
-Dreamux core resolves `builtin:claude-code` through the generic provider loader
-and supplies host contracts through the neutral create context. The package
-default-exports that provider factory, so
-`loadExternalAgentRuntimeProviders({ refs: ['builtin:claude-code'] })` can load it
-through the same package-loader path as external `npm:` providers.
+Dreamux always loads this package's plugin, which contributes the provider
+under `builtin:claude-code` through the neutral plugin `contribute(host)`
+hook; core supplies host contracts through the neutral create context.
+External callers can construct the bare provider directly, without going
+through the plugin:
+
+```ts
+import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-claude-code';
+```
+
+The factory takes no options. Runtime creation uses the neutral create context,
+the configured Claude binary, and the package's native session constructor and
+session id generator.
 
 ## Resident session and request settlement
 
@@ -49,12 +60,13 @@ follow its result and does not decide when another input can be submitted.
 Background native turns may run without a submission. Their activity and result
 boundaries remain observable, but they settle no unrelated request and do not
 terminate the resident process. Explicit inputs steered into a background turn
-settle normally once they join it. Concurrent input requires lifecycle evidence;
-sessions without it retain single-input compatibility. Native `cancelled` can
-describe a hard failure; it does not imply a user stop. Consumed commands retain
-their result membership through terminal lifecycle frames. An unconsumed command
-that is cancelled, refused or discarded settles as failed. Every native error
-result remains observable, including UUID-less errors and the `success` arm with
+settle normally once they join it. Command-lifecycle admission is assumed
+always supported: there is no capability check, no version gate, and no
+single-input fallback mode. Native `cancelled` can describe a hard failure; it
+does not imply a user stop. Consumed commands retain their result membership
+through terminal lifecycle frames. An unconsumed command that is cancelled,
+refused or discarded settles as failed. Every native error result remains
+observable, including UUID-less errors and the `success` arm with
 `is_error: true` carrying API error text.
 
 A setup error can precede `started` and omit the input UUID. It reports a failed
@@ -66,9 +78,9 @@ Core owns source deduplication, captured recipients and completion-token deliver
 The provider owns native admission: `failed` means the command was proven not
 written, while `ambiguous` means a native write may have been accepted and must
 not be retried automatically. Runtime stop synchronously fences new input,
-releases pending capability/write waiters, terminates the supervised process
-group with absence proof, resolves unsettled submissions as stopped, and drains
-already-started admission calls before it resolves.
+terminates the supervised process group with absence proof, resolves unsettled
+submissions as stopped, and drains already-started admission calls before it
+resolves.
 
 ## Native sessions and transcripts
 
@@ -82,26 +94,26 @@ live process; transcript discovery never controls request settlement.
 It returns neutral assistant/tool activity records and provider-owned opaque
 cursors. It is not a completion source.
 
-## Custom session factories
+## Native session contract
 
-A custom `ClaudeCodeSessionFactory` now implements `submit()` returning
+The native session implements `submit()` returning
 `RuntimeAdmission`; accepted submissions carry their own settlement promises.
 The old `submitTurn()`/`steerTurn()` window interface is removed. Session specs
 provide the pinned `sessionId` and optional `outputSchemaEnabled` result contract;
 the exit handler receives its failure cause.
 
 Session implementations own result validation and settlement. Their
-`onProtocolEvent` callback reports native activity independently: result events
-retain `commandUuids` for observation, and the public `command_lifecycle` variant
-reports native command state without deciding settlement in runtime or Core.
-An `interrupted` event can report an independently known interruption boundary.
-Emitting a callback alone no longer settles a
+`onProtocolEvent` callback reports native activity independently, without
+deciding settlement in runtime or Core: `result` events report a turn's
+terminal outcome, and an `interrupted` event can report an independently known
+interruption boundary. Emitting a callback alone no longer settles a
 request. These are breaking changes to the Claude-specific extension seam;
 the neutral `AgentRuntime` and `RuntimeSubmission` contracts are unchanged.
 
 ## Direct stream RPC consumers
 
-The exported `ClaudeCodeStreamRpc` has the same single `submit()` path, returning
+`ClaudeCodeStreamRpc` (package-internal; see `./rpc.ts`, no longer part of the
+public barrel) has the same single `submit()` path, returning
 `Promise<RuntimeAdmission>` in place of `submitTurn()` and `steerTurn()`. Accepted
 handles own eventual settlement; callers no longer await an aggregate window.
 Replace `failPending(error)` with `fail(error)` for transport failure or `stop()`
@@ -113,7 +125,7 @@ that failure for subsequent admission, even after cleanup calls `stop()`.
 `reapOnTimeout(error)` receives the failure `Error`. Protocol callbacks are
 observation only, as described above. Parsed `ResultEnvelope` and `TurnOutcome`
 also expose `terminalReason`, a string or `null`, for native terminal diagnostics.
-These changes break direct RPC consumers as well as custom session factories.
+Direct RPC consumers follow this same request and settlement contract.
 
 The default adapter uses consumption events because the observed background
 folds omit both result UUID echo fields. Claude Code 2.1.263 marks

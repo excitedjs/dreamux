@@ -13,7 +13,8 @@ shared structural types.
 - **Declarations only.** The package emits `.d.ts` files (`emitDeclarationOnly`)
   and publishes a `types`-only `exports` map — there is no runtime JS contract
   surface to import as a value.
-- **No runtime dependencies.** `package.json` declares only dev tooling.
+- **One runtime dependency, `tapable`, by type only.** The plugin hook contract
+  is tapable's hook types; beyond it `package.json` declares only dev tooling.
 - **No host-private types.** Provider create contexts here are neutral; Dreamux
   core adapts its private objects (dispatcher rows, stores, identity records)
   into these public shapes rather than exposing them.
@@ -34,6 +35,9 @@ shared structural types.
   collaboration operations, and dispatcher-scoped read-only core event DTOs.
   Channel delivery receipts are status-only and the core event surface carries
   no service Turn submitted/settled events;
+- plugin contracts: `DreamuxPlugin`, its `ContributeHost` / `ServerHost`, the
+  hooked `Dispatcher` / `Team` faces, `LaunchDraft`, and the
+  `DreamuxPluginApis` map a plugin augments to type its published `api`;
 - a minimal public logger type (`DreamuxLogger`).
 
 It does **not** export runtime implementations, default loggers, loader logic,
@@ -82,6 +86,14 @@ A provider implements the full contract against this package only — see
 > `packages/dreamux/src/agent-runtime/types.ts`) is the runtime-split slice's job
 > (issue #209 slice 3). The public target published here is already stable for
 > external and built-in runtime/channel packages to author against.
+
+## Plugin loading contract
+
+A plugin factory returns its `DreamuxPlugin` synchronously; `config.read`
+synchronously validates the plugin's config. Returning a thenable fails loading
+with the ref or plugin name and phase. Loaded plugin names must be unique
+ignoring ASCII case, so `Foo` and `foo` cannot coexist. A single mixed-case
+name keeps its original API key and `state/plugins/<name>` spelling.
 
 ## Build / test
 

@@ -1,4 +1,10 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -142,7 +148,8 @@ describe('log call sites never bypass key-based redaction with a dynamic message
     // without needing to know every logger variable's name. Comments are
     // stripped first so a docstring example is never mistaken for a real call
     // site.
-    const pattern = /(?<!console)\.(info|warn|error|debug|trace)\(\s*`[^`]*\$\{/;
+    const pattern =
+      /(?<!console)\.(info|warn|error|debug|trace)\(\s*`[^`]*\$\{/;
     const offenders = scannedFiles.filter((file) =>
       pattern.test(stripComments(readFileSync(file, 'utf8'))),
     );
@@ -150,7 +157,8 @@ describe('log call sites never bypass key-based redaction with a dynamic message
   });
 
   it('no .info/.warn/.error/.debug/.trace( call in core or a provider package builds its message by string-concatenating a variable', () => {
-    const pattern = /(?<!console)\.(info|warn|error|debug|trace)\(\s*['"][^'"]*['"]\s*\+/;
+    const pattern =
+      /(?<!console)\.(info|warn|error|debug|trace)\(\s*['"][^'"]*['"]\s*\+/;
     const offenders = scannedFiles.filter((file) =>
       pattern.test(stripComments(readFileSync(file, 'utf8'))),
     );

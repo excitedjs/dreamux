@@ -14,7 +14,7 @@ export class CronJobNotFoundError extends StatedFailure {
     super(
       'CRON_JOB_NOT_FOUND',
       message,
-      'List this agent\'s cron jobs through this surface and use an exact id ' +
+      "List this agent's cron jobs through this surface and use an exact id " +
         'from that list; an id from another owner never resolves here.',
     );
   }

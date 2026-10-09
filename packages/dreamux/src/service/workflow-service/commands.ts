@@ -7,16 +7,16 @@
  * model sends can select a scope here. Run admission, concurrency, and record
  * semantics stay inside the workflow service.
  *
- * The run-request codec and the record projection live with the service's own
- * types, and a failure states its own reason and next step where it is raised.
- * The TeamMate MCP delegate that advertises the Workflow tools reads the same
- * helpers; neither adapter reads the other.
+ * The run-request codec and the record projection live in the service's own
+ * `requests.ts`, and a failure states its own reason and next step where it is
+ * raised. The TeamMate MCP delegate that advertises the Workflow tools reads
+ * the same helpers; neither adapter reads the other.
  */
-import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
+import type { DispatcherCommandHost } from '../../command/host.js';
+import type { CoreCommandDefinition } from '../../command/types.js';
 
-import type { AnyCoreCommand } from '../../command/registry.js';
-import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
 import { commandPayload } from '../../command/payload.js';
+import type { AnyCoreCommand } from '../../command/registry.js';
 import {
   ANY,
   INTEGER,
@@ -25,15 +25,18 @@ import {
   STRING,
   objectSchema,
 } from '../../command/schema.js';
+import type { WorkflowOps } from './index.js';
 import {
   workflowRunIdParam,
   workflowRunInput,
   workflowRunResult,
-  type WorkflowListResult,
-  type WorkflowRunAccepted,
-  type WorkflowRunInput,
-  type WorkflowRunRecord,
-  type WorkflowStopResult,
+} from './requests.js';
+import type {
+  WorkflowListResult,
+  WorkflowRunAccepted,
+  WorkflowRunInput,
+  WorkflowRunRecord,
+  WorkflowStopResult,
 } from './types.js';
 
 interface WorkflowRunCommandInput {
@@ -45,7 +48,7 @@ interface WorkflowRunIdInput {
 }
 
 export function workflowCommands(
-  host: CoreCommandHost,
+  host: DispatcherCommandHost<{ workflows: WorkflowOps }>,
 ): readonly AnyCoreCommand[] {
   const run: CoreCommandDefinition<
     'workflow.run',
@@ -65,7 +68,7 @@ export function workflowCommands(
       return { request: workflowRunInput(commandPayload(payload)) };
     },
     async execute(context, input) {
-      return mustDispatcher(host, context).workflows.run(input.request);
+      return host.addressedDispatcher(context).workflows.run(input.request);
     },
   };
 
@@ -81,7 +84,7 @@ export function workflowCommands(
     parse: (payload) => runIdInput(payload),
     async execute(context, input) {
       return workflowRunResult(
-        await mustDispatcher(host, context).workflows.status({
+        await host.addressedDispatcher(context).workflows.status({
           run_id: input.runId,
         }),
       );
@@ -99,7 +102,7 @@ export function workflowCommands(
     output: OBJECT,
     parse: (payload) => runIdInput(payload),
     async execute(context, input) {
-      return mustDispatcher(host, context).workflows.stop({
+      return host.addressedDispatcher(context).workflows.stop({
         run_id: input.runId,
       });
     },
@@ -116,7 +119,7 @@ export function workflowCommands(
     output: OBJECT,
     parse: () => ({}),
     async execute(context) {
-      const result = await mustDispatcher(host, context).workflows.list();
+      const result = await host.addressedDispatcher(context).workflows.list();
       return { runs: result.runs.map(workflowRunResult) };
     },
   };
@@ -124,6 +127,8 @@ export function workflowCommands(
   return [run, status, stop, list] as unknown as readonly AnyCoreCommand[];
 }
 
-function runIdInput(payload: Parameters<typeof commandPayload>[0]): WorkflowRunIdInput {
+function runIdInput(
+  payload: Parameters<typeof commandPayload>[0],
+): WorkflowRunIdInput {
   return { runId: workflowRunIdParam(commandPayload(payload)) };
 }

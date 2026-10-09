@@ -23,26 +23,28 @@
  * operator who rebinds or removes the space meanwhile changes what the next
  * creation sees and nothing about one already under way.
  */
+import type { FeishuBindingOperations } from './routing/operations.js';
+import type { FeishuTeamSubmitter } from './session/submitter.js';
 import type {
   DreamuxLogger,
-  JsonValue,
+  TeamCreateCommand,
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
-import type { FeishuRouting } from './routing/index.js';
+import type { FeishuCoreCommands } from './feishu-core-commands.js';
+import {
+  errorMessage,
+  type FeishuChatSubmission,
+  type FeishuSubmitOutcome,
+} from './feishu-submit.js';
 import type { FeishuSpaceRecord } from './routing/document.js';
+import type { FeishuRouting } from './routing/index.js';
 import { targetIntent, teamNamePrefix } from './routing/naming.js';
 import {
   describeTarget,
   targetKey,
   type FeishuTarget,
 } from './routing/target.js';
-import {
-  errorMessage,
-  type FeishuChatSubmission,
-  type FeishuSubmitOutcome,
-  type FeishuTeamSubmitter,
-} from './feishu-submit.js';
 
 export interface FeishuProvisioningOptions {
   readonly dispatcherId: string;
@@ -50,16 +52,8 @@ export interface FeishuProvisioningOptions {
   readonly log: DreamuxLogger;
   readonly routing: FeishuRouting;
   readonly submitter: FeishuTeamSubmitter;
-  invoke(command: string, payload: JsonValue): Promise<JsonValue>;
-  /** Announce a newly installed route in the conversation it now serves. */
-  announce(input: {
-    target: FeishuTarget;
-    display: string | null;
-    teamName: string;
-    leaderName: string;
-    agentRuntime: string;
-    runtimeCwd: string;
-  }): void;
+  readonly commands: FeishuCoreCommands;
+  readonly bindings: Pick<FeishuBindingOperations, 'presentCommittedBind'>;
 }
 
 /** One target, one policy snapshot, and the message that discovered both. */
@@ -150,11 +144,11 @@ export class FeishuProvisioning {
     if (created.status === 'closed') {
       // Reachable now that the request id is the message id: it means this
       // exact message was already provisioned once and its Team has since been
-      // closed. Core keeps that acceptance permanently, so there is nothing to
-      // retry around — the message is reported unsubmitted and the triggering
-      // conversation gets the in-place failure notice. A *new* message to the
-      // same topic carries a new id and provisions a fresh Team, so a closed
-      // Team never strands a conversation.
+      // closed. Its valid record still carries the acceptance, so there is
+      // nothing to retry around — the message is reported unsubmitted and the
+      // triggering conversation gets the in-place failure notice. A new
+      // message to the same topic carries a new id and provisions a fresh Team,
+      // so a closed Team never strands a conversation.
       return {
         status: 'unsubmitted',
         message: `team.create replayed closed Team ${created.team_name}`,
@@ -166,14 +160,18 @@ export class FeishuProvisioning {
         message: 'team.create returned no Team name',
       };
     }
-    await this.opts.routing.bind({
+    const binding = await this.opts.routing.bind({
       target: input.target,
       teamName: created.team_name,
       display: input.display,
-      origin: 'space',
       spaceId: input.space.space_id,
+      // Automatic provisioning always has the message that triggered it, and
+      // its target is always a topic (`FeishuRouting.plan` only returns a
+      // `provision` plan for one) — the one path that can always set this.
+      rootMessageId: input.submission.anchor.messageId,
     });
-    this.opts.announce({
+    this.opts.bindings.presentCommittedBind({
+      ...binding,
       target: input.target,
       display: input.display,
       teamName: created.team_name,
@@ -181,7 +179,11 @@ export class FeishuProvisioning {
       agentRuntime: created.leader_agent_runtime,
       runtimeCwd: created.runtime_cwd,
     });
-    return this.opts.submitter.submit(created.team_name, input.submission);
+    return this.opts.submitter.submit(
+      created.team_name,
+      input.submission,
+      input.target,
+    );
   }
 
   /** A message that arrived while a run was live, delivered once it is done. */
@@ -193,18 +195,19 @@ export class FeishuProvisioning {
     if (binding === undefined) {
       return {
         status: 'unsubmitted',
-        message:
-          `provisioning for ${describeTarget(input.target)} installed no route`,
+        message: `provisioning for ${describeTarget(input.target)} installed no route`,
       };
     }
-    return this.opts.submitter.submit(binding.team_name, input.submission);
+    return this.opts.submitter.submit(
+      binding.team_name,
+      input.submission,
+      input.target,
+    );
   }
 
-  private async createTeam(
-    input: ProvisioningRequest,
-  ): Promise<TeamSummary> {
+  private async createTeam(input: ProvisioningRequest): Promise<TeamSummary> {
     const { space, target } = input;
-    return (await this.opts.invoke('team.create', {
+    const command: TeamCreateCommand = {
       // The inbound Feishu message id, used bare: it is globally unique, so it
       // needs no target prefix to stay distinct. Request identity is scoped to
       // the message that triggered provisioning, not to the topic, and that
@@ -212,16 +215,17 @@ export class FeishuProvisioning {
       //
       // The platform redelivering one message replays this same id, so Core's
       // team.create idempotency answers with the Team the first attempt made
-      // instead of building a second one. If that first attempt died between
-      // `team.create` and the routing bind, the replay returns the same Team
-      // summary and this run goes on to install the binding — recovering the
-      // half-finished provisioning rather than duplicating it.
+      // while that Team's valid record carries the acceptance. If that attempt
+      // died between `team.create` and the routing bind, the replay returns the
+      // same Team summary and installs the binding, recovering the unfinished
+      // provisioning without duplicating it.
       //
       // A new message always mints a new id, which is the point. After a Team
       // is dissolved, the next message to that same topic provisions a fresh
-      // Team normally. A thread-scoped id could not: Core keeps a request's
-      // acceptance record permanently, so it would replay `closed` forever and
-      // the topic could never be provisioned again.
+      // Team normally. A thread-scoped id would replay `closed` while the
+      // accepted Team's valid record remains. Once that fully retired record
+      // is deleted or damaged, the same request can create anew, but ordinary
+      // reprovisioning must not depend on losing the historical record.
       //
       // The cost of message scope is that a *different* message arriving after
       // a partial failure creates a second Team. That window is knowingly left
@@ -261,7 +265,8 @@ export class FeishuProvisioning {
             },
           }
         : {}),
-    } as JsonValue)) as unknown as TeamSummary;
+    };
+    return this.opts.commands.teamCreate(command);
   }
 }
 

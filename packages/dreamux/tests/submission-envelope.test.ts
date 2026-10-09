@@ -1,3 +1,7 @@
+import { dispatcherFixture } from './helpers/real-dispatcher.js';
+import { AgentIdentityStore } from '../src/service/agent/store.js';
+import { dispatcherDir } from '../src/platform/paths.js';
+import { createLogger } from '../src/platform/logger.js';
 /**
  * The submission envelope: the LOCKED `TeammateSubmitInput` signature, the
  * rendering rule that turns it into model-facing text, source selection
@@ -12,15 +16,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { DreamuxLogger, JsonValue, TeamSubmitCommand } from '@excitedjs/dreamux-types';
+import type { JsonValue, TeamSubmitCommand } from '@excitedjs/dreamux-types';
 
-import type { RestartIntentConsumer } from '../src/daemon/restart-intent.js';
 import {
   channelSubmitInput,
   parseChannelSubmission,
-} from '../src/service/channel-submission.js';
+} from '../src/service/agent/channel-submission.js';
 import { commandPayload } from '../src/command/payload.js';
-import { injectRestartNoticeIfNeeded } from '../src/service/dispatcher-service/restart-notice.js';
 import {
   AGENT_TASK_SOURCE,
   CHANNEL_SOURCE,
@@ -28,22 +30,13 @@ import {
   SCHEDULED_SOURCE,
   SYSTEM_SOURCE,
 } from '../src/service/submission-sources.js';
-import { teamSubmitResult } from '../src/service/team-service/types.js';
-import type { TeammateService } from '../src/service/teammate-service/index.js';
+import { teamSubmitResult } from '../src/service/team/requests.js';
 import {
   isSafeTagName,
   renderSubmission,
   type TeammateSubmitInput,
-} from '../src/service/teammate-service/submission.js';
-import type { TurnAdmission } from '../src/service/teammate-service/turn-recording.js';
-
-const silentLog: DreamuxLogger = {
-  error: () => {},
-  warn: () => {},
-  info: () => {},
-  debug: () => {},
-  trace: () => {},
-} as unknown as DreamuxLogger;
+} from '../src/service/agent/submission.js';
+import type { TurnAdmission } from '../src/service/agent/turn.js';
 
 /**
  * A type-only sink: passing an object literal here runs TypeScript's excess
@@ -56,7 +49,7 @@ const silentLog: DreamuxLogger = {
 function acceptSubmitInput(_input: TeammateSubmitInput): void {}
 
 describe('TeammateSubmitInput: the locked model-facing submission signature', () => {
-  it('accepts exactly source, attrs, text, reminder, sourceId, intent, deliverCompletion', () => {
+  it('accepts exactly source, attrs, text, reminder, sourceId, intent, completionRecipient', () => {
     const full: TeammateSubmitInput = {
       source: 'channel',
       attrs: { chat: 'general' },
@@ -64,12 +57,16 @@ describe('TeammateSubmitInput: the locked model-facing submission signature', ()
       reminder: 'be nice',
       sourceId: 'msg-1',
       intent: 'chat',
-      deliverCompletion: async () => undefined,
+      completionRecipient: {
+        prepareCompletion: async () => ({
+          submit: async () => ({ status: 'accepted' as const }),
+        }),
+      },
     };
     expect(Object.keys(full).sort()).toEqual(
       [
         'attrs',
-        'deliverCompletion',
+        'completionRecipient',
         'intent',
         'reminder',
         'source',
@@ -80,14 +77,23 @@ describe('TeammateSubmitInput: the locked model-facing submission signature', ()
   });
 
   it('rejects a channelInput wrapper (the removed multi-shape submission surface)', () => {
-    // @ts-expect-error channelInput wrapper was deleted; the four model-facing
-    // fields are flat on TeammateSubmitInput, not nested under a per-producer key.
-    acceptSubmitInput({ source: 'channel', text: 'x', channelInput: { chat: 'g' } });
+    acceptSubmitInput({
+      source: 'channel',
+      text: 'x',
+      // @ts-expect-error channelInput wrapper was deleted; the four
+      // model-facing fields are flat on TeammateSubmitInput, not nested
+      // under a per-producer key.
+      channelInput: { chat: 'g' },
+    });
   });
 
   it('rejects a scheduledInput wrapper', () => {
-    // @ts-expect-error scheduledInput wrapper was deleted the same way.
-    acceptSubmitInput({ source: 'cron', text: 'x', scheduledInput: { fire: 1 } });
+    acceptSubmitInput({
+      source: 'cron',
+      text: 'x',
+      // @ts-expect-error scheduledInput wrapper was deleted the same way.
+      scheduledInput: { fire: 1 },
+    });
   });
 
   it('rejects a controlInput wrapper', () => {
@@ -122,8 +128,12 @@ describe('TeammateSubmitInput: the locked model-facing submission signature', ()
   });
 
   it('rejects a caller-supplied AbortSignal', () => {
-    // @ts-expect-error there is no cancellation seam on the submission input.
-    acceptSubmitInput({ source: 'channel', text: 'x', signal: new AbortController().signal });
+    acceptSubmitInput({
+      source: 'channel',
+      text: 'x',
+      // @ts-expect-error there is no cancellation seam on the submission input.
+      signal: new AbortController().signal,
+    });
   });
 
   it('rejects a caller-supplied logging label', () => {
@@ -142,7 +152,11 @@ describe('renderSubmission: the one paired-root envelope', () => {
 
   it('renders an explicit empty attrs object identically to an omitted one', () => {
     const withOmitted = renderSubmission({ source: 'channel', text: 'hi' });
-    const withEmpty = renderSubmission({ source: 'channel', attrs: {}, text: 'hi' });
+    const withEmpty = renderSubmission({
+      source: 'channel',
+      attrs: {},
+      text: 'hi',
+    });
     expect(withEmpty).toBe(withOmitted);
     expect(withOmitted).toBe('<channel>hi</channel>');
   });
@@ -169,7 +183,9 @@ describe('renderSubmission: the one paired-root envelope', () => {
       attrs: { chat: 'general' },
       text: 'line one\nline two',
     });
-    expect(rendered).toBe('<channel chat="general">line one\nline two</channel>');
+    expect(rendered).toBe(
+      '<channel chat="general">line one\nline two</channel>',
+    );
   });
 
   it('never rewrites XML entities in the body', () => {
@@ -181,7 +197,10 @@ describe('renderSubmission: the one paired-root envelope', () => {
   });
 
   it('never wraps the body in CDATA', () => {
-    const rendered = renderSubmission({ source: 'channel', text: 'plain text' });
+    const rendered = renderSubmission({
+      source: 'channel',
+      text: 'plain text',
+    });
     expect(rendered).not.toContain('CDATA');
   });
 
@@ -218,7 +237,9 @@ describe('renderSubmission: the one paired-root envelope', () => {
   });
 
   it('omits the reminder entirely when absent or empty', () => {
-    expect(renderSubmission({ source: 'channel', text: 'hi' })).not.toContain('reminder');
+    expect(renderSubmission({ source: 'channel', text: 'hi' })).not.toContain(
+      'reminder',
+    );
     expect(
       renderSubmission({ source: 'channel', text: 'hi', reminder: '' }),
     ).not.toContain('reminder');
@@ -228,12 +249,18 @@ describe('renderSubmission: the one paired-root envelope', () => {
     expect(() => renderSubmission({ source: 'bad name', text: 'x' })).toThrow(
       /not a safe tag name/,
     );
-    expect(() => renderSubmission({ source: '<channel>', text: 'x' })).toThrow();
+    expect(() =>
+      renderSubmission({ source: '<channel>', text: 'x' }),
+    ).toThrow();
   });
 
   it('fails loud on an unsafe attribute name instead of degrading', () => {
     expect(() =>
-      renderSubmission({ source: 'channel', attrs: { 'bad name': 'v' }, text: 'x' }),
+      renderSubmission({
+        source: 'channel',
+        attrs: { 'bad name': 'v' },
+        text: 'x',
+      }),
     ).toThrow(/not a safe tag name/);
   });
 
@@ -245,7 +272,7 @@ describe('renderSubmission: the one paired-root envelope', () => {
     );
   });
 
-  it('renders none of sourceId, intent, or deliverCompletion — they are Core-only fields', () => {
+  it('renders none of sourceId, intent, or completionRecipient — they are Core-only fields', () => {
     // Exact equality (not `.toContain`) is load-bearing: a `.toContain('hi')`
     // check would pass even if a leak like `sourceId` sneaked into an attr or
     // a second child. Only the paired root and the untouched body may appear.
@@ -254,7 +281,11 @@ describe('renderSubmission: the one paired-root envelope', () => {
       text: 'hi',
       sourceId: 'SECRET-msg-77',
       intent: 'SECRET-intent',
-      deliverCompletion: async () => {},
+      completionRecipient: {
+        prepareCompletion: async () => ({
+          submit: async () => ({ status: 'accepted' as const }),
+        }),
+      },
     });
     expect(rendered).toBe('<channel>hi</channel>');
     expect(rendered).not.toContain('SECRET');
@@ -325,7 +356,10 @@ describe('parseChannelSubmission + channelSubmitInput: the ingress boundary shar
   });
 
   it('carries the caller attrs through to the envelope unchanged', () => {
-    const result = channelInput({ ...base, attrs: { title: 'second', chat: 'general' } });
+    const result = channelInput({
+      ...base,
+      attrs: { title: 'second', chat: 'general' },
+    });
     expect(result.attrs).toEqual({ title: 'second', chat: 'general' });
   });
 
@@ -347,7 +381,10 @@ describe('parseChannelSubmission + channelSubmitInput: the ingress boundary shar
 
 describe('Command-boundary admission normalization (team-collection/projections.ts)', () => {
   function submitted(): TurnAdmission {
-    return { status: 'submitted', turn: { id: 'turn-1' } } as unknown as TurnAdmission;
+    return {
+      status: 'submitted',
+      turn: { id: 'turn-1' },
+    } as unknown as TurnAdmission;
   }
 
   it('reports a real turn_id only for a newly submitted turn', () => {
@@ -371,7 +408,9 @@ describe('Command-boundary admission normalization (team-collection/projections.
   });
 
   it('reports a plain `stopped` unchanged', () => {
-    expect(teamSubmitResult({ status: 'stopped' })).toEqual({ status: 'stopped' });
+    expect(teamSubmitResult({ status: 'stopped' })).toEqual({
+      status: 'stopped',
+    });
   });
 
   it('`failed` proves pre-admission: a distinct code from `ambiguous`, no turn_id', () => {
@@ -379,7 +418,7 @@ describe('Command-boundary admission normalization (team-collection/projections.
     const result = teamSubmitResult({ status: 'failed', error });
     expect(result.status).toBe('failed');
     expect(result.error).toEqual({
-      code: 'TEAM_SUBMIT_FAILED',
+      code: 'SUBMIT_FAILED',
       message: error.message,
     });
     expect('turn_id' in result).toBe(false);
@@ -394,7 +433,7 @@ describe('Command-boundary admission normalization (team-collection/projections.
     // would make a second call behave like an automatic retry.
     expect(first).toEqual(second);
     expect(first.status).toBe('ambiguous');
-    expect(first.error?.code).toBe('TEAM_SUBMIT_AMBIGUOUS');
+    expect(first.error?.code).toBe('SUBMIT_AMBIGUOUS');
     expect(first.error?.code).not.toBe(
       teamSubmitResult({ status: 'failed', error }).error?.code,
     );
@@ -409,69 +448,48 @@ function acceptTeamSubmitCommand(_input: TeamSubmitCommand): void {}
 
 describe('SYSTEM_SOURCE is unreachable from the one ordinary caller-facing submit surface', () => {
   it('rejects a source field on team.submit — the Command schema has none to select `system` (or anything else) with', () => {
-    // @ts-expect-error `TeamSubmitCommand` (dreamux-types/src/team.ts) declares
-    // team_name/attrs/text/reminder/intent/source_id and nothing else. There is
-    // no `source` field for a caller to set, so `system` (Core-reserved) is
-    // structurally as unreachable through this surface as any other source name
-    // — Core always supplies its own source (CHANNEL_SOURCE or
-    // AGENT_TASK_SOURCE) when it turns this Command into a submission.
-    acceptTeamSubmitCommand({ team_name: 'flow', text: 'hi', source: 'system' });
+    acceptTeamSubmitCommand({
+      team_name: 'flow',
+      text: 'hi',
+      // @ts-expect-error `TeamSubmitCommand` (dreamux-types/src/team.ts)
+      // declares team_name/attrs/text/reminder/intent/source_id and nothing
+      // else. There is no `source` field for a caller to set, so `system`
+      // (Core-reserved) is structurally as unreachable through this surface
+      // as any other source name — Core always supplies its own source
+      // (CHANNEL_SOURCE or AGENT_TASK_SOURCE) when it turns this Command
+      // into a submission.
+      source: 'system',
+    });
   });
 });
 
 describe('SYSTEM_SOURCE: the one Core-reserved producer', () => {
   it('the Dispatcher restart notice is the sole producer observed submitting under SYSTEM_SOURCE', async () => {
-    const submitted: TeammateSubmitInput[] = [];
-    const fakeAgent = {
-      startContinuity: () => 'resumed' as const,
-      submitInput: async (input: TeammateSubmitInput) => {
-        submitted.push(input);
-        return { status: 'submitted', turn: { id: 't1' } } as unknown as TurnAdmission;
-      },
-    } as unknown as TeammateService;
-    const restartIntent = {
-      claim: () => 'the dispatcher restarted',
-    } as unknown as RestartIntentConsumer;
-
-    await injectRestartNoticeIfNeeded({
-      dispatcherId: 'flow',
-      agent: fakeAgent,
-      restartIntent,
-      now: Date.now(),
-      log: silentLog,
+    const f = await dispatcherFixture({
+      restartNotice: 'the dispatcher restarted',
     });
-
-    expect(submitted).toHaveLength(1);
-    expect(submitted[0]?.source).toBe(SYSTEM_SOURCE);
-    // No caller-facing surface accepts `source`, so this reservation is
-    // structural: `team.submit`'s own input schema (team-collection/commands.ts)
-    // declares no `source` field at all, and every ordinary submit path below
-    // hardcodes CHANNEL_SOURCE or AGENT_TASK_SOURCE instead of reading one from
-    // a payload — there is no branch anywhere an external caller could steer
-    // into `system`.
+    await f.host.start();
+    await f.host.close();
+    const identity = new AgentIdentityStore({
+      dir: dispatcherDir('test'),
+      dispatcherId: 'test',
+      expectedName: null,
+      log: createLogger({ destination: { write() {} } }),
+    });
+    await identity.update({ sessionId: 'native-resume' });
+    f.provider.planNext({ continuity: 'resumed' });
+    const next = f.build();
+    await next.host.start();
+    expect(f.provider.runtimes).toHaveLength(1);
+    expect(f.provider.runtimes[0]!.inputs).toEqual([
+      '<system>the dispatcher restarted</system>',
+    ]);
   });
-
   it('skips the notice entirely for a fresh (non-resumed) start — no submission at all', async () => {
-    const submitted: TeammateSubmitInput[] = [];
-    const fakeAgent = {
-      startContinuity: () => 'fresh' as const,
-      submitInput: async (input: TeammateSubmitInput) => {
-        submitted.push(input);
-        return { status: 'submitted', turn: { id: 't1' } } as unknown as TurnAdmission;
-      },
-    } as unknown as TeammateService;
-    const restartIntent = {
-      claim: () => 'should never be read',
-    } as unknown as RestartIntentConsumer;
-
-    await injectRestartNoticeIfNeeded({
-      dispatcherId: 'flow',
-      agent: fakeAgent,
-      restartIntent,
-      now: Date.now(),
-      log: silentLog,
+    const f = await dispatcherFixture({
+      restartNotice: 'should never be read',
     });
-
-    expect(submitted).toHaveLength(0);
+    await f.host.start();
+    expect(f.provider.runtimes).toHaveLength(0);
   });
 });

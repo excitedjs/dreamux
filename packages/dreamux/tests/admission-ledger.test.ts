@@ -1,66 +1,31 @@
 /**
- * Core's one bounded, process-local duplicate-admission ledger, plus the
- * `TeammateService.submitInput` orchestration that sits on top of it.
+ * Core's one bounded, process-local duplicate-admission ledger.
  *
- * Two layers, two kinds of test:
- *
- * - `AdmissionLedger` itself is pure — no runtime, no identity store, no
- *   filesystem — so its concurrency, commit/release, and global-window rules
- *   are proven directly against the class.
- * - The properties that only exist at the orchestration boundary (a duplicate
- *   must not rewrite the durable recovery subject; the Agent Runtime seam
- *   never sees a source id; an ordinary submission reopens its target before
- *   the runtime is asked) are proven behaviorally against a real
- *   `TeammateService`, wired to a minimal fake Agent Runtime provider so no
- *   native process, network, or real Codex/Claude login is ever involved.
+ * `AdmissionLedger` itself is pure — no runtime, no identity store, no
+ * filesystem — so its concurrency, commit/release, and global-window rules
+ * are proven directly against the class.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 
-import { afterEach, describe, expect, it } from 'vitest';
-
-import type {
-  AgentRuntimeProvider,
-  AgentRuntimeSubmissionInput,
-  DreamuxLogger,
-  RuntimeActivity,
-  RuntimeAdmission,
-} from '@excitedjs/dreamux-types';
-
-import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import type {
-  ConversationInput,
-  ConversationProjection,
-} from '../src/channel/conversation-projection.js';
-import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
-import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import {
   ADMISSION_SOURCE_WINDOW,
   AdmissionLedger,
   type AgentEntityLedgerKey,
-} from '../src/service/teammate-service/admission-ledger.js';
-import { createTeammateService } from '../src/service/teammate-service/factory.js';
-import type { TeammateService } from '../src/service/teammate-service/index.js';
-import type { Turn, TurnAdmission } from '../src/service/teammate-service/turn-recording.js';
-import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
-import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
-
-const silentLog = {
-  error: () => {},
-  warn: () => {},
-  info: () => {},
-  debug: () => {},
-  trace: () => {},
-  child: () => silentLog,
-} as unknown as DreamuxLogger;
+} from '../src/service/agent/admission.js';
+import type { TurnAdmission } from '../src/service/agent/turn.js';
 
 function entity(name = 'worker'): AgentEntityLedgerKey {
   return { dispatcherId: 'flow', teamId: null, name };
 }
 
 function submittedAdmission(id: string): TurnAdmission {
-  return { status: 'submitted', turn: { id } as unknown as Turn };
+  return {
+    status: 'submitted',
+    turn: {
+      id,
+      settled: Promise.resolve({ status: 'completed', resultText: null }),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +140,10 @@ describe('AdmissionLedger: commit on submitted/ambiguous, release on failed/stop
       const first = await ledger.admit(entity(), 'src-1', async () => {
         calls += 1;
         return status === 'failed'
-          ? { status: 'failed' as const, error: new Error('pre-admission failure') }
+          ? {
+              status: 'failed' as const,
+              error: new Error('pre-admission failure'),
+            }
           : { status };
       });
       expect(first.status).toBe(status);
@@ -211,11 +179,14 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     const ledger = new AdmissionLedger();
     const a = entity('agent-a');
     const b = entity('agent-b');
-    await ledger.admit(a, 'shared-src', async () => submittedAdmission('a-turn'));
+    await ledger.admit(a, 'shared-src', async () =>
+      submittedAdmission('a-turn'),
+    );
     // A different entity's identical sourceId is a fresh admission: the
     // entity itself is part of the key, so committing `a` never touches `b`.
     const admissionForB = await ledger.admit(b, 'shared-src', async () =>
-      submittedAdmission('b-turn'));
+      submittedAdmission('b-turn'),
+    );
     expect(admissionForB.status).toBe('submitted');
   });
 
@@ -224,12 +195,17 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     const filler = entity('filler');
     const watched = entity('watched');
 
-    const watchedAdmission = await ledger.admit(watched, 'watched-src', async () =>
-      submittedAdmission('watched-turn'));
+    const watchedAdmission = await ledger.admit(
+      watched,
+      'watched-src',
+      async () => submittedAdmission('watched-turn'),
+    );
     expect(watchedAdmission.status).toBe('submitted');
     // Immediately after commit, a repeat is still a duplicate.
     expect(
-      await ledger.admit(watched, 'watched-src', async () => submittedAdmission('x')),
+      await ledger.admit(watched, 'watched-src', async () =>
+        submittedAdmission('x'),
+      ),
     ).toEqual({ status: 'duplicate' });
 
     // Push exactly ADMISSION_SOURCE_WINDOW more DIFFERENT commits through a
@@ -237,11 +213,14 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     // touch `watched`'s reservation; because it is one shared, bounded
     // window, this evicts `watched-src` once the window is exceeded.
     for (let i = 0; i < ADMISSION_SOURCE_WINDOW; i += 1) {
-      await ledger.admit(filler, `filler-src-${i}`, async () => submittedAdmission(`f${i}`));
+      await ledger.admit(filler, `filler-src-${i}`, async () =>
+        submittedAdmission(`f${i}`),
+      );
     }
 
     const afterEviction = await ledger.admit(watched, 'watched-src', async () =>
-      submittedAdmission('watched-turn-2'));
+      submittedAdmission('watched-turn-2'),
+    );
     // The oldest committed key was evicted by the shared window filling up
     // with a completely different entity's admissions — proof there is no
     // second, per-entity registry keeping `watched-src` alive on its own.
@@ -251,7 +230,9 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
   it('never survives a restart: a fresh ledger instance has no memory of a prior one’s commits', async () => {
     const before = new AdmissionLedger();
     const target = entity();
-    await before.admit(target, 'src-1', async () => submittedAdmission('turn-1'));
+    await before.admit(target, 'src-1', async () =>
+      submittedAdmission('turn-1'),
+    );
     expect(
       await before.admit(target, 'src-1', async () => submittedAdmission('x')),
     ).toEqual({ status: 'duplicate' });
@@ -259,502 +240,8 @@ describe('AdmissionLedger: one global ledger, no per-entity child registry, no c
     // A process restart replaces the ledger object; nothing durable backs it.
     const after = new AdmissionLedger();
     const admission = await after.admit(target, 'src-1', async () =>
-      submittedAdmission('turn-1-again'));
+      submittedAdmission('turn-1-again'),
+    );
     expect(admission.status).toBe('submitted');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// TeammateService.submitInput: the orchestration properties only visible at
-// the real boundary (renderSubmission -> ledger.admit -> ensureStarted ->
-// intent update -> runtime.submit).
-// ---------------------------------------------------------------------------
-
-const DISPATCHER = 'flow';
-const RUNTIME_ID = 'fake-runtime';
-
-interface Harness {
-  readonly service: TeammateService;
-  readonly order: string[];
-  readonly submittedInputs: AgentRuntimeSubmissionInput[];
-  readonly createRuntimeCalls: () => number;
-  readonly cleanup: () => Promise<void>;
-}
-
-async function buildTeammateHarness(
-  options: {
-    name?: string;
-    closed?: boolean;
-    admissions?: AdmissionLedger;
-    conversationProjection?: ConversationProjection;
-    /** Fail the provider's own `start`, the way a missing binary would. */
-    startError?: Error;
-    /** Return this admission from the provider instead of accepting. */
-    refuseWith?: Exclude<RuntimeAdmission, { status: 'submitted' }>;
-  } = {},
-): Promise<Harness> {
-  const dir = await mkdtemp(join(tmpdir(), 'dreamux-submission-admission-'));
-  const identities = new AgentIdentityStore({
-    dir,
-    dispatcherId: DISPATCHER,
-    expectedName: null,
-    log: silentLog,
-  });
-  let identity = await identities.create({
-    name: options.name ?? 'worker',
-    teamId: null,
-    agentRuntime: RUNTIME_ID,
-    sourceCwd: dir,
-    sourceRepo: null,
-    cwd: dir,
-    runtimeCwd: dir,
-    worktree: reuseCwdWorktree(dir),
-    intent: null,
-    identityPrompt: null,
-    sessionId: null,
-    status: 'running',
-  });
-  if (options.closed === true) {
-    identity = await identities.update(identity, {
-      status: 'closed',
-      closedAt: Date.now(),
-      closeNote: 'closed for the reopen test',
-    });
-  }
-
-  const order: string[] = [];
-  const submittedInputs: AgentRuntimeSubmissionInput[] = [];
-  let createRuntimeCalls = 0;
-
-  // The minimal Agent Runtime provider fake: everything the seam actually
-  // exercises (createRuntime -> start -> submit), and nothing else. `submit`
-  // records exactly what it received, which is how "no source id crosses the
-  // seam" gets proven — by inspecting the real argument object, not by trust.
-  const provider = {
-    getCapabilities: () => ({ tags: [], publicConfig: null }),
-    readRecentActivity: async () => ({ records: [], truncated: false }),
-    async createRuntime() {
-      createRuntimeCalls += 1;
-      order.push('createRuntime');
-      return {
-        async start() {
-          order.push('start');
-          if (options.startError !== undefined) throw options.startError;
-          return { continuity: 'fresh' as const };
-        },
-        async submit(input: AgentRuntimeSubmissionInput) {
-          order.push('submit');
-          submittedInputs.push(input);
-          if (options.refuseWith !== undefined) return options.refuseWith;
-          const pending = controllableRuntimeSubmission();
-          pending.complete(null);
-          return { status: 'submitted' as const, submission: pending.submission };
-        },
-        async stop() {
-          order.push('stop');
-        },
-      };
-    },
-  } as unknown as AgentRuntimeProvider<unknown>;
-
-  const catalog = {
-    resolve: () => ({ implementation: provider }),
-  } as unknown as AgentRuntimeProviderCatalog;
-
-  const config: DreamuxConfig = {
-    agents: {
-      [RUNTIME_ID]: { provider: 'fake', config: {} } as unknown as ResolvedAgentConfig,
-    },
-    dispatchers: [],
-  };
-
-  const admissions = options.admissions ?? new AdmissionLedger();
-  const service = createTeammateService({
-    config,
-    agentRuntimeProviders: catalog,
-    identities,
-    admissions,
-    ...(options.conversationProjection !== undefined
-      ? { conversationProjection: options.conversationProjection }
-      : {}),
-    log: silentLog,
-    dispatcherId: DISPATCHER,
-    identity,
-    options: { runtimeId: RUNTIME_ID, role: 'teammate', ownsWorktreeOnClose: false },
-  });
-
-  return {
-    service,
-    order,
-    submittedInputs,
-    createRuntimeCalls: () => createRuntimeCalls,
-    cleanup: async () => {
-      await rm(dir, { recursive: true, force: true });
-    },
-  };
-}
-
-const roots: Array<() => Promise<void>> = [];
-afterEach(async () => {
-  for (const cleanup of roots.splice(0)) await cleanup();
-});
-
-async function harness(
-  options?: Parameters<typeof buildTeammateHarness>[0],
-): Promise<Harness> {
-  const built = await buildTeammateHarness(options);
-  roots.push(built.cleanup);
-  return built;
-}
-
-describe('TeammateService.submitInput: starts or reopens the target before Runtime submission', () => {
-  it('reopens a closed target and starts its runtime before the runtime ever sees a submission', async () => {
-    const h = await harness({ closed: true });
-    expect(h.service.current().status).toBe('closed');
-
-    const admission = await h.service.submitInput({ source: 'channel', text: 'hello' });
-
-    expect(admission.status).toBe('submitted');
-    expect(h.order).toEqual(['createRuntime', 'start', 'submit']);
-    expect(h.service.current().status).not.toBe('closed');
-    expect(h.service.current().closed_at).toBeNull();
-  });
-
-  it('starts the runtime before submitting for an already-running (non-closed) target too', async () => {
-    const h = await harness();
-    await h.service.submitInput({ source: 'channel', text: 'hello' });
-    expect(h.order).toEqual(['createRuntime', 'start', 'submit']);
-  });
-});
-
-describe('TeammateService.submitInput: no source id crosses the Agent Runtime seam', () => {
-  it('hands the runtime exactly { text } — sourceId and intent never appear on the submit payload', async () => {
-    const h = await harness();
-    await h.service.submitInput({
-      source: 'channel',
-      text: 'hi',
-      sourceId: 'msg-77',
-      intent: 'chat',
-    });
-    expect(h.submittedInputs).toHaveLength(1);
-    expect(Object.keys(h.submittedInputs[0]!)).toEqual(['text']);
-    expect(h.submittedInputs[0]!.text).toContain('hi');
-  });
-});
-
-describe('TeammateService.submitInput: intent updates only a newly accepted turn', () => {
-  it('records intent on a fresh admission, and a later duplicate never rewrites it', async () => {
-    const h = await harness();
-
-    const first = await h.service.submitInput({
-      source: 'channel',
-      text: 'first',
-      sourceId: 's1',
-      intent: 'first-intent',
-    });
-    expect(first.status).toBe('submitted');
-    expect(h.service.current().intent).toBe('first-intent');
-
-    const second = await h.service.submitInput({
-      source: 'channel',
-      text: 'second — must never reach the runtime',
-      sourceId: 's1',
-      intent: 'second-intent',
-    });
-    expect(second.status).toBe('duplicate');
-    // The duplicate short-circuited before the admitted operation ran: the
-    // recovery subject is untouched and the runtime saw exactly one submit.
-    expect(h.service.current().intent).toBe('first-intent');
-    expect(h.submittedInputs).toHaveLength(1);
-  });
-});
-
-describe('TeammateService.submitInput: admission ledger bypass and joining, at the real boundary', () => {
-  it('reaches the runtime every time when sourceId is omitted', async () => {
-    const h = await harness();
-    await h.service.submitInput({ source: 'channel', text: 'a' });
-    await h.service.submitInput({ source: 'channel', text: 'b' });
-    expect(h.submittedInputs).toHaveLength(2);
-  });
-
-  it('joins a concurrent repeat into one admission — the runtime is asked once and both callers observe the same turn', async () => {
-    const h = await harness();
-    const [a, b] = await Promise.all([
-      h.service.submitInput({ source: 'channel', text: 'x', sourceId: 'dup-1' }),
-      h.service.submitInput({ source: 'channel', text: 'x', sourceId: 'dup-1' }),
-    ]);
-    expect(h.createRuntimeCalls()).toBe(1);
-    expect(h.submittedInputs).toHaveLength(1);
-    expect(a).toBe(b);
-    expect(a.status).toBe('submitted');
-  });
-
-  it('does not dedupe two different entities that happen to reuse the same source id, even sharing one ledger', async () => {
-    const shared = new AdmissionLedger();
-    const alpha = await harness({ name: 'alpha', admissions: shared });
-    const beta = await harness({ name: 'beta', admissions: shared });
-
-    const first = await alpha.service.submitInput({
-      source: 'channel',
-      text: 'to alpha',
-      sourceId: 'shared-msg-id',
-    });
-    const second = await beta.service.submitInput({
-      source: 'channel',
-      text: 'to beta',
-      sourceId: 'shared-msg-id',
-    });
-
-    expect(first.status).toBe('submitted');
-    expect(second.status).toBe('submitted');
-    expect(alpha.submittedInputs).toHaveLength(1);
-    expect(beta.submittedInputs).toHaveLength(1);
-  });
-});
-
-describe('TeammateService.submitInput: the conversation projection records the source body, not the rendered envelope', () => {
-  it('projects the original text and caller id on a fresh admission — no envelope markup, and not the reminder', async () => {
-    const projected: Array<{
-      text: string;
-      source: string;
-      sourceId: string | null;
-    }> = [];
-    const conversationProjection: ConversationProjection = {
-      projectInput(_agent, input) {
-        projected.push({
-          text: input.text,
-          source: input.source,
-          sourceId: input.sourceId,
-        });
-      },
-      projectActivity() {},
-    };
-    const h = await harness({ conversationProjection });
-
-    await h.service.submitInput({
-      source: 'channel',
-      attrs: { chat: 'general' },
-      text: 'hello there',
-      reminder: 'stay on task',
-      sourceId: 'message-fixture',
-    });
-
-    expect(projected).toHaveLength(1);
-    // Exactly the caller's own body: not the `<channel chat="general">...`
-    // start tag, not the closing tag, and not the trailing `<reminder>`
-    // sibling — all three are delivery formatting `renderSubmission` adds on
-    // top of `input.text`, which the input fact never records.
-    expect(projected[0]?.text).toBe('hello there');
-    expect(projected[0]?.source).toBe('channel');
-    expect(projected[0]?.sourceId).toBe('message-fixture');
-  });
-
-  it('never re-projects a duplicate: only the first admission of a repeated sourceId is recorded', async () => {
-    const projected: string[] = [];
-    const conversationProjection: ConversationProjection = {
-      projectInput(_agent, input) {
-        projected.push(input.text);
-      },
-      projectActivity() {},
-    };
-    const h = await harness({ conversationProjection });
-
-    await h.service.submitInput({ source: 'channel', text: 'first', sourceId: 'dup-2' });
-    await h.service.submitInput({ source: 'channel', text: 'first, again', sourceId: 'dup-2' });
-
-    expect(projected).toEqual(['first']);
-  });
-});
-
-describe('TeammateService.prepareCompletion: completion delivery defaults to the reserved task-notification source', () => {
-  it('renders the delivered turn under <task-notification>, never under the reporting teammate name or <channel>', async () => {
-    const h = await harness();
-    // A runtime has to already be running for prepareCompletion to proceed
-    // (index.ts: `existingRuntimeAfterStart` returns null otherwise), so start
-    // it with one ordinary submission first.
-    await h.service.submitInput({ source: 'channel', text: 'get started' });
-    expect(h.submittedInputs).toHaveLength(1);
-
-    const delivery = await h.service.prepareCompletion({
-      kind: 'teammate',
-      source: 'reporter-agent',
-      status: 'completed',
-      result: 'the work is done',
-    });
-    const result = await delivery.submit();
-
-    expect(result.status).toBe('accepted');
-    expect(h.submittedInputs).toHaveLength(2);
-    const deliveredText = h.submittedInputs[1]?.text ?? '';
-    expect(deliveredText.startsWith('<task-notification')).toBe(true);
-    expect(deliveredText).not.toMatch(/^<channel/);
-  });
-
-  it.each([
-    {
-      what: 'a TeamMate',
-      fact: {
-        kind: 'teammate' as const,
-        source: 'reporter-agent',
-        status: 'completed' as const,
-        result: 'the work is done',
-      },
-      notice: { kind: 'teammate_completion', producer: 'reporter-agent' },
-      says: 'TeamMate reporter-agent has finished its task.',
-    },
-    {
-      what: 'a Workflow',
-      fact: {
-        kind: 'workflow' as const,
-        source: 'workflow' as const,
-        runId: 'wf-1',
-        status: 'completed' as const,
-        result: 'the run is done',
-      },
-      notice: { kind: 'workflow_completion' },
-      says: 'Workflow wf-1 has completed.',
-    },
-  ])('tells the display which producer reported when $what finished', async (
-    { fact, notice, says },
-  ) => {
-    const { projection, inputs } = recordingProjection();
-    const h = await harness({ conversationProjection: projection });
-    await h.service.submitInput({ source: 'channel', text: 'get started' });
-
-    await (await h.service.prepareCompletion(fact)).submit();
-
-    // Every provenance name here is the same `task-notification`, so the
-    // producer is stated as a fact rather than read back out of the prose.
-    expect(inputs[1]?.notice).toEqual(notice);
-    // The model still gets the whole notification body it always got.
-    expect(inputs[1]?.text).toContain(says);
-    expect(h.submittedInputs[1]?.text).toContain(says);
-  });
-
-  it('leaves an ordinary submission without a producer notice', async () => {
-    const { projection, inputs } = recordingProjection();
-    const h = await harness({ conversationProjection: projection });
-    await h.service.submitInput({ source: 'channel', text: 'do the thing' });
-    expect(inputs[0]?.notice).toBeNull();
-  });
-});
-
-/**
- * Recording projection: what a display surface would have been told, in order.
- */
-function recordingProjection(): {
-  projection: ConversationProjection;
-  inputs: ConversationInput[];
-  activities: RuntimeActivity[];
-} {
-  const inputs: ConversationInput[] = [];
-  const activities: RuntimeActivity[] = [];
-  return {
-    inputs,
-    activities,
-    projection: {
-      projectInput(_agent, input) { inputs.push(input); },
-      projectActivity(_agent, activity) { activities.push(activity); },
-    },
-  };
-}
-
-describe('TeammateService.submitAdmitted: an input is announced before anything can refuse it', () => {
-  it('announces a submission the provider refuses, then ends it with the reason', async () => {
-    const { projection, inputs, activities } = recordingProjection();
-    const h = await harness({
-      conversationProjection: projection,
-      refuseWith: { status: 'failed', error: new Error('runtime refused the turn') },
-    });
-
-    const admission = await h.service.submitInput({
-      source: 'channel',
-      text: 'this one fails',
-      sourceId: 'msg-fail',
-    });
-
-    expect(admission.status).toBe('failed');
-    // Ruling 8: the failing text is exactly what a diagnosis needs to see.
-    expect(inputs.map((input) => input.text)).toEqual(['this one fails']);
-    // Rulings 4 and 9: no turn exists and no runtime will report a native end,
-    // so Core ends the surface its own input opened, carrying the error text.
-    expect(activities).toEqual([{
-      kind: 'turn.ended',
-      occurredAt: expect.any(Number),
-      status: 'failed',
-      reason: 'runtime refused the turn',
-    }]);
-  });
-
-  it('announces and ends a submission whose runtime never even started', async () => {
-    const { projection, inputs, activities } = recordingProjection();
-    const h = await harness({
-      conversationProjection: projection,
-      startError: new Error('claude binary is missing'),
-    });
-
-    await expect(
-      h.service.submitInput({ source: 'channel', text: 'never delivered' }),
-    ).rejects.toThrow('claude binary is missing');
-
-    expect(inputs.map((input) => input.text)).toEqual(['never delivered']);
-    expect(activities).toEqual([{
-      kind: 'turn.ended',
-      occurredAt: expect.any(Number),
-      status: 'failed',
-      reason: 'claude binary is missing',
-    }]);
-  });
-
-  it('announces an accepted submission exactly once, and does not end it', async () => {
-    const { projection, inputs, activities } = recordingProjection();
-    const h = await harness({ conversationProjection: projection });
-
-    await h.service.submitInput({ source: 'channel', text: 'accepted' });
-
-    expect(inputs).toHaveLength(1);
-    // The runtime owns the end of an accepted turn; Core must not race it.
-    expect(activities).toEqual([]);
-  });
-});
-
-describe('TeammateService.prepareCompletion: a push-back never wakes its recipient', () => {
-  it('reports unsupported once the host released the runtime, and starts nothing', async () => {
-    const { projection, inputs, activities } = recordingProjection();
-    const h = await harness({ conversationProjection: projection });
-    // Make the entity live first, so the refusal below is about `wake: false`
-    // and not about an entity that never had a runtime.
-    await h.service.submitInput({ source: 'channel', text: 'wake up' });
-
-    const prepared = await h.service.prepareCompletion({
-      kind: 'teammate',
-      source: 'worker',
-      status: 'completed',
-      result: 'the answer',
-    });
-    await h.service.stopForHost();
-    const before = h.createRuntimeCalls();
-    const stepsBefore = h.order.length;
-
-    const delivery = await prepared.submit();
-
-    expect(delivery.status).toBe('unsupported');
-    // `wake: false` is the whole difference: no second runtime is created for
-    // an answer nobody asked this agent to read.
-    expect(h.createRuntimeCalls()).toBe(before);
-    expect(h.order.slice(stepsBefore)).toEqual([]);
-
-    // The push-back is an ordinary admitted input, so it is announced like any
-    // other and then ended, saying why it went nowhere. A dropped completion
-    // used to be silent; the operator can now see one happen.
-    expect(inputs).toHaveLength(2);
-    expect(inputs[1]?.source).toBe('task-notification');
-    expect(inputs[1]?.text).toContain('the answer');
-    expect(activities).toEqual([{
-      kind: 'turn.ended',
-      occurredAt: expect.any(Number),
-      status: 'failed',
-      reason: 'the agent runtime is not running',
-    }]);
   });
 });

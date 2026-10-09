@@ -1,59 +1,270 @@
-/**
- * Shared test scaffolding for the Core Command registry and its two adapters
- * (node: core-command-registry).
- *
- * Nothing here replaces production wiring: it builds the exact same objects
- * `Server` composes — `createCoreCommandRegistry`, `CoreCommandPort`,
- * `createAdminSocketServer`, `createChannelCorePort`, a real
- * `McpLeaseRegistry` — around a hand-built `CoreCommandHost` and a hand-built
- * `DispatcherService`-shaped fake. Using the real registry/port/adapters is
- * what makes "both adapters resolve the same definition" a fact the tests
- * observe rather than an assumption they encode.
- *
- * The fake dispatcher only implements the methods the registered Commands
- * actually call (verified by reading every `service/*\/commands.ts` module),
- * each returning the minimal value that satisfies that Command's own declared
- * output schema. A test overrides one method to inject a business failure or
- * to observe whether a handler ran.
- */
-import { mkdtemp, rm } from 'node:fs/promises';
+/** Real command composition and transport fixtures, using controlled provider seams. */
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
-
+import { afterEach, vi } from 'vitest';
 import type {
   ChannelEventSource,
-  CoreCommandContext,
   JsonValue,
   TeamSummary,
+  DreamuxLogger,
 } from '@excitedjs/dreamux-types';
-
-import { createCoreCommandRegistry } from '../../src/command/catalog.js';
-import type { CoreCommandHost } from '../../src/command/host.js';
-import type { TeamListRow } from '../../src/service/team-collection/types.js';
+import type { CoreCommandContext } from '../../src/command/types.js';
+import { createCoreCommandRegistry } from '../../src/server/command-catalog.js';
 import { CoreCommandPort } from '../../src/command/port.js';
-import { CoreCommands } from '../../src/command/registry.js';
-import { createAdminSocketServer, type AdminSocketServer } from '../../src/admin/socket.js';
+import type {
+  CoreCommands,
+  AnyCoreCommand,
+} from '../../src/command/registry.js';
+import {
+  createAdminSocketServer,
+  type AdminSocketServer,
+} from '../../src/admin/socket.js';
 import type { AdminResponse } from '../../src/admin/protocol.js';
-import { createChannelCorePort } from '../../src/channel/core-port.js';
+import { createChannelCorePort } from '../../src/service/channel-service/core-port.js';
 import { McpLeaseRegistry } from '../../src/service/mcp/leases.js';
 import type {
   McpDelegateCall,
   McpDelegateResult,
   McpServerDelegate,
 } from '../../src/service/mcp/types.js';
+import type { TeamListRow } from '../../src/service/team/types.js';
 import type { DispatcherService } from '../../src/service/dispatcher-service/index.js';
-import type { DispatcherRow } from '../../src/state/dispatcher-store.js';
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {
-  DispatcherRuntimeStatus,
   DispatcherSummary,
+  DispatcherRuntimeStatus,
 } from '../../src/service/dispatcher-service/types.js';
-import type { Server } from '../../src/server.js';
+import { ConfigService } from '../../src/config/service.js';
+import {
+  globalConfigFile,
+  type DispatcherConfig,
+  type DispatcherChannelConfig,
+} from '../../src/config/config.js';
+import {
+  ProviderRegistry,
+  parseProviderRef,
+} from '../../src/registry/index.js';
+import { Server } from '../../src/server.js';
+import { ControlledRuntimeProvider } from './controlled-runtime-provider.js';
+import { createFakeChannelProvider } from './fake-channel-provider.js';
 
-/** The one dispatcher id every harness configures by default. */
+// Observe definitions supplied to the real constructor; production needs no
+// catalog reflection capability merely to satisfy a test.
+const observed = vi.hoisted(
+  () => new WeakMap<object, readonly AnyCoreCommand[]>(),
+);
+vi.mock('../../src/command/registry.js', async (importOriginal) => {
+  const real =
+    await importOriginal<typeof import('../../src/command/registry.js')>();
+  return {
+    ...real,
+    CoreCommands: class extends real.CoreCommands {
+      constructor(definitions: readonly AnyCoreCommand[]) {
+        super(definitions);
+        observed.set(this, definitions);
+      }
+    },
+  };
+});
+export function registryNames(registry: CoreCommands): string[] {
+  const definitions = observed.get(registry);
+  if (!definitions) throw new Error('registry construction was not observed');
+  return definitions.map((definition) => definition.name);
+}
 export const HARNESS_DISPATCHER_ID = 'harness-d1';
 export const HARNESS_CHANNEL_ID = 'harness-channel';
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  try {
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  } finally {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  }
+});
+export interface FakeDispatcherOverrides {
+  createTeam?: unknown;
+  submitToTeamLeader?: unknown;
+  submitToAgent?: unknown;
+  interruptAgent?: unknown;
+  interruptTeamLeader?: unknown;
+  listTeams?: unknown;
+  listChannels?: unknown;
+  getTeamStatus?: unknown;
+  getTeamHistory?: unknown;
+  dissolveTeam?: unknown;
+  teamScheduler?: unknown;
+  teammates?: Record<string, unknown>;
+  workflows?: Record<string, unknown>;
+  scheduler?: Record<string, unknown>;
+}
+export interface HarnessOptions {
+  dispatcherOverrides?: FakeDispatcherOverrides;
+  dispatcherRow?: DispatcherConfig | null;
+  summarize?: () => Promise<DispatcherSummary[]>;
+  dispatcherRuntimeStatus?: () => Promise<DispatcherRuntimeStatus>;
+  enabled?: boolean;
+  channels?: DispatcherChannelConfig[];
+}
+export interface CommandHarness {
+  readonly host: Server;
+  readonly registry: CoreCommands;
+  readonly port: CoreCommandPort;
+  readonly dispatcher: DispatcherService;
+  readonly mcpLeases: McpLeaseRegistry;
+  readonly dispatcherLookups: string[];
+  readonly provider: ControlledRuntimeProvider;
+  readonly fake: ReturnType<typeof createFakeChannelProvider>;
+  readonly root: string;
+}
+export function harnessDispatcherRow(
+  overrides: Partial<DispatcherConfig> = {},
+): DispatcherConfig {
+  return {
+    id: HARNESS_DISPATCHER_ID,
+    cwd: '/tmp',
+    enabled: true,
+    workspace: { enabled: false },
+    channels: [],
+    agentRuntime: 'controlled',
+    ...overrides,
+  };
+}
+function stub(target: object, key: string, implementation: unknown): void {
+  if (implementation !== undefined)
+    vi.spyOn(target as never, key as never).mockImplementation(
+      implementation as never,
+    );
+}
+/** Config is file-backed; external runtime and channel providers are controlled. */
+export async function createUnstartedCommandServer(
+  options: Pick<HarnessOptions, 'enabled' | 'channels'> & {
+    hooks?: ConstructorParameters<typeof Server>[0]['hooks'];
+  } = {},
+) {
+  const root = await mkdtemp(join(tmpdir(), 'dreamux-command-'));
+  vi.stubEnv('DREAMUX_ROOT', join(root, 'state'));
+  const registry = new ProviderRegistry();
+  const provider = new ControlledRuntimeProvider();
+  const fake = createFakeChannelProvider();
+  registry.register(
+    {
+      id: 'controlled',
+      kind: 'agentRuntime',
+      ref: parseProviderRef('builtin:controlled'),
+    },
+    provider,
+  );
+  const channels = options.channels ?? [
+    { id: HARNESS_CHANNEL_ID, provider: 'builtin:fixture-channel', config: {} },
+  ];
+  for (const channel of channels) {
+    const ref = parseProviderRef(channel.provider);
+    registry.register(
+      {
+        id: ref.source === 'builtin' ? ref.id : ref.package,
+        kind: 'channel',
+        ref,
+      },
+      {
+        ...fake.provider,
+        identity: {
+          get: (config: Record<string, unknown>) =>
+            typeof config['identity'] === 'string' ? config['identity'] : '',
+        },
+      },
+    );
+  }
+  const raw = {
+    agents: [{ id: 'controlled', provider: 'builtin:controlled', config: {} }],
+    dispatchers: [
+      {
+        id: HARNESS_DISPATCHER_ID,
+        cwd: root,
+        enabled: options.enabled ?? true,
+        workspace: { enabled: false },
+        channels,
+        agentRuntime: 'controlled',
+      },
+    ],
+  };
+  const file = globalConfigFile();
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(raw), { mode: 0o600 });
+  const config = await ConfigService.open({ providerRegistry: registry });
+  const log = capturingLogger([]);
+  const host = new Server({
+    config,
+    providerRegistry: registry,
+    ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+    adminSocketPath: join(root, 'owner.sock'),
+    logger: log,
+    channelLoggerFactory: () => log,
+    workflowLoggerFactory: () => log,
+  });
+  cleanups.push(async () => {
+    try {
+      await host.shutdown();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  return { host, config, provider, fake, root };
+}
+/** Fault injection spies sit on actual owners, never a fake command host. */
+export async function createCommandHarness(
+  options: HarnessOptions = {},
+): Promise<CommandHarness> {
+  const fixture = await createUnstartedCommandServer(options);
+  const { host, config } = fixture;
+  await host.start();
+  const dispatcher = host.dispatchers.get(HARNESS_DISPATCHER_ID);
+  const dispatcherLookups: string[] = [];
+  const get = host.dispatchers.get.bind(host.dispatchers);
+  vi.spyOn(host.dispatchers, 'get').mockImplementation((id) => {
+    dispatcherLookups.push(id);
+    return get(id);
+  });
+  stub(host.dispatchers, 'summarize', options.summarize);
+  stub(host.dispatchers, 'status', options.dispatcherRuntimeStatus);
+  const overrides = options.dispatcherOverrides ?? {};
+  for (const [input, target, key] of [
+    ['submitToAgent', dispatcher, 'submitToAgent'],
+    ['interruptAgent', dispatcher, 'interruptAgent'],
+    ['listChannels', dispatcher.channels, 'list'],
+    ['createTeam', dispatcher.teams, 'createFromRequest'],
+    ['submitToTeamLeader', dispatcher.teams, 'submitToLeader'],
+    ['interruptTeamLeader', dispatcher.teams, 'interruptLeader'],
+    ['listTeams', dispatcher.teams, 'list'],
+    ['getTeamStatus', dispatcher.teams, 'summary'],
+    ['getTeamHistory', dispatcher.teams, 'history'],
+    ['dissolveTeam', dispatcher.teams, 'dissolve'],
+    ['teamScheduler', dispatcher.teams, 'scheduler'],
+  ] as const)
+    stub(target, key, overrides[input]);
+  for (const key of ['teammates', 'workflows', 'scheduler'] as const) {
+    for (const [method, implementation] of Object.entries(overrides[key] ?? {}))
+      stub(dispatcher[key], method, implementation);
+  }
+  if (options.dispatcherRow === null) {
+    const current = config.current();
+    vi.spyOn(config, 'current').mockReturnValue({
+      ...current,
+      dispatchers: [],
+    });
+  }
+  const commands = createCoreCommandRegistry(host);
+  const port = new CoreCommandPort(commands);
+  return {
+    ...fixture,
+    registry: commands,
+    port,
+    dispatcher,
+    mcpLeases: host.mcpLeases,
+    dispatcherLookups,
+  };
+}
 
 export function harnessTeamListRow(
   overrides: Partial<TeamListRow> = {},
@@ -105,196 +316,6 @@ export function harnessTeamSummary(
   };
 }
 
-/** A minimal, always-valid `DispatcherRow` for the harness dispatcher. */
-export function harnessDispatcherRow(
-  overrides: Partial<DispatcherRow> = {},
-): DispatcherRow {
-  return {
-    dispatcher_id: HARNESS_DISPATCHER_ID,
-    channel_identity: 'harness-identity',
-    status: 'running',
-    enabled: 1,
-    created_at: 0,
-    updated_at: 0,
-    ...overrides,
-  } as DispatcherRow;
-}
-
-/**
- * Every method a registered Command reaches on `host.dispatcher(id)`,
- * pre-wired to return the minimal value each caller's declared output schema
- * accepts. Override any subset per test.
- */
-export interface FakeDispatcherOverrides {
-  start?: () => Promise<void>;
-  runtimeStatus?: () => { status: string | null };
-  workspace?: () => Promise<string>;
-  createTeam?: (input: unknown) => Promise<unknown>;
-  submitToTeamLeader?: (input: unknown) => Promise<unknown>;
-  submitToAgent?: (input: unknown) => Promise<unknown>;
-  interruptAgent?: () => Promise<unknown>;
-  interruptTeamLeader?: (teamId: string) => Promise<unknown>;
-  listTeams?: () => Promise<unknown[]>;
-  listChannels?: DispatcherService['listChannels'];
-  getTeamStatus?: (teamId: string) => Promise<unknown>;
-  getTeamHistory?: (query: unknown) => Promise<unknown>;
-  dissolveTeam?: (input: unknown) => Promise<unknown>;
-  teamScheduler?: (teamId: string) => Promise<unknown>;
-  teammates?: Partial<{
-    spawn: (input: unknown) => Promise<unknown>;
-    send: (input: unknown) => Promise<unknown>;
-    close: (input: unknown) => Promise<unknown>;
-    list: () => Promise<unknown[]>;
-    status: (name: string) => Promise<unknown>;
-    history: (query: unknown) => Promise<unknown>;
-    last: (name: string, query?: unknown) => Promise<unknown>;
-    getCapabilities: () => unknown;
-  }>;
-  workflows?: Partial<{
-    run: (input: unknown) => Promise<unknown>;
-    status: (input: unknown) => Promise<unknown>;
-    stop: (input: unknown) => Promise<unknown>;
-    list: () => Promise<unknown>;
-  }>;
-  scheduler?: Partial<{
-    list: () => Promise<unknown>;
-    create: (input: unknown) => Promise<unknown>;
-    update: (input: unknown) => Promise<unknown>;
-    delete: (id: string) => Promise<unknown>;
-  }>;
-}
-
-/**
- * A `DispatcherService`-shaped fake. Cast at the boundary rather than typed
- * structurally: every registered Command reaches it only through the narrow
- * `CoreCommandHost` port, exactly as production does, so nothing here needs to
- * be a *real* `DispatcherService` — only to answer the same calls the same way.
- */
-export function createFakeDispatcher(
-  overrides: FakeDispatcherOverrides = {},
-): DispatcherService {
-  const fake = {
-    start: overrides.start ?? (async () => {}),
-    runtimeStatus: overrides.runtimeStatus ?? (() => ({ status: 'running' })),
-    workspace: overrides.workspace ?? (async () => '/tmp/harness-workspace'),
-    createTeam:
-      overrides.createTeam ??
-      (async () => harnessTeamSummary()),
-    submitToTeamLeader:
-      overrides.submitToTeamLeader ??
-      (async () => ({ status: 'submitted', turn: { id: 'harness-turn-1' } })),
-    submitToAgent:
-      overrides.submitToAgent ??
-      (async () => ({ status: 'submitted', turn: { id: 'harness-turn-1' } })),
-    interruptAgent: overrides.interruptAgent ?? (async () => ({ status: 'idle' })),
-    interruptTeamLeader:
-      overrides.interruptTeamLeader ?? (async () => ({ status: 'idle' })),
-    listTeams: overrides.listTeams ?? (async () => []),
-    listChannels: overrides.listChannels ?? (() => []),
-    getTeamStatus:
-      overrides.getTeamStatus ??
-      (async () => harnessTeamSummary()),
-    getTeamHistory:
-      overrides.getTeamHistory ?? (async () => ({ items: [], next_cursor: null })),
-    dissolveTeam:
-      overrides.dissolveTeam ??
-      (async () => ({
-        accepted: true,
-        team_name: 'harness-team',
-        status: 'dissolving',
-      })),
-    teamScheduler:
-      overrides.teamScheduler ??
-      (async () => fakeSchedulerCommands(overrides.scheduler)),
-    teammates: {
-      spawn:
-        overrides.teammates?.spawn ??
-        (async () => ({ teammate: {}, status: 'submitted' })),
-      send:
-        overrides.teammates?.send ??
-        (async () => ({ teammate: {}, status: 'submitted' })),
-      close: overrides.teammates?.close ?? (async () => ({ teammate: {} })),
-      list: overrides.teammates?.list ?? (async () => []),
-      status: overrides.teammates?.status ?? (async () => ({})),
-      history:
-        overrides.teammates?.history ?? (async () => ({ items: [], next_cursor: null })),
-      last:
-        overrides.teammates?.last ??
-        (async () => ({
-          teammate: {},
-          requested_records: 0,
-          returned_records: 0,
-          records: [],
-          next_cursor: null,
-          truncated: false,
-        })),
-      getCapabilities:
-        overrides.teammates?.getCapabilities ?? (() => ({ verbs: [], agent_runtimes: [] })),
-    },
-    workflows: {
-      run: overrides.workflows?.run ?? (async () => ({ run_id: 'harness-run-1' })),
-      status: overrides.workflows?.status ?? (async () => ({})),
-      stop: overrides.workflows?.stop ?? (async () => ({})),
-      list: overrides.workflows?.list ?? (async () => ({})),
-    },
-    get scheduler() {
-      return fakeSchedulerCommands(overrides.scheduler);
-    },
-  };
-  return fake as unknown as DispatcherService;
-}
-
-function fakeSchedulerCommands(overrides: FakeDispatcherOverrides['scheduler']) {
-  return {
-    list: overrides?.list ?? (async () => ({ jobs: [] })),
-    create: overrides?.create ?? (async () => ({})),
-    update: overrides?.update ?? (async () => ({})),
-    delete: overrides?.delete ?? (async (id: string) => ({ id, deleted: true })),
-  };
-}
-
-export interface HarnessOptions {
-  dispatcherOverrides?: FakeDispatcherOverrides;
-  dispatcherRow?: DispatcherRow | null;
-  /** Override `host.summarize()`, used by `server.status` and `dispatcher.list`. */
-  summarize?: () => Promise<DispatcherSummary[]>;
-  dispatcherRuntimeStatus?: () => Promise<DispatcherRuntimeStatus>;
-}
-
-export interface CommandHarness {
-  readonly host: CoreCommandHost;
-  readonly registry: CoreCommands;
-  readonly port: CoreCommandPort;
-  readonly dispatcher: DispatcherService;
-  readonly mcpLeases: McpLeaseRegistry;
-  /** Every call `host.dispatcher(id)` made, for tests that assert a call count. */
-  readonly dispatcherLookups: string[];
-}
-
-/** Build one full harness: host, registry, and the admitted port, wired together exactly as `Server` wires them. */
-export function createCommandHarness(options: HarnessOptions = {}): CommandHarness {
-  const dispatcher = createFakeDispatcher(options.dispatcherOverrides);
-  const dispatcherLookups: string[] = [];
-  const mcpLeases = new McpLeaseRegistry();
-  const row =
-    options.dispatcherRow === undefined ? harnessDispatcherRow() : options.dispatcherRow;
-  const host: CoreCommandHost = {
-    summarize: options.summarize ?? (async () => []),
-    dispatcherRow: (id: string) => (id === row?.dispatcher_id ? row : null),
-    dispatcherRuntimeStatus:
-      options.dispatcherRuntimeStatus ??
-      (async () => ({ status: 'running', sessionId: null, lastError: null })),
-    dispatcher: (id: string) => {
-      dispatcherLookups.push(id);
-      return dispatcher;
-    },
-    mcpLeases,
-  };
-  const registry = createCoreCommandRegistry(host);
-  const port = new CoreCommandPort(registry);
-  return { host, registry, port, dispatcher, mcpLeases, dispatcherLookups };
-}
-
 /** A caller context as the admin socket adapter would build it. */
 export function adminContext(dispatcherId?: string): CoreCommandContext {
   return {
@@ -308,14 +329,18 @@ export function channelContext(
   dispatcherId: string = HARNESS_DISPATCHER_ID,
   channelId: string = HARNESS_CHANNEL_ID,
 ): CoreCommandContext {
-  return { source: 'channel', dispatcher_id: dispatcherId, channel_id: channelId };
+  return {
+    source: 'channel',
+    dispatcher_id: dispatcherId,
+    channel_id: channelId,
+  };
 }
 
 /** A no-op `ChannelEventSource`: the Command half of the port is under test, never the event half. */
 export function fakeChannelEventSource(): ChannelEventSource {
   return {
     subscribe: () => ({ unsubscribe: () => {} }),
-  } as unknown as ChannelEventSource;
+  };
 }
 
 /** Build the in-process Channel invoke adapter over a harness's admitted port. */
@@ -342,25 +367,24 @@ export interface CapturedLog {
 
 /** A logger that keeps what it was told, for asserting what stayed private. */
 export function capturingLogger(sink: CapturedLog[]): DreamuxLogger {
-  const record =
-    () =>
-    (fields?: unknown, message?: unknown): void => {
-      if (typeof fields === 'string') {
-        sink.push({ fields: {}, message: fields });
-        return;
-      }
-      sink.push({
-        fields: (fields ?? {}) as Record<string, unknown>,
-        message: typeof message === 'string' ? message : '',
-      });
-    };
-  return {
-    error: record(),
-    warn: record(),
-    info: record(),
-    debug: record(),
-    trace: record(),
-  } as unknown as DreamuxLogger;
+  const record = (
+    fields: Record<string, unknown> | string,
+    message?: string,
+  ): void => {
+    sink.push({
+      fields: typeof fields === 'string' ? {} : fields,
+      message: typeof fields === 'string' ? fields : (message ?? ''),
+    });
+  };
+  const log: DreamuxLogger = {
+    error: record,
+    warn: record,
+    info: record,
+    debug: record,
+    trace: record,
+    child: () => log,
+  };
+  return log;
 }
 
 export interface HarnessAdminSocket {
@@ -368,7 +392,10 @@ export interface HarnessAdminSocket {
   readonly server: AdminSocketServer;
   /** Everything the socket adapter logged instead of putting on the wire. */
   readonly logs: CapturedLog[];
-  send(method: string, params?: Record<string, unknown>): Promise<AdminResponse>;
+  send(
+    method: string,
+    params?: Record<string, unknown>,
+  ): Promise<AdminResponse>;
   /** Send a raw line, bypassing JSON construction — for framing-failure tests. */
   sendRaw(line: string): Promise<AdminResponse>;
   close(): Promise<void>;
@@ -389,7 +416,7 @@ export async function startHarnessAdminSocket(
   const fakeServer = {
     commands: harness.port,
     logger: capturingLogger(logs),
-  } as unknown as Server;
+  };
   const server = createAdminSocketServer(fakeServer, socketPath);
   await server.start();
 
@@ -424,7 +451,13 @@ export async function startHarnessAdminSocket(
   ): Promise<AdminResponse> {
     seq += 1;
     const id = `req-${seq}`;
-    return sendRaw(JSON.stringify({ id, method, ...(params !== undefined ? { params } : {}) }));
+    return sendRaw(
+      JSON.stringify({
+        id,
+        method,
+        ...(params !== undefined ? { params } : {}),
+      }),
+    );
   }
 
   return {
@@ -454,19 +487,21 @@ export function mintFakeMcpServer(
   const delegate: McpServerDelegate = {
     name: options.name ?? 'harness-mcp-server',
     describe: () => ({
-      identity: { name: options.name ?? 'harness-mcp-server', version: '1.0.0' },
       tools: [{ name: toolName, inputSchema: { type: 'object' } }],
     }),
     call:
       options.call ??
       (async (call) => ({ ok: true, structured: { echoed: call.arguments } })),
   };
-  const lease = { isCurrent: options.isCurrent ?? (() => true) } as unknown as Parameters<
-    McpLeaseRegistry['mint']
-  >[0];
+  const lease = {
+    isCurrent: options.isCurrent ?? (() => true),
+    state: { publish: async () => {} },
+  };
   const minted = mcpLeases.mint(lease, delegate);
   if (minted === null) {
-    throw new Error('harness MCP delegate advertised no tools; mint returned null');
+    throw new Error(
+      'harness MCP delegate advertised no tools; mint returned null',
+    );
   }
   return { token: minted.token };
 }

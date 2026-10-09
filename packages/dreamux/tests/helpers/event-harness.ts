@@ -11,49 +11,16 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type {
-  ChannelCoreEvent,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { ChannelCoreEvent, DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { DispatcherCoreEventPublisher } from '../../src/service/dispatcher-core-events/index.js';
 import type {
   AgentEntityIdentity,
   AgentEntityWorktreeIdentity,
-} from '../../src/service/agent-entity/types.js';
-import { AgentIdentityStore } from '../../src/service/agent-entity/identity-store.js';
-import type { AgentIdentityCreateInput } from '../../src/service/agent-entity/identity-store.js';
-
-/** A `DreamuxLogger` that swallows every call but keeps them for assertions. */
-export interface CapturingLogger {
-  readonly logger: DreamuxLogger;
-  readonly warnCalls: Array<{ fields: Record<string, unknown>; message?: string }>;
-  readonly errorCalls: Array<{ fields: Record<string, unknown>; message?: string }>;
-}
-
-export function createCapturingLogger(): CapturingLogger {
-  const warnCalls: CapturingLogger['warnCalls'] = [];
-  const errorCalls: CapturingLogger['errorCalls'] = [];
-  const record = (
-    bucket: CapturingLogger['warnCalls'],
-    fieldsOrMessage: Record<string, unknown> | string,
-    message?: string,
-  ): void => {
-    if (typeof fieldsOrMessage === 'string') {
-      bucket.push({ fields: {}, message: fieldsOrMessage });
-    } else {
-      bucket.push({ fields: fieldsOrMessage, ...(message !== undefined ? { message } : {}) });
-    }
-  };
-  const logger: DreamuxLogger = {
-    error: (a: Record<string, unknown> | string, b?: string) => record(errorCalls, a, b),
-    warn: (a: Record<string, unknown> | string, b?: string) => record(warnCalls, a, b),
-    info: () => {},
-    debug: () => {},
-    trace: () => {},
-  };
-  return { logger, warnCalls, errorCalls };
-}
+} from '../../src/service/agent/identity.js';
+import { AgentIdentityStore } from '../../src/service/agent/store.js';
+import type { AgentIdentityCreateInput } from '../../src/service/agent/store.js';
+import { capturingLogger } from './command-harness.js';
 
 /**
  * A `DispatcherCoreEventPublisher` fake that only records what was published,
@@ -63,7 +30,7 @@ export function createCapturingLogger(): CapturingLogger {
  * directly, against the real class, elsewhere).
  */
 export interface CapturingPublisher extends DispatcherCoreEventPublisher {
-  readonly published: Array<{ dispatcherId: string; event: ChannelCoreEvent }>;
+  readonly published: Array<{ event: ChannelCoreEvent }>;
   sourcesPresent: boolean;
 }
 
@@ -74,8 +41,8 @@ export function createCapturingPublisher(
   return {
     published,
     sourcesPresent,
-    publish(dispatcherId: string, event: ChannelCoreEvent): void {
-      published.push({ dispatcherId, event });
+    publish(event: ChannelCoreEvent): void {
+      published.push({ event });
     },
     hasSources(): boolean {
       return this.sourcesPresent;
@@ -130,14 +97,12 @@ export function makeIdentityStore(input: {
   dispatcherId?: string;
   expectedName?: string | null;
   log?: DreamuxLogger;
-  onPersisted?: (identity: AgentEntityIdentity) => void;
 }): AgentIdentityStore {
   return new AgentIdentityStore({
     dir: input.dir,
     dispatcherId: input.dispatcherId ?? 'dispatcher-fixture',
     expectedName: input.expectedName ?? null,
-    log: input.log ?? createCapturingLogger().logger,
-    ...(input.onPersisted !== undefined ? { onPersisted: input.onPersisted } : {}),
+    log: input.log ?? capturingLogger([]),
   });
 }
 

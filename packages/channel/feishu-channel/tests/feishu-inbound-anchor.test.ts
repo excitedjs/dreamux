@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FeishuInboundCorrelations } from '../src/feishu-inbound-anchor.js';
+import { FeishuInboundCorrelations } from '../src/cot/inbound-correlations.js';
 
 describe('FeishuInboundCorrelations', () => {
   it('recognizes a caller id this session issued, exactly once', () => {
@@ -12,7 +12,7 @@ describe('FeishuInboundCorrelations', () => {
     release();
   });
 
-  it('does not recognize another producer\'s caller id', () => {
+  it("does not recognize another producer's caller id", () => {
     const correlations = new FeishuInboundCorrelations();
     const release = correlations.begin('message-own');
 

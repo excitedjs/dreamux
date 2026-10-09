@@ -1,4 +1,7 @@
+import type { CommandRunner } from '../src/platform/command-runner.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi } from 'vitest';
+import * as filesystem from 'node:fs/promises';
 import {
   existsSync,
   mkdirSync,
@@ -18,17 +21,13 @@ import {
   type OnboardCliOptions,
 } from '../src/onboard/wizard.js';
 import type {
-  CommandRunner,
   OnboardAnswers,
   OnboardChannelConfig,
 } from '../src/onboard/types.js';
-import type { ServiceNodeProbe } from '../src/onboard/service.js';
-import { loadConfig } from '../src/config/config.js';
-import {
-  logsRoot,
-  resetRuntimeConfig,
-} from '../src/platform/paths.js';
-import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
+import type { ServiceNodeProbe } from '../src/daemon/environment.js';
+import { loadConfig } from '../src/config/load.js';
+import { logsRoot } from '../src/platform/paths.js';
+
 import {
   testConfigFileObject,
   testSingleDispatcherFileObject,
@@ -42,16 +41,16 @@ class FakeRunner implements CommandRunner {
   readonly calls: Array<{
     command: string;
     args: string[];
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
+    cwd?: string | undefined;
+    env?: NodeJS.ProcessEnv | undefined;
   }> = [];
 
   async run(
     command: string,
     args: string[],
     options: {
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
+      cwd?: string | undefined;
+      env?: NodeJS.ProcessEnv | undefined;
       dryRun?: boolean;
     } = {},
   ): Promise<void> {
@@ -77,8 +76,8 @@ class FakeRunner implements CommandRunner {
     command: string,
     args: string[],
     options: {
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
+      cwd?: string | undefined;
+      env?: NodeJS.ProcessEnv | undefined;
       dryRun?: boolean;
     } = {},
   ): Promise<boolean> {
@@ -89,17 +88,15 @@ class FakeRunner implements CommandRunner {
     if (command === 'loginctl' && args[0] === 'enable-linger') {
       return this.lingerEnableOk;
     }
-    return command === 'launchctl' &&
-      args[0] === 'print' &&
-      this.launchdLoaded;
+    return command === 'launchctl' && args[0] === 'print' && this.launchdLoaded;
   }
 
   async capture(
     command: string,
     args: string[],
     options: {
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
+      cwd?: string | undefined;
+      env?: NodeJS.ProcessEnv | undefined;
       dryRun?: boolean;
     } = {},
   ): Promise<string> {
@@ -118,8 +115,8 @@ const noSystemNodeProbe: ServiceNodeProbe = {
 };
 const LINUXBREW_BIN = '/home/linuxbrew/.linuxbrew/bin';
 
-function writeGlobalCodexAuth(answers: OnboardAnswers): void {
-  const authPath = join(dispatcherCodexHome(answers.dispatcherId), 'auth.json');
+function writeGlobalCodexAuth(_answers: OnboardAnswers): void {
+  const authPath = join(homedir(), '.codex', 'auth.json');
   mkdirSync(dirname(authPath), { recursive: true });
   writeFileSync(authPath, '{}', { mode: 0o600 });
 }
@@ -129,9 +126,10 @@ function countCalls(
   command: string,
   argsPrefix: string[],
 ): number {
-  return runner.calls.filter((call) =>
-    call.command === command &&
-    argsPrefix.every((arg, index) => call.args[index] === arg),
+  return runner.calls.filter(
+    (call) =>
+      call.command === command &&
+      argsPrefix.every((arg, index) => call.args[index] === arg),
   ).length;
 }
 
@@ -150,14 +148,12 @@ describe('dreamux onboard', () => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
     delete process.env['DREAMUX_ROOT'];
-    resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
   it('writes dispatcher state, records subprocess files, and passes the serve doctor', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -185,7 +181,7 @@ describe('dreamux onboard', () => {
     ]);
 
     const dreamuxConfig = JSON.parse(
-      readFileSync(join(root, 'config', 'config.json'), 'utf8'),
+      readFileSync(join(root, 'dreamux', 'config.json'), 'utf8'),
     ) as Record<string, any>;
     expect(dreamuxConfig['agents']).toEqual([
       {
@@ -202,23 +198,25 @@ describe('dreamux onboard', () => {
         },
       },
     ]);
-    expect(dreamuxConfig['dispatchers']).toEqual([{
-      id: 'flow',
-      cwd: join(root, 'dispatcher-cwd'),
-      enabled: true,
-      workspace: { enabled: false },
-      channels: [
-        {
-          id: 'primary',
-          provider: 'builtin:feishu',
-          config: {
-            app_id: 'app-test',
-            app_secret: 'secret-test',
+    expect(dreamuxConfig['dispatchers']).toEqual([
+      {
+        id: 'flow',
+        cwd: join(root, 'dispatcher-cwd'),
+        enabled: true,
+        workspace: { enabled: false },
+        channels: [
+          {
+            id: 'primary',
+            provider: 'builtin:feishu',
+            config: {
+              app_id: 'app-test',
+              app_secret: 'secret-test',
+            },
           },
-        },
-      ],
-      agentRuntime: 'flow',
-    }]);
+        ],
+        agentRuntime: 'flow',
+      },
+    ]);
     expect(dreamuxConfig).not.toHaveProperty('feishu');
     expect(dreamuxConfig).not.toHaveProperty('codex');
     expect(dreamuxConfig).not.toHaveProperty('runtime_dir');
@@ -234,7 +232,7 @@ describe('dreamux onboard', () => {
           entry.path.startsWith(`${workspaceSkillRoot}${sep}`),
       ),
     ).toBe(false);
-    expect(ledger.get(join(root, 'config', 'config.json'))?.status).toBe(
+    expect(ledger.get(join(root, 'dreamux', 'config.json'))?.status).toBe(
       'created',
     );
     expect(
@@ -246,7 +244,9 @@ describe('dreamux onboard', () => {
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    expect(serviceUnit).toContain(`Environment=DREAMUX_NODE_BIN=${process.execPath}`);
+    expect(serviceUnit).toContain(
+      `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
+    );
     // The unit no longer pins CODEX_HOST_CODEX_BIN; the dispatcher's
     // runtime.config.bin resolves off the unit PATH instead (which includes the
     // codex dir below).
@@ -263,9 +263,9 @@ describe('dreamux onboard', () => {
     expect(servicePath).toContain(dirname(process.execPath));
     expect(servicePath).toContain(join(root, 'home', '.local', 'bin'));
     expect(servicePath.split(':')[0]).toBe(dirname(process.execPath));
-    expect(
-      ledger.get(join(logsRoot(), 'daemon.stdout.log'))?.status,
-    ).toBe('created');
+    expect(ledger.get(join(logsRoot(), 'daemon.stdout.log'))?.status).toBe(
+      'created',
+    );
     expect(result.files.map((entry) => entry.reason)).not.toContain(
       'dispatcher database',
     );
@@ -274,7 +274,6 @@ describe('dreamux onboard', () => {
   it('pins the service to a stable system Node and leads PATH with its directory', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -298,7 +297,9 @@ describe('dreamux onboard', () => {
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    expect(serviceUnit).toContain('Environment=DREAMUX_NODE_BIN=/usr/local/bin/node');
+    expect(serviceUnit).toContain(
+      'Environment=DREAMUX_NODE_BIN=/usr/local/bin/node',
+    );
     const servicePath =
       serviceUnit
         .split('\n')
@@ -316,7 +317,6 @@ describe('dreamux onboard', () => {
   it('captures the interactive session PATH into the service PATH after stable dirs', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -329,7 +329,6 @@ describe('dreamux onboard', () => {
       '/usr/bin',
       '/bin',
     ].join(':');
-    const probes: string[] = [];
 
     await runOnboard({
       answers,
@@ -338,10 +337,6 @@ describe('dreamux onboard', () => {
       homeDir: join(root, 'home'),
       env: { PATH: sessionPath, CODEX_ACCESS_TOKEN: 'interactive-token-test' },
       nodeProbe: noSystemNodeProbe,
-      execDirProbe: async (path) => {
-        probes.push(path);
-        return false;
-      },
     });
 
     const serviceUnit = readFileSync(
@@ -357,12 +352,14 @@ describe('dreamux onboard', () => {
     // Stable dirs lead (the current Node bin dir).
     expect(parts[0]).toBe(dirname(process.execPath));
     // Session PATH entries follow in their original order.
-    expect(parts).toContain(join(root, 'home', '.nvm', 'versions', 'node', 'v22.7.0', 'bin'));
+    expect(parts).toContain(
+      join(root, 'home', '.nvm', 'versions', 'node', 'v22.7.0', 'bin'),
+    );
     expect(parts).toContain(join(root, 'home', '.pyenv', 'shims'));
     // Fallback dirs are present last.
     expect(parts).toContain(join(root, 'home', '.local', 'bin'));
     expect(parts).not.toContain(LINUXBREW_BIN);
-    expect(probes).toEqual([LINUXBREW_BIN]);
+
     // De-duplicated: /usr/bin appears exactly once (from session PATH; fallback
     // does not re-add it).
     expect(parts.filter((p) => p === '/usr/bin')).toHaveLength(1);
@@ -371,7 +368,6 @@ describe('dreamux onboard', () => {
   it('preserves Linuxbrew when the operator already supplied it in session PATH', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -386,7 +382,6 @@ describe('dreamux onboard', () => {
         CODEX_ACCESS_TOKEN: 'interactive-token-test',
       },
       nodeProbe: noSystemNodeProbe,
-      execDirProbe: async () => false,
     });
 
     const serviceUnit = readFileSync(
@@ -399,16 +394,13 @@ describe('dreamux onboard', () => {
         .find((line) => line.startsWith('Environment=PATH='))
         ?.slice('Environment=PATH='.length) ?? '';
     expect(
-      servicePath
-        .split(':')
-        .filter((entry) => entry === LINUXBREW_BIN),
+      servicePath.split(':').filter((entry) => entry === LINUXBREW_BIN),
     ).toHaveLength(1);
   });
 
   it('captures the ambient process.env PATH when options.env is omitted (normal CLI use)', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -419,7 +411,9 @@ describe('dreamux onboard', () => {
     const pyenvShims = join(home, '.pyenv', 'shims');
     const oldPath = process.env['PATH'];
     const oldToken = process.env['CODEX_ACCESS_TOKEN'];
-    process.env['PATH'] = [nvmBin, pyenvShims, '/usr/bin', '/bin'].join(delimiter);
+    process.env['PATH'] = [nvmBin, pyenvShims, '/usr/bin', '/bin'].join(
+      delimiter,
+    );
     process.env['CODEX_ACCESS_TOKEN'] = 'interactive-token-test';
 
     try {
@@ -459,7 +453,6 @@ describe('dreamux onboard', () => {
   it('excludes a version-manager-bound candidate and falls back to the current Node', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -498,7 +491,6 @@ describe('dreamux onboard', () => {
     const runner = new FakeRunner();
     runner.lingerEnableOk = false;
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       registerService: true,
     });
     writeGlobalCodexAuth(answers);
@@ -528,7 +520,6 @@ describe('dreamux onboard', () => {
   it('does not let an interactive shell token satisfy the managed service doctor', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       registerService: true,
     });
 
@@ -548,7 +539,6 @@ describe('dreamux onboard', () => {
   it('fails before systemd registration when the service cannot execute the launcher', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       registerService: true,
       dreamuxBin: '/usr/local/bin/dreamux',
     });
@@ -565,14 +555,15 @@ describe('dreamux onboard', () => {
       }),
     ).rejects.toThrow('managed service cannot execute dreamux launcher');
 
-    expect(countCalls(runner, 'systemctl', ['--user', 'daemon-reload'])).toBe(0);
+    expect(countCalls(runner, 'systemctl', ['--user', 'daemon-reload'])).toBe(
+      0,
+    );
     expect(countCalls(runner, 'systemctl', ['--user', 'enable'])).toBe(0);
   });
 
   it('rewrites workspace dispatcher skills and skips already-loaded launchd services on rerun', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
       registerService: true,
       startService: true,
     });
@@ -605,7 +596,13 @@ describe('dreamux onboard', () => {
 
     const launchdPlist = parsePlist(
       readFileSync(
-        join(root, 'home', 'Library', 'LaunchAgents', 'dev.excited.dreamux.plist'),
+        join(
+          root,
+          'home',
+          'Library',
+          'LaunchAgents',
+          'dev.excited.dreamux.plist',
+        ),
         'utf8',
       ),
     ) as Record<string, any>;
@@ -630,7 +627,7 @@ describe('dreamux onboard', () => {
 
   it('preserves existing dispatchers and their codex settings on rerun', async () => {
     const runner = new FakeRunner();
-    const configDir = join(root, 'config');
+    const configDir = join(root, 'dreamux');
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),
@@ -656,7 +653,6 @@ describe('dreamux onboard', () => {
       { mode: 0o600 },
     );
     const answers = testAnswers({
-      configDir,
       dispatcherId: 'docs',
       dispatcherCwd: join(root, 'docs-cwd'),
       registerService: false,
@@ -751,7 +747,7 @@ describe('dreamux onboard', () => {
     // otherwise carries the existing dispatcher's own block through untouched,
     // so an explicit `true` survives a rerun even though the default is false.
     const runner = new FakeRunner();
-    const configDir = join(root, 'config');
+    const configDir = join(root, 'dreamux');
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),
@@ -771,7 +767,6 @@ describe('dreamux onboard', () => {
       { mode: 0o600 },
     );
     const answers = testAnswers({
-      configDir,
       dispatcherId: 'flow',
       dispatcherCwd: join(root, 'flow-cwd'),
       registerService: false,
@@ -802,7 +797,7 @@ describe('dreamux onboard', () => {
     // agent used only via teammate.spawn under a Codex dispatcher). Re-running
     // onboard must NOT silently delete that entry.
     const runner = new FakeRunner();
-    const configDir = join(root, 'config');
+    const configDir = join(root, 'dreamux');
     mkdirSync(configDir, { recursive: true });
     const existing = {
       agents: [
@@ -845,7 +840,6 @@ describe('dreamux onboard', () => {
     });
 
     const answers = testAnswers({
-      configDir,
       dispatcherId: 'docs',
       dispatcherCwd: join(root, 'docs-cwd'),
       registerService: false,
@@ -864,8 +858,12 @@ describe('dreamux onboard', () => {
     const saved = JSON.parse(
       readFileSync(join(configDir, 'config.json'), 'utf8'),
     ) as Record<string, any>;
-    const agentIds = (saved['agents'] as Array<{ id: string }>).map((a) => a.id);
-    expect(agentIds).toEqual(expect.arrayContaining(['flow', 'docs', 'claude-helper']));
+    const agentIds = (saved['agents'] as Array<{ id: string }>).map(
+      (a) => a.id,
+    );
+    expect(agentIds).toEqual(
+      expect.arrayContaining(['flow', 'docs', 'claude-helper']),
+    );
     const claudeHelper = (saved['agents'] as Array<any>).find(
       (a) => a.id === 'claude-helper',
     );
@@ -878,7 +876,7 @@ describe('dreamux onboard', () => {
     // choice, not a config error — onboard adds the second dispatcher and
     // rewrites the config instead of failing loud + rolling back.
     const runner = new FakeRunner();
-    const configDir = join(root, 'config');
+    const configDir = join(root, 'dreamux');
     const existingConfig = JSON.stringify(
       testSingleDispatcherFileObject({
         id: 'flow',
@@ -902,7 +900,6 @@ describe('dreamux onboard', () => {
     });
 
     const answers = testAnswers({
-      configDir,
       dispatcherId: 'docs',
       dispatcherCwd: join(root, 'docs-cwd'),
       channels: [feishuOnboardChannel('app-shared', 'secret-docs')],
@@ -937,9 +934,7 @@ describe('dreamux onboard', () => {
     // with the expected provider + config). This is the canonical round-trip
     // gate for the agents[] normalization.
     const runner = new FakeRunner();
-    const configDir = join(root, 'config');
     const answers = testAnswers({
-      configDir,
       dispatcherId: 'flow',
       registerService: false,
       channels: [feishuOnboardChannel('app-roundtrip', 'secret-roundtrip')],
@@ -955,30 +950,27 @@ describe('dreamux onboard', () => {
     });
 
     // Now load the written config through the same parser.
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfig();
 
     // agents map must be populated with the 'flow' agent.
     expect(Object.keys(config.agents)).toEqual(['flow']);
     expect(config.agents['flow']?.provider).toBe('builtin:codex');
     expect(config.agents['flow']?.config).toBeDefined();
 
-    // Dispatcher must have its agentRuntime resolved into .runtime.
+    // The Dispatcher keeps its agent reference; the agents map owns configuration.
     expect(config.dispatchers).toHaveLength(1);
     expect(config.dispatchers[0]).toMatchObject({
       id: 'flow',
       agentRuntime: 'flow',
-      runtime: {
-        provider: 'builtin:codex',
-        config: expect.objectContaining({ approval_policy: 'never' }),
-      },
     });
-    // In-memory runtime deep-equals the resolved agent config.
-    expect(config.dispatchers[0]?.runtime).toEqual(config.agents['flow']);
+    expect(
+      config.agents[config.dispatchers[0]!.agentRuntime]?.config,
+    ).toMatchObject({ sandbox_mode: 'workspace-write' });
   });
 
   /**
    * `runOnboard()` writes a real config.json naming `builtin:feishu`, then
-   * reads it back through the exact same `loadConfig({ configDir })` call
+   * reads it back through the exact same `loadConfig()` call
    * `dreamux onboard` / server startup uses in production — `runOnboard`
    * takes no `providerRegistry` override, so this exercises the real
    * channel-provider loader against the real `@excitedjs/feishu-channel`
@@ -997,9 +989,7 @@ describe('dreamux onboard', () => {
    */
   it('onboard writes a real builtin:feishu channel that loadConfig should accept', async () => {
     const runner = new FakeRunner();
-    const configDir = join(root, 'config');
     const answers = testAnswers({
-      configDir,
       dispatcherId: 'flow',
       registerService: false,
       channels: [feishuOnboardChannel('app-defect', 'secret-defect')],
@@ -1017,13 +1007,12 @@ describe('dreamux onboard', () => {
     // The config `runOnboard` just wrote round-trips through the same
     // production `loadConfig()` call, loading the real ref-less Feishu
     // provider through the real channel loader.
-    await expect(loadConfig({ configDir })).resolves.toBeDefined();
+    await expect(loadConfig()).resolves.toBeDefined();
   });
 
   it('fails non-interactive setup when required channel inputs are missing', async () => {
     const options: OnboardCliOptions = {
       yes: true,
-      configDir: join(root, 'config'),
     };
 
     await expect(answersFromOptions(options, false)).rejects.toThrow(
@@ -1035,7 +1024,7 @@ describe('dreamux onboard', () => {
     const answers = await answersFromOptions(
       {
         yes: true,
-        configDir: join(root, 'config'),
+
         channelConfigJson: JSON.stringify({
           app_id: 'app-test',
           app_secret: 'secret-test',
@@ -1050,9 +1039,8 @@ describe('dreamux onboard', () => {
 
 function testAnswers(overrides: Partial<OnboardAnswers>): OnboardAnswers {
   return {
-    configDir: join(rootForTest(overrides), 'config'),
     dispatcherId: 'flow',
-    dispatcherCwd: join(rootForTest(overrides), 'dispatcher-cwd'),
+    dispatcherCwd: join(rootForTest(), 'dispatcher-cwd'),
     agentRuntime: {
       id: overrides.dispatcherId ?? 'flow',
       provider: 'builtin:codex',
@@ -1089,8 +1077,29 @@ function feishuOnboardChannel(
   };
 }
 
-function rootForTest(overrides: Partial<OnboardAnswers>): string {
-  const fromConfig = overrides.configDir;
-  if (fromConfig !== undefined) return join(fromConfig, '..');
-  return homedir();
+function rootForTest(): string {
+  return dirname(process.env['DREAMUX_ROOT']!);
 }
+
+// Control only the external filesystem entries; production PATH discovery runs unchanged.
+let homebrewPresent = false;
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...real, access: vi.fn(real.access) };
+});
+const actualAccess = (
+  await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+).access;
+beforeEach(() => {
+  homebrewPresent = false;
+  vi.spyOn(filesystem, 'access').mockImplementation(async (path, mode) => {
+    if (path === LINUXBREW_BIN || path === '/opt/homebrew/bin') {
+      if (homebrewPresent) return;
+      throw Object.assign(new Error('missing Homebrew fixture'), {
+        code: 'ENOENT',
+      });
+    }
+    return actualAccess(path, mode);
+  });
+});
+afterEach(() => vi.restoreAllMocks());

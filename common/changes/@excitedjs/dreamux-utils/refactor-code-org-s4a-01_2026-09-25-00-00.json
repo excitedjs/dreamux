@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 4a: added TransactionalStore<T> (a per-file, session-held, load-then-serialized-update primitive) and publishFileExclusive (a no-clobber atomic file publish helper) per issue #448's storage design. Removed writeAtomic, whose only in-repo callers (feishu-channel's routing store and access ledger) now write through TransactionalStore instead; writeAtomic was a public runtime export, so an external provider could in principle have imported it directly.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "053700@gmail.com"
+}

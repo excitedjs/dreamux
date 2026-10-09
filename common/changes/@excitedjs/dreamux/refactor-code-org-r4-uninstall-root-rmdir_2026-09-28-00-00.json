@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "`dreamux uninstall` follows the existing next behavior: dry-run checks existence and reports planned removal without enumerating root contents or writing files; actual uninstall recursively removes the entire DREAMUX_ROOT, including other files and directories inside it. The foreign-retention predictor is removed. Results report removed or missing; permission and other filesystem errors still propagate, including after a successful preview. Normalized removal paths inside or containing a provider-derived operator runtime home are refused before any service mutation. Physical symlink aliases are not resolved. Current root addressing and service removal order remain unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

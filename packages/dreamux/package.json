@@ -29,7 +29,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
-    "lint": "eslint .",
+    "lint": "eslint . && prettier --check . '!**/*.md' '!**/dist/**' '!**/CHANGELOG.json' '!**/.rush/**' && depcruise --config .dependency-cruiser.cjs src && knip --tsConfig tsconfig.tests.json --use-tsconfig-files --exports",
     "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
     "test": "vitest run --fileParallelism=false",
     "test:watch": "vitest",
@@ -50,17 +50,22 @@
     "@clack/prompts": "^1.5.0",
     "execa": "^9.6.1",
     "pino": "^9.5.0",
-    "plist": "^5.0.0"
+    "plist": "^5.0.0",
+    "tapable": "~2.3.3"
   },
   "devDependencies": {
+    "@excitedjs/dreamux-plugin-bootstrap": "workspace:*",
     "@excitedjs/eslint-config": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",
     "eslint": "^9.39.0",
+    "prettier": "^3.9.9",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "dependency-cruiser": "~18.4.0",
+    "knip": "~6.38.0"
   }
 }

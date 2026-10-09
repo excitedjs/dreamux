@@ -1,13 +1,14 @@
 # @excitedjs/feishu-channel
 
-The built-in Feishu **`ChannelProvider`** for [Dreamux](../../dreamux) — the
-package behind the `builtin:feishu` provider reference. It implements the
+The built-in Feishu **plugin** for [Dreamux](../../dreamux): it contributes the
+Feishu `ChannelProvider` behind the `builtin:feishu` provider reference and
+publishes an extension api for other plugins. The provider implements the
 neutral `@excitedjs/dreamux-types` channel contract on top of
 [`@excitedjs/feishu-transport`](../feishu-transport), which stays the sole owner
 of the Lark SDK.
 
-`@excitedjs/dreamux` depends on this package by default and resolves
-`builtin:feishu` to it, so the Feishu channel ships out of the box.
+`@excitedjs/dreamux` depends on this package and always loads its plugin, so
+the Feishu channel ships out of the box.
 
 ## What it owns
 
@@ -17,7 +18,7 @@ of the Lark SDK.
   store, read and written under a host-supplied state directory.
 - **Inbound normalization**: turning Feishu events into agent-facing channel
   results, including the Channel-owned inner body and inline `<attachment>`
-  blocks. Agent runtimes own the outer `<channel source="feishu" …>` envelope.
+  blocks. Core owns the outer `<channel source="feishu" …>` envelope.
 - **Topic routing**: verifying `chat_mode=topic`, projecting `thread_id` as a
   neutral collaboration target, and recording exact per-message targets for
   scoped TeamLeader replies.
@@ -32,33 +33,45 @@ of the Lark SDK.
 ## What it does not own
 
 - It never imports `@excitedjs/dreamux` core, and never imports the Lark SDK
-  directly — platform calls go through `@excitedjs/feishu-transport`. Both
-  boundaries are enforced by `tests/import-boundary.test.ts`.
-- Dispatcher lifecycle, agent/Codex process supervision, routing, binding state,
-  authorization, Team lifecycle, and the Feishu MCP **server descriptor** /
-  admin-method routing stay in `@excitedjs/dreamux`. The host supplies the bot
+  directly — platform calls go through `@excitedjs/feishu-transport`. The Core
+  import boundary is enforced by the shared lint configuration.
+- Dispatcher lifecycle, agent process supervision, Team lifecycle, the neutral
+  command port, and MCP lease/shim routing stay in `@excitedjs/dreamux`.
+  Feishu routing, binding state, access policy, and tool definitions belong to
+  this package. The host supplies the bot
   secret / app id and the state / cache directories; the package reconstructs no
   Dreamux host layout or path contract.
 
 ## Public API
 
-- `createFeishuChannelProvider()` plus the default-exported provider factory —
-  builds the neutral `ChannelProvider` the generic channel loader registers for
-  `builtin:feishu`. Its `createSession` returns a contract-valid `ChannelSession`
-  (`reply` / `react` / `resolveTarget` / `tools` / `handleTool` /
-  `messageBelongsToTarget`).
-- The session class plus the gate, chat-bots store, message formatter, MCP tool
-  parser, and production bot adapter helpers used by the core adapter that
-  drives the host-shaped session path.
+- The default export is the neutral provider factory for
+  `npm:@excitedjs/feishu-channel`. `createFeishuPlugin()` is the named plugin
+  factory. The plugin
+  contributes the `feishu` channel provider (`builtin:feishu`) and publishes
+  `FeishuApi`, through which another plugin registers Feishu extensions: extra
+  MCP tools, card actions, and a per-channel-instance lifecycle with an
+  instance api (`FeishuExtension`, `FeishuInstanceApi`).
+- `createFeishuChannelProvider()` — the same provider with no extensions. Its
+  `createSession` returns a `ChannelInstance`: a `session` with
+  `initialize` / `start` / `close`, plus the optional `mcp` capability beside it.
+- The public extension contracts and inbound message formatter support plugin
+  authors and cross-package callers. Session, gate, stores, tool parsers, and
+  bot adapter implementations remain package-internal.
 
-Inbound delivery receipts are status-only (`submitted`, `duplicate`, `stopped`,
-`failed`, or `ambiguous`). `failed` proves pre-admission rejection; `ambiguous`
-means delivery may have crossed the runtime boundary and is terminal for the
-inbound event, so Feishu does not replay it. The Channel contract does not
-expose a Dreamux Turn identifier. The read-only core event stream projects
+Successful submission receipts can carry a Dreamux Turn identifier. The
+channel distinguishes admitted, duplicate, stopped, failed, ambiguous, and
+proven Team-rejection outcomes. A proven pre-admission Team rejection permits
+the bound-route fallback; ambiguous delivery is never replayed. The read-only
+core event stream projects
 sanitized submitted, activity, and settled lifecycle facts for dispatcher and
 TeamLeader conversations; Feishu anchors each presentation to the turn's
 inbound message.
+
+Binding a topic retires the displaced Team's presentation even when that Team
+served the topic through its parent group. Removing an exact topic binding
+retires that route's presentation and permits fresh submissions through a
+remaining parent binding, including one to the same Team. A standing anchor
+keeps the serving-route provenance captured when it was created.
 
 Test doubles are deliberately test-local and are not part of the published
 package API.
@@ -72,7 +85,7 @@ non-empty sender id. Other chat types fail with `unsupported_chat_type`, and
 other sender shapes fail with `sender_unknown`, before bot observation,
 `/introduce`, pairing, or delivery.
 
-The public `dreamuxFeishuGate` input is unchanged: it still has `chat_type` and
+The `dreamuxFeishuGate` input is unchanged: it still has `chat_type` and
 `is_bot_sender` and has no `sender_kind`. Callers must perform the exact
 classification above first. Passing `is_bot_sender: false` asserts a known
 human; negating `isBotSenderType(...)` alone is not sufficient because unknown
@@ -98,7 +111,7 @@ takes effect when the new server starts.
 may deliver ordinary text in a trusted chat but cannot mutate peer-bot trust;
 the command is diagnosed as `sender_not_followed` and writes no trust.
 
-## Feishu topic-group permission
+## Feishu chat information permission
 
 Topic collaboration routing reads the enclosing chat through Feishu's
 `im.v1.chat.get` API. The bot must have a group information read permission
@@ -110,6 +123,21 @@ Every non-empty inbound `thread_id` is also included in the provider-owned
 display attributes, so runtimes render it in the model-visible `<channel>`
 envelope. Displaying that identifier does not classify an ordinary group
 thread as a collaboration topic.
+
+The same read can decide who may answer a card, as a last resort. A click on
+an ask-user or extension card names its chat but not whether that chat is
+direct or a group, so the channel applies the inbound access policy for both
+kinds and establishes the kind only when the two answers differ. It takes the
+kind from the chat itself, never from the access lists it is judging: the kind
+reported by the last admitted inbound message this session routed in that chat
+(a group message dropped for lacking a mention, an untrusted bot's message, or
+a consumed `/introduce` teaches nothing). Only then does it ask the platform. A person the policy
+admits in a direct chat and in a group alike, or in neither, never triggers the
+read. When the answer does depend on the kind and it cannot be established, the
+click is refused with an error toast rather than degrading to an ordinary group
+as topic detection does, which on an install whose bot lacks the group
+information read permission affects only a click in a chat this session has not
+yet routed an admitted message from.
 
 A confirmed topic target declares its enclosing group as a less-specific
 binding fallback. An exact topic binding wins first; a bound collaboration

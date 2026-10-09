@@ -1,3 +1,14 @@
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+const silentLog: DreamuxLogger = {
+  error() {},
+  warn() {},
+  info() {},
+  debug() {},
+  trace() {},
+  child() {
+    return silentLog;
+  },
+};
 /**
  * `readClaudeRecentActivity` (`src/activity/reader.ts`) — the MANDATORY
  * `AgentRuntimeProvider.readRecentActivity` implementation for Claude Code.
@@ -23,7 +34,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { readClaudeRecentActivity } from '../src/activity/reader.js';
-import { deriveClaudeHistoryPath } from '../src/activity/path.js';
+
 import { defaultDispatcherClaudeCodeConfig } from '../src/config.js';
 import type {
   AgentActivityReadContext,
@@ -39,7 +50,10 @@ interface NativeRecordInput {
   timestamp: string;
 }
 
-function userText(input: NativeRecordInput, text: string): Record<string, unknown> {
+function userText(
+  input: NativeRecordInput,
+  text: string,
+): Record<string, unknown> {
   return {
     type: 'user',
     sessionId: input.sessionId,
@@ -50,7 +64,10 @@ function userText(input: NativeRecordInput, text: string): Record<string, unknow
   };
 }
 
-function assistantText(input: NativeRecordInput, text: string): Record<string, unknown> {
+function assistantText(
+  input: NativeRecordInput,
+  text: string,
+): Record<string, unknown> {
   return {
     type: 'assistant',
     sessionId: input.sessionId,
@@ -94,7 +111,14 @@ function userToolResult(
     timestamp: input.timestamp,
     message: {
       role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: callId, content, is_error: isError }],
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: callId,
+          content,
+          is_error: isError,
+        },
+      ],
     },
   };
 }
@@ -104,7 +128,9 @@ function userToolResult(
 const tempDirs: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
 });
 
 interface Fixture {
@@ -112,7 +138,9 @@ interface Fixture {
   configDir: string;
   sessionId: string;
   path: string;
-  context: AgentActivityReadContext<ReturnType<typeof defaultDispatcherClaudeCodeConfig>>;
+  context: AgentActivityReadContext<
+    ReturnType<typeof defaultDispatcherClaudeCodeConfig>
+  >;
   /** Append native JSONL lines to the session file (models a growing session). */
   append(lines: readonly Record<string, unknown>[]): Promise<void>;
   /** Overwrite the whole session file (used for malformed/mismatched fixtures). */
@@ -126,13 +154,21 @@ async function makeFixture(sessionId = randomUUID()): Promise<Fixture> {
   const configDir = join(root, 'claude-config');
   await mkdir(cwd, { recursive: true });
   await mkdir(configDir, { recursive: true });
-  const path = await deriveClaudeHistoryPath(sessionId, cwd, {
-    CLAUDE_CONFIG_DIR: configDir,
-  });
-  const context: AgentActivityReadContext<ReturnType<typeof defaultDispatcherClaudeCodeConfig>> = {
-    config: defaultDispatcherClaudeCodeConfig(),
+  const path = join(
+    configDir,
+    'projects',
+    cwd.replace(/[^a-zA-Z0-9]/g, '-'),
+    `${sessionId}.jsonl`,
+  );
+  const context: AgentActivityReadContext<
+    ReturnType<typeof defaultDispatcherClaudeCodeConfig>
+  > = {
+    config: {
+      ...defaultDispatcherClaudeCodeConfig(),
+      extra_env: { CLAUDE_CONFIG_DIR: configDir },
+    },
     cwd,
-    injectEnv: { CLAUDE_CONFIG_DIR: configDir },
+    logger: silentLog,
   };
   return {
     cwd,
@@ -166,9 +202,18 @@ function conversation(sessionId: string): Record<string, unknown>[] {
   const t = (offsetSeconds: number) =>
     new Date(Date.UTC(2026, 0, 1, 0, 0, offsetSeconds)).toISOString();
   return [
-    userText({ sessionId, uuid: 'u1', parentUuid: null, timestamp: t(0) }, 'hello'),
-    assistantText({ sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: t(1) }, 'hi there'),
-    userText({ sessionId, uuid: 'u2', parentUuid: 'a1', timestamp: t(2) }, 'read the file'),
+    userText(
+      { sessionId, uuid: 'u1', parentUuid: null, timestamp: t(0) },
+      'hello',
+    ),
+    assistantText(
+      { sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: t(1) },
+      'hi there',
+    ),
+    userText(
+      { sessionId, uuid: 'u2', parentUuid: 'a1', timestamp: t(2) },
+      'read the file',
+    ),
     assistantToolUse(
       { sessionId, uuid: 'a2', parentUuid: 'u2', timestamp: t(3) },
       'call-1',
@@ -181,7 +226,10 @@ function conversation(sessionId: string): Record<string, unknown>[] {
       'super secret file contents',
       false,
     ),
-    assistantText({ sessionId, uuid: 'a3', parentUuid: 'u3', timestamp: t(5) }, 'done reading'),
+    assistantText(
+      { sessionId, uuid: 'a3', parentUuid: 'u3', timestamp: t(5) },
+      'done reading',
+    ),
   ];
 }
 
@@ -192,9 +240,16 @@ describe('readClaudeRecentActivity: active growing session', () => {
     const fixture = await makeFixture();
     await fixture.write(conversation(fixture.sessionId));
 
-    const firstPage = await readClaudeRecentActivity(query(fixture, { limit: 1 }), fixture.context);
+    const firstPage = await readClaudeRecentActivity(
+      query(fixture, { limit: 1 }),
+      fixture.context,
+    );
     expect(firstPage.records).toEqual([
-      { kind: 'assistant_message', text: 'done reading', occurredAt: expect.any(String) },
+      {
+        kind: 'assistant_message',
+        text: 'done reading',
+        occurredAt: expect.any(String),
+      },
     ]);
     expect(firstPage.nextCursor).toBeDefined();
 
@@ -202,33 +257,68 @@ describe('readClaudeRecentActivity: active growing session', () => {
     // AFTER the cursor was minted.
     await fixture.append([
       userText(
-        { sessionId: fixture.sessionId, uuid: 'u4', parentUuid: 'a3', timestamp: '2026-01-01T00:00:06.000Z' },
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'u4',
+          parentUuid: 'a3',
+          timestamp: '2026-01-01T00:00:06.000Z',
+        },
         'one more thing',
       ),
       assistantText(
-        { sessionId: fixture.sessionId, uuid: 'a4', parentUuid: 'u4', timestamp: '2026-01-01T00:00:07.000Z' },
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'a4',
+          parentUuid: 'u4',
+          timestamp: '2026-01-01T00:00:07.000Z',
+        },
         'sure',
       ),
     ]);
 
     const secondPage = await readClaudeRecentActivity(
-      query(fixture, { limit: 2, cursor: firstPage.nextCursor }),
+      query(fixture, { limit: 2, cursor: firstPage.nextCursor! }),
       fixture.context,
     );
     expect(secondPage.records).toEqual([
-      { kind: 'assistant_message', text: 'hi there', occurredAt: expect.any(String) },
-      { kind: 'tool', name: 'Read', status: 'completed', occurredAt: expect.any(String) },
+      {
+        kind: 'assistant_message',
+        text: 'hi there',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'tool',
+        name: 'Read',
+        status: 'completed',
+        occurredAt: expect.any(String),
+      },
     ]);
   });
 
   it('reads the newest tail directly (no cursor) reflecting whatever was appended most recently', async () => {
     const fixture = await makeFixture();
     await fixture.write(conversation(fixture.sessionId));
-    const page = await readClaudeRecentActivity(query(fixture), fixture.context);
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
     expect(page.records).toEqual([
-      { kind: 'assistant_message', text: 'hi there', occurredAt: expect.any(String) },
-      { kind: 'tool', name: 'Read', status: 'completed', occurredAt: expect.any(String) },
-      { kind: 'assistant_message', text: 'done reading', occurredAt: expect.any(String) },
+      {
+        kind: 'assistant_message',
+        text: 'hi there',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'tool',
+        name: 'Read',
+        status: 'completed',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'assistant_message',
+        text: 'done reading',
+        occurredAt: expect.any(String),
+      },
     ]);
     expect(page.truncated).toBe(false);
     // No further page beyond the file start.
@@ -242,7 +332,10 @@ describe('readClaudeRecentActivity: closed session', () => {
     await fixture.write(conversation(fixture.sessionId));
     // No live child, no supervisor, nothing but the on-disk file: the read
     // path never needed one, so a "closed" session reads the same way.
-    const page = await readClaudeRecentActivity(query(fixture), fixture.context);
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
     expect(page.records).toHaveLength(3);
   });
 });
@@ -256,8 +349,16 @@ describe('readClaudeRecentActivity: tool filtering as a group', () => {
       fixture.context,
     );
     expect(page.records).toEqual([
-      { kind: 'assistant_message', text: 'hi there', occurredAt: expect.any(String) },
-      { kind: 'assistant_message', text: 'done reading', occurredAt: expect.any(String) },
+      {
+        kind: 'assistant_message',
+        text: 'hi there',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'assistant_message',
+        text: 'done reading',
+        occurredAt: expect.any(String),
+      },
     ]);
     expect(page.records.some((record) => record.kind === 'tool')).toBe(false);
   });
@@ -271,10 +372,13 @@ describe('readClaudeRecentActivity: tool filtering as a group', () => {
     );
     await expect(
       readClaudeRecentActivity(
-        query(fixture, { cursor: withTools.nextCursor, includeTools: false }),
+        query(fixture, { cursor: withTools.nextCursor!, includeTools: false }),
         fixture.context,
       ),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'cursor_invalid' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'cursor_invalid',
+    });
   });
 });
 
@@ -284,10 +388,16 @@ describe('readClaudeRecentActivity: bounds', () => {
     await fixture.write(conversation(fixture.sessionId));
     await expect(
       readClaudeRecentActivity(query(fixture, { limit: 0 }), fixture.context),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'activity_corrupt' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'activity_corrupt',
+    });
     await expect(
       readClaudeRecentActivity(query(fixture, { limit: 201 }), fixture.context),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'activity_corrupt' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'activity_corrupt',
+    });
   });
 });
 
@@ -297,7 +407,10 @@ describe('readClaudeRecentActivity: neutral typed errors', () => {
     // Never written: the derived path is valid but nothing lives there.
     await expect(
       readClaudeRecentActivity(query(fixture), fixture.context),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'session_unavailable' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'session_unavailable',
+    });
   });
 
   it('surfaces session_unavailable when the file belongs to a different native session id', async () => {
@@ -308,15 +421,24 @@ describe('readClaudeRecentActivity: neutral typed errors', () => {
     await fixture.write(conversation(otherSessionId));
     await expect(
       readClaudeRecentActivity(query(fixture), fixture.context),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'session_unavailable' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'session_unavailable',
+    });
   });
 
   it('surfaces cursor_invalid for a garbage cursor string', async () => {
     const fixture = await makeFixture();
     await fixture.write(conversation(fixture.sessionId));
     await expect(
-      readClaudeRecentActivity(query(fixture, { cursor: 'not-a-real-cursor' }), fixture.context),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'cursor_invalid' });
+      readClaudeRecentActivity(
+        query(fixture, { cursor: 'not-a-real-cursor' }),
+        fixture.context,
+      ),
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'cursor_invalid',
+    });
   });
 
   it('every rejection is a plain neutral AgentActivityError, never a raw Node fs error', async () => {
@@ -336,14 +458,22 @@ describe('readClaudeRecentActivity: no native leakage into records', () => {
   it('never carries tool arguments or tool results, and never carries a filesystem path, in a returned record', async () => {
     const fixture = await makeFixture();
     await fixture.write(conversation(fixture.sessionId));
-    const page = await readClaudeRecentActivity(query(fixture), fixture.context);
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
 
     const toolRecord = page.records.find((record) => record.kind === 'tool');
     expect(toolRecord).toBeDefined();
     // Structural proof, not just type-level: the actual returned object has
     // no 'arguments' or 'result' key at all, even though the native transcript
     // carried a tool call argument and a tool result payload.
-    expect(Object.keys(toolRecord!)).toEqual(['kind', 'name', 'status', 'occurredAt']);
+    expect(Object.keys(toolRecord!)).toEqual([
+      'kind',
+      'name',
+      'status',
+      'occurredAt',
+    ]);
 
     const serialized = JSON.stringify(page);
     expect(serialized).not.toContain('/etc/native/secret-path.txt');

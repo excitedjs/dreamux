@@ -19,7 +19,7 @@ lives under `/packages/dreamux/src/service/`.
 
 Each `DispatcherService` is one dispatcher-local aggregate and owns:
 
-- the dispatcher's contained agent (a `TeammateService` built from the
+- the dispatcher's contained agent (an `AgentService` built from the
   dispatcher root `identity.json`, structurally outside the `teammate/`
   collection so read chokepoints never enumerate it);
 - a dispatcher-local `ChannelService`;
@@ -27,18 +27,24 @@ Each `DispatcherService` is one dispatcher-local aggregate and owns:
 - the per-dispatcher `TeamCollection`;
 - one stateless `CompletionDeliveryPolicy`;
 - one `WorktreeManager`;
-- one shared `AgentIdentityStore`, built at construction in
-  `service/agent-entity/` and injected into the dispatcher agent, the
-  dispatcher-scope teammate collection, and each Team's `TeamCollection` /
-  `TeamService` / member `TeammateCollection`. Collections never self-build the
-  store;
+- the dispatcher-root Agent's own identity, built and read through the
+  dispatcher's `AgentServiceFactory` (`create`/`open`/`upsert`) rather than a
+  store any parent holds (R63: an Agent is a directory to its parents).
+  `Dispatchers` (`service/dispatchers/index.ts`) holds no cached identity
+  store of its own either: its `summarize()`/`status()` fallback reads call
+  the stateless `readAgentIdentity()` fresh, on every call. Every other
+  identity — dispatcher TeamMates, TeamLeaders, and Team members — is read or
+  written the same way, through the owning entity's own factory call or a
+  fresh stateless read, never through an instance any parent constructs or
+  caches (see Store Construction Patterns in
+  [service-topology](service-topology.md#store-construction-patterns));
 - the dispatcher scheduler.
 
 Source:
 
 - `/packages/dreamux/src/server.ts`
 - `/packages/dreamux/src/service/CLAUDE.md`
-- `/packages/dreamux/src/service/agent-entity/`
+- `/packages/dreamux/src/service/agent/`
 - `/packages/dreamux/src/service/dispatchers/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/index.ts`
@@ -52,7 +58,7 @@ things:
 |---|---|---|
 | `Dispatchers` | `DispatcherService` | aggregate factory/cache vs. one dispatcher's object graph |
 | `TeamCollection` | `TeamService` | Team store, worktrees, create/list/history vs. one Team's record and lifecycle |
-| `TeammateCollection` | `TeammateService` | scoped construction/cache/reads vs. entity-owned lifecycle |
+| `TeammateCollection` | `AgentService` | scoped construction/cache/reads vs. entity-owned lifecycle |
 
 A **Collection** owns its store, its factory, lookup and list, the instances
 this process holds, materialization dedup, and exact-instance eviction. It does
@@ -61,20 +67,22 @@ owns no bulk runtime or membership shutdown verb, apart from the Team-scoped
 bulk member close a dissolve needs.
 
 A **Service** owns exactly one entity: its record or identity, its operations,
-its runtime-backed work, and its close. `TeammateService` is the sole command
+its runtime-backed work, and its close. `AgentService` is the sole command
 owner for every dispatcher agent, TeamMate, TeamLeader, and Team member — it
 owns mutation admission, its process-local Workflow lock, raw runtime authority,
 in-process `Turn` objects, terminal outcome and delivery convergence, close
 single-flight, and the committed retirement fact.
 
 The dispatcher *has* an agent; it is not itself an Agent Runtime. Each
-`TeamService` directly builds and holds its TeamLeader `TeammateService` through
-`team-service/leader-agent.ts`, using the identity store, worktree manager, and
-completion-delivery policy its owning `TeamCollection` injects. The per-Team
+`TeamService` directly builds and holds its TeamLeader `AgentService` through
+`team/leader.ts`, using the `AgentServiceFactory` (R63: no identity store of
+its own), worktree manager, and completion-delivery policy its owning
+`TeamCollection` injects. The per-Team
 `TeammateCollection` is members-only: the TeamLeader lives at the Team root and
-is never cached in the collection's entity map. `DispatcherService.team()`
-returns a `TeamLeaderHandle` to admin and MCP team-leader callers, never the
-concrete `TeamService`.
+is never cached in the collection's entity map. The Team assembles its leader's
+tools from its own members, Workflows, scheduler, and dissolve operation. Channel
+tools receive the actual ChannelService and fences through neutral structural
+views. There is no leader-scope handle or lookup back through TeamCollection.
 
 One service class belongs in one file or directory; a class with helpers gets a
 directory whose `index.ts` is the class and whose siblings are its helpers.
@@ -83,11 +91,11 @@ Source:
 
 - `/packages/dreamux/src/service/CLAUDE.md`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/team-collection/index.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/dreamux/src/service/team/index.ts`
+- `/packages/dreamux/src/service/team/service.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
+- `/packages/dreamux/src/service/agent/runtime-generation.ts`
 
 ## Contracts
 
@@ -114,7 +122,7 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
-- `/packages/dreamux/src/service/dispatcher-service/input-source-lifecycle.ts`
+- `/packages/dreamux/src/service/dispatcher-service/lifecycle.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 
 ### Roles And Visibility
@@ -138,8 +146,9 @@ predicate before projecting any physically discovered identity.
 
 Source:
 
-- `/packages/dreamux/src/service/agent-entity/read-helpers.ts`
-- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/agent/records.ts`
+- `/packages/dreamux/src/service/agent/requests.ts`
+- `/packages/dreamux/src/service/team/leader.ts`
 - `/packages/dreamux/src/platform/paths.ts`
 
 ### TeamMate Model
@@ -152,10 +161,16 @@ closed TeamMate from the persisted `session_id`, and there is no standalone
 
 Read tools do not start or resume runtimes. `last` first checks the identity and
 scope, then delegates a bounded cold read to the selected `AgentRuntimeProvider`
-for that agent's native session history. It materializes no entity, starts no
-runtime, and stores no transcript copy, index, or cursor; it returns
-provider-neutral bounded message/tool records, an opaque backward cursor, and
-truncation state.
+for that agent's native session history. While the entity's runtime generation
+is running, the provider, config, and session id are the ones that generation
+was launched with, because an online `config.agents.replace` does not change
+what a running runtime uses (a TeamMate being reopened from a closed record
+counts: `last` waits for that build, which settles before any launch, and reads
+the entity it produced); with no runtime running they resolve from the current
+config, and one that no longer resolves is an error. Dreamux persists no
+historical config for this. It materializes no entity, starts no runtime, and
+stores no transcript copy, index, or cursor; it returns provider-neutral bounded message/tool
+records, an opaque backward cursor, and truncation state.
 
 No surface exposes a native history path. `spawn`, `send`, `list`, `status`, and
 `history` receipts carry the entity's `AgentEntityRuntimeStatus`, whose only
@@ -195,17 +210,17 @@ envelopes, and typed provider errors inside their own runtime packages. Neutral
 scan mechanics — digests, a bounded discovery budget, exact positional reads,
 and lexical path containment — are single-sourced in
 `/packages/dreamux-utils/src/activity-scan.ts`, which holds mechanism only and
-owns no record shape. Output bounding is not delegated: Core's own
-`readAgentActivity` re-validates every returned page against its record, cursor,
-text, and byte budgets, because a provider is not trusted to bound Core's
-output.
+owns no record shape. Core's own `readAgentActivity` still re-validates every
+returned page's shape (record count against what was requested, record and
+cursor field types) against its record, but a provider's own bounds are the
+only bound on the magnitude of what it returns — Core no longer imposes a
+byte/char/cursor-length cap of its own on top of them.
 
 Source:
 
-- `/packages/dreamux/src/service/teammate-collection/`
-- `/packages/dreamux/src/service/teammate-service/`
-- `/packages/dreamux/src/service/agent-entity/types.ts`
-- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
+- `/packages/dreamux/src/service/agent/`
+- `/packages/dreamux/src/service/agent/identity.ts`
+- `/packages/dreamux/src/service/agent/activity.ts`
 - `/packages/dreamux-utils/src/activity-scan.ts`
 - `/packages/agent-runtime/codex/src/activity/`
 - `/packages/agent-runtime/claude-code/src/activity/`
@@ -214,15 +229,20 @@ Source:
 
 `team.create.name_prefix` is a label request, not a durable address. Core
 allocates a concrete `team_name` with a 4–8 character random suffix, and the
-Team's own `record.json` is the claim: publishing it is an exclusive create, and
-that create is the whole acceptance protocol. Before it the candidate name is
-free and a caller that loses the race chooses another; after it the record owns
-the name for good, so closed and not-yet-materialized concrete names are never
-reused. There is no separate claim file.
+Team's own `record.json` is the claim: publishing it is a serialized
+load-decide-write inside the one `TransactionalStore` the collection holds for
+that Team id, and that create is the whole acceptance protocol. Before it the
+candidate name is free and a caller that loses the race against that same
+in-memory queue chooses another; after it the valid record owns the name,
+including after close. Fully retired history returns to disk reads, so later
+deletion or damage of that record affects existence and name availability;
+active ownership and unfinished cleanup remain memory-authoritative. The
+[Team record owner](state-config-and-files.md#team-records) defines retention
+and release. There is no separate claim file.
 
 Generated TeamLeader, ordinary TeamMate, and Team-member names use the same 4–8
 character suffix contract. Names stay dispatcher-global:
-`AgentIdentityStore.allocateName()` checks the persisted dispatcher-global
+`AgentNameRegistry.allocate()` checks the persisted dispatcher-global
 entity directory namespace before selection, a directory name stays occupied
 even when its identity is unreadable, identity creation is an atomic no-clobber
 write, and a reserved-name guard blocks names that would recreate a removed
@@ -265,22 +285,26 @@ derives its Team from the MCP descriptor and accepts no Team selector.
 
 Source:
 
-- `/packages/dreamux/src/service/team-collection/store.ts`
-- `/packages/dreamux/src/service/team-collection/create-request.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/team/store.ts`
+- `/packages/dreamux/src/service/team/create-request.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
+- `/packages/dreamux/src/service/agent/store.ts`
 
 ### Dissolve
 
 A dissolve belongs to the Team, and it is a submission rather than a persisted
-operation. Both caller forms answer `{ accepted, team_name, status: "submitted" }`
-as soon as the Team owns the one background task that will stop it, close it,
-and reclaim its checkout, and neither ever reports how that went — a TeamLeader
-dissolving its own Team should expect to lose the response, because its runtime
-is one of the things being stopped. A second submission joins the first rather
-than dismantling the same Team twice, and a refused dissolve can be asked again.
-Nothing about the operation is written down, so a process that dies mid-dissolve
-simply leaves an open Team whose children reopen lazily.
+operation. It answers `{ accepted, team_name, status: "submitted" }` as soon as
+the Team owns the one background task that will write it closed, destroy every
+child service, and reclaim its checkout, and it never reports how that went —
+a TeamLeader dissolving its own Team should expect to lose the response,
+because its runtime is one of the things being stopped. A second submission
+joins the first rather than dismantling the same Team twice. A precheck
+refusal (below) leaves the Team untouched and can be asked again; once the
+closed record commits, dissolve can no longer fail in a way that undoes
+anything (R62): a process that dies before that commit leaves the Team exactly
+as `dissolve` found it, and one that dies after it leaves the Team durably
+closed with whatever children the destroy pass had not yet reached — inert
+residue nothing revisits, since a closed Team is never rebuilt.
 
 The Team holds the fence, and the fence *is* the operation: it goes up the
 moment a dissolve is submitted, before the first await, and refuses new work
@@ -288,21 +312,34 @@ rather than queueing it — dissolve is a stop-and-reclaim, not a drain. From th
 point every caller operation the Team admits is refused (Dispatcher and Channel
 send, TeamLeader member and Workflow mutation, Team scheduler mutation and fire,
 member-completion injection), and permanently so once the record says closed;
-reads stay available. A failed dissolve lowers the fence again and the Team
-stays open, its children reopening lazily, because nothing durable was written.
+reads stay available. Only a precheck refusal, or a failure to write the closed
+record itself, lowers the fence again and leaves the Team open, exactly as it
+was — the operation's only two reversible outcomes.
 
-Behind the receipt the order is fixed. A Dispatcher-requested dissolve calls the
+Behind the receipt the order is fixed, uniformly for every caller, including a
+TeamLeader dissolving itself (R62, reaffirmed by R67 — there is no longer a
+caller-specific early-stop variant). A non-forced dissolve calls the
 non-destructive `WorktreeManager.assessCleanup()` first, while nothing has
-stopped, so a refusal costs the Team nothing; a TeamLeader cannot ask that
-question about itself, so it stops its members first and then asks while it is
-still alive to be told. `force` overrides the refusal, never the question. Then
-Workflow admission closes, the scheduler stops, members and the leader stop and
-close, and the assessment is repeated now that nothing is running — that second
-answer is the only one a destructive reclaim may act on. The single record write
-that sets `status: "closed"`, `closed_at`, the close note, and the worktree fact
-is the commit boundary; nothing after it may take that back, which is why the
-Team's cron store is discarded only after it and why a failure before it reopens
-admission instead.
+stopped, so a refusal costs the Team nothing; `force` overrides the refusal,
+never the question. Once that precheck passes (or `force` skips it), the Team
+writes its record `status: "closed"`, `closed_at`, the close note, and a
+worktree fact from one more `assessCleanup()` read — this write is the commit
+boundary, and the only step the operation can still take back: a write that
+fails clears the fence and leaves the Team exactly as `dissolve` found it.
+Nothing after this write may take it back. Only then does the Team destroy
+every child service it holds, one after another, trying each and aggregating
+failures rather than stopping at the first: Workflows (`stopAll()`, releasing
+held members' locks and keeping history), the scheduler's own `destroy()`
+(stop, then delete its own cron store file), the member collection's
+`destroy()` (closes every held member through the Agent's own close, marks
+every never-built member closed at rest), and the leader's `close()`. A
+failure destroying any of them is logged, never retried, and never reopens the
+Team — there is nothing left to roll back to. Only the worktree reclaim that
+follows (`WorktreeManager.cleanup()`, via `settleTeamWorktreeCleanup` in `team/service.ts`) re-assesses
+the checkout fresh, after every child has actually stopped, and that read is
+what a destructive reclaim acts on; a member that dirties the worktree after
+the precheck no longer refuses the dissolve — the Team still closes, and a
+non-forced cleanup then only keeps the directory instead of removing it.
 
 Assessment checks only dirty and unmerged state; it enumerates no refs and walks
 no repository history. `cleanup: keep` and non-managed workspaces are terminally
@@ -340,29 +377,39 @@ process stopping. Only agents this process actually materialized are reached: a
 durable member nobody materialized is already idle, and starting one to stop it
 would make a host sweep touch entities it never ran.
 
+A host stop sweeps the runtimes it can already see exactly once, after every
+already-admitted operation has settled (`DispatcherLifecycle.close()`); nothing
+newly appears in either collection's live map after that, because a spawn or a
+Team create/rebuild that was admitted before the stop fence published checks
+that fence itself the instant it registers into the collection and closes
+itself immediately instead of proceeding, rather than relying on a second
+sweep to catch it.
+
 Source:
 
 - `/packages/dreamux/src/service/CLAUDE.md`
-- `/packages/dreamux/src/service/team-service/closing.ts`
-- `/packages/dreamux/src/service/team-collection/worktree-cleanup.ts`
-- `/packages/dreamux/src/service/team-collection/index.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team/service.ts`
+- `/packages/dreamux/src/service/team/index.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/worktree/manager.ts`
 
 ### Completion Routing
 
-Completion delivery is captured by object and closure, not reconstructed through
-a dispatcher-wide key. A delivery-initiating action (`spawn`, `send`, or
-team-create-with-prompt) resolves its initiator before runtime admission and
-attaches one closure to the entity-owned `Turn`. After the winning terminal
+Completion delivery carries an actual recipient object, never a dispatcher-wide
+lookup key. A delivery-initiating action (`spawn`, `send`, or
+team-create-with-prompt) queries its owner before runtime admission and
+attaches the recipient to the entity-owned `Turn`. After the winning terminal
 outcome is selected, that Turn invokes the shared stateless
-`CompletionDeliveryPolicy`, which delivers at-most-once per producer, completion
-token, and recipient while preserving provider order — never keyed by native
-ids, completion text, or slot heuristics.
+`CompletionDeliveryPolicy`, which delivers at-most-once per completion token
+while preserving provider order — never keyed by native ids, completion text,
+or slot heuristics. Dedupe keys on the token alone: an entity's initiator is
+fixed for its whole life, so every submission whose native turn can fold into
+the same token already resolves to the same recipient — there is no separate
+per-producer or per-recipient dedupe axis to keep.
 
 - the initiating action retains the target directly; there is no Turn id lookup
   map or terminal registry;
-- channel inbound and remote-control turns do not attach a completion closure,
+- channel inbound and remote-control turns do not attach a completion recipient,
   so they are not pushed;
 - one Turn starts at most one delivery task after outcome selection;
 - completion preparation and each submission attempt are deadline-bounded;
@@ -376,35 +423,46 @@ read at the moment delivery would start. The producer never learns that its
 owner is going away, and no teardown walks the producer population:
 
 - an entity reports a turn only while it is `active` and not under host
-  release (`TeammateService` states this through the coordinator's
-  `owesCompletion`). A turn its own close, host stop, or dissolve ended is
+  release (`EntityTurn` queries its actual AgentService owner's
+  `owesCompletion()` once at the moment delivery would start). A turn its
+  own close, host stop, or dissolve ended is
   settled for convergence and dropped for good, so a later `ensureDelivery()`
   cannot revive it; a delivery already under way is never retracted. Both
   fences are published before the native stop, so a turn admitted ahead of
   the fence reads it when it settles, and host release still drains admissions
   when the native stop fails;
 - `CompletionDeliveryPolicy` reads the dispatcher admission gate
-  (`DispatcherTaskDrain.accepting`) once per requested delivery, before folding
-  or queueing. Stop, shutdown, and failed-start rollback close that gate
-  synchronously, so nothing settling behind it — including a Team member's or
-  leader's natural completion during a long Workflow teardown — reaches a
-  stopping owner; a successful rollback reopens it. No in-process stop→start
-  path exists today; one would have to reopen the gate;
-- a Team-scope recipient runs its delivery inside `TeamService.admit()`, so a
+  (`WorkFence.isClosing()`) once per requested delivery, before
+  folding or queueing. `close()` — the one terminal close a failed `start()`
+  reuses instead of a separate rollback — raises that gate synchronously, so
+  nothing settling behind it, including a Team member's or leader's natural
+  completion during a long Workflow teardown, reaches a closing owner. There
+  is no in-process stop→start path: once `close()` has run, this dispatcher
+  never accepts work again (R11);
+- a Team-scope recipient runs its delivery inside `TeamService.admitTeam()`, so a
   dissolving Team refuses it with `TeamClosedError`;
 - a Workflow run stops owing its terminal report the moment a stop reserves
-  the `stopped` intent (`WorkflowRun` clears its `deliverTerminal` in the
-  terminal's admission-close callback); a completed or failed intent that won
-  first keeps its report. A leader turn that completes naturally inside a
+  the `stopped` intent (`WorkflowRun` clears its owed recipient when it
+  reserves a stop); a completed or failed intent that won first keeps its
+  report. A leader turn that completes naturally inside a
   dissolve's Workflow-stop window is still real news and reaches the
   dispatcher.
+
+The recipient query timing is part of this boundary. DispatcherAgent returns
+`mustAgent()` at the original initiating operation; a configured but disabled
+dispatcher therefore still fails before submitting a member's first turn.
+TeamService returns itself without an additional readiness check and performs
+its Team-only check during preparation and prepared submission. Adding a
+dispatcher check there would retract already-queued delivery. The stable Team
+object supplies FIFO identity without a separate recipient key.
 
 Source:
 
 - `/packages/dreamux/src/service/completion-router/index.ts`
-- `/packages/dreamux/src/service/dispatcher-service/inbound-task-drain.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-recording.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/service/dispatcher-service/lifecycle.ts`
+- `/packages/dreamux/src/service/agent/admission.ts`
+- `/packages/dreamux/src/service/agent/turn.ts`
+- `/packages/dreamux/src/service/agent/service.ts`
 - `/packages/dreamux/src/service/workflow-service/run.ts`
 
 ### Workspaces
@@ -428,7 +486,7 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/service/worktree/`
-- `/packages/dreamux/src/service/agent-entity/agent-config.ts`
+- `/packages/dreamux/src/config/config.ts`
 
 ### MCP Boundaries
 
@@ -436,10 +494,18 @@ Dreamux-owned orchestration is exposed through MCP tools injected into runtime
 roles. Each surface is an in-server delegate owned by its own domain — Team,
 TeamMate, scheduler, workflow, and one per channel that publishes tools.
 
-The role→delegate decision lives in one place,
-`dispatcher-service/mcp-delegates.ts`. The Dispatcher Agent and a TeamLeader get
-different sets because they are different callers, not because a shared server
-filters by who is asking.
+The role owner assembles its delegates: DispatcherAgent during build, and
+`teamLeaderOptions` in `team/leader.ts` when TeamService builds its leader.
+Each holds the actual channel source and
+its own domain collaborators. Channel snapshots are taken after initialization.
+The different tool sets follow the callers' ownership, not a shared server's
+filter or a lookup back through TeamCollection.
+
+A live leader MCP lease can outlast the Team's closed-record write while
+earlier children stop. Lease validity therefore does not replace the actual
+Team's access policy. The per-entry order and admission spans of
+`admitLeaderTools(operation)` are owned by
+[`service/CLAUDE.md`](/packages/dreamux/src/service/CLAUDE.md).
 
 There is one Agent-facing MCP descriptor shape for every server: the same
 binary, the same `mcp` subcommand, the admin socket to reach, and an opaque
@@ -463,11 +529,12 @@ Source:
 - `/packages/dreamux/src/mcp/server.ts`
 - `/packages/dreamux/src/mcp/shim.ts`
 - `/packages/dreamux/src/service/mcp/`
-- `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
-- `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
-- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
-- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/team/leader-mcp.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
+- `/packages/dreamux/src/service/agent/mcp.ts`
+- `/packages/dreamux/src/service/team/mcp.ts`
+- `/packages/dreamux/src/service/scheduler/mcp.ts`
 
 ## Invariants
 

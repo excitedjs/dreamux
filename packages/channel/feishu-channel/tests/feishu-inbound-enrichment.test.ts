@@ -6,13 +6,13 @@ import type {
   FeishuMessageReadResponse,
 } from '@excitedjs/feishu-transport';
 
-import type { FeishuInboundEvent } from '../src/bot.js';
-import { enrichFeishuInbound } from '../src/feishu-inbound-enrichment.js';
+import type { FeishuInboundEvent } from '@excitedjs/feishu-transport';
+import { createFeishuLifecycle } from '../src/session/lifecycle.js';
+import { enrichFeishuInbound } from '../src/inbound/enrich.js';
 import {
-  alwaysActiveSessionFence,
   createFeishuInboundWork,
   type FeishuInboundWorkContext,
-} from '../src/feishu-inbound-work.js';
+} from '../src/inbound/work.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 const works: FeishuInboundWorkContext[] = [];
@@ -35,7 +35,7 @@ function logger(): DreamuxLogger {
 }
 
 function work(): FeishuInboundWorkContext {
-  const value = createFeishuInboundWork(alwaysActiveSessionFence());
+  const value = createFeishuInboundWork(createFeishuLifecycle());
   works.push(value);
   return value;
 }
@@ -80,19 +80,28 @@ function item(
   };
 }
 
-function response(...items: FeishuMessageReadItem[]): FeishuMessageReadResponse {
+function response(
+  ...items: FeishuMessageReadItem[]
+): FeishuMessageReadResponse {
   return { items };
 }
 
 describe('nonsupport resolution', () => {
   it('adopts a matching authoritative root and preserves routing identity', async () => {
     const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_root', response(item(
+    bot.setMessageRead(
       'om_root',
-      'audio',
-      { file_key: 'voice-key' },
-      { mentions: [{ key: '@_user_1', id: { open_id: 'ou_x' }, name: 'X' }] },
-    )));
+      response(
+        item(
+          'om_root',
+          'audio',
+          { file_key: 'voice-key' },
+          {
+            mentions: [{ key: '@_user_1', id: { open_id: 'ou_x' }, name: 'X' }],
+          },
+        ),
+      ),
+    );
 
     const result = await enrichFeishuInbound(
       event('nonsupport', { contentIncomplete: true }),
@@ -117,10 +126,13 @@ describe('nonsupport resolution', () => {
 
   it('stops at a lazy lookup when the authoritative type is merged-forward', async () => {
     const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_root', response(
-      item('om_root', 'merge_forward', ''),
-      item('om_child', 'text', { text: 'must stay hidden' }),
-    ));
+    bot.setMessageRead(
+      'om_root',
+      response(
+        item('om_root', 'merge_forward', ''),
+        item('om_child', 'text', { text: 'must stay hidden' }),
+      ),
+    );
 
     const result = await enrichFeishuInbound(
       event('nonsupport', { contentIncomplete: true }),
@@ -138,7 +150,10 @@ describe('nonsupport resolution', () => {
 
   it('keeps the accepted event when the read has no matching root', async () => {
     const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_root', response(item('om_other', 'text', { text: 'x' })));
+    bot.setMessageRead(
+      'om_root',
+      response(item('om_other', 'text', { text: 'x' })),
+    );
     const original = event('nonsupport', { contentIncomplete: true });
 
     const result = await enrichFeishuInbound(original, bot, work(), logger());
@@ -184,9 +199,10 @@ describe('lazy message lookup', () => {
 
   it('reads only an actionable parent of a top-level merged-forward message', async () => {
     const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_parent', response(
-      item('om_parent', 'post', { title: 'must stay hidden' }),
-    ));
+    bot.setMessageRead(
+      'om_parent',
+      response(item('om_parent', 'post', { title: 'must stay hidden' })),
+    );
 
     const result = await enrichFeishuInbound(
       event('merge_forward', { text: '', parentId: 'om_parent' }),
@@ -207,36 +223,41 @@ describe('lazy message lookup', () => {
     'merge_forward',
     'image',
     'future_type.v2',
-  ])('projects the validated parent type %s without consuming its content', async (
-    parentMessageType,
-  ) => {
-    const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_parent', response(
-      item('om_parent', parentMessageType, { secret: 'must stay hidden' }),
-      item('om_child', 'text', { text: 'child must stay hidden' }),
-    ));
+  ])(
+    'projects the validated parent type %s without consuming its content',
+    async (parentMessageType) => {
+      const bot = createFakeFeishuBot();
+      bot.setMessageRead(
+        'om_parent',
+        response(
+          item('om_parent', parentMessageType, { secret: 'must stay hidden' }),
+          item('om_child', 'text', { text: 'child must stay hidden' }),
+        ),
+      );
 
-    const result = await enrichFeishuInbound(
-      event('text', {
-        rawContent: JSON.stringify({ text: 'current body' }),
-        text: 'current body',
-        parentId: 'om_parent',
-      }),
-      bot,
-      work(),
-      logger(),
-    );
+      const result = await enrichFeishuInbound(
+        event('text', {
+          rawContent: JSON.stringify({ text: 'current body' }),
+          text: 'current body',
+          parentId: 'om_parent',
+        }),
+        bot,
+        work(),
+        logger(),
+      );
 
-    expect(result.parentMessageType).toBe(parentMessageType);
-    expect(result.text).toBe('current body');
-    expect(bot.messageReadRequests).toEqual([{ messageId: 'om_parent' }]);
-  });
+      expect(result.parentMessageType).toBe(parentMessageType);
+      expect(result.text).toBe('current body');
+      expect(bot.messageReadRequests).toEqual([{ messageId: 'om_parent' }]);
+    },
+  );
 
   it('omits invalid parent types and skips non-actionable ancestry reads', async () => {
     const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_parent', response(
-      item('om_parent', 'invalid type!', { secret: true }),
-    ));
+    bot.setMessageRead(
+      'om_parent',
+      response(item('om_parent', 'invalid type!', { secret: true })),
+    );
 
     const invalid = await enrichFeishuInbound(
       event('text', { parentId: 'om_parent' }),

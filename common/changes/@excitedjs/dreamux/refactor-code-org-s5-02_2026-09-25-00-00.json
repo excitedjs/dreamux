@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 5 item 2: moved the dependency-free service-root primitives (closed-fact.ts, deduplicate.ts, in-flight-work.ts, serial-queue.ts, shutdown-errors.ts) from service/ to platform/ unchanged, and folded frozen-snapshot.ts's deepFreeze into platform/json-value.ts as a generic exported helper, replacing that module's private JsonValue-only duplicate. Repointed the 25 production import sites for the five moved files plus the 2 for deepFreeze; logic and behavior unchanged.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

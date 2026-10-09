@@ -1,0 +1,703 @@
+import { EventEmitter } from 'node:events';
+import { readFile, readdir } from 'node:fs/promises';
+
+import type {
+  AgentRuntimeSkillSource,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
+import { TransactionalStore } from '@excitedjs/dreamux-utils';
+
+import { parseAgentRuntimeSkillSources } from '../../agent-runtime/skill-sources.js';
+import { LegacyStateError } from '../../platform/errors.js';
+import { isNotFound } from '../../platform/fs-errors.js';
+import {
+  agentIdentityPath,
+  collectionEntityDir,
+  teamMateCollectionDir,
+} from '../../platform/paths.js';
+import {
+  allocateConcreteName,
+  type ConcreteNameKind,
+} from '../name-allocator.js';
+import {
+  TEAMMATE_NAME_PATTERN,
+  validateAgentEntityName,
+  type AgentEntityIdentity,
+  type AgentEntityIdentityStatus,
+  type AgentEntityWorktreeIdentity,
+} from './identity.js';
+
+export interface AgentIdentityCreateInput {
+  name: string;
+  teamId?: string | null;
+  agentRuntime: string;
+  sessionId?: string | null;
+  sourceCwd: string;
+  sourceRepo: string | null;
+  cwd: string;
+  runtimeCwd: string;
+  worktree: AgentEntityWorktreeIdentity;
+  intent?: string | null;
+  identityPrompt?: string | null;
+  skillSources?: readonly AgentRuntimeSkillSource[] | undefined;
+  status?: AgentEntityIdentityStatus;
+  /**
+   * Replace whatever occupies the bound location instead of refusing it.
+   *
+   * The owner sets this only when it has already established that the residue
+   * is not a usable record of the entity it is creating — a TeamLeader whose
+   * identity is missing, malformed, or belongs to someone else. Recovery of a
+   * known-unusable file is the intent; a collision it has not reasoned about
+   * still has to surface.
+   */
+  replaceExisting?: boolean;
+}
+
+export interface AgentIdentityUpdateInput {
+  name?: string;
+  teamId?: string | null;
+  agentRuntime?: string;
+  sessionId?: string | null;
+  sourceCwd?: string;
+  sourceRepo?: string | null;
+  cwd?: string;
+  runtimeCwd?: string;
+  worktree?: AgentEntityWorktreeIdentity;
+  intent?: string | null;
+  identityPrompt?: string | null;
+  status?: AgentEntityIdentityStatus;
+  lastError?: string | null | undefined;
+  closedAt?: number | null;
+  closeNote?: string | null;
+}
+
+/**
+ * How one bound identity store is wired by the owner that materializes the
+ * Agent.
+ *
+ * `dir` is the entity directory the owner already resolved — the dispatcher
+ * root, a Team root, or a `teammate/<name>/` child of one of the two collection
+ * roots. It is the ONLY path input; nothing in this module recomputes it, and
+ * no persisted field takes part in choosing it.
+ */
+export interface AgentIdentityStoreBinding {
+  /** The already-resolved entity directory. */
+  dir: string;
+  /** Owning dispatcher, cross-checked against the record on read. */
+  dispatcherId: string;
+  /**
+   * The owner's own key for this entity when the path encodes it, so a scanned
+   * directory whose record disagrees is rejected. `null` at an owner root
+   * (dispatcher Agent, TeamLeader), where the record's `name` is authoritative.
+   */
+  expectedName: string | null;
+  log: DreamuxLogger;
+}
+
+/**
+ * Durable identity storage for exactly one agent entity.
+ *
+ * The store is bound to a directory at construction and reads, creates,
+ * updates, and recovers through that one location. There is no dispatcher-wide
+ * variant that takes a `dispatcher_id`/`team_id`/`name` tuple and rediscovers
+ * where a record must live: the owner already knows, so a lookup can never
+ * probe two candidate paths, and a record's contents can never redirect their
+ * own storage.
+ */
+export class AgentIdentityStore {
+  readonly committed = new EventEmitter<{ committed: [AgentEntityIdentity] }>();
+  private readonly path: string;
+  private readonly store: TransactionalStore<AgentEntityIdentity | null>;
+
+  constructor(private readonly binding: AgentIdentityStoreBinding) {
+    this.path = agentIdentityPath(binding.dir);
+    this.store = new TransactionalStore<AgentEntityIdentity | null>({
+      path: this.path,
+      load: () => this.loadIdentity(),
+    });
+  }
+
+  /** The bound entity directory, for owners that place sibling state beside it. */
+  get dir(): string {
+    return this.binding.dir;
+  }
+
+  /**
+   * The last committed identity, or `null` for an entity with no record yet.
+   * Safe once a `load()`/`create()` has already gone through this store at
+   * least once — true for every live-owner caller (a runtime-state store
+   * wrapping this same instance), since each reaches this store only after
+   * its own construction path already read or created the entity.
+   */
+  current(): AgentEntityIdentity | null {
+    return this.store.current;
+  }
+
+  /**
+   * Read this entity's identity. A missing file yields null; a legacy/old-state
+   * file is rethrown (fail-loud); any other parse error is logged and yields
+   * null, so one unreadable entity never sinks a whole collection scan. An IO
+   * error other than "not found" is rethrown: the file may say anything, and
+   * reporting "no identity" for a directory this process could not read would
+   * be a guess.
+   */
+  read(): Promise<AgentEntityIdentity | null> {
+    return this.store.load();
+  }
+
+  private async loadIdentity(): Promise<AgentEntityIdentity | null> {
+    let raw: string;
+    try {
+      raw = await readFile(this.path, 'utf8');
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+    try {
+      return readIdentity(
+        this.binding.dispatcherId,
+        this.binding.expectedName,
+        raw,
+      );
+    } catch (err) {
+      if (err instanceof LegacyStateError) throw err;
+      this.binding.log.warn(
+        {
+          dispatcher_id: this.binding.dispatcherId,
+          name: this.binding.expectedName,
+          path: this.path,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'skipping unreadable agent identity',
+      );
+      return null;
+    }
+  }
+
+  async create(input: AgentIdentityCreateInput): Promise<AgentEntityIdentity> {
+    validateAgentEntityName(input.name);
+    const identity = buildIdentity(this.binding.dispatcherId, input);
+    // A freshly published identity always announces — there is no "previous"
+    // to compare a create against, unlike `update`'s status-change filter.
+    await this.store.create(identity, {
+      replace: input.replaceExisting === true,
+    });
+    this.committed.emit('committed', identity);
+    return identity;
+  }
+
+  /**
+   * Merge `patch` onto the store's true committed value and publish the
+   * result. `patch` may be a function so a caller that needs to read the
+   * current value to decide what to write (a lease re-check, a recovered
+   * worktree) can do so from inside the store's own serialized `change` —
+   * never against a snapshot it held before calling. Two overlapping callers
+   * merging against the same stale base would silently lose whichever write
+   * settled first; running the merge inside `change` is what prevents that.
+   *
+   * `committed` emits only when the merge changed `status`, matching the
+   * pre-`TransactionalStore` contract — `create`/`upsert` announce
+   * unconditionally, `update` does not.
+   */
+  async update(
+    patch:
+      | AgentIdentityUpdateInput
+      | ((
+          current: AgentEntityIdentity,
+        ) => AgentIdentityUpdateInput | Promise<AgentIdentityUpdateInput>),
+  ): Promise<AgentEntityIdentity> {
+    let next!: AgentEntityIdentity;
+    await this.store.update(
+      async (current) => {
+        if (current === null) {
+          throw new Error(
+            `agent identity at ${this.path} has no identity to update`,
+          );
+        }
+        const input =
+          typeof patch === 'function' ? await patch(current) : patch;
+        next = mergeIdentity(current, input);
+        return next;
+      },
+      (next, previous) => {
+        if (
+          next !== null &&
+          previous !== null &&
+          next.status !== previous.status
+        ) {
+          this.committed.emit('committed', next);
+        }
+      },
+    );
+    return next;
+  }
+
+  /**
+   * Reconcile this store's record against a caller-owned policy and write the
+   * result, replacing whatever occupies the bound location.
+   *
+   * Nothing exists yet: build a fresh identity from `creation`, sharing this
+   * store's own field defaults with `create()`. A record already exists:
+   * merge `reconcile`'s patch onto it through the same conditional-spread
+   * `update()` uses, so the caller states only its own compatibility
+   * decision — which fields change and whether the session resets — never a
+   * second copy of the record's field defaults.
+   */
+  async upsert(
+    creation: AgentIdentityCreateInput,
+    reconcile: (existing: AgentEntityIdentity) => AgentIdentityUpdateInput,
+  ): Promise<AgentEntityIdentity> {
+    const existing = await this.read();
+    const identity =
+      existing === null
+        ? buildIdentity(this.binding.dispatcherId, creation)
+        : mergeIdentity(existing, reconcile(existing));
+    await this.store.create(identity, { replace: true });
+    this.committed.emit('committed', identity);
+    return identity;
+  }
+}
+
+/**
+ * The one place a fresh identity's field defaults are assembled — every
+ * version/timestamp/nullable-default a new entity gets, regardless of
+ * whether `create()` was called directly or `upsert()` found nothing at its
+ * bound location. An owner that continuously reconciles its identity against
+ * live config (the dispatcher root) states creation input and a
+ * compatibility decision, never this construction.
+ */
+function buildIdentity(
+  dispatcherId: string,
+  input: AgentIdentityCreateInput,
+): AgentEntityIdentity {
+  const now = Date.now();
+  return {
+    version: 1,
+    dispatcher_id: dispatcherId,
+    name: input.name,
+    team_id: input.teamId ?? null,
+    agent_runtime: input.agentRuntime,
+    session_id: input.sessionId ?? null,
+    source_cwd: input.sourceCwd,
+    source_repo: input.sourceRepo,
+    cwd: input.cwd,
+    runtime_cwd: input.runtimeCwd,
+    worktree: input.worktree,
+    intent: input.intent ?? null,
+    identity_prompt: input.identityPrompt ?? null,
+    skill_sources: [...(input.skillSources ?? [])],
+    created_at: now,
+    updated_at: now,
+    status: input.status ?? 'starting',
+    last_error: null,
+    closed_at: null,
+    close_note: null,
+  };
+}
+
+/**
+ * The pre-`TransactionalStore` conditional-spread merge, unchanged, now
+ * shared by {@link AgentIdentityStore.update}'s inline `patch` form and its
+ * function form, and by {@link AgentIdentityStore.upsert}'s `reconcile` form.
+ */
+function mergeIdentity(
+  identity: AgentEntityIdentity,
+  input: AgentIdentityUpdateInput,
+): AgentEntityIdentity {
+  return {
+    ...identity,
+    ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.teamId !== undefined ? { team_id: input.teamId } : {}),
+    ...(input.agentRuntime !== undefined
+      ? { agent_runtime: input.agentRuntime }
+      : {}),
+    ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
+    ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
+    ...(input.sourceRepo !== undefined
+      ? { source_repo: input.sourceRepo }
+      : {}),
+    ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    ...(input.runtimeCwd !== undefined
+      ? { runtime_cwd: input.runtimeCwd }
+      : {}),
+    ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
+    ...(input.intent !== undefined ? { intent: input.intent } : {}),
+    ...(input.identityPrompt !== undefined
+      ? { identity_prompt: input.identityPrompt }
+      : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.lastError !== undefined ? { last_error: input.lastError } : {}),
+    ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
+    ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
+    updated_at: Date.now(),
+  };
+}
+
+/**
+ * One already-bound agent collection root — a `teammate/` directory whose
+ * immediate children are one entity directory per name.
+ *
+ * The collection appends the entity name to its own root and nothing else. It
+ * never learns whether it sits under a dispatcher or under a Team: that is
+ * settled by whoever constructed it, which is exactly what keeps a leader and a
+ * TeamMate from ever being confused for one another.
+ */
+export class AgentEntityCollectionStore {
+  constructor(
+    private readonly opts: {
+      root: string;
+      dispatcherId: string;
+      log: DreamuxLogger;
+    },
+  ) {}
+
+  /** One member's own directory under this collection's root. */
+  entityDir(name: string): string {
+    return collectionEntityDir(this.opts.root, name);
+  }
+
+  /** Snapshot reads bind a store without installing publication listeners. */
+  entity(name: string): AgentIdentityStore {
+    return new AgentIdentityStore({
+      dir: collectionEntityDir(this.opts.root, name),
+      dispatcherId: this.opts.dispatcherId,
+      expectedName: name,
+      log: this.opts.log,
+    });
+  }
+
+  /**
+   * Every occupied name in this collection. The entity DIRECTORY is the
+   * occupancy fact, so a name stays taken even while its identity file is
+   * unreadable — no-clobber discovery happens before any workspace side effect.
+   */
+  async names(): Promise<string[]> {
+    return listCollectionNames(this.opts.root);
+  }
+
+  /** Query current sibling identities, never a construction-time snapshot. */
+  async findManagedWorktreeOwner(
+    path: string,
+    excludingName: string,
+  ): Promise<string | null> {
+    const collision = (await this.list()).find(
+      (identity) =>
+        identity.name !== excludingName &&
+        identity.worktree.mode === 'managed' &&
+        identity.worktree.path === path,
+    );
+    return collision?.name ?? null;
+  }
+
+  /** Every readable identity in this collection, skipping unreadable entries. */
+  async list(): Promise<AgentEntityIdentity[]> {
+    const identities: AgentEntityIdentity[] = [];
+    for (const name of await this.names()) {
+      const identity = await this.entity(name).read();
+      if (identity !== null) identities.push(identity);
+    }
+    return identities;
+  }
+}
+
+/**
+ * The dispatcher-global agent-name namespace.
+ *
+ * Agent names stay dispatcher-global even though the directories are nested, so
+ * uniqueness is checked across the dispatcher's own TeamMates plus every Team's
+ * leader and TeamMates. It is composed once at the dispatcher composition root
+ * from the two collection roots that dispatcher owns, and walks only fixed
+ * segments below them — it does not take a locator tuple, and it reads a
+ * leader's `name` rather than any field that could redirect a path.
+ */
+export class AgentNameRegistry {
+  constructor(
+    private readonly opts: {
+      /** `<dispatcher>/teammate` — the dispatcher's own agent collection. */
+      teamMateRoot: string;
+      /** `<dispatcher>/team` — one child directory per Team. */
+      teamRoot: string;
+      dispatcherId: string;
+      log: DreamuxLogger;
+    },
+  ) {}
+
+  /** Every name currently occupied anywhere under this dispatcher. */
+  async occupied(): Promise<Set<string>> {
+    const names = new Set(await listCollectionNames(this.opts.teamMateRoot));
+    for (const teamName of await listDirectoryNames(this.opts.teamRoot)) {
+      const teamDir = collectionEntityDir(this.opts.teamRoot, teamName);
+      const leader = await readAgentIdentity({
+        dir: teamDir,
+        dispatcherId: this.opts.dispatcherId,
+        expectedName: null,
+        log: this.opts.log,
+      });
+      if (leader !== null) names.add(leader.name);
+      for (const name of await listCollectionNames(
+        teamMateCollectionDir(teamDir),
+      )) {
+        names.add(name);
+      }
+    }
+    return names;
+  }
+
+  /** Allocate one generated name against the dispatcher's persisted namespace. */
+  async allocate(input: {
+    kind: Exclude<ConcreteNameKind, 'team'>;
+    base: string;
+    teamSlug?: string;
+  }): Promise<string> {
+    const occupied = await this.occupied();
+    return allocateConcreteName({
+      kind: input.kind,
+      base: input.base,
+      teamSlug: input.teamSlug,
+      exists: (value) => occupied.has(value),
+    });
+  }
+}
+
+/**
+ * A read-only snapshot of one agent entity's identity, for a reader that must
+ * answer about an Agent without constructing it — a Team's read-model, a
+ * dispatcher's cold-path status fallback. Binds and discards its own store; a
+ * caller that goes on to build or write the entity uses
+ * `AgentServiceFactory.open`/`.create`/`.upsert` instead, never this.
+ */
+export function readAgentIdentity(
+  binding: AgentIdentityStoreBinding,
+): Promise<AgentEntityIdentity | null> {
+  return new AgentIdentityStore(binding).read();
+}
+
+/** Occupied member count directly under one collection root — a directory listing, no identity read. */
+export async function agentCollectionMemberCount(
+  root: string,
+): Promise<number> {
+  return (await listCollectionNames(root)).length;
+}
+
+/** Valid entity directory names directly under one collection root. */
+async function listCollectionNames(dir: string): Promise<string[]> {
+  const names = await listDirectoryNames(dir);
+  return names.filter((name) => TEAMMATE_NAME_PATTERN.test(name));
+}
+
+async function listDirectoryNames(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch (err) {
+    if (isNotFound(err)) return [];
+    throw err;
+  }
+}
+
+/**
+ * Parse and validate one identity file. `expectedName` is the owner's key for
+ * the entity; pass `null` at an owner root (the dispatcher Agent, a TeamLeader),
+ * whose name is not encoded in the path — the parsed `name` is then
+ * authoritative.
+ *
+ * Current shape only. A required field that is missing or the wrong type is
+ * not repaired into something plausible: the file says something this version
+ * does not accept, and saying so is the only honest answer a reader can give.
+ */
+function readIdentity(
+  dispatcherId: string,
+  expectedName: string | null,
+  raw: string,
+): AgentEntityIdentity {
+  const value = JSON.parse(raw) as Record<string, unknown>;
+  const storedName =
+    typeof value['name'] === 'string' ? value['name'] : expectedName;
+  if (
+    typeof value['agent_runtime'] !== 'string' &&
+    typeof value['provider_ref'] === 'string'
+  ) {
+    throw new LegacyStateError(
+      `agent identity ${JSON.stringify(storedName)} uses the legacy provider_ref ` +
+        'format (pre-#148). Agent identities now reference an agents[].id via ' +
+        'agent_runtime. Close and respawn this agent, or delete its identity ' +
+        'file to rebuild it.',
+    );
+  }
+  if (
+    value['version'] !== 1 ||
+    value['dispatcher_id'] !== dispatcherId ||
+    typeof value['name'] !== 'string' ||
+    (expectedName !== null && value['name'] !== expectedName) ||
+    typeof value['agent_runtime'] !== 'string' ||
+    typeof value['cwd'] !== 'string' ||
+    typeof value['source_cwd'] !== 'string' ||
+    typeof value['runtime_cwd'] !== 'string' ||
+    typeof value['created_at'] !== 'number' ||
+    typeof value['updated_at'] !== 'number' ||
+    !Array.isArray(value['skill_sources'])
+  ) {
+    throw new Error(`invalid agent identity ${JSON.stringify(storedName)}`);
+  }
+  const name = value['name'] as string;
+  const record = value as Record<string, unknown>;
+  const sourceRepo =
+    typeof record['source_repo'] === 'string' ? record['source_repo'] : null;
+  return {
+    version: 1,
+    dispatcher_id: dispatcherId,
+    name,
+    team_id: typeof record['team_id'] === 'string' ? record['team_id'] : null,
+    agent_runtime: record['agent_runtime'] as string,
+    session_id: readSessionId(record['session_id'], storedName),
+    source_cwd: record['source_cwd'] as string,
+    source_repo: sourceRepo,
+    cwd: record['cwd'] as string,
+    runtime_cwd: record['runtime_cwd'] as string,
+    worktree: readWorktreeIdentity(record['worktree'], storedName),
+    intent: typeof record['intent'] === 'string' ? record['intent'] : null,
+    identity_prompt:
+      typeof record['identity_prompt'] === 'string'
+        ? record['identity_prompt']
+        : null,
+    skill_sources: parseAgentRuntimeSkillSources(
+      record['skill_sources'],
+      `agent identity ${JSON.stringify(storedName)} skill_sources`,
+    ),
+    created_at: record['created_at'] as number,
+    updated_at: record['updated_at'] as number,
+    status: readStatus(record['status'], storedName),
+    last_error:
+      typeof record['last_error'] === 'string' ? record['last_error'] : null,
+    closed_at:
+      typeof record['closed_at'] === 'number' ? record['closed_at'] : null,
+    close_note:
+      typeof record['close_note'] === 'string' ? record['close_note'] : null,
+  };
+}
+
+const IDENTITY_STATUSES = new Set<AgentEntityIdentityStatus>([
+  'starting',
+  'running',
+  'degraded',
+  'closed',
+  'stopped',
+]);
+
+function readStatus(
+  value: unknown,
+  storedName: string | null,
+): AgentEntityIdentityStatus {
+  if (
+    typeof value !== 'string' ||
+    !IDENTITY_STATUSES.has(value as AgentEntityIdentityStatus)
+  ) {
+    throw new Error(
+      `invalid agent identity ${JSON.stringify(storedName)} status`,
+    );
+  }
+  return value as AgentEntityIdentityStatus;
+}
+
+/**
+ * Read the workspace this Agent runs in.
+ *
+ * Nothing here is inferred. A missing or unrecognized workspace mode, path, or
+ * cleanup state would decide whether Dreamux may delete a checkout, so guessing
+ * one is the one repair this reader must never make.
+ */
+function readWorktreeIdentity(
+  value: unknown,
+  storedName: string | null,
+): AgentEntityWorktreeIdentity {
+  const record =
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const cleanupState =
+    record === null ? null : readWorktreeCleanupState(record['cleanup_state']);
+  if (
+    record === null ||
+    (record['mode'] !== 'managed' && record['mode'] !== 'reuse-cwd') ||
+    typeof record['path'] !== 'string' ||
+    (record['cleanup'] !== 'keep' && record['cleanup'] !== 'delete-on-close') ||
+    cleanupState === null
+  ) {
+    throw new Error(
+      `invalid agent identity ${JSON.stringify(storedName)} worktree`,
+    );
+  }
+  return {
+    mode: record['mode'],
+    slug: typeof record['slug'] === 'string' ? record['slug'] : null,
+    path: record['path'],
+    branch: typeof record['branch'] === 'string' ? record['branch'] : null,
+    base_ref:
+      typeof record['base_ref'] === 'string' ? record['base_ref'] : null,
+    cleanup: record['cleanup'],
+    cleanup_state: cleanupState,
+    cleanup_error:
+      typeof record['cleanup_error'] === 'string'
+        ? record['cleanup_error']
+        : null,
+  };
+}
+
+const WORKTREE_CLEANUP_STATES = new Set<
+  AgentEntityWorktreeIdentity['cleanup_state']
+>([
+  'not-managed',
+  'managed-active',
+  'cleanup-pending',
+  'kept',
+  'deleted',
+  'retained-dirty',
+  'retained-unmerged',
+  'retained-unique-commits',
+  'retained-error',
+]);
+
+function readWorktreeCleanupState(
+  value: unknown,
+): AgentEntityWorktreeIdentity['cleanup_state'] | null {
+  return typeof value === 'string' &&
+    WORKTREE_CLEANUP_STATES.has(
+      value as AgentEntityWorktreeIdentity['cleanup_state'],
+    )
+    ? (value as AgentEntityWorktreeIdentity['cleanup_state'])
+    : null;
+}
+
+/**
+ * Read the provider-owned session id. Core validates only that a present value
+ * is a non-empty string; its content is opaque and is handed back verbatim to
+ * the provider that wrote it. An empty string is rejected rather than coerced
+ * to `null`: it would silently downgrade a resume into a fresh start.
+ */
+/**
+ * Read the persisted session id: the plain `string | null` this version stores.
+ *
+ * This type check is the whole contract, and it is deliberately the only gate.
+ * An absent or null value means "no prior session", which is the correct reading
+ * of every record that never had one AND of a record whose id was written under
+ * some other key — the Agent simply starts a fresh session, which is what a
+ * reader that cannot find an id must do anyway. A value that is present but not
+ * a usable id (a number, an object, an empty string) is a corrupt record rather
+ * than an older layout: it fails validation here, so `read()` reports the record
+ * as unreadable instead of coercing it into that same "no session" answer.
+ */
+function readSessionId(
+  value: unknown,
+  storedName: string | null,
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value === '') {
+    throw new Error(
+      `agent identity ${JSON.stringify(storedName)} has a session_id that is not a non-empty string`,
+    );
+  }
+  return value;
+}

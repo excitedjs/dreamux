@@ -1,21 +1,25 @@
 import { pathExists } from '../platform/fs-errors.js';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, resolve, sep } from 'node:path';
 
-import { ExecaCommandRunner } from './commands.js';
-import { removeUserService } from './service.js';
-import type { CommandRunner, ServicePlatform } from '../onboard/types.js';
+import { removeUserService } from '../daemon/install.js';
+import { createServiceHost } from '../daemon/host.js';
+import type { ServicePlatform } from '../daemon/unit.js';
+import type { CommandRunner } from '../platform/command-runner.js';
 import {
-  assertNoLegacyTomlOnly,
   expandHome,
   globalConfigDir,
   globalConfigFile,
-  loadConfig,
 } from '../config/config.js';
+import { assertNoLegacyTomlOnly, loadConfig } from '../config/load.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
+import { ProviderRegistry } from '../registry/index.js';
+import { loadPlugins } from '../plugin/loader.js';
+import { createLogger } from '../platform/logger.js';
+import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
 
-export type UninstallStatus = 'removed' | 'missing' | 'skipped';
+export type UninstallStatus = 'removed' | 'missing';
 
 export interface UninstallEntry {
   path: string;
@@ -24,12 +28,11 @@ export interface UninstallEntry {
 }
 
 export interface RunUninstallOptions {
-  configDir?: string;
   runner?: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;
   uid?: number;
-  dryRun?: boolean;
+  dryRun?: boolean | undefined;
 }
 
 export interface UninstallRunResult {
@@ -44,42 +47,71 @@ export interface UninstallRunResult {
 export async function runUninstall(
   options: RunUninstallOptions = {},
 ): Promise<UninstallRunResult> {
-  const runner = options.runner ?? new ExecaCommandRunner();
+  const host = createServiceHost(options);
   const dryRun = options.dryRun ?? false;
-  const configDir = normalizePath(options.configDir ?? globalConfigDir());
+  const configDir = normalizePath(globalConfigDir());
   const entries: UninstallEntry[] = [];
   const warnings: string[] = [];
-  await warnIfConfigIsNotReadable(configDir, warnings);
+  await warnIfConfigIsNotReadable(warnings);
   const stateDir = normalizePath(stateRoot());
   const runDir = normalizePath(runRoot());
   const cacheDir = normalizePath(cacheRoot());
   const logDir = normalizePath(logsRoot());
+  const protectedRoots = await resolveOperatorStateRoots();
 
-  assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
-  assertSafeOwnedDirectory(runDir, 'dreamux run directory');
-  assertSafeOwnedDirectory(cacheDir, 'dreamux cache directory');
-  assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
-  assertSafeOwnedDirectory(configDir, 'dreamux config directory');
+  assertSafeOwnedDirectory(stateDir, 'dreamux state directory', protectedRoots);
+  assertSafeOwnedDirectory(runDir, 'dreamux run directory', protectedRoots);
+  assertSafeOwnedDirectory(cacheDir, 'dreamux cache directory', protectedRoots);
+  assertSafeOwnedDirectory(logDir, 'dreamux logs directory', protectedRoots);
+  assertSafeOwnedDirectory(
+    configDir,
+    'dreamux config directory',
+    protectedRoots,
+  );
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
-  const removal = await removeUserService({
-    runner,
-    platform: options.platform,
-    homeDir: options.homeDir ?? homedir(),
-    uid: options.uid,
-    dryRun,
-  });
+  const removal = await removeUserService({ host, dryRun });
   entries.push({
     path: removal.unitPath,
     status: removal.removed ? 'removed' : 'missing',
     reason: `${removal.platform} unit`,
   });
 
-  await removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
-  await removeOwnedDirectory(runDir, entries, 'dreamux run directory', dryRun);
-  await removeOwnedDirectory(cacheDir, entries, 'dreamux cache directory', dryRun);
-  await removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
-  await removeOwnedDirectory(configDir, entries, 'dreamux config directory', dryRun);
+  await removeOwnedDirectory(
+    stateDir,
+    entries,
+    'dreamux state directory',
+    dryRun,
+    protectedRoots,
+  );
+  await removeOwnedDirectory(
+    runDir,
+    entries,
+    'dreamux run directory',
+    dryRun,
+    protectedRoots,
+  );
+  await removeOwnedDirectory(
+    cacheDir,
+    entries,
+    'dreamux cache directory',
+    dryRun,
+    protectedRoots,
+  );
+  await removeOwnedDirectory(
+    logDir,
+    entries,
+    'dreamux logs directory',
+    dryRun,
+    protectedRoots,
+  );
+  await removeOwnedDirectory(
+    configDir,
+    entries,
+    'dreamux config directory',
+    dryRun,
+    protectedRoots,
+  );
 
   return {
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
@@ -91,14 +123,11 @@ export async function runUninstall(
   };
 }
 
-async function warnIfConfigIsNotReadable(
-  configDir: string,
-  warnings: string[],
-): Promise<void> {
+async function warnIfConfigIsNotReadable(warnings: string[]): Promise<void> {
   try {
-    await assertNoLegacyTomlOnly({ configDir });
-    if (!(await pathExists(globalConfigFile({ configDir })))) return;
-    await loadConfig({ configDir });
+    await assertNoLegacyTomlOnly();
+    if (!(await pathExists(globalConfigFile()))) return;
+    await loadConfig();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(
@@ -112,8 +141,9 @@ async function removeOwnedDirectory(
   entries: UninstallEntry[],
   reason: string,
   dryRun: boolean,
+  protectedRoots: readonly string[],
 ): Promise<void> {
-  assertSafeOwnedDirectory(path, reason);
+  assertSafeOwnedDirectory(path, reason, protectedRoots);
   await removePath(path, entries, reason, dryRun);
 }
 
@@ -136,7 +166,12 @@ async function removePath(
   entries.push({ path, status: 'removed', reason });
 }
 
-function assertSafeOwnedDirectory(path: string, reason: string): void {
+/** Compare normalized paths only; physical symlink aliases are not resolved. */
+function assertSafeOwnedDirectory(
+  path: string,
+  reason: string,
+  protectedRoots: readonly string[],
+): void {
   const normalized = normalizePath(path);
   const home = normalizePath(homedir());
   if (
@@ -147,10 +182,13 @@ function assertSafeOwnedDirectory(path: string, reason: string): void {
   ) {
     throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
   }
-  for (const protectedRoot of operatorStateRoots()) {
-    if (isSameOrInside(normalized, protectedRoot)) {
+  for (const protectedRoot of protectedRoots) {
+    if (
+      isSameOrInside(normalized, protectedRoot) ||
+      isSameOrInside(protectedRoot, normalized)
+    ) {
       throw new Error(
-        `refusing to remove unsafe ${reason}: ${path} is inside operator Codex/Claude state ${protectedRoot}`,
+        `refusing to remove unsafe ${reason}: ${path} overlaps operator agent runtime state ${protectedRoot}`,
       );
     }
   }
@@ -160,15 +198,31 @@ function normalizePath(path: string): string {
   return resolve(expandHome(path));
 }
 
-function operatorStateRoots(): string[] {
-  return uniquePaths([
-    joinHome('.codex'),
-    joinHome('.claude'),
-  ]);
-}
-
-function joinHome(child: string): string {
-  return normalizePath(join(homedir(), child));
+/**
+ * Operator state locations for normalized-path checks, from every always-loaded
+ * Agent Runtime provider's own `operatorStateRoot` (e.g. Codex's `~/.codex`,
+ * Claude Code's `~/.claude`) instead of a host-side hard-coded list — a
+ * provider added or removed from the always-loaded set participates in the
+ * same checks without an uninstall-side edit. Building the registry this way
+ * (empty `entries`, same as `onboard/wizard.ts`'s `onboardProviderRegistry`)
+ * needs no config file: only the always-loaded plugins register.
+ */
+async function resolveOperatorStateRoots(): Promise<string[]> {
+  const registry = new ProviderRegistry();
+  await loadPlugins({
+    registry,
+    entries: [],
+    logger: createLogger({ name: 'uninstall' }),
+  });
+  const roots: Array<string | undefined> = registry
+    .listByKind('agentRuntime')
+    .map((descriptor) => {
+      const implementation = asAgentRuntimeProvider(
+        registry.getImplementation(descriptor.id),
+      );
+      return implementation?.operatorStateRoot?.(process.env);
+    });
+  return uniquePaths(roots);
 }
 
 function uniquePaths(paths: Array<string | undefined>): string[] {

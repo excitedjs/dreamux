@@ -25,7 +25,11 @@
  * nobody answers in.
  */
 import type { FeishuBindingView } from '../routing/index.js';
-import { chatTarget, topicTarget, type FeishuTarget } from '../routing/target.js';
+import {
+  chatTarget,
+  topicTarget,
+  type FeishuTarget,
+} from '../routing/target.js';
 import type {
   FeishuToolContext,
   FeishuToolDef,
@@ -41,10 +45,12 @@ import {
 } from './schema.js';
 
 const mutating = { readOnlyHint: false, destructiveHint: false } as const;
+// The card is best effort: it is skipped when a topic's reply root cannot be
+// read from Feishu, and dropped when the send fails after its one retry.
 const BIND_SUCCESS_TEXT =
-  'Binding succeeded. The system will automatically send a notification card; no additional user notification is needed.';
+  'Binding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
 const UNBIND_SUCCESS_TEXT =
-  'Unbinding succeeded. The system will automatically send a notification card; no additional user notification is needed.';
+  'Unbinding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
 
 interface TargetInput {
   chatId: string;
@@ -129,7 +135,7 @@ async function runBind(
   input: BindInput,
   requireOwner?: string,
 ): Promise<FeishuToolResult> {
-  const result = await ctx.session.bindChannel({
+  const result = await ctx.session.bindings.bindChannel({
     target: bindTarget(input),
     teamName: input.teamName,
     display: input.display,
@@ -148,7 +154,10 @@ async function runUnbind(
   input: TargetInput,
   requireOwner?: string,
 ): Promise<FeishuToolResult> {
-  const result = await ctx.session.unbindChannel(bindTarget(input), requireOwner);
+  const result = await ctx.session.bindings.unbindChannel(
+    bindTarget(input),
+    requireOwner,
+  );
   return {
     chat_id: input.chatId,
     thread_id: input.threadId,
@@ -162,7 +171,7 @@ export const bindChannelDef: FeishuToolDef<BindInput> = {
   title: 'Bind a Feishu conversation to a Team',
   description:
     'Route a Feishu group or topic to a Team. Inbound messages there are ' +
-    'delivered to that Team\'s TeamLeader. Rebinding reports the ' +
+    "delivered to that Team's TeamLeader. Rebinding reports the " +
     'previous Team.',
   callers: ['dispatcher'],
   inputSchema: closedObjectSchema(
@@ -203,7 +212,7 @@ export const leaderBindChannelDef: FeishuToolDef<
     'Route a Feishu group or topic to your own Team, so messages there ' +
     'reach you directly. Only a free conversation or one already routed ' +
     'to your Team can be bound here; a conversation another Team answers ' +
-    'in is outside this caller\'s authority.',
+    "in is outside this caller's authority.",
   callers: ['team_leader'],
   inputSchema: closedObjectSchema(
     { ...targetProperties, display: displayProperty },
@@ -235,7 +244,8 @@ export const unbindChannelDef: FeishuToolDef<TargetInput> = {
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
   outputSchema: unbindOutputSchema,
   annotations: mutating,
-  successText: (result) => result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
+  successText: (result) =>
+    result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },
@@ -255,7 +265,8 @@ export const leaderUnbindChannelDef: FeishuToolDef<TargetInput> = {
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
   outputSchema: unbindOutputSchema,
   annotations: mutating,
-  successText: (result) => result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
+  successText: (result) =>
+    result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },
@@ -306,7 +317,7 @@ export const listBindingsDef: FeishuToolDef<ListBindingsQuery> = {
     'matched exactly; several of them narrow together, and no filter at all ' +
     'returns the whole table. Matching nothing is an answer, not a failure — ' +
     'and it means no row, not that nobody answers there: a topic with no row ' +
-    'of its own is still served by its chat\'s binding.',
+    "of its own is still served by its chat's binding.",
   callers: ['dispatcher'],
   inputSchema: closedObjectSchema({
     team_name: {
@@ -316,7 +327,7 @@ export const listBindingsDef: FeishuToolDef<ListBindingsQuery> = {
     chat_id: {
       ...nonEmptyString,
       description:
-        'Return only routes in this chat: the chat\'s own binding and every ' +
+        "Return only routes in this chat: the chat's own binding and every " +
         'topic binding under it.',
     },
     thread_id: {
@@ -343,7 +354,6 @@ export const listBindingsDef: FeishuToolDef<ListBindingsQuery> = {
             thread_id: { type: ['string', 'null'] },
             display: { type: ['string', 'null'] },
             team_name: nonEmptyString,
-            origin: { type: 'string' },
             space_name: { type: ['string', 'null'] },
             created_at: { type: 'number' },
             updated_at: { type: 'number' },
@@ -354,7 +364,6 @@ export const listBindingsDef: FeishuToolDef<ListBindingsQuery> = {
             'thread_id',
             'display',
             'team_name',
-            'origin',
             'space_name',
             'created_at',
             'updated_at',
@@ -381,7 +390,7 @@ export const listBindingsDef: FeishuToolDef<ListBindingsQuery> = {
   async handle(ctx, query) {
     return {
       channel_id: ctx.session.channelId,
-      bindings: ctx.session
+      bindings: ctx.session.routing
         .listBindings()
         .filter((row) => matchesQuery(row, query))
         .map((row) => ({ ...row })),

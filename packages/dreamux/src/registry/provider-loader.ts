@@ -14,28 +14,29 @@
  *
  * Kind-specific contract assertions stay with each kind's loader (see
  * `../agent-runtime/external-provider.ts` and
- * `../channel/external-channel-provider.ts`). `builtin:*` refs resolve to their
- * package through {@link resolveBuiltinProviderPackage} and then use the same
- * loading path as package-backed `npm:` refs.
+ * `../channel/external-channel-provider.ts`). A `builtin:` ref never resolves
+ * to a package name here: every built-in ships as an always-loaded plugin and
+ * registers its descriptor and implementation together before this skeleton
+ * runs, so a `builtin:` ref reaching {@link loadProviderPackages} unregistered
+ * names an id no loaded plugin contributes and fails loud immediately, as a
+ * refused ref (`UnknownBuiltinProviderPackageError`) rather than a load
+ * failure; only an `npm:` ref resolves to a package and flows through import +
+ * factory.
  */
 
-import { errorMessage as errMessage } from '../platform/error-info.js';
-import { resolveBuiltinProviderPackage } from './builtins.js';
-import {
-  parseProviderRef,
-  type NpmProviderRef,
-  type ProviderRef,
-} from './provider-ref.js';
-import type { ProviderDescriptor, ProviderKind } from './registry.js';
-import type { ProviderRegistry } from './registry.js';
+import { errorMessage as errMessage } from '@excitedjs/dreamux-utils';
+import { UnknownBuiltinProviderPackageError } from './builtins.js';
+import { parseProviderRef, type ProviderRef } from './provider-ref.js';
+import type {
+  ProviderDescriptor,
+  ProviderImplementation,
+  ProviderKind,
+  ProviderRegistry,
+} from './registry.js';
 
 export type ProviderModule = Record<string, unknown> & {
   default?: unknown;
 };
-
-export type ProviderModuleImporter = (
-  packageName: string,
-) => Promise<ProviderModule>;
 
 /**
  * A provider package's factory export.
@@ -91,69 +92,51 @@ export interface ProviderPackageLoaderSpec<TProvider, TFactoryContext> {
 export interface LoadProviderPackagesOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ProviderModuleImporter;
 }
 
 /**
  * Load every package-backed provider ref in `refs` into the registry using the
  * kind-specific `spec`. Builtin (`builtin:`) and external (`npm:`) refs both
- * flow through here; refs are de-duplicated by canonical form.
+ * flow through here; refs are de-duplicated by canonical form. A ref already
+ * registered (by an earlier pass, or as an always-loaded built-in) is
+ * skipped — `ProviderRegistry.register()` always registers a descriptor
+ * together with its implementation, so presence of one means presence of
+ * both. A ref registered under the wrong kind (a `channel` ref that turns out
+ * to be an `agentRuntime` provider) is skipped here too and is caught instead
+ * by `config/config.ts`'s `resolveConfigProvider`, which checks every
+ * resolved descriptor's kind against the field that referenced it.
  *
- * The skip condition is implementation-aware, not descriptor-aware: a ref is
- * skipped only once its *implementation* is registered. A built-in descriptor
- * may already exist in the registry (the builtin descriptors are pre-registered)
- * while its package implementation has not been loaded yet — that ref must still
- * flow through import + factory + implementation registration. Skipping on
- * descriptor existence alone would silently leave pre-registered built-ins
- * without a loaded implementation (the slice-3 Codex/Claude extraction path).
+ * `TProvider extends ProviderImplementation` so the loaded value can reach
+ * `ProviderRegistry.register()` typed; the skeleton stays kind-agnostic
+ * otherwise — it never branches on which of the two contracts `TProvider` is.
  */
-export async function loadProviderPackages<TProvider, TFactoryContext>(
+export async function loadProviderPackages<
+  TProvider extends ProviderImplementation,
+  TFactoryContext,
+>(
   options: LoadProviderPackagesOptions,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
-  const importModule = options.importModule ?? defaultImportModule;
   for (const ref of uniqueLoadableRefs(options.refs)) {
-    if (isImplementationLoaded(options.registry, ref)) continue;
-    await loadOneProviderPackage(options.registry, ref, importModule, spec);
+    if (options.registry.hasRef(ref.raw)) continue;
+    await loadOneProviderPackage(options.registry, ref, spec);
   }
 }
 
-/**
- * True when `ref` already has both a registered descriptor and a registered
- * implementation. A descriptor without an implementation (a pre-registered
- * built-in awaiting its package) returns false so the loader proceeds.
- */
-function isImplementationLoaded(
+async function loadOneProviderPackage<
+  TProvider extends ProviderImplementation,
+  TFactoryContext,
+>(
   registry: ProviderRegistry,
   ref: ProviderRef,
-): boolean {
-  if (!registry.hasRef(ref.raw)) return false;
-  const descriptor = registry.resolve(ref.raw);
-  return registry.getImplementation(descriptor.id) !== undefined;
-}
-
-async function loadOneProviderPackage<TProvider, TFactoryContext>(
-  registry: ProviderRegistry,
-  ref: ProviderRef,
-  importModule: ProviderModuleImporter,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
-  const existing = registry.hasRef(ref.raw)
-    ? registry.resolve(ref.raw)
-    : undefined;
-  // Core owns the kind of a registered ref. A provider no longer echoes a
-  // descriptor back, so this is the only place a ref listed under the wrong
-  // kind (a channel ref configured as an agentRuntime, say) can fail loud.
-  if (existing !== undefined && existing.kind !== spec.kind) {
-    throw spec.createContractError(
-      ref.raw,
-      `provider ref is registered as kind ${JSON.stringify(existing.kind)}, expected ${JSON.stringify(spec.kind)}`,
-    );
-  }
-  const packageName = resolvePackageName(ref, spec);
-  const module = await importProviderModule(ref, packageName, importModule, spec);
+  const packageName = resolvePackageName(ref);
+  const module = await importProviderModule(ref, packageName, spec);
   const factory = selectFactoryExport(ref, module, spec);
-  const seedDescriptor: ProviderDescriptor = existing ?? {
+  // The registered descriptor is Core's own: parsed from the configured ref,
+  // never read back off the loaded implementation.
+  const descriptor: ProviderDescriptor = {
     id: seedDescriptorId(ref),
     kind: spec.kind,
     ref,
@@ -161,9 +144,7 @@ async function loadOneProviderPackage<TProvider, TFactoryContext>(
 
   let provider: TProvider;
   try {
-    provider = await factory(
-      spec.factoryContext({ ref: ref.raw, descriptor: seedDescriptor }),
-    );
+    provider = await factory(spec.factoryContext({ ref: ref.raw, descriptor }));
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,
@@ -174,42 +155,31 @@ async function loadOneProviderPackage<TProvider, TFactoryContext>(
 
   spec.assertProvider(provider, {
     ref: ref.raw,
-    descriptor: seedDescriptor,
+    descriptor,
     fail: (message) => {
       throw spec.createContractError(ref.raw, message);
     },
   });
 
-  // The registered descriptor is Core's own: it is parsed from the configured
-  // ref, never read back off the loaded implementation. A pre-registered
-  // built-in keeps its existing descriptor; only its implementation is loaded
-  // from the package. Package-backed refs register both.
-  if (existing === undefined) {
-    registry.register(seedDescriptor);
-  }
-  registry.registerImplementation(seedDescriptor.id, provider);
+  registry.register(descriptor, provider);
 }
 
-function resolvePackageName<TProvider, TFactoryContext>(
-  ref: ProviderRef,
-  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
-): string {
+function resolvePackageName(ref: ProviderRef): string {
   if (ref.source === 'npm') return ref.package;
-  try {
-    return resolveBuiltinProviderPackage(ref.id);
-  } catch (err) {
-    throw spec.createLoadError(ref.raw, errMessage(err), { cause: err });
-  }
+  // A `builtin:` ref only ever reaches here unregistered (see the module
+  // comment): there is no package to resolve it to, only the named failure.
+  // It is thrown as itself, not wrapped in the kind's load error: it is a
+  // refused ref, not a failed load.
+  throw new UnknownBuiltinProviderPackageError(ref.id);
 }
 
 async function importProviderModule<TProvider, TFactoryContext>(
   ref: ProviderRef,
   packageName: string,
-  importModule: ProviderModuleImporter,
   spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<ProviderModule> {
   try {
-    return await importModule(packageName);
+    return await defaultImportModule(packageName);
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,
@@ -257,7 +227,3 @@ async function defaultImportModule(
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-
-export { errMessage };
-
-export type { NpmProviderRef };

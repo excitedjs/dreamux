@@ -1,3 +1,4 @@
+import { RuleViolation } from '@excitedjs/dreamux-utils';
 /**
  * Which failures are the caller's, and which stay the server's.
  *
@@ -13,13 +14,20 @@
  *    collection answers it from the durable record, including when a
  *    concurrent close commits inside the window this one is reading.
  */
-import { rm } from 'node:fs/promises';
-
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { WorkFence } from '../src/platform/work-fence.js';
+import { dispatcherFixture } from './helpers/real-dispatcher.js';
+import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
+import { ProviderRegistry, parseProviderRef } from '../src/registry/index.js';
+import { ControlledRuntimeProvider } from './helpers/controlled-runtime-provider.js';
+import type { CronJob } from '../src/service/scheduler/types.js';
+import type { AgentEntityIdentity } from '../src/service/agent/identity.js';
 
 import {
   DreamuxError,
-  RuleViolation,
   ServerShuttingDownError,
 } from '../src/platform/errors.js';
 import { throwCallerMistake } from '../src/command/errors.js';
@@ -27,41 +35,97 @@ import { normalizeSkillSources } from '../src/agent-runtime/skill-sources.js';
 import {
   AgentActivityReadError,
   readAgentActivity,
-} from '../src/service/agent-entity/activity-reader.js';
-import { capturingLogger, type CapturedLog } from './helpers/command-harness.js';
-import { AgentEntityCollectionStore } from '../src/service/agent-entity/identity-store.js';
+} from '../src/service/agent/activity.js';
+import {
+  capturingLogger,
+  type CapturedLog,
+} from './helpers/command-harness.js';
 import {
   agentEntityLastQuery,
   optionalAgentEntityNameParam,
   validateLastLimit,
-} from '../src/service/agent-entity/read-helpers.js';
-import { validateAgentEntityName } from '../src/service/agent-entity/types.js';
-import { SchedulerService } from '../src/service/scheduler/service.js';
-import type { SchedulerServiceOptions } from '../src/service/scheduler/types.js';
-import {
-  teamNameParam,
-  validateTeamId,
-} from '../src/service/team-collection/types.js';
-import { TeammateCollection } from '../src/service/teammate-collection/index.js';
-import { parseWorkflowMaxConcurrency } from '../src/service/workflow-service/limits.js';
-import { workflowRunInput } from '../src/service/workflow-service/types.js';
-import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
-import { makeTempDir, silentLog } from './helpers/dissolve-harness.js';
-import {
-  fakeCronStore,
-  silentLog as silentCronLog,
-  testCronJob,
-} from './helpers/workflow-harness.js';
-
-function scheduler(options: Partial<SchedulerServiceOptions> = {}): SchedulerService {
-  return new SchedulerService({
+} from '../src/service/agent/requests.js';
+import { validateAgentEntityName } from '../src/service/agent/identity.js';
+import { SchedulerService } from '../src/service/scheduler/index.js';
+import { teamNameParam } from '../src/service/team/requests.js';
+import { validateTeamId } from '../src/service/team/types.js';
+import { assertWorkflowMaxConcurrency } from '../src/service/workflow-service/limits.js';
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  try {
+    for (const done of cleanup.splice(0).reverse()) await done();
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+function testCronJob(overrides: Partial<CronJob> = {}): CronJob {
+  return {
+    id: 'job-1',
+    cron: '* * * * *',
+    tz: 'UTC',
+    recurring: true,
+    action: { kind: 'prompt-agent', prompt: 'go' },
+    enabled: true,
+    created_at: 1,
+    updated_at: 1,
+    next_run_at: Date.now() + 60_000,
+    last_fired_at: null,
+    ...overrides,
+  };
+}
+async function scheduler(
+  jobs: readonly unknown[] = [],
+): Promise<SchedulerService> {
+  const root = await mkdtemp(join(tmpdir(), 'dreamux-failure-cron-'));
+  const path = join(root, 'cron-jobs.json');
+  await writeFile(path, JSON.stringify({ version: 1, jobs }), { mode: 0o600 });
+  const fence = new WorkFence('dispatcher-1');
+  const service = new SchedulerService({
     ownerId: 'dispatcher-1',
-    store: fakeCronStore([]).store,
-    admit: (task) => task(),
-    submitScheduled: vi.fn(async () => ({ status: 'submitted' as const })),
-    log: silentCronLog(),
-    ...options,
-  } as SchedulerServiceOptions);
+    cronJobsPath: path,
+    fence,
+    recipient: { submitInput: async () => ({ status: 'stopped' }) },
+    log: capturingLogger([]),
+  });
+  cleanup.push(async () => {
+    service.stop();
+    await fence.drain();
+    await rm(root, { recursive: true, force: true });
+  });
+  return service;
+}
+function activityIdentity(): AgentEntityIdentity {
+  return {
+    version: 1,
+    dispatcher_id: 'd1',
+    name: 'mate-9z',
+    team_id: null,
+    agent_runtime: 'r1',
+    session_id: 'session-1',
+    source_cwd: '/tmp',
+    source_repo: null,
+    cwd: '/tmp',
+    runtime_cwd: '/tmp',
+    worktree: {
+      mode: 'reuse-cwd',
+      slug: null,
+      path: '/tmp',
+      branch: null,
+      base_ref: null,
+      cleanup: 'keep',
+      cleanup_state: 'not-managed',
+      cleanup_error: null,
+    },
+    intent: null,
+    identity_prompt: null,
+    skill_sources: [],
+    created_at: 1,
+    updated_at: 1,
+    status: 'running',
+    last_error: null,
+    closed_at: null,
+    close_note: null,
+  };
 }
 
 function codeOf(error: unknown): string | undefined {
@@ -122,26 +186,31 @@ describe('an Activity read reports what failed, and invents nothing', () => {
     raise: () => never,
     logs: CapturedLog[] = [],
   ): Promise<unknown> {
+    const provider = new ControlledRuntimeProvider();
+    vi.spyOn(provider, 'readRecentActivity').mockImplementation(async () =>
+      raise(),
+    );
+    const registry = new ProviderRegistry();
+    registry.register(
+      {
+        id: 'fake',
+        kind: 'agentRuntime',
+        ref: parseProviderRef('builtin:fake'),
+      },
+      provider,
+    );
     return raised(() =>
       readAgentActivity({
-        config: { agents: { r1: { provider: 'builtin:fake', config: {} } } },
-        providers: {
-          resolve: () => ({
-            implementation: {
-              readRecentActivity: async () => raise(),
-            },
-          }),
+        config: {
+          agents: { r1: { provider: 'builtin:fake', config: {} } },
+          dispatchers: [],
         },
-        identity: {
-          name: 'mate-9z',
-          dispatcher_id: 'd1',
-          agent_runtime: 'r1',
-          runtime_cwd: '/tmp',
-          session_id: 'session-1',
-        },
+        providers: new AgentRuntimeProviderCatalog({ registry }),
+        identity: activityIdentity(),
+        running: null,
         query: {},
         log: capturingLogger(logs),
-      } as never),
+      }),
     );
   }
 
@@ -191,7 +260,10 @@ describe('an Activity read reports what failed, and invents nothing', () => {
     expect(unnamed).toHaveLength(1);
     // Nothing is claimed about a reason the provider never gave.
     expect(unnamed[0]!.fields).not.toHaveProperty('activity_reason');
-    const err = unnamed[0]!.fields['err'] as { message: string; stack?: string };
+    const err = unnamed[0]!.fields['err'] as {
+      message: string;
+      stack?: string;
+    };
     expect(err.message).toBe('EIO: i/o error');
     expect(typeof err.stack).toBe('string');
   });
@@ -201,26 +273,27 @@ describe('a broken cron rule is the caller`s mistake', () => {
   const badRequests: ReadonlyArray<[string, Record<string, unknown>]> = [
     ['an empty prompt', { cron: '*/5 * * * *', prompt: '' }],
     ['an empty title', { cron: '*/5 * * * *', prompt: 'go', title: '' }],
-    ['an action kind nothing can run', {
-      cron: '*/5 * * * *',
-      prompt: 'go',
-      action: { kind: 'spawn-teammate' },
-    }],
     ['a cron that is not five fields', { cron: '*/5 * * *', prompt: 'go' }],
-    ['a five-field cron the library cannot parse', {
-      cron: '99 99 99 99 99',
-      prompt: 'go',
-    }],
-    ['a timezone that does not exist', {
-      cron: '*/5 * * * *',
-      prompt: 'go',
-      tz: 'Mars/Olympus',
-    }],
+    [
+      'a five-field cron the library cannot parse',
+      {
+        cron: '99 99 99 99 99',
+        prompt: 'go',
+      },
+    ],
+    [
+      'a timezone that does not exist',
+      {
+        cron: '*/5 * * * *',
+        prompt: 'go',
+        tz: 'Mars/Olympus',
+      },
+    ],
   ];
 
   for (const [label, request] of badRequests) {
     it(`${label} is reported as BAD_REQUEST, naming the rule it broke`, async () => {
-      const service = scheduler();
+      const service = await scheduler();
       const error = await raised(() => service.create(request as never));
       expect(codeOf(error)).toBe('BAD_REQUEST');
       expect((error as Error).message).not.toBe('');
@@ -230,9 +303,10 @@ describe('a broken cron rule is the caller`s mistake', () => {
   it('an unparseable expression is stated in the scheduler`s words, not the library`s', async () => {
     // The rule is the scheduler's, so the sentence is too: a caller reads about
     // the field it sent, never about a parser it never chose.
-    const service = scheduler();
+    const service = await scheduler();
     const error = await raised(() =>
-      service.create({ cron: '99 99 99 99 99', prompt: 'go' } as never));
+      service.create({ cron: '99 99 99 99 99', prompt: 'go' } as never),
+    );
     expect((error as Error).message).toBe(
       "cron '99 99 99 99 99' is not a valid 5-field expression",
     );
@@ -240,57 +314,49 @@ describe('a broken cron rule is the caller`s mistake', () => {
 
   it('an update breaking the same rule is the caller`s mistake too', async () => {
     const job = testCronJob({ id: 'job-1' });
-    const service = scheduler({ store: fakeCronStore([job]).store });
+    const service = await scheduler([job]);
     const error = await raised(() =>
-      service.update({ id: 'job-1', cron: 'not a cron' } as never));
+      service.update({ id: 'job-1', cron: 'not a cron' } as never),
+    );
     expect(codeOf(error)).toBe('BAD_REQUEST');
   });
 });
 
 describe('a failure nobody classified stays the server`s, even on a validation path', () => {
-  /**
-   * A request whose `action` explodes when it is read.
-   *
-   * `normalizeAction` reads `action.kind` first, so this raises a `TypeError`
-   * from inside the very closure that validates the request — the exact place a
-   * closure-wide catch would have relabelled as the caller's fault.
-   */
-  function explodingAction(): Record<string, unknown> {
-    const action: Record<string, unknown> = {};
-    Object.defineProperty(action, 'kind', {
+  function explodingPrompt(
+    input: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return Object.defineProperty(input, 'prompt', {
       enumerable: true,
       get() {
-        throw new TypeError('reading kind blew up');
+        throw new TypeError('reading prompt blew up');
       },
     });
-    return action;
   }
 
   it('a create whose validation path throws something unforeseen is not the caller`s fault', async () => {
-    const service = scheduler();
+    const service = await scheduler();
     const error = await raised(() =>
-      service.create({
-        cron: '*/5 * * * *',
-        prompt: 'go',
-        action: explodingAction(),
-      } as never));
+      service.create(explodingPrompt({ cron: '*/5 * * * *' }) as never),
+    );
     expect(error).toBeInstanceOf(TypeError);
     expect(codeOf(error)).toBeUndefined();
   });
 
   it('an update whose validation path throws something unforeseen is not the caller`s fault', async () => {
     const job = testCronJob({ id: 'job-1' });
-    const service = scheduler({ store: fakeCronStore([job]).store });
+    const service = await scheduler([job]);
     const error = await raised(() =>
-      service.update({ id: 'job-1', action: explodingAction() } as never));
+      service.update(explodingPrompt({ id: 'job-1' }) as never),
+    );
     expect(error).toBeInstanceOf(TypeError);
     expect(codeOf(error)).toBeUndefined();
   });
 
   it('a persisted job that breaks a rule stays loud rather than becoming a caller mistake', async () => {
-    const service = scheduler({
-      store: fakeCronStore([testCronJob({ id: 'job-1', cron: 'not a cron' })]).store,
-    });
+    const service = await scheduler([
+      testCronJob({ id: 'job-1', cron: 'not a cron' }),
+    ]);
     const error = await raised(() => service.start());
     expect(codeOf(error)).not.toBe('BAD_REQUEST');
   });
@@ -305,8 +371,9 @@ describe('every request reader re-types the rule and nothing else', () => {
    * above, where an unforeseen `TypeError` crosses the same narrowing.
    */
   it('the shared narrowing converts a rule violation and rethrows everything else', () => {
-    expect(() => throwCallerMistake(new RuleViolation('name is too long')))
-      .toThrowError(expect.objectContaining({ code: 'BAD_REQUEST' }));
+    expect(() =>
+      throwCallerMistake(new RuleViolation('name is too long')),
+    ).toThrowError(expect.objectContaining({ code: 'BAD_REQUEST' }));
     const unforeseen = new TypeError('cannot read properties of undefined');
     expect(() => throwCallerMistake(unforeseen)).toThrow(unforeseen);
     const shuttingDown = new ServerShuttingDownError();
@@ -321,23 +388,22 @@ describe('every request reader re-types the rule and nothing else', () => {
     {
       what: 'a Team name',
       rule: () => validateTeamId('not a legal team'),
-      read: () => teamNameParam({ team_name: 'not a legal team' } as never, 'team_name'),
+      read: () =>
+        teamNameParam({ team_name: 'not a legal team' } as never, 'team_name'),
     },
     {
       what: 'a TeamMate name',
       rule: () => validateAgentEntityName('not a legal name'),
       read: () =>
-        optionalAgentEntityNameParam({ name: 'not a legal name' } as never, 'name'),
+        optionalAgentEntityNameParam(
+          { name: 'not a legal name' } as never,
+          'name',
+        ),
     },
     {
       what: 'a last-read limit',
       rule: () => validateLastLimit(0),
       read: () => agentEntityLastQuery({ name: 'mate-1', limit: 0 } as never),
-    },
-    {
-      what: 'a workflow concurrency bound',
-      rule: () => parseWorkflowMaxConcurrency(0),
-      read: () => workflowRunInput({ prompt: 'go', max_concurrency: 0 } as never),
     },
   ];
 
@@ -355,118 +421,13 @@ describe('every request reader re-types the rule and nothing else', () => {
   }
 });
 
-describe('closing an already-closed TeamMate is the operation succeeding', () => {
-  const DISPATCHER = 'dispatcher-1';
-
-  async function collection(): Promise<{
-    store: AgentEntityCollectionStore;
-    teammates: TeammateCollection;
-    cleanup: () => Promise<void>;
-  }> {
-    const root = await makeTempDir('dreamux-close-idempotency-');
-    const store = new AgentEntityCollectionStore({
-      root,
-      dispatcherId: DISPATCHER,
-      log: silentLog,
-    } as never);
-    const teammates = new TeammateCollection({
-      dispatcherId: DISPATCHER,
-      teamScope: null,
-      config: { agents: {} } as never,
-      agentRuntimeProviders: {} as never,
-      worktrees: {} as never,
-      store,
-      names: {} as never,
-      admissions: {} as never,
-      log: silentLog as never,
-    });
-    return {
-      store,
-      teammates,
-      cleanup: () => rm(root, { recursive: true, force: true }),
-    };
-  }
-
-  async function seed(
-    store: AgentEntityCollectionStore,
-    name: string,
-    status: 'running' | 'closed',
-  ): Promise<void> {
-    const created = await store.entity(name).create({
-      name,
-      teamId: undefined,
-      agentRuntime: 'fake-runtime',
-      sourceCwd: '/repo',
-      sourceRepo: null,
-      cwd: '/repo',
-      runtimeCwd: '/repo',
-      worktree: reuseCwdWorktree('/repo'),
-      intent: null,
-      identityPrompt: null,
-      status: 'running',
-    } as never);
-    if (status === 'closed') {
-      await store.entity(name).update(created, {
-        status: 'closed',
-        closedAt: Date.now() - 60_000,
-        closeNote: 'closed earlier',
-      } as never);
-    }
-  }
-
-  it('a record that already says closed is the answer, not a failure', async () => {
-    const { store, teammates, cleanup } = await collection();
-    try {
-      await seed(store, 'retired', 'closed');
-      const result = await teammates.close({ name: 'retired', note: 'cleanup' });
-      expect(result.teammate.name).toBe('retired');
-      expect(result.teammate.status).toBe('closed');
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('a close that loses the race to a concurrent one still answers, it does not refuse', async () => {
-    const { store, teammates, cleanup } = await collection();
-    try {
-      await seed(store, 'racer', 'running');
-      // The record flips to closed the moment after the first read of it — a
-      // concurrent close committing inside this close's window. Whichever read
-      // this close ends up making, the TeamMate is closed and saying so is the
-      // whole job; refusing would make an idempotent operation fail on timing.
-      const real = store.entity.bind(store);
-      let reads = 0;
-      vi.spyOn(store, 'entity').mockImplementation((name: string) => {
-        const entity = real(name);
-        const read = entity.read.bind(entity);
-        return Object.assign(Object.create(Object.getPrototypeOf(entity)), entity, {
-          read: async () => {
-            const identity = await read();
-            reads += 1;
-            return reads === 1 || identity === null
-              ? identity
-              : { ...identity, status: 'closed', closed_at: Date.now() };
-          },
-        }) as ReturnType<typeof real>;
-      });
-
-      const result = await teammates.close({ name: 'racer', note: 'cleanup' });
-      expect(result.teammate.status).toBe('closed');
-      expect(reads).toBeGreaterThan(0);
-    } finally {
-      vi.restoreAllMocks();
-      await cleanup();
-    }
-  });
-
-  it('a name that never existed is still the caller`s to fix', async () => {
-    const { teammates, cleanup } = await collection();
-    try {
-      const error = await raised(() =>
-        teammates.close({ name: 'ghost', note: 'cleanup' }));
-      expect(codeOf(error)).toBe('TEAMMATE_NOT_FOUND');
-    } finally {
-      await cleanup();
-    }
-  });
+// The reader shapes a number; the owning service applies the domain bound.
+it('a workflow concurrency bound: the rule is a named violation, and running it is BAD_REQUEST', async () => {
+  expect(() => assertWorkflowMaxConcurrency(0)).toThrow(RuleViolation);
+  const fixture = await dispatcherFixture();
+  await fixture.host.start();
+  await expect(
+    fixture.host.workflows.run({ script: 'return 1;', max_concurrency: 0 }),
+  ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  expect(fixture.provider.runtimes).toHaveLength(0);
 });

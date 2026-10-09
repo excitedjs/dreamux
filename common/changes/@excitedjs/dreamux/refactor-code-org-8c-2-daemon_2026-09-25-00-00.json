@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 8c, item 2: daemon/ now owns the managed-service lifecycle end to end. New daemon/unit.ts (unit render + parse: LAUNCHD_LABEL, SYSTEMD_UNIT, serviceUnitPath, renderLaunchdPlist, renderSystemdUnit, launchdTarget, and every parseLaunchd*/parseSystemd* helper), daemon/environment.ts (service-Node selection verbatim from onboard/service-node.ts, plus managedServiceEnvironment/resolveServiceExecutable/withUserLocalBinPath/validateManagedServiceLaunch moved from onboard/service.ts), and daemon/host.ts (new ServiceHost type + createServiceHost, the one {runner, platform, homeDir, uid} default every entry point now builds once instead of re-deriving). daemon/install.ts absorbs installUserService/registerLaunchd/registerSystemd/enableSystemdLinger/removeUserService from onboard/service.ts; installUserService/removeUserService now take a required host: ServiceHost field instead of separate optional runner/platform/homeDir/uid fields (the seven CLI-facing entry points — runDaemonInstall, runDaemonUninstall, controlUserService, getServiceStatus, runOnboard, runUninstall, runDreamuxDoctor — keep their existing flat optional shape unchanged). daemon/service-control.ts is renamed daemon/control.ts. New daemon/status.ts extracts ServiceStatus/getServiceStatus/launchdStatus/systemdStatus out of cli/doctor.ts. onboard/service.ts, onboard/service-node.ts, and cli/service-status-parse.ts (including its no-restricted-syntax re-export shim) are deleted; every caller now imports from the new daemon/ modules. The four independent launchd uid-undefined checks (in registerLaunchd, removeUserService, controlUserService, and the old standalone launchdTarget) collapse into one check inside daemon/unit.ts's launchdTarget, changing the exact wording of that already-unreachable-on-supported-platforms error for three of the four call sites. This is a code-location, internal-signature, and internal-error-wording move only: every public CLI command, config file shape, and service-unit content is unchanged.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -15,9 +15,11 @@
  * real stdio shim over a real `admin.sock`. The tables below are test fixtures
  * naming which call to make; production keeps no such table.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import type { CoreCommandContext, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { CoreCommandContext } from '../src/command/types.js';
+import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 
 import { runDreamuxMcp } from '../src/mcp/shim.js';
 import { McpLeaseRegistry } from '../src/service/mcp/leases.js';
@@ -26,14 +28,14 @@ import type {
   McpServerDelegate,
 } from '../src/service/mcp/types.js';
 import { StatedFailure, ValidationError } from '../src/platform/errors.js';
-import { createTeamMcpDelegate } from '../src/service/team-collection/mcp-delegate.js';
-import { createTeamMateMcpDelegate } from '../src/service/teammate-collection/mcp-delegate.js';
-import { createCronMcpDelegate } from '../src/service/scheduler/mcp-delegate.js';
+import { createTeamMcpDelegate } from '../src/service/team/mcp.js';
+import { createTeamMateMcpDelegate } from '../src/service/agent/mcp.js';
+import { createCronMcpDelegate } from '../src/service/scheduler/mcp.js';
 import {
   TeamClosedError,
   TeamNotFoundError,
-} from '../src/service/team-collection/errors.js';
-import { TeamMateNotFoundError } from '../src/service/teammate-collection/errors.js';
+} from '../src/service/team/errors.js';
+import { TeamMateNotFoundError } from '../src/service/agent/errors.js';
 import { CronJobNotFoundError } from '../src/service/scheduler/errors.js';
 import { WorkflowRunNotFoundError } from '../src/service/workflow-service/errors.js';
 import { DispatcherNotFoundError } from '../src/service/dispatchers/errors.js';
@@ -42,7 +44,6 @@ import {
   HARNESS_DISPATCHER_ID,
   capturingLogger,
   createCommandHarness,
-  createFakeDispatcher,
   createHarnessChannelInvoker,
   harnessTeamListRow,
   harnessTeamSummary,
@@ -51,19 +52,16 @@ import {
   type CommandHarness,
   type FakeDispatcherOverrides,
 } from './helpers/command-harness.js';
-import { teamSubmitResult } from '../src/service/team-service/types.js';
-import { toSubmissionResult } from '../src/service/teammate-service/turn-recording.js';
-import { AgentActivityReadError } from '../src/service/agent-entity/activity-reader.js';
-import { ACTIVITY_PUBLIC_ERRORS } from '../src/service/agent-entity/activity-errors.js';
+import { teamSubmitResult } from '../src/service/team/requests.js';
+import { toSubmissionResult } from '../src/service/agent/admission.js';
+import {
+  AgentActivityReadError,
+  ACTIVITY_PUBLIC_ERRORS,
+} from '../src/service/agent/activity.js';
 
-/**
- * An `AgentRuntimeGenerationLease`-shaped fake: every registry path used here
- * reads only `isCurrent()` (same narrow shape as mcp-lease-shim.test.ts).
- */
-function fakeLease() {
-  return { isCurrent: () => true } as unknown as Parameters<
-    McpLeaseRegistry['mint']
-  >[0];
+/** The supported generation lease seam; no running provider is needed for mint. */
+function fakeLease(): Parameters<McpLeaseRegistry['mint']>[0] {
+  return { isCurrent: () => true, state: { publish: async () => {} } };
 }
 
 function adminContext(): CoreCommandContext {
@@ -79,12 +77,12 @@ function toolText(result: { content?: unknown }): string {
 /** Run one tool through the real shim over a real admin socket. */
 async function throughTheShim(
   harness: CommandHarness,
-  delegate: McpServerDelegate,
+  delegate: McpServerDelegate | Promise<McpServerDelegate>,
   call: { name: string; arguments: Record<string, unknown> },
 ): Promise<{ text: string; isError: boolean; structured: unknown }> {
   const admin = await startHarnessAdminSocket(harness);
   try {
-    const minted = harness.mcpLeases.mint(fakeLease(), delegate);
+    const minted = harness.mcpLeases.mint(fakeLease(), await delegate);
     if (minted === null) throw new Error('the delegate advertised no tools');
     const connection = await connectMcpClient((transport) =>
       runDreamuxMcp({
@@ -95,7 +93,11 @@ async function throughTheShim(
       }),
     );
     try {
-      const result = await callTool(connection.client, call.name, call.arguments);
+      const result = await callTool(
+        connection.client,
+        call.name,
+        call.arguments,
+      );
       return {
         text: toolText(result),
         isError: result.isError === true,
@@ -114,36 +116,45 @@ async function throughTheShim(
  * lease registry, which is also where a failure becomes an answer.
  */
 async function throughTheRegistry(
-  delegate: McpServerDelegate,
+  delegate: McpServerDelegate | Promise<McpServerDelegate>,
   name: string,
   args: Record<string, unknown> = {},
   log?: DreamuxLogger,
 ): Promise<McpDelegateResult> {
   const registry = new McpLeaseRegistry(log);
-  const minted = registry.mint(fakeLease(), delegate);
+  const minted = registry.mint(fakeLease(), await delegate);
   if (minted === null) throw new Error('the delegate advertised no tools');
   return registry.invoke(minted.token, { name, arguments: args });
 }
 
-function teamDelegate(overrides: FakeDispatcherOverrides): McpServerDelegate {
-  return createTeamMcpDelegate({
-    dispatcher: createFakeDispatcher(overrides),
-    caller: { kind: 'dispatcher' },
+async function teamDelegate(
+  overrides: FakeDispatcherOverrides,
+): Promise<McpServerDelegate> {
+  const harness = await createCommandHarness({
+    dispatcherOverrides: overrides,
   });
+  return createTeamMcpDelegate({ teams: harness.dispatcher.teams });
 }
 
-function teammateDelegate(overrides: FakeDispatcherOverrides): McpServerDelegate {
+async function teammateDelegate(
+  overrides: FakeDispatcherOverrides,
+): Promise<McpServerDelegate> {
+  const harness = await createCommandHarness({
+    dispatcherOverrides: overrides,
+  });
   return createTeamMateMcpDelegate({
     kind: 'dispatcher',
-    dispatcher: createFakeDispatcher(overrides),
+    dispatcher: harness.dispatcher,
   });
 }
 
-function cronDelegate(overrides: FakeDispatcherOverrides): McpServerDelegate {
-  const dispatcher = createFakeDispatcher(overrides);
-  return createCronMcpDelegate({
-    scheduler: async () => dispatcher.scheduler,
+async function cronDelegate(
+  overrides: FakeDispatcherOverrides,
+): Promise<McpServerDelegate> {
+  const harness = await createCommandHarness({
+    dispatcherOverrides: overrides,
   });
+  return createCronMcpDelegate(harness.dispatcher.scheduler);
 }
 
 /** One value as its wire carries it. */
@@ -166,7 +177,7 @@ const UNCLASSIFIED = /^INTERNAL: /;
 describe('a failure that stated itself reaches the model as its code, its reason, and its next step', () => {
   it('team.status on a Team that does not exist: the model reads the fact and the way out', async () => {
     const raised = 'Team "ghost-a1b2" does not exist';
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const result = await throughTheShim(
       harness,
       teamDelegate({
@@ -269,7 +280,9 @@ describe('a failure Core does not own reaches the caller with its own message', 
     // The native fact survives whole: Core owns neither the reason nor a
     // recovery it would have to invent to say anything more.
     expect(message).toContain('ENOENT');
-    expect(message).toContain('/Users/ops/.dreamux/state/team/blue/record.json');
+    expect(message).toContain(
+      '/Users/ops/.dreamux/state/team/blue/record.json',
+    );
     expect(message).not.toContain('Whether this call took effect is unknown');
     expect(message).not.toMatch(/failure id/i);
   });
@@ -313,7 +326,7 @@ describe('a failure Core does not own reaches the caller with its own message', 
   });
 
   it('reaches the model that way too, through the real shim', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const result = await throughTheShim(
       harness,
       teamDelegate({
@@ -360,7 +373,11 @@ describe('every advertised tool answers both kinds of failure the same way', () 
 
   /** Arguments good enough to pass each tool's own input reading. */
   const ARGS: Readonly<Record<string, Record<string, unknown>>> = {
-    create: { name_prefix: 'blue', intent: 'ship it', leader_agent_runtime: 'r1' },
+    create: {
+      name_prefix: 'blue',
+      intent: 'ship it',
+      leader_agent_runtime: 'r1',
+    },
     send: { team_name: 'blue-1a2b', prompt: 'go', name: 'mate-9z' },
     status: { team_name: 'blue-1a2b', name: 'mate-9z' },
     history: {},
@@ -382,7 +399,7 @@ describe('every advertised tool answers both kinds of failure the same way', () 
 
   const servers: {
     server: string;
-    build: (overrides: FakeDispatcherOverrides) => McpServerDelegate;
+    build: (overrides: FakeDispatcherOverrides) => Promise<McpServerDelegate>;
   }[] = [
     { server: 'team', build: teamDelegate },
     { server: 'teammate', build: teammateDelegate },
@@ -394,12 +411,18 @@ describe('every advertised tool answers both kinds of failure the same way', () 
       const stated = poisonedWith(() => {
         throw new ValidationError("param 'anything' is wrong");
       });
-      const delegate = build(stated);
-      const tools = delegate.describe().tools as ReadonlyArray<{ name: string }>;
+      const delegate = await build(stated);
+      const tools = delegate.describe().tools as ReadonlyArray<{
+        name: string;
+      }>;
       expect(tools.length).toBeGreaterThan(0);
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(build(stated), tool.name, ARGS[tool.name] ?? {}),
+          await throughTheRegistry(
+            build(stated),
+            tool.name,
+            ARGS[tool.name] ?? {},
+          ),
         );
         expect(message, `tool '${tool.name}'`).toMatch(/^BAD_REQUEST: /);
         expect(message, `tool '${tool.name}'`).not.toMatch(UNCLASSIFIED);
@@ -408,13 +431,21 @@ describe('every advertised tool answers both kinds of failure the same way', () 
 
     it(`${server}: an unstated failure keeps its own words on every tool it advertises`, async () => {
       const unstated = poisonedWith(() => {
-        throw new TypeError('cannot read properties of undefined (reading nope)');
+        throw new TypeError(
+          'cannot read properties of undefined (reading nope)',
+        );
       });
-      const delegate = build(unstated);
-      const tools = delegate.describe().tools as ReadonlyArray<{ name: string }>;
+      const delegate = await build(unstated);
+      const tools = delegate.describe().tools as ReadonlyArray<{
+        name: string;
+      }>;
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(build(unstated), tool.name, ARGS[tool.name] ?? {}),
+          await throughTheRegistry(
+            build(unstated),
+            tool.name,
+            ARGS[tool.name] ?? {},
+          ),
         );
         expect(message, `tool '${tool.name}'`).toBe(
           'INTERNAL: cannot read properties of undefined (reading nope)',
@@ -436,18 +467,21 @@ describe('the admission boundary answers everything, including what never reache
     const silent: McpServerDelegate = {
       name: 'channel-x',
       describe: () => ({
-        identity: { name: 'dreamux-channel-x', version: '0.1.0' },
         tools: [
           {
             name: 'post',
             description: 'post a message',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
           },
         ],
       }),
       call: async () => ({ ok: false, message: '   ' }),
     };
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const minted = harness.mcpLeases.mint(fakeLease(), silent)!;
     await expect(
       harness.registry.invoke(adminContext(), 'mcp.toolcall', {
@@ -462,18 +496,21 @@ describe('the admission boundary answers everything, including what never reache
     const shapeless: McpServerDelegate = {
       name: 'channel-x',
       describe: () => ({
-        identity: { name: 'dreamux-channel-x', version: '0.1.0' },
         tools: [
           {
             name: 'post',
             description: 'post a message',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
           },
         ],
       }),
       call: async () => ({ ok: true, structured: 'not an object' }) as never,
     };
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const minted = harness.mcpLeases.mint(fakeLease(), shapeless)!;
     await expect(
       harness.registry.invoke(adminContext(), 'mcp.toolcall', {
@@ -488,12 +525,15 @@ describe('the admission boundary answers everything, including what never reache
     const provider: McpServerDelegate = {
       name: 'channel-x',
       describe: () => ({
-        identity: { name: 'dreamux-channel-x', version: '0.1.0' },
         tools: [
           {
             name: 'post',
             description: 'post a message',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
           },
         ],
       }),
@@ -515,7 +555,7 @@ describe('the admission boundary answers everything, including what never reache
       },
     });
     const registry = new McpLeaseRegistry();
-    const minted = registry.mint(fakeLease(), delegate)!;
+    const minted = registry.mint(fakeLease(), await delegate)!;
     registry.release([minted.token]);
     const result = await registry.invoke(minted.token, {
       name: 'list',
@@ -549,7 +589,7 @@ describe('the admission boundary answers everything, including what never reache
 
 describe('a stated failure carries the same code, reason, and action over the admin socket', () => {
   it('the wire carries the action beside the code and the reason', async () => {
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         getTeamStatus: async () => {
           throw new TeamNotFoundError('Team "ghost" does not exist');
@@ -573,7 +613,7 @@ describe('a stated failure carries the same code, reason, and action over the ad
   });
 
   it('the in-process rejection carries the same three parts, because it is the same object', async () => {
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         getTeamStatus: async () => {
           throw new TeamNotFoundError('Team "ghost" does not exist');
@@ -593,7 +633,7 @@ describe('a stated failure carries the same code, reason, and action over the ad
 
   it('an unclassified Command failure crosses the wire as INTERNAL with its own message', async () => {
     const raw = 'boom at /Users/ops/.dreamux/state/team/blue/record.json';
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         getTeamStatus: async () => {
           throw new Error(raw);
@@ -627,11 +667,11 @@ describe('a stated failure carries the same code, reason, and action over the ad
   });
 
   it('a rejected invocation the shim never got an answer for is normalized there too', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     try {
       const delegate = teamDelegate({});
-      const minted = harness.mcpLeases.mint(fakeLease(), delegate)!;
+      const minted = harness.mcpLeases.mint(fakeLease(), await delegate)!;
       const connection = await connectMcpClient((transport) =>
         runDreamuxMcp({
           lease: minted.token,
@@ -665,7 +705,11 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     operation: string;
     overrides: FakeDispatcherOverrides;
     command: { name: string; params: Record<string, unknown> };
-    tool: { delegate: 'team' | 'teammate' | 'cron'; name: string; args: Record<string, unknown> };
+    tool: {
+      delegate: 'team' | 'teammate' | 'cron';
+      name: string;
+      args: Record<string, unknown>;
+    };
     /**
      * What the owning object actually answered, in public form. Both surfaces
      * are checked against it rather than only against each other: two adapters
@@ -693,7 +737,6 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
   const teammateRow = { name: 'mate-9z', status: 'running' };
   const cronJob = {
     id: 'job-1',
-    dispatcher_id: HARNESS_DISPATCHER_ID,
     title: 'nightly',
     cron: '17 3 * * *',
     tz: 'UTC',
@@ -711,13 +754,20 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       operation: 'team.status',
       overrides: { getTeamStatus: async () => teamSummary },
       command: { name: 'team.status', params: { team_name: 'blue-1a2b' } },
-      tool: { delegate: 'team', name: 'status', args: { team_name: 'blue-1a2b' } },
+      tool: {
+        delegate: 'team',
+        name: 'status',
+        args: { team_name: 'blue-1a2b' },
+      },
       expected: teamSummary,
     },
     {
       operation: 'team.history',
       overrides: { getTeamHistory: async () => historyPage },
-      command: { name: 'team.history', params: { status: 'closed', limit: 10 } },
+      command: {
+        name: 'team.history',
+        params: { status: 'closed', limit: 10 },
+      },
       tool: {
         delegate: 'team',
         name: 'history',
@@ -754,7 +804,11 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         },
       },
       command: { name: 'teammate.history', params: { status: 'closed' } },
-      tool: { delegate: 'teammate', name: 'history', args: { status: 'closed' } },
+      tool: {
+        delegate: 'teammate',
+        name: 'history',
+        args: { status: 'closed' },
+      },
       expected: { items: [teammateRow], next_cursor: null },
     },
     {
@@ -765,7 +819,9 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
             teammate: teammateRow,
             requested_records: 5,
             returned_records: 1,
-            records: [{ kind: 'assistant_message', text: 'hi', occurred_at: null }],
+            records: [
+              { kind: 'assistant_message', text: 'hi', occurred_at: null },
+            ],
             next_cursor: null,
             truncated: false,
           }),
@@ -823,7 +879,9 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     },
     {
       operation: 'cron.delete',
-      overrides: { scheduler: { delete: async (id: string) => ({ id, deleted: true }) } },
+      overrides: {
+        scheduler: { delete: async (id: string) => ({ id, deleted: true }) },
+      },
       command: { name: 'scheduler.cron.delete', params: { id: 'job-1' } },
       tool: { delegate: 'cron', name: 'cron_delete', args: { id: 'job-1' } },
       expected: { id: 'job-1', deleted: true },
@@ -833,15 +891,18 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
   function delegateFor(entry: {
     tool: { delegate: 'team' | 'teammate' | 'cron' };
     overrides: FakeDispatcherOverrides;
-  }): McpServerDelegate {
+  }): Promise<McpServerDelegate> {
     if (entry.tool.delegate === 'team') return teamDelegate(entry.overrides);
-    if (entry.tool.delegate === 'teammate') return teammateDelegate(entry.overrides);
+    if (entry.tool.delegate === 'teammate')
+      return teammateDelegate(entry.overrides);
     return cronDelegate(entry.overrides);
   }
 
   for (const entry of cases) {
     it(`${entry.operation}: both surfaces answer the same owning object with the same value`, async () => {
-      const harness = createCommandHarness({ dispatcherOverrides: entry.overrides });
+      const harness = await createCommandHarness({
+        dispatcherOverrides: entry.overrides,
+      });
       const viaCommand = await harness.registry.invoke(
         adminContext(),
         entry.command.name,
@@ -868,7 +929,11 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     operation: string;
     overrides: FakeDispatcherOverrides;
     command: { name: string; params: Record<string, unknown> };
-    tool: { delegate: 'team' | 'teammate' | 'cron'; name: string; args: Record<string, unknown> };
+    tool: {
+      delegate: 'team' | 'teammate' | 'cron';
+      name: string;
+      args: Record<string, unknown>;
+    };
     raised: StatedFailure;
   }[] = [
     {
@@ -891,7 +956,10 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
           },
         },
       },
-      command: { name: 'teammate.submit', params: { name: 'ghost', prompt: 'go' } },
+      command: {
+        name: 'teammate.submit',
+        params: { name: 'ghost', prompt: 'go' },
+      },
       tool: {
         delegate: 'teammate',
         name: 'send',
@@ -917,7 +985,9 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       overrides: {
         workflows: {
           status: async () => {
-            throw new WorkflowRunNotFoundError("workflow run 'gone' does not exist");
+            throw new WorkflowRunNotFoundError(
+              "workflow run 'gone' does not exist",
+            );
           },
         },
       },
@@ -927,13 +997,17 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         name: 'workflow_status',
         args: { run_id: 'gone' },
       },
-      raised: new WorkflowRunNotFoundError("workflow run 'gone' does not exist"),
+      raised: new WorkflowRunNotFoundError(
+        "workflow run 'gone' does not exist",
+      ),
     },
   ];
 
   for (const entry of failureCases) {
     it(`${entry.operation}: the same code, reason, and action reach a scripted caller and a model`, async () => {
-      const harness = createCommandHarness({ dispatcherOverrides: entry.overrides });
+      const harness = await createCommandHarness({
+        dispatcherOverrides: entry.overrides,
+      });
       await expect(
         harness.registry.invoke(
           adminContext(),
@@ -958,7 +1032,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
   }
 
   it('a name neither surface accepts fails as the same caller mistake on both', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
       harness.registry.invoke(adminContext(), 'teammate.status', {
         name: 'not a legal name',
@@ -972,7 +1046,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
   });
 
   it('an unusable history page is the caller`s mistake on both, stating the rule', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
       harness.registry.invoke(adminContext(), 'teammate.history', {
         limit: 0,
@@ -987,7 +1061,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
   });
 
   it('a history cursor nothing here issued is refused as the caller`s, not normalized', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
       harness.registry.invoke(adminContext(), 'teammate.history', {
         cursor: 'not-a-cursor',
@@ -1009,7 +1083,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     // cannot name a Team at all. The field is still read through the Team's own
     // name codec, so an impossible owner is rejected here rather than surfacing
     // as INTERNAL from the lookup it would otherwise reach.
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
       harness.registry.invoke(adminContext(), 'scheduler.cron.list', {
         team_id: 'not a legal team',
@@ -1038,7 +1112,9 @@ describe('the admin socket and the in-process Channel port answer the same way',
       action: new TeamNotFoundError(raised).action,
     };
 
-    const harness = createCommandHarness({ dispatcherOverrides: overrides });
+    const harness = await createCommandHarness({
+      dispatcherOverrides: overrides,
+    });
     const admin = await startHarnessAdminSocket(harness);
     try {
       const response = await admin.send('team.status', {
@@ -1051,10 +1127,12 @@ describe('the admin socket and the in-process Channel port answer the same way',
     }
 
     const lease = createHarnessChannelInvoker(
-      createCommandHarness({ dispatcherOverrides: overrides }),
+      await createCommandHarness({ dispatcherOverrides: overrides }),
     );
     await expect(
-      lease.port.invoke.invoke('team.status', { team_name: 'ghost-a1b2' } as never),
+      lease.port.invoke.invoke('team.status', {
+        team_name: 'ghost-a1b2',
+      } as never),
     ).rejects.toMatchObject(expected);
   });
 
@@ -1065,7 +1143,9 @@ describe('the admin socket and the in-process Channel port answer the same way',
       },
     };
 
-    const harness = createCommandHarness({ dispatcherOverrides: overrides });
+    const harness = await createCommandHarness({
+      dispatcherOverrides: overrides,
+    });
     const admin = await startHarnessAdminSocket(harness);
     try {
       const response = await admin.send('team.status', {
@@ -1082,16 +1162,20 @@ describe('the admin socket and the in-process Channel port answer the same way',
 
     const logs: CapturedLog[] = [];
     const lease = createHarnessChannelInvoker(
-      createCommandHarness({ dispatcherOverrides: overrides }),
+      await createCommandHarness({ dispatcherOverrides: overrides }),
       HARNESS_DISPATCHER_ID,
       undefined,
       logs,
     );
     await expect(
-      lease.port.invoke.invoke('team.status', { team_name: 'blue-1a2b' } as never),
+      lease.port.invoke.invoke('team.status', {
+        team_name: 'blue-1a2b',
+      } as never),
     ).rejects.toMatchObject({ code: 'INTERNAL', message: NATIVE });
     // The port that observed it logged the whole value, without an identifier.
-    const record = logs.find((entry) => entry.fields['command'] === 'team.status');
+    const record = logs.find(
+      (entry) => entry.fields['command'] === 'team.status',
+    );
     expect(record, 'the channel port did not log the failure').toBeDefined();
     expect(record!.fields).not.toHaveProperty('failure_id');
     expect((record!.fields['err'] as { message: string }).message).toBe(NATIVE);
@@ -1103,7 +1187,7 @@ describe('the admin socket and the in-process Channel port answer the same way',
     class StoreCorrupt extends Error {
       override readonly name = 'StoreCorrupt';
     }
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: {
         createTeam: async () => {
           throw new StoreCorrupt(NATIVE);
@@ -1131,36 +1215,49 @@ describe('the admin socket and the in-process Channel port answer the same way',
 
 describe('a closed Team and a missing Team stay two facts', () => {
   it('a leader-scoped call on a closed Team says TEAM_CLOSED, not TEAM_NOT_FOUND', async () => {
-    const delegate = createTeamMateMcpDelegate({
-      kind: 'team_leader',
-      team: async () => {
-        throw new TeamClosedError('Team "blue-1a2b" is closed');
-      },
+    const fixture = await dispatcherFixture();
+    const created = await fixture.teams.createFromRequest(
+      teamRequest('closed-mcp'),
+    );
+    const team = await fixture.teams.open(created.team_name);
+    const delegate = createTeamMateMcpDelegate({ kind: 'team_leader', team });
+    await fixture.teams.dissolve(created.team_name, {
+      note: 'finished',
+      force: false,
     });
+    await team.closed;
     const message = refusalMessage(await throughTheRegistry(delegate, 'list'));
     expect(message.startsWith('TEAM_CLOSED: ')).toBe(true);
     expect(message).toContain('is closed');
     expect(message).not.toContain('TEAM_NOT_FOUND');
   });
 
-  it('a leader-scoped call on a Team that never existed still says TEAM_NOT_FOUND', async () => {
-    const delegate = createTeamMateMcpDelegate({
-      kind: 'team_leader',
-      team: async () => {
-        throw new TeamNotFoundError('Team "ghost-a1b2" does not exist');
-      },
+  it('a missing Team is refused before constructing leader-scoped tools', async () => {
+    const fixture = await dispatcherFixture();
+    await expect(fixture.teams.open('ghost-a1b2')).rejects.toMatchObject({
+      code: 'TEAM_NOT_FOUND',
     });
-    const message = refusalMessage(await throughTheRegistry(delegate, 'list'));
+    const message = refusalMessage(
+      await throughTheRegistry(
+        createTeamMcpDelegate({ teams: fixture.teams }),
+        'status',
+        { team_name: 'ghost-a1b2' },
+      ),
+    );
     expect(message.startsWith('TEAM_NOT_FOUND: ')).toBe(true);
+    expect(fixture.provider.runtimes).toHaveLength(0);
   });
 
-  it('resolving a Team leaves a failure it cannot name untouched', async () => {
-    const delegate = createTeamMateMcpDelegate({
-      kind: 'team_leader',
-      team: async () => {
-        throw new Error('EIO: i/o error reading the Team record');
-      },
-    });
+  it('bound Team admission leaves a failure it cannot name untouched', async () => {
+    const fixture = await dispatcherFixture();
+    const created = await fixture.teams.createFromRequest(
+      teamRequest('native-mcp'),
+    );
+    const team = await fixture.teams.open(created.team_name);
+    const delegate = createTeamMateMcpDelegate({ kind: 'team_leader', team });
+    vi.spyOn(team, 'admitLeaderTools').mockRejectedValueOnce(
+      new Error('EIO: i/o error reading the Team record'),
+    );
     expect(refusalMessage(await throughTheRegistry(delegate, 'list'))).toBe(
       'INTERNAL: EIO: i/o error reading the Team record',
     );
@@ -1185,10 +1282,14 @@ describe('a whitespace-only argument is a bad request, never an internal failure
     what: string;
     method: string;
     params: Record<string, unknown>;
-    tool: { delegate: () => McpServerDelegate; name: string; args: Record<string, unknown> };
+    tool: {
+      delegate: () => Promise<McpServerDelegate>;
+      name: string;
+      args: Record<string, unknown>;
+    };
   }[] = [
     {
-      what: "team.create name_prefix",
+      what: 'team.create name_prefix',
       method: 'team.create',
       params: {
         request_id: 'req-1',
@@ -1199,7 +1300,11 @@ describe('a whitespace-only argument is a bad request, never an internal failure
       tool: {
         delegate: () => teamDelegate({}),
         name: 'create',
-        args: { name_prefix: BLANK, intent: 'ship it', leader_agent_runtime: 'r1' },
+        args: {
+          name_prefix: BLANK,
+          intent: 'ship it',
+          leader_agent_runtime: 'r1',
+        },
       },
     },
     {
@@ -1214,7 +1319,11 @@ describe('a whitespace-only argument is a bad request, never an internal failure
       tool: {
         delegate: () => teamDelegate({}),
         name: 'create',
-        args: { name_prefix: 'blue', intent: BLANK, leader_agent_runtime: 'r1' },
+        args: {
+          name_prefix: 'blue',
+          intent: BLANK,
+          leader_agent_runtime: 'r1',
+        },
       },
     },
     {
@@ -1251,13 +1360,21 @@ describe('a whitespace-only argument is a bad request, never an internal failure
 
   for (const entry of cases) {
     it(`${entry.what}: BAD_REQUEST on the Command and on the tool`, async () => {
-      const harness = createCommandHarness();
+      const harness = await createCommandHarness();
       await expect(
-        harness.registry.invoke(adminContext(), entry.method, entry.params as never),
+        harness.registry.invoke(
+          adminContext(),
+          entry.method,
+          entry.params as never,
+        ),
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
       const message = refusalMessage(
-        await throughTheRegistry(entry.tool.delegate(), entry.tool.name, entry.tool.args),
+        await throughTheRegistry(
+          entry.tool.delegate(),
+          entry.tool.name,
+          entry.tool.args,
+        ),
       );
       expect(message.startsWith('BAD_REQUEST: ')).toBe(true);
       expect(message).not.toMatch(UNCLASSIFIED);
@@ -1265,9 +1382,11 @@ describe('a whitespace-only argument is a bad request, never an internal failure
   }
 
   it('an unusable Team history page is the caller`s mistake on both', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
-      harness.registry.invoke(adminContext(), 'team.history', { limit: 0 } as never),
+      harness.registry.invoke(adminContext(), 'team.history', {
+        limit: 0,
+      } as never),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     const message = refusalMessage(
@@ -1278,7 +1397,7 @@ describe('a whitespace-only argument is a bad request, never an internal failure
   });
 
   it('a Team history cursor nothing here issued is the caller`s mistake on both', async () => {
-    const harness = createCommandHarness();
+    const harness = await createCommandHarness();
     await expect(
       harness.registry.invoke(adminContext(), 'team.history', {
         cursor: 'not-a-cursor',
@@ -1286,12 +1405,13 @@ describe('a whitespace-only argument is a bad request, never an internal failure
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     const message = refusalMessage(
-      await throughTheRegistry(teamDelegate({}), 'history', { cursor: 'not-a-cursor' }),
+      await throughTheRegistry(teamDelegate({}), 'history', {
+        cursor: 'not-a-cursor',
+      }),
     );
     expect(message.startsWith('BAD_REQUEST: ')).toBe(true);
     expect(message).not.toMatch(UNCLASSIFIED);
   });
-
 });
 
 // ---------------------------------------------------------------------------
@@ -1311,15 +1431,17 @@ describe('a failed or ambiguous submission reports the runtime`s own message', (
   });
 
   it('the Team receipt carries the native message under its own code', () => {
-    expect(teamSubmitResult({ status: 'failed', error: new Error(NATIVE) })).toEqual({
+    expect(
+      teamSubmitResult({ status: 'failed', error: new Error(NATIVE) }),
+    ).toEqual({
       status: 'failed',
-      error: { code: 'TEAM_SUBMIT_FAILED', message: NATIVE },
+      error: { code: 'SUBMIT_FAILED', message: NATIVE },
     });
     expect(
       teamSubmitResult({ status: 'ambiguous', error: new Error(NATIVE) }),
     ).toEqual({
       status: 'ambiguous',
-      error: { code: 'TEAM_SUBMIT_AMBIGUOUS', message: NATIVE },
+      error: { code: 'SUBMIT_AMBIGUOUS', message: NATIVE },
     });
   });
 
@@ -1331,7 +1453,9 @@ describe('a failed or ambiguous submission reports the runtime`s own message', (
       }),
     };
 
-    const harness = createCommandHarness({ dispatcherOverrides: overrides });
+    const harness = await createCommandHarness({
+      dispatcherOverrides: overrides,
+    });
     const admin = await startHarnessAdminSocket(harness);
     try {
       const response = await admin.send('team.submit', {
@@ -1342,14 +1466,14 @@ describe('a failed or ambiguous submission reports the runtime`s own message', (
       expect(response.ok).toBe(true);
       expect((response as { result: unknown }).result).toEqual({
         status: 'ambiguous',
-        error: { code: 'TEAM_SUBMIT_AMBIGUOUS', message: NATIVE },
+        error: { code: 'SUBMIT_AMBIGUOUS', message: NATIVE },
       });
     } finally {
       await admin.close();
     }
 
     const lease = createHarnessChannelInvoker(
-      createCommandHarness({ dispatcherOverrides: overrides }),
+      await createCommandHarness({ dispatcherOverrides: overrides }),
     );
     expect(
       await lease.port.invoke.invoke('team.submit', {
@@ -1358,7 +1482,7 @@ describe('a failed or ambiguous submission reports the runtime`s own message', (
       } as never),
     ).toEqual({
       status: 'ambiguous',
-      error: { code: 'TEAM_SUBMIT_AMBIGUOUS', message: NATIVE },
+      error: { code: 'SUBMIT_AMBIGUOUS', message: NATIVE },
     });
   });
 });
@@ -1390,7 +1514,7 @@ describe('an Activity read answers with the failure that actually happened', () 
   });
 
   it('and reaches an admin caller the same way, on the Command surface', async () => {
-    const harness = createCommandHarness({
+    const harness = await createCommandHarness({
       dispatcherOverrides: throwingLast(() => {
         throw new Error(NATIVE);
       }),

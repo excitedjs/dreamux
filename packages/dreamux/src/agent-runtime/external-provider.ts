@@ -19,32 +19,29 @@
  * The `channel` kind reuses the same skeleton through a sibling loader; only the
  * contract assertions below are runtime-specific.
  */
-import { type ProviderRegistry } from '../registry/index.js';
-import {
-  isRecord,
-  loadProviderPackages,
-  type ProviderContractContext,
-  type ProviderModule,
-  type ProviderModuleImporter,
-  type ProviderPackageLoaderSpec,
-} from '../registry/provider-loader.js';
-import {
-  agentRuntimeCapabilitySnapshot,
-  InvalidAgentRuntimeCapabilitiesError,
-} from './capabilities.js';
 import type {
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
   AgentRuntimeProviderFactory,
   ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
+import { type ProviderRegistry } from '../registry/index.js';
+import {
+  isRecord,
+  loadProviderPackages,
+  type ProviderContractContext,
+  type ProviderModule,
+  type ProviderPackageLoaderSpec,
+} from '../registry/provider-loader.js';
+import {
+  agentRuntimeCapabilitySnapshot,
+  InvalidAgentRuntimeCapabilitiesError,
+} from './capabilities.js';
 
 export type ExternalAgentRuntimeProviderFactory =
   AgentRuntimeProviderFactory<unknown>;
 
 export type ExternalAgentRuntimeModule = ProviderModule;
-
-export type ExternalAgentRuntimeModuleImporter = ProviderModuleImporter;
 
 export class ExternalAgentRuntimeProviderLoadError extends Error {
   constructor(
@@ -61,7 +58,10 @@ export class ExternalAgentRuntimeProviderLoadError extends Error {
 }
 
 export class ExternalAgentRuntimeProviderContractError extends Error {
-  constructor(readonly providerRef: string, message: string) {
+  constructor(
+    readonly providerRef: string,
+    message: string,
+  ) {
     super(
       `invalid external agentRuntime provider ${JSON.stringify(providerRef)}: ${message}`,
     );
@@ -72,7 +72,6 @@ export class ExternalAgentRuntimeProviderContractError extends Error {
 export interface LoadAgentRuntimeProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
-  importModule?: ExternalAgentRuntimeModuleImporter;
 }
 
 const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<
@@ -180,7 +179,9 @@ function assertOptionalOnboard(
 ): void {
   if (value === undefined) return;
   if (!isRecord(value) || typeof value['collect'] !== 'function') {
-    context.fail('provider.onboard.collect must be a function when onboard is present');
+    context.fail(
+      'provider.onboard.collect must be a function when onboard is present',
+    );
   }
 }
 

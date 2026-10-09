@@ -17,7 +17,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   ChannelCoreEvent,
@@ -28,13 +28,30 @@ import type {
   TeamStateEvent,
 } from '@excitedjs/dreamux-types';
 
-import { FeishuChannelSession } from '../src/feishu-channel.js';
-import { defaultDispatcherAccessState, saveDispatcherAccess } from '../src/feishu-gate.js';
+import { FeishuChannelSession } from '../src/session/session.js';
+import { createFeishuBot } from '../src/bot.js';
+import { FeishuInboundRouter } from '../src/inbound/router.js';
+import {
+  defaultDispatcherAccessState,
+  type DispatcherAccessStateV3,
+} from '../src/access/state.js';
 import { routingDocumentFilename } from '../src/routing/store.js';
 import { spaceId as deriveSpaceId } from '../src/routing/naming.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
-import { createFakeFeishuBot, type FakeFeishuBot } from './helpers/fake-feishu-bot.js';
+import {
+  createFakeFeishuBot,
+  type FakeFeishuBot,
+} from './helpers/fake-feishu-bot.js';
 import { teamSummary } from './helpers/team-status.js';
+
+vi.mock('../src/bot.js', () => ({ createFeishuBot: vi.fn() }));
+
+async function seedAccess(
+  stateDir: string,
+  state: DispatcherAccessStateV3,
+): Promise<void> {
+  writeFileSync(join(stateDir, 'access.json'), JSON.stringify(state));
+}
 
 let dir: string;
 let attachDir: string;
@@ -45,6 +62,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
   rmSync(attachDir, { recursive: true, force: true });
 });
@@ -55,6 +73,7 @@ const silentLog: DreamuxLogger = {
   info: () => undefined,
   debug: () => undefined,
   trace: () => undefined,
+  child: () => silentLog,
 };
 
 interface FakePort {
@@ -66,7 +85,8 @@ interface FakePort {
 function fakePort(
   invoke: (command: string, payload: JsonValue) => Promise<JsonValue>,
 ): FakePort {
-  const listeners: Array<(event: ChannelCoreEvent) => void | Promise<void>> = [];
+  const listeners: Array<(event: ChannelCoreEvent) => void | Promise<void>> =
+    [];
   const calls: FakePort['calls'] = [];
   return {
     calls,
@@ -94,6 +114,7 @@ async function newSession(
   bot: FakeFeishuBot,
   channelId = 'chan-session',
 ): Promise<FeishuChannelSession> {
+  vi.mocked(createFeishuBot).mockReturnValueOnce(bot);
   return new FeishuChannelSession({
     dispatcherId: 'disp-1',
     channelId,
@@ -102,7 +123,6 @@ async function newSession(
     stateDir: dir,
     attachmentCacheDir: attachDir,
     log: silentLog,
-    botFactory: () => bot,
   });
 }
 
@@ -145,6 +165,46 @@ function readBindings(channelId: string): Array<Record<string, unknown>> {
   return onDisk.bindings;
 }
 
+async function deliverThroughInbound(
+  session: FeishuChannelSession,
+  bot: FakeFeishuBot,
+  input: Parameters<FeishuInboundRouter['deliver']>[0],
+) {
+  const target = input.target;
+  await seedAccess(dir, {
+    ...defaultDispatcherAccessState(),
+    allow_users: ['ou_human'],
+    group: {
+      policy: 'allowlist',
+      allow_chats: [target.chatId],
+      require_mention: true,
+    },
+  });
+  const delivered = vi.spyOn(FeishuInboundRouter.prototype, 'deliver');
+  await session.start();
+  await bot.inject({
+    messageId: input.submission.anchor.messageId,
+    chatId: target.chatId,
+    chatType: target.kind === 'p2p' ? 'p2p' : 'group',
+    ...(target.threadId === undefined ? {} : { threadId: target.threadId }),
+    senderId: 'ou_human',
+    senderType: 'user',
+    senderName: 'Human',
+    messageType: 'text',
+    rawContent: JSON.stringify({ text: `@_user_1 ${input.submission.text}` }),
+    text: `@_user_1 ${input.submission.text}`,
+    resources: [],
+    mentions: [
+      { key: '@_user_1', name: 'Dreamux', id: { open_id: bot.botOpenId! } },
+    ],
+    createTime: '1',
+    raw: {},
+  });
+  expect(delivered).toHaveBeenCalledOnce();
+  await session.lifecycle.drain();
+  return delivered.mock.results[0]!.value;
+}
+
 describe('FeishuChannelSession.deliver — typed pre-admission rejection fallback', () => {
   it('TEAM_CLOSED during a refused dissolve: removes the route neutrally and falls back once', async () => {
     const bot = createFakeFeishuBot();
@@ -167,11 +227,11 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
       target: chatTarget('oc_closed', 'group'),
       teamName: 'closing-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
-    const outcome = await session.deliver({
+    const outcome = await deliverThroughInbound(session, bot, {
       target: chatTarget('oc_closed', 'group'),
       containerChatId: null,
       submission: {
@@ -180,21 +240,36 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
         text: 'hi',
         reminder: '',
         sourceId: 'msg-1',
-        anchor: { chatId: 'oc_closed', messageId: 'm1', target: chatTarget('oc_closed', 'group') },
+        anchor: {
+          chatId: 'oc_closed',
+          messageId: 'm1',
+          target: chatTarget('oc_closed', 'group'),
+        },
       },
     });
 
     expect(outcome).toEqual({ status: 'submitted', turnId: 'turn-fallback-1' });
     expect(submitCalls).toBe(2);
-    expect(session.routing.bindingFor(chatTarget('oc_closed', 'group'))).toBeUndefined();
+    expect(
+      session.routing.bindingFor(chatTarget('oc_closed', 'group')),
+    ).toBeUndefined();
     expect(bot.sentCards).toHaveLength(1);
-    expect(JSON.stringify(bot.sentCards[0]!.card)).toContain('Dreamux route ended');
-    expect(JSON.stringify(bot.sentCards[0]!.card)).not.toMatch(/dissolved|remains active|Team closed/);
+    expect(JSON.stringify(bot.sentCards[0]!.card)).toContain(
+      'Dreamux route ended',
+    );
+    expect(JSON.stringify(bot.sentCards[0]!.card)).not.toMatch(
+      /dissolved|remains active|Team closed/,
+    );
 
     // The pending non-force dissolve is refused; Core still reports an open Team.
     port.emit({
-      schemaVersion: 1, kind: 'team.state', occurredAt: Date.now(),
-      teamName: 'closing-team', leaderName: 'leader-1', status: 'running', teammates: [],
+      schemaVersion: 1,
+      kind: 'team.state',
+      occurredAt: Date.now(),
+      teamName: 'closing-team',
+      leaderName: 'leader-1',
+      status: 'running',
+      teammates: [],
     });
     expect(bot.sentCards).toHaveLength(1);
     expect(readBindings(channelId)).toEqual([]);
@@ -227,11 +302,11 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
       target: chatTarget('oc_stale', 'group'),
       teamName: 'gone-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
-    const outcome = await session.deliver({
+    const outcome = await deliverThroughInbound(session, bot, {
       target: chatTarget('oc_stale', 'group'),
       containerChatId: null,
       submission: {
@@ -240,7 +315,11 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
         text: 'hi',
         reminder: '',
         sourceId: 'msg-2',
-        anchor: { chatId: 'oc_stale', messageId: 'm2', target: chatTarget('oc_stale', 'group') },
+        anchor: {
+          chatId: 'oc_stale',
+          messageId: 'm2',
+          target: chatTarget('oc_stale', 'group'),
+        },
       },
     });
 
@@ -250,7 +329,9 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
       'team.submit',
       'dispatcher.submit',
     ]);
-    expect(session.routing.bindingFor(chatTarget('oc_stale', 'group'))).toBeUndefined();
+    expect(
+      session.routing.bindingFor(chatTarget('oc_stale', 'group')),
+    ).toBeUndefined();
     // TEAM_NOT_FOUND is this Channel correcting its own stale document: silent.
     expect(bot.sentCards).toHaveLength(0);
 
@@ -273,11 +354,11 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
       target: chatTarget('oc_ambiguous', 'group'),
       teamName: 'ambiguous-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
-    const outcome = await session.deliver({
+    const outcome = await deliverThroughInbound(session, bot, {
       target: chatTarget('oc_ambiguous', 'group'),
       containerChatId: null,
       submission: {
@@ -286,7 +367,11 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
         text: 'hi',
         reminder: '',
         sourceId: 'msg-3',
-        anchor: { chatId: 'oc_ambiguous', messageId: 'm3', target: chatTarget('oc_ambiguous', 'group') },
+        anchor: {
+          chatId: 'oc_ambiguous',
+          messageId: 'm3',
+          target: chatTarget('oc_ambiguous', 'group'),
+        },
       },
     });
 
@@ -294,9 +379,10 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
     // Exactly one attempt: no fallback submit, and the binding this Channel
     // could not prove stale is left exactly as it was.
     expect(submitCalls).toBe(1);
-    expect(session.routing.bindingFor(chatTarget('oc_ambiguous', 'group'))?.team_name).toBe(
-      'ambiguous-team',
-    );
+    expect(
+      session.routing.bindingFor(chatTarget('oc_ambiguous', 'group'))
+        ?.team_name,
+    ).toBe('ambiguous-team');
 
     await session.close();
   });
@@ -315,21 +401,21 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
       target: chatTarget('oc_x', 'group'),
       teamName: 'dying-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
     await session.routing.bind({
       target: topicTarget('oc_x', 'thread_1'),
       teamName: 'dying-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: 'message-topic-root',
       spaceId: null,
     });
     await session.routing.bind({
       target: chatTarget('oc_y', 'group'),
       teamName: 'surviving-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
@@ -349,12 +435,15 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
     // notification — before this test closes the session. The immediate,
     // no-wait variant of this same sequence is the next test below.
     await waitFor(
-      () => session.routing.bindingFor(chatTarget('oc_x', 'group')) === undefined,
+      () =>
+        session.routing.bindingFor(chatTarget('oc_x', 'group')) === undefined,
     );
     await waitFor(() => bot.sentCards.length >= 2);
     for (const { card } of bot.sentCards) {
       expect(JSON.stringify(card)).toContain('Dreamux team dissolved');
-      expect(JSON.stringify(card)).toContain('all of its routes were removed automatically.');
+      expect(JSON.stringify(card)).toContain(
+        'all of its routes were removed automatically.',
+      );
       expect(JSON.stringify(card)).not.toContain('remains active');
     }
 
@@ -378,7 +467,7 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
       target: chatTarget('oc_race', 'group'),
       teamName: 'racing-team',
       display: null,
-      origin: 'manual',
+      rootMessageId: null,
       spaceId: null,
     });
 
@@ -433,31 +522,35 @@ describe('FeishuChannelSession — a routing document predating the binding/spac
         version: 1,
         dispatcher_id: 'disp-1',
         channel_id: channelId,
-        bindings: [{
-          target: { kind: 'group', chat_id: containerChatId },
-          display: null,
-          team_name: 'team-a',
-          origin: 'manual',
-          space_id: null,
-          created_at: 1,
-          updated_at: 1,
-        }],
-        spaces: [{
-          space_id: deriveSpaceId({
-            dispatcherId: 'disp-1',
-            channelId,
-            containerChatId,
-          }),
-          space_name: 'legacy-space',
-          container_chat_id: containerChatId,
-          display: null,
-          generation: 1,
-          leader_agent_runtime: 'codex',
-          identity: null,
-          repo: null,
-          created_at: 1,
-          updated_at: 1,
-        }],
+        bindings: [
+          {
+            target: { kind: 'group', chat_id: containerChatId },
+            display: null,
+            team_name: 'team-a',
+            origin: 'manual',
+            space_id: null,
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
+        spaces: [
+          {
+            space_id: deriveSpaceId({
+              dispatcherId: 'disp-1',
+              channelId,
+              containerChatId,
+            }),
+            space_name: 'legacy-space',
+            container_chat_id: containerChatId,
+            display: null,
+            generation: 1,
+            leader_agent_runtime: 'codex',
+            identity: null,
+            repo: null,
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
         updated_at: 1,
       }),
     );
@@ -471,30 +564,46 @@ describe('FeishuChannelSession — a routing document predating the binding/spac
     expect(session.routing.listBindings()).toHaveLength(1);
     // Routing is unchanged for such a document — the conflict is reported by
     // the next write that touches it, not by refusing to serve the channel.
-    expect(session.routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId))
-      .toMatchObject({ kind: 'bound', teamName: 'team-a' });
+    expect(
+      session.routing.plan(
+        topicTarget(containerChatId, 'omt_new'),
+        containerChatId,
+      ),
+    ).toMatchObject({ kind: 'bound', teamName: 'team-a' });
     await session.close();
   });
 });
 
-describe('FeishuChannelSession.submit — session liveness fence', () => {
-  it('refuses to submit once the session is not live, without reaching Core at all', async () => {
+describe('FeishuChannelSession — session liveness fence', () => {
+  it('refuses a late inbound callback after close without reaching Core at all', async () => {
     const bot = createFakeFeishuBot();
     const session = await newSession(bot, 'chan-not-live');
     const port = fakePort(async () => {
-      throw new Error('must not be called: session was never initialized');
+      throw new Error('must not reach Core');
     });
-    void port;
-
-    const outcome = await session.submit(null, {
-      kind: 'chat',
-      attrs: {},
-      text: 'hi',
-      reminder: '',
-      sourceId: 'msg-never',
-      anchor: { chatId: 'oc_z', messageId: 'm', target: chatTarget('oc_z', 'group') },
+    await session.initialize(port.port);
+    const start = vi.spyOn(bot, 'start');
+    await session.start();
+    const routes = start.mock.calls[0]![0];
+    await session.close();
+    await routes.onMessage({
+      messageId: 'om_late',
+      chatId: 'oc_z',
+      chatType: 'p2p',
+      senderId: 'ou_human',
+      senderType: 'user',
+      senderName: 'Human',
+      messageType: 'text',
+      rawContent: JSON.stringify({ text: 'late' }),
+      text: 'late',
+      resources: [],
+      mentions: [],
+      createTime: '1',
+      raw: {},
     });
-    expect(outcome).toEqual({ status: 'error', message: 'Feishu session is not live' });
+    expect(port.calls).toEqual([]);
+    expect(bot.sentCards).toEqual([]);
+    expect(bot.sentMessages).toEqual([]);
   });
 });
 
@@ -509,7 +618,10 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
   it('carries the comment text read through the bot, and opens no card', async () => {
     const bot = createFakeFeishuBot();
     const session = await newSession(bot, 'chan-doc-comment');
-    const port = fakePort(async () => ({ status: 'submitted', turn_id: 'turn-doc-1' }));
+    const port = fakePort(async () => ({
+      status: 'submitted',
+      turn_id: 'turn-doc-1',
+    }));
     await session.initialize(port.port);
     await session.start();
     await session.routing.subscribe({
@@ -553,7 +665,9 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
       anchor: 'content',
       anchor_id: 'blk_1',
     });
-    expect(payload['text']).toContain('<content>\nplease rework this\n</content>');
+    expect(payload['text']).toContain(
+      '<content>\nplease rework this\n</content>',
+    );
     expect(payload['text']).toContain('the paragraph in question');
     expect(bot.sentCards).toHaveLength(0);
 
@@ -563,8 +677,11 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
   it('delivers an unsubscribed mention from a trusted commenter through dispatcher.submit, writing no row', async () => {
     const bot = createFakeFeishuBot();
     const session = await newSession(bot, 'chan-doc-cold-open');
-    const port = fakePort(async () => ({ status: 'submitted', turn_id: 'turn-cold-1' }));
-    await saveDispatcherAccess(dir, {
+    const port = fakePort(async () => ({
+      status: 'submitted',
+      turn_id: 'turn-cold-1',
+    }));
+    await seedAccess(dir, {
       ...defaultDispatcherAccessState(),
       allow_users: ['ou_commenter'],
     });
@@ -604,12 +721,16 @@ const PROVISIONING_FAILURE_NOTICE =
 async function provisioningSession(
   channelId: string,
   invoke: (command: string, payload: JsonValue) => Promise<JsonValue>,
-): Promise<{ bot: FakeFeishuBot; session: FeishuChannelSession; port: FakePort }> {
+): Promise<{
+  bot: FakeFeishuBot;
+  session: FeishuChannelSession;
+  port: FakePort;
+}> {
   const bot = createFakeFeishuBot();
   bot.setChatMode('oc_space', 'topic');
   const session = await newSession(bot, channelId);
   const port = fakePort(invoke);
-  await saveDispatcherAccess(dir, {
+  await seedAccess(dir, {
     ...defaultDispatcherAccessState(),
     group: {
       policy: 'allowlist',
@@ -646,11 +767,13 @@ async function injectTopicMessage(
     rawContent: JSON.stringify({ text: '@_user_1 please start' }),
     text: '@_user_1 please start',
     resources: [],
-    mentions: [{
-      key: '@_user_1',
-      name: 'Dreamux',
-      id: { open_id: bot.botOpenId },
-    }],
+    mentions: [
+      {
+        key: '@_user_1',
+        name: 'Dreamux',
+        id: { open_id: bot.botOpenId! },
+      },
+    ],
     createTime: '1',
     raw: {},
   });
@@ -658,15 +781,18 @@ async function injectTopicMessage(
 
 describe('FeishuChannelSession.deliver — a provisioning failure answers in place', () => {
   it('a throwing team.create posts the notice under the triggering message and submits nothing', async () => {
-    const { bot, session, port } = await provisioningSession('chan-provision-throws', async (command) => {
-      if (command === 'team.create') {
-        throw Object.assign(
-          new Error('request_id replayed with a different payload'),
-          { code: 'IDEMPOTENCY_CONFLICT' },
-        );
-      }
-      throw new Error(`unexpected ${command}`);
-    });
+    const { bot, session, port } = await provisioningSession(
+      'chan-provision-throws',
+      async (command) => {
+        if (command === 'team.create') {
+          throw Object.assign(
+            new Error('request_id replayed with a different payload'),
+            { code: 'IDEMPOTENCY_CONFLICT' },
+          );
+        }
+        throw new Error(`unexpected ${command}`);
+      },
+    );
 
     await injectTopicMessage(bot, 'om_provision_throw');
 
@@ -693,12 +819,16 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
       const { bot, session, port } = await provisioningSession(
         `chan-provision-${createResult.team_name === '' ? 'empty' : 'closed'}`,
         async (command) => {
-          if (command !== 'team.create') throw new Error(`unexpected ${command}`);
+          if (command !== 'team.create')
+            throw new Error(`unexpected ${command}`);
           return createResult as unknown as JsonValue;
         },
       );
 
-      await injectTopicMessage(bot, `om_provision_${createResult.team_name === '' ? 'empty' : 'closed'}`);
+      await injectTopicMessage(
+        bot,
+        `om_provision_${createResult.team_name === '' ? 'empty' : 'closed'}`,
+      );
 
       expect(port.calls.map((call) => call.command)).toEqual(['team.create']);
       expect(bot.sentMessages.map((message) => message.text)).toEqual([
@@ -710,15 +840,16 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
   });
 
   it('a rejected submission to the just-provisioned Team posts the notice without a Dispatcher fallback', async () => {
-    const { bot, session, port } = await provisioningSession('chan-provision-rejected', async (
-      command,
-    ) => {
-      if (command === 'team.create') {
-        return teamSummary('fresh-team') as unknown as JsonValue;
-      }
-      if (command === 'team.submit') throw teamClosedError();
-      throw new Error(`unexpected ${command}`);
-    });
+    const { bot, session, port } = await provisioningSession(
+      'chan-provision-rejected',
+      async (command) => {
+        if (command === 'team.create') {
+          return teamSummary('fresh-team') as unknown as JsonValue;
+        }
+        if (command === 'team.submit') throw teamClosedError();
+        throw new Error(`unexpected ${command}`);
+      },
+    );
 
     await injectTopicMessage(bot, 'om_provision_rejected');
 
@@ -732,7 +863,8 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
     // Unlike the bound-plan fallback, the provision branch reconciles nothing
     // and never calls dispatcher.submit: the rejection is answered in place.
     expect(
-      session.routing.bindingFor(topicTarget('oc_space', 'omt_topic'))?.team_name,
+      session.routing.bindingFor(topicTarget('oc_space', 'omt_topic'))
+        ?.team_name,
     ).toBe('fresh-team');
 
     await session.close();
@@ -740,14 +872,15 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
 
   it('a concurrent waiter that finds the failed run installed no route gets its own notice', async () => {
     let resolveCreate!: (value: JsonValue) => void;
-    const { bot, session, port } = await provisioningSession('chan-provision-waiter', async (
-      command,
-    ) => {
-      if (command !== 'team.create') throw new Error(`unexpected ${command}`);
-      return new Promise<JsonValue>((resolve) => {
-        resolveCreate = resolve;
-      });
-    });
+    const { bot, session, port } = await provisioningSession(
+      'chan-provision-waiter',
+      async (command) => {
+        if (command !== 'team.create') throw new Error(`unexpected ${command}`);
+        return new Promise<JsonValue>((resolve) => {
+          resolveCreate = resolve;
+        });
+      },
+    );
 
     // Deterministic rendezvous. The second message's admission gate does real
     // access.json IO, so merely having injected it does not mean its delivery
@@ -758,38 +891,44 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
     // second deliver entry with still one team.create means the waiter joined
     // the first run; a second team.create would fail this wait instead of
     // hanging the test.
-    let deliverEntries = 0;
-    const originalDeliver = session.deliver.bind(session);
-    session.deliver = ((input) => {
-      deliverEntries += 1;
-      return originalDeliver(input);
-    }) as typeof session.deliver;
+    const delivered = vi.spyOn(FeishuInboundRouter.prototype, 'deliver');
 
     const first = injectTopicMessage(bot, 'om_provision_first');
-    await waitFor(() => port.calls.some((call) => call.command === 'team.create'));
+    await waitFor(() =>
+      port.calls.some((call) => call.command === 'team.create'),
+    );
     const second = injectTopicMessage(bot, 'om_provision_second');
     await waitFor(
       () =>
-        deliverEntries === 2 &&
-        port.calls.filter((call) => call.command === 'team.create').length === 1,
+        delivered.mock.calls.length === 2 &&
+        port.calls.filter((call) => call.command === 'team.create').length ===
+          1,
     );
 
     resolveCreate(teamSummary('ghost-team', 'closed') as unknown as JsonValue);
     await Promise.all([first, second]);
 
     expect(port.calls.map((call) => call.command)).toEqual(['team.create']);
-    expect(bot.sentMessages.map((message) => message.target.replyToMessageId)).toEqual([
-      'om_provision_first',
-      'om_provision_second',
-    ]);
-    expect(bot.sentMessages.every((message) => message.text === PROVISIONING_FAILURE_NOTICE))
-      .toBe(true);
+    expect(
+      bot.sentMessages.map((message) => message.target.replyToMessageId),
+    ).toEqual(['om_provision_first', 'om_provision_second']);
+    expect(
+      bot.sentMessages.every(
+        (message) => message.text === PROVISIONING_FAILURE_NOTICE,
+      ),
+    ).toBe(true);
 
     await session.close();
   });
 
   it.each([
-    ['failed', { status: 'failed', error: { code: 'TEAM_SUBMIT_FAILED', message: 'native down' } }],
+    [
+      'failed',
+      {
+        status: 'failed',
+        error: { code: 'TEAM_SUBMIT_FAILED', message: 'native down' },
+      },
+    ],
     ['ambiguous', { status: 'ambiguous', error: null }],
   ] as const)(
     'a %s admission after provisioning posts no notice and no Dispatcher submission',
@@ -818,15 +957,17 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
   );
 
   it('an unknown error after provisioning posts no notice and no Dispatcher submission', async () => {
-    const { bot, session, port } = await provisioningSession('chan-provision-error', async (
-      command,
-    ) => {
-      if (command === 'team.create') {
-        return teamSummary('fresh-team') as unknown as JsonValue;
-      }
-      if (command === 'team.submit') throw new Error('unknown transport failure');
-      throw new Error(`unexpected ${command}`);
-    });
+    const { bot, session, port } = await provisioningSession(
+      'chan-provision-error',
+      async (command) => {
+        if (command === 'team.create') {
+          return teamSummary('fresh-team') as unknown as JsonValue;
+        }
+        if (command === 'team.submit')
+          throw new Error('unknown transport failure');
+        throw new Error(`unexpected ${command}`);
+      },
+    );
 
     await injectTopicMessage(bot, 'om_provision_error');
 
@@ -844,10 +985,11 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
     const channelId = 'chan-unbound-inbound';
     const session = await newSession(bot, channelId);
     const port = fakePort(async (command) => {
-      if (command !== 'dispatcher.submit') throw new Error(`unexpected ${command}`);
+      if (command !== 'dispatcher.submit')
+        throw new Error(`unexpected ${command}`);
       return { status: 'submitted', turn_id: 'turn-unbound-1' };
     });
-    await saveDispatcherAccess(dir, {
+    await seedAccess(dir, {
       ...defaultDispatcherAccessState(),
       group: {
         policy: 'allowlist',
@@ -869,16 +1011,20 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
       rawContent: JSON.stringify({ text: '@_user_1 hello' }),
       text: '@_user_1 hello',
       resources: [],
-      mentions: [{
-        key: '@_user_1',
-        name: 'Dreamux',
-        id: { open_id: bot.botOpenId },
-      }],
+      mentions: [
+        {
+          key: '@_user_1',
+          name: 'Dreamux',
+          id: { open_id: bot.botOpenId! },
+        },
+      ],
       createTime: '1',
       raw: {},
     });
 
-    expect(port.calls.map((call) => call.command)).toEqual(['dispatcher.submit']);
+    expect(port.calls.map((call) => call.command)).toEqual([
+      'dispatcher.submit',
+    ]);
     expect(port.calls[0]!.payload).not.toHaveProperty('team_name');
     expect(bot.sentMessages).toEqual([]);
 

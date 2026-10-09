@@ -1,23 +1,8 @@
 /** Resident Claude Code AgentRuntime using stream-json stdio. */
-
+import { createDefaultClaudeCodeSession } from './supervisor.js';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-import type { DispatcherClaudeCodeConfig } from './config.js';
-import { claudeCodeResidentArgs } from './args.js';
-import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
-import { materializeClaudeSkillAddDir } from './skill-materializer.js';
-import type { ClaudeCodeSession } from './supervisor.js';
-import type { ClaudeProtocolEvent } from './types.js';
-import { consoleFallbackLogger } from './logger.js';
-import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
-import {
-  endNativeTurn,
-  handleProtocolEvent,
-  type NativeActivityState,
-} from './runtime-activity.js';
-import { buildClaudeProcessEnv } from './runtime-session.js';
-import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
   AgentRuntimeIdentity,
@@ -28,6 +13,20 @@ import type {
   DreamuxLogger,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
+import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
+import { claudeCodeResidentArgs } from './args.js';
+import type { DispatcherClaudeCodeConfig } from './config.js';
+import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
+import { claudeSpawnEnv } from './paths.js';
+import {
+  endNativeTurn,
+  handleProtocolEvent,
+  type NativeActivityState,
+} from './runtime-activity.js';
+import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
+import { materializeClaudeSkillAddDir } from './skill-materializer.js';
+import type { ClaudeCodeSession } from './supervisor.js';
+import type { ClaudeProtocolEvent } from './types.js';
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -56,7 +55,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly logger: DreamuxLogger;
   private status: AgentRuntimeStatus = 'declared';
   private threadId: string | null;
-  private resumeOnNextSpawn: boolean;
   private readonly resumed: boolean;
   /**
    * The provider-local fatal path for authoritative state writes. Any failure
@@ -83,7 +81,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const priorSessionId = identity.sessionId;
     this.dispatcherId = identity.runtimeId;
     this.config = deps.config;
-    this.bin = deps.resolveBinPath(this.config.bin);
+    this.bin = this.config.bin;
     this.cwd = deps.cwd;
     this.mcpConfigJson = stringifyClaudeCodeMcpConfig(deps.mcpServers);
     // Compose the resident stream-json child's stderr log under the neutral
@@ -95,9 +93,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       `${this.dispatcherId}.stderr.log`,
     );
     this.threadId = priorSessionId;
-    this.resumeOnNextSpawn = priorSessionId !== null;
     this.resumed = priorSessionId !== null;
-    this.logger = deps.logger ?? consoleFallbackLogger(this.dispatcherId);
+    this.logger = deps.logger;
   }
 
   start(): Promise<AgentRuntimeStartOutcome> {
@@ -109,9 +106,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const generation = this.generation;
     const task = this.startRuntime(generation);
     this.startTask = task;
-    void task.finally(() => {
-      if (this.startTask === task) this.startTask = null;
-    }).catch(() => undefined);
+    void task
+      .finally(() => {
+        if (this.startTask === task) this.startTask = null;
+      })
+      .catch(() => undefined);
     return task;
   }
 
@@ -128,7 +127,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     try {
       this.skillAddDirRoot = await materializeClaudeSkillAddDir(
         this.deps.paths.cacheDir(),
-        this.deps.skillSources ?? [],
+        this.deps.skillSources,
       );
       this.assertGeneration(generation);
       // Spawn the resident child up front so the runtime is truly resident
@@ -252,8 +251,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    */
   async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
     const session = this.session;
-    if (this.stopped || session === null || !session.isAlive()) return { status: 'idle' };
-    return await session.interrupt('Interrupted by Dreamux user command.')
+    if (this.stopped || session === null || !session.isAlive())
+      return { status: 'idle' };
+    return (await session.interrupt('Interrupted by Dreamux user command.'))
       ? { status: 'interrupted' }
       : { status: 'idle' };
   }
@@ -266,13 +266,19 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     } catch (error) {
       if (this.stopped) return { status: 'stopped' };
       this.setStatus('degraded', error);
-      return { status: 'failed', error: error instanceof Error ? error : new Error(String(error)) };
+      return {
+        status: 'failed',
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
     }
     if (this.stopped) return { status: 'stopped' };
     const admission = await session.submit(text);
     if (
-      !this.stopped && this.session === session && session.isAlive() &&
-      admission.status === 'submitted' && this.status !== 'ready'
+      !this.stopped &&
+      this.session === session &&
+      session.isAlive() &&
+      admission.status === 'submitted' &&
+      this.status !== 'ready'
     ) {
       this.setStatus('ready');
     }
@@ -283,9 +289,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     admission: Promise<RuntimeAdmission>,
   ): Promise<RuntimeAdmission> {
     this.pendingAdmissions.add(admission);
-    void admission.finally(() => {
-      this.pendingAdmissions.delete(admission);
-    }).catch(() => undefined);
+    void admission
+      .finally(() => {
+        this.pendingAdmissions.delete(admission);
+      })
+      .catch(() => undefined);
     return admission;
   }
 
@@ -310,9 +318,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const generation = this.generation;
     const starting = this.createSession(generation);
     this.sessionStarting = starting;
-    void starting.finally(() => {
-      if (this.sessionStarting === starting) this.sessionStarting = null;
-    }).catch(() => undefined);
+    void starting
+      .finally(() => {
+        if (this.sessionStarting === starting) this.sessionStarting = null;
+      })
+      .catch(() => undefined);
     return starting;
   }
 
@@ -324,11 +334,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       if (this.session === previous) this.session = null;
       this.assertGeneration(generation);
     }
-    const resuming = this.resumeOnNextSpawn;
-    const candidateSessionId =
-      resuming
-        ? this.threadId!
-        : (this.deps.generateSessionId?.() ?? randomUUID());
+    const priorThreadId = this.threadId;
+    const resuming = priorThreadId !== null;
+    const candidateSessionId = priorThreadId ?? randomUUID();
     const args = claudeCodeResidentArgs({
       config: this.config,
       mcpConfigJson: this.mcpConfigJson,
@@ -336,17 +344,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         ? { resumeSessionId: candidateSessionId }
         : { freshSessionId: candidateSessionId }),
       systemPromptAppend: this.deps.systemPromptAppend,
-      skillAddDirs:
-        this.skillAddDirRoot === null ? [] : [this.skillAddDirRoot],
+      skillAddDirs: this.skillAddDirRoot === null ? [] : [this.skillAddDirRoot],
       disableFeatures: this.deps.disableFeatures,
       outputSchema: this.deps.outputSchema,
     });
     const activity: NativeActivityState = { tools: new Map() };
-    const session = this.deps.sessionFactory({
+    const session = createDefaultClaudeCodeSession({
       bin: this.bin,
       args,
       cwd: this.cwd,
-      env: buildClaudeProcessEnv(this.deps.injectEnv, this.config.extra_env),
+      env: claudeSpawnEnv(this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
       sessionId: candidateSessionId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,
@@ -358,7 +365,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
           }
         : undefined,
       onProtocolEvent: (event) => this.onProtocolEvent(event, activity),
-      log: (level, msg, err) => this.log(level, msg, err),
+      logger: this.logger,
     });
     session.setOnExit((error) => {
       void this.onSessionExit(session, error);
@@ -371,13 +378,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       this.assertGeneration(generation);
       // Publish resolves only after the durable write, so awaiting it here is
       // what makes the session durable before start resolves.
-      await this.fence.publish(() => this.deps.state.publish({
-        kind: 'session',
-        sessionId: candidateSessionId,
-      }));
+      await this.fence.publish(() =>
+        this.deps.state.publish({
+          kind: 'session',
+          sessionId: candidateSessionId,
+        }),
+      );
       this.assertGeneration(generation);
       this.threadId = candidateSessionId;
-      this.resumeOnNextSpawn = true;
     } catch (error) {
       if (this.stopped) throw error;
       try {
@@ -395,7 +403,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   /** React to an unexpected resident-child exit: degrade and drop the session. */
-  private async onSessionExit(session: ClaudeCodeSession, error: Error): Promise<void> {
+  private async onSessionExit(
+    session: ClaudeCodeSession,
+    error: Error,
+  ): Promise<void> {
     if (this.session !== session) return; // already replaced/stopped
     if (this.stopped) return;
     this.log('error', 'claude-code resident child exited unexpectedly');
@@ -412,7 +423,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     }
   }
 
-  private onProtocolEvent(event: ClaudeProtocolEvent, activity: NativeActivityState): void {
+  private onProtocolEvent(
+    event: ClaudeProtocolEvent,
+    activity: NativeActivityState,
+  ): void {
     if (this.stopped) return;
     handleProtocolEvent(event, {
       activity,
@@ -461,11 +475,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     err?: unknown,
   ): Promise<void> {
     this.status = status;
-    await this.fence.publish(() => this.deps.state.publish({
-      kind: 'status',
-      status,
-      ...(err !== undefined ? { lastError: errMessage(err) } : {}),
-    }));
+    await this.fence.publish(() =>
+      this.deps.state.publish({
+        kind: 'status',
+        status,
+        ...(err !== undefined ? { lastError: errMessage(err) } : {}),
+      }),
+    );
   }
 
   /**
@@ -505,11 +521,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // late background transition must not reopen it.
     if (this.fence.isFenced) return;
     this.status = status;
-    this.fence.publishDetached(() => this.deps.state.publish({
-      kind: 'status',
-      status,
-      ...(err !== undefined ? { lastError: errMessage(err) } : {}),
-    }));
+    this.fence.publishDetached(() =>
+      this.deps.state.publish({
+        kind: 'status',
+        status,
+        ...(err !== undefined ? { lastError: errMessage(err) } : {}),
+      }),
+    );
   }
 
   private log(

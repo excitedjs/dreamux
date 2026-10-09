@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The named createFeishuPlugin factory contributes the feishu channel provider and publishes its extension API for other plugins. The package-root default remains a neutral provider factory for npm:@excitedjs/feishu-channel; createFeishuChannelProvider is unchanged. Existing provider configuration continues to load.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

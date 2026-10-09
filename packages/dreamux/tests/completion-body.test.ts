@@ -42,7 +42,10 @@ describe('resolveCompletionBody', () => {
   });
 
   it('inlines a result within the budget', async () => {
-    const body = await resolveCompletionBody(completion('short result'), spillDir);
+    const body = await resolveCompletionBody(
+      completion('short result'),
+      spillDir,
+    );
     expect(body).toEqual({ kind: 'inline', text: 'short result' });
     await expect(stat(spillDir)).rejects.toThrow();
   });
@@ -114,7 +117,9 @@ describe('completionInlineBudget', () => {
 
   it('clamps values above the upper bound', () => {
     expect(
-      completionInlineBudget({ TASK_MAX_OUTPUT_LENGTH: String(COMPLETION_INLINE_BUDGET_MAX + 1000) }),
+      completionInlineBudget({
+        TASK_MAX_OUTPUT_LENGTH: String(COMPLETION_INLINE_BUDGET_MAX + 1000),
+      }),
     ).toBe(COMPLETION_INLINE_BUDGET_MAX);
   });
 });

@@ -25,23 +25,11 @@
  *    presentation cannot be silently erased by a `role === 'dispatcher'`-shaped
  *    filter reappearing here.
  */
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  AgentRuntimeSkillSource,
-  ChannelCoreEvent,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import {
-  createConversationProjection,
-  type ConversationProjection,
-} from '../src/channel/conversation-projection.js';
-import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
 import {
   CompletionDeliveryPolicy,
   type CompletionDeliveryResult,
@@ -49,23 +37,15 @@ import {
   type PreparedCompletionDelivery,
   type PreparedCompletionFact,
 } from '../src/service/completion-router/index.js';
-import type { DispatcherCoreEventPublisher } from '../src/service/dispatcher-core-events/index.js';
 import { COMPLETION_SOURCE } from '../src/service/submission-sources.js';
 import {
   renderSubmission,
   type TeammateSubmitInput,
-} from '../src/service/teammate-service/submission.js';
-import type { TurnCompletionDelivery } from '../src/service/teammate-service/turn-recording.js';
+} from '../src/service/agent/submission.js';
 import {
   completedCompletion,
   controllableRuntimeSubmission,
 } from './helpers/runtime-submission.js';
-
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-
-function readSource(relPath: string): string {
-  return readFileSync(join(packageRoot, relPath), 'utf8');
-}
 
 /* -------------------------------------------------------------------------
  * 1. Core-only callback: never rendered, delivered source is task-notification
@@ -80,23 +60,17 @@ describe('deliverCompletion is a Core-only callback, never part of the model env
     expect(COMPLETION_SOURCE).toBe('task-notification');
   });
 
-  it('the actual delivery call site renders under COMPLETION_SOURCE, not a locally re-derived literal', () => {
-    // Pinning only the constant's value would still pass if the call site
-    // switched to a hardcoded 'task-notification' string or a different
-    // source entirely — tie the two together at the source-text level, the
-    // same way the other shape guards in this file do.
-    const teammateServiceText = readSource('src/service/teammate-service/index.ts');
-    expect(teammateServiceText).toMatch(/source:\s*COMPLETION_SOURCE/u);
-  });
-
-  it('renders identically whether or not a deliverCompletion callback is attached', () => {
-    const deliverCompletion: TurnCompletionDelivery = vi.fn(async () => undefined);
+  it('renders identically whether or not a Core completion recipient is attached', () => {
+    const prepareCompletion = vi.fn(async () => ({
+      submit: async () => ({ status: 'accepted' as const }),
+    }));
+    const completionRecipient: CompletionInitiator = { prepareCompletion };
     const body = 'TeamMate worker has finished its task. Output below:\n\ndone';
 
     const withCallback: TeammateSubmitInput = {
       source: COMPLETION_SOURCE,
       text: body,
-      deliverCompletion,
+      completionRecipient,
     };
     const withoutCallback: TeammateSubmitInput = {
       source: COMPLETION_SOURCE,
@@ -110,64 +84,13 @@ describe('deliverCompletion is a Core-only callback, never part of the model env
     // callback is never invoked as a side effect of rendering.
     expect(rendered).toBe(renderSubmission(withoutCallback));
     expect(rendered).toBe(`<task-notification>${body}</task-notification>`);
-    expect(deliverCompletion).not.toHaveBeenCalled();
+    expect(prepareCompletion).not.toHaveBeenCalled();
   });
 });
 
 /* -------------------------------------------------------------------------
  * 2. Ledger #13 — ownership belongs to the real caller, never the adapter
  * ---------------------------------------------------------------------- */
-
-describe('completion ownership: never inferred from the transport adapter (failure-ledger #13)', () => {
-  // Every module on the completion-delivery path a Channel-vs-admin check
-  // could plausibly be smuggled into.
-  const guardedFiles = [
-    'src/service/completion-router/index.ts',
-    'src/service/team-service/completion-targets.ts',
-    'src/service/team-service/index.ts',
-    'src/service/teammate-service/index.ts',
-    'src/service/teammate-service/turn-coordinator.ts',
-    'src/service/teammate-service/turn-recording.ts',
-    'src/service/teammate-service/submission.ts',
-    'src/service/dispatcher-service/index.ts',
-    'src/service/team-collection/commands.ts',
-    'src/service/team-collection/mcp-delegate.ts',
-  ];
-
-  it('never reintroduces an isChannelInvocation-style adapter branch on the completion path', () => {
-    for (const relPath of guardedFiles) {
-      const text = readSource(relPath);
-      expect(
-        text,
-        `${relPath} must not branch on isChannelInvocation; completion ownership ` +
-          'belongs to the caller, not the transport that carried the call',
-      ).not.toMatch(/isChannelInvocation/u);
-    }
-  });
-
-  it('states deliverCompletionToDispatcher as a caller-supplied literal at both call sites, never a computed adapter check', () => {
-    const dispatcherServiceText = readSource('src/service/dispatcher-service/index.ts');
-    // submitToTeamLeader forwards the flag it was handed; it must never
-    // recompute it by inspecting what kind of call carried the request.
-    expect(dispatcherServiceText).toMatch(
-      /deliverCompletionToDispatcher\s*\?\s*\{\s*initiator:/u,
-    );
-    expect(dispatcherServiceText).not.toMatch(
-      /(instanceof|adapter|\.kind\s*===)[^\n]*deliverCompletionToDispatcher/iu,
-    );
-
-    // The Agent-to-Team MCP delegate is a Core-side caller waiting for the
-    // answer, so it states `true` outright.
-    const mcpDelegateText = readSource('src/service/team-collection/mcp-delegate.ts');
-    expect(mcpDelegateText).toMatch(/deliverCompletionToDispatcher:\s*true/u);
-
-    // The Channel-facing `team.submit` Command has no Core-side waiter,
-    // whichever adapter (Channel or admin.sock) carried it, so it states
-    // `false` outright rather than branching on the adapter.
-    const commandsText = readSource('src/service/team-collection/commands.ts');
-    expect(commandsText).toMatch(/deliverCompletionToDispatcher:\s*false/u);
-  });
-});
 
 /* -------------------------------------------------------------------------
  * 3. Null-token delivery: FAILED/STOPPED reach the recipient, distinctly
@@ -195,16 +118,28 @@ function policy(): CompletionDeliveryPolicy {
   return new CompletionDeliveryPolicy({
     dispatcherId: 'flow',
     log: noopLog(),
-    accepting: () => true,
+    fence: { isClosing: () => false },
   });
 }
 
 function failedFact(source = 'worker'): PreparedCompletionFact {
-  return { kind: 'teammate', source, status: 'failed', result: null };
+  return {
+    kind: 'teammate',
+    role: 'teammate',
+    source,
+    status: 'failed',
+    result: null,
+  };
 }
 
 function stoppedFact(source = 'worker'): PreparedCompletionFact {
-  return { kind: 'teammate', source, status: 'stopped', result: null };
+  return {
+    kind: 'teammate',
+    role: 'teammate',
+    source,
+    status: 'stopped',
+    result: null,
+  };
 }
 
 describe('null-token completion delivery: an internal failed/stopped turn still reaches its recipient', () => {
@@ -231,11 +166,15 @@ describe('null-token completion delivery: an internal failed/stopped turn still 
     const router = policy();
     const completedFact: PreparedCompletionFact = {
       kind: 'teammate',
+      role: 'teammate',
       source: 'worker',
       status: 'completed',
       result: 'done',
     };
-    const token = completedCompletion(controllableRuntimeSubmission().submission, 'done');
+    const token = completedCompletion(
+      controllableRuntimeSubmission().submission,
+      'done',
+    );
 
     await router.deliverRuntime(recipient, null, failedFact());
     await router.deliverRuntime(recipient, token, completedFact);
@@ -265,11 +204,15 @@ describe('null-token completion delivery: an internal failed/stopped turn still 
     const router = policy();
     const completedFact: PreparedCompletionFact = {
       kind: 'teammate',
+      role: 'teammate',
       source: 'worker',
       status: 'completed',
       result: 'done',
     };
-    const token = completedCompletion(controllableRuntimeSubmission().submission, 'done');
+    const token = completedCompletion(
+      controllableRuntimeSubmission().submission,
+      'done',
+    );
 
     await router.deliverRuntime(recipient, null, failedFact());
     // Register the SAME real token twice: this only collapses to one send if
@@ -289,6 +232,7 @@ describe('null-token completion delivery: an internal failed/stopped turn still 
 
 const okCompletion: PreparedCompletionFact = {
   kind: 'teammate',
+  role: 'teammate',
   source: 'worker',
   status: 'completed',
   result: 'done',
@@ -308,7 +252,7 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
       const router = new CompletionDeliveryPolicy({
         dispatcherId: 'flow',
         log: noopLog(warn),
-        accepting: () => true,
+        fence: { isClosing: () => false },
         attemptTimeoutMs: 50,
       });
 
@@ -317,7 +261,10 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
       await delivery;
 
       expect(warn).toHaveBeenCalledTimes(1);
-      const [fields, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
+      const [fields, message] = warn.mock.calls[0] as [
+        Record<string, unknown>,
+        string,
+      ];
       expect(message).toMatch(/timed out/u);
       expect(fields['timeout_ms']).toBe(50);
     } finally {
@@ -332,7 +279,9 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
       },
     };
 
-    await expect(policy().deliver(initiator, okCompletion)).resolves.toBeUndefined();
+    await expect(
+      policy().deliver(initiator, okCompletion),
+    ).resolves.toBeUndefined();
   });
 
   it('never rejects the producer-facing delivery after a persistently failing submit exhausts every retry', async () => {
@@ -346,50 +295,15 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
         }),
     };
 
-    await expect(policy().deliver(initiator, okCompletion)).resolves.toBeUndefined();
+    await expect(
+      policy().deliver(initiator, okCompletion),
+    ).resolves.toBeUndefined();
   });
 });
 
 /* -------------------------------------------------------------------------
  * 4. Dispatcher presentation is not silently erased by a role filter
  * ---------------------------------------------------------------------- */
-
-/** Records every projection call, keyed by the entry point that produced it. */
-function fakeIdentity(overrides: Partial<AgentEntityIdentity> = {}): AgentEntityIdentity {
-  const now = Date.now();
-  return {
-    version: 1,
-    dispatcher_id: 'flow',
-    name: 'dispatcher',
-    team_id: null,
-    agent_runtime: 'fake-runtime',
-    session_id: null,
-    source_cwd: '/tmp/src',
-    source_repo: null,
-    cwd: '/tmp/cwd',
-    runtime_cwd: '/tmp/run',
-    worktree: {
-      mode: 'reuse-cwd',
-      slug: null,
-      path: '/tmp/cwd',
-      branch: null,
-      base_ref: null,
-      cleanup: 'keep',
-      cleanup_state: 'not-managed',
-      cleanup_error: null,
-    },
-    intent: null,
-    identity_prompt: null,
-    skill_sources: [] as readonly AgentRuntimeSkillSource[],
-    created_at: now,
-    updated_at: now,
-    status: 'running',
-    last_error: null,
-    closed_at: null,
-    close_note: null,
-    ...overrides,
-  };
-}
 
 function noopLog(warn?: (...args: unknown[]) => void): DreamuxLogger {
   const log = {
@@ -402,129 +316,3 @@ function noopLog(warn?: (...args: unknown[]) => void): DreamuxLogger {
   };
   return log as DreamuxLogger;
 }
-
-
-describe('nothing on the completion path can gate presentation on role (failure-ledger #13)', () => {
-  it('EntityTurnCoordinator holds no display code at all, so it cannot hold a role gate', () => {
-    // The strongest form of the original claim. Display is keyed on the Agent
-    // now and never passes through the push-back line, so the class that used
-    // to carry a role and a projection carries neither: a `role ===
-    // 'dispatcher'`-shaped filter has nowhere here to reappear.
-    const coordinatorText = readSource('src/service/teammate-service/turn-coordinator.ts');
-    expect(coordinatorText).not.toContain('conversationProjection');
-    expect(coordinatorText).not.toContain('TeammateRole');
-    expect(coordinatorText).not.toContain('role');
-  });
-
-  it('a completion push-back is the ordinary admitted-input path, asking only not to wake', () => {
-    // One submit path means the completion body is announced by the same code
-    // that announces a Channel message, so no second call site exists that
-    // could branch on role before publishing.
-    //
-    // Symbols only: one `submitAdmitted` call names the completion source and
-    // asks not to wake. Where the line breaks and how the arguments are spaced
-    // is the formatter's business, and pinning it made this assertion fail for
-    // reasons that have nothing to do with the claim.
-    const teammateServiceText = readSource('src/service/teammate-service/index.ts');
-    expect(teammateServiceText).toMatch(
-      /submitAdmitted\([^;]*COMPLETION_SOURCE[^;]*wake:\s*false/u,
-    );
-    expect(teammateServiceText).not.toContain('submitCompletion(');
-  });
-});
-
-/* -------------------------------------------------------------------------
- * 4b. Same claim, through the REAL conversation projection.
- *
- * The source guards above prove the push-back line has no role gate, but the
- * one actual `role === 'dispatcher'` branch on this whole path lives one layer
- * down, in `actorScope` (conversation-projection.ts). Wire the real
- * `createConversationProjection` here so a regression that dropped dispatcher
- * presentation would fail something.
- * ---------------------------------------------------------------------- */
-
-/** Records every event a dispatcher id published, in order. */
-class RecordingPublisher implements DispatcherCoreEventPublisher {
-  readonly events: Array<{ dispatcherId: string; event: ChannelCoreEvent }> = [];
-
-  publish(dispatcherId: string, event: ChannelCoreEvent): void {
-    this.events.push({ dispatcherId, event });
-  }
-}
-
-function realProjection(publisher: RecordingPublisher): ConversationProjection {
-  return createConversationProjection({
-    coreEvents: publisher,
-    log: noopLog(),
-    homePathPrefixes: [],
-  });
-}
-
-describe('the real conversation projection presents a dispatcher completion delivery (failure-ledger #13)', () => {
-  it('publishes the input fact for a dispatcher-role completion body, scoped to team_name: null', () => {
-    const publisher = new RecordingPublisher();
-    const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
-
-    realProjection(publisher).projectInput(
-      { identity, role: 'dispatcher' },
-      {
-        source: COMPLETION_SOURCE,
-        sourceId: null,
-        text: 'TeamMate worker has finished its task.',
-        notice: { kind: 'teammate_completion', producer: 'worker' },
-        occurredAt: Date.now(),
-      },
-    );
-
-    expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
-      kind: 'teammate.input',
-      teamName: null,
-      teammateName: 'dispatcher',
-      role: 'dispatcher',
-      source: COMPLETION_SOURCE,
-      sourceId: null,
-    }]);
-  });
-
-  it('publishes the runtime activity that answers it, still scoped to team_name: null', () => {
-    const publisher = new RecordingPublisher();
-    const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
-
-    realProjection(publisher).projectActivity(
-      { identity, role: 'dispatcher' },
-      { kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null },
-    );
-
-    expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
-      kind: 'teammate.activity',
-      teamName: null,
-      role: 'dispatcher',
-      activity: { kind: 'turn.ended', status: 'completed' },
-    }]);
-  });
-
-  it('negative control: a dispatcher-scoped TeamMate (role teammate, team_id null) is legitimately out of scope, not "erased"', () => {
-    // This is the real, intended boundary actorScope draws: only a Team's own
-    // conversation (`role !== 'dispatcher' && team_id !== null`) and the
-    // dispatcher's own conversation (`role === 'dispatcher' && team_id ===
-    // null`) exist. A `teammate`-role entity with no team is neither, so it
-    // projects nothing — a scoping decision, not a role filter erasing
-    // Dispatcher presentation. Pinning this distinguishes the two: the
-    // dispatcher case above must publish, this one must not.
-    const publisher = new RecordingPublisher();
-    const identity = fakeIdentity({ name: 'orphan', team_id: null });
-
-    realProjection(publisher).projectInput(
-      { identity, role: 'teammate' },
-      {
-        source: COMPLETION_SOURCE,
-        sourceId: null,
-        text: 'TeamMate worker has finished its task.',
-        notice: { kind: 'teammate_completion', producer: 'worker' },
-        occurredAt: Date.now(),
-      },
-    );
-
-    expect(publisher.events).toHaveLength(0);
-  });
-});

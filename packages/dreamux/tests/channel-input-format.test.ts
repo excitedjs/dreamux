@@ -33,9 +33,12 @@ import { Readable } from 'node:stream';
 import { formatFeishuMessageForRuntime } from '@excitedjs/feishu-channel';
 import type { FeishuInboundEvent } from '@excitedjs/feishu-channel';
 
-import { channelSubmitInput, parseChannelSubmission } from '../src/service/channel-submission.js';
+import {
+  channelSubmitInput,
+  parseChannelSubmission,
+} from '../src/service/agent/channel-submission.js';
 import { commandPayload } from '../src/command/payload.js';
-import { renderSubmission } from '../src/service/teammate-service/submission.js';
+import { renderSubmission } from '../src/service/agent/submission.js';
 
 /**
  * The production pipeline one Command runs: a payload carrying the Channel's
@@ -66,7 +69,9 @@ function escapeXmlAttr(value: string): string {
     .replaceAll('"', '&quot;');
 }
 
-function inboundEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEvent {
+function inboundEvent(
+  overrides: Partial<FeishuInboundEvent> = {},
+): FeishuInboundEvent {
   return {
     messageId: 'msg-1',
     chatId: 'chat-1',
@@ -75,7 +80,10 @@ function inboundEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboun
     senderType: 'user',
     senderName: 'Ada',
     messageType: 'file',
-    rawContent: JSON.stringify({ file_key: 'file-key-1', file_name: 'report.pdf' }),
+    rawContent: JSON.stringify({
+      file_key: 'file-key-1',
+      file_name: 'report.pdf',
+    }),
     text: 'file-key-1',
     resources: [{ type: 'file', key: 'file-key-1', name: 'report.pdf' }],
     mentions: [],
@@ -108,7 +116,9 @@ describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () =
   });
 
   it('omits an empty Feishu thread id', async () => {
-    const result = await formatFeishuMessageForRuntime(inboundEvent({ threadId: '' }));
+    const result = await formatFeishuMessageForRuntime(
+      inboundEvent({ threadId: '' }),
+    );
     expect(result.attrs.find(([key]) => key === 'thread_id')).toBeUndefined();
   });
 });
@@ -177,7 +187,8 @@ describe('attachment cache owner-only enforcement (issue #182 PR-2)', () => {
   const dirs: string[] = [];
 
   afterEach(() => {
-    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    for (const dir of dirs.splice(0))
+      rmSync(dir, { recursive: true, force: true });
   });
 
   function cacheDir(): string {
@@ -188,14 +199,20 @@ describe('attachment cache owner-only enforcement (issue #182 PR-2)', () => {
 
   /** A fetcher that streams fixed bytes; counts how many times it was called. */
   function countingFetcher(): {
-    fetchMessageResource: () => Promise<{ stream: Readable; headers: Record<string, unknown> }>;
+    fetchMessageResource: () => Promise<{
+      stream: Readable;
+      headers: Record<string, unknown>;
+    }>;
     calls: number;
   } {
     const f = {
       calls: 0,
       async fetchMessageResource() {
         f.calls += 1;
-        return { stream: Readable.from([Buffer.from('pdf-bytes')]), headers: {} };
+        return {
+          stream: Readable.from([Buffer.from('pdf-bytes')]),
+          headers: {},
+        };
       },
     };
     return f;

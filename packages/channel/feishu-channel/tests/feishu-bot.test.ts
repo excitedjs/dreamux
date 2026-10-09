@@ -1,20 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeishuBot,
-  type CreateBotOptions,
-  type FeishuInboundEvent,
-} from '../src/bot.js';
+import { createFeishuBot, type CreateBotOptions } from '../src/bot.js';
+import { createFeishuTransport } from '@excitedjs/feishu-transport';
 import type {
+  FeishuInboundEvent,
   FeishuAppOwnerIdentity,
-  FeishuCreateGroupInput,
-  FeishuCreateGroupResult,
   FeishuChatMode,
   FeishuDocCommentText,
   FeishuDocMetaResult,
   FeishuWikiNode,
-  FeishuInviteMembersInput,
-  FeishuInviteMembersResult,
   FeishuMessageResourceRequest,
   FeishuMessageResourceResponse,
   FeishuMessageReadRequest,
@@ -26,6 +20,12 @@ import type {
   OutboundTarget,
 } from '@excitedjs/feishu-transport';
 
+vi.mock('@excitedjs/feishu-transport', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@excitedjs/feishu-transport')>();
+  return { ...actual, createFeishuTransport: vi.fn() };
+});
+
 class FakeTransport implements FeishuTransport {
   readonly appId = 'app-test';
   readonly selfId = 'bot-open-id';
@@ -35,6 +35,24 @@ class FakeTransport implements FeishuTransport {
   readonly sentCards: Array<{ target: OutboundTarget; card: unknown }> = [];
   readonly editedCards: Array<{ messageId: string; card: unknown }> = [];
   closed = false;
+  lastSendOptions: FeishuSendOptions | undefined;
+
+  constructor() {
+    // The real transport returns an object with own function properties.
+    // Match that boundary: the bot forwards those members by object spread.
+    this.send = this.send.bind(this);
+    this.sendCard = this.sendCard.bind(this);
+    this.editCard = this.editCard.bind(this);
+    this.getChatMode = this.getChatMode.bind(this);
+    this.addReaction = this.addReaction.bind(this);
+    this.fetchDocMeta = this.fetchDocMeta.bind(this);
+    this.resolveWikiNode = this.resolveWikiNode.bind(this);
+    this.fetchDocCommentText = this.fetchDocCommentText.bind(this);
+    this.fetchMessageResource = this.fetchMessageResource.bind(this);
+    this.readMessage = this.readMessage.bind(this);
+    this.resolveAppOwner = this.resolveAppOwner.bind(this);
+    this.close = this.close.bind(this);
+  }
 
   async start(routes: InboundRoutes): Promise<void> {
     this.routes = routes;
@@ -43,28 +61,39 @@ class FakeTransport implements FeishuTransport {
   async send(
     target: OutboundTarget,
     text: string,
-    options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+    options?: FeishuSendOptions,
   ): Promise<FeishuSendResult> {
     this.sent.push({ target, text });
-    options?.onMessageCreated?.({ messageId: 'message-sent', ordinal: 0 });
-    return { messageIds: ['message-sent'] };
+    this.lastSendOptions = options;
+    return {
+      messages: [
+        {
+          messageId: 'message-sent',
+          chatId: target.chatId,
+          threadId: undefined,
+        },
+      ],
+    };
   }
 
-  async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
+  async sendCard(
+    target: OutboundTarget,
+    card: unknown,
+  ): Promise<FeishuSendResult> {
     this.sentCards.push({ target, card });
-    return { messageIds: ['message-card-sent'] };
+    return {
+      messages: [
+        {
+          messageId: 'message-card-sent',
+          chatId: target.chatId,
+          threadId: undefined,
+        },
+      ],
+    };
   }
 
   async editCard(messageId: string, card: unknown): Promise<void> {
     this.editedCards.push({ messageId, card });
-  }
-
-  async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
-    return { chatId: input.name };
-  }
-
-  async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
-    return { addedOpenIds: input.userOpenIds };
   }
 
   async getChatMode(): Promise<FeishuChatMode | undefined> {
@@ -116,39 +145,43 @@ class FakeTransport implements FeishuTransport {
 }
 
 describe('createFeishuBot inbound channel', () => {
-  it('forwards the per-message creation observer to the transport', async () => {
+  it('forwards platform message landings and cancellation to the transport', async () => {
     const transport = new FakeTransport();
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      { createTransport: () => transport },
-    );
-    const observer = vi.fn();
-
-    const result = await bot.send(
-      { chatId: 'chat-id-1' },
-      'hello',
-      { onMessageCreated: observer },
-    );
-
-    expect(result).toEqual({ messageIds: ['message-sent'] });
-    expect(observer).toHaveBeenCalledWith({
-      messageId: 'message-sent',
-      ordinal: 0,
+    vi.mocked(createFeishuTransport).mockReturnValueOnce(transport);
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
     });
+    const controller = new AbortController();
+    const result = await bot.send({ chatId: 'chat-id-1' }, 'hello', {
+      signal: controller.signal,
+    });
+    expect(result).toEqual({
+      messages: [
+        {
+          messageId: 'message-sent',
+          chatId: 'chat-id-1',
+          threadId: undefined,
+        },
+      ],
+    });
+    expect(transport.lastSendOptions?.signal).toBe(controller.signal);
+    expect(transport.sent).toEqual([
+      { target: { chatId: 'chat-id-1' }, text: 'hello' },
+    ]);
   });
 
   it('registers only im.message.receive_v1 and normalizes raw events', async () => {
     const transport = new FakeTransport();
     const createdWith: CreateBotOptions[] = [];
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      {
-        createTransport: (opts) => {
-          createdWith.push(opts);
-          return transport;
-        },
-      },
-    );
+    vi.mocked(createFeishuTransport).mockImplementationOnce((opts) => {
+      createdWith.push(opts);
+      return transport;
+    });
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
+    });
     const received: FeishuInboundEvent[] = [];
 
     await bot.start({
@@ -230,10 +263,11 @@ describe('createFeishuBot inbound channel', () => {
 
   it('uses best-effort sender display name fields when present', async () => {
     const transport = new FakeTransport();
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      { createTransport: () => transport },
-    );
+    vi.mocked(createFeishuTransport).mockReturnValueOnce(transport);
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
+    });
     const received: FeishuInboundEvent[] = [];
 
     await bot.start({
@@ -265,10 +299,11 @@ describe('createFeishuBot inbound channel', () => {
 
   it('drops unroutable receive_v1 events before calling the handler', async () => {
     const transport = new FakeTransport();
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      { createTransport: () => transport },
-    );
+    vi.mocked(createFeishuTransport).mockReturnValueOnce(transport);
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
+    });
     const received: FeishuInboundEvent[] = [];
     await bot.start({
       onMessage: async (event) => {
@@ -297,10 +332,11 @@ describe('createFeishuBot inbound channel', () => {
 
   it('registers the bot-added route only when a handler is provided (issue #62 seam)', async () => {
     const transport = new FakeTransport();
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      { createTransport: () => transport },
-    );
+    vi.mocked(createFeishuTransport).mockReturnValueOnce(transport);
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
+    });
     const added: Array<{ chatId: string; eventId: string }> = [];
     await bot.start({
       onMessage: async () => {},
@@ -323,10 +359,11 @@ describe('createFeishuBot inbound channel', () => {
 
   it('registers card.action.trigger and preserves the handler return value', async () => {
     const transport = new FakeTransport();
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      { createTransport: () => transport },
-    );
+    vi.mocked(createFeishuTransport).mockReturnValueOnce(transport);
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
+    });
 
     await bot.start({
       onMessage: async () => {},
@@ -355,10 +392,11 @@ describe('createFeishuBot inbound channel', () => {
 
   it('normalizes malformed card-action responses into a legal error toast', async () => {
     const transport = new FakeTransport();
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      { createTransport: () => transport },
-    );
+    vi.mocked(createFeishuTransport).mockReturnValueOnce(transport);
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
+    });
 
     await bot.start({
       onMessage: async () => {},
@@ -377,10 +415,11 @@ describe('createFeishuBot inbound channel', () => {
 
   it('strips unknown top-level keys from raw card callback data', async () => {
     const transport = new FakeTransport();
-    const bot = createFeishuBot(
-      { appId: 'app-test', appSecret: 'secret-test' },
-      { createTransport: () => transport },
-    );
+    vi.mocked(createFeishuTransport).mockReturnValueOnce(transport);
+    const bot = createFeishuBot({
+      appId: 'app-test',
+      appSecret: 'secret-test',
+    });
 
     await bot.start({
       onMessage: async () => {},

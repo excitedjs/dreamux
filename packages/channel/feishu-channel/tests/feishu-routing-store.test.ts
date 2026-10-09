@@ -12,13 +12,26 @@
  * serialize concurrent preparations, and publish only after persistence
  * succeeds.
  */
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { FeishuRoutingStore, routingDocumentFilename } from '../src/routing/store.js';
+import { TransactionalStore } from '@excitedjs/dreamux-utils';
+import type { FeishuRoutingDocument } from '../src/routing/document.js';
+import {
+  readRoutingDocument,
+  routingDocumentPath,
+  routingDocumentFilename,
+  updateRoutingDocument,
+} from '../src/routing/store.js';
 
 let dir: string;
 
@@ -30,11 +43,13 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function newStore(channelId = 'chan-store'): FeishuRoutingStore {
-  return new FeishuRoutingStore({
-    dispatcherId: 'disp-1',
-    channelId,
-    stateDir: dir,
+function newStore(
+  channelId = 'chan-store',
+): TransactionalStore<FeishuRoutingDocument> {
+  const options = { dispatcherId: 'disp-1', channelId, stateDir: dir };
+  return new TransactionalStore({
+    path: routingDocumentPath(options),
+    load: () => readRoutingDocument(options),
   });
 }
 
@@ -44,12 +59,12 @@ describe('FeishuRoutingStore — commit authority', () => {
     await store.load();
 
     // Commit A successfully.
-    await store.update((doc) => {
+    await updateRoutingDocument(store, dir, (doc) => {
       doc.bindings.push({
         target: { kind: 'group', chat_id: 'oc_a' },
         display: null,
         team_name: 'team-a',
-        origin: 'manual',
+        root_message_id: null,
         space_id: null,
         created_at: 1,
         updated_at: 1,
@@ -66,12 +81,12 @@ describe('FeishuRoutingStore — commit authority', () => {
     writeFileSync(dir, 'not a directory');
 
     await expect(
-      store.update((doc) => {
+      updateRoutingDocument(store, dir, (doc) => {
         doc.bindings.push({
           target: { kind: 'group', chat_id: 'oc_b' },
           display: null,
           team_name: 'team-b',
-          origin: 'manual',
+          root_message_id: null,
           space_id: null,
           created_at: 2,
           updated_at: 2,
@@ -86,12 +101,12 @@ describe('FeishuRoutingStore — commit authority', () => {
     // Repair the directory and commit C. It must be prepared against the
     // last *committed* document (A), not against the failed B.
     unlinkSync(dir);
-    await store.update((doc) => {
+    await updateRoutingDocument(store, dir, (doc) => {
       doc.bindings.push({
         target: { kind: 'group', chat_id: 'oc_c' },
         display: null,
         team_name: 'team-c',
-        origin: 'manual',
+        root_message_id: null,
         space_id: null,
         created_at: 3,
         updated_at: 3,
@@ -115,26 +130,26 @@ describe('FeishuRoutingStore — commit authority', () => {
     ]);
   });
 
-  it('serializes concurrent updates: the second mutator sees the first mutator\'s change as its base', async () => {
+  it("serializes concurrent updates: the second mutator sees the first mutator's change as its base", async () => {
     const store = newStore('chan-concurrent');
     await store.load();
 
     // Two updates queued back-to-back without awaiting the first. If they
     // were prepared against the same stale base rather than serialized, one
     // of the two pushes would be lost.
-    const first = store.update((doc) => {
+    const first = updateRoutingDocument(store, dir, (doc) => {
       doc.bindings.push({
         target: { kind: 'group', chat_id: 'oc_1' },
         display: null,
         team_name: 'team-1',
-        origin: 'manual',
+        root_message_id: null,
         space_id: null,
         created_at: 1,
         updated_at: 1,
       });
       return true;
     });
-    const second = store.update((doc) => {
+    const second = updateRoutingDocument(store, dir, (doc) => {
       // At the moment this mutator runs, it must already see whatever the
       // first commit produced (this is the doc it is handed).
       expect(doc.bindings.some((b) => b.team_name === 'team-1')).toBe(true);
@@ -142,7 +157,7 @@ describe('FeishuRoutingStore — commit authority', () => {
         target: { kind: 'group', chat_id: 'oc_2' },
         display: null,
         team_name: 'team-2',
-        origin: 'manual',
+        root_message_id: null,
         space_id: null,
         created_at: 2,
         updated_at: 2,
@@ -162,7 +177,7 @@ describe('FeishuRoutingStore — commit authority', () => {
     await store.load();
     const before = store.current.updated_at;
 
-    await store.update(() => false);
+    await updateRoutingDocument(store, dir, () => false);
 
     expect(store.current.updated_at).toBe(before);
   });
@@ -174,12 +189,12 @@ describe('FeishuRoutingStore — commit authority', () => {
     writeFileSync(dir, 'not a directory');
 
     await expect(
-      store.update((doc) => {
+      updateRoutingDocument(store, dir, (doc) => {
         doc.bindings.push({
           target: { kind: 'group', chat_id: 'oc_x' },
           display: null,
           team_name: 'team-x',
-          origin: 'manual',
+          root_message_id: null,
           space_id: null,
           created_at: 1,
           updated_at: 1,
@@ -217,16 +232,29 @@ describe('FeishuRoutingStore — commit authority', () => {
     expect(a1).not.toBe(b);
   });
 
+  it('routingDocumentFilename is byte-identical to its on-disk format, for a plain id and one needing slugging', () => {
+    // This is a persisted-state filename: a stability/uniqueness check alone
+    // would still pass if the format itself changed underneath (e.g. digest
+    // length, separator, slug charset), silently orphaning documents written
+    // before the change. Pin the exact literal so any such drift fails loud.
+    expect(routingDocumentFilename('acme-channel')).toBe(
+      'feishu-routing.acme-channel.346ef64c6b5c.json',
+    );
+    expect(routingDocumentFilename('acme/beta channel!')).toBe(
+      'feishu-routing.acme-beta-channel.39187d92107b.json',
+    );
+  });
+
   it('persists the committed document to the exact filename the store reads back', async () => {
     const channelId = 'chan-roundtrip';
     const store = newStore(channelId);
     await store.load();
-    await store.update((doc) => {
+    await updateRoutingDocument(store, dir, (doc) => {
       doc.bindings.push({
         target: { kind: 'group', chat_id: 'oc_r' },
         display: null,
         team_name: 'team-r',
-        origin: 'manual',
+        root_message_id: null,
         space_id: null,
         created_at: 1,
         updated_at: 1,
@@ -284,7 +312,7 @@ describe('FeishuRoutingStore — the subscriptions section', () => {
     const channelId = 'chan-subscription-roundtrip';
     const store = newStore(channelId);
     await store.load();
-    await store.update((doc) => {
+    await updateRoutingDocument(store, dir, (doc) => {
       doc.subscriptions.push({
         file_token: 'doc_tok',
         file_type: 'docx',
@@ -297,7 +325,12 @@ describe('FeishuRoutingStore — the subscriptions section', () => {
     const reloaded = newStore(channelId);
     await reloaded.load();
     expect(reloaded.current.subscriptions).toEqual([
-      { file_token: 'doc_tok', file_type: 'docx', team_name: null, created_at: 7 },
+      {
+        file_token: 'doc_tok',
+        file_type: 'docx',
+        team_name: null,
+        created_at: 7,
+      },
     ]);
   });
 });

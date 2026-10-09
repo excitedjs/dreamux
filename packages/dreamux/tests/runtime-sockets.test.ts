@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,11 +16,7 @@ import {
   runtimeSocketDirCandidates,
   sweepRuntimeSocketDirs,
 } from '../src/platform/runtime-sockets.js';
-import {
-  resetRuntimeConfig,
-  runRoot,
-  stateRoot,
-} from '../src/platform/paths.js';
+import { runRoot, stateRoot } from '../src/platform/paths.js';
 
 describe('runtime socket allocation', () => {
   let root: string;
@@ -38,7 +40,6 @@ describe('runtime socket allocation', () => {
     // keeps allocation deterministic across Linux (`/tmp`) and macOS
     // (`$TMPDIR` = `/var/folders/…`, which would otherwise be a valid candidate).
     process.env['TMPDIR'] = '/tmp';
-    resetRuntimeConfig();
   });
 
   afterEach(() => {
@@ -49,7 +50,6 @@ describe('runtime socket allocation', () => {
     else process.env['XDG_RUNTIME_DIR'] = previousXdg;
     if (previousTmpdir === undefined) delete process.env['TMPDIR'];
     else process.env['TMPDIR'] = previousTmpdir;
-    resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -68,7 +68,12 @@ describe('runtime socket allocation', () => {
   it('rejects shared-tmp XDG roots and falls back to the dreamux run root', () => {
     // XDG_RUNTIME_DIR is operator input: a shared-tmp value must not bypass
     // the guard, whether it is the root itself or a subdirectory.
-    for (const sharedXdg of ['/tmp', '/tmp/xdg', '/private/tmp', '/var/tmp/xdg']) {
+    for (const sharedXdg of [
+      '/tmp',
+      '/tmp/xdg',
+      '/private/tmp',
+      '/var/tmp/xdg',
+    ]) {
       expect(isSharedTmpPath(sharedXdg)).toBe(true);
       const path = allocateRuntimeSocketPath('test socket', {
         XDG_RUNTIME_DIR: sharedXdg,
@@ -102,9 +107,10 @@ describe('runtime socket allocation', () => {
     // TMPDIR (the macOS $TMPDIR analog) must keep the socket within budget
     // without touching shared /tmp or depending on the long durable root.
     process.env['DREAMUX_ROOT'] = join(root, 'h'.repeat(120));
-    resetRuntimeConfig();
     const privateTmp = join(root, 't'); // short, under the real (short) home
-    const path = allocateRuntimeSocketPath('test socket', { TMPDIR: privateTmp });
+    const path = allocateRuntimeSocketPath('test socket', {
+      TMPDIR: privateTmp,
+    });
     expect(path.startsWith(join(privateTmp, 'dreamux', 'sockets'))).toBe(true);
     expect(path.endsWith('.sock')).toBe(true);
     expect(unixSocketPathFitsBudget(path)).toBe(true);
@@ -154,6 +160,9 @@ describe('runtime socket allocation', () => {
     expect(existsSync(runDir!)).toBe(false);
 
     // A second sweep over now-missing dirs is a no-op, not an error.
-    await expect(sweepRuntimeSocketDirs(env)).resolves.toEqual([xdgDir, runDir]);
+    await expect(sweepRuntimeSocketDirs(env)).resolves.toEqual([
+      xdgDir,
+      runDir,
+    ]);
   });
 });

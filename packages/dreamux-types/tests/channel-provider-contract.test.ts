@@ -23,11 +23,10 @@ import type {
 } from '../src/channel.js';
 import type { JsonValue } from '../src/json.js';
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B
-  ? 1
-  : 0
-  ? true
-  : false;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
+    ? true
+    : false;
 
 function assertType<T extends true>(_proof?: T): void {
   // Compile-time-only: see agent-runtime-handle-contract.test.ts for the pattern's rationale.
@@ -146,31 +145,45 @@ describe('ChannelProvider composes optional capabilities rather than fake method
     assertType<
       Equal<
         keyof ChannelProvider<unknown>,
-        'createSession' | 'config' | 'identity' | 'onboard' | 'diagnostic' | 'mcp'
+        | 'createSession'
+        | 'config'
+        | 'identity'
+        | 'onboard'
+        | 'diagnostic'
+        | 'mcp'
       >
     >();
   });
-
   it('a bare provider that implements only createSession is a valid ChannelProvider', async () => {
-    const session: ChannelSession = {
-      async initialize(): Promise<void> {},
-      async start(): Promise<void> {},
-      async close(): Promise<void> {},
-    };
-    const provider: ChannelProvider<{ token: string }> = {
-      async createSession() {
-        return { session };
+    const instance: ChannelInstance = {
+      session: {
+        async initialize() {},
+        async start() {},
+        async close() {},
       },
     };
-
-    expect(provider.config).toBeUndefined();
-    expect(provider.mcp).toBeUndefined();
-    const instance = await provider.createSession({
-      dispatcher_id: 'd1',
-      channel_id: 'c1',
-      provider: 'fake',
-      config: { token: 'tok' },
-    });
-    expect(instance.session).toBe(session);
+    const provider: ChannelProvider<unknown> = {
+      createSession: async () => instance,
+    };
+    expect(
+      await provider.createSession({
+        dispatcher_id: 'test',
+        channel_id: 'test',
+        provider: 'npm:example',
+        config: {},
+        logger: {
+          error() {},
+          warn() {},
+          info() {},
+          debug() {},
+          trace() {},
+          child() {
+            return this;
+          },
+        },
+        state_root: '/state',
+        cache_root: '/cache',
+      }),
+    ).toBe(instance);
   });
 });

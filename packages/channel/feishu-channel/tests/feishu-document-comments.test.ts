@@ -15,7 +15,7 @@ import type {
   FeishuDocCommentText,
 } from '@excitedjs/feishu-transport';
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   FeishuDocumentComments,
@@ -28,13 +28,21 @@ import {
   type FeishuSubmitOutcome,
 } from '../src/feishu-submit.js';
 import { FeishuRouting } from '../src/routing/index.js';
-import { FeishuRoutingStore } from '../src/routing/store.js';
+import { FeishuCoreCommands } from '../src/feishu-core-commands.js';
+import { FeishuTeamSubmitter } from '../src/session/submitter.js';
+import { FeishuCotAdapter } from '../src/cot/adapter.js';
+import { createFeishuLifecycle } from '../src/session/lifecycle.js';
 
 /** One log line, as the level it was written at and what it said. */
-type LoggedLine = { level: string; fields: Record<string, unknown>; message: string };
+type LoggedLine = {
+  level: string;
+  fields: Record<string, unknown>;
+  message: string;
+};
 
 function recordingLogger(lines: LoggedLine[]) {
-  const at = (level: string) =>
+  const at =
+    (level: string) =>
     (fields: unknown, message?: unknown): undefined => {
       lines.push({
         level,
@@ -49,6 +57,7 @@ function recordingLogger(lines: LoggedLine[]) {
     info: at('info'),
     debug: at('debug'),
     trace: at('trace'),
+    child: () => recordingLogger(lines),
   };
 }
 
@@ -59,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -81,19 +91,14 @@ interface Harness {
 }
 
 async function harness(
-  overrides: Partial<FeishuDocumentCommentsOptions> = {},
+  overrides: Partial<FeishuDocumentCommentsOptions['bot']> = {},
 ): Promise<Harness> {
-  const store = new FeishuRoutingStore({
+  const routing = new FeishuRouting({
     dispatcherId: 'disp-1',
     channelId: 'chan-1',
     stateDir: dir,
   });
-  await store.load();
-  const routing = new FeishuRouting({
-    dispatcherId: 'disp-1',
-    channelId: 'chan-1',
-    store,
-  });
+  await routing.initialize();
   const lookups: string[] = [];
   const submissions: Harness['submissions'] = [];
   const outcomeFor = new Map<string | null, FeishuSubmitOutcome>();
@@ -101,37 +106,54 @@ async function harness(
   const commentReads: string[] = [];
   const comment: Harness['comment'] = { value: null };
   const logged: LoggedLine[] = [];
-  const comments = new FeishuDocumentComments({
+  const log = recordingLogger(logged);
+  const lifecycle = createFeishuLifecycle();
+  const cot = new FeishuCotAdapter({
     dispatcherId: 'disp-1',
     channelId: 'chan-1',
-    log: recordingLogger(logged),
-    routing,
-    async submit(teamName, submission) {
+    log,
+    lifecycle,
+    cotClient: undefined,
+  });
+  const submitter = new FeishuTeamSubmitter({
+    lifecycle,
+    cot,
+    commands: new FeishuCoreCommands(),
+  });
+  vi.spyOn(submitter, 'submit').mockImplementation(
+    async (teamName, submission) => {
       submissions.push({ teamName, submission });
       return outcomeFor.get(teamName) ?? { status: 'submitted', turnId: 't-1' };
     },
-    async fetchDocMeta(fileToken, fileType) {
-      lookups.push(`meta:${fileToken}:${fileType}`);
-      return { kind: 'visible', meta: { title: '', url: '' } };
+  );
+  const comments = new FeishuDocumentComments({
+    dispatcherId: 'disp-1',
+    channelId: 'chan-1',
+    log,
+    routing,
+    submitter,
+    bot: {
+      async fetchDocMeta(fileToken, fileType) {
+        lookups.push(`meta:${fileToken}:${fileType}`);
+        return { kind: 'visible', meta: { title: '', url: '' } };
+      },
+      async resolveWikiNode(token) {
+        lookups.push(`wiki:${token}`);
+        return { objToken: 'doc_from_wiki', objType: 'docx' };
+      },
+      async fetchDocCommentText(request) {
+        commentReads.push(
+          `${request.fileToken}:${request.commentId}:${request.replyId}`,
+        );
+        if (comment.value instanceof Error) throw comment.value;
+        return comment.value;
+      },
+      async resolveUserName() {
+        return 'Commenter';
+      },
+      ...overrides,
     },
-    async resolveWikiNode(token) {
-      lookups.push(`wiki:${token}`);
-      return { objToken: 'doc_from_wiki', objType: 'docx' };
-    },
-    async fetchDocCommentText(request) {
-      commentReads.push(
-        `${request.fileToken}:${request.commentId}:${request.replyId}`,
-      );
-      if (comment.value instanceof Error) throw comment.value;
-      return comment.value;
-    },
-    async resolveUserName() {
-      return 'Commenter';
-    },
-    async isTrustedUser(openId) {
-      return trusted.has(openId);
-    },
-    ...overrides,
+    access: { isTrustedDispatcherUser: async (openId) => trusted.has(openId) },
   });
   return {
     comments,
@@ -186,7 +208,11 @@ describe('subscribe_document — what it proves before it writes', () => {
     });
 
     await expect(
-      h.comments.subscribe({ document: 'doc_tok', type: 'docx', teamName: null }),
+      h.comments.subscribe({
+        document: 'doc_tok',
+        type: 'docx',
+        teamName: null,
+      }),
     ).rejects.toBeInstanceOf(PublicInvokeFailure);
     expect(h.routing.subscribersFor('doc_tok')).toEqual([]);
   });
@@ -213,7 +239,11 @@ describe('subscribe_document — what it proves before it writes', () => {
     });
 
     await expect(
-      h.comments.subscribe({ document: 'doc_tok', type: 'minutes', teamName: null }),
+      h.comments.subscribe({
+        document: 'doc_tok',
+        type: 'minutes',
+        teamName: null,
+      }),
     ).rejects.toThrow(/does not take type/);
   });
 
@@ -391,7 +421,9 @@ describe('document comment delivery', () => {
     const line = h.logged.at(-1);
     expect(line?.level).toBe('error');
     expect(line?.message).toBe('failed to deliver a feishu document comment');
-    expect(line?.fields['err']).toEqual({ message: 'Feishu session is not live' });
+    expect(line?.fields['err']).toEqual({
+      message: 'Feishu session is not live',
+    });
     expect(line?.fields['team_name']).toBe('team-a');
   });
 
@@ -488,8 +520,9 @@ describe('document comment delivery', () => {
       expect.arrayContaining([null, 'closed-team']),
     );
     expect(h.submissions).toHaveLength(2);
-    expect(h.routing.subscribersFor('doc_tok').map((row) => row.team_name))
-      .toEqual([null]);
+    expect(
+      h.routing.subscribersFor('doc_tok').map((row) => row.team_name),
+    ).toEqual([null]);
   });
 
   it('two replies in one thread carry different source ids, so both are admitted', async () => {
@@ -560,7 +593,9 @@ describe('document comment delivery', () => {
     await h.comments.deliver(commentEvent());
 
     expect(h.submissions[0]!.submission.attrs).not.toHaveProperty('reply_id');
-    expect(h.submissions[0]!.submission.attrs['notice_type']).toBe('add_comment');
+    expect(h.submissions[0]!.submission.attrs['notice_type']).toBe(
+      'add_comment',
+    );
   });
 
   it('carries what the commenter wrote, and a preview of what it is anchored to', async () => {
@@ -666,7 +701,9 @@ describe('document comment delivery', () => {
     await h.comments.deliver(commentEvent());
 
     const { text } = h.submissions[0]!.submission;
-    expect(text).toContain('<content>\nuse &lt;at&gt; &amp; not &lt;b&gt;\n</content>');
+    expect(text).toContain(
+      '<content>\nuse &lt;at&gt; &amp; not &lt;b&gt;\n</content>',
+    );
     expect(text).toContain('a &amp; b');
   });
 
@@ -746,7 +783,9 @@ describe('document comment delivery', () => {
     await h.comments.deliver(commentEvent());
     await h.comments.deliver(commentEvent({ replyId: 'rpl_1' }));
 
-    expect(h.submissions[0]!.submission.attrs['notice_type']).toBe('add_comment');
+    expect(h.submissions[0]!.submission.attrs['notice_type']).toBe(
+      'add_comment',
+    );
     expect(h.submissions[1]!.submission.attrs['notice_type']).toBe('add_reply');
   });
 
@@ -778,6 +817,8 @@ describe('document comment delivery', () => {
 
     await h.comments.deliver(commentEvent());
 
-    expect(h.submissions[0]!.submission.attrs).not.toHaveProperty('sender_name');
+    expect(h.submissions[0]!.submission.attrs).not.toHaveProperty(
+      'sender_name',
+    );
   });
 });

@@ -41,13 +41,15 @@ export interface JsonValueBounds {
  * holes, and hidden keys are still rejected, and the value is still
  * canonicalized and frozen. Only the depth/entry/byte ceilings are lifted.
  *
- * Use it for a value Core itself produced, where a generic ceiling would be an
- * arbitrary cutoff rather than a real policy. Some producers do bound their own
- * result (activity pages, `*.history` cursors) and some do not — a roster
- * listing grows with the persisted entities — but no product path produces an
- * arbitrarily large one, and the answer for a result that does grow is
- * pagination owned by its domain. Never use it for untrusted input: that is what
- * an explicit {@link JsonValueBounds} is for.
+ * Use it where a generic ceiling would be an arbitrary cutoff rather than a
+ * real policy: a value Core itself produced (some producers do bound their own
+ * result — activity pages, `*.history` cursors — and some do not, since a
+ * roster listing grows with the persisted entities, but no product path
+ * produces an arbitrarily large one, and the answer for a result that does
+ * grow is pagination owned by its domain), or a provider-declared value whose
+ * magnitude the provider itself is responsible for bounding. Use an explicit
+ * {@link JsonValueBounds} when Core is the one imposing a real size policy on
+ * the value.
  */
 export const JSON_VALUE_UNBOUNDED: JsonValueBounds = {
   maxDepth: Number.POSITIVE_INFINITY,
@@ -68,7 +70,9 @@ export function canonicalJsonValue(
   // the result is always a JSON document rather than `undefined`.
   const text = JSON.stringify(validated) as string;
   if (Buffer.byteLength(text, 'utf8') > bounds.maxBytes) {
-    throw new JsonValueError(`value exceeds the ${bounds.maxBytes}-byte budget`);
+    throw new JsonValueError(
+      `value exceeds the ${bounds.maxBytes}-byte budget`,
+    );
   }
   // Parsing back is what makes the canonical value the persisted value: it also
   // restores an own `"__proto__"` key as plain data, which building an object
@@ -104,10 +108,14 @@ function validateJsonValue(
   if (type !== 'object') {
     // `undefined`, functions, and symbols vanish or turn into `null` in a JSON
     // round trip; BigInt throws. None of them survive as the same value.
-    throw new JsonValueError(`values of type ${type} are not JSON-serializable`);
+    throw new JsonValueError(
+      `values of type ${type} are not JSON-serializable`,
+    );
   }
   if (depth >= bounds.maxDepth) {
-    throw new JsonValueError(`value nests deeper than ${bounds.maxDepth} levels`);
+    throw new JsonValueError(
+      `value nests deeper than ${bounds.maxDepth} levels`,
+    );
   }
   const container = value as object;
   if (seen.has(container)) throw new JsonValueError('value contains a cycle');
@@ -131,7 +139,9 @@ function validateJsonValue(
       throw new JsonValueError('objects must not carry own symbol keys');
     }
     if (Object.getOwnPropertyNames(value).length !== entries.length) {
-      throw new JsonValueError('objects must not carry non-enumerable own keys');
+      throw new JsonValueError(
+        'objects must not carry non-enumerable own keys',
+      );
     }
     const out = Object.create(null) as Record<string, JsonValue>;
     for (const [key, entry] of entries) {
@@ -191,17 +201,30 @@ function assertEntryCount(
   }
 }
 
-function deepFreeze(value: JsonValue): JsonValue {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    for (const entry of value) deepFreeze(entry);
-    return Object.freeze(value);
+/**
+ * Freeze `value` in place, recursively, and return it.
+ *
+ * {@link canonicalJsonValue} calls this on the value it parses back, which is
+ * why it lives here rather than beside one caller: a sealed Core event and a
+ * validated MCP tool catalog are the same "hold this fact, prevent a later
+ * mutation from rewriting what was already broadcast" need, just applied
+ * directly to an object the caller already knows is JSON-shaped, without
+ * paying for another validate/serialize/parse round trip. `Object.isFrozen`
+ * short-circuits a value (or sub-value) that is already frozen, so freezing
+ * twice, or freezing a structure that shares a frozen branch, does no
+ * redundant work.
+ */
+export function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
   }
-  for (const entry of Object.values(value)) deepFreeze(entry);
+  for (const nested of Object.values(value)) deepFreeze(nested);
   return Object.freeze(value);
 }
 
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }

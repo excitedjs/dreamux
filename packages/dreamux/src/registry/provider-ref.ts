@@ -22,6 +22,7 @@
  * runtime stays in this package.
  */
 
+// eslint-disable-next-line no-restricted-syntax -- neutral-contract type re-export documented above, so in-repo imports from ../registry/index.js keep resolving these names (issue #209)
 export type {
   ProviderRefSource,
   BuiltinProviderRef,
@@ -29,7 +30,11 @@ export type {
   ProviderRef,
 } from '@excitedjs/dreamux-types';
 
-import type { ProviderRef, BuiltinProviderRef, NpmProviderRef } from '@excitedjs/dreamux-types';
+import type {
+  ProviderRef,
+  BuiltinProviderRef,
+  NpmProviderRef,
+} from '@excitedjs/dreamux-types';
 
 /** Bundled provider id: lowercase, starts with a letter, kebab-friendly. */
 export const BUILTIN_PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -73,7 +78,10 @@ export class InvalidProviderRefError extends Error {
  */
 export function parseProviderRef(ref: string): ProviderRef {
   if (typeof ref !== 'string' || ref.length === 0) {
-    throw new InvalidProviderRefError(String(ref), 'ref must be a non-empty string');
+    throw new InvalidProviderRefError(
+      String(ref),
+      'ref must be a non-empty string',
+    );
   }
 
   const schemeEnd = ref.indexOf(':');
@@ -102,7 +110,10 @@ export function parseProviderRef(ref: string): ProviderRef {
 
 function parseBuiltinRef(ref: string, spec: string): BuiltinProviderRef {
   if (spec.includes('#')) {
-    throw new InvalidProviderRefError(ref, 'builtin refs do not take an `#export`');
+    throw new InvalidProviderRefError(
+      ref,
+      'builtin refs do not take an `#export`',
+    );
   }
   if (!BUILTIN_PROVIDER_ID_PATTERN.test(spec)) {
     throw new InvalidProviderRefError(
@@ -119,10 +130,16 @@ function parseNpmRef(ref: string, spec: string): NpmProviderRef {
   const exportName = hashIndex === -1 ? null : spec.slice(hashIndex + 1);
 
   if (!NPM_PACKAGE_PATTERN.test(pkg)) {
-    throw new InvalidProviderRefError(ref, `package must be ${NPM_PACKAGE_RULE}`);
+    throw new InvalidProviderRefError(
+      ref,
+      `package must be ${NPM_PACKAGE_RULE}`,
+    );
   }
   if (exportName !== null && !PROVIDER_EXPORT_PATTERN.test(exportName)) {
-    throw new InvalidProviderRefError(ref, `export must be ${PROVIDER_EXPORT_RULE}`);
+    throw new InvalidProviderRefError(
+      ref,
+      `export must be ${PROVIDER_EXPORT_RULE}`,
+    );
   }
 
   const raw = exportName === null ? `npm:${pkg}` : `npm:${pkg}#${exportName}`;

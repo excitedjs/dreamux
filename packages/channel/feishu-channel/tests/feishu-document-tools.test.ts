@@ -7,6 +7,7 @@
  */
 import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
 import { describe, expect, it } from 'vitest';
+import { makeToolSession } from './helpers/feishu-tool-session.js';
 
 import {
   listSubscriptionsDef,
@@ -15,7 +16,10 @@ import {
 } from '../src/tools/document-tools.js';
 import { findFeishuTool } from '../src/tools/registry.js';
 import type { FeishuDocumentSubscriptionView } from '../src/routing/index.js';
-import type { FeishuToolContext, FeishuToolSession } from '../src/tools/types.js';
+import type {
+  FeishuToolContext,
+  FeishuToolSession,
+} from '../src/tools/types.js';
 
 const dispatcher: ChannelMcpCaller = { kind: 'dispatcher' };
 const teamLeader: ChannelMcpCaller = {
@@ -40,49 +44,8 @@ function fakeSession(
   const subscribes: Recorded['subscribes'] = [];
   const unsubscribes: Recorded['unsubscribes'] = [];
   const listed: Recorded['listed'] = [];
-  return {
-    logger: {
-      error: () => undefined,
-      warn: () => undefined,
-      info: () => undefined,
-      debug: () => undefined,
-      trace: () => undefined,
-    },
-    channelId: 'chan-1',
-    async sendText() {
-      throw new Error('not used');
-    },
-    async react() {
-      throw new Error('not used');
-    },
-    async listKnownChatBots() {
-      throw new Error('not used');
-    },
-    async askUserQuestion() {
-      throw new Error('not used');
-    },
-    async bindChannel() {
-      throw new Error('not used');
-    },
-    async unbindChannel() {
-      throw new Error('not used');
-    },
-    listBindings() {
-      return [];
-    },
-    async bindSpace() {
-      throw new Error('not used');
-    },
-    async unbindSpace() {
-      throw new Error('not used');
-    },
-    getSpace() {
-      return undefined;
-    },
-    listSpaces() {
-      return [];
-    },
-    async subscribeDocument(input) {
+  const tools = makeToolSession({
+    subscribeDocument: async (input) => {
       subscribes.push(input);
       return {
         file_token: 'doc_tok',
@@ -90,18 +53,16 @@ function fakeSession(
         already_subscribed: false,
       };
     },
-    async unsubscribeDocument(input) {
+    unsubscribeDocument: async (input) => {
       unsubscribes.push(input);
       return { file_token: 'doc_tok', unsubscribed: true };
     },
-    listSubscriptions(teamName) {
+    listSubscriptions: (teamName) => {
       listed.push(teamName);
       return rows[teamName ?? '__dispatcher__'] ?? [];
     },
-    subscribes,
-    unsubscribes,
-    listed,
-  };
+  });
+  return Object.assign(tools, { subscribes, unsubscribes, listed });
 }
 
 function ctx(
@@ -128,9 +89,11 @@ describe('the document tools are one definition for both callers', () => {
       unsubscribeDocumentDef,
       listSubscriptionsDef,
     ]) {
-      const properties = (def.inputSchema as {
-        properties: Record<string, unknown>;
-      }).properties;
+      const properties = (
+        def.inputSchema as {
+          properties: Record<string, unknown>;
+        }
+      ).properties;
       expect(Object.keys(properties)).not.toContain('team_name');
     }
   });
@@ -164,8 +127,8 @@ describe('subscribe_document derives its recipient from the caller', () => {
   });
 });
 
-describe('unsubscribe_document reaches only the caller\'s own row', () => {
-  it('a TeamLeader removes its own Team\'s row', async () => {
+describe("unsubscribe_document reaches only the caller's own row", () => {
+  it("a TeamLeader removes its own Team's row", async () => {
     const session = fakeSession();
 
     await unsubscribeDocumentDef.handle(ctx(teamLeader, session), {
@@ -177,7 +140,7 @@ describe('unsubscribe_document reaches only the caller\'s own row', () => {
     ]);
   });
 
-  it('the Dispatcher removes the Dispatcher Agent\'s row', async () => {
+  it("the Dispatcher removes the Dispatcher Agent's row", async () => {
     const session = fakeSession();
 
     await unsubscribeDocumentDef.handle(ctx(dispatcher, session), {

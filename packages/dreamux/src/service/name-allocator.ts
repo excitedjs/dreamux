@@ -32,13 +32,7 @@ const BASE36 = 'abcdefghijklmnopqrstuvwxyz0123456789';
  * byte-identical to every name already allocated.
  */
 export type ConcreteNameKind =
-  | 'team'
-  | 'team-leader'
-  | 'team-teammate'
-  | 'dispatcher-teammate';
-
-/** Random generator hook so tests can force collisions deterministically. */
-export type SuffixGenerator = () => string;
+  'team' | 'team-leader' | 'team-teammate' | 'dispatcher-teammate';
 
 /**
  * Sanitize a model-supplied base into the name charset: lowercased, restricted
@@ -54,10 +48,7 @@ export function slugifyName(base: string): string {
 
 /** A CSPRNG-backed lowercase base36 suffix with a 4-8 character length. */
 export function generateNameSuffix(): string {
-  const length = randomInt(
-    NAME_SUFFIX_MIN_LENGTH,
-    NAME_SUFFIX_MAX_LENGTH + 1,
-  );
+  const length = randomInt(NAME_SUFFIX_MIN_LENGTH, NAME_SUFFIX_MAX_LENGTH + 1);
   const bytes = randomBytes(length);
   let out = '';
   for (let i = 0; i < length; i += 1) {
@@ -76,7 +67,7 @@ function kindPrefix(kind: ConcreteNameKind): string {
 export function buildConcreteName(input: {
   kind: ConcreteNameKind;
   base: string;
-  teamSlug?: string;
+  teamSlug?: string | undefined;
   suffix: string;
 }): string {
   const prefix = kindPrefix(input.kind);
@@ -94,9 +85,8 @@ export function buildConcreteName(input: {
 export function allocateConcreteName(input: {
   kind: ConcreteNameKind;
   base: string;
-  teamSlug?: string;
+  teamSlug?: string | undefined;
   exists: (name: string) => boolean;
-  generateSuffix?: SuffixGenerator;
   maxAttempts?: number;
 }): string {
   for (const candidate of concreteNameCandidates(input)) {
@@ -122,7 +112,6 @@ export async function allocateConcreteNameAsync(input: {
   base: string;
   teamSlug?: string;
   accept: (name: string) => Promise<boolean>;
-  generateSuffix?: SuffixGenerator;
   maxAttempts?: number;
 }): Promise<string> {
   for (const candidate of concreteNameCandidates(input)) {
@@ -138,18 +127,16 @@ export async function allocateConcreteNameAsync(input: {
 function* concreteNameCandidates(input: {
   kind: ConcreteNameKind;
   base: string;
-  teamSlug?: string;
-  generateSuffix?: SuffixGenerator;
+  teamSlug?: string | undefined;
   maxAttempts?: number;
 }): Generator<string> {
-  const generate = input.generateSuffix ?? generateNameSuffix;
   const maxAttempts = input.maxAttempts ?? NAME_ALLOCATION_MAX_ATTEMPTS;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     yield buildConcreteName({
       kind: input.kind,
       base: input.base,
-      ...(input.teamSlug !== undefined ? { teamSlug: input.teamSlug } : {}),
-      suffix: generate(),
+      teamSlug: input.teamSlug,
+      suffix: generateNameSuffix(),
     });
   }
 }

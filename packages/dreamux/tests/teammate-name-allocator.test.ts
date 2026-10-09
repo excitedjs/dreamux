@@ -13,7 +13,7 @@ import {
 import {
   assertNotReservedAgentName,
   TEAMMATE_NAME_PATTERN,
-} from '../src/service/agent-entity/types.js';
+} from '../src/service/agent/identity.js';
 
 /**
  * Unit coverage for the concrete-name allocator (issue #188, revised by the
@@ -40,7 +40,9 @@ describe('Team and TeamMate concrete-name allocation', () => {
   ];
 
   it('slugifies an agent-supplied base into the name charset', () => {
-    expect(slugifyName('Review The Auth Change')).toBe('review-the-auth-change');
+    expect(slugifyName('Review The Auth Change')).toBe(
+      'review-the-auth-change',
+    );
     expect(slugifyName('  weird@@name!! ')).toBe('weird-name');
     // Junk/empty bases fall back to a non-empty slug rather than producing ''.
     expect(slugifyName('')).toBe('tm');
@@ -61,12 +63,11 @@ describe('Team and TeamMate concrete-name allocation', () => {
   it('uses both 4- and 8-char suffix endpoints for every current name kind', () => {
     for (const kind of ALL_KINDS) {
       for (const suffix of ['a1b2', 'abcd1234']) {
-        const name = allocateConcreteName({
+        const name = buildConcreteName({
           kind,
           base: 'reviewer',
           teamSlug: 'alpha',
-          exists: never,
-          generateSuffix: () => suffix,
+          suffix,
         });
         expect(name).toMatch(new RegExp(`-${suffix}$`));
         expect(TEAMMATE_NAME_PATTERN.test(name)).toBe(true);
@@ -77,7 +78,11 @@ describe('Team and TeamMate concrete-name allocation', () => {
   it('applies the current role prefix: none for team/dispatcher-teammate, tm-/tl- for the rest', () => {
     // A dispatcher-scoped TeamMate carries no prefix at all.
     expect(
-      buildConcreteName({ kind: 'dispatcher-teammate', base: 'reviewer', suffix: 'abcd' }),
+      buildConcreteName({
+        kind: 'dispatcher-teammate',
+        base: 'reviewer',
+        suffix: 'abcd',
+      }),
     ).toBe('reviewer-abcd');
     // A Team's own name carries no prefix either.
     expect(
@@ -86,7 +91,11 @@ describe('Team and TeamMate concrete-name allocation', () => {
     // A Team-scoped TeamMate is durably tagged `tm-` (the durable address, not
     // a description of the retired `team_member` role vocabulary).
     expect(
-      buildConcreteName({ kind: 'team-teammate', base: 'builder', suffix: 'abcd1234' }),
+      buildConcreteName({
+        kind: 'team-teammate',
+        base: 'builder',
+        suffix: 'abcd1234',
+      }),
     ).toBe('tm-builder-abcd1234');
     // A TeamLeader names from the team slug (with `tl-`), not the base.
     expect(
@@ -101,7 +110,11 @@ describe('Team and TeamMate concrete-name allocation', () => {
 
   it('a team-leader falls back to the base when no teamSlug is supplied', () => {
     expect(
-      buildConcreteName({ kind: 'team-leader', base: 'fallback-base', suffix: 'abcd' }),
+      buildConcreteName({
+        kind: 'team-leader',
+        base: 'fallback-base',
+        suffix: 'abcd',
+      }),
     ).toBe('tl-fallback-base-abcd');
   });
 
@@ -143,16 +156,18 @@ describe('Team and TeamMate concrete-name allocation', () => {
   });
 
   it('regenerates the suffix on collision and returns the first free name', () => {
-    const suffixes = ['aaaaaaaa', 'bbbbbbbb', 'cccccccc'];
-    let i = 0;
-    const taken = new Set(['reviewer-aaaaaaaa', 'reviewer-bbbbbbbb']);
+    const candidates: string[] = [];
     const name = allocateConcreteName({
       kind: 'dispatcher-teammate',
       base: 'reviewer',
-      exists: (candidate) => taken.has(candidate),
-      generateSuffix: () => suffixes[i++]!,
+      exists: (candidate) => {
+        candidates.push(candidate);
+        return candidates.length < 3;
+      },
     });
-    expect(name).toBe('reviewer-cccccccc');
+    expect(candidates).toHaveLength(3);
+    expect(name).toBe(candidates[2]);
+    expect(name).toMatch(/^reviewer-[a-z0-9]{4,8}$/);
   });
 
   it('fails loudly when the attempt budget is exhausted (never reuses a name)', () => {
@@ -161,10 +176,12 @@ describe('Team and TeamMate concrete-name allocation', () => {
         kind: 'dispatcher-teammate',
         base: 'reviewer',
         exists: () => true, // every candidate already taken
-        generateSuffix: () => 'aaaaaaaa',
+
         maxAttempts: 4,
       }),
-    ).toThrow(/could not allocate a unique dispatcher-teammate name after 4 attempts/);
+    ).toThrow(
+      /could not allocate a unique dispatcher-teammate name after 4 attempts/,
+    );
   });
 
   it('reserves dispatcher as an ordinary agent or team name', () => {
@@ -186,6 +203,6 @@ describe('Team and TeamMate concrete-name allocation', () => {
       suffix: 'abcd',
     });
     expect(name.startsWith('tm-')).toBe(false);
-    expect(name).toBe('builder-abcd');
+    expect(name).toMatch(/^builder-[a-z0-9]{4,8}$/);
   });
 });

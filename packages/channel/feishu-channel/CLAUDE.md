@@ -1,7 +1,9 @@
 # @excitedjs/feishu-channel
 
-This package is the built-in Feishu `ChannelProvider` for Dreamux (alias
-`builtin:feishu`, issue #209 slice 5). It sits between
+This package is the built-in Feishu plugin for Dreamux: its named `createFeishuPlugin` export is
+the plugin factory, and the plugin contributes the Feishu `ChannelProvider`
+(alias `builtin:feishu`, issue #209 slice 5) and publishes the Feishu extension
+api. It sits between
 `@excitedjs/feishu-transport` and `@excitedjs/dreamux`, implements the neutral
 `@excitedjs/dreamux-types` `ChannelProvider`/`ChannelSession` contract, and
 depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`,
@@ -11,9 +13,8 @@ never on `@excitedjs/dreamux` core.
 ## Responsibilities
 
 - Own Feishu channel semantics above raw Lark JSAPI calls: the live channel
-  session (bot start/close), access/trust behavior (the gate + chat-bots store,
-  read/written under a host-supplied state dir), and provider-local
-  message-to-target ownership tracking.
+  session (bot start/close) and access/trust behavior (the gate + chat-bots
+  store, read/written under a host-supplied state dir).
 - Own the Feishu MCP tool surface and its caller-scoped catalogs: `reply`,
   `react`, `list_chat_bots`, `ask_user_question`, the routing tools
   (`bind_channel`, `unbind_channel`, `list_bindings`), the collaboration-space
@@ -21,7 +22,7 @@ never on `@excitedjs/dreamux` core.
   `unsubscribe_document`, `list_subscriptions`), plus their parsing and
   handlers. A name may appear twice with different authority — the Dispatcher's
   `bind_channel` names any Team, a TeamLeader's names none and reaches only its
-  own Team — because the catalog a caller is offered *is* the authorization. The
+  own Team — because the catalog a caller is offered _is_ the authorization. The
   document tools need no second definition for the same reason: none of them
   takes a recipient, so the caller is the recipient and can reach nobody else's
   rows. Core owns only the stdio transport; see Boundaries.
@@ -33,14 +34,14 @@ never on `@excitedjs/dreamux` core.
   never re-routed to the Dispatcher Agent. The same document holds which
   documents' comments reach which recipient, because a Team closing removes
   both in one commit.
-  Validate a manual bind against Core through the injected `invoke` port first:
-  a missing or closed Team is refused with a public failure and mutates no
-  routing state. The routing document holds one invariant of its own — a chat
-  carries either a whole-chat binding or a Collaboration Space, never both —
-  stated on `FeishuRoutingDocument` and refused at both writes that could break
-  it, each inside its own commit, so every caller meets it. Binding a single
-  topic is unaffected, which is what provisioning installs.
-  A dissolved Team's routes are invalidated from the `team.closed` event.
+  Validate a manual bind against Core through the typed `FeishuCoreCommands`
+  client first: a missing or closed Team is refused with a public failure and
+  mutates no routing state. The routing document holds one invariant of its
+  own — a chat carries either a whole-chat binding or a Collaboration Space,
+  never both — stated on `FeishuRoutingDocument` and refused at both writes
+  that could break it, each inside its own commit, so every caller meets it.
+  Binding a single topic is unaffected, which is what provisioning installs.
+  A dissolved Team's routes are invalidated from `team.state` with `status: closed`.
 - Own the Feishu slash-command surface. A human message whose leading text
   (after mentions) starts with a known `/command` token is executed here; it is
   never delivered to any agent runtime, and no agent is asked to render the
@@ -66,7 +67,7 @@ never on `@excitedjs/dreamux` core.
   its note says so — the anchored content itself is `anchor_id` and lark-cli's
   to read, because one anchored part can be larger than every comment on it. A mention inside a comment renders as the
   same `<at user_id="…">` element a chat mention does — one function in
-  `feishu-message-render.ts` writes it for both, so the two cannot drift. A subscribed document runs no access gate — the subscription is
+  `inbound/render.ts` writes it for both, so the two cannot drift. A subscribed document runs no access gate — the subscription is
   already the recipient's own authorization — and a subscriber whose Team is
   proven gone loses its own row and nobody else's. A comment no subscription
   claims splits on the mention: an @-mention from a commenter in the gate's
@@ -113,6 +114,82 @@ never on `@excitedjs/dreamux` core.
   exists, render `status="not_downloaded"` with the escaped key; retain the
   short reason in structured diagnostics, not inline XML.
 
+## Session Resource Ownership
+
+The session composes and closes its actual owners. `FeishuTeamSubmitter` owns
+liveness, optimistic COT anchor claim, Core admission, and anchor retirement
+and release. `FeishuInboundRouter` owns delivery fallback, slash routing, and
+the reply root an accepted topic message teaches its route.
+Provisioning retains its first submission inside the guarded per-target run;
+waiters await that submission before reading the new binding.
+After its bind commits, provisioning passes the committed previous exact and
+effective serving Teams and reply root to `FeishuBindingOperations`. That owner retires a displaced Team's
+presentation before claiming and announcing the new Team, just as manual bind
+does. Same-Team binds do not release the route; failed commits affect no display.
+Removing an exact topic route retires its old presentation, then permits new
+submissions through any committed parent fallback. A standing anchor keeps the
+serving route that produced it; a later bind never rewrites that provenance.
+
+`FeishuCoreCommands` holds the invoker installed after routing loads. COT holds
+the constructed transport client and the session lifecycle. Outbound owns
+where every send lands, so `reply`, `ask_user_question`, extension cards and the
+Channel's own notices share one address rule, and owns tracked binding
+notifications, including asking Feishu for the root of a topic whose route has
+none and dropping the notice only when that cannot say.
+Card actions own question sends and expiry delivery/repaint, observing the
+ask-user registry's local expiry emitter, and admit each ask-user or extension
+click through the access gate (`FeishuAccess.decide`, nothing committed)
+before it changes anything; pairing approval is checked as the App Owner
+instead. Tool handlers use one owner view,
+map their own results, and enter the same MCP lifecycle fence for built-in and
+extension calls. No bot/transport factory override is exposed.
+
+`FeishuBindingOperations.presentCommittedBind` owns the shared post-commit
+presentation for manual and provisioned binds: release a displaced Team before
+claiming the new route, send the bound card and offer its first anchor. A receipt
+at the bound target uses the committed root. A manual alternate receipt keeps
+its own topic root or invoking message fallback and never anchors the bound Team.
+
+`FeishuRouting` constructs its own store from dispatcher/channel identity and
+state directory. The session initializes routing before installing its Core
+invoker, event subscription, or extensions, and closes routing after extension
+teardown so outstanding route commits have drained. Routing owns the same
+owner-only directory check, no-op update policy, and document schema.
+
+`FeishuAccess` privately holds the access store. Gate decisions, pairing writes,
+approvals, pre-gate policy reads, and document-comment trusted-user checks all
+use that same authority; message transport remains inbound-owned.
+
+## Feishu Extensions
+
+The plugin publishes `FeishuApi` as its plugin `api`; other plugins register
+`FeishuExtension`s through it while plugins load (`extension.ts` holds the
+contract, `feishu-extensions.ts` the registry, the per-session lifecycle, and
+the instance api).
+
+- `register` rejects a duplicate extension name, a tool name already offered to
+  the same caller kind (built-in or another extension), and a card action key
+  already claimed (`approve_pairing`, the `ask_user_*` keys, or another
+  extension), naming both sources.
+- Extension tools join the provider's caller-scoped catalog and are served by
+  the same session MCP capability after the built-in lookup misses. Extension
+  card actions are matched on `dreamux_action` before the built-in handler.
+- Per session: `initialize` runs last in the session's `initialize`, `start`
+  after the bot started, and `close` in reverse order during teardown, after
+  in-flight work settled and before the routing store drains. An
+  `initialize`/`start` throw fails the session; a `close` throw is logged.
+  Extension tool calls are refused once the session stopped taking calls and
+  are tracked, so teardown waits for them.
+- Each extension's state root is
+  `<this plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension>/<channel segment>`,
+  where the channel segment is the same slug and digest the routing document
+  filename carries (`channelPathSegment`). The plugin's own state dir comes
+  from `ServerHost.stateDir`, bound to the shared extension registry by
+  `plugin.ts`'s `server()` before any session initializes — not the
+  channel instance's `state_root` that `access.json`/`chat-bots.json`/the
+  routing document sit under, so an extension cannot reach those files even
+  by construction, structurally rather than by naming convention alone.
+
 ## Owner-Only Pairing Approval Card
 
 The Feishu pairing flow is an interactive-card approval flow, not a
@@ -134,8 +211,9 @@ Requirements:
 - Non-Owner clicks must return a toast only:
   `只有 App Owner 才有权限点击批准授权`. They must not mutate `access.json` or
   update the card.
-- Owner clicks approve the hidden token under the access mutex. Approval adds
-  the pending requester to `allow_users` and removes the pending entry.
+- Owner clicks approve the hidden token through the session's held access
+  owner's serialized update queue. Approval adds the pending requester to
+  `allow_users` and removes the pending entry.
 - A successful click must respond through the official card callback ACK shape:
   `{ toast, card: { type: "raw", data: <green success card> } }`. Do not use
   ordinary `im.v1.messages.patch` from the click handler, and do not return a
@@ -159,14 +237,27 @@ Design constraints:
   implicit gate bypass. An Owner pairs only when it reaches an untrusted
   sender-gated pairing path. An exact-human Owner in a trusted chat delivers
   directly under that chat's authority and does not pair.
-- Keep card rendering in `feishu-pairing-card.ts`, gate state transitions in
-  `feishu-gate.ts`, and IO/mutation orchestration in `feishu-session-ops.ts`.
-  Transport code owns only thin Feishu SDK wrappers such as card send and owner
-  lookup. Bot display names come from the transport's runtime bot info
-  (`/open-apis/bot/v3/info` `app_name`); if missing, the channel falls back to
-  the neutral `Dreamux bot` label.
-- Any change to this flow must update `feishu-pairing-card.test.ts`, the
-  transport tests for new SDK wrappers, and
+- Keep card rendering in `cards/pairing.ts`, gate state transitions in
+  `access/gate.ts`, and access-state transitions in `access/index.ts`'s
+  `FeishuAccess`. Inbound asks for policy and gate decisions, sends the card or
+  existing-card reference outside the store queue, and records the successful
+  send through `recordPairingPrompt` or `refreshPairing`. The owner loads lazily
+  and merges against its latest committed state. Turning an approved token
+  into an `allow_users` entry is
+  `FeishuAccess.approvePairingByToken`, beside the loader the class builds its
+  own held `TransactionalStore` with — the one access-state mutation that
+  answers a card click rather than a gate decision. Transport code owns only
+  thin Feishu SDK wrappers such as card send and owner lookup. Bot display
+  names come from the
+  transport's runtime bot info (`/open-apis/bot/v3/info` `app_name`); if
+  missing, the channel falls back to the neutral `Dreamux bot` label.
+- Any change to this flow must preserve the restored behavioral assertions in
+  [pairing-card tests](tests/feishu-pairing-card.test.ts) for card content and
+  approval acknowledgements, [gate tests](tests/feishu-gate.test.ts) and
+  [introduce tests](tests/feishu-introduce.test.ts) for sender access and owner
+  routing, and [pairing commit tests](tests/pairing-commit.test.ts) for
+  send-before-save, expiry and concurrent approval. Update the transport tests
+  for new SDK wrappers and
   `.agents/domains/feishu-pairing-access.md` when the contract changes.
 
 ## Attachment Message Contract
@@ -193,9 +284,14 @@ runtime attachments retain the applicable structured facts.
 - Upstream: `@excitedjs/feishu-transport` low-level Lark operations.
 - Intended downstream: `@excitedjs/dreamux`. Since issue #209 slice 5, Dreamux
   depends on this package at runtime again: `@excitedjs/dreamux` declares it as
-  a dependency, and `builtin:feishu` resolves to it through
-  `BUILTIN_PROVIDER_PACKAGES` on the generic provider loading path. The package
+  a dependency and always loads this package's `createFeishuPlugin` export as the built-in
+  `feishu` plugin. The plugin contributes the channel provider under the name
+  `feishu`, which is what `builtin:feishu` resolves to. The package
   stays `shouldPublish: true` so the published manifest can resolve it — the
   issue #97 failure mode.
 - Dreamux may provide cache roots, limits, and logging hooks, but the channel
   owns how resources are downloaded, cached, represented, and degraded.
+
+The package-root default remains a neutral ChannelProvider factory for existing
+`npm:@excitedjs/feishu-channel` configuration. Named plugin construction shares
+one registry between its contributed provider and extension API.

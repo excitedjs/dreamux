@@ -1,77 +1,27 @@
 /**
- * `@excitedjs/agent-runtime-claude-code` — the built-in Claude Code Agent
- * Runtime provider for Dreamux (alias `builtin:claude-code`). Implements the
- * `@excitedjs/dreamux-types` `AgentRuntimeProvider` contract; never imports
- * `@excitedjs/dreamux` core.
+ * Package-root default: neutral provider factory for configured npm providers.
+ * The named plugin factory contributes the builtin provider and plugin APIs.
+ * This package never imports Dreamux Core.
  */
 
-export {
-  default,
-  createClaudeCodeAgentRuntimeProvider,
-  dispatcherClaudeCodeConfig,
-  CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
-  type ClaudeCodeAgentRuntimeProviderOptions,
-} from './provider.js';
+export { default as createClaudeCodePlugin } from './plugin.js';
 
-// The concrete runtime class is an implementation detail: the package's public
-// surface is the provider factory, and Core only ever holds the neutral
-// `start`/`submit`/`stop` handle `createRuntime` returns. The deps type stays
-// exported because provider options reference it.
-export type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
+export { createClaudeCodeAgentRuntimeProvider } from './provider.js';
 
 export {
-  createDefaultClaudeCodeSession,
-  type ClaudeCodeSession,
-  type ClaudeCodeSessionFactory,
-  type ClaudeCodeSessionSpec,
-  type TurnOutcome,
-  type TurnSubmitOptions,
-} from './supervisor.js';
-
-export {
-  ClaudeCodeStreamRpc,
-  type ClaudeCodeStreamRpcOptions,
-} from './rpc.js';
-
-export {
-  LineBuffer,
-  TurnAggregator,
-  assistantText,
-  parseLine,
-  buildUserMessage,
-  buildRemoteControlEnable,
-  buildCanUseToolAllow,
-  buildControlAck,
-} from './stream.js';
-
-export type {
-  JsonObject,
-  ParsedLine,
-  ResultEnvelope,
-} from './types.js';
-
-export {
-  claudeCodeMcpConfig,
-  stringifyClaudeCodeMcpConfig,
-  type ClaudeCodeMcpConfig,
-} from './mcp-config.js';
-
-export {
-  claudeCodeResidentArgs,
-  claudeCodeSkillAddDirArgs,
-  type ClaudeCodeResidentArgsInput,
-} from './args.js';
-
-export {
-  type DispatcherClaudeCodeConfig,
-  readDispatcherClaudeCodeConfig,
-  defaultDispatcherClaudeCodeConfig,
+  ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
   DEFAULT_CLAUDE_CODE_BIN,
   DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
-  ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
+  defaultDispatcherClaudeCodeConfig,
+  readDispatcherClaudeCodeConfig,
+  type DispatcherClaudeCodeConfig,
 } from './config.js';
 
-export { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
+import type { AgentRuntimeProviderFactory } from '@excitedjs/dreamux-types';
+import type { DispatcherClaudeCodeConfig } from './config.js';
+import { createClaudeCodeAgentRuntimeProvider } from './provider.js';
 
-// The claude-code diagnostic surface now lives in this package (issue #209 cleanup).
-export { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
+const providerFactory: AgentRuntimeProviderFactory<
+  DispatcherClaudeCodeConfig
+> = () => createClaudeCodeAgentRuntimeProvider();
+export default providerFactory;

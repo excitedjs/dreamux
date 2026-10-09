@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
-import { buildCompletionTurnText } from '../src/service/teammate-service/completion-renderer.js';
+import { buildCompletionTurnText } from '../src/service/agent/completion-renderer.js';
 
 const roots: string[] = [];
 
@@ -79,7 +79,10 @@ describe('buildCompletionTurnText', () => {
       'long, so the full result was saved to a file:\n\n';
     expect(text.startsWith(prefix)).toBe(true);
     expect(text.slice(prefix.length)).toMatch(
-      new RegExp(`^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`, 'u'),
+      new RegExp(
+        `^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`,
+        'u',
+      ),
     );
   });
 });
@@ -90,6 +93,7 @@ function teammateCompletion(
 ): PreparedCompletionFact {
   return {
     kind: 'teammate',
+    role: 'teammate',
     source: 'worker',
     status,
     result,

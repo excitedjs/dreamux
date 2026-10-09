@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Keep the package default compatible with configured npm provider references and expose createCodexPlugin separately. Clarify provider-owned activity bounds and restore runtime, activity and lifecycle coverage. Verify the actual neutral provider instance, including operatorStateRoot, separately from its runtime handle and package exports.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

@@ -1,20 +1,22 @@
-import { readFile } from 'node:fs/promises';
-import { homedir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
 
 import {
   BUILT_IN_DEFAULTS,
-  globalConfigDir,
   globalConfigFile,
-  loadConfig,
   type DreamuxConfig,
 } from '../config/config.js';
+import { loadConfig } from '../config/load.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
-import {
-  createBuiltinProviderRegistry,
-  type ProviderRegistry,
-} from '../registry/index.js';
+import { ProviderRegistry } from '../registry/index.js';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
+import { createLogger } from '../platform/logger.js';
+import { type LoadedPlugin, PluginLoadError } from '../plugin/loader.js';
+import {
+  pluginDoctorChecks,
+  pluginLoadFailureCheck,
+} from './doctor-plugins.js';
+import type { DoctorCheck } from './doctor-types.js';
 import {
   providerBinChecksForConfig,
   runDispatcherProviderDiagnostics,
@@ -26,66 +28,30 @@ import {
   dispatcherCronJobsPath,
   dispatcherTeamCronJobsPath,
   dispatcherTeamDir,
-  setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
 import { diagnoseDispatcherWorkspace } from '../service/dispatcher-workspace.js';
-import {
-  detectLegacyDispatcherState,
-  legacyDispatcherStateMessage,
-} from '../service/legacy-state.js';
 import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
-import { TeamStore } from '../service/team-collection/store.js';
-import { ExecaCommandRunner } from '../onboard/commands.js';
+import { readTeamRecords } from '../service/team/store.js';
 import {
   defaultServiceNodeProbe,
   detectServiceNodeVersionManager,
   MIN_SERVICE_NODE_VERSION,
   nodeVersionSatisfies,
   type ServiceNodeProbe,
-  serviceUnitPath,
-  SYSTEMD_UNIT,
-} from '../onboard/service.js';
-import type { CommandRunner } from '../onboard/types.js';
-import {
-  launchdTarget,
-  parseLaunchdDetail,
-  parseLaunchdPid,
-  parseLaunchdPlist,
-  parsePositiveInt,
-  parseSystemdProperties,
-  parseSystemdUnit,
-  systemdDetail,
-} from './service-status-parse.js';
+} from '../daemon/environment.js';
+import { createServiceHost } from '../daemon/host.js';
+import { getServiceStatus, type ServiceStatus } from '../daemon/status.js';
+import type { CommandRunner } from '../platform/command-runner.js';
 
 export interface DoctorOptions {
   env?: NodeJS.ProcessEnv;
   runner?: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;
-  uid?: number;
+  uid?: number | undefined;
   nodeProbe?: ServiceNodeProbe;
-    userName?: string;
-}
-
-export interface ServiceStatus {
-  platform: 'launchd' | 'systemd';
-  unitPath: string;
-  installed: boolean;
-  loaded: boolean;
-  running: boolean;
-  enabled: boolean;
-  pid: number | null;
-  detail: string | null;
-  environment: Record<string, string> | null;
-  execStart: string[] | null;
-}
-
-export interface DoctorCheck {
-  name: string;
-  ok: boolean;
-  detail: string;
-  severity?: 'warn';
+  userName?: string;
 }
 
 export interface DispatcherDoctorReport {
@@ -107,14 +73,13 @@ type ProviderBinaryCheck = ProviderBinCheck;
 export async function runDreamuxDoctor(
   options: DoctorOptions = {},
 ): Promise<DreamuxDoctorResult> {
-  const runner = options.runner ?? new ExecaCommandRunner();
+  const host = createServiceHost(options);
   const checks: DoctorCheck[] = [];
-  const configDir = globalConfigDir();
-  const { config, configFile, catalogs } = await readConfigForDoctor(
-    configDir,
-    checks,
-  );
-  setRuntimeConfig(config);
+  const { config, configFile, catalogs, plugins } =
+    await readConfigForDoctor(checks);
+  // Before the channel diagnostics below: api publication is where extensions
+  // register into their channel provider.
+  checks.push(...pluginDoctorChecks(plugins, createLogger({ name: 'doctor' })));
 
   checks.push({
     name: 'state directory',
@@ -122,10 +87,15 @@ export async function runDreamuxDoctor(
     detail: stateRoot(),
   });
   const doctorEnv = options.env ?? process.env;
-  for (const check of providerBinaryChecks(catalogs, config, doctorEnv, false)) {
+  for (const check of providerBinaryChecks(
+    catalogs,
+    config,
+    doctorEnv,
+    false,
+  )) {
     checks.push({
       name: check.name,
-      ok: await runner.check(check.bin, check.args, { env: doctorEnv }),
+      ok: await host.runner.check(check.bin, check.args, { env: doctorEnv }),
       detail: check.bin,
     });
   }
@@ -137,40 +107,32 @@ export async function runDreamuxDoctor(
         detail: 'disabled; workspace cwd contract not enforced',
       });
     } else {
-      const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
+      const diagnosis = await diagnoseDispatcherWorkspace(
+        config,
+        dispatcher.id,
+      );
       checks.push({
         name: `dispatcher ${dispatcher.id} workspace`,
         ok: diagnosis.ok,
         detail: diagnosis.detail,
       });
     }
-    const legacy = await detectLegacyDispatcherState(dispatcher.id);
-    checks.push({
-      name: `dispatcher ${dispatcher.id} legacy state`,
-      ok: legacy.length === 0,
-      detail:
-        legacy.length === 0
-          ? 'no removed state paths found'
-          : legacyDispatcherStateMessage(dispatcher.id, legacy),
-    });
     const cronLegacy = await detectLegacyCronJobStore(
       dispatcherCronJobsPath(dispatcher.id),
-      dispatcher.id,
     );
     checks.push({
       name: `dispatcher ${dispatcher.id} cron jobs`,
       ok: cronLegacy === null,
       detail: cronLegacy ?? 'cron job store is current (v1) or absent',
     });
-    const teams = new TeamStore({
+    const teams = await readTeamRecords({
       root: dispatcherTeamDir(dispatcher.id),
       dispatcherId: dispatcher.id,
     });
-    for (const team of await teams.list()) {
+    for (const team of teams) {
       if (team.status === 'closed') continue;
       const teamCronLegacy = await detectLegacyCronJobStore(
         dispatcherTeamCronJobsPath(dispatcher.id, team.team_id),
-        dispatcher.id,
       );
       checks.push({
         name: `dispatcher ${dispatcher.id} team ${team.team_id} cron jobs`,
@@ -180,12 +142,7 @@ export async function runDreamuxDoctor(
     }
   }
 
-  const service = await getServiceStatus({
-    runner,
-    platform: options.platform,
-    homeDir: options.homeDir,
-    uid: options.uid,
-  });
+  const service = await getServiceStatus(host);
   checks.push({
     name: 'user service',
     ok: true,
@@ -195,13 +152,16 @@ export async function runDreamuxDoctor(
   });
   if (service.platform === 'systemd' && service.installed) {
     checks.push(
-      await systemdLingerCheck(runner, options.userName ?? userInfo().username),
+      await systemdLingerCheck(
+        host.runner,
+        options.userName ?? userInfo().username,
+      ),
     );
   }
   await addManagedServiceLaunchChecks(
     checks,
     service,
-    runner,
+    host.runner,
     options.nodeProbe ?? defaultServiceNodeProbe,
     catalogs,
     config,
@@ -210,7 +170,7 @@ export async function runDreamuxDoctor(
   const dispatchers = await readDispatchers(
     catalogs,
     config,
-    runner,
+    host.runner,
     options.env ?? process.env,
     service,
   );
@@ -254,16 +214,14 @@ export function printDoctorResult(result: DreamuxDoctorResult): void {
   }
 }
 
-async function readConfigForDoctor(
-  configDir: string,
-  checks: DoctorCheck[],
-): Promise<{
+async function readConfigForDoctor(checks: DoctorCheck[]): Promise<{
   config: DreamuxConfig;
   configFile: string;
   catalogs: ProviderDiagnosticCatalogs;
+  plugins: LoadedPlugin[];
 }> {
   try {
-    const loaded = await loadConfig({ configDir });
+    const loaded = await loadConfig();
     checks.push({
       name: 'config',
       ok: true,
@@ -273,18 +231,27 @@ async function readConfigForDoctor(
       config: loaded.config,
       configFile: loaded.configFile,
       catalogs: catalogsFromRegistry(loaded.providerRegistry),
+      plugins: loaded.plugins,
     };
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    checks.push({
-      name: 'config',
-      ok: false,
-      detail,
-    });
+    if (err instanceof PluginLoadError) {
+      checks.push(
+        {
+          name: 'config',
+          ok: false,
+          detail: `not loaded: plugin "${err.plugin}" failed`,
+        },
+        pluginLoadFailureCheck(err),
+      );
+    } else {
+      const detail = err instanceof Error ? err.message : String(err);
+      checks.push({ name: 'config', ok: false, detail });
+    }
     return {
       config: BUILT_IN_DEFAULTS,
-      configFile: globalConfigFile({ configDir }),
-      catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
+      configFile: globalConfigFile(),
+      catalogs: catalogsFromRegistry(new ProviderRegistry()),
+      plugins: [],
     };
   }
 }
@@ -308,6 +275,7 @@ async function readDispatchers(
   return Promise.all(
     config.dispatchers.map(async (dispatcher) => {
       const foreground = await runDispatcherProviderDiagnostics({
+        config,
         dispatcher,
         catalogs,
         runner,
@@ -316,6 +284,7 @@ async function readDispatchers(
       });
       const managedService = service.installed
         ? await runDispatcherProviderDiagnostics({
+            config,
             dispatcher,
             catalogs,
             runner,
@@ -329,92 +298,6 @@ async function readDispatchers(
       };
     }),
   );
-}
-
-async function getServiceStatus(options: DoctorOptions): Promise<ServiceStatus> {
-  const runner = options.runner ?? new ExecaCommandRunner();
-  const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
-  if (unit.platform === 'launchd') {
-    return launchdStatus(unit.path, runner, options.uid);
-  }
-  return systemdStatus(unit.path, runner);
-}
-
-async function launchdStatus(
-  unitPath: string,
-  runner: CommandRunner,
-  uid?: number,
-): Promise<ServiceStatus> {
-  const installed = await pathExists(unitPath);
-  const target = launchdTarget(uid);
-  let raw = '';
-  let loaded = false;
-  try {
-    raw = await runner.capture('launchctl', ['print', target]);
-    loaded = true;
-  } catch {
-    loaded = false;
-  }
-  const pid = parseLaunchdPid(raw);
-  const unitFile = installed
-    ? parseLaunchdPlist(await readFile(unitPath, 'utf8'))
-    : { environment: null, execStart: null };
-  return {
-    platform: 'launchd',
-    unitPath,
-    installed,
-    enabled: installed,
-    loaded,
-    running: pid !== null || /\bstate = running\b/.test(raw),
-    pid,
-    detail: parseLaunchdDetail(raw),
-    environment: unitFile.environment,
-    execStart: unitFile.execStart,
-  };
-}
-
-async function systemdStatus(
-  unitPath: string,
-  runner: CommandRunner,
-): Promise<ServiceStatus> {
-  const enabled = await runner.check('systemctl', [
-    '--user',
-    'is-enabled',
-    SYSTEMD_UNIT,
-  ]);
-  const active = await runner.check('systemctl', [
-    '--user',
-    'is-active',
-    SYSTEMD_UNIT,
-  ]);
-  let raw = '';
-  try {
-    raw = await runner.capture('systemctl', [
-      '--user',
-      'show',
-      SYSTEMD_UNIT,
-      '--property=LoadState,ActiveState,SubState,MainPID,Result',
-    ]);
-  } catch {
-    raw = '';
-  }
-  const installed = await pathExists(unitPath);
-  const unitFile = installed
-    ? parseSystemdUnit(await readFile(unitPath, 'utf8'))
-    : { environment: null, execStart: null };
-  const props = parseSystemdProperties(raw);
-  return {
-    platform: 'systemd',
-    unitPath,
-    installed,
-    enabled,
-    loaded: props['LoadState'] === 'loaded',
-    running: active || props['ActiveState'] === 'active',
-    pid: parsePositiveInt(props['MainPID']),
-    detail: systemdDetail(props),
-    environment: unitFile.environment,
-    execStart: unitFile.execStart,
-  };
 }
 
 async function systemdLingerCheck(
@@ -497,7 +380,12 @@ async function addManagedServiceLaunchChecks(
       'ExecStart is missing in the installed service; rerun dreamux onboard',
     ),
   );
-  for (const check of providerBinaryChecks(catalogs, config, serviceEnv, true)) {
+  for (const check of providerBinaryChecks(
+    catalogs,
+    config,
+    serviceEnv,
+    true,
+  )) {
     checks.push(
       await checkHelpLaunch(
         check.name,
@@ -564,7 +452,9 @@ async function checkHelpLaunch(
   return {
     name,
     ok,
-    detail: ok ? command : `${command} failed under installed service environment; rerun dreamux onboard`,
+    detail: ok
+      ? command
+      : `${command} failed under installed service environment; rerun dreamux onboard`,
   };
 }
 

@@ -35,9 +35,9 @@ describe('Feishu provider — state_root is required', () => {
   it('refuses to create a session when the host supplied no state_root', async () => {
     const provider = createFeishuChannelProvider();
 
-    await expect(
-      provider.createSession(createContext({})),
-    ).rejects.toThrow(/requires an explicit state_root/);
+    await expect(provider.createSession(createContext({}))).rejects.toThrow(
+      /requires an explicit state_root/,
+    );
   });
 
   it('refuses an empty state_root rather than treating it as the current directory', async () => {

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 1: wired the shared package-wide re-export ban (only src/index.ts may re-export another module) and a warn-only filename-convention lint rule. Lint config and inline eslint-disable comments only; no runtime or published-API change.",
+      "type": "none",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

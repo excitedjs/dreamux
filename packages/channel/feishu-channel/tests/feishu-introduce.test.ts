@@ -13,10 +13,10 @@ import { join } from 'node:path';
 
 import {
   defaultDispatcherAccessState,
-  dreamuxFeishuGate,
-  generatePairingToken,
   type DispatcherAccessState,
-} from '../src/feishu-gate.js';
+} from '../src/access/state.js';
+import { dreamuxFeishuGate, generatePairingToken } from '../src/access/gate.js';
+import { TransactionalStore } from '@excitedjs/dreamux-utils';
 import {
   canRunIntroduce,
   detectIntroduce,
@@ -25,6 +25,8 @@ import {
   introducedPeers,
 } from '../src/introduce.js';
 import {
+  CHAT_BOTS_FILENAME,
+  type ChatBotsState,
   clearBaselineIfCurrent,
   listChatBots,
   loadChatBots,
@@ -62,7 +64,11 @@ describe('canRunIntroduce — allowlist policy: sender-scoped, not group-scoped'
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'user-a',
+      }),
     ).toBe(true);
   });
 
@@ -72,7 +78,11 @@ describe('canRunIntroduce — allowlist policy: sender-scoped, not group-scoped'
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-x' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'user-x',
+      }),
     ).toBe(false);
   });
 
@@ -82,7 +92,11 @@ describe('canRunIntroduce — allowlist policy: sender-scoped, not group-scoped'
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'chat-other',
+        senderId: 'user-a',
+      }),
     ).toBe(false);
   });
 
@@ -92,7 +106,11 @@ describe('canRunIntroduce — allowlist policy: sender-scoped, not group-scoped'
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'anyone' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'anyone',
+      }),
     ).toBe(false);
   });
 
@@ -102,7 +120,11 @@ describe('canRunIntroduce — allowlist policy: sender-scoped, not group-scoped'
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' }),
+      canRunIntroduce(access, {
+        chatType: 'p2p',
+        chatId: 'chat-a',
+        senderId: 'user-a',
+      }),
     ).toBe(false);
   });
 });
@@ -118,7 +140,11 @@ describe('canRunIntroduce — follow-user policy: allow_chats is ignored', () =>
       group: { policy: 'follow-user', allow_chats: [] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'brand-new-chat', senderId: 'user-a' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'brand-new-chat',
+        senderId: 'user-a',
+      }),
     ).toBe(true);
   });
 
@@ -128,7 +154,11 @@ describe('canRunIntroduce — follow-user policy: allow_chats is ignored', () =>
       group: { policy: 'follow-user', allow_chats: ['some-other-chat'] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'brand-new-chat', senderId: 'user-a' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'brand-new-chat',
+        senderId: 'user-a',
+      }),
     ).toBe(true);
   });
 
@@ -138,7 +168,11 @@ describe('canRunIntroduce — follow-user policy: allow_chats is ignored', () =>
       group: { policy: 'follow-user', allow_chats: [] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'brand-new-chat', senderId: 'stranger' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'brand-new-chat',
+        senderId: 'stranger',
+      }),
     ).toBe(false);
   });
 });
@@ -150,7 +184,11 @@ describe('canRunIntroduce — block policy never authorizes', () => {
       group: { policy: 'block', allow_chats: ['chat-a'] },
     });
     expect(
-      canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
+      canRunIntroduce(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'user-a',
+      }),
     ).toBe(false);
   });
 });
@@ -165,7 +203,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'user-a',
+      }),
     ).toBeNull();
   });
 
@@ -189,7 +231,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' }),
+      introduceDenyReason(access, {
+        chatType: 'p2p',
+        chatId: 'chat-a',
+        senderId: 'user-a',
+      }),
     ).toBe('non_group');
   });
 
@@ -199,7 +245,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: '' }),
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: '',
+      }),
     ).toBe('empty_sender_id');
   });
 
@@ -209,7 +259,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'block', allow_chats: ['chat-a'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'user-a',
+      }),
     ).toBe('group_blocked');
   });
 
@@ -219,7 +273,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' }),
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-other',
+        senderId: 'user-a',
+      }),
     ).toBe('chat_not_allowlisted');
   });
 
@@ -229,7 +287,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'follow-user', allow_chats: ['some-other-chat'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' }),
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-other',
+        senderId: 'user-a',
+      }),
     ).toBeNull();
   });
 
@@ -239,7 +301,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'anyone' }),
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'anyone',
+      }),
     ).toBe('sender_not_followed');
   });
 
@@ -249,7 +315,11 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       group: { policy: 'allowlist', allow_chats: ['chat-a'] },
     });
     expect(
-      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-x' }),
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'user-x',
+      }),
     ).toBe('sender_not_followed');
   });
 
@@ -286,9 +356,18 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
 
   it('stays consistent with canRunIntroduce across every branch', () => {
     const cases: DispatcherAccessState[] = [
-      state({ allow_users: ['user-a'], group: { policy: 'allowlist', allow_chats: ['chat-a'] } }),
-      state({ allow_users: ['user-a'], group: { policy: 'follow-user', allow_chats: [] } }),
-      state({ allow_users: ['user-a'], group: { policy: 'block', allow_chats: ['chat-a'] } }),
+      state({
+        allow_users: ['user-a'],
+        group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+      }),
+      state({
+        allow_users: ['user-a'],
+        group: { policy: 'follow-user', allow_chats: [] },
+      }),
+      state({
+        allow_users: ['user-a'],
+        group: { policy: 'block', allow_chats: ['chat-a'] },
+      }),
     ];
     const inputs = [
       { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' },
@@ -299,7 +378,9 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
     ];
     for (const access of cases) {
       for (const input of inputs) {
-        expect(canRunIntroduce(access, input)).toBe(introduceDenyReason(access, input) === null);
+        expect(canRunIntroduce(access, input)).toBe(
+          introduceDenyReason(access, input) === null,
+        );
       }
     }
   });
@@ -349,18 +430,21 @@ describe('gate vs introduce table — ordinary trusted-chat delivery intentional
             (chatInList || (policy === 'follow-user' && senderInList));
           const expectedIntroduceAuthorization =
             senderInList &&
-            (policy === 'follow-user' || (policy === 'allowlist' && chatInList));
+            (policy === 'follow-user' ||
+              (policy === 'allowlist' && chatInList));
 
           expect(gateDelivers).toBe(expectedGateDelivery);
           expect(introAuthorized).toBe(expectedIntroduceAuthorization);
           if (policy !== 'block' && chatInList && !senderInList) {
             expect(gateDelivers).toBe(true);
             expect(introAuthorized).toBe(false);
-            expect(introduceDenyReason(access, {
-              chatType: 'group',
-              chatId: 'chat-a',
-              senderId: 'user-a',
-            })).toBe('sender_not_followed');
+            expect(
+              introduceDenyReason(access, {
+                chatType: 'group',
+                chatId: 'chat-a',
+                senderId: 'user-a',
+              }),
+            ).toBe('sender_not_followed');
           }
         });
       }
@@ -399,8 +483,22 @@ describe('introduce rejects senders whose only trust is a pending pairing entry'
 
   for (const policy of ['block', 'follow-user', 'allowlist'] as const) {
     for (const scope of [
-      { label: 'DM', args: { chatType: 'p2p' as const, chatId: 'chat-p', senderId: 'user-p' } },
-      { label: 'group', args: { chatType: 'group' as const, chatId: 'chat-p', senderId: 'user-p' } },
+      {
+        label: 'DM',
+        args: {
+          chatType: 'p2p' as const,
+          chatId: 'chat-p',
+          senderId: 'user-p',
+        },
+      },
+      {
+        label: 'group',
+        args: {
+          chatType: 'group' as const,
+          chatId: 'chat-p',
+          senderId: 'user-p',
+        },
+      },
     ]) {
       it(`policy=${policy} scope=${scope.label} — pending-only sender is never authorized`, () => {
         const s = pendingOnlyState(policy);
@@ -420,9 +518,15 @@ describe('detectIntroduce — no @-mention required', () => {
   });
 
   it('matches /introduce after stripping a leading mention token', () => {
-    const mentions: Mention[] = [{ key: '@_user_1', id: { open_id: 'bot' }, name: 'Bot' }];
+    const mentions: Mention[] = [
+      { key: '@_user_1', id: { open_id: 'bot' }, name: 'Bot' },
+    ];
     expect(
-      detectIntroduce('text', textContent('@_user_1 /introduce @_user_2'), mentions),
+      detectIntroduce(
+        'text',
+        textContent('@_user_1 /introduce @_user_2'),
+        mentions,
+      ),
     ).toBe(true);
   });
 
@@ -439,7 +543,9 @@ describe('detectIntroduce — no @-mention required', () => {
   });
 
   it('does not match /introduce in the middle of a message', () => {
-    expect(detectIntroduce('text', textContent('hello /introduce'), [])).toBe(false);
+    expect(detectIntroduce('text', textContent('hello /introduce'), [])).toBe(
+      false,
+    );
   });
 
   it('does not match a longer word like /introducer', () => {
@@ -481,7 +587,11 @@ describe('introducedPeers', () => {
 
   it('keeps only the open_id when a mention carries both open_id and union_id', () => {
     const mentions: Mention[] = [
-      { key: '@_user_1', id: { open_id: 'peer-a', union_id: 'peer-union' }, name: 'Peer A' },
+      {
+        key: '@_user_1',
+        id: { open_id: 'peer-a', union_id: 'peer-union' },
+        name: 'Peer A',
+      },
     ];
     // No `unionId` field on the result — union_id never enters trust.
     expect(introducedPeers(mentions, 'self-bot')).toEqual([
@@ -525,32 +635,52 @@ describe('gate trust — only introduced bots may speak in a group', () => {
   }
 
   it('drops a bot sender that has not been introduced', () => {
-    const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
+    const access = state({
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
-      dreamuxFeishuGate(access, baseInbound({ trusted_bot: false, bot_mentioned: true })).action,
+      dreamuxFeishuGate(
+        access,
+        baseInbound({ trusted_bot: false, bot_mentioned: true }),
+      ).action,
     ).toMatchObject({ action: 'drop', reason: 'bot_untrusted' });
   });
 
   it('delivers a trusted bot that @-mentions us', () => {
-    const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
+    const access = state({
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
-      dreamuxFeishuGate(access, baseInbound({ trusted_bot: true, bot_mentioned: true })).action,
+      dreamuxFeishuGate(
+        access,
+        baseInbound({ trusted_bot: true, bot_mentioned: true }),
+      ).action,
     ).toMatchObject({ action: 'deliver' });
   });
 
   it('drops a trusted bot that does NOT @-mention us (#102)', () => {
-    const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
+    const access = state({
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
-      dreamuxFeishuGate(access, baseInbound({ trusted_bot: true, bot_mentioned: false })).action,
+      dreamuxFeishuGate(
+        access,
+        baseInbound({ trusted_bot: true, bot_mentioned: false }),
+      ).action,
     ).toMatchObject({ action: 'drop', reason: 'group_bot_not_mentioned' });
   });
 });
 
 describe('chat-bots store — awareness vs trust are separate', () => {
   let stateDir: string;
+  let store: TransactionalStore<ChatBotsState>;
 
   beforeEach(() => {
     stateDir = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-'));
+    store = new TransactionalStore({
+      path: join(stateDir, CHAT_BOTS_FILENAME),
+      load: () => loadChatBots(stateDir),
+    });
   });
 
   afterEach(() => {
@@ -558,36 +688,46 @@ describe('chat-bots store — awareness vs trust are separate', () => {
   });
 
   it('observing a bot records awareness but never trust', async () => {
-    await observeKnownBot(stateDir, 'chat-a', { openId: 'peer-a', name: 'Peer A' });
+    await observeKnownBot(store, 'chat-a', {
+      openId: 'peer-a',
+      name: 'Peer A',
+    });
     const entry = (await loadChatBots(stateDir)).chats['chat-a'];
     expect(entry?.known).toEqual(['peer-a']);
     expect(entry?.trusted ?? []).toEqual([]);
-    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-a')).toBe(false);
+    expect((await trustedBotIds(store, 'chat-a')).has('peer-a')).toBe(false);
   });
 
   it('introducing a bot records trust (and awareness)', async () => {
-    const added = await trustIntroducedBots(stateDir, 'chat-a', [
+    const added = await trustIntroducedBots(store, 'chat-a', [
       { openId: 'peer-a', name: 'Peer A' },
     ]);
     expect(added).toEqual(['peer-a']);
     const entry = (await loadChatBots(stateDir)).chats['chat-a'];
     expect(entry?.trusted).toEqual(['peer-a']);
     expect(entry?.known).toEqual(['peer-a']);
-    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-a')).toBe(true);
+    expect((await trustedBotIds(store, 'chat-a')).has('peer-a')).toBe(true);
   });
 
   it('recordBotAdded is idempotent by event id and flags a baseline', async () => {
-    expect(await recordBotAdded(stateDir, 'chat-a', 'evt-1')).toBe(true);
-    expect(await recordBotAdded(stateDir, 'chat-a', 'evt-1')).toBe(false);
-    expect((await loadChatBots(stateDir)).chats['chat-a']?.needsBaseline).toBe(true);
+    expect(await recordBotAdded(store, 'chat-a', 'evt-1')).toBe(true);
+    expect(await recordBotAdded(store, 'chat-a', 'evt-1')).toBe(false);
+    expect((await loadChatBots(stateDir)).chats['chat-a']?.needsBaseline).toBe(
+      true,
+    );
   });
 });
 
 describe('chat-bots store — one-shot pending context (issue #69)', () => {
   let stateDir: string;
+  let store: TransactionalStore<ChatBotsState>;
 
   beforeEach(() => {
     stateDir = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-pending-'));
+    store = new TransactionalStore({
+      path: join(stateDir, CHAT_BOTS_FILENAME),
+      load: () => loadChatBots(stateDir),
+    });
   });
 
   afterEach(() => {
@@ -595,56 +735,70 @@ describe('chat-bots store — one-shot pending context (issue #69)', () => {
   });
 
   it('arms a generation-stamped pending baseline carrying the trusted bots', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    const pending = await pendingBaseline(stateDir, 'chat-a');
+    await trustIntroducedBots(store, 'chat-a', [
+      { openId: 'peer-a', name: 'Peer A' },
+    ]);
+    const pending = await pendingBaseline(store, 'chat-a');
     expect(pending.needsBaseline).toBe(true);
     expect(pending.generation).toBe(1);
     expect(pending.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
   });
 
   it('only trusted (not passively known) bots ride the pending baseline', async () => {
-    await observeKnownBot(stateDir, 'chat-a', { openId: 'known-only', name: 'Known' });
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    expect((await pendingBaseline(stateDir, 'chat-a')).trusted).toEqual([
+    await observeKnownBot(store, 'chat-a', {
+      openId: 'known-only',
+      name: 'Known',
+    });
+    await trustIntroducedBots(store, 'chat-a', [
+      { openId: 'peer-a', name: 'Peer A' },
+    ]);
+    expect((await pendingBaseline(store, 'chat-a')).trusted).toEqual([
       { openId: 'peer-a', name: 'Peer A' },
     ]);
   });
 
   it('re-introducing an already-trusted bot does not re-arm the one-shot', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
+    await trustIntroducedBots(store, 'chat-a', [{ openId: 'peer-a' }]);
     await clearBaselineIfCurrent(
-      stateDir,
+      store,
       'chat-a',
-      (await pendingBaseline(stateDir, 'chat-a')).generation,
+      (await pendingBaseline(store, 'chat-a')).generation,
     );
-    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(false);
-    const added = await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
+    expect((await pendingBaseline(store, 'chat-a')).needsBaseline).toBe(false);
+    const added = await trustIntroducedBots(store, 'chat-a', [
+      { openId: 'peer-a' },
+    ]);
     expect(added).toEqual([]);
-    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(false);
+    expect((await pendingBaseline(store, 'chat-a')).needsBaseline).toBe(false);
   });
 
   it('clears the flag when the generation still matches the snapshot', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
-    const snapshot = await pendingBaseline(stateDir, 'chat-a');
-    await clearBaselineIfCurrent(stateDir, 'chat-a', snapshot.generation);
-    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(false);
+    await trustIntroducedBots(store, 'chat-a', [{ openId: 'peer-a' }]);
+    const snapshot = await pendingBaseline(store, 'chat-a');
+    await clearBaselineIfCurrent(store, 'chat-a', snapshot.generation);
+    expect((await pendingBaseline(store, 'chat-a')).needsBaseline).toBe(false);
   });
 
   it('does NOT clear when a newer event bumped the generation mid-enqueue', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
-    const stale = await pendingBaseline(stateDir, 'chat-a'); // generation 1
+    await trustIntroducedBots(store, 'chat-a', [{ openId: 'peer-a' }]);
+    const stale = await pendingBaseline(store, 'chat-a'); // generation 1
     // A second /introduce arrives before the stale clear runs.
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-b' }]); // generation 2
-    await clearBaselineIfCurrent(stateDir, 'chat-a', stale.generation);
-    const after = await pendingBaseline(stateDir, 'chat-a');
+    await trustIntroducedBots(store, 'chat-a', [{ openId: 'peer-b' }]); // generation 2
+    await clearBaselineIfCurrent(store, 'chat-a', stale.generation);
+    const after = await pendingBaseline(store, 'chat-a');
     expect(after.needsBaseline).toBe(true);
     expect(after.trusted).toEqual([{ openId: 'peer-a' }, { openId: 'peer-b' }]);
   });
 
   it('listChatBots returns known and trusted separately, with names', async () => {
-    await observeKnownBot(stateDir, 'chat-a', { openId: 'known-a', name: 'Known A' });
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    const listing = await listChatBots(stateDir, 'chat-a');
+    await observeKnownBot(store, 'chat-a', {
+      openId: 'known-a',
+      name: 'Known A',
+    });
+    await trustIntroducedBots(store, 'chat-a', [
+      { openId: 'peer-a', name: 'Peer A' },
+    ]);
+    const listing = await listChatBots(store, 'chat-a');
     expect(listing.known).toEqual([
       { openId: 'known-a', name: 'Known A' },
       { openId: 'peer-a', name: 'Peer A' },
@@ -655,16 +809,21 @@ describe('chat-bots store — one-shot pending context (issue #69)', () => {
   // #102: a peer introduced without a name still trusts its open_id; the
   // listing omits `name` entirely rather than echoing the raw open_id as a name.
   it('trusts an open_id with no name and omits name in the listing', async () => {
-    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-noname' }]);
-    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-noname')).toBe(true);
-    const listing = await listChatBots(stateDir, 'chat-a');
+    await trustIntroducedBots(store, 'chat-a', [{ openId: 'peer-noname' }]);
+    expect((await trustedBotIds(store, 'chat-a')).has('peer-noname')).toBe(
+      true,
+    );
+    const listing = await listChatBots(store, 'chat-a');
     expect(listing.trusted).toEqual([{ openId: 'peer-noname' }]);
     expect(listing.trusted[0]).not.toHaveProperty('name');
   });
 
   it('returns empty listings/baseline for an unknown chat', async () => {
-    expect(await listChatBots(stateDir, 'nope')).toEqual({ known: [], trusted: [] });
-    expect(await pendingBaseline(stateDir, 'nope')).toEqual({
+    expect(await listChatBots(store, 'nope')).toEqual({
+      known: [],
+      trusted: [],
+    });
+    expect(await pendingBaseline(store, 'nope')).toEqual({
       needsBaseline: false,
       generation: 0,
       trusted: [],

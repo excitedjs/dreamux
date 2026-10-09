@@ -6,56 +6,16 @@
  * yargs CommandModule from `commands/`.
  */
 
-import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
-import {
-  createDreamuxCommands,
-  type CliDeps,
-  type ExecEntry,
-} from './commands/index.js';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SERVER_ENTRY = join(HERE, 'server.js');
-const SERVER_CTL_ENTRY = join(HERE, 'server-ctl.js');
-
-const execEntry: ExecEntry = async function execEntry(
-  entry: string,
-  argv: string[],
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<never> {
-  const child = spawn(process.execPath, [entry, ...argv], {
-    env,
-    stdio: 'inherit',
-  });
-  await new Promise<void>((_resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code, signal) => {
-      if (signal !== null) {
-        process.kill(process.pid, signal);
-        return;
-      }
-      process.exit(code ?? 0);
-    });
-  });
-  process.exit(0);
-};
+import { createDreamuxCommands } from './commands/index.js';
 
 async function main(): Promise<void> {
-  const deps: CliDeps = {
-    serverEntry: SERVER_ENTRY,
-    serverCtlEntry: SERVER_CTL_ENTRY,
-    execEntry,
-  };
-
   await yargs(hideBin(process.argv))
     .scriptName('dreamux')
     .usage('$0 <command> [options]')
-    .command(createDreamuxCommands(deps))
+    .command(createDreamuxCommands())
     .demandCommand(1, 'Choose a command')
     .strict()
     .help()

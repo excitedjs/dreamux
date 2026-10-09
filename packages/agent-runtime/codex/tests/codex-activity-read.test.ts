@@ -1,3 +1,14 @@
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+const silentLog: DreamuxLogger = {
+  error() {},
+  warn() {},
+  info() {},
+  debug() {},
+  trace() {},
+  child() {
+    return silentLog;
+  },
+};
 /**
  * Behavioral coverage for `readRecentActivity` (the `builtin:codex` provider's
  * mandatory recent-Activity-Records read), against REAL rollout files under a
@@ -44,11 +55,13 @@ async function makeSession(
   return session;
 }
 
-function readContext(session: FixtureSession): AgentActivityReadContext<ReturnType<typeof defaultDispatcherCodexConfig>> {
+function readContext(
+  session: FixtureSession,
+): AgentActivityReadContext<ReturnType<typeof defaultDispatcherCodexConfig>> {
   return {
-    config: defaultDispatcherCodexConfig(),
+    config: { ...defaultDispatcherCodexConfig(), extra_env: session.env },
     cwd: '/fake/cwd',
-    injectEnv: session.env,
+    logger: silentLog,
   };
 }
 
@@ -78,16 +91,22 @@ describe('readRecentActivity: actively growing session', () => {
       { sessionId: session.sessionId },
       readContext(session),
     );
-    expect(firstPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)))
-      .toEqual(['before growth']);
+    expect(
+      firstPage.records.map((r) =>
+        r.kind === 'assistant_message' ? r.text : null,
+      ),
+    ).toEqual(['before growth']);
 
     await appendAssistantMessage(session, 'after growth');
     const secondPage = await provider.readRecentActivity(
       { sessionId: session.sessionId },
       readContext(session),
     );
-    expect(secondPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)))
-      .toEqual(['before growth', 'after growth']);
+    expect(
+      secondPage.records.map((r) =>
+        r.kind === 'assistant_message' ? r.text : null,
+      ),
+    ).toEqual(['before growth', 'after growth']);
   });
 
   it('reads identically once nothing is appending anymore (the "runtime closed" case)', async () => {
@@ -102,7 +121,9 @@ describe('readRecentActivity: actively growing session', () => {
       { sessionId: session.sessionId },
       readContext(session),
     );
-    expect(page.records).toEqual([{ kind: 'assistant_message', text: 'only message' }]);
+    expect(page.records).toEqual([
+      { kind: 'assistant_message', text: 'only message' },
+    ]);
   });
 
   it('reports truncated: true once the tail segment alone exhausts the native-record scan budget', async () => {
@@ -120,7 +141,11 @@ describe('readRecentActivity: actively growing session', () => {
   it('returns records in chronological order regardless of kind mix', async () => {
     const session = await makeSession();
     await appendAssistantMessage(session, 'thinking out loud');
-    await appendToolCall(session, { callId: 'c1', name: 'search_files', output: 'ok' });
+    await appendToolCall(session, {
+      callId: 'c1',
+      name: 'search_files',
+      output: 'ok',
+    });
     await appendAssistantMessage(session, 'final answer');
 
     const page = await provider.readRecentActivity(
@@ -146,8 +171,11 @@ describe('readRecentActivity: cursor pagination', () => {
       { sessionId: session.sessionId, limit: 2 },
       readContext(session),
     );
-    expect(firstPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)))
-      .toEqual(['message-3', 'message-4']);
+    expect(
+      firstPage.records.map((r) =>
+        r.kind === 'assistant_message' ? r.text : null,
+      ),
+    ).toEqual(['message-3', 'message-4']);
     expect(firstPage.nextCursor).toBeDefined();
 
     // Grow the session BETWEEN page reads — the cursor is anchored to a byte
@@ -156,11 +184,15 @@ describe('readRecentActivity: cursor pagination', () => {
     await appendAssistantMessage(session, 'message-5');
 
     const secondPage = await provider.readRecentActivity(
-      { sessionId: session.sessionId, limit: 2, cursor: firstPage.nextCursor },
+      { sessionId: session.sessionId, limit: 2, cursor: firstPage.nextCursor! },
       readContext(session),
     );
-    const firstTexts = firstPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null));
-    const secondTexts = secondPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null));
+    const firstTexts = firstPage.records.map((r) =>
+      r.kind === 'assistant_message' ? r.text : null,
+    );
+    const secondTexts = secondPage.records.map((r) =>
+      r.kind === 'assistant_message' ? r.text : null,
+    );
     // No overlap (no duplicate) and strictly older (no skip past unseen history):
     // the next older page picks up exactly where the first page's oldest
     // record left off, unaffected by the growth that happened in between.
@@ -177,13 +209,20 @@ describe('readRecentActivity: cursor pagination', () => {
         { sessionId: session.sessionId, cursor: 'not-a-real-cursor' },
         readContext(session),
       ),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'cursor_invalid' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'cursor_invalid',
+    });
   });
 
   it('rejects a cursor from a different query fingerprint (includeTools flip) as cursor_invalid', async () => {
     const session = await makeSession();
     await appendAssistantMessage(session, 'hello');
-    await appendToolCall(session, { callId: 'c1', name: 'search', output: 'x' });
+    await appendToolCall(session, {
+      callId: 'c1',
+      name: 'search',
+      output: 'x',
+    });
 
     const page = await provider.readRecentActivity(
       { sessionId: session.sessionId, limit: 1, includeTools: true },
@@ -195,19 +234,26 @@ describe('readRecentActivity: cursor pagination', () => {
       provider.readRecentActivity(
         {
           sessionId: session.sessionId,
-          cursor: page.nextCursor,
+          cursor: page.nextCursor!,
           includeTools: false,
         },
         readContext(session),
       ),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'cursor_invalid' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'cursor_invalid',
+    });
   });
 });
 
 describe('readRecentActivity: includeTools', () => {
   it('includes tool records by default', async () => {
     const session = await makeSession();
-    await appendToolCall(session, { callId: 'c1', name: 'search_files', output: 'result text' });
+    await appendToolCall(session, {
+      callId: 'c1',
+      name: 'search_files',
+      output: 'result text',
+    });
 
     const page = await provider.readRecentActivity(
       { sessionId: session.sessionId },
@@ -216,14 +262,26 @@ describe('readRecentActivity: includeTools', () => {
     // A call and its output settle the SAME positioned record (started ->
     // completed in place) — one native call produces one neutral record.
     expect(page.records).toHaveLength(1);
-    expect(page.records[0]).toMatchObject({ kind: 'tool', name: 'search_files', status: 'completed' });
+    expect(page.records[0]).toMatchObject({
+      kind: 'tool',
+      name: 'search_files',
+      status: 'completed',
+    });
   });
 
   it('hides ALL tool records as one group when includeTools is false, never partially', async () => {
     const session = await makeSession();
     await appendAssistantMessage(session, 'before tools');
-    await appendToolCall(session, { callId: 'c1', name: 'search_files', output: 'x' });
-    await appendToolCall(session, { callId: 'c2', name: 'apply_patch', failed: true });
+    await appendToolCall(session, {
+      callId: 'c1',
+      name: 'search_files',
+      output: 'x',
+    });
+    await appendToolCall(session, {
+      callId: 'c2',
+      name: 'apply_patch',
+      failed: true,
+    });
     await appendAssistantMessage(session, 'after tools');
 
     const page = await provider.readRecentActivity(
@@ -231,21 +289,32 @@ describe('readRecentActivity: includeTools', () => {
       readContext(session),
     );
     expect(page.records.every((r) => r.kind !== 'tool')).toBe(true);
-    expect(page.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)))
-      .toEqual(['before tools', 'after tools']);
+    expect(
+      page.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)),
+    ).toEqual(['before tools', 'after tools']);
   });
 
   it('reports a failed tool call status distinctly from a completed one', async () => {
     const session = await makeSession();
-    await appendToolCall(session, { callId: 'c1', name: 'apply_patch', failed: true });
-    await appendToolCall(session, { callId: 'c2', name: 'search_files', output: 'ok' });
+    await appendToolCall(session, {
+      callId: 'c1',
+      name: 'apply_patch',
+      failed: true,
+    });
+    await appendToolCall(session, {
+      callId: 'c2',
+      name: 'search_files',
+      output: 'ok',
+    });
 
     const page = await provider.readRecentActivity(
       { sessionId: session.sessionId },
       readContext(session),
     );
     const statuses = page.records
-      .filter((r): r is Extract<typeof r, { kind: 'tool' }> => r.kind === 'tool')
+      .filter(
+        (r): r is Extract<typeof r, { kind: 'tool' }> => r.kind === 'tool',
+      )
       .map((r) => `${r.name}:${r.status}`);
     expect(statuses).toContain('apply_patch:failed');
     expect(statuses).toContain('search_files:completed');
@@ -260,7 +329,10 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
         { sessionId: 'never-existed-session-id' },
         readContext(session),
       ),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'session_unavailable' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'session_unavailable',
+    });
   });
 
   it('reports activity_corrupt for an unreadable (non-JSON) record line', async () => {
@@ -273,7 +345,10 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
         { sessionId: session.sessionId },
         readContext(session),
       ),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'activity_corrupt' });
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'activity_corrupt',
+    });
   });
 
   it('never leaks a filesystem path, native record shape, or tool arguments/results into a record or error', async () => {
@@ -321,10 +396,10 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
     cleanupDirs.push(session.codexHome);
 
     await expect(
-      provider.readRecentActivity(
-        { sessionId },
-        readContext(session),
-      ),
-    ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'provider_failure' });
+      provider.readRecentActivity({ sessionId }, readContext(session)),
+    ).rejects.toMatchObject({
+      name: 'AgentActivityError',
+      reason: 'provider_failure',
+    });
   });
 });

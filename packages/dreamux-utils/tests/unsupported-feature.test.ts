@@ -6,7 +6,10 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { unsupportedFeatureError, isUnsupportedFeatureError } from '../src/unsupported-feature.js';
+import {
+  unsupportedFeatureError,
+  isUnsupportedFeatureError,
+} from '../src/unsupported-feature.js';
 
 describe('unsupportedFeatureError', () => {
   it('produces a real Error carrying the discriminant name and feature', () => {
@@ -38,12 +41,18 @@ describe('isUnsupportedFeatureError', () => {
     // The predicate is structural (no instanceof / shared class), so a
     // hand-built object with the right shape from a different package must
     // still be recognized — that IS the contract of a cross-package marker.
-    const lookalike = { name: 'UnsupportedAgentRuntimeFeatureError', feature: 'resume' };
+    const lookalike = {
+      name: 'UnsupportedAgentRuntimeFeatureError',
+      feature: 'resume',
+    };
     expect(isUnsupportedFeatureError(lookalike)).toBe(true);
   });
 
   it('rejects an object with the right name but a non-string feature', () => {
-    const malformed = { name: 'UnsupportedAgentRuntimeFeatureError', feature: 42 };
+    const malformed = {
+      name: 'UnsupportedAgentRuntimeFeatureError',
+      feature: 42,
+    };
     expect(isUnsupportedFeatureError(malformed)).toBe(false);
   });
 

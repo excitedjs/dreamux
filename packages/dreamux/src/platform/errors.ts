@@ -81,6 +81,10 @@ export abstract class StatedFailure extends DreamuxError {
  * out-of-range field, or a scope the caller may not address. `BAD_REQUEST` is
  * the single code because the distinction that matters to a caller is "fix your
  * request", and the message names the exact field.
+ *
+ * A checked-and-refused value arrives from a validator as a `RuleViolation`
+ * (`@excitedjs/dreamux-utils`, shared with the providers' config readers);
+ * `command/errors.ts`'s `throwCallerMistake` re-types exactly that class here.
  */
 export class ValidationError extends StatedFailure {
   constructor(message: string) {
@@ -120,42 +124,37 @@ export class InternalError extends DreamuxError {
 }
 
 /**
- * A domain rule said no.
- *
- * Deliberately *not* a {@link DreamuxError}: a rule is checked on more than one
- * kind of path, and only the caller's own request makes breaking it the
- * caller's fault. The reader that knows a value came from a caller re-types
- * exactly this class as {@link ValidationError}; the same rule broken by
- * persisted state stays unclassified and loud, because nothing the caller can
- * send would fix it.
- *
- * It exists so a request reader can narrow to one named type instead of
- * catching everything a validator might throw. A `TypeError` raised inside a
- * validation path is not a rule violation, and reporting it as the caller's
- * mistake both misleads the caller and states, in a failure's own words, a next
- * step that would not help. Such a failure keeps its own message and is
- * reported under `INTERNAL` instead.
+ * A reader's refusal to interpret a persisted file: the version, shape, or a
+ * field is one this build does not accept. Deliberately *not* a
+ * {@link DreamuxError} — it names no wire code because Dreamux 0.x has no
+ * migration path for it; the only remedy is deleting the file and letting it
+ * rebuild, and a read path that hits it propagates the failure rather than
+ * degrading to `null` or an empty document the way an ordinary missing or
+ * corrupt-but-tolerated file does.
  */
-export class RuleViolation extends Error {
+export class LegacyStateError extends Error {
   constructor(message: string) {
     super(message);
     this.name = new.target.name;
   }
 }
 
-/** The process refused the request because shutdown already closed admission. */
+/**
+ * The request was refused because some admission gate already closed.
+ *
+ * The default message is the process-wide fence `command/port.ts` closes at
+ * shutdown. A dispatcher, a workflow scope, or a Channel port closes its own
+ * admission independently of that fence, and passes its own wording instead —
+ * every closed-scope refusal still carries the one `SERVER_SHUTTING_DOWN` code
+ * a caller can branch on.
+ */
 export class ServerShuttingDownError extends StatedFailure {
-  constructor() {
+  constructor(message = 'dreamux server is shutting down') {
     super(
       'SERVER_SHUTTING_DOWN',
-      'dreamux server is shutting down',
+      message,
       'Nothing was started by this call. Wait for the operator to bring the ' +
         'server back, then call again.',
     );
   }
-}
-
-/** The message of an arbitrary thrown value, for wrapping into a typed error. */
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

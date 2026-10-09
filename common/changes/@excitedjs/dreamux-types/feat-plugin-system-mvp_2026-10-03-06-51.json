@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Clarify that activity size bounds belong to providers while Core checks shapes, record count and recognized errors. Restore compiler-checked neutral runtime, channel, Team and activity contracts.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

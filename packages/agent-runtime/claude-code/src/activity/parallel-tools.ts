@@ -79,9 +79,7 @@ export function recoverParallelToolBranches<TEntry extends ClaudeHistoryEntry>(
   return result;
 }
 
-function assistantMessageId(
-  entry: ClaudeHistoryEntry,
-): string | null {
+function assistantMessageId(entry: ClaudeHistoryEntry): string | null {
   return stringValue(recordValue(entry.value['message'])?.['id']);
 }
 
@@ -129,10 +127,7 @@ function timestamp(entry: ClaudeHistoryEntry): string {
   return stringValue(entry.value['timestamp']) ?? '';
 }
 
-function isSeen(
-  entry: ClaudeHistoryEntry,
-  seen: ReadonlySet<string>,
-): boolean {
+function isSeen(entry: ClaudeHistoryEntry, seen: ReadonlySet<string>): boolean {
   const uuid = stringValue(entry.value['uuid']);
   return uuid !== null && seen.has(uuid);
 }

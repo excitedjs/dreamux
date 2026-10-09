@@ -38,7 +38,10 @@ export async function createFixtureSession(
   const codexHome = await mkdtemp(join(tmpdir(), 'codex-activity-fixture-'));
   const sessionsDir = join(codexHome, 'sessions');
   await mkdir(sessionsDir, { recursive: true });
-  const rolloutPath = join(sessionsDir, `rollout-2024-01-01T00-00-00-${sessionId}.jsonl`);
+  const rolloutPath = join(
+    sessionsDir,
+    `rollout-2024-01-01T00-00-00-${sessionId}.jsonl`,
+  );
   const meta: Record<string, unknown> = { id: sessionId };
   if (options.historyBase !== undefined) {
     meta['history_base'] = {
@@ -84,7 +87,11 @@ export async function appendToolCall(
     session.rolloutPath,
     `${JSON.stringify({
       type: 'response_item',
-      payload: { type: 'function_call', call_id: input.callId, name: input.name },
+      payload: {
+        type: 'function_call',
+        call_id: input.callId,
+        name: input.name,
+      },
     })}\n`,
     'utf8',
   );
@@ -106,7 +113,9 @@ export async function appendToolCall(
 }
 
 /** Append a raw, deliberately unparseable line — simulates a corrupt record. */
-export async function appendCorruptLine(session: FixtureSession): Promise<void> {
+export async function appendCorruptLine(
+  session: FixtureSession,
+): Promise<void> {
   await appendFile(session.rolloutPath, '{not json at all\n', 'utf8');
 }
 
@@ -128,7 +137,10 @@ export async function createDeepLineageSession(
   await mkdir(sessionsDir, { recursive: true });
 
   const parentIds = Array.from({ length: parentCount }, () => randomUUID());
-  const rolloutPath = join(sessionsDir, `rollout-2024-01-01T00-00-00-${sessionId}.jsonl`);
+  const rolloutPath = join(
+    sessionsDir,
+    `rollout-2024-01-01T00-00-00-${sessionId}.jsonl`,
+  );
   await writeFile(
     rolloutPath,
     `${JSON.stringify({
@@ -185,7 +197,10 @@ export async function createBoundsExceedingLineageSession(
   await mkdir(sessionsDir, { recursive: true });
 
   const parentId = randomUUID();
-  const rolloutPath = join(sessionsDir, `rollout-2024-01-01T00-00-00-${sessionId}.jsonl`);
+  const rolloutPath = join(
+    sessionsDir,
+    `rollout-2024-01-01T00-00-00-${sessionId}.jsonl`,
+  );
   const lines: string[] = [
     JSON.stringify({
       type: 'session_meta',
@@ -196,7 +211,10 @@ export async function createBoundsExceedingLineageSession(
     }),
     JSON.stringify({
       type: 'event_msg',
-      payload: { type: 'agent_message', message: 'visible before the bound hits' },
+      payload: {
+        type: 'agent_message',
+        message: 'visible before the bound hits',
+      },
     }),
   ];
   // One more than MAX_NATIVE_RECORDS (20_000 in reader.ts) so the tail segment
@@ -206,7 +224,10 @@ export async function createBoundsExceedingLineageSession(
   }
   await writeFile(rolloutPath, `${lines.join('\n')}\n`, 'utf8');
 
-  const parentPath = join(sessionsDir, `rollout-2024-01-01T01-00-00-${parentId}.jsonl`);
+  const parentPath = join(
+    sessionsDir,
+    `rollout-2024-01-01T01-00-00-${parentId}.jsonl`,
+  );
   await writeFile(
     parentPath,
     `${JSON.stringify({ type: 'session_meta', payload: { id: randomUUID() } })}\n`,

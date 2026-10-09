@@ -1,88 +1,100 @@
-/**
- * Atomic write helper (fs.ts): tmpfile-then-rename, with O_CREAT|O_EXCL so a
- * name collision fails loud instead of clobbering, and no chmod of the final
- * path (permissions are set at open time only).
- */
-import { mkdtemp, open, readdir, readFile, rm, stat } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { publishFileExclusive, writeFileAtomic } from '../src/fs.js';
+import { TransactionalStore } from '../src/transactional-store.js';
 
-import { describe, it, expect, afterEach } from 'vitest';
+let root: string;
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), 'dreamux-write-'));
+});
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true });
+});
 
-import { writeAtomic } from '../src/fs.js';
-
-describe('writeAtomic', () => {
-  let root: string;
-
-  afterEach(async () => {
-    if (root) await rm(root, { recursive: true, force: true });
+describe('atomic filesystem publication', () => {
+  it('writes exact content with private default permissions and no temporary leftovers', async () => {
+    const path = join(root, 'state.json');
+    await writeFileAtomic(path, '{"a":1}');
+    expect(await readFile(path, 'utf8')).toBe('{"a":1}');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect(await readdir(root)).toEqual(['state.json']);
   });
-
-  it('writes the final file with the exact given content', async () => {
-    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-fs-'));
-    await writeAtomic(root, 'out.json', '{"a":1}');
-    const content = await readFile(join(root, 'out.json'), 'utf8');
-    expect(content).toBe('{"a":1}');
+  it('honors an explicit mode and atomically replaces the previous complete contents', async () => {
+    const path = join(root, 'state.json');
+    await writeFileAtomic(path, 'first', { mode: 0o644 });
+    expect((await stat(path)).mode & 0o777).toBe(0o644);
+    await writeFileAtomic(path, 'second');
+    expect(await readFile(path, 'utf8')).toBe('second');
+    expect(await readdir(root)).toEqual(['state.json']);
   });
-
-  it('applies the default 0600 mode at open time', async () => {
-    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-fs-'));
-    await writeAtomic(root, 'secret.txt', 'x');
-    const info = await stat(join(root, 'secret.txt'));
-    expect(info.mode & 0o777).toBe(0o600);
+  it('creates missing parent directories for the current publication contract', async () => {
+    const path = join(root, 'nested', 'state.json');
+    await writeFileAtomic(path, 'complete');
+    expect(await readFile(path, 'utf8')).toBe('complete');
   });
-
-  it('honors an explicit mode argument', async () => {
-    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-fs-'));
-    await writeAtomic(root, 'readable.txt', 'x', 0o644);
-    const info = await stat(join(root, 'readable.txt'));
-    expect(info.mode & 0o777).toBe(0o644);
+  it('cleans its temporary file when publishing over a directory fails', async () => {
+    const path = join(root, 'existing');
+    await mkdir(path);
+    await writeFile(join(path, 'foreign'), 'keep');
+    await expect(writeFileAtomic(path, 'replacement')).rejects.toThrow();
+    expect(await readdir(root)).toEqual(['existing']);
+    expect(await readFile(join(path, 'foreign'), 'utf8')).toBe('keep');
   });
-
-  it('leaves no leftover .tmp- file after a successful write', async () => {
-    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-fs-'));
-    await writeAtomic(root, 'clean.txt', 'x');
-    const entries = await readdir(root);
-    expect(entries).toEqual(['clean.txt']);
+  it('has exactly one winner under concurrent exclusive publishers without clobbering', async () => {
+    const path = join(root, 'new.json');
+    const results = await Promise.all(
+      ['first', 'second'].map((data) => publishFileExclusive(path, data)),
+    );
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(await readFile(path, 'utf8')).toBe(results[0] ? 'first' : 'second');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect(await publishFileExclusive(path, 'third')).toBe(false);
+    expect(await readdir(root)).toEqual(['new.json']);
   });
+});
 
-  it('overwrites an existing final file (rename replaces, does not collide)', async () => {
-    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-fs-'));
-    await writeAtomic(root, 'out.txt', 'first');
-    await writeAtomic(root, 'out.txt', 'second');
-    const content = await readFile(join(root, 'out.txt'), 'utf8');
-    expect(content).toBe('second');
-    // Only the final file remains — the two writes must not leave two tmp files.
-    const entries = await readdir(root);
-    expect(entries).toEqual(['out.txt']);
+describe('transactional publication owner', () => {
+  it('serializes updates and exposes the committed disk value to afterCommit', async () => {
+    const path = join(root, 'nested', 'counter.json');
+    const store = new TransactionalStore({ path, load: async () => 0 });
+    const published: number[] = [];
+    await Promise.all(
+      [1, 2, 3].map(() =>
+        store.update(
+          (n) => n + 1,
+          async (value) => {
+            expect(JSON.parse(await readFile(path, 'utf8'))).toBe(value);
+            expect(store.current).toBe(value);
+            published.push(value);
+          },
+        ),
+      ),
+    );
+    expect(published).toEqual([1, 2, 3]);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
-
-  it('rejects when the parent directory does not exist and leaves no tmp file behind', async () => {
-    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-fs-'));
-    const missingDir = join(root, 'does-not-exist');
-    await expect(writeAtomic(missingDir, 'out.txt', 'x')).rejects.toThrow();
-    // Nothing should have been created under the (missing) parent's sibling root.
-    const entries = await readdir(root);
-    expect(entries).toEqual([]);
-  });
-
-  it('fails loud on a real EEXIST tmp-name collision instead of clobbering', async () => {
-    // writeAtomic's tmp suffix is pid+time+random, so we cannot force a real
-    // collision through the public API. Instead we assert the underlying
-    // exclusivity primitive it depends on: opening the same path twice with
-    // 'wx' throws EEXIST rather than truncating the first writer's data. This
-    // is the exact guarantee writeAtomic's tmp-file open relies on.
-    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-fs-'));
-    const collidePath = join(root, 'collide.tmp');
-    const handle = await open(collidePath, 'wx', 0o600);
-    await handle.writeFile('first-writer-data');
-    try {
-      await expect(open(collidePath, 'wx', 0o600)).rejects.toMatchObject({ code: 'EEXIST' });
-      // The first writer's data must be untouched by the failed second open.
-      const content = await readFile(collidePath, 'utf8');
-      expect(content).toBe('first-writer-data');
-    } finally {
-      await handle.close();
-    }
+  it('keeps the previous committed memory and disk on failed change and accepts the next update', async () => {
+    const path = join(root, 'state.json');
+    const store = new TransactionalStore({ path, load: async () => 0 });
+    await store.create(1);
+    await expect(
+      store.update(() => {
+        throw new Error('failed change');
+      }),
+    ).rejects.toThrow('failed change');
+    expect(store.current).toBe(1);
+    expect(JSON.parse(await readFile(path, 'utf8'))).toBe(1);
+    await store.update((n) => n + 1);
+    expect(store.current).toBe(2);
   });
 });

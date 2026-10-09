@@ -1,3 +1,4 @@
+import { capturingLogger } from './helpers/command-harness.js';
 /**
  * Coverage cell C (event half), Stage 9 node "core-events".
  *
@@ -25,9 +26,8 @@ import type {
 import {
   createConversationProjection,
   type ProjectedAgent,
-} from '../src/channel/conversation-projection.js';
+} from '../src/service/dispatcher-core-events/conversation-projection.js';
 import {
-  createCapturingLogger,
   createCapturingPublisher,
   makeIdentity,
 } from './helpers/event-harness.js';
@@ -37,10 +37,9 @@ const HOME = '/home/operator';
 
 function harness(overrides: { hasSources?: boolean } = {}) {
   const publisher = createCapturingPublisher(overrides.hasSources ?? true);
-  const { logger } = createCapturingLogger();
   const projection = createConversationProjection({
     coreEvents: publisher,
-    log: logger,
+    log: capturingLogger([]),
     homePathPrefixes: [HOME],
   });
   const identity = makeIdentity({ team_id: 'alpha', name: 'scout', cwd: CWD });
@@ -52,8 +51,11 @@ function harness(overrides: { hasSources?: boolean } = {}) {
 function inputOf(
   publisher: ReturnType<typeof createCapturingPublisher>,
 ): TeammateInputEvent {
-  const event = publisher.published.find((entry) => entry.event.kind === 'teammate.input')?.event;
-  if (event?.kind !== 'teammate.input') throw new Error('expected a projected input event');
+  const event = publisher.published.find(
+    (entry) => entry.event.kind === 'teammate.input',
+  )?.event;
+  if (event?.kind !== 'teammate.input')
+    throw new Error('expected a projected input event');
   return event;
 }
 
@@ -61,8 +63,11 @@ function inputOf(
 function activityOf(
   publisher: ReturnType<typeof createCapturingPublisher>,
 ): RuntimeActivity {
-  const event = publisher.published.find((entry) => entry.event.kind === 'teammate.activity')?.event;
-  if (event?.kind !== 'teammate.activity') throw new Error('expected a projected activity event');
+  const event = publisher.published.find(
+    (entry) => entry.event.kind === 'teammate.activity',
+  )?.event;
+  if (event?.kind !== 'teammate.activity')
+    throw new Error('expected a projected activity event');
   return event.activity;
 }
 
@@ -145,7 +150,11 @@ describe('conversation projection: secret redaction', () => {
 
   it('redacts an authorization: value pair', () => {
     const { publisher, projection, agent } = harness();
-    projectPrompt(projection, agent, 'authorization: mySecretToken123abc grants access');
+    projectPrompt(
+      projection,
+      agent,
+      'authorization: mySecretToken123abc grants access',
+    );
     const content = inputOf(publisher).content;
     expect(content).not.toContain('mySecretToken123abc');
     expect(content).toContain('authorization: <redacted>');
@@ -153,7 +162,11 @@ describe('conversation projection: secret redaction', () => {
 
   it('redacts a bare Bearer token', () => {
     const { publisher, projection, agent } = harness();
-    projectPrompt(projection, agent, 'call it with Bearer abcDEF123.ghiJKL456-_9');
+    projectPrompt(
+      projection,
+      agent,
+      'call it with Bearer abcDEF123.ghiJKL456-_9',
+    );
     const content = inputOf(publisher).content;
     expect(content).not.toContain('abcDEF123.ghiJKL456-_9');
     expect(content).toContain('Bearer <redacted>');
@@ -189,13 +202,19 @@ describe('conversation projection: secret redaction', () => {
     ].join('\n');
     projectPrompt(projection, agent, `here is the key:\n${pem}\nend`);
     const content = inputOf(publisher).content;
-    expect(content).not.toContain('MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDExampleKeyData');
+    expect(content).not.toContain(
+      'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDExampleKeyData',
+    );
     expect(content).toContain('<redacted-private-key>');
   });
 
   it('relativizes an entity workspace path to a repo-relative one', () => {
     const { publisher, projection, agent } = harness();
-    projectPrompt(projection, agent, `file at ${CWD}/secrets/env.local was read`);
+    projectPrompt(
+      projection,
+      agent,
+      `file at ${CWD}/secrets/env.local was read`,
+    );
     const content = inputOf(publisher).content;
     expect(content).not.toContain(CWD);
     expect(content).toBe('file at secrets/env.local was read');
@@ -220,8 +239,17 @@ describe('conversation projection: secret redaction', () => {
 describe('conversation projection: content visible after redaction is unchanged, not narrowed', () => {
   it('keeps tool call arguments and results byte-identical when nothing is secret- or path-shaped', () => {
     const { publisher, projection, agent } = harness();
-    const args = { file: 'report.md', count: 3, tags: ['alpha', 'beta'], nested: { ok: true } };
-    const result = { status: 'ok', rows: [10, 20, 30], summary: 'no issues found' };
+    const args = {
+      file: 'report.md',
+      count: 3,
+      tags: ['alpha', 'beta'],
+      nested: { ok: true },
+    };
+    const result = {
+      status: 'ok',
+      rows: [10, 20, 30],
+      summary: 'no issues found',
+    };
     projection.projectActivity(agent, {
       kind: 'tool.call',
       occurredAt: Date.now(),
@@ -263,8 +291,9 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.summary).toBe('src/a.ts');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
     expect(tool.kind === 'tool.call' && tool.invocation).toBe('cat src/a.ts');
-    expect(tool.kind === 'tool.call' && tool.arguments)
-      .toEqual({ command: 'cat ~/src/a.ts' });
+    expect(tool.kind === 'tool.call' && tool.arguments).toEqual({
+      command: 'cat ~/src/a.ts',
+    });
   });
 
   it('passes a long summary through whole and redacts a secret-shaped invocation', () => {
@@ -276,7 +305,8 @@ describe('conversation projection: content visible after redaction is unchanged,
       toolName: 'Bash',
       action: 'run',
       summary: 's'.repeat(100_000),
-      invocation: 'post https://example.test with Bearer abcDEF123.ghiJKL456-_9',
+      invocation:
+        'post https://example.test with Bearer abcDEF123.ghiJKL456-_9',
       items: [],
       status: 'started',
       arguments: { token: 'abc123secret', home: `${HOME}/keys` },
@@ -286,10 +316,13 @@ describe('conversation projection: content visible after redaction is unchanged,
 
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(100_000);
-    expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('post https://example.test with Bearer <redacted>');
-    expect(tool.kind === 'tool.call' && tool.arguments)
-      .toEqual({ token: '<redacted>', home: '~/keys' });
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe(
+      'post https://example.test with Bearer <redacted>',
+    );
+    expect(tool.kind === 'tool.call' && tool.arguments).toEqual({
+      token: '<redacted>',
+      home: '~/keys',
+    });
   });
 
   it('redacts an invocation even when it is the only member with a secret', () => {
@@ -310,8 +343,9 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('curl -H "authorization: <redacted>" https://example.test');
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe(
+      'curl -H "authorization: <redacted>" https://example.test',
+    );
     expect(tool.kind === 'tool.call' && tool.summary).toBe('ran a request');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
     expect(tool.kind === 'tool.call' && tool.result).toBe('ok');
@@ -335,18 +369,25 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    expect(tool.kind === 'tool.call' && tool.summary).toBe('echo with token: <redacted>');
-    expect(tool.kind === 'tool.call' && tool.error).toBe('failed with token: <redacted>');
+    expect(tool.kind === 'tool.call' && tool.summary).toBe(
+      'echo with token: <redacted>',
+    );
+    expect(tool.kind === 'tool.call' && tool.error).toBe(
+      'failed with token: <redacted>',
+    );
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
-    expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('echo "token: <redacted>"');
-    expect(tool.kind === 'tool.call' && tool.arguments)
-      .toEqual({ command: 'echo "token: <redacted>"' });
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe(
+      'echo "token: <redacted>"',
+    );
+    expect(tool.kind === 'tool.call' && tool.arguments).toEqual({
+      command: 'echo "token: <redacted>"',
+    });
   });
 
   it('redacts a multi-line .env written through a tool argument, line by line', () => {
     const { publisher, projection, agent } = harness();
-    const content = 'NODE_ENV="production"\nTOKEN="t1"\nPORT=3000\nAPI_KEY=k2\nDEBUG=false';
+    const content =
+      'NODE_ENV="production"\nTOKEN="t1"\nPORT=3000\nAPI_KEY=k2\nDEBUG=false';
     projection.projectActivity(agent, {
       kind: 'tool.call',
       occurredAt: Date.now(),
@@ -365,7 +406,8 @@ describe('conversation projection: content visible after redaction is unchanged,
     const tool = activityOf(publisher);
     expect(tool.kind === 'tool.call' && tool.arguments).toEqual({
       file_path: '.env',
-      content: 'NODE_ENV="production"\nTOKEN="<redacted>"\nPORT=3000\nAPI_KEY=<redacted>\nDEBUG=false',
+      content:
+        'NODE_ENV="production"\nTOKEN="<redacted>"\nPORT=3000\nAPI_KEY=<redacted>\nDEBUG=false',
     });
   });
 
@@ -431,7 +473,8 @@ describe('conversation projection: content visible after redaction is unchanged,
       toolName: 'Bash',
       action: 'run',
       summary: 'connect',
-      invocation: 'net use X: /user:svc password=C:\\keys\\id and then continue',
+      invocation:
+        'net use X: /user:svc password=C:\\keys\\id and then continue',
       items: [],
       status: 'completed',
       arguments: null,
@@ -440,8 +483,9 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    expect(tool.kind === 'tool.call' && tool.invocation)
-      .toBe('net use X: /user:svc password=<redacted> and then continue');
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe(
+      'net use X: /user:svc password=<redacted> and then continue',
+    );
   });
 
   it('keeps an ordinary assistant message byte-identical', () => {
@@ -456,41 +500,91 @@ describe('conversation projection: content visible after redaction is unchanged,
 describe('conversation projection: shared activity contract', () => {
   it('preserves each activity shape and identity while redacting every payload member', () => {
     const activities: RuntimeActivity[] = [
-      { kind: 'assistant.message', occurredAt: 123, id: 'message-uuid', text: 'token: message-secret' },
+      {
+        kind: 'assistant.message',
+        occurredAt: 123,
+        id: 'message-uuid',
+        text: 'token: message-secret',
+      },
       { kind: 'context.compacted', occurredAt: 124, id: 'compact-uuid' },
       { kind: 'turn.interrupted', occurredAt: 125, id: 'result-uuid' },
-      { kind: 'token.usage', occurredAt: 126, id: 'result-uuid', inputTokens: 10, outputTokens: 5,
-        context: { usedTokens: 8, windowTokens: 100 } },
-      { kind: 'tool.call', occurredAt: 127, id: 'tool-use-id', toolName: 'Bash', action: 'run',
-        summary: 'token: summary-secret', invocation: 'token: invocation-secret',
-        items: ['token: item-secret'], status: 'failed',
-        arguments: { token: 'argument-secret' }, result: { token: 'result-secret' },
-        error: 'token: error-secret' },
-      { kind: 'turn.ended', occurredAt: 128, status: 'failed', reason: 'token: reason-secret' },
+      {
+        kind: 'token.usage',
+        occurredAt: 126,
+        id: 'result-uuid',
+        inputTokens: 10,
+        outputTokens: 5,
+        context: { usedTokens: 8, windowTokens: 100 },
+      },
+      {
+        kind: 'tool.call',
+        occurredAt: 127,
+        id: 'tool-use-id',
+        toolName: 'Bash',
+        action: 'run',
+        summary: 'token: summary-secret',
+        invocation: 'token: invocation-secret',
+        items: ['token: item-secret'],
+        status: 'failed',
+        arguments: { token: 'argument-secret' },
+        result: { token: 'result-secret' },
+        error: 'token: error-secret',
+      },
+      {
+        kind: 'turn.ended',
+        occurredAt: 128,
+        status: 'failed',
+        reason: 'token: reason-secret',
+      },
     ];
     const { publisher, projection, agent } = harness();
-    for (const activity of activities) projection.projectActivity(agent, activity);
+    for (const activity of activities)
+      projection.projectActivity(agent, activity);
     const expected = [
       { ...activities[0], text: 'token: <redacted>' },
-      activities[1], activities[2], activities[3],
-      { ...activities[4], summary: 'token: <redacted>', invocation: 'token: <redacted>',
-        items: ['token: <redacted>'], arguments: { token: '<redacted>' },
-        result: { token: '<redacted>' }, error: 'token: <redacted>' },
+      activities[1],
+      activities[2],
+      activities[3],
+      {
+        ...activities[4],
+        summary: 'token: <redacted>',
+        invocation: 'token: <redacted>',
+        items: ['token: <redacted>'],
+        arguments: { token: '<redacted>' },
+        result: { token: '<redacted>' },
+        error: 'token: <redacted>',
+      },
       { ...activities[5], reason: 'token: <redacted>' },
     ];
-    expect(publisher.published.map((entry) => entry.event)).toEqual(expected.map((activity) => ({
-      schemaVersion: 1, kind: 'teammate.activity', teamName: 'alpha', teammateName: 'scout',
-      role: 'teammate', occurredAt: activity!.occurredAt, activity,
-    })));
+    expect(publisher.published.map((entry) => entry.event)).toEqual(
+      expected.map((activity) => ({
+        schemaVersion: 1,
+        kind: 'teammate.activity',
+        teamName: 'alpha',
+        teammateName: 'scout',
+        role: 'teammate',
+        occurredAt: activity!.occurredAt,
+        activity,
+      })),
+    );
   });
 });
 
 describe('conversation projection: text-free markers', () => {
   it.each(['context.compacted', 'turn.interrupted'] as const)(
-    'projects %s with the same native id and timestamp', (kind) => {
+    'projects %s with the same native id and timestamp',
+    (kind) => {
       const { publisher, projection, agent } = harness();
-      projection.projectActivity(agent, { kind, occurredAt: 123, id: 'native-event' });
-      expect(activityOf(publisher)).toEqual({ kind, occurredAt: 123, id: 'native-event' });
+      projection.projectActivity(agent, {
+        kind,
+        occurredAt: 123,
+        id: 'native-event',
+      });
+      expect(activityOf(publisher)).toEqual({
+        kind,
+        occurredAt: 123,
+        id: 'native-event',
+      });
     },
   );
 });
@@ -539,14 +633,21 @@ describe('conversation projection: token.usage', () => {
 
 describe('conversation projection: the turn.ended reason', () => {
   function endedActivity(reason: string | null): RuntimeActivity {
-    return { kind: 'turn.ended', occurredAt: Date.now(), status: 'failed', reason };
+    return {
+      kind: 'turn.ended',
+      occurredAt: Date.now(),
+      status: 'failed',
+      reason,
+    };
   }
 
   it('redacts and relativizes the reason, which carries a raw provider error message', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(
       agent,
-      endedActivity(`spawn ${CWD}/bin/agent failed: authorization: tok3nAbcDef123`),
+      endedActivity(
+        `spawn ${CWD}/bin/agent failed: authorization: tok3nAbcDef123`,
+      ),
     );
     const ended = activityOf(publisher);
     expect(ended.kind === 'turn.ended' && ended.reason).toBe(
@@ -556,9 +657,14 @@ describe('conversation projection: the turn.ended reason', () => {
 
   it('keeps an ordinary reason byte-identical', () => {
     const { publisher, projection, agent } = harness();
-    projection.projectActivity(agent, endedActivity('the agent runtime is not running'));
+    projection.projectActivity(
+      agent,
+      endedActivity('the agent runtime is not running'),
+    );
     const ended = activityOf(publisher);
-    expect(ended.kind === 'turn.ended' && ended.reason).toBe('the agent runtime is not running');
+    expect(ended.kind === 'turn.ended' && ended.reason).toBe(
+      'the agent runtime is not running',
+    );
   });
 
   it('carries a null reason through as null, not an empty string', () => {

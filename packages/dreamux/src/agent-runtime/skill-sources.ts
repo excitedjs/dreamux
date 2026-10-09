@@ -27,7 +27,9 @@ export function parseAgentRuntimeSkillSources(
     const record = entry as Record<string, unknown>;
     const path = nonBlankString(record['path'], `${label}[${index}].path`);
     if (!isAbsolute(path)) {
-      throw new RuleViolation(`${label}[${index}].path must be an absolute path`);
+      throw new RuleViolation(
+        `${label}[${index}].path must be an absolute path`,
+      );
     }
     return {
       name: nonBlankString(record['name'], `${label}[${index}].name`),
@@ -43,8 +45,44 @@ export interface NormalizeAgentRuntimeSkillSourcesOptions {
    * Required roots are owned by core (for example a TeamLeader role root). They
    * are not returned, but their canonical roots and child skill names fence the
    * caller-provided roots so custom roots cannot replace role-critical skills.
+   * Canonicalized once per call (filesystem `realpath` + `readdir`); a caller
+   * that fences several calls against the same required roots should
+   * canonicalize once with {@link canonicalizeRequiredSkillSources} and pass
+   * the result as `requiredRoots` instead, so a required root does not need to
+   * stay readable for every one of those calls, only for the first.
    */
-  requiredSources?: readonly AgentRuntimeSkillSource[];
+  requiredSources?: readonly AgentRuntimeSkillSource[] | undefined;
+  /** Already-canonicalized required roots; takes precedence over `requiredSources`. */
+  requiredRoots?: readonly CanonicalSkillRoot[];
+}
+
+/** A required skill root, canonicalized once: realpath plus its child skill names. */
+export interface CanonicalSkillRoot {
+  readonly name: string;
+  readonly path: string;
+  readonly skillNames: readonly string[];
+}
+
+/**
+ * Canonicalize required (core-owned) skill roots once. Pass the result as
+ * `requiredRoots` to fence several {@link normalizeAgentRuntimeSkillSources}
+ * calls against the same roots without re-touching the filesystem for them on
+ * every call.
+ */
+export async function canonicalizeRequiredSkillSources(
+  sources: readonly AgentRuntimeSkillSource[],
+  label: string,
+): Promise<readonly CanonicalSkillRoot[]> {
+  const result: CanonicalSkillRoot[] = [];
+  for (const source of sources) {
+    const root = await canonicalSkillRoot(source, label, 'required source');
+    result.push({
+      name: source.name,
+      path: root.path,
+      skillNames: root.skillNames,
+    });
+  }
+  return result;
 }
 
 /**
@@ -59,11 +97,19 @@ export async function normalizeAgentRuntimeSkillSources(
   const seenRoots = new Set<string>();
   const seenSkillNames = new Map<string, string>();
 
-  for (const source of opts.requiredSources ?? []) {
-    const root = await canonicalSkillRoot(source, opts.label, 'required source');
+  const requiredRoots =
+    opts.requiredRoots ??
+    (await canonicalizeRequiredSkillSources(
+      opts.requiredSources ?? [],
+      opts.label,
+    ));
+  for (const root of requiredRoots) {
     seenRoots.add(root.path);
     for (const skillName of root.skillNames) {
-      seenSkillNames.set(skillName, `required source ${JSON.stringify(source.name)}`);
+      seenSkillNames.set(
+        skillName,
+        `required source ${JSON.stringify(root.name)}`,
+      );
     }
   }
 
@@ -190,9 +236,7 @@ export async function normalizeSkillSources(
   try {
     return await normalizeAgentRuntimeSkillSources(parsed, {
       label: "param 'skill_sources'",
-      ...(options.requiredSources !== undefined
-        ? { requiredSources: options.requiredSources }
-        : {}),
+      requiredSources: options.requiredSources,
     });
   } catch (err) {
     throwCallerMistake(err);

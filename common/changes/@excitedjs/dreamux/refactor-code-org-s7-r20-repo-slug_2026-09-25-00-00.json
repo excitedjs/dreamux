@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Code organization refactor stage 7, item 5 (R20): the teammate.spawn and team.create Commands no longer accept repo.slug (already true of the equivalent MCP tools since 0.25.0). The worktree directory and default branch already derive from the allocated entity name; existing worktrees and persisted state are unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -42,7 +42,10 @@ export function mustString(params: CommandPayload, key: string): string {
   return params[key] as string;
 }
 
-export function mustNonEmptyString(params: CommandPayload, key: string): string {
+export function mustNonEmptyString(
+  params: CommandPayload,
+  key: string,
+): string {
   const value = mustString(params, key);
   if (value === '') {
     throw new ValidationError(`param '${key}' must be a non-empty string`);
@@ -50,7 +53,10 @@ export function mustNonEmptyString(params: CommandPayload, key: string): string 
   return value;
 }
 
-export function mustNonBlankString(params: CommandPayload, key: string): string {
+export function mustNonBlankString(
+  params: CommandPayload,
+  key: string,
+): string {
   const value = mustString(params, key);
   if (value.trim() === '') {
     throw new ValidationError(`param '${key}' must be a non-empty string`);
@@ -58,7 +64,10 @@ export function mustNonBlankString(params: CommandPayload, key: string): string 
   return value;
 }
 
-export function mustRecord(params: CommandPayload, key: string): Record<string, unknown> {
+export function mustRecord(
+  params: CommandPayload,
+  key: string,
+): Record<string, unknown> {
   const value = params[key];
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new ValidationError(`param '${key}' must be an object`);
@@ -66,7 +75,10 @@ export function mustRecord(params: CommandPayload, key: string): Record<string, 
   return value as Record<string, unknown>;
 }
 
-export function optionalString(params: CommandPayload, key: string): string | null {
+export function optionalString(
+  params: CommandPayload,
+  key: string,
+): string | null {
   const v = params[key];
   if (v === undefined || v === null) return null;
   if (typeof v !== 'string') {
@@ -87,7 +99,10 @@ export function optionalNonBlankString(
   return value;
 }
 
-export function optionalInteger(params: CommandPayload, key: string): number | null {
+export function optionalInteger(
+  params: CommandPayload,
+  key: string,
+): number | null {
   const value = params[key];
   if (value === undefined || value === null) return null;
   if (!Number.isInteger(value)) {
@@ -127,16 +142,4 @@ export function optionalBooleanField(
     throw new ValidationError(`param '${key}' must be a boolean`);
   }
   return { [key]: value };
-}
-
-export function optionalRecordField(
-  params: CommandPayload,
-  key: string,
-): Record<string, Record<string, unknown>> {
-  if (!(key in params)) return {};
-  const value = params[key];
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new ValidationError(`param '${key}' must be an object`);
-  }
-  return { [key]: value as Record<string, unknown> };
 }

@@ -74,10 +74,12 @@ the same change that touches it.
   When an agent is blocked on a decision only the user can make, the built-in
   Feishu channel posts an interactive question card — 1-4 single-select
   questions, each with an "Other" text box — and the agent stops and waits: the
-  tool returns as soon as the card is sent, never the answer. Anyone in the chat
-  may answer, an explicit operator ruling rather than a gap, and the answer
-  arrives as an ordinary inbound message carrying who clicked and the answered
-  card's message id. A supplied reply message id is used directly, including
+  tool returns as soon as the card is sent, never the answer. Only a person the
+  chat's inbound access policy admits may answer (the operator's 2026-09-30
+  ruling, "卡片点击应该走和入站消息一样的门禁"; before it, anyone in the chat
+  could); anyone else gets an error toast and changes nothing. The
+  answer arrives as an ordinary inbound message carrying who clicked and the
+  answered card's message id. A supplied reply message id is used directly, including
   one the session has not observed; without one, the card is a new chat message.
   Answers and expiry notices follow the card's actual conversation, obtained
   from message details. A failed lookup does not redirect them to the parent
@@ -170,12 +172,31 @@ the same change that touches it.
 - **A collaboration space is a Channel product flow.** The Channel provisions a
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
-  than a persisted saga. A newly provisioned Feishu topic Team receives its
-  configured identity followed by the bound chat and initial triggering message
-  address. The leader must use that initial message ID when its current context
-  offers no other one, and must never omit the reply message ID. Existing Teams
-  and the shared space policy are unchanged; identity stays a string.
+  than a persisted saga. A newly provisioned Feishu topic Team's leader
+  identity is the configured space identity followed by the chat id and the
+  message id that triggered the Team, with the instruction to pass that message
+  id to `reply` when no other is visible; the `reply` guard in the next bullet
+  is a second line, not a replacement. Existing Teams and the shared space
+  policy are unchanged; identity stays a string.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **A message with no message id inside a Collaboration Space chat is guarded
+  by the Channel, not by prompt instruction.** Every other Feishu chat keeps
+  today's behavior — an address-less message opens a new top-level message.
+  Only inside a chat that carries a Collaboration Space does the Channel step
+  in, for every message an agent sends there: `reply`, `ask_user_question`, and
+  an extension's card (which passes the caller its tool handler received). It
+  lands under the calling Team's own bound topic when exactly one exists with a
+  known root message, and is refused with an instruction to pass a `message_id`
+  otherwise. The check is caller-agnostic — it asks only "does exactly one
+  topic name this caller" — so a Dispatcher Agent call, or an extension's
+  background call with no caller, neither of which owns a topic binding, is
+  always refused rather than special-cased; that is the mechanism protecting
+  the space from a stray new topic working as designed, not a gap. The
+  Channel's own messages are not agents' and are never re-addressed: a
+  binding, unbinding, dissolution, or space notice goes where its route says
+  (the space's own notices are chat-level). Nothing else about a Feishu chat's
+  send behavior changed.
+  (Domain: [channel](/.agents/domains/channel.md).)
 - **A provisioning run that produces no Team answers in place.** When a
   collaboration space cannot provision the Team a message was routed to, the
   Channel replies under that message — `Could not start a Team for this
@@ -198,10 +219,16 @@ the same change that touches it.
   The absolute repo cwd and runtime working directory are **deliberately**
   disclosed to the bound conversation's members — an explicit operator ruling
   that narrowed the earlier disclosure allowlist. Delivery is best-effort with
-  one retry; a failed card never affects the binding change it reports. Successful
+  one retry; a failed card never affects the binding change it reports. A card
+  for a topic replies under the topic's root message. A topic bound by tool, or
+  bound before roots were persisted, learns it from the first message accepted
+  in it, or else asks Feishu for the topic's root when a card needs it; if that
+  read fails, the card is skipped and logged — it never lands in the parent chat
+  or opens a new topic. Successful
   `bind_channel` and actual `unbind_channel` MCP receipts also tell the agent that
-  the system sends this card automatically and no additional user notification is
-  needed. A no-op unbind or refusal makes no success or card-delivery claim.
+  the system sends this card automatically on a best-effort basis and no additional
+  user notification is needed. A no-op unbind or refusal makes no success or
+  card-delivery claim.
   (Task: [strengthen-dispatch-and-compaction-text](/.agents/tasks/mcp/strengthen-dispatch-and-compaction-text/requirement.md).)
 
 ## Team lifecycle
@@ -212,12 +239,18 @@ the same change that touches it.
 - **The Team record is the only existence fact.** A readable, valid Team record
   means the Team exists and its name is taken; no record (or an invalid one)
   means no Team and a free name. Nothing else — ledgers, claims, identities —
-  competes with it.
+  competes with it. Constructing and live Teams, pending record work and
+  unfinished cleanup retain their authoritative value in memory. Fully
+  retired history is read from disk on demand; editing, deleting or damaging
+  that retired record is observable on the next query or name probe. History
+  remains on disk, and records remain server-owned.
+  (R74: [review repairs](/.agents/tasks/architecture/code-organization-refactor/artifacts/review-fixes-20261003.md).)
 - **Dissolve means terminate now and reclaim.** The user pressing dissolve
-  wants processes dead and tokens no longer burning: all member runtimes stop
-  immediately, the receipt says `accepted`/`closed` after the durable logical
-  close, and slow physical cleanup (large worktrees) continues in the
-  background. `force` is the explicit authorization to discard local changes.
+  wants processes dead and tokens no longer burning: the receipt answers
+  `{accepted, status: "submitted"}` as soon as the Team owns the background
+  work, before anything has stopped; all member runtimes then stop and close
+  behind that receipt, and slow physical cleanup (large worktrees) continues
+  after that. `force` is the explicit authorization to discard local changes.
   A TeamLeader dissolving its own Team usually never receives the tool
   response; that connection loss is the expected surface, and delivery failure
   never rolls the dissolve back. Automatic cleanup removes only the worktree
@@ -227,16 +260,24 @@ the same change that touches it.
   `delete-on-close` (operator ruling R31 in the refine-model-facing-surfaces
   record, 2026-09-06: kept worktrees piled up); pass `cleanup: keep` to retain
   one.
-- **A dissolve that cannot reclaim its worktree is refused before it is
-  accepted.** A non-forced dissolve assesses the managed worktree first: if it
-  is dirty or unmerged the caller gets the refusal and its reason, rather than
-  an `accepted` receipt for a dissolve that then quietly stops. `force` remains
-  the authorization to discard that work.
-  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
-- **A failed dissolve leaves a Team that still exists.** Whatever committed
-  before the failure stays committed (closed members stay closed, deleted cron
-  stores stay deleted); the next ordinary use rebuilds from disk, and the next
-  dissolve retries the same close operations. No rollback product exists.
+- **Dissolve has exactly one reversible step: the worktree precheck, or a
+  failed record write.** A non-forced dissolve assesses the managed worktree
+  first: if it is dirty or unmerged the caller gets the refusal and its
+  reason, rather than an `accepted` receipt for a dissolve that then quietly
+  stops, and the Team is untouched and usable again — `force` remains the
+  authorization to discard that work. Once the precheck passes (or is
+  skipped) and the Team's record says `closed`, the Team is over for good:
+  destroying its children (Workflows, scheduler, members, the leader) and
+  reclaiming its worktree are both best-effort from there — every step is
+  attempted, a failure is logged, and nothing is rolled back, because there is
+  nothing left to roll back to. A member dirtying the worktree after the
+  precheck no longer refuses the dissolve: the Team still closes, and a
+  non-forced cleanup then only keeps the directory instead of removing it.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md);
+  operator ruling R62/R67 in the code-organization-refactor rulings record,
+  2026-09-28: worktree precheck, then write `closed`, then destroy every child
+  service one after another, then worktree cleanup — a failure after `closed`
+  never reopens the Team.)
 - **Creation tools use entity-based worktree names.** The Dispatcher-facing
   `teammate.spawn` and `team.create` MCP tools accept repo mode, path, base ref,
   branch, and cleanup controls, but no custom directory slug. A managed
@@ -451,6 +492,21 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 
 ## Long operations
 
+- **Operational reads share their owner's close fence.** Dispatcher close
+  refuses Team inventory, status and history, TeamMate reads, and the
+  Dispatcher's Workflow and cron reads. A dissolving Team refuses its member,
+  Workflow and cron reads through the Team fence. Process-level Dispatcher
+  inventory and status still report lifecycle state; closed Team history is
+  readable while its Dispatcher admits reads.
+  (R12/R13: [code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md).)
+- **An accepted Workflow still needs admission for each new TeamMate.** Once
+  its Team or Dispatcher starts closing, another construction is refused
+  before name allocation, workspace resolution, identity creation, or launch
+  hooks. A Team refusal takes precedence over a Dispatcher refusal.
+  Construction admitted before close keeps its existing stop, cleanup, and
+  lock finalization; the run's first reserved terminal outcome still wins.
+  (Requirement: R73, "停止新建", in the
+  [existing-behavior follow-up](/.agents/tasks/architecture/code-organization-refactor/artifacts/product-decisions-20261002.md).)
 - **Tools return receipts, work runs behind them.** Any MCP operation that can
   outlast a runtime's tool timeout (dissolve, spawns, workflow runs) returns an
   immediate acceptance receipt; completion arrives as a push, and one settled
@@ -462,8 +518,109 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 
 ## Local state and upgrades
 
+- **Uninstall recursively removes the Dreamux root.** `dreamux uninstall`
+  removes the managed service and the state/run/cache/log paths, then the
+  root directory, including other files placed inside that root. Operator-state
+  locations supplied by runtime providers are checked as normalized paths:
+  removal paths inside or containing one are refused before service changes.
+  Physical provider-home aliases are not resolved or separately protected
+  (R76). Dry-run reports a
+  no-write removal plan from existence checks; it does not promise that later
+  filesystem removal will succeed.
+  (R75: “先和 next 保持一致吧”, in the
+  [code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md);
+  owner: [state and files](/.agents/domains/state-config-and-files.md#uninstall-and-preview).)
+- **Daemon startup starts enabled Dispatchers once.** Their channels and
+  scheduled work start with the daemon; their Agent's provider process is
+  created when needed. There is no `dispatcher.start` Command or CLI verb to
+  reopen a stopped Dispatcher in the same process.
+  (R11: [code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md).)
+- **A termination signal ends the serving process.** SIGTERM or SIGINT starts
+  shutdown. Successful shutdown exits 0; a rejected shutdown exits 1. A
+  shutdown still pending after 15 seconds is cut off and exits 1.
+  (Current behavior: [service topology](/.agents/domains/service-topology.md),
+  delivered in [PR #460](https://github.com/excitedjs/dreamux/pull/460).)
+- **Onboard rewrites known configuration wrapper fields.** A non-dry-run
+  `dreamux onboard` may discard unknown wrapper fields, including fields on
+  untouched entries. Untouched provider-owned `config` contents retain their
+  existing round trip; loading still tolerates unknown envelope keys.
+  (Requirement: R72, "不用保留", in the
+  [existing-behavior follow-up](/.agents/tasks/architecture/code-organization-refactor/artifacts/product-decisions-20261002.md).)
 - **Local runtime state is disposable; upgrades fail loudly.** Team, Agent, and
   Dispatcher operational state is rebuildable operational data, not a protected
   asset. On the 0.x line an incompatible shape is handled by fail-loud plus
   manual rebuild — no migrations, no lazy backfill, no old-shape fallback
   readers. (Domain: [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **A live Feishu session holds authority over its own files; a live hand edit
+  is not honored.** Once a Channel session loads its routing document,
+  `access.json`, or `chat-bots.json`, that in-memory value is authoritative for
+  the rest of the session — an edit made to the file on disk while the
+  dispatcher keeps running is not read, and the session's next write to that
+  file replaces it with the held value. Stop the daemon before editing
+  `access.json` by hand. (Domain:
+  [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **The Config Service holds authority over `config.json` while the daemon
+  runs; a live hand edit is not honored.** Once `dreamux serve` loads
+  `config.json`, that in-memory value is authoritative for the rest of the
+  process — an edit made to the file on disk while the daemon keeps running
+  is not read, and the next `config.agents.replace` writes the held value over
+  it. This is the routing document/`access.json`/`chat-bots.json` rule above
+  on the same `TransactionalStore`: stop the daemon before editing
+  `config.json` by hand. (Domain:
+  [state-config-and-files](/.agents/domains/state-config-and-files.md).)
+- **Runtime `agents[]` configuration is readable and replaceable through
+  Commands.** `config.agents.get` returns the current `agents[]` in file
+  shape with every secret-named value emptied; `config.agents.replace`
+  validates and writes a whole new `agents[]` array, matched to the
+  existing one by `id` — submitting `''` for a secret-named key keeps the
+  stored value, so a caller that read-then-replaced without ever seeing a
+  real secret cannot erase it. A payload the validators refuse — a wrong
+  type, an out-of-set value, or a `builtin:` ref no loaded plugin contributes
+  — is reported as `BAD_REQUEST` with the validator's own wording, and writes
+  nothing. A replace takes effect for the next runtime launch; a runtime
+  already running keeps what it launched with.
+  `dispatchers[]` has no Command; it is still edited by hand with the
+  daemon stopped. (Domain: [add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).)
+
+## Plugins
+
+- **Plugins are opt-in through config.** An operator enables a plugin by
+  listing it in the optional top-level `plugins[]` (`builtin:<id>` or
+  `npm:<package>[#export]`, optionally with a plugin-owned `config` block). A
+  config without `plugins[]` behaves as before; the built-in Feishu channel is
+  always loaded and never listed. A plugin that fails to load, a duplicate
+  plugin or provider name stops `dreamux serve` with an error naming the
+  plugin. The current implementation ignores a plugin's `config` block when
+  the plugin has no config reader; whether to retain this rule remains open in
+  the [refactor requirement](/.agents/tasks/architecture/code-organization-refactor/requirement.md).
+  A plugin callback that
+  fails while an agent launches is logged and skipped, and the launch goes on
+  without that plugin's additions. (Domain: [plugins](/.agents/domains/plugins.md).)
+- **A plugin can append to every TeamMate's launch, the same way it already
+  can for the Dispatcher and a TeamLeader.** Every ordinary TeamMate —
+  dispatcher-spawned, a Team's own member, or a Workflow agent — gets a
+  plugin's prompt instructions and skill sources appended before it launches,
+  told which Team (if any) owns that TeamMate. (Domain:
+  [plugins](/.agents/domains/plugins.md).)
+- **A plugin can adjust a Team's creation parameters.** Before a Team is
+  built from a `team.create` request that is not a replay of an already
+  accepted one, a plugin may change the requested name prefix, intent, leader
+  identity/prompt/skill sources, or repository; an already-accepted request
+  never re-runs this. (Domain: [plugins](/.agents/domains/plugins.md).)
+- **The bootstrap plugin keeps a shared profile in development builds.** The
+  plugin is not published (R56), so `builtin:bootstrap` is unavailable in a
+  published installation. With it enabled in a development build, a
+  Dispatcher whose cwd lacks `.workspace/identity.md` or
+  `.workspace/user.md` is told at start to offer the user to create them
+  together (the guide is also written to `.workspace/bootstrap.md`). Once both
+  files exist, the Dispatcher (from its next start) and every TeamLeader (from
+  its next launch) receive both files in their prompt, and `bootstrap.md` is
+  removed. TeamMates never receive them, and TeamLeaders never see the guide.
+  (Domain: [plugins](/.agents/domains/plugins.md#built-in-bootstrap-plugin).)
+- **Doctor lists plugins.** `dreamux doctor` prints one line per loaded plugin
+  (its source, the providers it contributed, the top-level hooks it tapped); a
+  plugin load failure shows as one failed line in place of those lines. Feishu extensions (tools and
+  card actions another plugin added to the Feishu channel) are listed on the
+  diagnostic line of each configured Feishu channel, and are not listed when
+  no Dispatcher has a Feishu channel. (Domain: [plugins](/.agents/domains/plugins.md),
+  [channel](/.agents/domains/channel.md#feishu-extensions).)

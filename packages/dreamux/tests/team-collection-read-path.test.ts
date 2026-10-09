@@ -1,216 +1,306 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
-import { afterEach, describe, expect, it } from 'vitest';
-
-import { TeamNotFoundError, TeamClosedError } from '../src/service/team-collection/errors.js';
-import { teamCreatePayloadHash } from '../src/service/team-collection/create-request.js';
-import { AgentEntityCollectionStore } from '../src/service/agent-entity/identity-store.js';
-import { teamMateCollectionDir } from '../src/platform/paths.js';
-import { resolveSpawnWorkspace } from '../src/service/worktree/workspaces.js';
-import type { SpawnTeamMateRequest } from '../src/service/teammate-collection/types.js';
-import type { DreamuxConfig } from '../src/config/config.js';
-
+import { describe, expect, it, vi } from 'vitest';
+import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
 import {
-  buildTeamCollectionHarness,
-  buildRestartedTeamCollection,
-  harnessLog,
-  minimalTeamRecordInput,
-  mockLeaderSubmission,
-  type TeamCollectionHarness,
-} from './helpers/team-harness.js';
+  TeamNotFoundError,
+  TeamClosedError,
+} from '../src/service/team/errors.js';
+import { TeamStore } from '../src/service/team/store.js';
+import type { TeamRecord } from '../src/service/team/types.js';
+import {
+  AgentEntityCollectionStore,
+  AgentIdentityStore,
+} from '../src/service/agent/store.js';
+import { createLogger } from '../src/platform/logger.js';
+import { teamMateCollectionDir } from '../src/platform/paths.js';
 import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
+import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
+import { deferred } from './helpers/controlled-runtime-provider.js';
+import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
 
-let harness: TeamCollectionHarness | null = null;
-let submission: { restore(): void } | null = null;
+type Fixture = Awaited<ReturnType<typeof dispatcherFixture>>;
+async function writeRawRecord(fixture: Fixture, name: string, raw: string) {
+  await mkdir(join(fixture.teamRoot, name), { recursive: true });
+  await writeFile(join(fixture.teamRoot, name, 'record.json'), raw);
+}
 
-afterEach(async () => {
-  submission?.restore();
-  submission = null;
-  await harness?.cleanup();
-  harness = null;
-});
-
-describe('TeamCollection: missing/malformed records', () => {
-  it('reports TEAM_NOT_FOUND for lookup and routing when no record exists at all', async () => {
-    harness = await buildTeamCollectionHarness();
-    await expect(harness.collection.open('nope')).rejects.toBeInstanceOf(
-      TeamNotFoundError,
+describe('TeamCollection durable read paths', () => {
+  it('starts a real Dispatcher with inert Team inventory and preserves valid history and residue', async () => {
+    const fixture = await dispatcherFixture();
+    const created = await fixture.teams.createFromRequest(
+      teamRequest('retained-history'),
     );
-    await expect(harness.collection.summary('nope')).rejects.toBeInstanceOf(
-      TeamNotFoundError,
-    );
+    const service = await fixture.teams.open(created.team_name);
+    const closingIdentity = deferred<void>();
+    const finishIdentity = deferred<void>();
+    fixture.releases.push(() => finishIdentity.resolve());
+    const update = AgentIdentityStore.prototype.update;
+    const identityUpdate = vi
+      .spyOn(AgentIdentityStore.prototype, 'update')
+      .mockImplementation(async function (this: AgentIdentityStore, patch) {
+        if (
+          this.dir === join(fixture.teamRoot, created.team_name) &&
+          typeof patch !== 'function' &&
+          patch.status === 'closed'
+        ) {
+          closingIdentity.resolve();
+          await finishIdentity.promise;
+        }
+        return update.call(this, patch);
+      });
+    let closed = false;
+    void service.closed.then(() => {
+      closed = true;
+    });
+    await fixture.teams.dissolve(created.team_name, {
+      note: 'Finished',
+      force: true,
+    });
+    try {
+      await closingIdentity.promise;
+      await fixture.host.close();
+      // Host shutdown stops runtimes; the accepted dissolve still owns this write.
+      expect(closed).toBe(false);
+      expect(
+        JSON.parse(
+          await readFile(
+            join(fixture.teamRoot, created.team_name, 'record.json'),
+            'utf8',
+          ),
+        ),
+      ).toMatchObject({ status: 'closed' });
+    } finally {
+      finishIdentity.resolve();
+      // This reuse-cwd Team has no physical worktree cleanup after child closure.
+      await service.closed;
+      identityUpdate.mockRestore();
+    }
+    expect(
+      JSON.parse(
+        await readFile(
+          join(fixture.teamRoot, created.team_name, 'identity.json'),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({ status: 'closed' });
+    for (const name of ['ledger', '.tmp', 'backup old'])
+      await writeRawRecord(fixture, name, 'inert bytes');
+    const next = fixture.build();
+    await next.host.start();
+    await next.host.dispatcherAgent.mustAgent().activate();
+    expect(fixture.provider.runtimes).toHaveLength(1);
+    expect((await next.teams.list()).map((row) => row.team_name)).toEqual([
+      created.team_name,
+    ]);
+    expect(await next.teams.summary(created.team_name)).toMatchObject({
+      status: 'closed',
+    });
+    for (const name of ['ledger', '.tmp', 'backup old']) {
+      expect(await readdir(join(fixture.teamRoot, name))).toEqual([
+        'record.json',
+      ]);
+      expect(
+        await readFile(join(fixture.teamRoot, name, 'record.json'), 'utf8'),
+      ).toBe('inert bytes');
+    }
   });
 
-  it('treats a malformed record identically to a missing one: not found, not listed, and its name is not reserved', async () => {
-    harness = await buildTeamCollectionHarness();
-    await writeRawRecord(harness, 'ghost', '{ this is not JSON');
-
-    await expect(harness.collection.open('ghost')).rejects.toBeInstanceOf(
+  it('reports TEAM_NOT_FOUND for lookup and routing when no record exists', async () => {
+    const fixture = await dispatcherFixture();
+    await expect(fixture.teams.open('nope')).rejects.toBeInstanceOf(
       TeamNotFoundError,
     );
-    expect(await harness.collection.list()).toEqual([]);
-
-    // A name a malformed record sits at is free, not reserved: publishing a
-    // fresh, valid record at the EXACT same name succeeds — the malformed
-    // file held no claim on it, so exclusive publication (which fails fast
-    // on a real collision) falls through to replacing it.
-    const republished = await harness.seedStore.create(
-      minimalTeamRecordInput({ dispatcherId: harness.dispatcherId, teamId: 'ghost' }),
+    await expect(fixture.teams.summary('nope')).rejects.toBeInstanceOf(
+      TeamNotFoundError,
     );
-    expect(republished).not.toBeNull();
-    expect((await harness.seedStore.get('ghost'))?.status).toBe('running');
+    expect(fixture.provider.runtimes).toHaveLength(0);
+  });
+
+  it('treats malformed records as missing and permits a valid record to claim the same name', async () => {
+    const fixture = await dispatcherFixture();
+    await writeRawRecord(fixture, 'ghost', '{ invalid JSON');
+    await expect(fixture.teams.open('ghost')).rejects.toBeInstanceOf(
+      TeamNotFoundError,
+    );
+    expect(await fixture.teams.list()).toEqual([]);
+    const store = new TeamStore({
+      root: fixture.teamRoot,
+      dispatcherId: 'test',
+    });
+    const handle = await store.acquire('ghost');
+    expect(
+      await handle.create(
+        validRawRecord('test', 'ghost') as unknown as TeamRecord,
+      ),
+    ).not.toBeNull();
+    await handle.release();
+    expect(await fixture.teams.summary('ghost')).toMatchObject({
+      team_name: 'ghost',
+      status: 'running',
+    });
+    expect(fixture.provider.runtimes).toHaveLength(0);
   });
 
   it.each([
-    ['leader_name missing', (r: Record<string, unknown>) => { delete r['leader_name']; }],
-    ['status outside the vocabulary', (r: Record<string, unknown>) => { r['status'] = 'active'; }],
-    ['leader_agent_runtime missing', (r: Record<string, unknown>) => { delete r['leader_agent_runtime']; }],
-    ['repo_cwd missing', (r: Record<string, unknown>) => { delete r['repo_cwd']; }],
-    ['runtime_cwd missing', (r: Record<string, unknown>) => { delete r['runtime_cwd']; }],
-    ['worktree missing', (r: Record<string, unknown>) => { delete r['worktree']; }],
-    ['worktree.mode outside the vocabulary', (r: Record<string, unknown>) => {
-      (r['worktree'] as Record<string, unknown>)['mode'] = 'symlink';
-    }],
-    ['team_id disagrees with the directory it was found in', (r: Record<string, unknown>) => {
-      r['team_id'] = 'someone-else';
-    }],
-    ['dispatcher_id disagrees with the owning dispatcher', (r: Record<string, unknown>) => {
-      r['dispatcher_id'] = 'someone-elses-dispatcher';
-    }],
-    ['leader_identity_prompt has the wrong type', (r: Record<string, unknown>) => {
-      r['leader_identity_prompt'] = 42;
-    }],
-  ])('a record with %s is TEAM_NOT_FOUND, not a crash', async (_label, corrupt) => {
-    harness = await buildTeamCollectionHarness();
-    const valid = validRawRecord(harness.dispatcherId, 'broken');
-    corrupt(valid);
-    await writeRawRecord(harness, 'broken', JSON.stringify(valid));
+    [
+      'leader_name missing',
+      (r: Record<string, unknown>) => {
+        delete r['leader_name'];
+      },
+    ],
+    [
+      'status outside the vocabulary',
+      (r: Record<string, unknown>) => {
+        r['status'] = 'active';
+      },
+    ],
+    [
+      'leader_agent_runtime missing',
+      (r: Record<string, unknown>) => {
+        delete r['leader_agent_runtime'];
+      },
+    ],
+    [
+      'repo_cwd missing',
+      (r: Record<string, unknown>) => {
+        delete r['repo_cwd'];
+      },
+    ],
+    [
+      'runtime_cwd missing',
+      (r: Record<string, unknown>) => {
+        delete r['runtime_cwd'];
+      },
+    ],
+    [
+      'worktree missing',
+      (r: Record<string, unknown>) => {
+        delete r['worktree'];
+      },
+    ],
+    [
+      'worktree.mode outside the vocabulary',
+      (r: Record<string, unknown>) => {
+        (r['worktree'] as Record<string, unknown>)['mode'] = 'symlink';
+      },
+    ],
+    [
+      'team_id disagrees with the directory it was found in',
+      (r: Record<string, unknown>) => {
+        r['team_id'] = 'someone-else';
+      },
+    ],
+    [
+      'dispatcher_id disagrees with the owning dispatcher',
+      (r: Record<string, unknown>) => {
+        r['dispatcher_id'] = 'someone-elses-dispatcher';
+      },
+    ],
+    [
+      'leader_identity_prompt has the wrong type',
+      (r: Record<string, unknown>) => {
+        r['leader_identity_prompt'] = 42;
+      },
+    ],
+  ])(
+    'a record with %s is TEAM_NOT_FOUND, not a crash',
+    async (_label, corrupt) => {
+      const fixture = await dispatcherFixture();
+      const valid = validRawRecord('test', 'broken');
+      corrupt(valid);
+      await writeRawRecord(fixture, 'broken', JSON.stringify(valid));
+      await expect(fixture.teams.open('broken')).rejects.toBeInstanceOf(
+        TeamNotFoundError,
+      );
+      expect(await fixture.teams.list()).toEqual([]);
+      expect(fixture.provider.runtimes).toHaveLength(0);
+    },
+  );
 
-    await expect(harness.collection.open('broken')).rejects.toBeInstanceOf(
-      TeamNotFoundError,
-    );
-    expect(await harness.collection.list()).toEqual([]);
-  });
-
-  it('does NOT validate fields outside the record-validity boundary — their absence is the contract', async () => {
-    harness = await buildTeamCollectionHarness();
-    const valid = validRawRecord(harness.dispatcherId, 'loose');
-    // Wrong type, and entirely absent — neither is part of what a Team record
-    // is checked for; both must still read back as a found, live Team.
+  it('does not expand validation beyond the Team record existence boundary', async () => {
+    const fixture = await dispatcherFixture();
+    const valid = validRawRecord('test', 'loose');
     valid['intent'] = 12345;
     delete valid['created_at'];
     delete valid['close_note'];
-    await writeRawRecord(harness, 'loose', JSON.stringify(valid));
-
-    await expect(harness.collection.summary('loose')).resolves.toMatchObject({
+    await writeRawRecord(fixture, 'loose', JSON.stringify(valid));
+    expect(await fixture.teams.summary('loose')).toMatchObject({
       team_name: 'loose',
       status: 'running',
     });
   });
 
-  it('reads a record written before leader_identity_prompt/leader_skill_sources existed as empty, never backfilled', async () => {
-    harness = await buildTeamCollectionHarness();
-    const valid = validRawRecord(harness.dispatcherId, 'preexisting');
+  it('reads missing additive leader creation inputs as empty without backfilling the file', async () => {
+    const fixture = await dispatcherFixture();
+    const valid = validRawRecord('test', 'preexisting');
     delete valid['leader_identity_prompt'];
     delete valid['leader_skill_sources'];
-    await writeRawRecord(harness, 'preexisting', JSON.stringify(valid));
-
-    const record = await harness.seedStore.get('preexisting');
-    expect(record?.leader_identity_prompt).toBeNull();
-    expect(record?.leader_skill_sources).toEqual([]);
-  });
-
-  it("a stale in-memory record snapshot cannot resurrect a Team whose disk record has since become invalid", async () => {
-    harness = await buildTeamCollectionHarness();
-    const input = minimalTeamRecordInput({
-      dispatcherId: harness.dispatcherId,
-      teamId: 'vanishing',
+    const raw = JSON.stringify(valid);
+    await writeRawRecord(fixture, 'preexisting', raw);
+    const store = new TeamStore({
+      root: fixture.teamRoot,
+      dispatcherId: 'test',
     });
-    const staleSnapshot = await harness.seedStore.create(input);
-    expect(staleSnapshot).not.toBeNull();
-
-    // The record an operator or a failed write left behind is now unreadable —
-    // simulating a Team whose durable proof of existence disappeared out from
-    // under an in-memory copy still held somewhere.
-    await writeRawRecord(harness, 'vanishing', '{ corrupted, not valid json');
-
-    await expect(
-      harness.seedStore.update(staleSnapshot!, {
-        status: 'closed',
-        closedAt: Date.now(),
-        closeNote: 'attempted close of a vanished Team',
-      }),
-    ).rejects.toBeInstanceOf(TeamNotFoundError);
-
-    // Nothing was written back from the stale snapshot: the file on disk is
-    // exactly the corrupted content this test planted, not a resurrected,
-    // merged "closed" record built from stale memory.
-    const raw = await readFile(recordPath(harness, 'vanishing'), 'utf8');
-    expect(raw).toBe('{ corrupted, not valid json');
+    expect(await store.get('preexisting')).toMatchObject({
+      leader_identity_prompt: null,
+      leader_skill_sources: [],
+    });
+    expect(
+      await readFile(
+        join(fixture.teamRoot, 'preexisting', 'record.json'),
+        'utf8',
+      ),
+    ).toBe(raw);
   });
-});
 
-describe('TeamCollection: closed Teams are record-only reads', () => {
-  it('lists, searches, and summarizes a closed Team from its record alone, without materializing a TeamService', async () => {
-    harness = await buildTeamCollectionHarness();
-    // Seeded directly: there is no leader identity file at all for this Team,
-    // so any code path that tried to materialize a TeamService would either
-    // throw (rebuild refuses a closed record outright) or need a real leader
-    // identity it does not have. `list`/`history`/`summary` succeeding proves
-    // neither path was taken.
-    await harness.seedStore.create(minimalTeamRecordInput({
-      dispatcherId: harness.dispatcherId,
-      teamId: 'retired',
-      status: 'closed',
-    }));
-
-    const rows = await harness.collection.list();
-    expect(rows).toEqual([
-      expect.objectContaining({ team_name: 'retired', status: 'closed', leader_state: null }),
+  it('lists, searches, and summarizes closed Teams with no leader identity or TeamService', async () => {
+    const fixture = await dispatcherFixture();
+    await writeRawRecord(
+      fixture,
+      'retired',
+      JSON.stringify({
+        ...validRawRecord('test', 'retired'),
+        status: 'closed',
+      }),
+    );
+    expect(await fixture.teams.list()).toEqual([
+      expect.objectContaining({
+        team_name: 'retired',
+        status: 'closed',
+        leader_state: null,
+      }),
     ]);
-
-    const history = await harness.collection.history({});
-    expect(history.items).toEqual([
+    expect((await fixture.teams.history({})).items).toEqual([
       expect.objectContaining({ team_name: 'retired', status: 'closed' }),
     ]);
-
-    const summary = await harness.collection.summary('retired');
-    expect(summary.status).toBe('closed');
-    expect(summary.leader_state).toBeNull();
-
-    // The one operation that DOES require a live Team refuses instead of
-    // building one — a closed Team is never materialized again.
-    await expect(harness.collection.open('retired')).rejects.toBeInstanceOf(
+    expect(await fixture.teams.summary('retired')).toMatchObject({
+      status: 'closed',
+      leader_state: null,
+    });
+    await expect(fixture.teams.open('retired')).rejects.toBeInstanceOf(
       TeamClosedError,
     );
+    expect(fixture.provider.runtimes).toHaveLength(0);
   });
-});
 
-describe('TeamCollection: canonical live/store projection', () => {
-  it('counts member-directory occupancy identically for a live Team and a cold collection', async () => {
-    harness = await buildTeamCollectionHarness();
-    const created = await harness.collection.createFromRequest({
-      requestId: 'member-count-request',
-      payloadHash: teamCreatePayloadHash({ intent: 'prove canonical member occupancy' }),
-      options: {
-        namePrefix: 'members',
-        leaderAgentRuntime: 'fake',
-        intent: 'prove canonical member occupancy',
-      },
+  it('counts occupied member directories identically in live and cold projections', async () => {
+    const fixture = await dispatcherFixture();
+    const created = await fixture.teams.createFromRequest(
+      teamRequest('member-occupancy'),
+    );
+    const root = teamMateCollectionDir(
+      join(fixture.teamRoot, created.team_name),
+    );
+    const store = new AgentEntityCollectionStore({
+      root,
+      dispatcherId: 'test',
+      log: createLogger({ destination: { write() {} } }),
     });
-    const teamRoot = join(harness.teamCollectionRoot, created.team_name);
-    const memberRoot = teamMateCollectionDir(teamRoot);
-    const members = new AgentEntityCollectionStore({
-      root: memberRoot,
-      dispatcherId: harness.dispatcherId,
-      log: harnessLog(),
-    });
-    await members.entity('closed-member').create({
+    await store.entity('closed-member').create({
       name: 'closed-member',
       teamId: created.team_name,
-      agentRuntime: 'fake',
+      agentRuntime: 'controlled',
       sourceCwd: created.runtime_cwd,
       sourceRepo: created.source_repo,
       cwd: created.runtime_cwd,
@@ -218,246 +308,69 @@ describe('TeamCollection: canonical live/store projection', () => {
       worktree: reuseCwdWorktree(created.runtime_cwd),
       status: 'closed',
     });
-    await mkdir(join(memberRoot, 'missing-identity'), { recursive: true });
-    await mkdir(join(memberRoot, 'malformed-identity'), { recursive: true });
+    await mkdir(join(root, 'missing-identity'));
+    await mkdir(join(root, 'malformed-identity'));
     await writeFile(
-      join(memberRoot, 'malformed-identity', 'identity.json'),
-      '{ malformed identity',
+      join(root, 'malformed-identity', 'identity.json'),
+      '{ invalid JSON',
     );
+    const live = await fixture.teams.summary(created.team_name);
+    expect(live.member_count).toBe(3);
+    expect((await fixture.teams.list())[0]).toMatchObject({
+      member_count: 3,
+      leader_state: live.leader_state,
+    });
+    await fixture.host.close();
+    const cold = fixture.build();
+    const status = await cold.teams.summary(created.team_name);
+    expect(status).toMatchObject({
+      member_count: 3,
+      leader_name: created.leader_name,
+    });
+    expect((await cold.teams.list())[0]).toMatchObject({
+      member_count: 3,
+      leader_state: status.leader_state,
+    });
+    expect(fixture.provider.runtimes).toHaveLength(0);
+  });
 
-    const liveStatus = await harness.collection.summary(created.team_name);
-    const liveList = (await harness.collection.list()).find(
-      (team) => team.team_name === created.team_name,
+  it('joins concurrent open to the same in-flight create until initial admission settles', async () => {
+    const fixture = await dispatcherFixture();
+    const admission = deferred<RuntimeAdmission>();
+    const pending = controllableRuntimeSubmission();
+    fixture.releases.push(() => {
+      admission.resolve({ status: 'stopped' });
+      pending.stop();
+    });
+    fixture.provider.planNext({ delayedAdmission: admission.promise });
+    const creating = fixture.teams.createFromRequest(
+      teamRequest('joined-create', 'First task'),
     );
-    expect(liveStatus.member_count).toBe(3);
-    expect(liveList?.member_count).toBe(3);
-    expect(liveList?.leader_state).toBe(liveStatus.leader_state);
-
-    const cold = buildRestartedTeamCollection(harness);
-    const coldStatus = await cold.summary(created.team_name);
-    const coldList = (await cold.list()).find(
-      (team) => team.team_name === created.team_name,
-    );
-    expect(coldStatus.member_count).toBe(3);
-    expect(coldList?.member_count).toBe(3);
-    expect(coldList?.leader_state).toBe(coldStatus.leader_state);
-    expect(coldStatus.leader_name).toBe(created.leader_name);
+    await vi.waitFor(() => expect(fixture.provider.runtimes).toHaveLength(1));
+    await fixture.provider.runtimes[0]!.submitStarted.promise;
+    const [name] = await readdir(fixture.teamRoot);
+    if (name === undefined) throw new Error('expected durable Team');
+    let opened = false;
+    const opening = fixture.teams.open(name).then((service) => {
+      opened = true;
+      return service;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(opened).toBe(false);
+    admission.resolve({ status: 'submitted', submission: pending.submission });
+    const [created, service] = await Promise.all([creating, opening]);
+    expect(created).toMatchObject({ team_name: name, status: 'running' });
+    expect(await fixture.teams.open(name)).toBe(service);
+    expect(fixture.provider.runtimes).toHaveLength(1);
+    expect(fixture.provider.runtimes[0]!.inputs).toHaveLength(1);
+    pending.stop();
   });
 });
 
-describe('TeamCollection: shared create/open construction', () => {
-  it('joins a concurrent open() to the exact same in-flight creation, and only delivers work after the leader is usable', async () => {
-    const gate = mockLeaderSubmission();
-    submission = gate;
-    harness = await buildTeamCollectionHarness();
-
-    // A prompt is what makes the leader's first submission happen at all — a
-    // promptless creation would reach no runtime, and there would be nothing
-    // here to hold open.
-    const creating = harness.collection.createFromRequest({
-      requestId: 'joined-request',
-      payloadHash: teamCreatePayloadHash({ intent: 'first caller', prompt: 'first task' }),
-      options: {
-        namePrefix: 'joined',
-        leaderAgentRuntime: 'fake',
-        intent: 'first caller',
-        prompt: 'first task',
-      },
-    });
-
-    // Wait for the record to actually be durable (the record is published
-    // BEFORE the leader's first `submitInput()` call) so the concurrent
-    // `admit` below has a real, findable Team to join rather than racing
-    // record publication.
-    let joinedTeamName: string | null = null;
-    await waitFor(async () => {
-      const [record] = await harness!.seedStore.list();
-      joinedTeamName = record?.team_id ?? null;
-      return joinedTeamName !== null;
-    });
-    if (joinedTeamName === null) throw new Error('created Team record has no name');
-
-    let delivered = false;
-    let seenService: unknown;
-    const admitting = harness.collection.admit(joinedTeamName, async (service) => {
-      delivered = true;
-      seenService = service;
-      return service.status();
-    });
-
-    // The leader's first `submitInput()` is still held open, so nothing has
-    // been delivered to the joined caller yet — construction is shared, not
-    // bypassed by a second, independent build.
-    await settledOrPending(admitting);
-    expect(delivered).toBe(false);
-
-    gate.release();
-    const [createResult, admitResult] = await Promise.all([creating, admitting]);
-
-    expect(delivered).toBe(true);
-    expect(createResult).toMatchObject({
-      team_name: expect.stringMatching(/^joined-/),
-      status: 'running',
-      leader_name: expect.any(String),
-      leader_agent_runtime: 'fake',
-      runtime_cwd: expect.any(String),
-    });
-    expect((await harness.collection.summary(createResult.team_name)).status).toBe('running');
-    expect(admitResult.status).toBe('running');
-    // Exactly one leader submission for both callers together.
-    expect(gate.callCount()).toBe(1);
-
-    // The exact same TeamService instance both callers ended up sharing is
-    // also what a later, ordinary open() reads back from the cache.
-    const reopened = await harness.collection.open(createResult.team_name);
-    expect(reopened).toBe(seenService);
-  });
-});
-
-describe('Team-scoped TeamMate workspace borrowing', () => {
-  it('borrows the Team runtime directory as reuse-cwd/keep, never copying the Team worktree\'s own identity', async () => {
-    const teamManagedWorktree = {
-      mode: 'managed' as const,
-      slug: 'team-slug',
-      path: '/team/managed/checkout',
-      branch: 'dreamux/team-branch',
-      base_ref: 'main',
-      cleanup: 'delete-on-close' as const,
-      cleanup_state: 'managed-active' as const,
-      cleanup_error: null,
-    };
-    const request: SpawnTeamMateRequest = {
-      name: 'member-1',
-      prompt: 'hi',
-      intent: 'work',
-      sharedWorkspace: {
-        sourceCwd: '/team/managed/checkout',
-        sourceRepo: 'git@example.com:org/repo.git',
-        runtimeCwd: '/team/managed/checkout',
-      },
-    };
-    const config: DreamuxConfig = { agents: {}, dispatchers: [] };
-    const untouchedWorktrees = {
-      prepare: () => { throw new Error('must not be called for a shared-workspace spawn'); },
-      prepareDefaultWorkspace: () => {
-        throw new Error('must not be called for a shared-workspace spawn');
-      },
-    } as unknown as import('../src/service/worktree/manager.js').WorktreeManager;
-
-    const workspace = await resolveSpawnWorkspace({
-      config,
-      worktrees: untouchedWorktrees,
-      dispatcherId: 'd1',
-      name: 'member-1',
-      request,
-    });
-
-    expect(workspace.createdCheckout).toBe(false);
-    expect(workspace.worktree).toEqual({
-      mode: 'reuse-cwd',
-      slug: null,
-      path: '/team/managed/checkout',
-      branch: null,
-      base_ref: null,
-      cleanup: 'keep',
-      cleanup_state: 'not-managed',
-      cleanup_error: null,
-    });
-    // None of the Team's own managed-worktree facts (slug, branch, base_ref,
-    // delete-on-close, active cleanup state) made it into the member's
-    // workspace — the loan type carries no worktree identity at all, so
-    // there is nothing for a member's own close to mistakenly clean up.
-    expect(workspace.worktree).not.toMatchObject({
-      slug: teamManagedWorktree.slug,
-      cleanup: 'delete-on-close',
-    });
-  });
-
-  it('lets a dispatcher-scoped TeamMate (no sharedWorkspace) take its own managed, delete-on-close worktree', async () => {
-    // `resolveSpawnWorkspace` resolves the dispatcher's own workspace cwd for
-    // real in managed mode (it is only the checkout placement that is faked
-    // below), so this needs one genuine, writable dispatcher cwd.
-    const dispatcherCwd = await mkdtemp(join(tmpdir(), 'dreamux-dispatcher-cwd-'));
-    let prepareCalls = 0;
-    const worktrees = {
-      prepare: async () => {
-        prepareCalls += 1;
-        return {
-          sourceCwd: '/repo',
-          sourceRepo: '/repo',
-          runtimeCwd: '/repo/.workspace/worktree/repo/member-1',
-          worktree: {
-            mode: 'managed' as const,
-            slug: 'member-1',
-            path: '/repo/.workspace/worktree/repo/member-1',
-            branch: 'dreamux/member-1',
-            base_ref: null,
-            cleanup: 'delete-on-close' as const,
-            cleanup_state: 'managed-active' as const,
-            cleanup_error: null,
-          },
-          createdCheckout: true,
-        };
-      },
-      prepareDefaultWorkspace: () => {
-        throw new Error('must not be called when the caller supplied an explicit cwd/worktree');
-      },
-    } as unknown as import('../src/service/worktree/manager.js').WorktreeManager;
-
-    try {
-      const config: DreamuxConfig = {
-        agents: {},
-        dispatchers: [{
-          id: 'd1',
-          cwd: dispatcherCwd,
-          enabled: true,
-          workspace: { enabled: false },
-          channels: [],
-          agentRuntime: 'unused',
-          runtime: { provider: 'unused', config: {} },
-        }],
-      };
-      const workspace = await resolveSpawnWorkspace({
-        config,
-        worktrees,
-        dispatcherId: 'd1',
-        name: 'member-1',
-        request: {
-          name: 'member-1',
-          prompt: 'hi',
-          intent: 'work',
-          cwd: '/repo',
-          worktree: { mode: 'managed', cleanup: 'delete-on-close' },
-        },
-      });
-
-      expect(prepareCalls).toBe(1);
-      expect(workspace.createdCheckout).toBe(true);
-      expect(workspace.worktree.mode).toBe('managed');
-      expect(workspace.worktree.cleanup).toBe('delete-on-close');
-    } finally {
-      await rm(dispatcherCwd, { recursive: true, force: true });
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// helpers
-
-function recordPath(harness: TeamCollectionHarness, teamId: string): string {
-  return join(harness.teamCollectionRoot, teamId, 'record.json');
-}
-
-async function writeRawRecord(
-  harness: TeamCollectionHarness,
+function validRawRecord(
+  dispatcherId: string,
   teamId: string,
-  raw: string,
-): Promise<void> {
-  await mkdir(join(harness.teamCollectionRoot, teamId), { recursive: true });
-  await writeFile(recordPath(harness, teamId), raw);
-}
-
-function validRawRecord(dispatcherId: string, teamId: string): Record<string, unknown> {
+): Record<string, unknown> {
   return {
     version: 1,
     dispatcher_id: dispatcherId,
@@ -466,7 +379,7 @@ function validRawRecord(dispatcherId: string, teamId: string): Record<string, un
     repo_cwd: '/tmp/unused-cwd',
     source_repo: null,
     leader_name: `tl-${teamId}-seed`,
-    leader_agent_runtime: 'fake',
+    leader_agent_runtime: 'controlled',
     leader_identity_prompt: null,
     leader_skill_sources: [],
     runtime_cwd: '/tmp/unused-cwd',
@@ -490,21 +403,4 @@ function validRawRecord(dispatcherId: string, teamId: string): Record<string, un
     create_payload_hash: null,
     worktree_cleanup_force: false,
   };
-}
-
-async function waitFor(condition: () => Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    if (await condition()) return;
-    if (Date.now() > deadline) throw new Error('condition never became true');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-/** Give a promise a short window to settle, without ever timing out the test. */
-async function settledOrPending(promise: Promise<unknown>): Promise<void> {
-  await Promise.race([
-    promise.catch(() => undefined),
-    new Promise((resolve) => setTimeout(resolve, 30)),
-  ]);
 }

@@ -1,15 +1,19 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 
-import { writeFileExclusiveAtomic } from '../../platform/atomic-write.js';
+import {
+  errorMessage,
+  isPlainObject,
+  TransactionalStore,
+} from '@excitedjs/dreamux-utils';
+
+import { LegacyStateError } from '../../platform/errors.js';
 import { isNotFound } from '../../platform/fs-errors.js';
-import { JsonDocumentStore } from '../../platform/json-document-store.js';
 import {
   validateWorkflowRunId,
   workflowRunRecordPath,
   workflowScopeDir,
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
-import { isRecord } from './run-support.js';
 import type {
   WorkflowAgentRecord,
   WorkflowAgentStatus,
@@ -18,48 +22,100 @@ import type {
   WorkflowRunStatus,
 } from './types.js';
 
+const RECORD_VERSION = 1;
+
 const RUN_STATUSES = new Set<WorkflowRunStatus>([
   'running',
   'completed',
   'failed',
   'stopped',
 ]);
-const AGENT_STATUSES = new Set<WorkflowAgentStatus>(['queued', ...RUN_STATUSES]);
-const CALLER_KINDS = new Set<WorkflowCallerKind>([
-  'dispatcher',
-  'team_leader',
+const AGENT_STATUSES = new Set<WorkflowAgentStatus>([
+  'queued',
+  ...RUN_STATUSES,
 ]);
+const CALLER_KINDS = new Set<WorkflowCallerKind>(['dispatcher', 'team_leader']);
 
 /** Scope-local record store. Journal events are owned separately by WorkflowJournal. */
 export class WorkflowRunStore {
-  private readonly documents = new JsonDocumentStore<WorkflowRunRecord | null>({
-    version: 1,
-    empty: () => null,
-    parse: (raw, ctx) => parseRecord(raw, this.scope, ctx.path),
-  });
+  /** One `TransactionalStore` per run id with a live in-process owner (a
+   * `WorkflowRun`), built lazily and released by {@link release} once that
+   * owner settles. A run with no live owner — finished, or never started
+   * in this process — has no entry here and is read one-shot from disk
+   * instead. */
+  private readonly stores = new Map<
+    string,
+    TransactionalStore<WorkflowRunRecord | null>
+  >();
 
   constructor(private readonly scope: WorkflowScopePathInput) {}
 
+  /**
+   * This run's own `TransactionalStore`, for an owner (`WorkflowRun`) that
+   * holds a synchronous reference across its lifetime — reading the last
+   * committed value (`.current`) or draining pending writes (`.drain()`) —
+   * instead of a fresh async round trip through {@link get}/{@link write}
+   * each time.
+   */
+  handle(runId: string): TransactionalStore<WorkflowRunRecord | null> {
+    return this.storeFor(runId);
+  }
+
+  /**
+   * Drop this run's cached store once its owning `WorkflowRun` has settled.
+   * A later `get`/`list` then reads the terminal record fresh from disk
+   * instead of serving it from memory for the rest of this scope's life.
+   */
+  release(runId: string): void {
+    this.stores.delete(validateWorkflowRunId(runId));
+  }
+
+  private storeFor(
+    runId: string,
+  ): TransactionalStore<WorkflowRunRecord | null> {
+    const id = validateWorkflowRunId(runId);
+    let store = this.stores.get(id);
+    if (store === undefined) {
+      store = new TransactionalStore<WorkflowRunRecord | null>({
+        path: this.path(id),
+        load: () => this.load(id),
+      });
+      this.stores.set(id, store);
+    }
+    return store;
+  }
+
+  /**
+   * Publish a brand-new run record, no-clobber. `create` stores the value it
+   * is handed as this run's committed reference, so a clone goes in — never
+   * the caller's own live, still-mutating draft — the same way {@link write}
+   * always clones its argument before committing it.
+   */
   async create(record: WorkflowRunRecord): Promise<void> {
     assertRecordScope(record, this.scope);
-    const path = this.path(record.run_id);
-    const published = await writeFileExclusiveAtomic(
-      path,
-      `${JSON.stringify(record, null, 2)}\n`,
-      { mode: 0o600 },
-    );
-    if (!published) {
-      throw new Error(`workflow run ${JSON.stringify(record.run_id)} already exists`);
-    }
+    await this.storeFor(record.run_id).create(structuredClone(record));
   }
 
+  /**
+   * One-shot read straight from disk — never through {@link storeFor}, so
+   * reading a run this scope has no live owner for does not cache it for the
+   * rest of the scope's life. An active run's owner reads through
+   * {@link handle} instead.
+   */
   async get(runId: string): Promise<WorkflowRunRecord | null> {
-    return this.documents.read(this.path(runId));
+    return this.load(validateWorkflowRunId(runId));
   }
 
+  /**
+   * Publish `record` as this run's next committed value. `WorkflowRun` is
+   * this record's sole mutator — there is no second writer whose committed
+   * value a merge would need to reconcile against — so this always publishes
+   * the caller's already-built next value rather than computing one from
+   * whatever is currently committed.
+   */
   async write(record: WorkflowRunRecord): Promise<void> {
     assertRecordScope(record, this.scope);
-    await this.documents.write(this.path(record.run_id), record);
+    await this.storeFor(record.run_id).update(() => structuredClone(record));
   }
 
   async list(): Promise<WorkflowRunRecord[]> {
@@ -89,6 +145,40 @@ export class WorkflowRunStore {
       runId: validateWorkflowRunId(runId),
     });
   }
+
+  /**
+   * This run's whole validation contract, inlined from the now-deleted
+   * generic `JsonDocumentStore`: a missing file is a successful `null`, a
+   * version mismatch or malformed document is a `LegacyStateError` (Dreamux
+   * 0.x does not migrate old state), and a parsed record must belong to this
+   * scope.
+   */
+  private async load(runId: string): Promise<WorkflowRunRecord | null> {
+    const path = this.path(runId);
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+    try {
+      const value = JSON.parse(raw) as unknown;
+      if (!isPlainObject(value) || value['version'] !== RECORD_VERSION) {
+        throw new LegacyStateError(
+          `JSON document ${path} is not version ${RECORD_VERSION}. ` +
+            'Dreamux 0.x does not migrate old state; delete the file to rebuild it.',
+        );
+      }
+      return parseRecord(value, this.scope, path);
+    } catch (err) {
+      if (err instanceof LegacyStateError) throw err;
+      throw new LegacyStateError(
+        `JSON document ${path} is malformed or incompatible. Dreamux 0.x does ` +
+          `not migrate old state; delete the file to rebuild it. Cause: ${errorMessage(err)}`,
+      );
+    }
+  }
 }
 
 function parseRecord(
@@ -96,7 +186,7 @@ function parseRecord(
   scope: WorkflowScopePathInput,
   path: string,
 ): WorkflowRunRecord {
-  if (!isRecord(raw)) throw new Error(`invalid workflow record ${path}`);
+  if (!isPlainObject(raw)) throw new Error(`invalid workflow record ${path}`);
   if (raw['version'] !== 1) {
     throw new Error(`unsupported workflow record version in ${path}`);
   }
@@ -137,8 +227,12 @@ function parseRecord(
   return record;
 }
 
-function parseAgent(raw: unknown, path: string, position: number): WorkflowAgentRecord {
-  if (!isRecord(raw)) {
+function parseAgent(
+  raw: unknown,
+  path: string,
+  position: number,
+): WorkflowAgentRecord {
+  if (!isPlainObject(raw)) {
     throw new Error(`invalid agent ${position} in workflow record ${path}`);
   }
   const status = raw['status'];
@@ -223,7 +317,10 @@ function nullableNumberField(
   path: string,
 ): number | null {
   const value = record[field];
-  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value))) {
+  if (
+    value !== null &&
+    (typeof value !== 'number' || !Number.isFinite(value))
+  ) {
     throw new Error(`invalid ${field} in workflow record ${path}`);
   }
   return value as number | null;

@@ -15,8 +15,9 @@
 import { connect, type Socket } from 'node:net';
 
 import type { JsonInvoker, JsonValue } from '@excitedjs/dreamux-types';
+import { errorMessage } from '@excitedjs/dreamux-utils';
 
-import { errorMessage, TransportError } from '../platform/errors.js';
+import { TransportError } from '../platform/errors.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
 
@@ -25,20 +26,31 @@ export interface AdminInvokerOptions {
   timeoutMs?: number;
 }
 
-/** A failure the SERVER reported, carrying the server's own stable code. */
+/**
+ * A failure the SERVER reported, carrying the server's own stable code.
+ *
+ * Structurally exactly `command/errors.ts`'s `CommandFailure`: `action` is
+ * typed as an exact optional `string`, matching that interface's `action?:
+ * string` field. A constructor parameter property typed `action?: string`
+ * would instead give the field the type an optional *parameter* has inside
+ * the constructor body, `string | undefined`, which `exactOptionalPropertyTypes`
+ * rejects where a `CommandFailure` is expected — so the field is declared and
+ * conditionally assigned by hand instead.
+ */
 export class AdminClientError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    /**
-     * The next step the failure stated for itself, when it stated one. Absent
-     * means the failure never authored one, so a caller renders the code and
-     * the message alone.
-     */
-    public readonly action?: string,
-  ) {
+  public readonly code: string;
+  /**
+   * The next step the failure stated for itself, when it stated one. Absent
+   * means the failure never authored one, so a caller renders the code and
+   * the message alone.
+   */
+  public readonly action?: string;
+
+  constructor(code: string, message: string, action?: string) {
     super(message);
     this.name = 'AdminClientError';
+    this.code = code;
+    if (action !== undefined) this.action = action;
   }
 }
 
