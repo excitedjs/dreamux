@@ -1,6 +1,7 @@
 import type { TeamStatus, TeamSubmitResult } from '@excitedjs/dreamux-types';
 
-import { ValidationError, throwCallerMistake } from '../../command/errors.js';
+import { ValidationError } from '../../platform/errors.js';
+import { throwCallerMistake } from '../../command/errors.js';
 import {
   mustString,
   optionalInteger,

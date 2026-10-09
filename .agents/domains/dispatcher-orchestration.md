@@ -47,7 +47,6 @@ Source:
 - `/packages/dreamux/src/service/agent/`
 - `/packages/dreamux/src/service/dispatchers/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/index.ts`
 
 ### Collections And Entities
 

@@ -8,13 +8,15 @@
  * own session) and is unaware of which package implements a `builtin:` vs an
  * external `npm:` channel provider.
  */
+import { formatProviderRef } from '../registry/provider-ref.js';
 import {
-  formatProviderRef,
   ReservedExternalProviderError,
-  type ProviderDescriptor,
   type ProviderRegistry,
-} from '../registry/index.js';
-import type { ChannelProvider } from '@excitedjs/dreamux-types';
+} from '../registry/registry.js';
+import type {
+  ProviderDescriptor,
+  ChannelProvider,
+} from '@excitedjs/dreamux-types';
 
 export class UnsupportedChannelProviderError extends Error {
   constructor(

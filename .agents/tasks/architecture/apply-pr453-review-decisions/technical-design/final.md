@@ -32,3 +32,11 @@ The change removes two file opening implementations, two unused Codex state/inpu
 ## Verification plan
 
 The implementation developer returns changed files and focused behavioral evidence. The TeamLeader reviews the whole diff, runs the four Rush gates and knowledge/anti-leak checks, and obtains independent read-only reviews of scheduler/core and shared-runtime changes. The final PR targets next; normal CI and merge authority are separate delivery facts.
+
+## Additional core re-export removal
+
+Delete the three behavior-free aggregate files under agent-runtime, registry and service. Remove the forwarding declarations in provider-ref, registry and command/errors; keep their own parsing, registration and failure-conversion responsibilities. Route each existing named import directly to its defining core file, dreamux-types or dreamux-utils, preserving aliases and type-only edges. No new intermediary module or export alias replaces a removed path.
+
+Core has no forwarding entry point after this change, so its existing package-wide re-export lint configuration uses an empty entryFiles list. Remove only the obsolete service-barrel layer and Knip entry. The smoke script still loads server.js in a fresh process, which directly loads Dispatchers and transitively loads DispatcherService, TeamService and WorkflowService. Keep that real graph initialization and the unchanged CLI probes; delete the facade import and its export-key/value mirror instead of adding a replacement smoke facade or redundant imports.
+
+Independent review checks the full additional diff, direct import ownership and unchanged runtime/class/error identity. The TeamLeader is the sole writer for this mechanically bounded addition. Update the same existing PR only after fresh build, lint, test, typecheck:tests, built-CLI smoke and knowledge checks; prior green results do not certify the new diff.

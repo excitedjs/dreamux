@@ -2,7 +2,8 @@ import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 import { readdir, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
-import { RuleViolation, throwCallerMistake } from '../command/errors.js';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
+import { throwCallerMistake } from '../command/errors.js';
 import type { CommandPayload } from '../command/payload.js';
 
 /**

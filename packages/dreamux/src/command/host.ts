@@ -15,7 +15,8 @@
  * closed around domain fields only.
  */
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
-import { ValidationError, throwCallerMistake } from './errors.js';
+import { ValidationError } from '../platform/errors.js';
+import { throwCallerMistake } from './errors.js';
 import type { CoreCommandContext } from './types.js';
 
 export function mustDispatcherId(context: CoreCommandContext): string {

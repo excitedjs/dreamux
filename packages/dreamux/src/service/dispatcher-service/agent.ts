@@ -19,7 +19,7 @@ import { createTeamMcpDelegate } from '../team/mcp.js';
 import type { TeamsPort } from '../team/teams-port.js';
 
 import { errorInfo } from '@excitedjs/dreamux-utils';
-import { DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
+import { DISABLE_FEATURE_CRON } from '../../agent-runtime/host-context.js';
 import {
   bundledDispatcherSkillRoot,
   bundledSharedSkillRoot,

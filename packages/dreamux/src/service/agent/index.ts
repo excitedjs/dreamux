@@ -3,10 +3,8 @@ import { EventEmitter } from 'node:events';
 import type { AsyncSeriesHook } from 'tapable';
 import type { WorkAdmission } from '../../platform/work-fence.js';
 
-import type {
-  AgentRuntimeProviderCatalog,
-  AgentRuntimePublicCapabilities,
-} from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
+import type { AgentRuntimePublicCapabilities } from '../../agent-runtime/capabilities.js';
 import {
   defaultAgentRuntime,
   type ResolvedAgentConfig,

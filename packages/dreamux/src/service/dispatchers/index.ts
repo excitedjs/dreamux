@@ -1,7 +1,7 @@
 import type { Dispatcher, DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import type { SyncHook } from 'tapable';
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { CoreCommandRegistry } from '../../command/types.js';
 import {

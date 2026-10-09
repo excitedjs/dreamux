@@ -184,10 +184,10 @@ typechecking, so a test-only type error surfaces nowhere else.
 
 `smoke-built-cli` is an ESM initialization gate on the service graph, not just a
 CLI liveness check: in one fresh Node process it imports the package main
-`dist/server.js` (asserting the `Server` export), imports `dist/service/index.js`
-and asserts its exports are exactly `DispatcherService`, `Dispatchers`,
-`TeamService`, `WorkflowService` and all are values, and only then spawns
-`bin/dreamux --version`. Both halves are load-bearing
+`dist/server.js` (asserting the `Server` export), which loads `Dispatchers`
+and its actual `DispatcherService`, `TeamService` and `WorkflowService`
+dependencies, and only then spawns `bin/dreamux --version`. Package-main
+initialization and CLI execution are both load-bearing
 ([why](#assuming-a-green-build-proves-more-than-it-does)). The same command runs
 before every publish, stable and prerelease alike.
 
@@ -578,9 +578,9 @@ is safe.
 - **ESM initialization cycles.** `bin/dreamux --version` execs
   `dist/cli/dreamux.js` and never loads the package main or the service graph,
   so a CLI-only smoke would not see a cycle among service modules. That is
-  precisely why `smoke-built-cli` imports `dist/server.js` and
-  `dist/service/index.js` in the same fresh Node process before running the
-  bin.
+  precisely why `smoke-built-cli` imports `dist/server.js`, loading the actual
+  service graph in a fresh Node process before running the bin. It needs no
+  aggregate service facade or export-name mirror.
 
 **Rejected direction:** reaching for a repo-wide `consistent-type-imports` rule
 to cover the general case — that enforces across every package to protect one

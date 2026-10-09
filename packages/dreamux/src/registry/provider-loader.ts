@@ -24,15 +24,16 @@
  */
 
 import { errorMessage as errMessage } from '@excitedjs/dreamux-utils';
-import type { ProviderFactory, NpmProviderRef } from '@excitedjs/dreamux-types';
-import { UnknownBuiltinProviderPackageError } from './builtins.js';
-import { parseProviderRef, type ProviderRef } from './provider-ref.js';
+import { parseProviderRef } from './provider-ref.js';
 import type {
+  ProviderRef,
   ProviderDescriptor,
-  ProviderImplementation,
   ProviderKind,
-  ProviderRegistry,
-} from './registry.js';
+  ProviderFactory,
+  NpmProviderRef,
+} from '@excitedjs/dreamux-types';
+import type { ProviderImplementation, ProviderRegistry } from './registry.js';
+import { UnknownBuiltinProviderPackageError } from './builtins.js';
 
 export type ProviderModule = Record<string, unknown> & {
   default?: unknown;

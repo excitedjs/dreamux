@@ -10,7 +10,7 @@ import { loadConfig } from '../src/config/load.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
-} from '../src/registry/index.js';
+} from '../src/registry/builtins.js';
 import {
   AgentEntityCollectionStore,
   AgentIdentityStore,

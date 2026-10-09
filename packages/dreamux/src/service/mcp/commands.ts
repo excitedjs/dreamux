@@ -29,7 +29,7 @@
  */
 import type { CoreCommandDefinition } from '../../command/types.js';
 
-import { ValidationError } from '../../command/errors.js';
+import { ValidationError } from '../../platform/errors.js';
 import { commandPayload, mustNonEmptyString } from '../../command/payload.js';
 import type { AnyCoreCommand } from '../../command/registry.js';
 import {

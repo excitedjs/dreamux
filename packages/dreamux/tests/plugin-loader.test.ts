@@ -35,8 +35,8 @@ import {
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
-  ProviderRegistry,
-} from '../src/registry/index.js';
+} from '../src/registry/builtins.js';
+import { ProviderRegistry } from '../src/registry/registry.js';
 
 const silentLog = {
   error: () => {},

@@ -24,7 +24,7 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderFactory,
 } from '@excitedjs/dreamux-types';
-import { type ProviderRegistry } from '../registry/index.js';
+import type { ProviderRegistry } from '../registry/registry.js';
 import {
   isRecord,
   assertOptionalProviderCapabilities,

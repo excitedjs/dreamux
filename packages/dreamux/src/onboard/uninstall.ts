@@ -14,7 +14,7 @@ import {
 } from '../config/config.js';
 import { assertNoLegacyTomlOnly, loadConfig } from '../config/load.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
-import { ProviderRegistry } from '../registry/index.js';
+import { ProviderRegistry } from '../registry/registry.js';
 import { loadPlugins } from '../plugin/loader.js';
 import { createLogger } from '../platform/logger.js';
 import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';

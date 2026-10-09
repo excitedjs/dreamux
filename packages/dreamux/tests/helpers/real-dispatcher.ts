@@ -11,10 +11,8 @@ import { CoreCommands } from '../../src/command/registry.js';
 import type { DreamuxConfig } from '../../src/config/config.js';
 import { createLogger } from '../../src/platform/logger.js';
 import { dispatcherDir, teamCollectionDir } from '../../src/platform/paths.js';
-import {
-  parseProviderRef,
-  ProviderRegistry,
-} from '../../src/registry/index.js';
+import { parseProviderRef } from '../../src/registry/provider-ref.js';
+import { ProviderRegistry } from '../../src/registry/registry.js';
 import { DispatcherService } from '../../src/service/dispatcher-service/index.js';
 import {
   notifyResumedRestart,

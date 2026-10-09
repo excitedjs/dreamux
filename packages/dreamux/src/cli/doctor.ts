@@ -8,7 +8,7 @@ import {
 import { loadConfig } from '../config/load.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
-import { ProviderRegistry } from '../registry/index.js';
+import { ProviderRegistry } from '../registry/registry.js';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { createLogger } from '../platform/logger.js';
 import { type LoadedPlugin, PluginLoadError } from '../plugin/loader.js';

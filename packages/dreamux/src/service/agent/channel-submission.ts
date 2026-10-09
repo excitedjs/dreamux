@@ -15,7 +15,7 @@
  */
 import type { JsonSchema, SubmitCommand } from '@excitedjs/dreamux-types';
 
-import { ValidationError } from '../../command/errors.js';
+import { ValidationError } from '../../platform/errors.js';
 import {
   mustNonEmptyString,
   optionalString,

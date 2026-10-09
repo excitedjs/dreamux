@@ -32,7 +32,7 @@ import {
 
 import { throwCallerMistake } from '../command/errors.js';
 import type { LoadedPlugin } from '../plugin/loader.js';
-import type { ProviderRegistry } from '../registry/index.js';
+import type { ProviderRegistry } from '../registry/registry.js';
 import { globalConfigFile, type DreamuxConfig } from './config.js';
 import {
   assertNoLegacyTomlOnly,

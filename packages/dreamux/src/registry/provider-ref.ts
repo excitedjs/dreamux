@@ -17,18 +17,9 @@
  *
  * The structural ref shapes (`ProviderRef`, `BuiltinProviderRef`,
  * `NpmProviderRef`, `ProviderRefSource`) are published by
- * `@excitedjs/dreamux-types` and re-exported here so the many in-repo imports
- * from `../registry/index.js` stay stable (issue #209). The parsing/formatting
- * runtime stays in this package.
+ * `@excitedjs/dreamux-types`; consumers import those contracts from that
+ * package directly. The parsing/formatting runtime stays in this module.
  */
-
-// eslint-disable-next-line no-restricted-syntax -- neutral-contract type re-export documented above, so in-repo imports from ../registry/index.js keep resolving these names (issue #209)
-export type {
-  ProviderRefSource,
-  BuiltinProviderRef,
-  NpmProviderRef,
-  ProviderRef,
-} from '@excitedjs/dreamux-types';
 
 import type {
   ProviderRef,

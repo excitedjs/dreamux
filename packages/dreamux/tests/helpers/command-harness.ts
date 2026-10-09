@@ -41,10 +41,8 @@ import {
   type DispatcherConfig,
   type DispatcherChannelConfig,
 } from '../../src/config/config.js';
-import {
-  ProviderRegistry,
-  parseProviderRef,
-} from '../../src/registry/index.js';
+import { ProviderRegistry } from '../../src/registry/registry.js';
+import { parseProviderRef } from '../../src/registry/provider-ref.js';
 import { Server } from '../../src/server.js';
 import { ControlledRuntimeProvider } from './controlled-runtime-provider.js';
 import { createFakeChannelProvider } from './fake-channel-provider.js';

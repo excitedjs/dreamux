@@ -34,10 +34,8 @@ import { ConfigService } from '../src/config/service.js';
 import { globalConfigFile } from '../src/config/config.js';
 import { dispatcherDir } from '../src/platform/paths.js';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
-import {
-  ProviderRegistry,
-  registerBuiltinProvider,
-} from '../src/registry/index.js';
+import { ProviderRegistry } from '../src/registry/registry.js';
+import { registerBuiltinProvider } from '../src/registry/builtins.js';
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 

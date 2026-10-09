@@ -7,9 +7,9 @@
  * envelope, and the in-process Channel invoker rejects with the error itself so
  * a Channel can read `error.code` directly (it is structurally the published
  * `ChannelCommandError`). A {@link StatedFailure} additionally carries the next
- * step it authored, which travels beside its code and reason. Re-exported here
- * so a domain Command module has one import for the base, the generic failures,
- * and the one failure the registry owns.
+ * step it authored, which travels beside its code and reason. This module owns
+ * failure conversion and the registry's unknown-command error; callers import
+ * generic errors and utilities directly from their defining modules.
  */
 import { errorMessage, RuleViolation } from '@excitedjs/dreamux-utils';
 
@@ -18,18 +18,6 @@ import {
   StatedFailure,
   ValidationError,
 } from '../platform/errors.js';
-
-// eslint-disable-next-line no-restricted-syntax -- callers import the Command failure vocabulary from this module today (see file-level comment above), not from platform/errors.js or dreamux-utils directly
-export {
-  DreamuxError,
-  InternalError,
-  ServerShuttingDownError,
-  StatedFailure,
-  TransportError,
-  ValidationError,
-} from '../platform/errors.js';
-// eslint-disable-next-line no-restricted-syntax -- same one-import convenience re-export as above, for the canonical helper's new home and the one shared rule-violation class
-export { errorMessage, RuleViolation } from '@excitedjs/dreamux-utils';
 
 /**
  * One Command failure, in the shape every adapter puts on its wire.

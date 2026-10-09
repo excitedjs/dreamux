@@ -12,7 +12,7 @@ import {
 } from '../agent/identity.js';
 import type { ChannelMcpDelegates } from '../mcp/types.js';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
 import type { ConfigReader } from '../../config/service.js';
 import { RuleViolation } from '@excitedjs/dreamux-utils';
 import type { AgentServiceFactory } from '../agent/factory.js';

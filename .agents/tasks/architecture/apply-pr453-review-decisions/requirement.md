@@ -43,3 +43,13 @@ Use real temporary files to verify shared activity opening and retain native act
 Exercise the real routing file reader for absent/non-string team_name, valid bindings, tolerated unknown fields and absent-root compatibility. Do not mock downstream failures or extend validation to unrelated fields.
 
 Required repository gates: Rush build, lint, test, and typecheck:tests; knowledge check and mandatory anti-leak commit hook. Checks not executed or unable to run must be reported precisely.
+
+## Additional core removal instruction
+
+On 2026-10-09 the operator explicitly directed: “有点扯淡，先给 core 的重导出都删掉。” This supersedes the earlier retention of core directory barrels and compatibility forwarding exports for this task.
+
+Remove all re-exports from `packages/dreamux/src`, including the agent-runtime, registry and service aggregate modules, the old neutral-type import paths, and command error/helper forwarding. Migrate source and test consumers to the modules that actually define the symbols. Retain the functions, types, classes, package main, CLI behavior and error identities those consumers use; remove the aggregate paths themselves without replacement facades or local-import/export workarounds.
+
+Remove the corresponding core ESLint exemptions, deleted-path Knip/layer configuration, and the service facade's exact export-list smoke assertion. Keep the compiled package-main, actual service-module ESM initialization and CLI smoke probes. Update current ownership documentation and run all four Rush gates plus the built-CLI smoke and knowledge checks.
+
+The instruction names core only. Provider/channel/transport/utils/types public entries and internal forwarding are outside this addition. C2's Codex/Claude public-entry assertions remain outside this addition; the core service-facade assertion is part of the authorized deletion. No new product behavior, persistent schema, runtime policy, merge or release authority is inferred.

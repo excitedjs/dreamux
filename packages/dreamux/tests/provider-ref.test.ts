@@ -5,8 +5,8 @@ import {
   formatProviderRef,
   isBuiltinRef,
   parseProviderRef,
-  type ProviderRef,
 } from '../src/registry/provider-ref.js';
+import type { ProviderRef } from '@excitedjs/dreamux-types';
 
 describe('parseProviderRef — builtin', () => {
   it('parses a builtin id', () => {

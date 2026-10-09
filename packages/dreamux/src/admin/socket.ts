@@ -23,9 +23,8 @@ import {
   DreamuxError,
   TransportError,
   ValidationError,
-  commandFailure,
-  type CommandFailure,
-} from '../command/errors.js';
+} from '../platform/errors.js';
+import { commandFailure, type CommandFailure } from '../command/errors.js';
 import type {
   CoreCommandContext,
   CoreCommandRegistry,
