@@ -3,7 +3,8 @@ import { pathExists } from '../platform/fs-errors.js';
 import { readFile } from 'node:fs/promises';
 import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js';
 import { loadChannelProviders } from '../channel/external-channel-provider.js';
-import { parseProviderRef, ProviderRegistry } from '../registry/index.js';
+import { parseProviderRef } from '../registry/provider-ref.js';
+import { ProviderRegistry } from '../registry/registry.js';
 import { isPlainObject } from '@excitedjs/dreamux-utils';
 import { createLogger } from '../platform/logger.js';
 import {

@@ -22,7 +22,7 @@ import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
 import { ConfigService } from '../config/service.js';
-import { ProviderRegistry } from '../registry/index.js';
+import { ProviderRegistry } from '../registry/registry.js';
 import { startPlugins } from '../plugin/host.js';
 import { createLogger } from '../platform/logger.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';

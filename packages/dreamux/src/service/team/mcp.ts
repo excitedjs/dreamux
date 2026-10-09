@@ -87,13 +87,7 @@ async function callTool(
   const record = records.find(
     (candidate) => candidate.descriptor.name === call.name,
   );
-  if (record === undefined) {
-    // Unreachable: Core admits a call only against this delegate's own frozen
-    // catalog, so a name that is not in this delegate's own records never
-    // arrives here.
-    throw new Error(`unknown Team tool '${call.name}'`);
-  }
-  return record.execute(call.arguments as CommandPayload);
+  return record!.execute(call.arguments as CommandPayload);
 }
 
 async function create(

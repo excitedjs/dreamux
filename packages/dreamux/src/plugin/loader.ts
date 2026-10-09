@@ -8,7 +8,19 @@
  * `./host.ts` and run only where hooks are needed (serve, doctor).
  */
 
+import {
+  ALWAYS_LOADED_PLUGIN_REFS,
+  BUILTIN_PLUGIN_PACKAGES,
+  registerBuiltinProvider,
+} from '../registry/builtins.js';
+import { parseProviderRef } from '../registry/provider-ref.js';
 import type {
+  ProviderImplementation,
+  ProviderRegistry,
+} from '../registry/registry.js';
+import type {
+  ProviderKind,
+  ProviderRef,
   AgentRuntimeProvider,
   ChannelProvider,
   ContributeHost,
@@ -21,17 +33,6 @@ import {
   readNonEmptyString,
   RuleViolation,
 } from '@excitedjs/dreamux-utils';
-
-import {
-  ALWAYS_LOADED_PLUGIN_REFS,
-  BUILTIN_PLUGIN_PACKAGES,
-  parseProviderRef,
-  registerBuiltinProvider,
-  type ProviderImplementation,
-  type ProviderKind,
-  type ProviderRef,
-  type ProviderRegistry,
-} from '../registry/index.js';
 
 /** One `plugins[]` item: a bare ref string is `{ ref }`. */
 export interface PluginConfigEntry {

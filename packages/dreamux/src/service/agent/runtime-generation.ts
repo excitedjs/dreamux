@@ -7,10 +7,8 @@ import type {
   AgentRuntimeStartOutcome,
 } from '@excitedjs/dreamux-types';
 
-import {
-  DISABLE_FEATURE_USER_INTERRUPT,
-  hostRuntimePaths,
-} from '../../agent-runtime/index.js';
+import { DISABLE_FEATURE_USER_INTERRUPT } from '../../agent-runtime/host-context.js';
+import { hostRuntimePaths } from '../../agent-runtime/host-paths.js';
 import { resolveAgent, type ResolvedAgentConfig } from '../../config/config.js';
 import {
   assertUniqueMcpServerNames,

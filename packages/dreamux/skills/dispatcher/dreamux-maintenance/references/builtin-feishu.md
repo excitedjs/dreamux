@@ -58,6 +58,9 @@ extensions close.
   access-state change, made through the pairing flow, not here.
 - A document this Dreamux version cannot read fails loud at channel start,
   naming the file.
+- Each binding must have a string `team_name`. A missing or non-string value
+  fails routing initialization before event subscriptions start. Unknown fields
+  remain tolerated; an absent `root_message_id` is accepted and read as `null`.
 - A topic-kind binding also carries the message id its cards reply under
   (`root_message_id`). Automatic provisioning sets it when it binds; a manual
   bind through `bind_channel` or an extension starts without one, and the

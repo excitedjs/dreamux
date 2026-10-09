@@ -44,8 +44,6 @@ export function createLeaderTeamMcpDelegate(team: {
     describe: () => ({ tools: [descriptor] }),
     call: (call) =>
       runDelegateTool(async () => {
-        if (call.name !== 'dissolve')
-          throw new Error(`unknown Team tool '${call.name}'`);
         const note = mustNonBlankString(call.arguments, 'note');
         const force = call.arguments['force'] === true;
         const dissolved = await team.admitLeaderTools(() =>

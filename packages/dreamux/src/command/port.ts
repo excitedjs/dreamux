@@ -14,7 +14,7 @@
 import type { JsonValue } from '@excitedjs/dreamux-types';
 
 import type { CoreCommandContext, CoreCommandRegistry } from './types.js';
-import { ServerShuttingDownError } from './errors.js';
+import { ServerShuttingDownError } from '../platform/errors.js';
 import type { CoreCommands } from './registry.js';
 
 export class CoreCommandPort implements CoreCommandRegistry {

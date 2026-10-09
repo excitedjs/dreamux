@@ -430,6 +430,12 @@ three answers: `bound` (with the row that answered, which may be the parent
 group), `provision` (the committed Collaboration Space policy snapshot to create
 a Team under), or `dispatcher` (`no_binding` or `not_bindable`).
 
+The binding decoder requires a string `team_name` before publishing a route.
+Missing or non-string values fail initialization through the existing malformed
+binding error. Unknown fields remain tolerated and an absent `root_message_id`
+retains its historical `null` meaning. This validation belongs to the routing
+reader, not to submitters or a Dispatcher fallback.
+
 Core makes no routing decision. The Channel resolves its own target, consults its
 own bindings, and states the recipient in the Command:
 

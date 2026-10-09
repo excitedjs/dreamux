@@ -5,12 +5,14 @@ import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
 import { asChannelProvider } from '../channel/catalog.js';
 import {
   InvalidProviderRefError,
+  formatProviderRef,
+} from '../registry/provider-ref.js';
+import {
   ReservedExternalProviderError,
   UnknownBuiltinProviderError,
-  formatProviderRef,
-  type ProviderDescriptor,
   type ProviderRegistry,
-} from '../registry/index.js';
+} from '../registry/registry.js';
+import type { ProviderDescriptor } from '@excitedjs/dreamux-types';
 import {
   describeType,
   isPlainObject,

@@ -269,6 +269,70 @@ describe('FeishuRoutingStore — commit authority', () => {
   });
 });
 
+describe('FeishuRoutingStore — binding row decoding', () => {
+  const channelId = 'chan-binding-decoder';
+  const binding = {
+    target: { kind: 'group', chat_id: 'oc_binding' },
+    display: null,
+    team_name: 'team-a',
+    root_message_id: null,
+    space_id: null,
+    created_at: 1,
+    updated_at: 1,
+  };
+
+  function writeBinding(row: unknown): void {
+    writeFileSync(
+      join(dir, routingDocumentFilename(channelId)),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'disp-1',
+        channel_id: channelId,
+        bindings: [row],
+        spaces: [],
+        updated_at: 1,
+      }),
+    );
+  }
+
+  it.each([
+    { name: 'missing', value: undefined },
+    { name: 'null', value: null },
+    { name: 'number', value: 1 },
+    { name: 'boolean', value: true },
+    { name: 'array', value: [] },
+    { name: 'object', value: {} },
+  ])('refuses a $name team_name while reading the file', async ({ value }) => {
+    writeBinding({ ...binding, team_name: value });
+
+    await expect(
+      readRoutingDocument({
+        dispatcherId: 'disp-1',
+        channelId,
+        stateDir: dir,
+      }),
+    ).rejects.toThrow(/a binding row is malformed/);
+  });
+
+  it.each([
+    { name: 'valid binding', row: binding },
+    { name: 'unknown field', row: { ...binding, origin: 'retired' } },
+    {
+      name: 'absent root_message_id',
+      row: { ...binding, root_message_id: undefined },
+    },
+  ])('keeps a $name readable', async ({ row }) => {
+    writeBinding(row);
+
+    const document = await readRoutingDocument({
+      dispatcherId: 'disp-1',
+      channelId,
+      stateDir: dir,
+    });
+    expect(document.bindings).toEqual([binding]);
+  });
+});
+
 describe('FeishuRoutingStore — the subscriptions section', () => {
   it('reads a document written before the section existed as an empty list, not undefined', async () => {
     const channelId = 'chan-no-subscriptions';

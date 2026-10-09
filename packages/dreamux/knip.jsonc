@@ -28,13 +28,12 @@
 // this item's own goal of not reporting false positives, on top of scanning
 // tests/ so exports only consumed by tests/ (e.g. the `DEFAULT_*` provider
 // constants core tests import) aren't flagged either. `entry` allowlists
-// this package's two published/semi-public surfaces so their own top-level
-// exports are never flagged just because nothing inside the package imports
-// them: `server.ts` is the npm `main` entry point, and `service/index.ts` is
-// the surface `smoke-built-cli` asserts.
+// server.ts, the npm main, so its own top-level exports are not flagged just
+// because nothing inside the package imports them. Internal modules are not
+// package entry points.
 {
   "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
-  "entry": ["src/server.ts", "src/service/index.ts"],
+  "entry": ["src/server.ts"],
   "rules": {
     "exports": "warn",
     "nsExports": "warn",

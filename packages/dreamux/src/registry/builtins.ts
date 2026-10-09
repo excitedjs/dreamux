@@ -8,12 +8,11 @@
 import { RuleViolation } from '@excitedjs/dreamux-utils';
 
 import { parseProviderRef } from './provider-ref.js';
-import {
-  type ProviderDescriptor,
-  type ProviderImplementation,
-  type ProviderKind,
-  ProviderRegistry,
-} from './registry.js';
+import type {
+  ProviderDescriptor,
+  ProviderKind,
+} from '@excitedjs/dreamux-types';
+import { type ProviderImplementation, ProviderRegistry } from './registry.js';
 
 /**
  * Canonical provider refs Dreamux ships. These live next to the builtin ids so

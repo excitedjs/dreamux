@@ -106,7 +106,6 @@ export class CodexRuntime implements AgentRuntime {
   private restarting = false;
   private generation = 0;
   private startupTask: Promise<AgentRuntimeStartOutcome> | null = null;
-  private restartTask: Promise<void> | null = null;
   private stopTask: Promise<void> | null = null;
   private restartAttempts = 0;
   private restartTimer: NodeJS.Timeout | null = null;
@@ -567,13 +566,9 @@ export class CodexRuntime implements AgentRuntime {
     );
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      const task = this.restartCodexRuntime(reason, this.generation);
-      this.restartTask = task;
-      void task
-        .finally(() => {
-          if (this.restartTask === task) this.restartTask = null;
-        })
-        .catch(() => undefined);
+      void this.restartCodexRuntime(reason, this.generation).catch(
+        () => undefined,
+      );
     }, delay);
   }
 

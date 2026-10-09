@@ -9,11 +9,9 @@
  */
 import type { JsonSchema } from '@excitedjs/dreamux-types';
 
-import {
-  throwCallerMistake,
-  RuleViolation,
-  ValidationError,
-} from '../../command/errors.js';
+import { throwCallerMistake } from '../../command/errors.js';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
+import { ValidationError } from '../../platform/errors.js';
 import {
   mustNonBlankString,
   mustNonEmptyString,

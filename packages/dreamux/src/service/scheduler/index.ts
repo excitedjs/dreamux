@@ -8,7 +8,6 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo, RuleViolation } from '@excitedjs/dreamux-utils';
 import { throwCallerMistake } from '../../command/errors.js';
 import type { TurnAdmission } from '../agent/turn.js';
-import { CronJobNotFoundError } from './errors.js';
 
 import { validateCronSchedule } from './cron-validation.js';
 import { CronJobStore } from './store.js';
@@ -83,7 +82,7 @@ export class SchedulerService implements SchedulerCommands {
     // (running stays false, no timers armed) rather than partially live.
     const armable: CronJob[] = [];
     for (const job of jobs) {
-      const reconciled = await this.reconcile(job);
+      const reconciled = await this.reconcile(job.id);
       if (reconciled !== null) armable.push(reconciled);
     }
     this.running = true;
@@ -148,18 +147,15 @@ export class SchedulerService implements SchedulerCommands {
   }
 
   private async doUpdate(input: CronUpdateRequest): Promise<CronJob> {
-    const current = await this.mustJob(input.id);
-    const normalized = this.normalizeUpdate(current, input);
-    // Use the EFFECTIVE enabled state (an omitted `enabled` keeps the current
-    // one), so a prompt-only update of an already-disabled job does not persist
-    // a misleading next_run_at for a job that will never fire.
-    const effectiveEnabled = input.enabled ?? current.enabled;
-    const nextRunAt = effectiveEnabled
-      ? nextRunAfter(normalized.cron, normalized.tz, Date.now())
-      : null;
-    const job = await this.store.update({
-      ...normalized,
-      nextRunAt,
+    const job = await this.store.update(input.id, (current) => {
+      const normalized = this.normalizeUpdate(current, input);
+      const enabled = input.enabled ?? current.enabled;
+      return {
+        ...normalized,
+        nextRunAt: enabled
+          ? nextRunAfter(normalized.cron, normalized.tz, Date.now())
+          : null,
+      };
     });
     this.clearTimer(job.id);
     this.log.info(
@@ -186,27 +182,22 @@ export class SchedulerService implements SchedulerCommands {
     return { id, deleted };
   }
 
-  private async reconcile(job: CronJob): Promise<CronJob | null> {
-    if (!job.enabled) return null;
-    const now = Date.now();
-    if (!job.recurring && job.next_run_at !== null && job.next_run_at <= now) {
-      this.log.warn(
-        { owner_id: this.ownerId, job_id: job.id },
-        'cron one-shot missed while scheduler was stopped',
-      );
-      await this.store.update({ id: job.id, ...this.advanceJob(job, now) });
-      return null;
-    }
-    const nextRunAt =
-      job.next_run_at !== null && job.next_run_at > now
-        ? job.next_run_at
-        : nextRunAfter(job.cron, job.tz, now);
-    return nextRunAt === job.next_run_at
-      ? job
-      : await this.store.update({
-          id: job.id,
-          nextRunAt,
-        });
+  private async reconcile(id: string): Promise<CronJob | null> {
+    return this.store.applyMissed(id, (current) => {
+      if (!current.enabled) return null;
+      const now = Date.now();
+      if (current.next_run_at !== null && current.next_run_at > now) {
+        return null;
+      }
+      if (!current.recurring && current.next_run_at !== null) {
+        this.log.warn(
+          { owner_id: this.ownerId, job_id: id },
+          'cron one-shot missed while scheduler was stopped',
+        );
+        return this.advanceJob(current, now);
+      }
+      return { nextRunAt: nextRunAfter(current.cron, current.tz, now) };
+    });
   }
 
   private arm(job: CronJob): void {
@@ -338,9 +329,7 @@ export class SchedulerService implements SchedulerCommands {
    * resolve to one shape either way, so the outcome plays no part in the
    * formula. A one-shot's `enabled: false` is a real value a caller must
    * write; a recurring job's `enabled` is deliberately absent rather than
-   * `true`, so a partial-update write (`rearm`'s 'missed' branch) never
-   * re-enables a job a concurrent `cron.update` disabled in the same window —
-   * `setFired`'s required `enabled` field is supplied by `rearm` itself.
+   * `true`, so settlement never re-enables a paused job.
    */
   private advanceJob(
     job: CronJob,
@@ -382,8 +371,9 @@ export class SchedulerService implements SchedulerCommands {
    * `generation` is the value `dispatch` captured before submitting: a
    * 'fired' outcome is recorded unconditionally (a submission the runtime
    * already accepted must never end up looking, on disk, like one that never
-   * happened), but it is armed again only if this scheduler is still the one
-   * that submitted it. A 'missed' outcome carries no such durable-fact
+   * happened), but earns an arm only if it advances the current occurrence and
+   * this scheduler is still the one that submitted it. A 'missed' outcome
+   * carries no such durable-fact
    * obligation — a job whose miss-rearm is skipped here for a stale
    * generation is picked back up by the next `start()`'s `reconcile()`, which
    * re-derives the same schedule from the persisted job — so a stale
@@ -400,8 +390,8 @@ export class SchedulerService implements SchedulerCommands {
    * as it stands, because a future `next_run_at` does not prove anyone armed
    * it — a wall clock stepped backward while the submission was in flight
    * leaves this fire's own, already-consumed schedule in the future. `arm()`
-   * clears first, so re-arming a row a concurrent update already armed is
-   * harmless. `updated` is `null` only when the job was deleted.
+   * clears first, replacing any future timer the concurrent update already
+   * armed. `updated` is `null` only when the job was deleted.
    */
   private async rearm(
     job: CronJob,
@@ -410,13 +400,25 @@ export class SchedulerService implements SchedulerCommands {
     generation: number,
   ): Promise<void> {
     if (outcome === 'fired') {
-      const updated = await this.store.setFired({
-        id: job.id,
-        firedAt: now,
-        nextRunAt: this.advanceJob(job, now).nextRunAt,
-        enabled: job.recurring,
-      });
-      if (updated !== null && generation === this.lifecycleGeneration) {
+      let advanced = false;
+      const updated = await this.store.setFired(
+        { id: job.id, firedAt: now },
+        (current) => {
+          // Settle only the occurrence submitted. An update may already have
+          // paused this job or replaced its next occurrence while admission
+          // was pending; the factual fire does not consume that replacement.
+          if (!current.enabled || current.next_run_at !== job.next_run_at) {
+            return null;
+          }
+          advanced = true;
+          return this.advanceJob(current, now);
+        },
+      );
+      if (
+        advanced &&
+        updated !== null &&
+        generation === this.lifecycleGeneration
+      ) {
         this.arm(updated);
       }
       return;
@@ -470,7 +472,6 @@ export class SchedulerService implements SchedulerCommands {
       return normalized;
     });
     return {
-      id: input.id,
       title: input.title,
       cron,
       tz,
@@ -478,14 +479,6 @@ export class SchedulerService implements SchedulerCommands {
       action,
       enabled: input.enabled,
     };
-  }
-
-  private async mustJob(id: string): Promise<CronJob> {
-    const job = await this.store.get(id);
-    if (job === null) {
-      throw new CronJobNotFoundError(`cron job '${id}' does not exist`);
-    }
-    return job;
   }
 
   private nextFireSourceId(jobId: string): string {

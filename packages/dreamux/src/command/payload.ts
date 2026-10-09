@@ -17,7 +17,7 @@
  */
 import type { JsonValue } from '@excitedjs/dreamux-types';
 
-import { ValidationError } from './errors.js';
+import { ValidationError } from '../platform/errors.js';
 
 /** One Command payload in the object form every `parse` reads. */
 export type CommandPayload = Record<string, unknown>;

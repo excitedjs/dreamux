@@ -6,12 +6,10 @@ dispatcher. It holds the dispatcher agent and orchestrates everything below it.
 
 One service class per file or directory; a class with helpers gets a directory
 whose `index.ts` is the class and whose siblings are its helpers.
-`service/index.ts` is the only package-internal service facade (`Dispatchers`,
-`DispatcherService`, `TeamService`, `WorkflowService`, and the Workflow result
-types). Sub-service directories must not re-export sibling modules — this is
-the package-wide re-export ban (`packages/eslint-config/index.js`'s
-`withPackageEntryOnlyReexports`), not a service-only rule; callers import the
-owning module directly unless the symbol belongs on that facade.
+Core has no aggregate service facade. Every caller imports a class, function
+or type from its defining module. This is the package-wide re-export ban
+(`packages/eslint-config/index.js`'s `withPackageEntryOnlyReexports`), with no
+core entry-file or inline forwarding exemptions.
 
 ## Collections and Services
 

@@ -7,19 +7,20 @@ import type {
 import {
   activityQueryFingerprint,
   ActivityError,
+  openActivityFile,
+  type OpenedActivityFile,
   readBytesAt,
 } from '@excitedjs/dreamux-utils';
 
 import type { DispatcherClaudeCodeConfig } from '../config.js';
 import { claudeSpawnEnv } from '../paths.js';
 import { decodeClaudeCursor, digest, encodeClaudeCursor } from './cursor.js';
-import {
-  openClaudeRollout,
-  type ClaudeOpenedRollout,
-  validateClaudeSessionEvidence,
-} from './opened-file.js';
 import { recoverParallelToolBranches } from './parallel-tools.js';
-import { locateClaudeHistory } from './path.js';
+import {
+  CLAUDE_ACTIVITY_FILE_MESSAGES,
+  locateClaudeHistory,
+  validateClaudeSessionEvidence,
+} from './path.js';
 import { applyNativeRewrites } from './rewrites.js';
 
 /** Native read bounds. The provider enforces these and reports truncation. */
@@ -80,7 +81,11 @@ export async function readClaudeRecentActivity(
     cwd: context.cwd,
     env,
   });
-  const opened = await openClaudeRollout(located.path, located.root);
+  const opened = await openActivityFile(
+    located.path,
+    [located.root],
+    CLAUDE_ACTIVITY_FILE_MESSAGES,
+  );
   if (opened.dev !== located.dev || opened.ino !== located.ino) {
     await opened.handle.close();
     throw new ActivityError(
@@ -157,7 +162,7 @@ function resolveLimit(limit: number | undefined): number {
 }
 
 async function readWindow(
-  opened: ClaudeOpenedRollout,
+  opened: OpenedActivityFile,
   endOffset: number,
 ): Promise<{ bytes: Buffer; startOffset: number }> {
   const startOffset = Math.max(0, endOffset - MAX_DECODED_BYTES);
@@ -356,7 +361,7 @@ function positioned(
 }
 
 async function verifyCursorBoundaryDigest(
-  opened: ClaudeOpenedRollout,
+  opened: OpenedActivityFile,
   position: number,
   expected: string,
 ): Promise<void> {
@@ -407,7 +412,7 @@ function isProjectableRecord(value: Record<string, unknown>): boolean {
 }
 
 async function verifyRewriteEvidence(
-  opened: ClaudeOpenedRollout,
+  opened: OpenedActivityFile,
   cursor: ReturnType<typeof decodeClaudeCursor> | null,
 ): Promise<RewriteEvidence> {
   if (cursor === null) {
@@ -456,7 +461,7 @@ async function verifyRewriteEvidence(
 }
 
 async function scanRewriteEvidence(
-  opened: ClaudeOpenedRollout,
+  opened: OpenedActivityFile,
   start: number,
   end: number,
   startsAtBoundary: boolean,

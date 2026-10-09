@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Reject bindings with a missing or non-string team_name when loading routing state.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

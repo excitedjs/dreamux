@@ -215,8 +215,7 @@ const PACKAGE_REEXPORT_SELECTORS = [
  * the issue #85 sync-destructure backstop for every file this block matches,
  * since its `no-restricted-syntax` value would win over the base block's for
  * the same rule key). `entryFiles` is the caller's own package-relative list
- * (its root barrel, plus any other file a live consumer still asserts the
- * exact export surface of).
+ * (its declared public entry points; core has none that re-export).
  */
 export function withPackageEntryOnlyReexports(baseConfig, { entryFiles }) {
   return [

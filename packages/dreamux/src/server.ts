@@ -17,7 +17,9 @@ import {
   createAdminSocketServer,
   type AdminSocketServer,
 } from './admin/socket.js';
-import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
+import { AgentRuntimeProviderCatalog } from './agent-runtime/catalog.js';
+import { ProviderRegistry } from './registry/registry.js';
+import { Dispatchers } from './service/dispatchers/index.js';
 import { ChannelProviderCatalog } from './channel/catalog.js';
 import { CoreCommandPort } from './command/port.js';
 import { dispatcherAgent, type DreamuxConfig } from './config/config.js';
@@ -30,12 +32,12 @@ import {
   throwShutdownFailures,
 } from './platform/shutdown-errors.js';
 import { createServerHooks, type ServerHooks } from './plugin/host.js';
-import { ProviderRegistry } from './registry/index.js';
+
 import { createCoreCommandRegistry } from './server/command-catalog.js';
 import type { CoreCommandHost } from './server/command-host.js';
 import { RestartIntentConsumer } from './service/dispatcher-service/restart-intent.js';
 import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
-import { Dispatchers } from './service/index.js';
+
 import { McpLeaseRegistry } from './service/mcp/leases.js';
 
 export interface ServerOptions {

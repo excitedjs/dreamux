@@ -8,7 +8,7 @@ import type {
 import { AsyncSeriesHook, AsyncSeriesWaterfallHook, SyncHook } from 'tapable';
 import { WorkFence } from '../../platform/work-fence.js';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { CoreCommandRegistry } from '../../command/types.js';
 import type { DispatcherConfig } from '../../config/config.js';

@@ -4,7 +4,8 @@ import type { WorkAdmission } from '../../platform/work-fence.js';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
-import { RuleViolation, throwCallerMistake } from '../../command/errors.js';
+import { RuleViolation } from '@excitedjs/dreamux-utils';
+import { throwCallerMistake } from '../../command/errors.js';
 import { deduplicate } from '../../platform/deduplicate.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import { InFlightWork } from '../../platform/in-flight-work.js';

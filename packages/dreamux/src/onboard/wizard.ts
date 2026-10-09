@@ -34,9 +34,9 @@ import { expandHome } from '../config/config.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
-  formatProviderRef,
-  ProviderRegistry,
-} from '../registry/index.js';
+} from '../registry/builtins.js';
+import { formatProviderRef } from '../registry/provider-ref.js';
+import { ProviderRegistry } from '../registry/registry.js';
 import { validateDispatcherId } from '../platform/dispatcher-id.js';
 import { createLogger } from '../platform/logger.js';
 import { loadPlugins } from '../plugin/loader.js';

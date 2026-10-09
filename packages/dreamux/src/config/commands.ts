@@ -19,7 +19,7 @@
 import type { CoreCommandDefinition } from '../command/types.js';
 
 import type { AnyCoreCommand } from '../command/registry.js';
-import { ValidationError } from '../command/errors.js';
+import { ValidationError } from '../platform/errors.js';
 import { commandPayload } from '../command/payload.js';
 import { NO_INPUT, OBJECT, arrayOf, objectSchema } from '../command/schema.js';
 import type { AgentFileEntry, ConfigService } from './service.js';

@@ -13,34 +13,6 @@ if (typeof serverModule.Server !== 'function') {
   throw new Error('dreamux built package main does not export Server');
 }
 
-const serviceModule = await import(
-  pathToFileURL(join(packageRoot, 'dist', 'service', 'index.js')).href
-);
-const expectedServiceExports = [
-  'DispatcherService',
-  'Dispatchers',
-  'TeamService',
-  'WorkflowService',
-];
-const actualServiceExports = Object.keys(serviceModule).sort();
-if (
-  actualServiceExports.length !== expectedServiceExports.length ||
-  actualServiceExports.some(
-    (name, index) => name !== expectedServiceExports[index],
-  )
-) {
-  throw new Error(
-    `dreamux built service facade exports ${JSON.stringify(actualServiceExports)}`,
-  );
-}
-for (const name of expectedServiceExports) {
-  if (typeof serviceModule[name] !== 'function') {
-    throw new Error(
-      `dreamux built service facade export ${name} is not a value`,
-    );
-  }
-}
-
 async function runCli(args) {
   const child = spawn(bin, args, {
     env: {
@@ -89,4 +61,4 @@ if (version === '') {
   );
 }
 
-console.log(`dreamux built package/service/CLI smoke ok: ${version}`);
+console.log(`dreamux built package/CLI smoke ok: ${version}`);

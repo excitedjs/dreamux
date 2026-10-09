@@ -23,11 +23,11 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
   AgentRuntimeProviderFactory,
-  ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
-import { type ProviderRegistry } from '../registry/index.js';
+import type { ProviderRegistry } from '../registry/registry.js';
 import {
   isRecord,
+  assertOptionalProviderCapabilities,
   loadProviderPackages,
   type ProviderContractContext,
   type ProviderModule,
@@ -75,13 +75,9 @@ export interface LoadAgentRuntimeProvidersOptions {
 }
 
 const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<
-  AgentRuntimeProvider<unknown>,
-  ProviderFactoryContext
+  AgentRuntimeProvider<unknown>
 > = {
   kind: 'agentRuntime',
-  // Ref-only, by contract: Core's registration descriptor stays inside the
-  // loader skeleton, because an Agent Runtime provider has nothing to echo back.
-  factoryContext: ({ ref }) => ({ ref }),
   createLoadError: (ref, message, options) =>
     new ExternalAgentRuntimeProviderLoadError(ref, message, options),
   createContractError: (ref, message) =>
@@ -112,9 +108,7 @@ function assertExternalAgentRuntimeProvider(
   if (typeof candidate.createRuntime !== 'function') {
     context.fail('provider.createRuntime must be a function');
   }
-  assertOptionalConfig(candidate.config, context);
-  assertOptionalOnboard(candidate.onboard, context);
-  assertOptionalDiagnostic(candidate.diagnostic, context);
+  assertOptionalProviderCapabilities(candidate, context);
   // Take Core's one capability snapshot here rather than validating a throwaway
   // read: the catalog later reuses this exact snapshot, so a provider cannot
   // pass the contract with one object and serve the public projection another.
@@ -158,45 +152,5 @@ function assertRuntimeHandle(
     if (typeof value[method] !== 'function') {
       context.fail(`runtime.${method} must be a function`);
     }
-  }
-}
-
-function assertOptionalConfig(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (value === undefined) return;
-  if (!isRecord(value) || typeof value['read'] !== 'function') {
-    context.fail(
-      'provider.config.read must be a function when config is present',
-    );
-  }
-}
-
-function assertOptionalOnboard(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (value === undefined) return;
-  if (!isRecord(value) || typeof value['collect'] !== 'function') {
-    context.fail(
-      'provider.onboard.collect must be a function when onboard is present',
-    );
-  }
-}
-
-function assertOptionalDiagnostic(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (value === undefined) return;
-  if (
-    !isRecord(value) ||
-    typeof value['binChecks'] !== 'function' ||
-    typeof value['runDiagnostic'] !== 'function'
-  ) {
-    context.fail(
-      'provider.diagnostic must expose binChecks and runDiagnostic functions when present',
-    );
   }
 }

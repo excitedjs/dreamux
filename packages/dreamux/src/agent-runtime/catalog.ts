@@ -1,17 +1,17 @@
+import { formatProviderRef } from '../registry/provider-ref.js';
 import {
-  formatProviderRef,
   ReservedExternalProviderError,
-  type ProviderDescriptor,
   type ProviderRegistry,
-} from '../registry/index.js';
+} from '../registry/registry.js';
+import type {
+  ProviderDescriptor,
+  AgentRuntimeProvider,
+  RegisteredProvider,
+} from '@excitedjs/dreamux-types';
 import {
   agentRuntimeCapabilitySnapshot,
   type AgentRuntimePublicCapabilities,
 } from './capabilities.js';
-import type {
-  AgentRuntimeProvider,
-  RegisteredProvider,
-} from '@excitedjs/dreamux-types';
 
 /**
  * One registered Agent Runtime provider: Core's authoritative descriptor paired

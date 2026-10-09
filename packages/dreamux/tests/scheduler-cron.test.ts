@@ -306,12 +306,13 @@ describe('cron store deletion ordering', () => {
   it('setFired queued before deleteStoreFile leaves the store deleted', async () => {
     await seed(job());
     const current = store();
-    const write = current.setFired({
-      id: 'job-a',
-      firedAt: 1,
-      nextRunAt: null,
-      enabled: false,
-    });
+    const write = current.setFired(
+      {
+        id: 'job-a',
+        firedAt: 1,
+      },
+      () => ({ nextRunAt: null, enabled: false }),
+    );
     const remove = current.deleteStoreFile();
     const [written] = await Promise.all([write, remove]);
     expect(written?.id).toBe('job-a');
@@ -322,12 +323,13 @@ describe('cron store deletion ordering', () => {
     await seed(job());
     const current = store();
     const remove = current.deleteStoreFile();
-    const write = current.setFired({
-      id: 'job-a',
-      firedAt: 1,
-      nextRunAt: null,
-      enabled: false,
-    });
+    const write = current.setFired(
+      {
+        id: 'job-a',
+        firedAt: 1,
+      },
+      () => ({ nextRunAt: null, enabled: false }),
+    );
     const [, written] = await Promise.all([remove, write]);
     expect(written).toBeNull();
     await expect(readFile(path())).rejects.toMatchObject({ code: 'ENOENT' });
@@ -360,4 +362,226 @@ it.each([
   await fence.drain();
   expect(await store().get('job-a')).toEqual(committed);
   expect(submit).toHaveBeenCalledTimes(1);
+});
+
+describe('current-row cron mutations', () => {
+  it.each([
+    { name: 'pause', recurring: true, patch: { enabled: false } },
+    {
+      name: 'recurring reschedule',
+      recurring: true,
+      patch: { cron: '*/5 * * * *' },
+    },
+    {
+      name: 'one-shot reschedule',
+      recurring: false,
+      patch: { cron: '*/5 * * * *' },
+    },
+  ])(
+    'startup reconciliation preserves a $name committed after its list snapshot',
+    async ({ recurring, patch }) => {
+      await seed(job({ recurring, next_run_at: Date.now() - 30 }));
+      const submit = vi.fn(async () => submitted());
+      const { service, fence } = scheduler(submit);
+      const list = CronJobStore.prototype.list;
+      let committed!: CronJob;
+      vi.spyOn(CronJobStore.prototype, 'list').mockImplementationOnce(
+        async function (this: CronJobStore) {
+          const snapshot = await list.call(this);
+          committed = await service.update({ id: 'job-a', ...patch });
+          return snapshot;
+        },
+      );
+
+      await service.start();
+      expect(await store().get('job-a')).toEqual(committed);
+      await vi.advanceTimersByTimeAsync(300000);
+      await fence.drain();
+      expect(submit).toHaveBeenCalledTimes(committed.enabled ? 1 : 0);
+      if (!recurring) {
+        expect((await store().get('job-a'))?.enabled).toBe(false);
+      }
+    },
+  );
+
+  it('preserves both concurrent sparse patches in committed state', async () => {
+    await seed(job());
+    const { service } = scheduler(async () => submitted());
+    await service.list();
+    const [schedule, content] = await Promise.all([
+      service.update({
+        id: 'job-a',
+        cron: '*/5 * * * *',
+        tz: 'Asia/Tokyo',
+        recurring: false,
+      }),
+      service.update({ id: 'job-a', title: 'new title', prompt: 'new prompt' }),
+    ]);
+    expect(content).toMatchObject({
+      cron: schedule.cron,
+      tz: schedule.tz,
+      recurring: false,
+      next_run_at: schedule.next_run_at,
+      title: 'new title',
+      action: { kind: 'prompt-agent', prompt: 'new prompt' },
+    });
+    expect(await store().get('job-a')).toEqual(content);
+  });
+
+  it('rejects invalid and missing-job updates without changing the committed row', async () => {
+    await seed(job());
+    const { service } = scheduler(async () => submitted());
+    const before = (await service.list()).jobs[0];
+    await expect(
+      service.update({ id: 'job-a', prompt: '' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      service.update({ id: 'gone', title: 'new title' }),
+    ).rejects.toMatchObject({ code: 'CRON_JOB_NOT_FOUND' });
+    expect(await store().get('job-a')).toEqual(before);
+  });
+
+  it.each(['submitted', 'ambiguous'] as const)(
+    'records %s admission without consuming a replacement occurrence',
+    async (status) => {
+      await seed(job());
+      const entered = deferred<void>(),
+        result = deferred<TurnAdmission>();
+      releases.push(() => result.resolve(submitted()));
+      const submit = vi.fn(async () => {
+        entered.resolve();
+        return result.promise;
+      });
+      const { service, fence } = scheduler(submit);
+      await fire(service);
+      await entered.promise;
+      const committed = await service.update({
+        id: 'job-a',
+        cron: '*/5 * * * *',
+        recurring: false,
+      });
+      result.resolve(
+        status === 'submitted'
+          ? submitted()
+          : { status: 'ambiguous', error: new Error('unknown admission') },
+      );
+      await fence.drain();
+      expect(await store().get('job-a')).toEqual({
+        ...committed,
+        last_fired_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      expect(submit).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(300000 - 30);
+      await fence.drain();
+      expect(submit).toHaveBeenCalledTimes(2);
+      expect((await store().get('job-a'))?.enabled).toBe(false);
+    },
+  );
+
+  it.each(['submitted', 'ambiguous'] as const)(
+    'does not redispatch an in-flight replacement when the older fire is %s',
+    async (status) => {
+      await seed(job());
+      const firstEntered = deferred<void>(),
+        firstResult = deferred<TurnAdmission>(),
+        secondEntered = deferred<void>(),
+        secondResult = deferred<TurnAdmission>();
+      releases.push(() => firstResult.resolve(submitted()));
+      releases.push(() => secondResult.resolve(submitted()));
+      const submit = vi.fn(async (_input: TeammateSubmitInput) => {
+        if (submit.mock.calls.length === 1) {
+          firstEntered.resolve();
+          return firstResult.promise;
+        }
+        secondEntered.resolve();
+        return secondResult.promise;
+      });
+      const { service, fence } = scheduler(submit);
+      await fire(service);
+      await firstEntered.promise;
+      const replacement = await service.update({
+        id: 'job-a',
+        cron: '*/5 * * * *',
+        recurring: false,
+        prompt: 'replacement prompt',
+      });
+      await vi.advanceTimersByTimeAsync(replacement.next_run_at! - Date.now());
+      await secondEntered.promise;
+      expect(submit).toHaveBeenCalledTimes(2);
+
+      const firedAt = Date.now();
+      firstResult.resolve(
+        status === 'submitted'
+          ? submitted()
+          : { status: 'ambiguous', error: new Error('unknown admission') },
+      );
+      await waitUntil(
+        async () => (await store().get('job-a'))?.last_fired_at === firedAt,
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      expect(submit).toHaveBeenCalledTimes(2);
+      expect(await store().get('job-a')).toEqual({
+        ...replacement,
+        last_fired_at: firedAt,
+        updated_at: firedAt,
+      });
+
+      secondResult.resolve(submitted());
+      await fence.drain();
+      expect(submit.mock.calls.map(([input]) => input.text)).toEqual([
+        'do the thing',
+        'replacement prompt',
+      ]);
+      expect((await store().get('job-a'))?.enabled).toBe(false);
+      expect((await store().get('job-a'))?.next_run_at).toBeNull();
+    },
+  );
+
+  it.each(['submitted', 'ambiguous'] as const)(
+    'records %s admission without undoing a committed pause',
+    async (status) => {
+      await seed(job());
+      const entered = deferred<void>(),
+        result = deferred<TurnAdmission>();
+      releases.push(() => result.resolve(submitted()));
+      const submit = vi.fn(async () => {
+        entered.resolve();
+        return result.promise;
+      });
+      const { service, fence } = scheduler(submit);
+      await fire(service);
+      await entered.promise;
+      const committed = await service.update({ id: 'job-a', enabled: false });
+      result.resolve(
+        status === 'submitted'
+          ? submitted()
+          : { status: 'ambiguous', error: new Error('unknown admission') },
+      );
+      await fence.drain();
+      expect(await store().get('job-a')).toEqual({
+        ...committed,
+        last_fired_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      await vi.advanceTimersByTimeAsync(60000);
+      await fence.drain();
+      expect(submit).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('consumes an unchanged one-shot occurrence normally', async () => {
+    await seed(job({ recurring: false }));
+    const submit = vi.fn(async () => submitted());
+    const { service, fence } = scheduler(submit);
+    await fire(service);
+    await fence.drain();
+    expect(await store().get('job-a')).toMatchObject({
+      enabled: false,
+      next_run_at: null,
+      last_fired_at: Date.now(),
+    });
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
 });

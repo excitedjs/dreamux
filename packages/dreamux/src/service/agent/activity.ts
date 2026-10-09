@@ -5,8 +5,9 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import { StatedFailure } from '../../command/errors.js';
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import { StatedFailure } from '../../platform/errors.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
+
 import { resolveAgent, type DreamuxConfig } from '../../config/config.js';
 import {
   type AgentEntityActivityRecord,

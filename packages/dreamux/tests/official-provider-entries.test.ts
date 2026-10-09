@@ -12,7 +12,7 @@ import type {
   ChannelProviderFactory,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
-import { ProviderRegistry } from '../src/registry/index.js';
+import { ProviderRegistry } from '../src/registry/registry.js';
 import {
   ALWAYS_LOADED_PLUGIN_REFS,
   BUILTIN_PLUGIN_PACKAGES,

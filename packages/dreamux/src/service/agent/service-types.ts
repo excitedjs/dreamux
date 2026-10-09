@@ -6,7 +6,7 @@ import type {
   TeammateRole,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
 import type { ConfigReader } from '../../config/service.js';
 import type { CompletionDeliveryPolicy } from '../completion-router/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';

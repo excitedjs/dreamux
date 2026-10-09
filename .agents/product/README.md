@@ -19,6 +19,11 @@ the same change that touches it.
 
 ## Channels and routing
 
+- **A Feishu binding requires a Team name at load.** A missing or non-string
+  `team_name` fails routing initialization. Unknown fields remain tolerated and
+  older bindings without `root_message_id` retain their accepted `null` default.
+  (Requirement: [selected PR #453 decisions](/.agents/tasks/architecture/apply-pr453-review-decisions/requirement.md).)
+
 - **The Channel is the operator's doorway.** There is no Web UI or TUI; all
   user interaction reaches Dreamux through a Channel. The Channel's product
   responsibility grows over time; "minimize the Channel" can only ever mean its
@@ -489,6 +494,10 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   the agent; the provider may fold it into an ongoing turn. There is no
   held-fire waiting, no idle gating, and the only job action is prompting the
   owning agent. (Domain: [scheduled-work](/.agents/domains/scheduled-work.md).)
+- **Cron edits preserve current intent.** Concurrent sparse updates retain each
+  other's omitted fields. Settlement of an already submitted occurrence records
+  that fire while preserving a later pause or replacement schedule.
+  (Requirement: [selected PR #453 decisions](/.agents/tasks/architecture/apply-pr453-review-decisions/requirement.md).)
 
 ## Long operations
 

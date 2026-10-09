@@ -43,9 +43,11 @@ against.
   one shape (`SupervisedChild`, `SupervisedChildLaunch`,
   `SupervisedChildOptions`, `SupervisedChildExit`).
 - **activity-scan** — neutral scan mechanism shared by provider-owned Activity
-  readers: bounded positional reads, digests, path containment, and a scan
+  readers: file opening with canonical-root and inode checks, bounded
+  positional reads, digests, path containment, and a scan
   budget, with no native history layout or record shape of its own
-  (`createScanBudget`, `readBytesAt`, `isPathWithin`, `scanDigest`,
+  (`openActivityFile`, `OpenedActivityFile`,
+  `createScanBudget`, `readBytesAt`, `isPathWithin`, `scanDigest`,
   `isScanDigest`, `activityQueryFingerprint`, `SCAN_DISCOVERY_MAX_ENTRIES`,
   `SCAN_DISCOVERY_MAX_ELAPSED_MS`).
 - **activity-error** — the error a provider-owned Activity reader throws and

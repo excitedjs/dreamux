@@ -21,7 +21,7 @@ import {
   StatedFailure,
   TransportError,
   ValidationError,
-} from '../src/command/errors.js';
+} from '../src/platform/errors.js';
 import * as platformErrors from '../src/platform/errors.js';
 import { AdminClientError, adminJsonInvoker } from '../src/admin/client.js';
 import { CoreCommandPort } from '../src/command/port.js';

@@ -173,10 +173,6 @@ const LAYERS = [
     path: ['^src/service/dispatchers/'],
   },
   {
-    name: 'service-barrel',
-    path: ['^src/service/index\\.ts$'],
-  },
-  {
     name: 'composition',
     path: [
       '^src/admin/',

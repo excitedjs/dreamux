@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Remove all core forwarding exports and aggregate import paths; import symbols directly from their defining modules and retain package-main/CLI smoke coverage.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

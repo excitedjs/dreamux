@@ -37,7 +37,6 @@ export interface CronJobCreateInput {
 }
 
 export interface CronJobUpdateInput {
-  id: string;
   title?: string | null | undefined;
   cron?: string;
   tz?: string;

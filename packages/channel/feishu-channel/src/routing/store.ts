@@ -209,7 +209,10 @@ function validatedBinding(
   path: string,
 ): FeishuBindingRecord {
   const raw = (row as { root_message_id?: unknown }).root_message_id;
-  if (raw !== undefined && raw !== null && typeof raw !== 'string') {
+  if (
+    typeof row.team_name !== 'string' ||
+    (raw !== undefined && raw !== null && typeof raw !== 'string')
+  ) {
     throw new Error(`${path}: a binding row is malformed. ${INCOMPATIBLE}`);
   }
   return {

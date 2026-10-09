@@ -4,7 +4,7 @@ import type {
   Team,
 } from '@excitedjs/dreamux-types';
 
-import { DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
+import { DISABLE_FEATURE_CRON } from '../../agent-runtime/host-context.js';
 import {
   bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,

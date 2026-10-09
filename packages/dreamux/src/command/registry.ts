@@ -38,11 +38,8 @@ import {
   JSON_VALUE_UNBOUNDED,
   type JsonValueBounds,
 } from '../platform/json-value.js';
-import {
-  InternalError,
-  UnknownCommandError,
-  ValidationError,
-} from './errors.js';
+import { InternalError, ValidationError } from '../platform/errors.js';
+import { UnknownCommandError } from './errors.js';
 import {
   SchemaViolation,
   validateJsonSchema,

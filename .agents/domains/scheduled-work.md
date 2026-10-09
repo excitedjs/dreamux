@@ -72,9 +72,20 @@ activity hook, no defer-until-idle race, and no scheduler-owned defer window.
 
 `sourceId` is `scheduled:<job-id>:<fire-seq>` — stable for one fire, different
 across recurring fires of the same job, so runtime-side dedupe cannot collapse a
-later occurrence. On an accepted submission the scheduler records
-`last_fired_at`, recomputes `next_run_at`, and disables a one-shot job. It
-never observes whether the resulting turn succeeded.
+later occurrence. On an accepted or ambiguous submission the scheduler records
+`last_fired_at` in the same store transaction that reads the current row. A pause
+or replacement `next_run_at` made while admission was pending is preserved. Only
+the submitted occurrence advances the current recurrence or disables its one-shot.
+That advance earns a new timer. A preserved replacement retains its writer's
+timer ownership; re-arming it from an older settlement could dispatch it again
+after its own timer has already fired.
+The scheduler never observes whether the resulting turn succeeded.
+
+Sparse updates are normalized against the current row inside that store's
+serialized transaction. Concurrent edits therefore preserve omitted fields and
+derive the next occurrence from the current schedule and enabled state; they do
+not merge independently read snapshots. Provider submission stays outside the
+store transaction.
 
 A fire whose submission is not accepted, or whose dispatch itself throws, is
 rearmed as a miss through the same `next_run_at` recompute but without writing
