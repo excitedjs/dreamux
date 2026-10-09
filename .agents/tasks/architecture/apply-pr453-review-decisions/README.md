@@ -25,5 +25,5 @@ The current process follows the later rulings: “简化流程，你手动调度
 
 ## Delivery
 
-- Pull request: To be linked after reviewed submission.
+- Pull request: [PR #466](https://github.com/excitedjs/dreamux/pull/466), targeting next. Merge, release and deployment are not included in this task's authority.
 - Knowledge closeout: Updated scheduled-work.md, provider-runtime.md, channel.md, product/README.md, the owning maintenance references and the utils README. Plugin/runtime argv/terminal references are N/A: the selected deletions preserve their existing documented contracts; implementation and adjudication are recorded in this task.
