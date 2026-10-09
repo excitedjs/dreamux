@@ -1,6 +1,21 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+
+## 0.6.0
+Fri, 09 Oct 2026 03:05:18 GMT
+
+### Minor changes
+
+- Add the shared redaction capability: one list of secret key names, the text rules (secret shapes destroyed, host paths renamed), and redactJson, which redacts a JSON value by walking its structure instead of pattern-matching its serialization. The package now depends on no Dreamux package at all: @excitedjs/dreamux-types is the contract external providers compile against, so the JSON value and settled-invoke shapes are declared here instead of imported.
+- Add `RuleViolation`, the error a validator throws for a value it checked and refused, and make the shared config validators throw it instead of a plain `Error`, so a host request reader can tell a refused value from a failure of its own. Messages are unchanged.
+- Code organization refactor stage 8a, item 1: renamed config-validate's requireNonEmptyString/requireStringArray/requireStringRecord/requirePositiveInt to readNonEmptyString/readStringArray/readStringRecord/readPositiveInt, matching the existing readOptionalString/readOptionalBoolean/readProviderConfigObject naming. No behavior change: all four still throw on a missing or wrong-type field. These are re-exported from the package's index.ts, so an external provider could in principle have imported them directly under the old names.
+- Removed the exported `rejectUnknownKeys` config-validation primitive: every in-repo caller (agent-runtime-codex, agent-runtime-claude-code, feishu-channel, and dreamux's plugin-entry reader) dropped its unknown-key allow-list in favor of the persisted-shape policy (R21), which tolerates unrecognized keys and rejects only wrong types and missing required fields. An external provider package that imported `rejectUnknownKeys` needs to drop that check the same way; every other `config-validate` export is unchanged.
+- Code organization refactor stage 4a: added TransactionalStore<T> (a per-file, session-held, load-then-serialized-update primitive) and publishFileExclusive (a no-clobber atomic file publish helper) per issue #448's storage design. Removed writeAtomic, whose only in-repo callers (feishu-channel's routing store and access ledger) now write through TransactionalStore instead; writeAtomic was a public runtime export, so an external provider could in principle have imported it directly.
+- Code organization refactor stage 4c item 2: added an optional replacement parameter to redactSecretKeyValues, defaulting to '<redacted>' so every existing caller is unaffected. Lets the Config Service project secret-named agents[] values as '' instead of writing a second recursive walker.
+- Code organization refactor stage 5 item 12: added json-shape.ts (isPlainObject, moved out of config-validate.ts as a generic primitive; new asString/nonEmptyString) and error-info.ts (errorMessage/errorInfo/ErrorInfo, the canonical home for the copy every dreamux-internal package previously vendored). config-validate.ts now builds isPlainObject-dependent checks on top of json-shape.ts instead of defining its own.
+- Code organization refactor stage 5 item 13: added writeFileAtomic(path, data, { mode? }) to fs.ts, the overwrite-and-replace counterpart to the existing create-only publishFileExclusive (same sibling-temp-file-then-swap shape, but rename() over an existing target instead of link() refusing one). TransactionalStore now calls it instead of its own inline write-tmp-then-rename sequence.
+- Code organization refactor stage 5 item 14: added activity-error.ts (ActivityError, ActivityErrorDetail, ActivityErrorReason), the shared Activity-read error the Codex and Claude Code Agent Runtime providers each used to duplicate with identical shape and reason mapping; added activityQueryFingerprint to activity-scan.ts, the same fold for the cursor-fingerprint helper both providers also duplicated verbatim.
 
 ## 0.5.1
 Thu, 10 Sep 2026 04:59:50 GMT

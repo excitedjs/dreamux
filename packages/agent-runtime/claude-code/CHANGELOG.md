@@ -1,6 +1,27 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+
+## 0.8.0
+Fri, 09 Oct 2026 03:05:18 GMT
+
+### Minor changes
+
+- Code organization refactor stage 8a item 4: added paths.ts mirroring the codex package's spawn-env/config-home resolver — claudeSpawnEnv (moved verbatim from runtime-session.ts's buildClaudeProcessEnv) and resolveClaudeConfigHomeDir (hoisted out of activity/path.ts's claudeHistoryRoots, which now calls it and keeps its own missing-HOME error). runtime.ts and activity/reader.ts now share claudeSpawnEnv instead of each computing the process/extra_env merge separately. runtime-session.ts's other two exports, completionFromTurnOutcome and turnFailureMessage, moved into rpc.ts (their real owner: rpc.ts is completionFromTurnOutcome's only caller, and runtime-activity.ts now imports turnFailureMessage from rpc.ts instead); runtime-session.ts is deleted. None of this is re-exported from the package's own index.ts barrel, and no behavior changed.
+- The package keeps its default neutral provider factory for configured npm provider refs and exports createClaudeCodePlugin for builtin plugin loading. createClaudeCodeAgentRuntimeProvider remains the named bare-provider constructor. Internal process, RPC, and diagnostic helpers are no longer public barrel exports; callers inside the package use their owning modules. Existing configured official npm provider refs continue to load.
+- Implemented the new AgentRuntimeProvider.operatorStateRoot capability, returning the operator's default Claude config home (resolveClaudeConfigHomeDir(process.env, process.cwd())). Dreamux core's uninstall guard now sources its protected Claude Code path from this instead of a hard-coded ~/.claude literal: for a default install the protected path is still ~/.claude, but if CLAUDE_CONFIG_DIR is set in the environment dreamux uninstall runs in, the guard now protects that directory instead.
+- An `agents[].config` block for a `builtin:claude-code`/`npm:`-claude-code-runtime provider now follows the same persisted-shape policy (R21) as the rest of config.json: a key outside the recognized set is tolerated and ignored instead of refusing `dreamux serve`. The recognized keys (`bin`, `model`, `permission_mode`, `remote_control`, `extra_args`, `extra_env`, `turn_timeout_ms`) are validated as before, and a wrong type or an invalid value still fails loading.
+- Code organization refactor stage 2a, item 7: the resident session no longer falls back to a legacy single-input admission path when command_lifecycle protocol support has not yet been confirmed — every submission writes to stdin immediately and command_lifecycle admission is assumed always supported, with no version gate. TurnSubmitOptions.isSynthetic is deleted (no production caller ever set it). ParsedLine's init variant drops capabilities and ClaudeProtocolEvent's result variant drops commandUuids, both unread outside tests. Dreamux's supported Claude Code CLI already reports command_lifecycle on every session, so the fallback and these fields were unreachable/unread in practice.
+- Code organization refactor stage 2b, item 4: enable exactOptionalPropertyTypes. Published fields now type their optional members as also accepting an explicit undefined value, not only omission: ClaudeCodeSessionSpec.onRemoteControlUrl, ClaudeCodeRuntimeDeps.outputSchema/systemPromptAppend/generateSessionId, ClaudeCodeResidentArgsInput.systemPromptAppend/disableFeatures/outputSchema, and ClaudeCodeStreamRpcOptions.outputSchemaEnabled/log/onRemoteControlUrl/onProtocolEvent (all exported from index.ts). Non-breaking widening; no runtime change.
+- Construct Claude sessions directly and remove ClaudeCodeAgentRuntimeProviderOptions (sessionFactory, resolveBinPath, and generateSessionId). Session and RPC diagnostic inputs now accept optional DreamuxLogger objects through logger instead of positional log callbacks; configured binaries and numeric settings retain their behavior.
+- Report text-free compaction and interruption activities using native envelope UUIDs, and tool activities using native tool ids. Carry the result envelope UUID on result and interrupted protocol events, require interrupted outcomes, and remove generated activity ids and callId.
+- Emit one cumulative token.usage snapshot per native result from the native modelUsage totals, keeping no baseline or history; the formatted usage summary is no longer emitted as an assistant message.
+
+### Patches
+
+- A Claude Code agent's live activity no longer includes its native subagents: a subagent's words, tool calls, and tool results are not reported. The agent's own `Agent` tool call and its result are still shown.
+- Keep the package default compatible with configured npm provider references and expose createClaudeCodePlugin separately. Require always-supplied internal skill and feature dependencies, clarify activity bounds and restore protocol and lifecycle coverage.
+- The config reader throws `RuleViolation` from `@excitedjs/dreamux-utils` for a refused `bin` or `permission_mode` value instead of a plain `Error`; messages are unchanged.
 
 ## 0.7.0
 Thu, 10 Sep 2026 04:59:50 GMT

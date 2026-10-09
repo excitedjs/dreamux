@@ -1,6 +1,33 @@
 # Change Log - @excitedjs/dreamux-types
 
-This log was last generated on Thu, 10 Sep 2026 04:59:50 GMT and should not be manually modified.
+This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+
+## 0.11.0
+Fri, 09 Oct 2026 03:05:18 GMT
+
+### Minor changes
+
+- `SubmitCommand` is exported: the flat submit payload both submit Commands share — display attributes, faithful text, an optional trailing reminder, and an optional `source_id` Core deduplicates on — with no recipient in it. `dispatcher.submit` takes it as is, because it addresses the Dispatcher through the caller context. `TeamSubmitCommand` extends it with a required `team_name` and the optional `intent`, so omitting the Team name no longer type-checks and no longer means the Dispatcher Agent.
+- Add the plugin contract: `DreamuxPlugin`, `ContributeHost`, `ServerHost`, the `Dispatcher` and `Team` interfaces plugin hooks receive, `LaunchDraft`, and the `DreamuxPluginApis` declaration-merge map. The package now has one dependency, `tapable`, used by type only for the hook types the contract names.
+- Code organization refactor stage 8a, item 2: split RuntimeActivity/NativeActivity/RuntimeToolAction and the AgentActivity* cold-read contract out of agent-runtime.ts into a new activity.ts (both still root-exported, no import-path change for a root consumer). Removed CoreCommandContext/CoreCommandDefinition/CoreCommandRegistry/CoreCommandSource and JsonInvokeResult from the published surface: every consumer of the four Command types was inside @excitedjs/dreamux (now declared locally there), and JsonInvokeResult had zero consumers anywhere. Moved ChannelCommandError/ChannelCommandRetryableErrorCode from the now-deleted command.ts into team.ts, their only consumer (still root-exported). Named TeamSummary's previously-inline 9-member worktree_cleanup union as TeamWorktreeCleanupState. Made AgentRuntimeDiagnosticContext.paths required (the host has always supplied it; this only tightens a type). Nothing persisted changes and no runtime behavior changes.
+- Added an optional AgentRuntimeProvider.operatorStateRoot(env) capability, beside diagnostic: a provider that owns a global (non-per-agent-overridden) state directory reports it here instead of the host hard-coding that provider's directory name. Purely additive; a provider that does not implement it is unaffected.
+- Code organization refactor stage 2a, item 1: AgentRuntimeCreateContext.activity/.logger, the activity-read context's .logger, ChannelSessionCreateContext.logger/.state_root/.cache_root, and DreamuxLogger.child are now required fields instead of optional ones — Core always supplied them. AgentRuntimeCreateContext.injectEnv and the activity-read context's .injectEnv are deleted; the neutral env-injection seam was always empty in production. Not user-visible.
+- Code organization refactor stage 2b, item 1: enable exactOptionalPropertyTypes. ChannelInstance.mcp now types as ChannelSessionMcpCapability | undefined so a Channel provider can construct the field with an explicit undefined value, not only omit it. Non-breaking widening; no runtime change.
+- Code organization refactor stage 6b item 2 (R48): removed Team.hooks.created (an AsyncSeriesHook plugins could tap after a newly created Team reached running) from the Team interface, along with the Team doc comment's note about a failing created tap being logged. No plugin in this tree taps it; a plugin author who does loses the hook and must remove the tap to compile against this dreamux-types version.
+- Code organization refactor stage 6f, item 2 (R48): added Dispatcher.hooks.teammateLaunch, an append-only launch-draft hook that fires once per ordinary TeamMate Agent construction (Dispatcher-spawned, a Team member, or a Workflow agent), carrying that TeamMate's owning Team id. Additive only; nothing existing changes shape.
+- Code organization refactor stage 6f, item 3 (R48): added Dispatcher.hooks.createTeam, an AsyncSeriesWaterfallHook that runs once per non-replay team.create request on the caller's own TeamCreateParams (a new export, TeamCreateCommand without request_id) before the Team is built. Additive only; nothing existing changes shape.
+- Code organization refactor stage 6f, item 4 (R50): added ServerHost.stateDir, a plugin's own durable state directory path handed to it at server() time. Additive only; every existing ServerHost field keeps its shape.
+- Code organization refactor stage 6f, item 1 (R52): renamed Dispatcher.hooks.beforeLaunch to Dispatcher.hooks.launch and Team.hooks.beforeTeamLeaderLaunch to Team.hooks.leaderLaunch. Pure rename of the plugin hook property names; no behavior, ownership, or firing-site change. A plugin authored against the old names must rename its own tap registrations to compile against this dreamux-types version.
+- Code organization refactor stage 7, item 5 (R20): TeamCreateRepoRequest's managed branch drops the optional slug field.
+- Revert #408 and restore the previous workspace and Team creation behavior.
+- Add text-free, live-only context.compacted and turn.interrupted activities. Replace TeammateActivity with RuntimeActivity in teammate.activity, retaining occurredAt and structured arguments/result/error payloads. Use native provider ids and remove tool.call.callId; ids may be shared across activity kinds and tool statuses. Remove redacted from activities and teammate.input. Rename members of team.state, teammate.state, teammate.input and teammate.activity (including actor scope and roster entries) to camelCase: schemaVersion, occurredAt, teamName, teammateName, leaderName and sourceId.
+- Add a neutral, live-only token.usage activity carrying a provider's cumulative session token counters and optional context window usage, replacing the synthetic usage-bearing assistant message.
+
+### Patches
+
+- Clarify that activity size bounds belong to providers while Core checks shapes, record count and recognized errors. Restore compiler-checked neutral runtime, channel, Team and activity contracts.
+- Clarify synchronous plugin factory/config validation and case-insensitive duplicate-name detection while retaining original name spelling.
+- Document that every TeammateActivity tool.call member is redacted, including invocation and arguments_json.
 
 ## 0.10.0
 Thu, 10 Sep 2026 04:59:50 GMT

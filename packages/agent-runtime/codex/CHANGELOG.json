@@ -2,6 +2,96 @@
   "name": "@excitedjs/agent-runtime-codex",
   "entries": [
     {
+      "version": "0.7.0",
+      "tag": "@excitedjs/agent-runtime-codex_v0.7.0",
+      "date": "Fri, 09 Oct 2026 03:05:18 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Support ultrathink through native Codex effort parameters, restore ordinary effort on the next ordinary submission, and pass submission text through unchanged. Busy input follows native Codex timing."
+          },
+          {
+            "comment": "Align the Codex ultrathink keyword with Claude Code: a matching submission now also carries the sentence Claude Code injects, as a separate input item beside the unchanged submission text, and the keyword must appear as a whole word. A submission where it is only part of a word, such as 'ultrathinking', no longer raises effort."
+          },
+          {
+            "comment": "Fixed the codex doctor to validate the Codex home actually in effect for an agent, instead of always ~/.codex: it now resolves CODEX_HOME (and the OPENAI_API_KEY/CODEX_API_KEY/CODEX_ACCESS_TOKEN auth check) from the same effective env the runtime spawns its Codex child with (ambient env plus the agent's own extra_env), via one CODEX_HOME resolver paths.ts now shares between the runtime spawn path, the activity reader, and the doctor. Previously doctor ignored extra_env entirely and always checked the operator's global ~/.codex, so an operator-configured per-agent CODEX_HOME or auth override produced false doctor failures or false passes. Also removed the dead codexHomeDoctor hook end to end: CodexAgentRuntimeProviderOptions no longer has a codexHomeDoctor field (nothing in this repo ever supplied it), and codex-home.ts's assertDispatcherCodexHomeReady, formatDispatcherCodexHomeErrors, and DispatcherCodexHomeDoctor type, which only existed to serve that hook, are gone from the package's exports along with paths.ts's operatorCodexHome/dispatcherCodexHome/dispatcherCodexConfigPath (replaced by the internal codexSpawnEnv/resolveCodexHomeDir). dispatcherCodexHomeDoctorContext now takes a required env argument, and validateDispatcherCodexHome no longer accepts a bare dispatcher-id string (its only caller already passed a full context). Nothing persisted changes."
+          },
+          {
+            "comment": "The package keeps its default neutral provider factory for configured npm provider refs and exports createCodexPlugin for builtin plugin loading. createCodexAgentRuntimeProvider remains the named bare-provider constructor. Internal process, RPC, and diagnostic helpers are no longer public barrel exports; callers inside the package use their owning modules. Existing configured official npm provider refs continue to load."
+          },
+          {
+            "comment": "Implemented the new AgentRuntimeProvider.operatorStateRoot capability, returning the operator's default Codex home (resolveCodexHomeDir(process.env), with no per-agent extra_env override applied). Dreamux core's uninstall guard now sources its protected Codex path from this instead of a hard-coded ~/.codex literal: for a default install the protected path is still ~/.codex, but if CODEX_HOME is set in the environment dreamux uninstall runs in, the guard now protects that directory instead."
+          },
+          {
+            "comment": "PR #455 review round: `codexSpawnEnv` now takes the base env as an explicit parameter instead of reading `process.env` internally. The managed-service `dreamux doctor` check builds its Codex spawn env from the diagnostic context's own target env (the installed service's persisted env) merged with `extra_env`, instead of the ambient env of the process running `doctor`; a per-agent `CODEX_HOME` or auth override that only differs between the terminal and the installed systemd unit is now validated against the environment the managed service actually runs with. The runtime spawn and the activity reader are unaffected: both still merge `extra_env` onto the live process's own `process.env`, passed explicitly at the call site now instead of implicitly inside the helper."
+          },
+          {
+            "comment": "An `agents[].config` block for a `builtin:codex`/`npm:`-codex-runtime provider now follows the same persisted-shape policy (R21) as the rest of config.json: an unrecognized key is tolerated and ignored instead of refusing `dreamux serve`. This drops the allow-list added by stage 2a for `turn_timeout_ms`/`approval_policy` (which is superseded, not narrowed) along with `bin`/`sandbox_mode`/`extra_args`/`extra_env`/`initialize_timeout_ms`; wrong types and missing required fields still fail loading."
+          },
+          {
+            "comment": "Code organization refactor stage 2a, item 8 (R24/R25): agents[].config.turn_timeout_ms and .approval_policy are no longer read - Codex approval policy is always 'never' (issue #2 trust model), and turn_timeout_ms was accepted-and-ignored with no runtime effect. Both keys are still tolerated (and ignored) in an existing config.json - a file that sets either does not need editing."
+          },
+          {
+            "comment": "Code organization refactor stage 2b, item 3: enable exactOptionalPropertyTypes. CodexProcessOptions.binPath and HandshakeOptions.timeoutMs (both published: binPath from index.ts's CodexProcessOptions, timeoutMs from performInitializeHandshake's exported HandshakeOptions parameter type) now type as string | undefined and number | undefined so a caller can construct the field with an explicit undefined value, not only omit it. Non-breaking widening; no runtime change."
+          },
+          {
+            "comment": "Construct Codex processes and clients directly, removing codexProcessFactory and codexClientFactory provider options. Retain numeric restart backoff settings and per-start socket allocation; internal turn and skill-root diagnostics use DreamuxLogger objects."
+          },
+          {
+            "comment": "Report text-free compaction and interruption activities. Use native item ids for assistant, tool and compaction activities, and turn ids for usage and interruption; remove callId."
+          },
+          {
+            "comment": "Emit one cumulative token.usage snapshot per native turn from the app-server thread/tokenUsage/updated totals, keeping no baseline or history; the formatted usage summary is no longer emitted as an assistant message."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Keep the package default compatible with configured npm provider references and expose createCodexPlugin separately. Clarify provider-owned activity bounds and restore runtime, activity and lifecycle coverage. Verify the actual neutral provider instance, including operatorStateRoot, separately from its runtime handle and package exports."
+          },
+          {
+            "comment": "The config reader throws `RuleViolation` from `@excitedjs/dreamux-utils` for a refused `bin` or `sandbox_mode` value instead of a plain `Error`; messages are unchanged."
+          },
+          {
+            "comment": "Bind fixed runtime context once and return persistence and cleanup operations to their owning services."
+          },
+          {
+            "comment": "The Codex home auth check in `dreamux doctor` also accepts a home whose selected `model_provider` authenticates through its own `[model_providers.<id>]` table (a non-empty `experimental_bearer_token`, or an `env_key` whose variable is set). Such a home has no `auth.json` and was reported as missing auth even though the runtime started normally."
+          }
+        ],
+        "none": [
+          {
+            "comment": "PR #455 review round: deleted dead surface with zero producers. TurnManagerOptions.turnCwd/onTurnCompleted and args.ts's parseCodexArgs had no caller (the sole `new TurnManager` never supplied the first two, and codexArgsFromConfig replaced parseCodexArgs's only caller in an earlier stage); the output-schema codec's fingerprint field/hash was computed on every compile and never read. Also dropped the codex-home doctor context's dispatcherCwd/codexCliArgs params (never read by validation; the sole caller always supplies env directly), activity/path.ts's resolveCodexRolloutRoots env default (its one caller always passes env), and supervisor.ts's binPath fallback (redundant with bin.ts's resolveCodexBinPath, which the sole caller already resolves through). events.ts's submitTurnStart lost its cwd parameter too: with turnCwd gone, the sole caller always passed null, so the request never carried a cwd override. No runtime or published-API behavior change."
+          },
+          {
+            "comment": "Code organization refactor stage 2a, item 1: updated to the tightened dreamux-types context contract (activity/logger now required); deleted the dead injectEnv plumbing (R30) from runtime-deps.ts, runtime-support.ts's codexProcessEnv, runtime.ts, provider.ts, and the activity reader. Internal-only; no runtime or published-API change."
+          },
+          {
+            "comment": "Code organization refactor stage 2a, item 6: dispatcherCodexConfig now takes the agent-config shape directly ({provider, config}, no runtime wrapper) plus a dispatcherId for its error message, tracking the host's DispatcherConfig.runtime deletion. Zero in-repo callers; internal-only, no runtime or published-API behavior change."
+          },
+          {
+            "comment": "Code organization refactor stage 2a, item 9: events.ts's one-shot turn-collection mode (runTurn, TurnCollector.awaitTurn, and the acceptAnyThread/onTrace/retainAfterTerminal collector options it needed) is deleted along with the sha256 terminal-fingerprint comparison, and turn-manager.ts's collector construction no longer re-subscribes on a thread-id change. None of the deleted names were re-exported from the package's index.ts barrel (verified: only the resident push-style subscribeTurnCollection path, used by TurnManager, was ever reachable outside this package), so there is no published-API or runtime-behavior change for a Dreamux-managed Codex session."
+          },
+          {
+            "comment": "Code organization refactor stage 3: added prettier --check to the package's lint script and reformatted src/tests/ to the shared repo-root config (R2). Whitespace/quote-style only; no runtime or published-API change."
+          },
+          {
+            "comment": "Code organization refactor stage 5 item 12: output-schema-codec.ts's private errorMessage helper (byte-identical to the canonical copy, and never re-exported from this package's barrel) now imports it from @excitedjs/dreamux-utils instead of defining its own. Internal-only; no public export changed."
+          },
+          {
+            "comment": "Code organization refactor stage 5 item 14: deleted activity/error.ts and activity/budget.ts (CodexActivityError, createCodexScanBudget's ActivityError construction) in favor of the shared ActivityError from @excitedjs/dreamux-utils; createCodexScanBudget itself moved into activity/path.ts, unchanged in behavior. activity/cursor.ts's codexQueryFingerprint (byte-identical to Claude Code's copy) was replaced by the same package's activityQueryFingerprint. None of this was re-exported from the package's own index.ts barrel."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.11.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.6.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.6.0",
       "tag": "@excitedjs/agent-runtime-codex_v0.6.0",
       "date": "Thu, 10 Sep 2026 04:59:50 GMT",

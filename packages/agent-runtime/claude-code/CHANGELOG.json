@@ -2,6 +2,78 @@
   "name": "@excitedjs/agent-runtime-claude-code",
   "entries": [
     {
+      "version": "0.8.0",
+      "tag": "@excitedjs/agent-runtime-claude-code_v0.8.0",
+      "date": "Fri, 09 Oct 2026 03:05:18 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "A Claude Code agent's live activity no longer includes its native subagents: a subagent's words, tool calls, and tool results are not reported. The agent's own `Agent` tool call and its result are still shown."
+          },
+          {
+            "comment": "Keep the package default compatible with configured npm provider references and expose createClaudeCodePlugin separately. Require always-supplied internal skill and feature dependencies, clarify activity bounds and restore protocol and lifecycle coverage."
+          },
+          {
+            "comment": "The config reader throws `RuleViolation` from `@excitedjs/dreamux-utils` for a refused `bin` or `permission_mode` value instead of a plain `Error`; messages are unchanged."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "Code organization refactor stage 8a item 4: added paths.ts mirroring the codex package's spawn-env/config-home resolver — claudeSpawnEnv (moved verbatim from runtime-session.ts's buildClaudeProcessEnv) and resolveClaudeConfigHomeDir (hoisted out of activity/path.ts's claudeHistoryRoots, which now calls it and keeps its own missing-HOME error). runtime.ts and activity/reader.ts now share claudeSpawnEnv instead of each computing the process/extra_env merge separately. runtime-session.ts's other two exports, completionFromTurnOutcome and turnFailureMessage, moved into rpc.ts (their real owner: rpc.ts is completionFromTurnOutcome's only caller, and runtime-activity.ts now imports turnFailureMessage from rpc.ts instead); runtime-session.ts is deleted. None of this is re-exported from the package's own index.ts barrel, and no behavior changed."
+          },
+          {
+            "comment": "The package keeps its default neutral provider factory for configured npm provider refs and exports createClaudeCodePlugin for builtin plugin loading. createClaudeCodeAgentRuntimeProvider remains the named bare-provider constructor. Internal process, RPC, and diagnostic helpers are no longer public barrel exports; callers inside the package use their owning modules. Existing configured official npm provider refs continue to load."
+          },
+          {
+            "comment": "Implemented the new AgentRuntimeProvider.operatorStateRoot capability, returning the operator's default Claude config home (resolveClaudeConfigHomeDir(process.env, process.cwd())). Dreamux core's uninstall guard now sources its protected Claude Code path from this instead of a hard-coded ~/.claude literal: for a default install the protected path is still ~/.claude, but if CLAUDE_CONFIG_DIR is set in the environment dreamux uninstall runs in, the guard now protects that directory instead."
+          },
+          {
+            "comment": "An `agents[].config` block for a `builtin:claude-code`/`npm:`-claude-code-runtime provider now follows the same persisted-shape policy (R21) as the rest of config.json: a key outside the recognized set is tolerated and ignored instead of refusing `dreamux serve`. The recognized keys (`bin`, `model`, `permission_mode`, `remote_control`, `extra_args`, `extra_env`, `turn_timeout_ms`) are validated as before, and a wrong type or an invalid value still fails loading."
+          },
+          {
+            "comment": "Code organization refactor stage 2a, item 7: the resident session no longer falls back to a legacy single-input admission path when command_lifecycle protocol support has not yet been confirmed — every submission writes to stdin immediately and command_lifecycle admission is assumed always supported, with no version gate. TurnSubmitOptions.isSynthetic is deleted (no production caller ever set it). ParsedLine's init variant drops capabilities and ClaudeProtocolEvent's result variant drops commandUuids, both unread outside tests. Dreamux's supported Claude Code CLI already reports command_lifecycle on every session, so the fallback and these fields were unreachable/unread in practice."
+          },
+          {
+            "comment": "Code organization refactor stage 2b, item 4: enable exactOptionalPropertyTypes. Published fields now type their optional members as also accepting an explicit undefined value, not only omission: ClaudeCodeSessionSpec.onRemoteControlUrl, ClaudeCodeRuntimeDeps.outputSchema/systemPromptAppend/generateSessionId, ClaudeCodeResidentArgsInput.systemPromptAppend/disableFeatures/outputSchema, and ClaudeCodeStreamRpcOptions.outputSchemaEnabled/log/onRemoteControlUrl/onProtocolEvent (all exported from index.ts). Non-breaking widening; no runtime change."
+          },
+          {
+            "comment": "Construct Claude sessions directly and remove ClaudeCodeAgentRuntimeProviderOptions (sessionFactory, resolveBinPath, and generateSessionId). Session and RPC diagnostic inputs now accept optional DreamuxLogger objects through logger instead of positional log callbacks; configured binaries and numeric settings retain their behavior."
+          },
+          {
+            "comment": "Report text-free compaction and interruption activities using native envelope UUIDs, and tool activities using native tool ids. Carry the result envelope UUID on result and interrupted protocol events, require interrupted outcomes, and remove generated activity ids and callId."
+          },
+          {
+            "comment": "Emit one cumulative token.usage snapshot per native result from the native modelUsage totals, keeping no baseline or history; the formatted usage summary is no longer emitted as an assistant message."
+          }
+        ],
+        "none": [
+          {
+            "comment": "PR #455 review round: deleted dead surface with zero remaining callers/effect. resumeOnNextSpawn tracked exactly threadId !== null, so it is replaced by that check; the now-empty TurnSubmitOptions (its last field, isSynthetic, was deleted in an earlier stage) is dropped from ClaudeCodeSession.submit, ClaudeCodeStreamRpc.submit and buildUserMessage; the command_lifecycle ClaudeProtocolEvent variant is dropped along with its emission, since its only consumer discarded it unread; locateClaudeHistory's locator param/branch is dropped, since its only caller always passed locator: null; deriveClaudeHistoryPath, claudeHistoryRoots, validateClaudeHistoryPath, ClaudeValidatedHistory, createClaudeScanBudget and CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES are un-exported (used only within their own file). Also corrected config.ts's stale './config' subpath comment and README.md's description of the resident RPC (both still described the pre-refactor legacy single-input compatibility fallback and a capability/write-waiter release step that no longer exist in code). No runtime or published-API behavior change."
+          },
+          {
+            "comment": "Code organization refactor stage 2a, item 1: updated to the tightened dreamux-types context contract (activity/logger now required); deleted the dead injectEnv plumbing (R30) from runtime-deps.ts, runtime-session.ts, runtime.ts, provider.ts, and the activity reader; the console-fallback logger gained a child() to keep satisfying the now-required DreamuxLogger.child field. Internal-only; no runtime or published-API change."
+          },
+          {
+            "comment": "Code organization refactor stage 2a, item 6: dispatcherClaudeCodeConfig now takes the agent-config shape directly ({provider, config}, no runtime wrapper) plus a dispatcherId for its error message, tracking the host's DispatcherConfig.runtime deletion. Zero in-repo callers; internal-only, no runtime or published-API behavior change."
+          },
+          {
+            "comment": "Code organization refactor stage 3: added prettier --check to the package's lint script and reformatted src/tests/ to the shared repo-root config (R2). Whitespace/quote-style only; no runtime or published-API change."
+          },
+          {
+            "comment": "Code organization refactor stage 5 item 14: deleted activity/error.ts and activity/budget.ts (ClaudeActivityError, createClaudeScanBudget's ActivityError construction) in favor of the shared ActivityError from @excitedjs/dreamux-utils; createClaudeScanBudget itself moved into activity/path.ts, unchanged in behavior. activity/cursor.ts's claudeQueryFingerprint (byte-identical to Codex's copy) was replaced by the same package's activityQueryFingerprint. None of this was re-exported from the package's own index.ts barrel."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.11.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.6.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.7.0",
       "tag": "@excitedjs/agent-runtime-claude-code_v0.7.0",
       "date": "Thu, 10 Sep 2026 04:59:50 GMT",
