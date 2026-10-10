@@ -3,7 +3,8 @@
  *
  * Both engines defer MCP tool definitions: the model sees a tool name, loads
  * the definition, and from that point the tool description and the property
- * descriptions are the whole manual. This walks the `teammate`, `team`, and
+ * descriptions explain the calling contract; teamwork owns collaboration
+ * guidance. This walks the `teammate`, `team`, and
  * `cron` catalogs as each caller sees them — nested objects such as `repo`
  * included — and fails on any input property that states only its type.
  *

@@ -24,12 +24,24 @@ deliberately composed into both Dispatcher and TeamLeader runtimes:
   doctor passes, then perform notification restart. It carries no
   release-specific schema or migration body.
 - `skills/team-leader/teamwork` is injected only into TeamLeader runtimes. It
-  loads when the TeamLeader is about to spawn or send to a TeamMate — not as
-  a standing condition of the turn — and covers the same collaboration ground
-  from the TeamLeader's vantage: a TeamMate against an engine-native subagent;
+  is consulted when needed collaboration guidance is missing from the current
+  context, rather than reloaded for each turn or handoff. It covers collaboration from the
+  TeamLeader's vantage: a TeamMate against an engine-native subagent;
   writing a hand-down prompt for members who share one Team workspace; asking
   a TeamMate why before overriding a surprising action; and continuing one
-  collaboration instead of starting another.
+  collaboration instead of starting another. It encourages useful independent
+  work by default, coordinates shared-workspace writes,
+  and keeps evidence-based integration with the TeamLeader. It frames TeamMates
+  as a more capable, durable subagent system: independent judgment and parallel
+  work with resumable conversations, standing roles, and runtime choice. The
+  source investigation behind this
+  distinction is recorded in [Codex Ultra delegation](../research/codex-ultra-delegation.md).
+  The TeamLeader launch prompt encourages useful delegation and routes missing
+  guidance to the skill. The skill owns collaboration methods and a concise
+  TeamMate tool guide. Briefs supply context and necessary, reasoned task
+  constraints without prescribing the approach. Identity primarily enhances
+  lasting judgment; the skill cautions about persistent restrictions and explains
+  their lifecycle consequences. MCP descriptions retain calling contracts.
 - The shared `dynamic-workflow` skill at `skills/shared/dynamic-workflow` is
   injected into both Dispatcher and TeamLeader runtimes. It loads when about
   to write or run a `workflow_run` script — not needed for any other tool —
@@ -113,7 +125,8 @@ TeamLeader `teammate` MCP tools are `spawn`, `send`, `close`, `list`, `status`,
 `history`, `last`, and `get_capabilities`, scoped to the Team's members.
 TeamLeader `spawn` does not accept a `repo` input because the Team workspace is
 already selected when the Team is created. Team-scoped TeamMates share that
-workspace, so concurrent editing needs an explicit non-conflict boundary.
+workspace, so concurrent editing needs an explicit non-conflict boundary;
+the `teamwork` skill owns that coordination guidance.
 
 TeamLeader `team` MCP exposes exactly one tool, `dissolve({ note, force? })`.
 It always targets the descriptor-bound Team, accepts no Team selector, and
@@ -137,5 +150,13 @@ over — that is a Dispatcher move.
 TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
 `cron_delete`. Cron prompts are injected back into that
 TeamLeader.
+
+## Regression Trap: using identity for task restrictions
+
+A temporary assignment placed in `spawn.identity` survives later turns and
+close/reopen; `send` cannot revise it. Recommending a prohibitive reviewer identity
+as the ordinary example encouraged this mistake. Use lasting behavioral guidance
+there and put necessary, reasoned task constraints in `prompt`, preserving the
+member's independent judgment.
 
 History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md).

@@ -164,6 +164,7 @@ function teamLeaderSystemPrompt(
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
     "Your Dreamux MCP servers: `teammate` (this Team's members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel's own tools).",
     teamWorkspaceSentence(workspace),
+    'Use TeamMates proactively when delegation can save time or improve quality, and consult the `teamwork` skill when you need collaboration guidance that is not already in your current context.',
     ...pluginInstructions,
   ];
   if (identityPrompt !== null) append.push(identityPrompt);

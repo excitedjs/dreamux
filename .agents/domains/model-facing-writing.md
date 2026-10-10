@@ -10,7 +10,7 @@ Current source owners:
 
 - `/packages/dreamux/skills/`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
-- `/packages/dreamux/src/service/team/service.ts`
+- `/packages/dreamux/src/service/team/leader.ts` (the TeamLeader launch prompt)
 - `/packages/dreamux/src/service/mcp/tool-metadata.ts` (the shared `repo` input and its property descriptions)
 - `/packages/dreamux/src/service/agent/mcp.ts`
 - `/packages/dreamux/src/service/agent/system-prompt.ts` (what a TeamMate is told about itself)
@@ -22,8 +22,9 @@ Current source owners:
 
 ## Design Principles
 
-- An identity statement says who the model is and what it has; it carries no
-  rule.
+- An identity statement says who the model is and what it has. The TeamLeader
+  additionally carries one sentence encouraging useful delegation and routing
+  missing collaboration guidance to `teamwork` (see Prompt Shape).
 - A reminder states a consequence the model cannot see, at the moment of the
   action, and does not generally order the model what to do. The
   dispatch-result reminders (`spawn`/`send`/`team.create`/`team.send`/
@@ -37,10 +38,11 @@ Current source owners:
   "the user sees only the reply tool", the dispatch delegate owns "the result
   arrives later", the skill owns methodology, and the tool description owns
   the contract of that tool.
-- A skill is loaded when the model is about to use the MCP the skill is about,
-  never as a standing condition of a turn. The trigger is the skill's
-  frontmatter description plus a pointer sentence in the tool description that
-  is about to be used.
+- Skills load for the work they guide, not as a standing condition of a turn.
+  Tool-specific skills route through their frontmatter description and the
+  relevant tool description. The TeamLeader prompt routes missing collaboration
+  guidance to `teamwork`; its frontmatter repeats that condition. Another turn
+  or handoff does not require rereading guidance already in context.
 - Per-engine visibility facts the writer must know: Claude Code drops MCP
   `content` text on a tool result once `structuredContent` is also present, so
   a reminder attached only as `content` text is invisible there; Codex renders
@@ -160,7 +162,7 @@ Dispatcher prompt content should still be compact and role-specific:
   files, PATH, and runtime auth are host-owned, and an ambiguous channel
   request leaves changing them unauthorized until the owner confirms.
 
-Identity carries no rule (Design Principles above), so the prompt stops there:
+The Dispatcher prompt's scope stops there:
 no reply-tool instruction, no secrets clause, no tool-definition-loading
 sentence, and no MCP-authority bullet — each is either an engine-native
 mechanism the model does not need reminding of, or a consequence some other
@@ -169,6 +171,16 @@ the action.
 
 Append prompts layer onto an already-capable runtime prompt, so they should be
 short role deltas rather than a full reintroduction.
+
+The TeamLeader append prompt names its identity, MCP servers, and workspace
+facts, then encourages delegation when it can save time or improve quality and
+routes missing collaboration guidance to `teamwork`. Guidance already in context
+is reused; a new turn or tool call is not a reload trigger. The skill owns task
+decomposition, briefs, shared-workspace coordination, standing identity
+consequences, tool usage, and integration. MCP descriptions retain schemas and
+calling contracts; the launch prompt carries only the direction and route.
+The operator's request and the superseded role-only rule are recorded in the
+[proactive teamwork task](../tasks/builtin-skills/guide-proactive-teamwork/README.md).
 
 Do not copy repository contributor guidance into product prompts. `AGENTS.md`,
 `apply_patch`, PR review rituals, citation-marker cleanup, frontend-production
@@ -241,8 +253,8 @@ Do not introduce correlation/failure ids, uniform sanitize templates,
 per-operation visibility allowlists, or Core-invented recovery advice.
 
 The no-polling and completion-delivery rule has no home in Dispatcher or
-TeamLeader role prompts; those carry only identity and the MCP server map (see
-Prompt Shape above). It has two owners instead, each stating the same fact at
+TeamLeader role prompts. Their role and skill-routing scope is described in
+Prompt Shape above. Delivery has two owners, each stating the same fact at
 a different layer:
 `/packages/dreamux/src/service/mcp/dispatch-reminders.ts`, which owns the
 operation-local reminder text without changing the tool's canonical structured
