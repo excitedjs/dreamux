@@ -238,6 +238,14 @@ the same change that touches it.
 
 ## Team lifecycle
 
+- **TeamLeaders are guided to delegate useful independent work.** Their launch
+  prompt encourages TeamMate collaboration when it can save time or improve
+  quality, and directs them to `teamwork` when needed collaboration guidance
+  is missing from their current context. A new turn or handoff does not itself
+  require rereading the skill. The skill explains that a member's standing
+  identity survives close/reopen and cannot be changed through `send`.
+  (Decision: [2026-10-10 follow-up](../tasks/builtin-skills/guide-proactive-teamwork/requirement.md).)
+
 - **Workspace isolation defaults to off.** Omitted dispatcher workspace policy
   uses `enabled: false`; explicit true/false values retain their meaning.
   Configuration: [state and config](/.agents/domains/state-config-and-files.md).

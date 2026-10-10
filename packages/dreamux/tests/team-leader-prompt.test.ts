@@ -185,8 +185,8 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
     }
   });
 
-  it('mandates no skill before a turn', async () => {
+  it('routes collaboration guidance to the bundled teamwork skill', async () => {
     const prompt = await launchedLeaderPrompt();
-    expect(prompt).not.toContain('teamwork');
+    expect(prompt).toContain('`teamwork`');
   });
 });

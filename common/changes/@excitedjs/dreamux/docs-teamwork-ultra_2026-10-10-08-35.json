@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Align teamwork guidance with proactive multi-agent collaboration and frame TeamMates as a more capable, durable subagent system.",
+      "comment": "Encourage useful TeamMate delegation without per-turn skill reloads, document standing identity consequences, and move collaboration usage guidance into teamwork.",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

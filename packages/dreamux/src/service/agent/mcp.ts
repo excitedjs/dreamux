@@ -182,21 +182,19 @@ const AGENT_RUNTIME_CAPABILITY_SCHEMA: JsonSchema = objectSchema(
 
 function teammateToolRecords(scope: TeamMateMcpScope): TeammateMcpToolRecord[] {
   const callerKind = scope.kind;
-  // The pointer to the hand-down skill opens the description of the tool the
-  // model is about to call, which is where the intent to hand work down forms.
-  // Which skill depends on who is calling: a TeamLeader hands work only to a
-  // TeamMate, a Dispatcher to a TeamMate or a Team.
+  // Dispatcher handoffs discover their guide at the tool. The TeamLeader's
+  // launch prompt already routes missing collaboration guidance to teamwork.
   const handOffSkillPointer =
     callerKind === 'dispatcher'
-      ? 'The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team.'
-      : 'The bundled `teamwork` skill covers how to brief a TeamMate.';
+      ? 'The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. '
+      : '';
   const spawnProperties: Record<string, JsonSchema> = {
     name_prefix: {
       type: 'string',
       minLength: 1,
       maxLength: 64,
       description:
-        'Requested label; the concrete name comes back in the result.',
+        'Requested label; use the concrete, never-reused name returned in the result for later calls.',
     },
     prompt: {
       type: 'string',
@@ -222,8 +220,8 @@ function teammateToolRecords(scope: TeamMateMcpScope): TeammateMcpToolRecord[] {
       minLength: 1,
       maxLength: 4000,
       description:
-        "Standing role and boundaries appended to the TeamMate's system " +
-        'prompt for every turn.',
+        'Standing instructions for every turn, retained after reopening ' +
+        'and not editable through send.',
     },
   };
   if (callerKind === 'dispatcher') {
@@ -235,9 +233,12 @@ function teammateToolRecords(scope: TeamMateMcpScope): TeammateMcpToolRecord[] {
   }
   const spawnDescription =
     callerKind === 'dispatcher'
-      ? `${handOffSkillPointer} Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate the work directory by the dispatcher's workspace policy (a fresh per-TeamMate directory, or the dispatcher's own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. Returns a receipt at once; the completion is pushed later as a new message.`
-      : `${handOffSkillPointer} Start a resumable TeamMate agent in this Team's shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only, the edits are independent, or the user asked for parallel edits. This tool does not accept a repo parameter. Returns a receipt at once; the completion is pushed later as a new message.`;
-  const sendDescription = `${handOffSkillPointer} Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn. Returns a receipt at once; the completion is pushed later as a new message.`;
+      ? `${handOffSkillPointer}Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate the work directory by the dispatcher's workspace policy (a fresh per-TeamMate directory, or the dispatcher's own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. Returns a receipt at once; the completion is pushed later as a new message.`
+      : "Start a resumable TeamMate in this Team's shared workspace and submit its first turn; returns its concrete name for later calls. Returns a receipt at once; the completion is pushed later as a new message.";
+  const sendDescription =
+    callerKind === 'dispatcher'
+      ? `${handOffSkillPointer}Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn. Returns a receipt at once; the completion is pushed later as a new message.`
+      : 'Send a turn to a TeamMate; a closed member reopens with its recorded runtime session and standing identity. Returns a receipt at once; the completion is pushed later as a new message.';
 
   return [
     {

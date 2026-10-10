@@ -1,6 +1,6 @@
 ---
 name: teamwork
-description: "How a TeamLeader hands work to a TeamMate and works with it afterwards. Load when about to spawn or send to a TeamMate; not needed for any other tool."
+description: "Guidance for proactive TeamMate collaboration, briefs, standing identities, tool use, and result integration. Consult when you need collaboration guidance that is not already in your current context."
 ---
 
 # Teamwork
@@ -15,6 +15,10 @@ tools within the user's scope and the active runtime's instructions. Keep a
 quick, tightly coupled task with yourself when the handoff would cost more than
 it gains. Reconsider as new work appears, not only at the start of the request.
 
+Use guidance already in your current context. A new turn or another TeamMate
+call is not a reason to reload this skill; consult it again when the guidance
+you need is missing, including after context compaction.
+
 ## Yourself, a Subagent, or a TeamMate
 
 Three ways to get a piece of work done:
@@ -22,8 +26,8 @@ Three ways to get a piece of work done:
 - **Yourself.** The work fits this turn and needs the context you already hold.
   You are also the one who answers for the Team, so the decisions and the
   reporting stay with you either way.
-- **An engine-native subagent.** Delegation inside your own turn and your own
-  engine, useful for a bounded investigation or an independent reading. Your
+- **An engine-native subagent.** A collaborator managed through your engine's
+  delegation tools, useful for a bounded investigation or an independent reading. Your
   engine describes its delegation feature — what it can see, how long it
   lives, what it returns — and that description is the one to read.
 - **A TeamMate.** A member of this Team that continues independently: its own
@@ -118,12 +122,54 @@ the route. Say what happens when reality disagrees with the brief — stopping t
 report a conflict with the code, or a blocker, is the correct result of the
 turn, not a failure to deliver.
 
-`identity` holds what stands for every turn of the member's life: its role, its
-boundaries, the posture of stopping to report rather than pushing through, and
-its standing to contradict your framing — what you hand down is evidence, not a
-verdict.
-`prompt` holds this turn's task. `send` carries the next turn's task the same
-way; the standing role is already in place and does not need restating.
+## Choose Identity for the Member's Whole Life
+
+`spawn.identity` is optional, but consequential: Dreamux stores it and appends
+it to the member's standing runtime instructions. It governs every turn,
+including after `close` followed by `send` reopens the member. `send` has no
+identity parameter; a later task prompt cannot override a conflicting standing
+instruction. Closing and reopening does not reset it.
+
+For example, an identity that says "Only modify files under directory a" binds
+that member to directory a for its whole life. A later prompt asking it to edit
+directory b does not lift that restriction. If the role needs a wider boundary,
+start a new member with an appropriate identity and supply the relevant context;
+respect any user or repository constraint that still applies. Do not ask the
+existing member to ignore its identity. These are instruction constraints, not
+filesystem permission isolation.
+
+Put only lasting responsibilities and boundaries in `identity`: a reviewer
+does not write the implementation; a member can challenge your framing; it
+reports conflicts rather than pushing through them. Omit identity when no
+additional standing instruction is needed. Put this turn's task, temporary
+path ownership, hypotheses, and acceptance evidence in `prompt`. A later `send`
+can revise that task assignment within the standing boundaries.
+
+## TeamMate Tools in Practice
+
+Use the `teammate` MCP server for this Team's members. Their working directory
+is the Team's shared workspace; `spawn` does not choose a separate repository.
+The advertised tool schemas own accepted parameters and result fields.
+
+| Tool | Use |
+| --- | --- |
+| `get_capabilities` | Inspect available runtimes and their declared configuration before choosing `agent_runtime`. |
+| `spawn` | Create a member and submit its first `prompt`; provide the requested `name_prefix` and required recovery subject `intent`, and choose `identity` deliberately. |
+| `send` | Continue a member with another `prompt`; optionally update its recovery subject with `intent`. A closed member reopens with its recorded runtime session and identity. |
+| `list` | See the current member set and compact status and intent summaries. |
+| `history` | Find a member for recovery, including closed members, by its recorded subject and other search filters. |
+| `status` | Inspect one member's identity and live runtime status when an explicit check is needed. |
+| `last` | Read recent assistant messages and tool activity, including an in-progress turn, without starting or resuming the member. |
+| `close` | End an active role with a required explanatory `note`; retain history for later recovery. |
+
+Use the concrete name returned by `spawn` for later calls, not the requested
+prefix. `spawn` and `send` return submission receipts; completion arrives later
+as a pushed message. Continue independent work, or end your turn if there is
+nothing else to do. Use inspection tools for a specific question, not repeated
+polling to wait for completion.
+
+Scripted `workflow_*` tools have their own guide: consult `dynamic-workflow`
+when writing or running a workflow script.
 
 ## Bring the Work Back Together
 
