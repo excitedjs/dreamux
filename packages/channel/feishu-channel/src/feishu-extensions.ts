@@ -24,11 +24,17 @@ import type {
   FeishuExtensionTool,
   FeishuInstanceApi,
 } from './extension.js';
+import type { FeishuCoreCommands } from './feishu-core-commands.js';
+import {
+  CHANNEL_REMINDER,
+  type FeishuSubmissionPayload,
+} from './feishu-submit.js';
 import type { FeishuInboundTargeting } from './inbound/target.js';
 import { agentSender, type FeishuOutbound } from './outbound/index.js';
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuBindingOperations } from './routing/operations.js';
 import { channelPathSegment } from './routing/store.js';
+import type { FeishuTarget } from './routing/target.js';
 import type { FeishuLifecycle } from './session/lifecycle.js';
 import { findFeishuTool, toolRegistration } from './tools/registry.js';
 import type { FeishuToolResult } from './tools/types.js';
@@ -301,6 +307,38 @@ export interface FeishuBoundExtensionTool {
 }
 
 /**
+ * Where one extension delivery says its input came from: the checked target's
+ * own address, with the caller's metadata underneath it.
+ *
+ * A caller supplies identity and business fields, but not these three — the
+ * operation already holds the conversation it verified, and a caller that
+ * overrode `chat_id` or invented a `thread_id` for a conversation that has
+ * none would state provenance the Channel knows to be false.
+ *
+ * The result is built with `Object.fromEntries`, never by assigning onto a
+ * plain object: attribute names are an open caller-chosen string set, so an
+ * own `__proto__` key is ordinary metadata — the same shape and the same
+ * construction Core's own `channel-submission.ts` reader keeps, and one that
+ * `canonicalJsonValue` carries across the Command boundary as data.
+ */
+function deliveryAttrs(
+  target: FeishuTarget,
+  attrs: Readonly<Record<string, string>> | undefined,
+): Record<string, string> {
+  const fields: Array<[string, string]> = [];
+  for (const [name, value] of Object.entries(attrs ?? {})) {
+    if (name !== 'source' && name !== 'chat_id' && name !== 'thread_id') {
+      fields.push([name, value]);
+    }
+  }
+  fields.push(['source', 'feishu'], ['chat_id', target.chatId]);
+  if (target.threadId !== undefined) {
+    fields.push(['thread_id', target.threadId]);
+  }
+  return Object.fromEntries(fields) as Record<string, string>;
+}
+
+/**
  * The instance api for one session lifecycle. `lifecycle` is that session's
  * one liveness value, so every outbound call made after the instance began
  * closing rejects as `aborted` — `assertLive()` is `FeishuLifecycle`'s own
@@ -314,8 +352,17 @@ export function buildInstanceApi(input: {
   targetRouter: Pick<FeishuInboundTargeting, 'project'>;
   routing: FeishuRouting;
   bindings: FeishuBindingOperations;
+  commands: FeishuCoreCommands;
 }): FeishuInstanceApi {
-  const { lifecycle, outbound, bot, targetRouter, routing, bindings } = input;
+  const {
+    lifecycle,
+    outbound,
+    bot,
+    targetRouter,
+    routing,
+    bindings,
+    commands,
+  } = input;
   return {
     owner(target) {
       const plan = routing.plan(target, null);
@@ -333,6 +380,36 @@ export function buildInstanceApi(input: {
       await lifecycle.track(
         bindings.bindChannel({ target, teamName, display }),
       );
+    },
+    submitToBoundTeam({
+      target,
+      expectedTeamName,
+      text,
+      sourceId,
+      attrs,
+      reminder,
+    }) {
+      // Checked, captured and invoked in one synchronous turn: nothing between
+      // the plan and the Command can run, so the Team the call reaches is the
+      // Team this check saw. A binding committed afterwards retargets the next
+      // call, never this one.
+      if (!lifecycle.isLive()) {
+        return Promise.resolve({ status: 'refused', reason: 'closed' });
+      }
+      const plan = routing.plan(target, null);
+      if (plan.kind !== 'bound' || plan.teamName !== expectedTeamName) {
+        return Promise.resolve({
+          status: 'refused',
+          reason: 'binding_changed',
+        });
+      }
+      const submission: FeishuSubmissionPayload = {
+        attrs: deliveryAttrs(target, attrs),
+        text,
+        reminder: reminder ?? CHANNEL_REMINDER,
+        sourceId,
+      };
+      return lifecycle.track(commands.teamSubmit(plan.teamName, submission));
     },
     async sendCard({ chatId, replyTo, card, caller }) {
       const sent = await outbound.sendCard({

@@ -50,7 +50,12 @@ the Feishu channel ships out of the box.
   contributes the `feishu` channel provider (`builtin:feishu`) and publishes
   `FeishuApi`, through which another plugin registers Feishu extensions: extra
   MCP tools, card actions, and a per-channel-instance lifecycle with an
-  instance api (`FeishuExtension`, `FeishuInstanceApi`).
+  instance api (`FeishuExtension`, `FeishuInstanceApi`). That api includes
+  `submitToBoundTeam`: an extension delivers work of its own (after a click or
+  from a timer) to the one Team the conversation still routes to, with no card
+  callback and no Core port of its own, and receives Core's actual admission
+  outcome. It never provisions a Team or falls back to another recipient, and
+  it claims no presentation anchor.
 - `createFeishuChannelProvider()` — the same provider with no extensions. Its
   `createSession` returns a `ChannelInstance`: a `session` with
   `initialize` / `start` / `close`, plus the optional `mcp` capability beside it.

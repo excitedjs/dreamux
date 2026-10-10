@@ -25,6 +25,10 @@ export type {
 // The extension contract's own transitive types: what an extension author
 // needs to build a `FeishuExtensionAction`/`FeishuExtensionTool` and drive
 // `FeishuInstanceApi`, and nothing an extension never touches.
+export type {
+  FeishuBoundTeamSubmitOutcome,
+  FeishuCommandSubmitOutcome,
+} from './feishu-submit.js';
 export type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 export { DREAMUX_ACTION_KEY } from './card-actions.js';
 export {

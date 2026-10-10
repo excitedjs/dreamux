@@ -23,8 +23,8 @@ import {
   commandErrorCode,
   errorMessage,
   submitOutcome,
-  type FeishuSubmission,
-  type FeishuSubmitOutcome,
+  type FeishuCommandSubmitOutcome,
+  type FeishuSubmissionPayload,
 } from './feishu-submit.js';
 
 /**
@@ -33,7 +33,9 @@ import {
  * the source id Core deduplicates on. `teamSubmit` spreads `team_name` onto
  * this; `dispatcherSubmit` sends it as-is.
  */
-function chatSubmission(submission: FeishuSubmission): SubmitCommand {
+function submitCommandPayload(
+  submission: FeishuSubmissionPayload,
+): SubmitCommand {
   return {
     attrs: submission.attrs,
     text: submission.text,
@@ -52,7 +54,7 @@ async function submitOutcomeFor(
   invoker: JsonInvoker,
   command: 'team.submit' | 'dispatcher.submit',
   payload: SubmitCommand & { team_name?: string },
-): Promise<FeishuSubmitOutcome> {
+): Promise<FeishuCommandSubmitOutcome> {
   try {
     const raw = await invoker.invoke(command, payload as unknown as JsonValue);
     return submitOutcome(raw as unknown as TeamSubmitResult);
@@ -93,18 +95,20 @@ export class FeishuCoreCommands implements JsonInvoker {
   }
   teamSubmit(
     teamName: string,
-    submission: FeishuSubmission,
-  ): Promise<FeishuSubmitOutcome> {
+    submission: FeishuSubmissionPayload,
+  ): Promise<FeishuCommandSubmitOutcome> {
     return submitOutcomeFor(this, 'team.submit', {
       team_name: teamName,
-      ...chatSubmission(submission),
+      ...submitCommandPayload(submission),
     });
   }
-  dispatcherSubmit(submission: FeishuSubmission): Promise<FeishuSubmitOutcome> {
+  dispatcherSubmit(
+    submission: FeishuSubmissionPayload,
+  ): Promise<FeishuCommandSubmitOutcome> {
     return submitOutcomeFor(
       this,
       'dispatcher.submit',
-      chatSubmission(submission),
+      submitCommandPayload(submission),
     );
   }
   async teamDissolve(input: { teamName: string; note: string }): Promise<void> {

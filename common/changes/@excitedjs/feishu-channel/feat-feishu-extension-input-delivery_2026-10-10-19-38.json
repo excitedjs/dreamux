@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Add FeishuInstanceApi.submitToBoundTeam so an extension can deliver its own input to the one Team the conversation still routes to, and answer with Core's actual admission outcome.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

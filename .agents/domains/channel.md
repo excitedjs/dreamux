@@ -1686,8 +1686,8 @@ an empty extension registry.
   answer, and `forward`, when present, is delivered afterwards, detached, to
   whichever Team or Dispatcher Agent owns the card's conversation (Feishu
   resolves that owner from the card's own message and delivers through the
-  same path an ask-user answer's settlement uses; the extension states only
-  what to say, never a Team name or a delivery mechanism of its own). Handlers
+  same path an ask-user answer's settlement uses; with `forward`, the extension
+  states only what to say and the Channel resolves the recipient). Handlers
   receive that Feishu instance's state `S`: two Feishu channels get two
   states. A tool or card action is unreachable until this instance's
   `initialize` has filled that extension's state — the same "no such tool" (or
@@ -1700,8 +1700,9 @@ an empty extension registry.
   work; timers start here), `close` after new extension tool calls and card
   actions are refused and in-flight work settled, in reverse registration
   order, before the routing store drains. In-flight work includes a running
-  `start` and an instance-api `bindTeam` (which writes routing after an
-  awaited Core read), so a close landing mid-`start` waits for it and then
+  `start`, an instance-api `bindTeam` (which writes routing after an awaited
+  Core read), and already invoked `submitToBoundTeam` commands, so a close
+  landing mid-`start` waits for it and then
   closes what it opened, and no bind lands after the store drained; that
   `session.start()` then rejects with "closed during startup". An `initialize`,
   `start` or card-action throw is logged with `feishu_extension` as "Feishu
@@ -1709,8 +1710,10 @@ an empty extension registry.
   throw fails that session like any other start failure, taking that
   Dispatcher's Feishu channel down; a card-action throw reaches the Lark SDK,
   which cannot name its owner. A `close` throw is logged the same way and
-  teardown continues. After teardown begins every outbound api call rejects as
-  aborted.
+  teardown continues. After teardown begins outbound api calls reject as
+  aborted; new `submitToBoundTeam` calls instead return `refused/closed` without
+  invoking Core. An already invoked command remains tracked and returns its
+  actual outcome, including rejection or uncertainty, before drain completes.
 - **State root.** `<Feishu plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension>/<channel
   segment>`, not created for the extension. The plugin's own state dir is
   `ServerHost.stateDir`, host-owned and scoped by plugin name alone, handed to
@@ -1729,9 +1732,37 @@ an empty extension registry.
   `caller` is the MCP caller a tool handler received, which the shared address
   guard needs to place a card with no `replyTo` in a Space chat; the returned
   target is read back from Feishu because a reply lands in the replied-to
-  topic), and `editCard`. The api carries no submit/delivery capability: a
-  card action forwards to a Team through its `handle` return, not through the
-  instance api (see Tools and card actions above).
+  topic), `editCard`, and `submitToBoundTeam`. Input delivery is called from
+  `start` onward, including detached post-click work and extension-owned timers.
+  The extension supplies the actual target, expected Team, text, source identity
+  and optional metadata/reminder. This instance synchronously requires committed
+  routing to remain bound to that Team (including inherited topic binding), then
+  invokes its existing typed Team command. A mismatch returns
+  `refused/binding_changed`; there is no fallback, provisioning, route mutation
+  or automatic retry. Rebinding after invocation cannot retarget that captured
+  call; the next call sees the new committed route. Core decides concurrent
+  Team closure and returns its real outcome.
+- **Input-delivery outcome and payload.** `FeishuBoundTeamSubmitOutcome` adds the
+  operation's proven no-command `refused` result to `FeishuCommandSubmitOutcome`.
+  It does not reuse provisioning's distinct `unsubmitted` result. Command
+  submission, duplication, failure, stopping, uncertainty and invocation errors
+  retain their existing meaning. `duplicate` is not proof that a prior attempt
+  completed: an ambiguous attempt can reserve the same process-local key. The
+  key belongs to the recipient and source ID, not the channel/extension instance;
+  empty IDs disable deduplication. No cross-restart exactly-once guarantee is
+  added. Caller metadata survives, but the checked target owns `source`,
+  `chat_id` and `thread_id`. An omitted reminder uses the channel note, a supplied
+  note replaces Core's single reminder slot, and an empty note omits it.
+- **Input delivery and presentation.** The new operation claims no anchor,
+  registers no inbound correlation and opens no pre-admission receipt. It does
+  not suppress Core events: an input can render at an existing standing anchor
+  under the current COT rules, while no anchor means no invented presentation.
+  Detached `forward` keeps ordinary routing, anchor and correlation effects.
+  Extensions needing the current-routing callback behavior use `forward`;
+  those needing a bound-Team precondition and observable outcome use
+  `submitToBoundTeam`. Decision arbitration, deadlines, persistence, retry and
+  repaint remain extension-owned; no new business journal or host executor is
+  introduced.
 - **Doctor.** Extension tools and card actions are listed in the diagnostic line
   of each configured Feishu channel, and only there; with no Dispatcher using a
   `feishu` channel they are not listed. Core gains no Feishu knowledge for it.
@@ -1778,6 +1809,21 @@ semantics, and the `/introduce` authority split are owned elsewhere:
   unlisted kind is dropped and logged, never delivered and never thrown.
 
 ## Regression Traps
+
+### Open metadata keys are data properties
+
+**Trigger:** reconstructing caller-selected metadata with dynamic assignment
+onto a plain object. An own `__proto__` key from JSON or a computed property
+hits the inherited setter and is silently lost before Core receives it.
+
+**Rejected direction:** adding a prototype-key guard or denying the key. Preserve
+open own entries with `Object.fromEntries`, as the submission reader and redactor
+already do. The operator settled property preservation, not prototype-chain
+validation; the task record retains that historical ruling.
+
+Source: `/packages/channel/feishu-channel/src/feishu-extensions.ts`,
+`/packages/dreamux/src/service/agent/channel-submission.ts`,
+`/packages/dreamux-utils/src/redaction.ts`.
 
 ### `thread_id` is the only topic key
 
