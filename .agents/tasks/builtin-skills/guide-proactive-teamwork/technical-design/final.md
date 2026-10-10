@@ -28,6 +28,15 @@ diagnoses or fixed sequences. Keep the identity conflict example and short tool
 table in the body because they apply directly to ordinary member handoffs.
 The description names delegation and follow-up without an exhaustive topic list.
 
+Following the operator's PR comments, useful delegation is the default without
+an additional user-scope qualification in the skill. Context, Not Control is an
+explicit brief-writing principle: provide the question and evidence, preserve
+independent choice of approach, and explain necessary task constraints. Temporary
+behavior and path assignments belong in `prompt`. Identity primarily enhances
+lasting judgment, illustrated by active adversarial challenge of a design and
+its assumptions. Warn that restrictions in identity persist; do not recommend
+prohibitive identity text as the ordinary way to assign an independent review.
+
 Identity is a stored standing instruction, not a per-turn assignment. The member
 prompt appends it after plugin instructions; Codex maps it to developer instructions
 and Claude Code to appended system text. Reopening rebuilds from stored identity.

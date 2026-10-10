@@ -38,6 +38,23 @@ a changed standing role requires an appropriately briefed new member, subject
 to any continuing user and repository constraints. Explain instruction precedence
 without promising filesystem permission enforcement.
 
+The operator clarified delegation and identity guidance in PR #467 comments on
+2026-10-10, verbatim:
+
+> 不要考虑用户权限，默认应该在能够提效的场景积极去使用，和开了 ultra 模式一样。
+
+> 这里应该提示 teamleader ，在 identity 里增加限制约束需要谨慎，identity 应该提供模型行为的增强引导，而不是限制，如：你应该积极做对抗性挑战，质疑整体方案的合理性等，而不是在 identity 里加限制，如：你不应该做xxx
+
+> 行为限制可以写进 prompt ，作为当前轮次的约束，但是也不要过度限制，应该符合context not control 原则（这段你好像删掉了？）
+
+These comments replace the skill's explicit user-scope qualification and its
+recommendation to use identity for prohibitive role boundaries. Encourage useful
+delegation by default. Recommend lasting behavioral enhancement in identity,
+with an adversarial-challenge example and caution about persistent restrictions.
+Restore an explicit Context, Not Control principle: give goals and evidence,
+leave the approach open, and keep necessary, reasoned task constraints in
+`prompt`. Preserve the documented identity lifecycle and conflict consequences.
+
 ## Acceptance and limits
 
 The operator requested the skill-creator guidance and then authorized the

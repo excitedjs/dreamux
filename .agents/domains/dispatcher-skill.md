@@ -30,7 +30,7 @@ deliberately composed into both Dispatcher and TeamLeader runtimes:
   writing a hand-down prompt for members who share one Team workspace; asking
   a TeamMate why before overriding a surprising action; and continuing one
   collaboration instead of starting another. It encourages useful independent
-  work within the active delegation rules, coordinates shared-workspace writes,
+  work by default, coordinates shared-workspace writes,
   and keeps evidence-based integration with the TeamLeader. It frames TeamMates
   as a more capable, durable subagent system: independent judgment and parallel
   work with resumable conversations, standing roles, and runtime choice. The
@@ -38,8 +38,10 @@ deliberately composed into both Dispatcher and TeamLeader runtimes:
   distinction is recorded in [Codex Ultra delegation](../research/codex-ultra-delegation.md).
   The TeamLeader launch prompt encourages useful delegation and routes missing
   guidance to the skill. The skill owns collaboration methods and a concise
-  TeamMate tool guide, including the lifecycle consequences of standing identity
-  restrictions; MCP descriptions retain calling contracts.
+  TeamMate tool guide. Briefs supply context and necessary, reasoned task
+  constraints without prescribing the approach. Identity primarily enhances
+  lasting judgment; the skill cautions about persistent restrictions and explains
+  their lifecycle consequences. MCP descriptions retain calling contracts.
 - The shared `dynamic-workflow` skill at `skills/shared/dynamic-workflow` is
   injected into both Dispatcher and TeamLeader runtimes. It loads when about
   to write or run a `workflow_run` script — not needed for any other tool —
@@ -148,5 +150,13 @@ over — that is a Dispatcher move.
 TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
 `cron_delete`. Cron prompts are injected back into that
 TeamLeader.
+
+## Regression Trap: using identity for task restrictions
+
+A temporary assignment placed in `spawn.identity` survives later turns and
+close/reopen; `send` cannot revise it. Recommending a prohibitive reviewer identity
+as the ordinary example encouraged this mistake. Use lasting behavioral guidance
+there and put necessary, reasoned task constraints in `prompt`, preserving the
+member's independent judgment.
 
 History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md).

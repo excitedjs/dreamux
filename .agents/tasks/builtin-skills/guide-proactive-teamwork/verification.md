@@ -59,3 +59,16 @@ The TeamLeader reran Rush build, lint, test, and typecheck:tests successfully,
 plus the skill validator and KB check. The earlier independent reviews do not
 cover this later prose refinement. No new model forward-test or live loading
 frequency measurement was performed in this focused correction.
+
+## Operator comment follow-up
+
+On 2026-10-10 the TeamLeader addressed all three inline comments in PR #467.
+Delegation is encouraged by default; identity primarily enhances lasting
+judgment, with an adversarial-challenge example and caution about restrictions.
+Context, Not Control is explicit again, and necessary temporary constraints
+belong in the task prompt with their reasons. The lifetime identity example,
+conditional skill consultation, and tool contracts remain intact.
+
+Rush build, lint, test, and typecheck:tests passed, as did the skill validator
+and KB check. This follow-up changes prose and knowledge records only. No
+additional independent agent review or live model behavior test was performed.
