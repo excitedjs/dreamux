@@ -40,6 +40,11 @@ without promising filesystem permission enforcement.
 
 ## Acceptance and limits
 
+The operator requested the skill-creator guidance and then authorized the
+focused rewrite on 2026-10-10, verbatim: "先修一下". Preserve the approved
+collaboration and lifetime-identity behavior while reducing generic repetition
+and replacing absolute judgments with evidence-based decision criteria.
+
 - The real launch fixture receives the teamwork route; only one collaboration sentence is added before plugin and operator identity instructions.
 - Skills and tool descriptions impose no per-turn or per-handoff skill reload requirement.
 - Teamwork covers independent briefs, shared-workspace writes, tool use, lifetime identity consequences, and evidence-based integration.

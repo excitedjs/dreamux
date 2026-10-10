@@ -20,6 +20,14 @@ briefs, standing identity consequences, eight TeamMate tools, and result integra
 It explicitly reuses guidance already in context, including across handoffs.
 Scripted workflows retain the separate dynamic-workflow guide.
 
+Following the operator's skill-creator correction, keep the entrypoint
+self-contained and focused on TeamMate-specific decisions and invariants.
+Merge generic role introductions and repeated collaboration advice; express
+open-ended judgment through criteria and concrete examples rather than absolute
+diagnoses or fixed sequences. Keep the identity conflict example and short tool
+table in the body because they apply directly to ordinary member handoffs.
+The description names delegation and follow-up without an exhaustive topic list.
+
 Identity is a stored standing instruction, not a per-turn assignment. The member
 prompt appends it after plugin instructions; Codex maps it to developer instructions
 and Claude Code to appended system text. Reopening rebuilds from stored identity.
@@ -40,7 +48,7 @@ Shorten TeamLeader spawn/send descriptions, preserving their shared workspace,
 concrete name, reopen, and async completion facts. Parameter descriptions carry
 runtime selection, recovery intent, and lifetime identity semantics. Name-prefix
 wording explicitly requires the concrete, never-reused returned name for later
-calls. Tool schemas and handlers do not change.
+calls. Tool input/output shapes and handlers do not change.
 
 Update current skill and model-facing KB owners and the product catalog. Keep the
 Codex source investigation frozen with its disposition last; this task owns the

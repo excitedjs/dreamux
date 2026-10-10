@@ -11,8 +11,8 @@ instruction adherence.
 
 ## Independent review
 
-The operator requested trae-seed and mimo; each independently reviewed the entire
-diff against next, including the initial Ultra-alignment change and follow-up.
+The operator requested trae-seed and mimo; each independently reviewed the earlier revision against next, including the
+initial Ultra-alignment change and follow-up, before the skill-creator refinement.
 Both verified identity persistence, reopening, request schemas, runtime mapping,
 and the single-sentence launch route. Neither found a high-severity defect.
 
@@ -44,3 +44,18 @@ Mimo then spot-checked the accepted corrections and rejected test suggestion on
 That follow-up was bounded to the corrections, not another full review. The
 TeamLeader reran all four Rush gates successfully after the source correction,
 and revalidated skill, KB, and staged leak checks.
+
+## Skill-creator refinement
+
+On 2026-10-10 the operator requested skill-creator guidance and authorized a
+focused prose correction. The self-contained skill was reduced from 252 to
+103 lines by merging generic role explanations and repeated advice. Its
+description now names delegation and follow-up; concrete identity consequences,
+shared-write ownership, async tool contracts, and independent judgment remain.
+Repeated-review guidance now offers evidence-based criteria instead of declaring
+the design wrong. The approved single-sentence launch route is preserved.
+
+The TeamLeader reran Rush build, lint, test, and typecheck:tests successfully,
+plus the skill validator and KB check. The earlier independent reviews do not
+cover this later prose refinement. No new model forward-test or live loading
+frequency measurement was performed in this focused correction.
