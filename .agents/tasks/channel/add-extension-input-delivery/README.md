@@ -9,7 +9,7 @@
 - Solution review Issue: [#468](https://github.com/excitedjs/dreamux/issues/468).
 - Draft and reviews: [Original draft](/.agents/tasks/channel/add-extension-input-delivery/technical-design/draft.md); independent [Seed](/.agents/tasks/channel/add-extension-input-delivery/technical-design/reviews/seed.md), [Codex](/.agents/tasks/channel/add-extension-input-delivery/technical-design/reviews/codex.md) and [DeepSeek](/.agents/tasks/channel/add-extension-input-delivery/technical-design/reviews/deepseek.md) reports.
 - Blockers: None; implementation and knowledge review are complete.
-- Next action: Prepare the upstream PR, await normal CI and request merge authority. Downstream adaptation is outside this task.
+- Next action: Await operator merge authority and the required GitHub review for [PR #469](https://github.com/excitedjs/dreamux/pull/469). Downstream adaptation is outside this task.
 - Related tasks: Builds on [Minimize Core Provider Boundaries](/.agents/tasks/architecture/minimize-provider-boundaries/README.md); preserves the existing plugin and channel ownership boundaries.
 
 ## Task authorization
@@ -45,7 +45,7 @@
 
 ## Delivery
 
-- Pull request: The implementation PR is linked from [Issue #468](https://github.com/excitedjs/dreamux/issues/468); delivery targets `next` and merge requires operator authority.
+- Pull request: [#469](https://github.com/excitedjs/dreamux/pull/469), targeting `next` and closing Issue #468. It requires operator merge authority and the normal GitHub review gate.
 - Verification: [Evidence and pre-review boundary](/.agents/tasks/channel/add-extension-input-delivery/verification.md).
 - Knowledge closeout: Completed on 2026-10-11. Supersession check: this extends the existing plugin/extension capability; no whole task is superseded. The contradictory no-delivery statement was replaced in the channel owner.
 - Current facts: [Channel contract](/.agents/domains/channel.md#feishu-extensions) and [product catalog](/.agents/product/README.md) updated; package guidance and minor Rush note reviewed. The channel owner carries the own-metadata regression trap from the previously settled ruling.

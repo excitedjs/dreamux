@@ -165,3 +165,18 @@ The completed-commit Rush change verification passed against `origin/next`,
 finding both declaration files. The mandatory staged ESLint, author identity,
 gitleaks and internal-content commit gates passed; no bypass was used. The
 post-commit knowledge check also passed and the working tree was clean.
+
+## GitHub delivery
+
+[PR #469](https://github.com/excitedjs/dreamux/pull/469) targets `next`. The
+implementation commit passed all nine normal CI checks on Linux/macOS in
+[CI run](https://github.com/excitedjs/dreamux/actions/runs/38067266290). The first
+Linux test run failed in the unchanged `teammate-completion-lifecycle`
+stopped-record assertion. A local focused rerun passed all eight tests; the
+failed CI job passed on retry at the same commit, without a code or assertion
+change. That observation does not claim the underlying timing risk is fixed.
+
+This final delivery-record update changes task documentation only. No further
+implementation review is triggered by pushing its commit. Merge remains
+unperformed: the operator's merge authority and GitHub review approval are
+separate outstanding gates. Downstream adaptation remains outside this PR.
