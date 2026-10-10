@@ -13,6 +13,7 @@ import type { ChannelMcpCaller, DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { FeishuCardActionEvent } from '@excitedjs/feishu-transport';
 
 import type { FeishuCardActionResponse } from './cards/pairing.js';
+import type { FeishuBoundTeamSubmitOutcome } from './feishu-submit.js';
 import type { FeishuTarget } from './routing/target.js';
 import type { FeishuToolDef, FeishuToolResult } from './tools/types.js';
 
@@ -37,7 +38,8 @@ export interface FeishuExtension<S> {
    * that instance's state. Local IO only: the bot is not started yet and the
    * core channel contract forbids external IO during initialize. Of
    * `context.api`, only `owner` may be called here; outbound calls (`sendCard`,
-   * `editCard`, `readMessageRoute`, `bindTeam`) wait for `start`.
+   * `editCard`, `readMessageRoute`, `bindTeam`) and input delivery
+   * (`submitToBoundTeam`) wait for `start`.
    */
   initialize(context: FeishuExtensionContext): Promise<S>;
   /**
@@ -141,6 +143,54 @@ export interface FeishuInstanceApi {
     teamName: string;
     display: string;
   }): Promise<void>;
+  /**
+   * Deliver input to the one Team this conversation still routes to, and
+   * answer with what Core said. This is the entry for work an extension does
+   * after a click and for input it produces from its own timer — neither needs
+   * a card callback, nor any other channel instance, nor a Core port of its
+   * own.
+   *
+   * `expectedTeamName` is both the precondition and the whole recipient set:
+   * the conversation must still route to exactly that Team, checked against
+   * committed routing (a topic counts its group's binding). Nothing here
+   * chooses another recipient, provisions a Team, drops a stale route, or
+   * retries. `target` is the address the caller already holds — from `sendCard`
+   * or `readMessageRoute` — and it becomes authoritative for the payload's
+   * `source`, `chat_id` and `thread_id`; `attrs` add identity and business
+   * metadata but cannot replace those.
+   *
+   * The answer is Core's actual admission result, never a boolean: submitted,
+   * duplicate, stopped, failed, ambiguous, a proven pre-admission rejection,
+   * or an unknown invocation error. `refused` is different in kind — this
+   * Channel proved no Command was sent, either because the instance was
+   * already closing (`closed`) or because the binding no longer says what the
+   * caller expected (`binding_changed`). Admission is not execution completion
+   * and not user receipt.
+   *
+   * `sourceId` is the identity Core deduplicates on, scoped to the recipient
+   * entity: retry one decision with the same id, give different decisions
+   * different ids, and an empty id means no deduplication. An omitted
+   * `reminder` uses the channel's standing note; an explicit string replaces
+   * it, and an empty string deliberately supplies none.
+   *
+   * This call claims no presentation anchor and opens no pre-admission receipt.
+   * Core can still project the input as an ordinary event, which the existing
+   * chain-of-thought rules render at whichever anchor already stands — an
+   * extension that wants a card of its own repaints it itself.
+   *
+   * Calls made once the instance begins closing answer `refused/closed` and
+   * invoke nothing; a Command already sent stays tracked and still returns its
+   * actual outcome, because an abort is not evidence that Core admitted
+   * nothing.
+   */
+  submitToBoundTeam(input: {
+    target: FeishuTarget;
+    expectedTeamName: string;
+    text: string;
+    sourceId: string;
+    attrs?: Readonly<Record<string, string>>;
+    reminder?: string;
+  }): Promise<FeishuBoundTeamSubmitOutcome>;
   /**
    * Send a card and report where Feishu placed it, read off the send
    * response itself. There is no idempotency key: a rejection can mean the

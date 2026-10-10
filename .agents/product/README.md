@@ -202,6 +202,18 @@ the same change that touches it.
   (the space's own notices are chat-level). Nothing else about a Feishu chat's
   send behavior changed.
   (Domain: [channel](/.agents/domains/channel.md).)
+- **An extension decision stays with the expected bound Team.** After a
+  card click is acknowledged, or from its own timer, an extension can submit
+  input through that Feishu instance and observe the admission result. If the
+  conversation no longer belongs to the expected Team, the call delivers
+  nothing: it does not redirect to another Team or the Dispatcher, or create a
+  Team. Closing the instance refuses new calls while already invoked calls
+  return their actual result. Admission is not task completion or proof that a
+  person saw a reply. The operation does not move the card's presentation
+  anchor or open a receipt; existing Core input-event display still applies.
+  Ordinary inbound and detached card forwarding retain their existing behavior.
+  (Task: [add-extension-input-delivery](/.agents/tasks/channel/add-extension-input-delivery/README.md);
+  contract: [Feishu extensions](/.agents/domains/channel.md#feishu-extensions).)
 - **A provisioning run that produces no Team answers in place.** When a
   collaboration space cannot provision the Team a message was routed to, the
   Channel replies under that message — `Could not start a Team for this

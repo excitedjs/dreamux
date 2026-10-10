@@ -289,6 +289,7 @@ export class FeishuChannelSession {
           targetRouter: this.targetRouter,
           routing: this.routing,
           bindings: this.bindings,
+          commands: this.commands,
         }),
       });
     } catch (error) {

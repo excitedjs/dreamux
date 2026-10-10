@@ -56,7 +56,17 @@ export const DOC_COMMENT_COLD_OPEN_REMINDER =
   `${DOC_COMMENT_REMINDER} ` +
   'No recipient is subscribed to this document; it reached you because the comment @-mentioned this bot.';
 
-interface FeishuSubmissionBase {
+/**
+ * The submission fields one submit Command carries: everything Core reads, and
+ * nothing about how this Channel presents the turn.
+ *
+ * It is separate from `FeishuSubmission` below because presentation and payload
+ * are independent axes. The two shapes this Channel produces for ordinary
+ * traffic differ only in their presentation branch, and an extension's
+ * expected-Team delivery has no presentation branch at all while handing Core
+ * the same payload. `FeishuCoreCommands` consumes this shape, never the union.
+ */
+export interface FeishuSubmissionPayload {
   readonly attrs: Readonly<Record<string, string>>;
   readonly text: string;
   readonly reminder: string;
@@ -74,12 +84,12 @@ interface FeishuSubmissionBase {
  * with nowhere to hang it; a union does not compile.
  */
 export type FeishuSubmission =
-  | (FeishuSubmissionBase & {
+  | (FeishuSubmissionPayload & {
       readonly kind: 'chat';
       /** The visible Feishu message this turn's presentation hangs under. */
       readonly anchor: Omit<VisibleMessageAnchor, 'servingTarget'>;
     })
-  | (FeishuSubmissionBase & { readonly kind: 'doc_comment' });
+  | (FeishuSubmissionPayload & { readonly kind: 'doc_comment' });
 
 /** A submission that came from a chat, and therefore carries a visible anchor. */
 export type FeishuChatSubmission = Extract<FeishuSubmission, { kind: 'chat' }>;
@@ -107,7 +117,16 @@ export function chatSubmission(input: {
   };
 }
 
-export type FeishuSubmitOutcome =
+/**
+ * What a submit Command itself answers — the subset of `FeishuSubmitOutcome`
+ * that comes from Core rather than from this Channel's own provisioning run.
+ *
+ * It is named once because two callers now produce it: the ordinary submitter
+ * and an extension's expected-Team delivery. `team.submit` and
+ * `dispatcher.submit` both answer it, and neither may widen it into the
+ * provisioning-only `unsubmitted` member below.
+ */
+export type FeishuCommandSubmitOutcome =
   | { readonly status: 'submitted'; readonly turnId: string | null }
   | { readonly status: 'duplicate' | 'stopped' }
   | {
@@ -127,6 +146,16 @@ export type FeishuSubmitOutcome =
       readonly message: string;
     }
   /**
+   * Any other failure, including an unknown boundary. Never retried and never
+   * re-routed: once Core has been called, a failure proves nothing about
+   * whether a turn exists, and this Channel does not deliver a message a
+   * second time on a guess.
+   */
+  | { readonly status: 'error'; readonly message: string };
+
+export type FeishuSubmitOutcome =
+  | FeishuCommandSubmitOutcome
+  /**
    * Automatic provisioning produced no recipient, and `team.submit` was never
    * invoked for this message.
    *
@@ -136,14 +165,24 @@ export type FeishuSubmitOutcome =
    * the notice honest, not the failure: it exists only while no Command has
    * been sent.
    */
-  | { readonly status: 'unsubmitted'; readonly message: string }
-  /**
-   * Any other failure, including an unknown boundary. Never retried and never
-   * re-routed: once Core has been called, a failure proves nothing about
-   * whether a turn exists, and this Channel does not deliver a message a
-   * second time on a guess.
-   */
-  | { readonly status: 'error'; readonly message: string };
+  | { readonly status: 'unsubmitted'; readonly message: string };
+
+/**
+ * What one extension's expected-Team delivery answers.
+ *
+ * The command outcome, unchanged, or a refusal this Channel made without
+ * invoking Core at all: `closed` once the instance began closing, and
+ * `binding_changed` when the conversation no longer routes to the expected
+ * Team. A refusal therefore proves this operation sent nothing, which no Core
+ * answer above establishes — and it is not provisioning's `unsubmitted`, which
+ * is a fact about a provisioning run that produced no recipient.
+ */
+export type FeishuBoundTeamSubmitOutcome =
+  | FeishuCommandSubmitOutcome
+  | {
+      readonly status: 'refused';
+      readonly reason: 'closed' | 'binding_changed';
+    };
 
 /**
  * What one outcome is, once the question is what a log line owes it.
@@ -226,7 +265,9 @@ export function describeSubmitOutcome(
  * means here: some outcomes prove the optimistic Channel anchor must be
  * retired, while an ambiguous result proves nothing and leaves it unchanged.
  */
-export function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
+export function submitOutcome(
+  result: TeamSubmitResult,
+): FeishuCommandSubmitOutcome {
   switch (result.status) {
     case 'submitted':
       return { status: 'submitted', turnId: result.turn_id ?? null };

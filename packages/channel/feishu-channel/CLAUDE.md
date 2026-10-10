@@ -180,6 +180,21 @@ the instance api).
   `initialize`/`start` throw fails the session; a `close` throw is logged.
   Extension tool calls are refused once the session stopped taking calls and
   are tracked, so teardown waits for them.
+- `submitToBoundTeam` is how an extension delivers input of its own — after a
+  click, or from a timer — without a card callback or a Core port: the session's
+  own invoker sends `team.submit`. `expectedTeamName` is the precondition and
+  the whole recipient set, checked against committed routing (a topic counts its
+  group's binding); the session never provisions, falls back, drops a stale
+  route, or retries. The checked `target` is authoritative for the payload's
+  `source`/`chat_id`/`thread_id`, so caller `attrs` cannot restate them or
+  invent a thread for a conversation that has none. The answer is Core's actual
+  admission result, not a boolean; `refused` is separate in kind and proves no
+  Command was sent (`closed` once the instance is closing, `binding_changed`
+  when the binding no longer matches). The call claims no presentation anchor
+  and opens no receipt — Core's own event for the input renders at whichever
+  anchor already stands. Closing refuses new calls; a Command already sent is
+  tracked and still returns its real outcome. Calling it before `start` is not
+  supported.
 - Each extension's state root is
   `<this plugin's own state dir>/<dispatcher id>/feishu-extensions/<extension>/<channel segment>`,
   where the channel segment is the same slug and digest the routing document
