@@ -29,7 +29,13 @@ deliberately composed into both Dispatcher and TeamLeader runtimes:
   from the TeamLeader's vantage: a TeamMate against an engine-native subagent;
   writing a hand-down prompt for members who share one Team workspace; asking
   a TeamMate why before overriding a surprising action; and continuing one
-  collaboration instead of starting another.
+  collaboration instead of starting another. It encourages useful independent
+  work within the active delegation rules, coordinates shared-workspace writes,
+  and keeps evidence-based integration with the TeamLeader. It frames TeamMates
+  as a more capable, durable subagent system: independent judgment and parallel
+  work with resumable conversations, standing roles, and runtime choice. The
+  source investigation behind this
+  distinction is recorded in [Codex Ultra delegation](../research/codex-ultra-delegation.md).
 - The shared `dynamic-workflow` skill at `skills/shared/dynamic-workflow` is
   injected into both Dispatcher and TeamLeader runtimes. It loads when about
   to write or run a `workflow_run` script — not needed for any other tool —

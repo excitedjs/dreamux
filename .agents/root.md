@@ -84,6 +84,9 @@ boundary of a long task and after every context compaction, not just at kickoff.
 
 ## Research
 
+- [Codex Ultra delegation](research/codex-ultra-delegation.md) — source snapshot
+  of Ultra's effort normalization, developer-message injection, and the
+  collaboration principles applied to the bundled `teamwork` skill.
 - [Post-#110 architecture sustainability](research/post-110-architecture-sustainability.md)
   — frozen diagnosis of why agent-written code drifted after the pluginization
   inflection; its live backlog is tracked in
