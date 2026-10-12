@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "The doctor's representative app-server socket sample keeps a real allocation's exact path length, placement and budget verdict, but its name is fixed instead of random: the doctor renders that sample into its own diagnostics, so two runs over identical configuration now report identical text.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

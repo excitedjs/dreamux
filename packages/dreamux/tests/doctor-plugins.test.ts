@@ -271,6 +271,45 @@ describe('runDreamuxDoctor plugin wiring', () => {
     }
   });
 
+  it('reports the same diagnostics twice when the socket sample falls back under shared /tmp', async () => {
+    // The condition the CI doctor run meets: no `$XDG_RUNTIME_DIR`, and a
+    // dreamux root under shared `/tmp`. Both are pinned here rather than
+    // inherited from this host, so the case holds on every platform. Under it
+    // the Codex doctor reaches its placement check and RENDERS the socket
+    // sample it was handed, so two identical runs must still agree line for
+    // line — a sample name that changed per call would differ on this line.
+    const pinned = await mkdtemp(join('/tmp', 'dreamux-doctor-no-xdg-'));
+    const oldXdg = process.env['XDG_RUNTIME_DIR'];
+    const oldRoot = process.env['DREAMUX_ROOT'];
+    delete process.env['XDG_RUNTIME_DIR'];
+    process.env['DREAMUX_ROOT'] = pinned;
+    try {
+      await mkdir(join(pinned, 'state'), { recursive: true });
+      await writeFile(
+        join(pinned, 'config.json'),
+        JSON.stringify(
+          testSingleDispatcherFileObject({ id: 'flow', cwd: pinned }),
+        ),
+        { mode: 0o600 },
+      );
+      const before = await doctor();
+      const reported = before.dispatchers
+        .flatMap((dispatcher) => dispatcher.providers)
+        .flatMap((provider) => provider.result.errors)
+        .filter((error) =>
+          error.startsWith(
+            'dispatcher app-server socket must not be under /tmp: ',
+          ),
+        );
+      expect(reported).toEqual([expect.stringMatching(/\/sockets\/.+\.sock$/)]);
+      expect(await doctor()).toEqual(before);
+    } finally {
+      restoreEnv('XDG_RUNTIME_DIR', oldXdg);
+      restoreEnv('DREAMUX_ROOT', oldRoot);
+      await rm(pinned, { recursive: true, force: true });
+    }
+  });
+
   it('a non-PluginLoadError config failure pushes only the config row, no plugin row', async () => {
     // A wrong type for dispatchers is rejected; this
     // throws a plain Error, not a PluginLoadError, and it throws after
