@@ -301,11 +301,11 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
         announceIn: topic,
         ...(root !== null ? { announceMessageId: 'command-message' } : {}),
       });
-      expect(h.routing.plan(topic, null)).toMatchObject({
+      expect(h.routing.plan(topic, false)).toMatchObject({
         kind: 'bound',
         teamName: 'team-a',
       });
-      expect(h.routing.plan(target, null)).toMatchObject({
+      expect(h.routing.plan(target, false)).toMatchObject({
         kind: 'bound',
         teamName: 'team-b',
       });
@@ -570,7 +570,9 @@ async function submitAt(
 ): Promise<void> {
   const outcome = await h.router.deliver({
     target,
-    containerChatId: target.kind === 'topic' ? target.chatId : null,
+    // These submissions exercise existing routes, never provisioning; a
+    // paused (chat-format) observation must still reach the bound Team.
+    canProvision: false,
     submission: chatSubmission({
       attrs: { source: 'feishu' },
       text: 'question',
@@ -608,7 +610,7 @@ describe('COT route retirement through routing, submission, and binding owners',
       team_name: 'same-team',
     });
     await nextTurn();
-    expect(h.routing.plan(topic, topic.chatId)).toEqual({
+    expect(h.routing.plan(topic, false)).toEqual({
       kind: 'bound',
       teamName: 'same-team',
       matched: parent,
@@ -771,7 +773,7 @@ describe('COT route retirement through routing, submission, and binding owners',
         renameSync(preserved, path);
       }
       expect(await readRoutingDocument(options)).toEqual(before);
-      expect(h.routing.plan(topic, topic.chatId)).toMatchObject({
+      expect(h.routing.plan(topic, false)).toMatchObject({
         teamName: 'old-team',
       });
       expect(h.cotCalls).toEqual([]);
@@ -813,7 +815,7 @@ describe('COT route retirement through routing, submission, and binding owners',
       });
       const pending = h.router.deliver({
         target,
-        containerChatId: target.chatId,
+        canProvision: true,
         submission: chatSubmission({
           attrs: { source: 'feishu' },
           text: 'create A',

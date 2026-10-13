@@ -36,3 +36,4 @@
 - [Refine the ask_user_question card](/.agents/tasks/channel/refine-ask-user-question-card/README.md) — Keep a question card answerable for 24 hours, and let one card carry the explanation that precedes its questions
 - [Hide Claude Code subagent activity](/.agents/tasks/channel/hide-claude-subagent-activity/README.md) — Report only the main agent's activity from the Claude Code runtime; a subagent's envelopes produce no runtime activity
 - [Feishu extension input delivery contract](/.agents/tasks/channel/add-extension-input-delivery/README.md) — Let a Feishu extension deliver card-related input from its own channel instance, observe the submission outcome, and constrain delivery to the expected bound Team.
+- [Support converted Feishu topic groups](/.agents/tasks/channel/support-converted-feishu-topic-groups/README.md) — Allow ordinary Feishu groups switched to thread message format to operate as Collaboration Spaces with one Team per topic.

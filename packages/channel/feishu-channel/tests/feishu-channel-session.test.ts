@@ -233,7 +233,7 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
 
     const outcome = await deliverThroughInbound(session, bot, {
       target: chatTarget('oc_closed', 'group'),
-      containerChatId: null,
+      canProvision: false,
       submission: {
         kind: 'chat',
         attrs: {},
@@ -308,7 +308,7 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
 
     const outcome = await deliverThroughInbound(session, bot, {
       target: chatTarget('oc_stale', 'group'),
-      containerChatId: null,
+      canProvision: false,
       submission: {
         kind: 'chat',
         attrs: {},
@@ -360,7 +360,7 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
 
     const outcome = await deliverThroughInbound(session, bot, {
       target: chatTarget('oc_ambiguous', 'group'),
-      containerChatId: null,
+      canProvision: false,
       submission: {
         kind: 'chat',
         attrs: {},
@@ -565,10 +565,7 @@ describe('FeishuChannelSession — a routing document predating the binding/spac
     // Routing is unchanged for such a document — the conflict is reported by
     // the next write that touches it, not by refusing to serve the channel.
     expect(
-      session.routing.plan(
-        topicTarget(containerChatId, 'omt_new'),
-        containerChatId,
-      ),
+      session.routing.plan(topicTarget(containerChatId, 'omt_new'), true),
     ).toMatchObject({ kind: 'bound', teamName: 'team-a' });
     await session.close();
   });
@@ -1030,4 +1027,464 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
 
     await session.close();
   });
+});
+
+/**
+ * One accepted group message through the real session, at a place the test
+ * names. `mention: false` sends no bot mention, for the gate-drop cases.
+ */
+async function injectMessage(
+  bot: FakeFeishuBot,
+  input: {
+    messageId: string;
+    chatId: string;
+    threadId?: string | undefined;
+    mention?: boolean;
+  },
+): Promise<void> {
+  const mentioned = input.mention ?? true;
+  await bot.inject({
+    messageId: input.messageId,
+    chatId: input.chatId,
+    chatType: 'group',
+    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+    senderId: 'ou_human',
+    senderType: 'user',
+    senderName: 'Human',
+    messageType: 'text',
+    rawContent: JSON.stringify({
+      text: mentioned ? '@_user_1 please start' : 'please start',
+    }),
+    text: mentioned ? '@_user_1 please start' : 'please start',
+    resources: [],
+    mentions: mentioned
+      ? [{ key: '@_user_1', name: 'Dreamux', id: { open_id: bot.botOpenId! } }]
+      : [],
+    createTime: '1',
+    raw: {},
+  });
+}
+
+/** Submissions observed at Core, and the Teams `team.create` produced. */
+function recordingPort(): {
+  fake: FakePort;
+  submissions: Array<{ command: string; teamName: string | null }>;
+  created: string[];
+} {
+  const submissions: Array<{ command: string; teamName: string | null }> = [];
+  const created: string[] = [];
+  const fake = fakePort(async (command, payload) => {
+    const p = payload as Record<string, unknown>;
+    if (command === 'team.create') {
+      const name = `created-${created.length + 1}`;
+      created.push(name);
+      return teamSummary(name) as unknown as JsonValue;
+    }
+    if (command === 'team.submit' || command === 'dispatcher.submit') {
+      submissions.push({
+        command,
+        teamName: typeof p['team_name'] === 'string' ? p['team_name'] : null,
+      });
+      return { status: 'submitted', turn_id: `turn-${submissions.length}` };
+    }
+    throw new Error(`unexpected ${command}`);
+  });
+  return { fake, submissions, created };
+}
+
+function allowOnly(...chats: string[]): DispatcherAccessStateV3 {
+  return {
+    ...defaultDispatcherAccessState(),
+    allow_users: ['ou_human'],
+    group: {
+      policy: 'allowlist',
+      allow_chats: chats,
+      require_mention: true,
+    },
+  };
+}
+
+describe('FeishuChannelSession — group message format switches', () => {
+  it('provisions in thread message format, pauses in chat message format, and resumes without re-registration', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setChatMode('oc_space', 'topic');
+    const { fake: port, submissions, created } = recordingPort();
+    const session = await newSession(bot, 'chan-switch');
+    await seedAccess(dir, allowOnly('oc_space'));
+    await session.initialize(port.port);
+    await session.routing.bindSpace({
+      spaceName: 'space-a',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await session.start();
+
+    // Thread message format: an accepted message in an unbound topic provisions.
+    await injectMessage(bot, {
+      messageId: 'om_a1',
+      chatId: 'oc_space',
+      threadId: 'omt_old',
+    });
+    await waitFor(() => submissions.length >= 1);
+    expect(created).toEqual(['created-1']);
+    expect(submissions).toEqual([
+      { command: 'team.submit', teamName: 'created-1' },
+    ]);
+    await waitFor(
+      () =>
+        session.routing.bindingFor(topicTarget('oc_space', 'omt_old'))
+          ?.team_name === 'created-1',
+    );
+
+    // The operator switches the group to chat message format.
+    bot.setChatMode('oc_space', 'group');
+    await injectMessage(bot, {
+      messageId: 'om_a2',
+      chatId: 'oc_space',
+      threadId: 'omt_old',
+    });
+    await injectMessage(bot, {
+      messageId: 'om_a3',
+      chatId: 'oc_space',
+      threadId: 'omt_fresh',
+    });
+    await injectMessage(bot, { messageId: 'om_a4', chatId: 'oc_space' });
+    await waitFor(() => submissions.length >= 4);
+
+    // The bound topic keeps its Team; the unbound thread and the top-level
+    // message reach the Dispatcher; no Team was created while paused.
+    expect(created).toEqual(['created-1']);
+    expect(submissions).toEqual([
+      { command: 'team.submit', teamName: 'created-1' },
+      { command: 'team.submit', teamName: 'created-1' },
+      { command: 'dispatcher.submit', teamName: null },
+      { command: 'dispatcher.submit', teamName: null },
+    ]);
+
+    // Switching back restores provisioning without re-registration, and the
+    // existing topic Teams remain in place.
+    bot.setChatMode('oc_space', 'topic');
+    await injectMessage(bot, {
+      messageId: 'om_a5',
+      chatId: 'oc_space',
+      threadId: 'omt_fresh',
+    });
+    await waitFor(() => submissions.length >= 5);
+    expect(created).toEqual(['created-1', 'created-2']);
+    expect(submissions[4]).toEqual({
+      command: 'team.submit',
+      teamName: 'created-2',
+    });
+    expect(
+      session.routing.bindingFor(topicTarget('oc_space', 'omt_old'))?.team_name,
+    ).toBe('created-1');
+
+    await session.close();
+  });
+
+  it('delivers to saved topic bindings in chat message format, manual and rebound alike', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setChatMode('oc_manual', 'group');
+    bot.setChatMode('oc_space', 'group');
+    const { fake: port, submissions, created } = recordingPort();
+    const session = await newSession(bot, 'chan-manual');
+    await seedAccess(dir, allowOnly('oc_manual', 'oc_space'));
+    await session.initialize(port.port);
+    // A manually bound thread in an ordinary group — no space policy anywhere
+    // near it, and a row a manual bind wrote without a space origin marker.
+    await session.routing.bind({
+      target: topicTarget('oc_manual', 'omt_manual'),
+      teamName: 'manual-team',
+      display: null,
+      rootMessageId: null,
+      spaceId: null,
+    });
+    // A space topic rebound by hand: the row keeps its exact target and loses
+    // its space origin marker, which must not matter to delivery.
+    await session.routing.bindSpace({
+      spaceName: 'space-a',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await session.routing.bind({
+      target: topicTarget('oc_space', 'omt_rebound'),
+      teamName: 'rebound-team',
+      display: null,
+      rootMessageId: null,
+      spaceId: null,
+    });
+    await session.start();
+
+    await injectMessage(bot, {
+      messageId: 'om_m1',
+      chatId: 'oc_manual',
+      threadId: 'omt_manual',
+    });
+    await injectMessage(bot, {
+      messageId: 'om_m2',
+      chatId: 'oc_space',
+      threadId: 'omt_rebound',
+    });
+    await waitFor(() => submissions.length >= 2);
+
+    expect(created).toEqual([]);
+    expect(submissions).toEqual([
+      { command: 'team.submit', teamName: 'manual-team' },
+      { command: 'team.submit', teamName: 'rebound-team' },
+    ]);
+
+    await session.close();
+  });
+
+  it('after space removal and a restart, saved topic Teams still receive and unbound threads do not provision', async () => {
+    const channelId = 'chan-restart';
+    const first = createFakeFeishuBot();
+    first.setChatMode('oc_space', 'topic');
+    const firstPort = recordingPort();
+    const session = await newSession(first, channelId);
+    await seedAccess(dir, allowOnly('oc_space'));
+    await session.initialize(firstPort.fake.port);
+    await session.routing.bindSpace({
+      spaceName: 'space-a',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await session.start();
+    await injectMessage(first, {
+      messageId: 'om_r1',
+      chatId: 'oc_space',
+      threadId: 'omt_old',
+    });
+    await waitFor(() => firstPort.submissions.length >= 1);
+    expect(firstPort.created).toEqual(['created-1']);
+    // Unregistering stops future provisioning and removes no bindings.
+    await session.routing.unbindSpace('space-a');
+    await session.close();
+
+    // Reinitialize from the same real state directory, with the group now in
+    // chat message format — the accepted case after a space is removed: the
+    // saved topic Team still receives, and nothing unbound is provisioned.
+    const second = createFakeFeishuBot();
+    second.setChatMode('oc_space', 'group');
+    const secondPort = recordingPort();
+    const restarted = await newSession(second, channelId);
+    await restarted.initialize(secondPort.fake.port);
+    await restarted.start();
+    await injectMessage(second, {
+      messageId: 'om_r2',
+      chatId: 'oc_space',
+      threadId: 'omt_old',
+    });
+    await injectMessage(second, {
+      messageId: 'om_r3',
+      chatId: 'oc_space',
+      threadId: 'omt_fresh',
+    });
+    await waitFor(() => secondPort.submissions.length >= 2);
+
+    expect(secondPort.created).toEqual([]);
+    expect(secondPort.submissions).toEqual([
+      { command: 'team.submit', teamName: 'created-1' },
+      { command: 'dispatcher.submit', teamName: null },
+    ]);
+
+    // Back in thread message format the removed policy is still decisive:
+    // eligibility alone never recreates a space that was unregistered.
+    second.setChatMode('oc_space', 'topic');
+    await injectMessage(second, {
+      messageId: 'om_r4',
+      chatId: 'oc_space',
+      threadId: 'omt_new',
+    });
+    await waitFor(() => secondPort.submissions.length >= 3);
+    expect(secondPort.created).toEqual([]);
+    expect(secondPort.submissions[2]).toEqual({
+      command: 'dispatcher.submit',
+      teamName: null,
+    });
+
+    await restarted.close();
+  });
+
+  it('falls back to a whole-chat binding for an unbound thread and sends top-level messages to the Dispatcher', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setChatMode('oc_plain', 'group');
+    bot.setChatMode('oc_space', 'group');
+    const { fake: port, submissions, created } = recordingPort();
+    const session = await newSession(bot, 'chan-fallback');
+    await seedAccess(dir, allowOnly('oc_plain', 'oc_space'));
+    await session.initialize(port.port);
+    await session.routing.bind({
+      target: chatTarget('oc_plain', 'group'),
+      teamName: 'group-team',
+      display: null,
+      rootMessageId: null,
+      spaceId: null,
+    });
+    await session.routing.bindSpace({
+      spaceName: 'space-a',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await session.start();
+
+    await injectMessage(bot, {
+      messageId: 'om_f1',
+      chatId: 'oc_plain',
+      threadId: 'omt_any',
+    });
+    // A registered space's top-level message never enters per-topic
+    // provisioning, least of all in chat message format.
+    await injectMessage(bot, { messageId: 'om_f2', chatId: 'oc_space' });
+    await waitFor(() => submissions.length >= 2);
+
+    expect(created).toEqual([]);
+    expect(submissions).toEqual([
+      { command: 'team.submit', teamName: 'group-team' },
+      { command: 'dispatcher.submit', teamName: null },
+    ]);
+
+    await session.close();
+  });
+
+  it('performs no format lookup for an inbound the access gate rejects', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setChatMode('oc_space', 'topic');
+    const { fake: port, submissions } = recordingPort();
+    const session = await newSession(bot, 'chan-gate');
+    await seedAccess(dir, allowOnly('oc_space'));
+    await session.initialize(port.port);
+    await session.routing.bindSpace({
+      spaceName: 'space-a',
+      containerChatId: 'oc_space',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    await session.start();
+
+    // No bot mention in a chat that requires one: the gate drops the message
+    // before any projection runs.
+    await injectMessage(bot, {
+      messageId: 'om_g1',
+      chatId: 'oc_space',
+      threadId: 'omt_x',
+      mention: false,
+    });
+
+    expect(bot.chatModeRequests).toEqual([]);
+    expect(submissions).toEqual([]);
+    expect(port.calls).toEqual([]);
+
+    await session.close();
+  });
+});
+
+describe('FeishuChannelSession — unverifiable group message format', () => {
+  type ModeFailure = 'failed' | 'timed out' | 'missing or unrecognized';
+
+  function applyModeFailure(bot: FakeFeishuBot, failure: ModeFailure): void {
+    switch (failure) {
+      case 'failed':
+        bot.setChatMode('oc_meta', new Error('feishu refused the read'));
+        bot.setChatMode('oc_space', new Error('feishu refused the read'));
+        return;
+      case 'timed out':
+        // Never answers: the bounded lookup's own deadline settles each one.
+        bot.getChatMode = () => new Promise(() => undefined);
+        return;
+      case 'missing or unrecognized':
+        // The transport's own normalized answer for both a missing and an
+        // unrecognized raw chat_mode; that raw mapping is covered at the
+        // transport, so the producer here is exactly what a session sees.
+        bot.setChatMode('oc_meta', undefined);
+        bot.setChatMode('oc_space', undefined);
+        return;
+    }
+  }
+
+  it.each(['failed', 'timed out', 'missing or unrecognized'] as ModeFailure[])(
+    'a %s format observation still delivers through saved bindings and never creates a Team',
+    async (failure) => {
+      const bot = createFakeFeishuBot();
+      applyModeFailure(bot, failure);
+      const { fake: port, submissions, created } = recordingPort();
+      const session = await newSession(bot, 'chan-meta');
+      await seedAccess(dir, allowOnly('oc_meta', 'oc_space'));
+      await session.initialize(port.port);
+      // One chat carries an exact topic binding and its parent-group binding.
+      await session.routing.bind({
+        target: topicTarget('oc_meta', 'omt_exact'),
+        teamName: 'topic-team',
+        display: null,
+        rootMessageId: null,
+        spaceId: null,
+      });
+      await session.routing.bind({
+        target: chatTarget('oc_meta', 'group'),
+        teamName: 'group-team',
+        display: null,
+        rootMessageId: null,
+        spaceId: null,
+      });
+      // Another carries a registered space and nothing bound, so anything
+      // that wrongly granted permission would show up as a Team creation.
+      await session.routing.bindSpace({
+        spaceName: 'space-a',
+        containerChatId: 'oc_space',
+        display: null,
+        leaderAgentRuntime: 'codex',
+        identity: null,
+        repo: null,
+      });
+      await session.start();
+
+      await injectMessage(bot, {
+        messageId: 'om_meta1',
+        chatId: 'oc_meta',
+        threadId: 'omt_exact',
+      });
+      await injectMessage(bot, {
+        messageId: 'om_meta2',
+        chatId: 'oc_meta',
+        threadId: 'omt_unbound',
+      });
+      await injectMessage(bot, {
+        messageId: 'om_meta3',
+        chatId: 'oc_space',
+        threadId: 'omt_fresh',
+      });
+      await waitFor(() => submissions.length >= 3);
+
+      // The exact topic binding and the parent-group binding each receive
+      // their message; the unbound topic in the registered space reaches the
+      // Dispatcher. A format observation that cannot be established never
+      // invents permission to open a Team.
+      expect(created).toEqual([]);
+      expect(submissions).toEqual([
+        { command: 'team.submit', teamName: 'topic-team' },
+        { command: 'team.submit', teamName: 'group-team' },
+        { command: 'dispatcher.submit', teamName: null },
+      ]);
+      expect(port.calls.map((call) => call.command)).not.toContain(
+        'team.create',
+      );
+
+      await session.close();
+    },
+    30_000,
+  );
 });

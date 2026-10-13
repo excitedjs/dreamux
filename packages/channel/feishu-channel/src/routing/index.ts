@@ -134,25 +134,27 @@ export class FeishuRouting {
    * Where an inbound message goes, decided entirely from local state.
    *
    * The order is the product rule: an exact binding wins, a topic's parent
-   * group answers next, and only a target that matched nothing at all may be
-   * provisioned. A message that reaches none of those goes to the Dispatcher
+   * group answers next, and only a still-unbound topic that may provision —
+   * one whose projection observed the topic message format — may receive a
+   * new Team. A message that reaches none of those goes to the Dispatcher
    * Agent, which is what an unbound conversation with this bot has always
    * been talking to — including after a restart, when provisioning that never
    * finished has simply left no binding behind.
+   *
+   * `canProvision` is permission, not identity: the topic-kind check beside it
+   * is this owner's per-topic provisioning invariant, so even a caller that
+   * claims permission for a chat-level target cannot open a Team for one.
    */
-  plan(
-    target: FeishuTarget,
-    containerChatId: string | null,
-  ): FeishuRoutingPlan {
+  plan(target: FeishuTarget, canProvision: boolean): FeishuRoutingPlan {
     const bound = boundPlan(this.store.current.bindings, target);
     if (bound !== null) return bound;
     if (!isBindableTarget(target)) {
       return { kind: 'dispatcher', reason: 'not_bindable' };
     }
-    const space =
-      containerChatId === null
-        ? undefined
-        : this.spaceForContainer(containerChatId);
+    if (!canProvision || target.kind !== 'topic') {
+      return { kind: 'dispatcher', reason: 'no_binding' };
+    }
+    const space = this.spaceForContainer(target.chatId);
     return space === undefined
       ? { kind: 'dispatcher', reason: 'no_binding' }
       : { kind: 'provision', space };

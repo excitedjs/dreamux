@@ -69,10 +69,10 @@ export class FeishuInboundRouter implements FeishuInboundDelivery {
   command(input: {
     command: FeishuSlashCommandInvocation;
     target: FeishuTarget;
-    containerChatId: string | null;
+    canProvision: boolean;
     messageId: string;
   }): Promise<FeishuSlashCommandReply> {
-    const plan = this.opts.routing.plan(input.target, input.containerChatId);
+    const plan = this.opts.routing.plan(input.target, input.canProvision);
     return dispatchFeishuSlashCommand(input.command, {
       plan,
       target: input.target,
@@ -104,10 +104,10 @@ export class FeishuInboundRouter implements FeishuInboundDelivery {
    */
   async deliver(input: {
     target: FeishuTarget;
-    containerChatId: string | null;
+    canProvision: boolean;
     submission: FeishuChatSubmission;
   }): Promise<FeishuSubmitOutcome> {
-    const plan = this.opts.routing.plan(input.target, input.containerChatId);
+    const plan = this.opts.routing.plan(input.target, input.canProvision);
     const { submission } = input;
     if (plan.kind === 'dispatcher') {
       return this.opts.submitter.submit(null, submission, null);

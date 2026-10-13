@@ -37,7 +37,17 @@ parameters (Feishu `chat_id`, `message_id`, `file_key`, …) and return
 platform-native results with the minimum of re-shaping required to make
 success/error handling uniform.
 
-`fetchDocMeta` is the one exception to "minimum re-shaping", and deliberately:
+`getChatMode` is one such deliberate re-shaping: it answers a chat's effective
+conversation format, not its raw `chat_mode`. `topic` covers both a native
+topic group (`chat_mode=topic`) and an ordinary group currently using thread
+message format (`chat_mode=group` with `group_message_type=thread`); an
+ordinary group in chat message format answers `group`, and a missing or
+unrecognized `chat_mode` answers `undefined`. The raw fields never leave this
+package, so channel and Core code see one fact instead of two platform fields,
+and a custom transport reports effective format through the same optional
+method.
+
+`fetchDocMeta` is a second deliberate exception to "minimum re-shaping":
 a caller uses it as a permission proof, so it answers `visible` / `invisible` /
 `unsupported_type` rather than one nullable value. Only `invisible` — Feishu
 reporting the token in `failed_list` — establishes that this app cannot see the

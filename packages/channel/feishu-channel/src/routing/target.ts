@@ -7,9 +7,12 @@
  * them here, matches on them here, and hands Core only a `team_name`.
  *
  * Three kinds exist because Feishu has three: a direct chat, an ordinary group,
- * and one topic inside a topic-mode group. A topic is the only one with a
- * parent, which is the whole of this module's hierarchy: a message in a topic
- * that has no binding of its own is still a message in its group.
+ * and one topic. A topic is the only one with a parent, which is the whole of
+ * this module's hierarchy: a message in a topic that has no binding of its own
+ * is still a message in its group. Identity is Feishu's own `thread_id` and
+ * does not depend on the group's current message format — whether an unbound
+ * topic may automatically receive a new Team is a separate, routing-owned
+ * question.
  */
 
 export type FeishuTargetKind = 'p2p' | 'group' | 'topic';
@@ -27,6 +30,32 @@ export function chatTarget(chatId: string, rawType: string): FeishuTarget {
 
 export function topicTarget(chatId: string, threadId: string): FeishuTarget {
   return { kind: 'topic', chatId, threadId };
+}
+
+/**
+ * The target a message sits in, from the place Feishu reports for it — pure,
+ * and the one owner of that composition.
+ *
+ * A non-empty `thread_id` names a topic whatever the group's current message
+ * format is; neither `root_id` nor `parent_id` is consulted. A direct chat
+ * stays direct; a message whose source supplies no chat kind (a message read
+ * back from the API, a send response) is the ordinary-group case it has always
+ * been assumed to be.
+ */
+export function messageTarget(place: {
+  chatId: string;
+  chatType?: string | undefined;
+  threadId?: string | undefined;
+}): FeishuTarget {
+  const chatType = place.chatType ?? 'group';
+  if (
+    chatType !== 'p2p' &&
+    place.threadId !== undefined &&
+    place.threadId !== ''
+  ) {
+    return topicTarget(place.chatId, place.threadId);
+  }
+  return chatTarget(place.chatId, chatType);
 }
 
 /** The chat a target lives in: a topic's parent group, or the target itself. */

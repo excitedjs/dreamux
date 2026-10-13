@@ -629,14 +629,37 @@ describe('createFeishuTransport — group chats', () => {
     expect(stub.chatGet).toHaveBeenCalledWith({ path: { chat_id: 'oc_chat' } });
   });
 
-  test.each(['p2p', 'group', 'topic'] as const)(
-    'reads the %s chat mode from the group information API',
-    async (chatMode) => {
+  test.each([
+    ['a native topic group', { chat_mode: 'topic' }, 'topic'],
+    [
+      'an ordinary group in thread message format',
+      { chat_mode: 'group', group_message_type: 'thread' },
+      'topic',
+    ],
+    [
+      'an ordinary group in chat message format',
+      { chat_mode: 'group', group_message_type: 'chat' },
+      'group',
+    ],
+    [
+      'an ordinary group reporting no message format',
+      { chat_mode: 'group' },
+      'group',
+    ],
+    [
+      'an ordinary group reporting an unrecognized message format',
+      { chat_mode: 'group', group_message_type: 'future-format' },
+      'group',
+    ],
+    ['a direct chat', { chat_mode: 'p2p' }, 'p2p'],
+  ] as const)(
+    'reports the effective conversation format of %s as %s',
+    async (_case, data, expected) => {
       const stub = stubClient();
-      stub.chatGet.mockResolvedValueOnce({ data: { chat_mode: chatMode } });
+      stub.chatGet.mockResolvedValueOnce({ data });
       const transport = buildTransport(stub);
 
-      await expect(transport.getChatMode?.('oc_chat')).resolves.toBe(chatMode);
+      await expect(transport.getChatMode?.('oc_chat')).resolves.toBe(expected);
       expect(stub.chatGet).toHaveBeenCalledWith({
         path: { chat_id: 'oc_chat' },
       });

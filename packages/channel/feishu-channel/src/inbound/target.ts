@@ -1,23 +1,26 @@
 /**
- * Which target an inbound Feishu message sits in, in Feishu's own terms.
+ * Which target an inbound Feishu message sits in, and whether an unbound
+ * conversation there may automatically receive a new Team.
  *
- * This answers one question, for inbound only — which target is this, and
- * does it sit inside a container that may be a Collaboration Space. It does
- * not read or write a binding: that is `FeishuRouting`'s job, once this has
- * named the target to look one up for. Nothing here leaves the package: Core
- * is told a `team_name` and nothing about chats, threads, or topic mode.
+ * Identity and permission are different facts. Identity is pure —
+ * `messageTarget` in `routing/target.ts` composes it from what the platform
+ * reported — and this class adds only the per-projection provisioning
+ * eligibility: a topic may be provisioned only while its group's effective
+ * message format is the topic format, which is mutable and therefore observed
+ * fresh for every projection that could use it (a session-lifetime cache would
+ * keep granting permission after an operator switched the group back to chat
+ * format). Failures and unknown formats are not remembered either, so the next
+ * projection retries; simultaneous lookups for one chat share a single
+ * request.
  *
- * Topic detection needs one platform lookup, so successful resolutions are
- * cached per chat for the session (failures and unknown modes are not cached,
- * so the next accepted inbound retries) and it fails open: a chat whose mode
- * cannot be established is treated as an ordinary group, which routes the
- * message to the group binding rather than inventing a topic that may not
- * exist. `chatType` shares this cache and lookup for a card click, which names
- * no chat kind; it does not fail open, because the access decision it feeds has
- * no safe default kind when the two kinds are decided differently. Every inbound
- * event this projects states its chat's kind, so a click in a chat this session
- * has already routed an admitted message from needs no lookup; a message the
- * gate dropped or a consumed command never reaches here and teaches nothing.
+ * Beside that, this class holds stable chat-kind knowledge (direct chat or
+ * group) for the card-click access gate: accepted inbound events teach it, and
+ * a successful platform lookup establishes it. It never holds the mutable
+ * topic-versus-chat message format. This class reads no binding table and owns
+ * no routing policy: it does not decide where a message goes — that is
+ * `FeishuRouting`'s job, once this has named the target and supplied the
+ * eligibility fact. Nothing here leaves the package: Core is told a
+ * `team_name` and nothing about chats, threads, or topic mode.
  */
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {
@@ -30,11 +33,7 @@ import {
   isFeishuOperationError,
   runFeishuBoundedOperation,
 } from '../feishu-bounded-operation.js';
-import {
-  chatTarget,
-  topicTarget,
-  type FeishuTarget,
-} from '../routing/target.js';
+import { messageTarget, type FeishuTarget } from '../routing/target.js';
 
 const FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS = 2_000;
 
@@ -45,10 +44,11 @@ interface FeishuChatModeReader {
 export interface FeishuInboundRoute {
   readonly target: FeishuTarget;
   /**
-   * The chat a Collaboration Space policy could be registered on. Only a topic
-   * has one: an ordinary group is a target, not a container of targets.
+   * Whether this projection observed a topic message format for the target's
+   * chat. Only a topic can carry it; it is permission to provision, never
+   * identity, and it says nothing about bindings.
    */
-  readonly containerChatId: string | null;
+  readonly canProvision: boolean;
 }
 
 interface FeishuInboundTargetingOptions {
@@ -56,11 +56,10 @@ interface FeishuInboundTargetingOptions {
   log: DreamuxLogger;
 }
 
-/** Resolves which target and container an inbound event's place names. */
+/** Resolves a target's provisioning eligibility, and stable chat kinds. */
 export class FeishuInboundTargeting {
-  private readonly resolvedChatModes = new Map<string, FeishuChatMode>();
-  /** Chats an inbound event reported as groups, mode (topic or not) unknown. */
-  private readonly knownGroups = new Set<string>();
+  /** Stable kinds (direct chat or group) — never the mutable message format. */
+  private readonly chatKinds = new Map<string, 'p2p' | 'group'>();
   private readonly pendingChatModes = new Map<
     string,
     Promise<FeishuChatMode | undefined>
@@ -73,21 +72,17 @@ export class FeishuInboundTargeting {
     signal?: AbortSignal,
   ): Promise<FeishuInboundRoute> {
     assertRoutingActive(signal);
-    // A direct-chat event states its chat's mode exactly. A group event states
-    // only the kind: it does not say whether the group is in topic mode, so it
-    // is kept apart from the mode cache, where a wrong entry would stop topic
-    // detection from ever asking.
-    if (event.chatType === 'p2p') {
-      this.resolvedChatModes.set(event.chatId, 'p2p');
-    } else if (event.chatType === 'group') {
-      this.knownGroups.add(event.chatId);
+    // An accepted event states its chat's kind exactly, which is all the
+    // card-click gate ever needs from it; the message format is not taught.
+    if (event.chatType === 'p2p' || event.chatType === 'group') {
+      this.chatKinds.set(event.chatId, event.chatType);
     }
     const route = await this.project(
-      {
+      messageTarget({
         chatId: event.chatId,
         chatType: event.chatType,
         threadId: event.threadId,
-      },
+      }),
       signal,
     );
     assertRoutingActive(signal);
@@ -95,54 +90,40 @@ export class FeishuInboundTargeting {
   }
 
   /**
-   * Which target a message sits in, from the place Feishu reports for it.
+   * The provisioning eligibility of an already normalized target.
    *
-   * A thread id is only half the answer: outside a topic-mode group it names a
-   * reply chain rather than a topic, so the chat's mode decides — and that
-   * lookup is spent only on a message that claims a thread at all. `chatType`
-   * is absent for a message read back from the API, which reports none; an
-   * ordinary group is what this already assumes for a chat it cannot name,
-   * and the two kinds differ only in whether a binding could exist.
+   * Identity is settled before this runs — a thread is a topic whatever the
+   * group's message format currently is — so the only question left is
+   * permission: whether this chat is in the topic message format right now.
+   * Only a topic needs that lookup; a chat or direct-chat target can never
+   * provision and costs no request.
    */
   async project(
-    place: { chatId: string; threadId?: string | undefined; chatType?: string },
+    target: FeishuTarget,
     signal?: AbortSignal,
   ): Promise<FeishuInboundRoute> {
-    const chatType = place.chatType ?? 'group';
-    if (
-      chatType === 'group' &&
-      place.threadId !== undefined &&
-      place.threadId !== ''
-    ) {
-      const mode = await this.chatMode(place.chatId, signal);
-      assertRoutingActive(signal);
-      if (mode === 'topic') {
-        return {
-          target: topicTarget(place.chatId, place.threadId),
-          containerChatId: place.chatId,
-        };
-      }
+    if (target.kind !== 'topic') {
+      return { target, canProvision: false };
     }
-    return {
-      target: chatTarget(place.chatId, chatType),
-      containerChatId: null,
-    };
+    const mode = await this.chatMode(target.chatId, signal);
+    assertRoutingActive(signal);
+    return { target, canProvision: mode === 'topic' };
   }
 
   /**
-   * Whether a chat is a direct chat or a group: the kind an inbound event
-   * reported, the cached mode of an earlier lookup, or, failing both, the same
-   * platform lookup topic detection uses. A card click names its chat but not
-   * the kind, and the access gate can decide differently for the two, so when
-   * it does the kind is established rather than assumed: `undefined` when
-   * neither the cache nor Feishu can say, and the caller then has nothing to
-   * decide on.
+   * Whether a chat is a direct chat or a group: the kind an accepted inbound
+   * event reported, or the same platform lookup eligibility uses. A card click
+   * names its chat but not the kind, and the access gate can decide differently
+   * for the two, so when it does the kind is established rather than assumed:
+   * `undefined` when neither this session nor Feishu can say, and the caller
+   * then has nothing to decide on.
    */
   async chatType(
     chatId: string,
     signal?: AbortSignal,
   ): Promise<'p2p' | 'group' | undefined> {
-    if (this.knownGroups.has(chatId)) return 'group';
+    const known = this.chatKinds.get(chatId);
+    if (known !== undefined) return known;
     const mode = await this.chatMode(chatId, signal);
     if (mode === undefined) return undefined;
     return mode === 'p2p' ? 'p2p' : 'group';
@@ -153,13 +134,10 @@ export class FeishuInboundTargeting {
     signal?: AbortSignal,
   ): Promise<FeishuChatMode | undefined> {
     assertRoutingActive(signal);
-    const cached = this.resolvedChatModes.get(chatId);
-    if (cached !== undefined) return cached;
     const pending = this.pendingChatModes.get(chatId);
     if (pending !== undefined) {
       const mode = await pending;
       assertRoutingActive(signal);
-      if (mode !== undefined) this.resolvedChatModes.set(chatId, mode);
       return mode;
     }
 
@@ -168,7 +146,6 @@ export class FeishuInboundTargeting {
     try {
       const mode = await lookup;
       assertRoutingActive(signal);
-      if (mode !== undefined) this.resolvedChatModes.set(chatId, mode);
       return mode;
     } finally {
       if (this.pendingChatModes.get(chatId) === lookup) {
@@ -189,9 +166,14 @@ export class FeishuInboundTargeting {
       const mode = await withChatModeTimeout(
         getChatMode.call(this.opts.chatModes, chatId),
       );
-      if (mode !== undefined) return mode;
-      this.warnUnknownMode(chatId, 'missing_or_unknown_chat_mode');
-      return undefined;
+      if (mode === undefined) {
+        this.warnUnknownMode(chatId, 'missing_or_unknown_chat_mode');
+        return undefined;
+      }
+      // The format is not remembered, but the kind it implies is stable, so a
+      // successful lookup is also what a later card click can rely on.
+      this.chatKinds.set(chatId, mode === 'p2p' ? 'p2p' : 'group');
+      return mode;
     } catch (err) {
       this.warnUnknownMode(
         chatId,
@@ -211,8 +193,9 @@ export class FeishuInboundTargeting {
   ): void {
     this.opts.log.warn(
       { chat_id: chatId, reason, err },
-      'could not verify Feishu chat mode; an inbound message is treated as ' +
-        'an ordinary group, and a card click that depends on it is refused',
+      'could not verify the Feishu chat message format; automatic Team ' +
+        'provisioning is disabled for it, and a card click that depends on ' +
+        'its chat kind is refused',
     );
   }
 }

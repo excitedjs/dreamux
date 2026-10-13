@@ -51,7 +51,7 @@ import {
 } from '../feishu-submit.js';
 import type { FeishuInboundTargeting } from '../inbound/target.js';
 import type { FeishuOutbound, FeishuSender } from '../outbound/index.js';
-import type { FeishuTarget } from '../routing/target.js';
+import { messageTarget, type FeishuTarget } from '../routing/target.js';
 
 /** The card-action callback's own answer, or nothing for a key it does not own. */
 export type FeishuCardActionResult =
@@ -517,14 +517,17 @@ export class FeishuCardActions {
       { chatId: string; threadId?: string | undefined } | undefined;
   }): Promise<{ target: FeishuTarget; outcome: FeishuSubmitOutcome }> {
     const { knownLanding, ...submission } = input;
-    const route =
+    const target =
       knownLanding !== undefined
-        ? await this.opts.targetRouter.project(knownLanding)
+        ? messageTarget(knownLanding)
         : await this.opts.outbound.locate(input.cardMessageId);
-    const { target } = route;
+    // Identity is settled above; eligibility is observed fresh once, so an
+    // old topic keeps its Team after a format switch while an unbound one
+    // stops provisioning the same way an ordinary inbound message does.
+    const route = await this.opts.targetRouter.project(target);
     const outcome = await this.opts.router.deliver({
       target,
-      containerChatId: route.containerChatId,
+      canProvision: route.canProvision,
       submission: cardSubmission({ target, ...submission }),
     });
     return { target, outcome };

@@ -140,7 +140,6 @@ async function handle(
     log,
     lifecycle,
     routing,
-    targetRouter,
   });
   const commands = new FeishuCoreCommands();
   commands.initialize({
@@ -394,8 +393,10 @@ describe('the ask-card settlement envelope', () => {
     await answers(delivered, 1);
 
     expect(delivered[0]?.target).toEqual(topicTarget('oc_room', 'omt_thread'));
-    // The parent chat a Collaboration Space is keyed by; only a topic has one.
-    expect(delivered[0]?.containerChatId).toBe('oc_room');
+    // The topic's chat is in the topic message format right now, so this
+    // projection may provision — the eligibility observation travels with the
+    // delivery instead of a duplicate of the target's own chat id.
+    expect(delivered[0]?.canProvision).toBe(true);
     expect(delivered[0]?.submission.attrs).toMatchObject({
       source: 'feishu',
       chat_id: 'oc_room',
@@ -413,6 +414,35 @@ describe('the ask-card settlement envelope', () => {
     // model in the same chat, under the same consequence.
     expect(delivered[0]?.submission.reminder).toBe(CHANNEL_REMINDER);
     expect(bot.messageReadRequests).toEqual([]);
+  });
+
+  it('keeps the topic identity of an answer after the group switches to chat message format', async () => {
+    const { delivery, delivered } = capturingDelivery();
+    const bot = createFakeFeishuBot();
+    const h = await handle(delivery, bot);
+    bot.setChatMode('oc_room', 'topic');
+    sentCardWillLandIn(bot, { chatId: 'oc_room', threadId: 'omt_thread' });
+
+    const opened = await askUserQuestion(h, {
+      chatId: 'oc_room',
+      messageId: 'om_root',
+      questions: QUESTIONS,
+    });
+    const cardId = bot.sentCards[0]?.messageIds[0] ?? '';
+    cardSitsIn(bot, cardId, { chatId: 'oc_room', threadId: 'omt_thread' });
+    // The operator switches the group to chat message format before anyone
+    // answers the card.
+    bot.setChatMode('oc_room', 'group');
+
+    await clickThrough(h, cardId, opened.request_id);
+    await answers(delivered, 1);
+
+    // The answer still sits in the topic it was asked in — and, that group
+    // being in chat message format now, this observation withholds
+    // provisioning. Whether the topic's saved Team receives the answer is the
+    // routing owner's bound-first rule.
+    expect(delivered[0]?.target).toEqual(topicTarget('oc_room', 'omt_thread'));
+    expect(delivered[0]?.canProvision).toBe(false);
   });
 
   it('routes a dismissal from its card too', async () => {
@@ -499,7 +529,8 @@ describe('the ask-card settlement envelope', () => {
     });
 
     expect(delivered[0]?.target).toEqual(chatTarget('oc_room', 'group'));
-    expect(delivered[0]?.containerChatId).toBeNull();
+    // A chat-level target can never provision; it costs no format lookup.
+    expect(delivered[0]?.canProvision).toBe(false);
     expect(delivered[0]?.submission.attrs).toMatchObject({
       chat_id: 'oc_room',
       message_id: 'om_card',

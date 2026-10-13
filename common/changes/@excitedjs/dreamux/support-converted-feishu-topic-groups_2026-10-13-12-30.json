@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Update the dispatcher maintenance reference to describe that saved Feishu topic bindings stay effective across group message-format switches and that a switch is never a hand-edit repair case.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

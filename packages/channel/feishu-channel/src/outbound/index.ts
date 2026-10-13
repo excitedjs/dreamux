@@ -25,7 +25,11 @@
  * and remembered on the route. Every other method is a thin, logged wrapper
  * over the transport.
  */
-import { describeTarget, type FeishuTarget } from '../routing/target.js';
+import {
+  describeTarget,
+  messageTarget,
+  type FeishuTarget,
+} from '../routing/target.js';
 import type { ChannelMcpCaller, DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo, PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 import type {
@@ -40,10 +44,6 @@ import {
   runFeishuBoundedOperation,
 } from '../feishu-bounded-operation.js';
 import { errorMessage } from '../feishu-submit.js';
-import type {
-  FeishuInboundRoute,
-  FeishuInboundTargeting,
-} from '../inbound/target.js';
 import type { FeishuRouting } from '../routing/index.js';
 import type { FeishuLifecycle } from '../session/lifecycle.js';
 
@@ -89,9 +89,6 @@ type FeishuOutboundRouting = Pick<
   'spaceForContainer' | 'topicBindingsFor' | 'fillTopicRoot'
 >;
 
-/** `locate`'s own inbound-projection need, and no more. */
-type FeishuOutboundTargeting = Pick<FeishuInboundTargeting, 'project'>;
-
 export interface FeishuOutboundOptions {
   readonly bot: FeishuBot;
   readonly log: DreamuxLogger;
@@ -100,7 +97,6 @@ export interface FeishuOutboundOptions {
   /** This handle's session lifecycle; a send after it ends aborts. */
   readonly lifecycle: FeishuLifecycle;
   readonly routing: FeishuOutboundRouting;
-  readonly targetRouter: FeishuOutboundTargeting;
 }
 
 export class FeishuOutbound {
@@ -385,7 +381,8 @@ export class FeishuOutbound {
   }
 
   /**
-   * Where a card actually is, asked of Feishu rather than assumed.
+   * Where a card actually is, asked of Feishu rather than assumed — its pure
+   * target identity, and nothing else.
    *
    * A message sent as a reply lives in the replied-to message's topic, which
    * only Feishu can report. Every caller this exists for names a card it did
@@ -397,15 +394,17 @@ export class FeishuOutbound {
    * round never recorded a landing (the send reported no message at all) —
    * ordinarily it already knows from `activate()` and skips this. A message
    * this fails to locate is a failed delivery — the chat is a guess, and a
-   * guess puts one conversation's answer in front of another.
+   * guess puts one conversation's answer in front of another. Locating is
+   * identity only: no group-format lookup runs here, so a card already on
+   * screen costs no extra request to identify.
    */
-  async locate(messageId: string): Promise<FeishuInboundRoute> {
+  async locate(messageId: string): Promise<FeishuTarget> {
     const read = await this.opts.bot.readMessage?.({ messageId });
     const message = read?.items.find((item) => item.messageId === messageId);
     if (message === undefined || message.chatId === '') {
       throw new Error(`Feishu reported no chat for message ${messageId}`);
     }
-    return this.opts.targetRouter.project({
+    return messageTarget({
       chatId: message.chatId,
       threadId: message.threadId,
     });

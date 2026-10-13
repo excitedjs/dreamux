@@ -211,7 +211,7 @@ describe('Provisioning snapshot immutability', () => {
 
     // `plan()` is what actually hands the current record to a fresh run; the
     // routing service's own read confirms which snapshot a *new* plan sees.
-    const planned = routing.plan(topicTarget('oc_c', 'thread-new'), 'oc_c');
+    const planned = routing.plan(topicTarget('oc_c', 'thread-new'), true);
     expect(planned.kind).toBe('provision');
     if (planned.kind !== 'provision') throw new Error('unreachable');
     expect(planned.space.leader_agent_runtime).toBe('claude-code');
@@ -283,7 +283,9 @@ describe('unbindSpace — stops future provisioning only', () => {
     // And the next inbound message to the same container no longer provisions.
     const plan = routing.plan(
       topicTarget('oc_c', 'thread-after-unbind'),
-      'oc_c',
+      // Still in the topic message format: what stopped provisioning is the
+      // removed policy, not eligibility.
+      true,
     );
     expect(plan.kind).toBe('dispatcher');
   });

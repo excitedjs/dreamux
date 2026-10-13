@@ -522,7 +522,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
 
     const outcome = await deliver(session, {
       target: chatTarget('oc_group', 'group'),
-      containerChatId: null,
+      canProvision: false,
       submission: {
         kind: 'chat',
         attrs: {},

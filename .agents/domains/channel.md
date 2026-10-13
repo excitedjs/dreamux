@@ -290,15 +290,15 @@ itself, never from the access lists being judged (a direct chat wrongly listed i
 `group.allow_chats` must still be judged as the direct chat it is): the kind an
 admitted inbound message this session routed in that chat reported (a group
 message dropped for lacking a mention, an untrusted bot's message, or a consumed
-`/introduce` teaches nothing), kept by the same targeting owner as the
-per-chat mode cache topic detection uses (a group event records only the kind,
-apart from the mode, since it does not say whether the group is in topic mode). Only
-when no inbound event has said does the click ask Feishu, through the chat-get lookup that
-cache also fills. A person admitted in both or in neither kind never triggers
+`/introduce` teaches nothing), kept in the targeting owner's stable chat-kind
+map. A successful chat-get lookup also establishes that kind; the map holds
+only `p2p` or `group`, never the mutable group message format. Only when neither
+an admitted event nor an earlier successful lookup has established the kind
+does the click ask Feishu. A person admitted in both or in neither kind never triggers
 the lookup. When the decision does depend on the kind and none of these can say,
 the click is refused: the lookup needs the same group information read
-permission topic detection does, but unlike topic detection it does not degrade
-to an ordinary group, because there is no safe default kind once the two
+permission provisioning eligibility does, but it does not assume a chat kind,
+because there is no safe default kind once the two
 decisions differ. Counting
 the click as addressing the bot, so that a group requiring mentions does not
 refuse every click, is this implementation's reading and not a ruling. Pairing approval is
@@ -361,15 +361,15 @@ Source:
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/mcp/`
 
-### Targets and chat-mode discovery
+### Targets and message-format observation
 
 A target does not cross the seam. The neutral contract publishes no
 `ChannelTarget`: Core never sees a chat id, a thread id, a target key, or a
 bindable flag, holds no binding table, and makes no routing decision.
 
 Feishu normalizes its own selectors into a package-local `FeishuTarget` with
-three kinds, because Feishu has three: `p2p` (a direct chat), `group` (an
-ordinary group), and `topic` (one topic inside a topic-mode group). A topic is
+three kinds: `p2p` (a direct chat), `group` (the chat itself), and `topic`
+(one conversation named by a non-empty `thread_id`). A topic is
 the only kind with a parent. `targetKey` is injective over the three kinds
 because a chat id cannot contain `\0`. A `p2p` target is deliberately not
 bindable: it is one person's conversation with the bot, and binding it would
@@ -381,41 +381,60 @@ its enclosing group and stops; an ordinary group resolves only to itself. There
 is no chain to walk and no inherited binding beyond the conversation the message
 is visibly in.
 
-Topic detection needs one platform lookup, so it is bounded and fails open. The
-router uses `message.thread_id` as the stable topic key and verifies the
-enclosing chat through `im.v1.chat.get`, bounded to 2,000 ms. Only
-`chat_mode=topic` produces a topic target and a container chat id a Collaboration
-Space policy could be registered on. Missing group-information permission, a
-missing or unknown chat mode, a timeout, and an API failure each warn in the
-channel log and fall back to the group route. Operators using Feishu topic
-collaboration must grant the bot a group information read permission accepted by
-the chat-get API, such as `im:chat:readonly`. A card click uses the same lookup
-only as a last resort: when the access gate decides a direct chat and a group
-differently for the clicker and neither the operator's `group.allow_chats` nor
-an earlier inbound direct-chat event already gives the chat's kind. It fails
-closed there instead; a person the policy treats alike in both kinds never
-triggers it.
+Identity is pure. `messageTarget` in `routing/target.ts` composes a group
+message's topic from its non-empty `thread_id`, independently of current group
+message format. A message without a thread is the chat target, and a direct
+chat remains direct. Message reads and send responses report no chat kind,
+so they retain the existing group assumption. No reply ancestry supplies a
+missing thread identity.
+
+Automatic provisioning is a separate observation. For a topic used in delivery,
+`FeishuInboundTargeting.project` reads the enclosing chat through
+`im.v1.chat.get`, bounded to 2,000 ms. The transport's `getChatMode` returns
+effective conversation format: `topic` for either raw `chat_mode=topic` or an
+ordinary group with `chat_mode=group` and `group_message_type=thread`, `group`
+for other ordinary-group responses, and `p2p` for a direct chat. The Channel
+carries `canProvision`, not a duplicate parent chat identifier, into routing.
+Only a verified topic format permits automatic provisioning, and the routing
+owner separately limits it to a still-unbound topic with a registered space.
+
+Missing group-information permission, missing or unknown mode, timeout, and
+API failure each warn and withhold provisioning. They do not change topic
+identity or disable saved bindings: exact topic then parent-group resolution
+still applies, and only a conversation neither binding claims reaches the
+Dispatcher. Operators need a group information read permission accepted by
+chat-get, such as `im:chat:readonly`, for automatic provisioning.
+
+The card-click access gate uses the same platform read only as a last resort
+to establish direct-chat versus group kind when its two access decisions
+differ. An unknown kind refuses the click; a person treated alike in both
+kinds never triggers that read. Pure identity consumers do not need a format
+lookup: `FeishuOutbound.locate`, extension `readMessageRoute`, and extension
+`sendCard` return the actual target without one. Card settlements and forwards
+observe fresh eligibility separately before ordinary delivery.
 
 Cache and concurrency are precise:
 
-- successfully resolved chat modes are cached for the life of the session, with
-  no eviction; unsuccessful lookups are not cached at all, so a later accepted
-  inbound retries. An accepted direct-chat inbound event also enters its chat as
-  `p2p` without a lookup, because the event states it (a group event cannot
-  state topic versus ordinary mode, so it enters no mode; it records only that
-  the chat is a group, kept apart for the card-click gate);
+- mutable group message format is never cached after its request settles;
+  each later topic delivery projection makes a fresh observation, so switching
+  between thread and chat format takes effect without restarting;
+- only stable chat kind is retained for the session, learned from accepted
+  inbound events or a successful platform lookup; failed lookups establish
+  neither kind nor permission;
 - concurrent lookups for one chat share a single in-flight request, which is
   removed once it settles.
 
-Target projection runs only for an accepted inbound: the access and pairing gate
-decides first, so a rejected or gate-consumed message reaches no chat API call
-and populates no cache entry.
+Eligibility projection for ordinary inbound runs after the access and pairing
+gate, so a rejected or gate-consumed message reaches no format lookup and
+teaches no chat kind. Pure identity projection is also used by outbound and
+extension identity consumers, where it performs no I/O.
 
 Source:
 
 - `/packages/channel/feishu-channel/src/routing/target.ts`
 - `/packages/channel/feishu-channel/src/inbound/target.ts`
 - `/packages/channel/feishu-channel/src/inbound/pipeline.ts`
+- `/packages/channel/feishu-transport/src/transport/feishu.ts`
 - `/packages/dreamux-types/src/channel.ts`
 
 ### Inbound routing
@@ -429,6 +448,15 @@ a caller told a route exists is being told what disk says. The plan is one of
 three answers: `bound` (with the row that answered, which may be the parent
 group), `provision` (the committed Collaboration Space policy snapshot to create
 a Team under), or `dispatcher` (`no_binding` or `not_bindable`).
+
+`plan(target, canProvision)` resolves saved exact and parent-group bindings
+before considering creation. Only a topic target with fresh permission can
+consult the space policy by its own `chatId`. A top-level group target never
+creates a per-topic Team. Saved topic bindings remain effective in chat message
+format, after manual rebinds that clear `space_id`, and after space unregistration;
+the origin marker is not a routing prerequisite. Binding-only extension queries
+and expected-Team delivery use `canProvision=false` without introducing an
+await between the expected-owner check and Core invocation.
 
 The binding decoder requires a string `team_name` before publishing a route.
 Missing or non-string values fail initialization through the existing malformed
@@ -1097,13 +1125,23 @@ Collaboration Space service, no space store, and no `collaboration_space` Comman
 namespace; the operator config no longer reads a `collaborationSpace` block, and
 a leftover one is tolerated and ignored, like any other retired key.
 
-For Feishu a Space is a registered topic group whose child topics are provisioned
-automatically. Its four Dispatcher-only tools register an existing external
+For Feishu a Space registers either a native topic group or an ordinary group
+using thread message format for automatic per-topic provisioning. Its four
+Dispatcher-only tools register an existing external
 container with a creation policy (leader runtime, optional identity, optional
 repository) and read it back. They do not create the external container, and
-unbinding releases routing and provisioning ownership without deleting the
-container or dissolving Teams already provisioned under it; dissolving one of
+unbinding removes future provisioning policy without deleting the container,
+existing topic bindings, or Teams already provisioned under it; dissolving one of
 those is an ordinary `team.dissolve`.
+
+Switching an ordinary group to chat message format preserves its space policy
+and all saved topic bindings, pauses automatic provisioning, and sends unbound
+threads to their parent-group binding or Dispatcher. A registered space excludes
+a whole-chat binding, so its unbound threads and chat-level messages reach the
+Dispatcher. Switching back to thread message format restores provisioning
+without re-registration. A format switch writes no routing state, adds no mode
+record, and does not cancel a provisioning run already holding its policy
+snapshot. Restart uses the existing policy and binding records normally.
 
 Provisioning is process-local by design. It runs as an in-memory sequence and
 persists nothing until the binding is actually installed: no saga, phase, outbox,
@@ -1829,11 +1867,12 @@ Source: `/packages/channel/feishu-channel/src/feishu-extensions.ts`,
 
 Feishu topic routing keys on `message.thread_id` and nothing else. `root_id` and
 `parent_id` remain diagnostic reply ancestry and must never independently enable
-topic routing or substitute for a missing `thread_id`: an ordinary group stays a
-group target even when Feishu exposes thread-style messages inside it, and every
-non-empty inbound `thread_id` is included in the opaque display attrs rendered
-into the model-visible `<channel>` envelope without acquiring a topic container or
-topic routing semantics.
+topic routing or substitute for a missing `thread_id`. A group message carrying
+that identity remains a topic in either thread or chat message format; current
+format affects only automatic provisioning eligibility. Every non-empty inbound
+`thread_id` is also included in the opaque display attrs rendered into the
+model-visible `<channel>` envelope. A message without that field remains a chat
+target, even when reply ancestry is present.
 
 The egress side has no `thread_id` selector to key on in the first place: the
 `reply` tool takes `chat_id` and an optional `message_id`, never a bare thread

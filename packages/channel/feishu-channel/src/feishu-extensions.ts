@@ -29,12 +29,11 @@ import {
   CHANNEL_REMINDER,
   type FeishuSubmissionPayload,
 } from './feishu-submit.js';
-import type { FeishuInboundTargeting } from './inbound/target.js';
 import { agentSender, type FeishuOutbound } from './outbound/index.js';
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuBindingOperations } from './routing/operations.js';
 import { channelPathSegment } from './routing/store.js';
-import type { FeishuTarget } from './routing/target.js';
+import { messageTarget, type FeishuTarget } from './routing/target.js';
 import type { FeishuLifecycle } from './session/lifecycle.js';
 import { findFeishuTool, toolRegistration } from './tools/registry.js';
 import type { FeishuToolResult } from './tools/types.js';
@@ -349,29 +348,21 @@ export function buildInstanceApi(input: {
   outbound: FeishuOutbound;
   /** Card repaint (`editCard`) reaches the bot directly; see `outbound/index.ts`'s header. */
   bot: Pick<FeishuBot, 'editCard'>;
-  targetRouter: Pick<FeishuInboundTargeting, 'project'>;
   routing: FeishuRouting;
   bindings: FeishuBindingOperations;
   commands: FeishuCoreCommands;
 }): FeishuInstanceApi {
-  const {
-    lifecycle,
-    outbound,
-    bot,
-    targetRouter,
-    routing,
-    bindings,
-    commands,
-  } = input;
+  const { lifecycle, outbound, bot, routing, bindings, commands } = input;
   return {
     owner(target) {
-      const plan = routing.plan(target, null);
+      // Binding-only: ownership is a routing-row fact, never permission to
+      // provision, which no caller of this check is asking for.
+      const plan = routing.plan(target, false);
       return plan.kind === 'bound' ? plan.teamName : null;
     },
     async readMessageRoute(messageId) {
       lifecycle.assertLive();
-      const route = await outbound.locate(messageId);
-      return { target: route.target };
+      return { target: await outbound.locate(messageId) };
     },
     async bindTeam({ target, teamName, display }) {
       lifecycle.assertLive();
@@ -392,11 +383,13 @@ export function buildInstanceApi(input: {
       // Checked, captured and invoked in one synchronous turn: nothing between
       // the plan and the Command can run, so the Team the call reaches is the
       // Team this check saw. A binding committed afterwards retargets the next
-      // call, never this one.
+      // call, never this one. The plan is binding-only (`canProvision=false`):
+      // this call delivers to a Team the conversation already routes to and
+      // never opens one.
       if (!lifecycle.isLive()) {
         return Promise.resolve({ status: 'refused', reason: 'closed' });
       }
-      const plan = routing.plan(target, null);
+      const plan = routing.plan(target, false);
       if (plan.kind !== 'bound' || plan.teamName !== expectedTeamName) {
         return Promise.resolve({
           status: 'refused',
@@ -424,14 +417,15 @@ export function buildInstanceApi(input: {
       if (sentMessage === undefined) {
         throw new Error('Feishu returned no message id for the sent card');
       }
-      // Where the card landed, from Feishu's own send response: a chat-mode
-      // lookup only for a chat this session has not already resolved, no
-      // second `readMessage` round trip.
-      const { target } = await targetRouter.project({
-        chatId: sentMessage.chatId,
-        threadId: sentMessage.threadId,
-      });
-      return { messageId: sentMessage.messageId, target };
+      // Where the card landed, composed from Feishu's own send response:
+      // identity only, so no group-format lookup and no format warning.
+      return {
+        messageId: sentMessage.messageId,
+        target: messageTarget({
+          chatId: sentMessage.chatId,
+          threadId: sentMessage.threadId,
+        }),
+      };
     },
     async editCard(messageId, card) {
       lifecycle.assertLive();
