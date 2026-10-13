@@ -1,78 +1,24 @@
-# Single Developer TeamMate and TeamLeader Pre-Review
+# Implementation and Local Verification
 
-## Start one development writer
+Enter `implementation` only after the development-authorization card receives an
+explicit approving response and that evidence is recorded in the task README.
+Implement the approved requirement and solution within the recorded boundary.
+Preserve unrelated worktree changes.
 
-Enter this phase only after valid development approval is recorded in the task
-README, including evidence of the sent development-authorization card and the
-operator's explicit approving response. A declared approval without that evidence
-does not open this gate. Set `State: implementation` and preserve the approved
-requirement, final solution, scope, and verification links.
+Before requesting `review`:
 
-For the minimal-change fast path, have the TeamLeader implement directly as previously
-approved and do not start a TeamMate. When the entire implementation surface is
-`.agents/**`, the TeamLeader also implements directly as the sole repository writer.
-For every other path, load and follow `teamwork`, then directly start exactly
-one write-capable developer TeamMate with the identity in
-[developer-identity.md](developer-identity.md). Do not run another writer
-concurrently. The TeamLeader must regain control and inspect the completed diff
-before deciding the next action.
+- inspect the whole diff for requirement completeness and scope compliance;
+- run the checks required by the changed owners and repository rules;
+- record commands, results, skipped checks, coverage limits, and residual risks in
+  `verification.md`;
+- correct known failures and verify the complete resulting change.
 
-Dispatch from repository artifacts, not a paraphrased requirement. Give the
-developer TeamMate:
+Do not call the stage green until the repository's required build, lint, test, and
+`typecheck:tests` gates pass. For narrower validation, report exactly what passed
+and what was not run.
 
-- the confirmed task README path;
-- the approved requirement and final solution paths;
-- the approved implementation boundary;
-- the applicable repository-guidance paths;
-- instructions to preserve unrelated worktree changes;
-- the expected local verification and completion report.
-
-Do not repeat or paraphrase the identity in the work prompt. Let the identity carry
-the developer role and `.agents` ownership boundary; let repository artifacts carry
-the approved work.
-
-## Wait without polling
-
-Normally wait for Dreamux to push the developer TeamMate's completion without
-polling. When development starts, create a one-hour reminder. Delete it if the
-TeamMate completes first. If the reminder fires and the TeamMate has not completed,
-check whether it is still running normally.
-
-Do not infer commit, push, or merge authority from the implementation assignment.
-Those actions belong to the later PR and merge rules.
-
-## Run TeamLeader pre-review
-
-After implementation finishes, have the TeamLeader inspect the worktree and whole
-implementation diff before starting the review workflow. This is a fast quality
-and completeness gate, not the independent code review.
-
-Check at least:
-
-- every acceptance criterion and approved solution element is represented;
-- the workspace change is coherent, complete, and remains inside the approved
-  boundary;
-- relevant compile, static, and focused unit checks pass;
-- skipped or unavailable checks have an exact reason and visible residual risk;
-- the developer's completion report matches the actual diff and check results.
-
-Select commands from the changed owners and repository guidance; do not run an
-irrelevant ritual command set. Inspect failures rather than reporting only exit
-codes.
-
-If the change is incomplete or a basic check fails, send precise findings back to
-the same developer TeamMate and repeat the pre-review after it finishes. Do not ask
-an independent reviewer to find or clean up defects already visible to the
-TeamLeader. For a TeamLeader-authored fast-path or `.agents/**`-only change, the
-TeamLeader fixes its own implementation before independent review. If remediation
-requires a material requirement or solution change, stop, set
-`State: awaiting-development-approval`, and return to the earliest affected stage.
-
-When the gate passes, have the TeamLeader create or update `verification.md`, record
-the commands and results and known limitations, and set `State: review` in the task
-README. The TeamLeader, not the developer, owns these writes. Pass only a concise
-note that compile, static, and unit checks passed; reviewers do not repeat those
-checks.
-
-Continue with one direct TeamMate review for the approved minimal-change fast path, or
-the workflow review for every other path.
+A material requirement, solution, or scope change stops implementation and returns
+to the earliest affected stage for confirmation and renewed development approval.
+Once the approved change and local verification are ready, request entry to
+`review` through the stage-transition card. Continue with
+[implementation review](implementation-review.md).
