@@ -19,9 +19,10 @@ the Feishu channel ships out of the box.
 - **Inbound normalization**: turning Feishu events into agent-facing channel
   results, including the Channel-owned inner body and inline `<attachment>`
   blocks. Core owns the outer `<channel source="feishu" …>` envelope.
-- **Topic routing**: verifying `chat_mode=topic`, projecting `thread_id` as a
-  neutral collaboration target, and recording exact per-message targets for
-  scoped TeamLeader replies.
+- **Topic routing**: projecting `thread_id` as a neutral collaboration target
+  whatever the group's current message format is, observing that format only to
+  decide whether an unbound topic may receive a new Team, and recording exact
+  per-message targets for scoped TeamLeader replies.
 - **Attachment handling**: downloading inbound attachments after the host access
   gate allows delivery, plus cache layout, path sanitization, permissions, and
   honest fallback references when a resource is not downloaded. Inline XML is
@@ -118,16 +119,25 @@ the command is diagnosed as `sender_not_followed` and writes no trust.
 
 ## Feishu chat information permission
 
-Topic collaboration routing reads the enclosing chat through Feishu's
+Topic identity is Feishu's own `thread_id`: a group message carrying one is a
+topic whatever the group's current message format is — a native topic group, an
+ordinary group switched to thread message format, or an ordinary group back in
+chat message format whose old topics members keep talking in. Neither `root_id`
+nor `parent_id` is ever read as identity. What the message format decides is
+only whether a still-unbound topic may automatically receive a new Team, and
+that mutable fact is observed fresh per message, never remembered for the
+session.
+
+That observation reads the enclosing chat through Feishu's
 `im.v1.chat.get` API. The bot must have a group information read permission
 accepted by that API, such as `im:chat:readonly`, and must be a member of the
-group. If the API fails or omits a recognized `chat_mode`, the channel logs a
-warning and deliberately treats the inbound as an ordinary group message; it
-does not infer topic mode from `root_id`, `parent_id`, or `thread_id` alone.
-Every non-empty inbound `thread_id` is also included in the provider-owned
-display attributes, so runtimes render it in the model-visible `<channel>`
-envelope. Displaying that identifier does not classify an ordinary group
-thread as a collaboration topic.
+group. If the API fails or omits a recognized message format, the channel logs
+a warning, keeps the message's identity, and withholds automatic provisioning
+for it: saved bindings still answer — an exact topic binding first, then a
+parent-group binding — and an unbound topic reaches the Dispatcher instead of
+being given a Team. Every non-empty inbound `thread_id` is also included in the
+provider-owned display attributes, so runtimes render it in the model-visible
+`<channel>` envelope.
 
 The same read can decide who may answer a card, as a last resort. A click on
 an ask-user or extension card names its chat but not whether that chat is
@@ -139,16 +149,19 @@ reported by the last admitted inbound message this session routed in that chat
 a consumed `/introduce` teaches nothing). Only then does it ask the platform. A person the policy
 admits in a direct chat and in a group alike, or in neither, never triggers the
 read. When the answer does depend on the kind and it cannot be established, the
-click is refused with an error toast rather than degrading to an ordinary group
-as topic detection does, which on an install whose bot lacks the group
-information read permission affects only a click in a chat this session has not
-yet routed an admitted message from.
+click is refused with an error toast rather than admitted on a guess — the
+access kind is the only fact at stake here; a failed message-format read never
+changes what a message is, only whether an unbound topic may provision. On an
+install whose bot lacks the group information read permission, this affects
+only a click in a chat this session has not yet routed an admitted message
+from.
 
-A confirmed topic target declares its enclosing group as a less-specific
-binding fallback. An exact topic binding wins first; a bound collaboration
-space then provisions or reuses the exact topic Team; only a topic group that
-has no accepted collaboration route may reuse an existing group binding. If no
-such binding exists, delivery stays with the Dispatcher. This fallback is also
+A topic target declares its enclosing group as a less-specific binding
+fallback. An exact topic binding wins first, then its parent-group binding,
+and only a still-unbound topic may then be provisioned — one whose group is
+currently in the topic message format and carries a registered Collaboration
+Space policy. If no policy claims it, delivery stays with the Dispatcher.
+This fallback is also
 used for TeamLeader egress authorization after exact message/topic ownership is
 verified, allowing a group-bound TeamLeader to reply to an observed topic
 message without weakening cross-topic authorization for topic-bound leaders.

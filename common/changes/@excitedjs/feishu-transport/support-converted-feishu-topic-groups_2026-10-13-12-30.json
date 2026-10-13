@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-transport",
+      "comment": "getChatMode reports the effective conversation format: an ordinary group using thread message format answers topic alongside a native topic group, and the raw chat_mode/group_message_type fields stay transport-internal.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport"
+}

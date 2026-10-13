@@ -678,7 +678,7 @@ describe('delivery is constrained to the expected bound Team', () => {
 
     // The ordinary inbound path really would provision here: the container
     // carries a Space policy and the topic has no binding of its own.
-    expect(feishuSession(instance).routing.plan(topic, 'oc_space').kind).toBe(
+    expect(feishuSession(instance).routing.plan(topic, true).kind).toBe(
       'provision',
     );
 
@@ -1291,6 +1291,148 @@ describe('delivery claims no anchor and hides no input', () => {
     expect(cotDeltas(cotClient.cards)).not.toContain('forwarded from the card');
     held.resolve({ status: 'submitted', turn_id: 'turn-fwd' });
     expect(cotClient.cards).toHaveLength(opened);
+
+    await instance.session.close();
+  });
+});
+
+// ── Card forwards against the group's current message format ────────────
+
+describe('a detached extension forward observes the group message format', () => {
+  /** A forwarder whose click always forwards the card it was clicked on. */
+  function forwarder(): FeishuExtension<undefined> {
+    return {
+      name: 'forwarder',
+      tools: [],
+      cardActions: [
+        {
+          key: 'forward_card',
+          handle: async () => ({
+            response: { toast: { type: 'info', content: '已转发' } },
+            forward: { text: 'forwarded from the card', sourceId: 's-fwd' },
+          }),
+        },
+      ],
+      initialize: async () => undefined,
+      start: async () => undefined,
+      close: async () => undefined,
+    };
+  }
+
+  async function forwardFromCard(bot: FakeFeishuBot, cardMessageId: string) {
+    await expect(
+      bot.injectCardAction({
+        operatorOpenId: 'operator',
+        openChatId: 'oc_group',
+        openMessageId: cardMessageId,
+        actionValue: { dreamux_action: 'forward_card' },
+        raw: {},
+      }),
+    ).resolves.toEqual({ toast: { type: 'info', content: '已转发' } });
+  }
+
+  it('reaches a chat-format thread’s own bound Team', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setChatMode('oc_group', 'group');
+    writeAccess(['oc_group']);
+    const core = scriptedCore();
+    const loaded = loadFeishu([bot]);
+    const holder = inputExtension();
+    loaded.api.extensions.register(holder.extension);
+    loaded.api.extensions.register(forwarder());
+    const instance = await createSession(loaded.provider, 'primary');
+    runningSessions.push(instance.session);
+    await instance.session.initialize(core.port);
+    await instance.session.start();
+    // The thread's own explicit binding, written before the group switched to
+    // chat message format — or by hand in it; the row is the same.
+    await apiOf(holder).bindTeam({
+      target: topicTarget('oc_group', 'omt_old'),
+      teamName: 'alpha',
+      display: '',
+    });
+    bot.setMessageRead('om_fwd_card', {
+      items: [
+        {
+          messageId: 'om_fwd_card',
+          messageType: 'text',
+          content: '{}',
+          mentions: [],
+          deleted: false,
+          malformed: false,
+          chatId: 'oc_group',
+          threadId: 'omt_old',
+        },
+      ],
+    });
+
+    await forwardFromCard(bot, 'om_fwd_card');
+
+    await vi.waitFor(() => {
+      expect(core.submissions).toHaveLength(1);
+    });
+    // The saved topic binding answers, and the delivery path still observed
+    // the current (chat) message format — it simply does not override a
+    // binding. No Team was opened for it.
+    expect(core.submissions[0]!.command).toBe('team.submit');
+    expect(core.submissions[0]!.payload).toMatchObject({
+      team_name: 'alpha',
+      source_id: 's-fwd',
+    });
+    // The delivery path obtained a fresh format result; the saved binding, not
+    // that observation, is what answered.
+    expect(bot.chatModeRequests).toContain('oc_group');
+
+    await instance.session.close();
+  });
+
+  it('provisions nothing for an unbound thread in a registered space in chat message format', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setChatMode('oc_group', 'group');
+    writeAccess(['oc_group']);
+    const core = scriptedCore();
+    const loaded = loadFeishu([bot]);
+    const holder = inputExtension();
+    loaded.api.extensions.register(holder.extension);
+    loaded.api.extensions.register(forwarder());
+    const instance = await createSession(loaded.provider, 'primary');
+    runningSessions.push(instance.session);
+    await instance.session.initialize(core.port);
+    await instance.session.start();
+    // A registered space: an unbound topic would provision in thread message
+    // format. `scriptedCore` throws on `team.create`, so a provisioning run
+    // here fails the test instead of going unnoticed.
+    await feishuSession(instance).routing.bindSpace({
+      spaceName: 'space',
+      containerChatId: 'oc_group',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    bot.setMessageRead('om_fwd_card', {
+      items: [
+        {
+          messageId: 'om_fwd_card',
+          messageType: 'text',
+          content: '{}',
+          mentions: [],
+          deleted: false,
+          malformed: false,
+          chatId: 'oc_group',
+          threadId: 'omt_fresh',
+        },
+      ],
+    });
+
+    await forwardFromCard(bot, 'om_fwd_card');
+
+    await vi.waitFor(() => {
+      expect(core.submissions).toHaveLength(1);
+    });
+    expect(core.submissions[0]!.command).toBe('dispatcher.submit');
+    expect(core.submissions[0]!.payload).not.toHaveProperty('team_name');
+    expect(core.calls.map((call) => call.command)).not.toContain('team.create');
 
     await instance.session.close();
   });

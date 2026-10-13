@@ -957,6 +957,55 @@ describe('FeishuInstanceApi happy paths', () => {
     await instance.session.close();
   });
 
+  it('readMessageRoute and sendCard return the actual topic target with no chat-format lookup', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setMessageRead('msg-thread', {
+      items: [
+        {
+          messageId: 'msg-thread',
+          messageType: 'text',
+          content: '{}',
+          mentions: [],
+          deleted: false,
+          malformed: false,
+          chatId: 'oc_read',
+          threadId: 'omt_old',
+        },
+      ],
+    });
+    let captured: FeishuInstanceApi | undefined;
+    const { api, provider } = loadFeishu([bot]);
+    api.extensions.register(
+      extension<FeishuInstanceApi>('alpha', {
+        initialize: async (context) => {
+          captured = context.api;
+          return context.api;
+        },
+      }),
+    );
+    const instance = await createSession(provider);
+    await instance.session.initialize(inertPort());
+    await instance.session.start();
+
+    await expect(captured!.readMessageRoute('msg-thread')).resolves.toEqual({
+      target: topicTarget('oc_read', 'omt_old'),
+    });
+
+    // A fresh send into a topic chat lands in a topic of its own; the send
+    // response is the whole address, and identity costs no group-format read.
+    bot.setChatMode('oc_read', 'topic');
+    const sent = await captured!.sendCard({
+      chatId: 'oc_read',
+      card: { type: 'card' },
+    });
+    expect(sent.target).toEqual(
+      topicTarget('oc_read', `thread-${sent.messageId}`),
+    );
+    expect(bot.chatModeRequests).toEqual([]);
+
+    await instance.session.close();
+  });
+
   it("editCard lands in the fake bot's edited cards", async () => {
     const bot = createFakeFeishuBot();
     let captured: FeishuInstanceApi | undefined;

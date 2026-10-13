@@ -98,27 +98,57 @@ function sentMessageFrom(
   };
 }
 
+/**
+ * A chat's effective conversation format. `topic` means new conversations are
+ * topics — a native topic group, or an ordinary group switched to thread
+ * message format. `group` means plain chat message format. The raw platform
+ * fields that establish this (`chat_mode`, `group_message_type`) never leave
+ * this transport.
+ */
 export type FeishuChatMode = 'p2p' | 'group' | 'topic';
+
+/**
+ * The chat-get fields this transport reads. `group_message_type` is how an
+ * ordinary group states its current message format: `thread` means topics,
+ * anything else means plain chat.
+ */
+interface FeishuChatGetData {
+  chat_mode?: string;
+  group_message_type?: string;
+  name?: string;
+}
 
 function feishuChatClient(client: lark.Client): {
   chat?:
-    | {
-        get?: (
-          input: unknown,
-        ) => Promise<{ data?: { chat_mode?: string; name?: string } }>;
-      }
+    | { get?: (input: unknown) => Promise<{ data?: FeishuChatGetData }> }
     | undefined;
 } {
   const root = client as unknown as {
     im?: {
       chat?: {
-        get?: (
-          input: unknown,
-        ) => Promise<{ data?: { chat_mode?: string; name?: string } }>;
+        get?: (input: unknown) => Promise<{ data?: FeishuChatGetData }>;
       };
     };
   };
   return { chat: root.im?.chat };
+}
+
+/**
+ * The effective conversation format one chat-get response establishes.
+ *
+ * `chat_mode=group` is the mutable case: the same group answers `topic` while
+ * it uses thread message format and `group` after it switches back, which is
+ * why callers observe this per use instead of remembering it.
+ */
+function effectiveChatMode(
+  data: FeishuChatGetData | undefined,
+): FeishuChatMode | undefined {
+  const mode = data?.chat_mode;
+  if (mode === 'topic') return 'topic';
+  if (mode === 'group') {
+    return data?.group_message_type === 'thread' ? 'topic' : 'group';
+  }
+  return mode === 'p2p' ? 'p2p' : undefined;
 }
 
 type FeishuContactUserRequest = {
@@ -234,7 +264,15 @@ export interface FeishuTransport {
     card: unknown,
     options?: FeishuSendOptions,
   ): Promise<FeishuSendResult>;
-  /** Optional capability for custom transports; callers must fail safe when absent. */
+  /**
+   * Optional capability for custom transports; callers must fail safe when absent.
+   *
+   * The result is the chat's effective conversation format, not its raw
+   * `chat_mode`: `topic` covers both a native topic group (`chat_mode=topic`)
+   * and an ordinary group currently using thread message format
+   * (`chat_mode=group`, `group_message_type=thread`). A custom transport
+   * reports effective format through this same capability.
+   */
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
   /** Optional best-effort lookup of a chat's current Feishu name. */
   resolveChatName?(chatId: string): Promise<string | undefined>;
@@ -451,10 +489,7 @@ export function createFeishuTransport(
         );
       }
       const res = await chatClient.chat.get({ path: { chat_id: chatId } });
-      const mode = res.data?.chat_mode;
-      return mode === 'p2p' || mode === 'group' || mode === 'topic'
-        ? mode
-        : undefined;
+      return effectiveChatMode(res.data);
     },
 
     async resolveChatName(chatId: string): Promise<string | undefined> {

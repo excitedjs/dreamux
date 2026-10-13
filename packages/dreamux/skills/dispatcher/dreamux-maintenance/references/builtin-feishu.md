@@ -31,17 +31,28 @@ extensions close.
   closed Team and writes nothing. Dissolving a Team invalidates its routes and
   drops its document subscriptions, in the same commit.
 - A chat carries either a whole-chat binding or a collaboration space, never
-  both, because a whole-chat binding answers for every topic under it and would
-  leave a space's new topics without a Team of their own. `bind_channel` refuses
-  a chat a space is registered on, and `bind_collaboration_space` refuses a chat
-  already bound as a whole; each names the conflict and writes nothing. Unbind
-  the one you do not want first. Binding a single topic is unaffected — that is
-  the row a space installs as it provisions.
+  both, because a whole-chat binding claims every topic under it that has no
+  binding of its own and would leave a space's new topics without a Team of
+  their own. A topic's own exact binding always wins over the whole-chat one.
+  `bind_channel` refuses a chat a space is registered on, and
+  `bind_collaboration_space` refuses a chat already bound as a whole; each
+  names the conflict and writes nothing. Unbind the one you do not want first.
+  Binding a single topic is unaffected — that is the row a space installs as
+  it provisions.
 - A document that already holds both still loads and the channel still starts;
   the rule is enforced on writes, not at startup. Such a chat keeps routing the
-  way it has been — every topic under it answers to the whole-chat Team and new
-  topics get no Team of their own — until the whole-chat binding is released.
-  Nothing has to be rebuilt or hand-edited.
+  way it has been — every topic under it that has no binding of its own answers
+  to the whole-chat Team, and new topics get no Team of their own — until the
+  whole-chat binding is released. Nothing has to be rebuilt or hand-edited.
+- Saved topic bindings answer independently of the group's current message
+  format. An ordinary group can switch between thread and chat message format
+  at any time; that switch changes only whether an unbound topic may receive a
+  new Team automatically. In chat message format a registered space stays
+  registered, every saved topic binding — provisioned or hand-bound — keeps
+  reaching its own Team, and its unbound threads reach the Dispatcher instead
+  of being provisioned. Switching back to thread message format restores
+  automatic provisioning without re-registering the space. None of this is a
+  repair case: do not hand-edit the document over a format switch.
 - A document subscription belongs to whoever created it — a Team, or the
   Dispatcher Agent. Neither recipient can create or remove another's, and
   `list_subscriptions` shows the caller's own rows only. Subscribing refuses a

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Support ordinary Feishu groups switched to thread message format as Collaboration Spaces with one Team per topic: thread_id names the topic whatever the group's current message format is, that format only gates automatic provisioning per message, and saved topic bindings stay effective in chat message format.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

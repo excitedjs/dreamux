@@ -78,7 +78,7 @@ describe('FeishuRouting — plan() resolution order', () => {
       nextServingTeamName: 'fallback-parent',
       target: topic,
     });
-    expect(routing.plan(topic, topic.chatId)).toEqual({
+    expect(routing.plan(topic, false)).toEqual({
       kind: 'bound',
       teamName: 'fallback-parent',
       matched: parent,
@@ -104,7 +104,7 @@ describe('FeishuRouting — plan() resolution order', () => {
       spaceId: null,
     });
 
-    const plan = routing.plan(topic, 'oc_group');
+    const plan = routing.plan(topic, false);
     expect(plan).toEqual({
       kind: 'bound',
       teamName: 'team-topic',
@@ -124,7 +124,7 @@ describe('FeishuRouting — plan() resolution order', () => {
     });
 
     const topic = topicTarget('oc_group', 'thread_9');
-    const plan = routing.plan(topic, 'oc_group');
+    const plan = routing.plan(topic, false);
     expect(plan).toEqual({
       kind: 'bound',
       teamName: 'team-group',
@@ -134,13 +134,13 @@ describe('FeishuRouting — plan() resolution order', () => {
 
   it('a p2p direct chat is never bindable and reaches the Dispatcher for that reason', async () => {
     const routing = await makeRouting();
-    const plan = routing.plan(chatTarget('oc_dm', 'p2p'), null);
+    const plan = routing.plan(chatTarget('oc_dm', 'p2p'), false);
     expect(plan).toEqual({ kind: 'dispatcher', reason: 'not_bindable' });
   });
 
   it('an unmatched bindable target with no registered space reaches the Dispatcher', async () => {
     const routing = await makeRouting();
-    const plan = routing.plan(chatTarget('oc_unbound', 'group'), null);
+    const plan = routing.plan(chatTarget('oc_unbound', 'group'), false);
     expect(plan).toEqual({ kind: 'dispatcher', reason: 'no_binding' });
   });
 
@@ -155,8 +155,43 @@ describe('FeishuRouting — plan() resolution order', () => {
       repo: null,
     });
     const topic = topicTarget('oc_container', 'thread_new');
-    const plan = routing.plan(topic, 'oc_container');
+    const plan = routing.plan(topic, true);
     expect(plan).toEqual({ kind: 'provision', space });
+  });
+
+  it('a paused eligibility observation reaches the Dispatcher instead of provisioning', async () => {
+    const routing = await makeRouting();
+    await routing.bindSpace({
+      spaceName: 'space-a',
+      containerChatId: 'oc_container',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    // The group is in chat message format: the topic identity is unchanged,
+    // but an unbound topic must not receive a new Team.
+    expect(
+      routing.plan(topicTarget('oc_container', 'thread_new'), false),
+    ).toEqual({ kind: 'dispatcher', reason: 'no_binding' });
+  });
+
+  it('a top-level group target never provisions, even when a caller claims eligibility', async () => {
+    const routing = await makeRouting();
+    await routing.bindSpace({
+      spaceName: 'space-a',
+      containerChatId: 'oc_container',
+      display: null,
+      leaderAgentRuntime: 'codex',
+      identity: null,
+      repo: null,
+    });
+    // Per-topic provisioning is this owner's invariant: permission alone must
+    // not open a Team for a chat-level message.
+    expect(routing.plan(chatTarget('oc_container', 'group'), true)).toEqual({
+      kind: 'dispatcher',
+      reason: 'no_binding',
+    });
   });
 });
 
@@ -423,7 +458,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     ).rejects.toThrow(/Collaboration Space/);
     expect(routing.listBindings()).toEqual([]);
     expect(
-      routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space'),
+      routing.plan(topicTarget('oc_space', 'omt_new'), true),
     ).toMatchObject({
       kind: 'provision',
     });
@@ -447,7 +482,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       spaceId: space.space_id,
     });
     expect(
-      routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space'),
+      routing.plan(topicTarget('oc_space', 'omt_one'), true),
     ).toMatchObject({
       kind: 'bound',
       teamName: 'team-a',
@@ -455,7 +490,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     // The sibling topic is untouched: one provisioned topic never speaks for
     // the rest of the Space, which is what binding the chat itself would do.
     expect(
-      routing.plan(topicTarget('oc_space', 'omt_two'), 'oc_space'),
+      routing.plan(topicTarget('oc_space', 'omt_two'), true),
     ).toMatchObject({
       kind: 'provision',
     });
@@ -498,7 +533,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
       repo: null,
     });
     expect(
-      routing.plan(topicTarget('oc_space', 'omt_new'), 'oc_space'),
+      routing.plan(topicTarget('oc_space', 'omt_new'), true),
     ).toMatchObject({
       kind: 'provision',
     });
@@ -531,7 +566,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     });
     expect(renamed.space_name).toBe('space-renamed');
     expect(
-      routing.plan(topicTarget('oc_space', 'omt_one'), 'oc_space'),
+      routing.plan(topicTarget('oc_space', 'omt_one'), true),
     ).toMatchObject({
       kind: 'bound',
       teamName: 'team-a',
@@ -597,7 +632,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     expect(routing.listSpaces()).toHaveLength(1);
     // And it is broken in exactly the way the refusals exist to prevent.
     expect(
-      routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId),
+      routing.plan(topicTarget(containerChatId, 'omt_new'), true),
     ).toMatchObject({ kind: 'bound', teamName: 'team-a' });
 
     await expect(
@@ -629,7 +664,7 @@ describe('FeishuRouting — Collaboration Space policy', () => {
     expect(routing.listSpaces()).toHaveLength(1);
     expect(renamed.space_id).toBe(space_id);
     expect(
-      routing.plan(topicTarget(containerChatId, 'omt_new'), containerChatId),
+      routing.plan(topicTarget(containerChatId, 'omt_new'), true),
     ).toMatchObject({ kind: 'provision' });
   });
 

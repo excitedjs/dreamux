@@ -318,7 +318,7 @@ export interface FeishuInboundDelivery {
   command(input: {
     command: FeishuSlashCommandInvocation;
     target: FeishuTarget;
-    containerChatId: string | null;
+    canProvision: boolean;
     /**
      * The message the command was parsed from. A command whose own effect
      * announces into a conversation with no root of its own yet (a topic
@@ -335,13 +335,13 @@ export interface FeishuInboundDelivery {
    * turned out stale, or the bound Team's TeamLeader. A provisioning run that
    * never produces a Team answers `unsubmitted` (or `rejected` when the
    * just-provisioned Team refuses the submission), and the inbound path posts a
-   * failure notice under the triggering message instead. `containerChatId` is
-   * the parent chat a topic belongs to, which is what a Collaboration Space is
-   * keyed by.
+   * failure notice under the triggering message instead. `canProvision` is the
+   * projection's fresh eligibility observation: only a still-unbound topic in
+   * a currently verified topic message format may enter provisioning.
    */
   deliver(input: {
     target: FeishuTarget;
-    containerChatId: string | null;
+    canProvision: boolean;
     submission: FeishuChatSubmission;
   }): Promise<FeishuSubmitOutcome>;
 }

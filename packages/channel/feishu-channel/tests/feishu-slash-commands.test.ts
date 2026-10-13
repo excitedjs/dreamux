@@ -1075,6 +1075,30 @@ describe('/bind through ordinary Feishu inbound', () => {
     },
   );
 
+  it('binds the containing chat and announces in the originating thread in chat message format', async () => {
+    const topic = topicTarget('oc_topic_group', 'omt_topic');
+    const group = chatTarget(topic.chatId, 'group');
+    const h = await bindHarness(topic);
+    // The group switched back to chat message format: the thread keeps its
+    // identity, so `/bind` keeps binding the containing chat and answering in
+    // the thread the command was typed in.
+    h.bot.setChatMode(topic.chatId, 'group');
+    const messageId = await h.inject('/bind team-b');
+    await vi.waitFor(() => expect(h.bot.sentCards).toHaveLength(1));
+    expect(h.session.routing.bindingFor(group)?.team_name).toBe('team-b');
+    expect(h.session.routing.bindingFor(topic)).toBeUndefined();
+    expect(h.bot.sentCards[0]!.target).toEqual({
+      chatId: topic.chatId,
+      replyToMessageId: messageId,
+    });
+    await h.speak('team-b');
+    expect(h.bot.sentCards[0]!.messages[0]).toMatchObject({
+      chatId: topic.chatId,
+      threadId: topic.threadId,
+    });
+    await h.session.close();
+  });
+
   // `/bind` binds the containing chat from either place, so both invocations
   // reach `FeishuRouting.bind` with the same group target and are refused by
   // the routing document rather than by this command. The Team is live, so a

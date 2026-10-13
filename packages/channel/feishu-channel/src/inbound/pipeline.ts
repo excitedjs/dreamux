@@ -375,7 +375,7 @@ async function deliverAcceptedMessage(
       const reply = await h.delivery.command({
         command,
         target: route.target,
-        containerChatId: route.containerChatId,
+        canProvision: route.canProvision,
         messageId: acceptedEvent.messageId,
       });
       work.assertSessionActive();
@@ -410,7 +410,7 @@ async function deliverAcceptedMessage(
     work.assertSessionActive();
     const outcome = await h.delivery.deliver({
       target: route.target,
-      containerChatId: route.containerChatId,
+      canProvision: route.canProvision,
       submission: built.submission,
     });
 

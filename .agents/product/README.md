@@ -137,7 +137,7 @@ the same change that touches it.
   (Task: [add-bind-and-help-slash-commands](/.agents/tasks/channel/add-bind-and-help-slash-commands/README.md).)
 - **A chat is either bound to one Team or run as a collaboration space, never
   both.** Routing a Space's own chat to a single Team would quietly take over
-  every topic in it and stop new topics from getting a Team of their own, with
+  its still-unbound topics and stop new topics from getting a Team of their own, with
   nothing said. Both ways of reaching that state are refused and change nothing:
   binding the chat of an existing Space — typed as `/bind`, or asked for by an
   agent through `bind_channel` — and registering a Space on a chat that is
@@ -184,6 +184,20 @@ the same change that touches it.
   is a second line, not a replacement. Existing Teams and the shared space
   policy are unchanged; identity stays a string.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **Feishu spaces support native topic groups and ordinary groups using topic
+  message format.** Switching an ordinary group back to chat message format
+  preserves its space registration and all saved topic Teams while pausing new
+  provisioning. Switching back restores the per-topic Team flow without
+  re-registration or restart. Every explicit topic binding remains effective,
+  including manual bindings, rebindings, and bindings after space unregistration.
+  An unbound thread in chat format uses its whole-chat binding, if any, or the
+  Dispatcher; a registered space has no whole-chat binding. Messages without a
+  thread keep their chat-level route and never create a per-topic Team.
+  Failure to read current group format also prevents new provisioning while
+  leaving saved topic and parent-group routes effective. `/bind` still binds
+  the whole containing chat even when typed inside a thread; MCP binding tools
+  still select a topic only when their explicit `thread_id` names one.
+  (Task: [support-converted-feishu-topic-groups](/.agents/tasks/channel/support-converted-feishu-topic-groups/README.md).)
 - **A message with no message id inside a Collaboration Space chat is guarded
   by the Channel, not by prompt instruction.** Every other Feishu chat keeps
   today's behavior — an address-less message opens a new top-level message.

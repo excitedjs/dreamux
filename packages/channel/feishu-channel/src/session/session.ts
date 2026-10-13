@@ -168,7 +168,6 @@ export class FeishuChannelSession {
       dispatcherId: opts.dispatcherId,
       lifecycle: this.lifecycle,
       routing: this.routing,
-      targetRouter: this.targetRouter,
     });
     this.cot = new FeishuCotAdapter({
       dispatcherId: opts.dispatcherId,
@@ -286,7 +285,6 @@ export class FeishuChannelSession {
           lifecycle: this.lifecycle,
           outbound: this.outbound,
           bot: this.bot,
-          targetRouter: this.targetRouter,
           routing: this.routing,
           bindings: this.bindings,
           commands: this.commands,
