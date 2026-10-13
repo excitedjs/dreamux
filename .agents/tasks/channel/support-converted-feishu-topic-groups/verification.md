@@ -56,6 +56,8 @@ production-code build before the test-only follow-ups.
 | `git diff --check` | Exit 0 after final follow-up inspection. |
 | Task-record check with `--allow-in-flight` | Exit 0 during pre-review. |
 | `.agents/scripts/check.sh` | Exit 0 after independent review and knowledge closeout, with the task marked done. |
+| Mandatory pre-commit gates | Passed for the reviewed implementation commit, including staged ESLint, author identity, gitleaks, and internal-content checks. |
+| `node common/scripts/install-run-rush.js change --verify --target-branch origin/next --no-fetch` | Exit 0 after committing the reviewed change; Rush recognized all three package change files. |
 
 The full KB check's trunk-state rule is applied at knowledge closeout. Its
 intentional refusal of an in-flight implementation or review state is not bypassed.
@@ -111,6 +113,3 @@ review finding required a scope change or a further operator decision.
   group and must capture that event separately.
 - The repository's default test run excludes live model-gate cases and reports
   that exclusion as a warning. It does not certify those model-dependent gates.
-- Rush change validation against `origin/next` must run after the reviewed change
-  is committed; a no-change result against an uncommitted working tree is not
-  release-note evidence.

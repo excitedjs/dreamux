@@ -25,4 +25,5 @@
 
 ## Delivery
 
+- Pull request: [#473](https://github.com/excitedjs/dreamux/pull/473).
 - Knowledge closeout: Updated the [product catalog](/.agents/product/README.md), [Channel architecture](/.agents/domains/channel.md), task records and discovery index, both package READMEs, and the [Feishu maintenance reference](/packages/dreamux/skills/dispatcher/dreamux-maintenance/references/builtin-feishu.md). The remaining knowledge owners and reasons for no change are recorded in verification.
