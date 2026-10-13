@@ -11,6 +11,9 @@ record. Verify implementation facts against current source. Use
 judgment and [repository operations](../../domains/repository-operations-and-release.md)
 for build, CI, public-repository safety, and merge rules.
 
+Use Dreamux's strengths in development tasks and follow the `teamwork` skill to
+collaborate appropriately with heterogeneous TeamMates.
+
 ## Interactive-card gate
 
 Every workflow stage transition and request for operator authority requires
