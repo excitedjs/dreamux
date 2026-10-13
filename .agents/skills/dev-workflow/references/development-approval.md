@@ -1,86 +1,43 @@
 # Development Approval
 
-## Ask after solution review
+Enter `awaiting-development-approval` after the operator confirms the final
+solution. Before requesting development, play back:
 
-Before asking for approval, make the confirmed task self-contained and current.
-Play back to the operator:
+- the final requirement and acceptance criteria;
+- confirmed current facts or proven bug root cause;
+- the final technical solution and implementation boundary;
+- verification plan, non-goals, and known limitations.
 
-- the final outcome and acceptance criteria;
-- confirmed facts or proven bug root cause;
-- the final technical solution;
-- implementation scope and explicit non-goals;
-- verification plan;
-- non-blocking assumptions and known residual risks.
+Send a development-authorization question through `ask_user_question` or an
+equivalent interactive card tied to those recorded artifacts. Wait for the
+operator's explicit approving response before entering `implementation` or writing
+any implementation artifact. A requirement or solution confirmation, reviewer
+verdict, original request, or ordinary chat agreement does not replace this card.
+A pending, expired, unanswered, or declined card grants no development authority.
 
-Send an explicit development-authorization question through `ask_user_question`
-or an equivalent interactive-card tool, such as:
+A short response such as "OK" or "start development" counts only when it explicitly
+answers that sent card against the current requirement and solution. If no
+interactive-card tool is available, leave the task awaiting approval and report
+the missing mechanism.
 
-> Do you approve this requirement and technical solution and want the team to enter
-> development?
-
-**No sent development-authorization card means no development authorization.**
-The playback above may be ordinary chat text; it is the request itself that must
-be the card. The card must refer to the current recorded requirement, final
-solution, and implementation scope. Sending it alone is insufficient: wait for the operator's
-explicit approval in response. A pending, expired, unanswered, or declined card
-does not authorize development. A product-choice or solution-review card is not
-a development-authorization card.
-
-The original request never counts as approval because it precedes investigation,
-requirement convergence, and solution review. Agreement with a diagnosis, answer to
-a product question, reaction, or instruction to continue investigating also does
-not count.
-
-A short response such as "OK", "approved", or "start development" counts only
-when it explicitly answers that sent development-authorization card against the
-current recorded requirement and final solution. An ordinary chat confirmation
-without that card does not count, even if it says to start. Neither a reviewer's
-verdict nor the leader declaring the task approved replaces the card and answer.
-If no interactive-card tool is available, leave the task awaiting approval and
-report that the required authorization mechanism is unavailable; do not replace
-it with a prose-only question.
-
-## Regression Trap: reviewed requirements are not authorization
-
-A leader started a developer after requirement confirmation and an independent
-review, then had to stop when the operator clarified that development was not
-authorized. A task-state declaration cannot supply the missing consent: check
-for the sent development-authorization card and its approving response before
-starting a developer or writing implementation artifacts.
-
-## Record and enforce the scope
-
-After valid approval and before any implementation write, update the task README
-with at least:
+After approval and before any implementation write, record in the task README:
 
 - `State: implementation`;
-- the approved requirement and solution links;
-- the approved implementation scope;
-- a public-safe, provider-neutral description of the sent development-authorization
-  card, its time, and the operator's explicit approving response and time;
-- `Next action: Enter development`.
+- the approved requirement and solution links and implementation boundary;
+- public-safe descriptions of the card and approving response, with their times;
+- the next action.
 
-Treat the task README as the visible current-state authority. A deeper progress log
-may retain chronology but must not become a conflicting state source. Never record
-a private message URL, channel name, channel identifier, or other transport
-metadata in the repository.
+Never record private transport identifiers or message URLs in the repository.
+Approval survives context recovery while the requirement, solution, and scope
+remain unchanged. In-scope edits, tests, and ratified review corrections do not
+require another development-authorization card.
 
-Bind approval to the recorded requirement, solution, and implementation scope, not
-to the task forever. Preserve it across context compression or handoff when those
-inputs remain unchanged. Do not ask for approval for every line edit, in-scope test,
-or review correction.
-
-If the goal, product behavior, architecture, public contract, or implementation
-scope changes materially, stop implementation, set
-`State: awaiting-development-approval`, update the affected artifacts, and return
-to the earliest affected workflow step. Reopened development after a completed
+If those inputs change materially, stop implementation and return through the
+card gate to the earliest affected stage. Obtain renewed development approval
+before implementing the changed scope. Reopened development after a completed
 merge requires a new clarification and approval cycle.
 
-## Enforce the pre-approval write boundary
-
-Before valid recorded approval, allow writes only to the confirmed task directory,
-the parent task README indexes required to discover it, and its public GitHub
-solution-review Issue. Prohibit changes to product code,
-tests, configuration, scripts, migrations, generated files, and other
-implementation artifacts. Prohibit implementation TeamMates and temporary
-diagnostic code.
+Before approval, allow writes only to the confirmed task directory, required
+parent README indexes, and its public solution-review Issue. Do not change product
+code, tests, configuration, scripts, migrations, generated files, or other
+implementation artifacts, including prototypes and temporary diagnostic code.

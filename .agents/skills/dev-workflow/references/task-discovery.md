@@ -83,7 +83,7 @@ prior task's entire history.
 
 Make the task README the stable entry point and sole current-state authority. Keep
 its goal, current state, current requirement link, current solution link, next
-action, related-task links, and public solution-review Issue link current.
+action, related-task links, and any public solution-review Issue link current.
 
 When creating, renaming, reopening, relating, or completing a task, update its task
 README and every parent README index needed to discover it. README-first discovery

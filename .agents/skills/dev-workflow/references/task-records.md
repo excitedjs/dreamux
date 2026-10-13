@@ -5,8 +5,8 @@
 Use the task README as the only current-state authority and discovery entry. Keep
 the detailed requirement, final solution, and verification evidence in their own
 files; link them from the README instead of copying them into several status
-documents. The linked GitHub Issue is the operator review surface for the final
-solution, not a second task-state authority.
+documents. When a solution-review Issue is used, link it as the operator review
+surface; the local task remains authoritative.
 
 For a newly created task, initialize only:
 
@@ -19,8 +19,7 @@ For a newly created task, initialize only:
 Create later artifacts only when their stage begins:
 
 - `technical-design/final.md` for the authoritative solution;
-- `technical-design/draft.md`, `technical-design/proposals/`, and
-  `technical-design/reviews/` only when the selected consultation path needs them;
+- draft or review artifacts only when they are needed to explain a decision;
 - `verification.md` when implementation begins producing evidence;
 - `sources/` or `artifacts/` only when an external requirement, incident artifact,
   screenshot, or acceptance result cannot be reconstructed reliably.
@@ -42,9 +41,10 @@ Keep these fields current and concise:
 - goal;
 - finite workflow state;
 - requirement and final-solution links;
-- public GitHub solution-review Issue link;
-- the sent development-authorization card and approving response, their times,
-  and the approved boundary (public-safe descriptions, never private transport IDs);
+- public GitHub solution-review Issue link when one is used;
+- stage-transition decisions and the sent development-authorization card and
+  approving response, their times, and the approved boundary (public-safe
+  descriptions, never private transport IDs);
 - blockers and next action;
 - lineage and related-task links;
 - the pull request link once one is open;
@@ -55,9 +55,9 @@ Use one of these states:
 `intake`, `clarification`, `solution`, `awaiting-development-approval`,
 `implementation`, `review`, `knowledge-closeout`, `done`, or `blocked`.
 
-Do not keep a parallel progress file or free-form maturity field. Preserve only
-milestones that another TeamLeader cannot safely reconstruct: development approval,
-material re-approval, and review adjudication.
+Do not keep a parallel progress file or free-form maturity field. Preserve the
+operator confirmations, development approval, material re-approval, and review
+adjudication needed to reconstruct the authorized scope.
 
 ## Write only facts that cannot expire on their own
 
@@ -210,8 +210,3 @@ Pass `--allow-in-flight` while the task is still on its branch; without it the
 check holds the record to what may land on the trunk. `.agents/scripts/check.sh`
 runs the same validation over every record in the repository and never passes
 that flag, which is what makes the rule binding rather than advisory.
-
-The initializer and every authoritative task update belong to the TeamLeader.
-Developer TeamMates treat `.agents/**` as read-only and return evidence in their
-completion message. During solution consultation only, proposal and solution-review
-TeamMates may write the one disjoint task file explicitly assigned to them.
