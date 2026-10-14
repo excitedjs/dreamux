@@ -325,4 +325,22 @@ Workflow construction remain unchanged.
   diff is one replacement. Public task/product records capture the bounded
   authorization. No new live-model claim is made for this prompt change.
 
-The subsequent feature-branch alpha release is recorded below after publication.
+### Follow-up alpha publication
+
+- [Source CI](https://github.com/excitedjs/dreamux/actions/runs/38560106137)
+  passed all nine checks, including both operating-system Rush jobs.
+- [Feature-branch release](https://github.com/excitedjs/dreamux/actions/runs/38560685548)
+  succeeded and published `@excitedjs/dreamux@0.27.0-alpha.g4af2f5f9ad03`.
+  The workflow built, packed and audited before OIDC publication; its stable
+  jobs were skipped. It made no source version commit or release tag.
+- Public npm metadata confirms the fixed version. Root downloaded the published
+  tarball, verified its SHA-512 integrity against registry metadata, and checked
+  that compiled ordinary-member guidance contains the exact approved text and
+  omits the replaced availability sentence.
+- The alpha dist-tag points to that version. Before/after snapshots confirmed
+  that latest and beta did not move.
+- This follow-up publishes only; it does not install or restart the managed
+  service. Its installed CLI remained on the earlier accepted alpha. No
+  new live-model or proactive-send behavior proof is claimed for the new
+  guidance. Earlier alpha acceptance and its recorded failures keep their
+  original artifact provenance.
