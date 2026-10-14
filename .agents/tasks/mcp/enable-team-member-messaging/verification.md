@@ -179,3 +179,11 @@ canonical mandatory staged-ESLint, author, gitleaks and internal-content hook.
 The committed-branch Rush change verification against origin/next passed and
 discovered all four ordinary minor notes. Delivery is linked from task README;
 GitHub records the exact PR heads, check runs and eventual merge disposition.
+
+After external final review, the original writer replaced only two Codex comment
+lines to spell out completion rather than C. Build, lint, test and
+typecheck:tests each exited 0 again; the default test count remains 2831 passed
+with six opt-in model cases excluded. No test or change note was added, no
+dependencies changed, and no live-model evidence was rerun or reclassified.
+Root verified that the executable diff is unchanged. External approval and the
+operator's separate decision withholding merge authority are linked in the task.

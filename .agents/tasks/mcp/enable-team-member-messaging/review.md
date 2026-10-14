@@ -75,3 +75,21 @@ The earlier Core review applies to unchanged Core implementation, with the new
 cross-scope collector regressions and runtime review covering the correction's
 adjacent Core effects. No accepted defect remains. Prior live records keep their
 build provenance; F1 fault interleavings are not represented as new live evidence.
+
+## External final review (2026-10-14)
+
+The external reviewer submitted an [approving GitHub review](https://github.com/excitedjs/dreamux/pull/475#pullrequestreview-5514039424)
+with no blocking findings. It checked the optional neutral result contract,
+same-object folding, late acknowledgements/stop, managed-Team request boundaries,
+Workflow construction and host-bound sender behavior. It independently reran
+Rush update/build/lint/test and focused suites in a clean worktree; authenticated
+model cases were excluded there without auth. This is additional review evidence,
+not new live-model evidence or operator merge authority.
+
+Root accepted its [nonblocking terminology nit](https://github.com/excitedjs/dreamux/pull/475#discussion_r4267604811):
+spell out retained completion in bindSubmission's comment rather than using the
+design-document shorthand C. The same writer applied the two-line comment edit
+and reran build/lint/test/typecheck:tests successfully. Root inspected the exact
+diff: no executable code, interface, test assertion or requirement changed. No
+further review of unchanged executable content is required merely for a push.
+The operator's separate "Do not merge for now" decision is recorded in task README.

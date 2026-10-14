@@ -192,8 +192,8 @@ export class TurnManager {
 
   private bindSubmission(turnId: string, deferred: SubmissionDeferred): void {
     const selected = this.nativeTurns.get(turnId)?.completion;
-    // The native answer may precede admission, failure or stop. Its retained C
-    // remains the input's answer; later connection loss cannot erase it.
+    // The native answer may precede admission, failure or stop. The retained
+    // completion remains the input's answer; later connection loss cannot erase it.
     if (selected != null) {
       deferred.settle({ kind: 'completion', completion: selected });
       return;

@@ -12,7 +12,7 @@
 - Solution workflow: Three independent proposals, then one cross-review round, confirmed by the operator on 2026-10-13; reuse the DeepSeek, MiMo, and Trae Seed consultation sessions.
 - Classification: Complex; the new member MCP surface and runtime-neutral completion contract cross Core and both in-tree runtime packages.
 - Blockers: None in the reviewed implementation scope; declared provider-contract and live-coverage limits are recorded in verification.md. The operator's delegated final-quality authority and requested rebase are preserved below.
-- Next action: GitHub owns review, CI and merge status; the delivery link below is the continuation surface.
+- Next action: GitHub owns review and CI status. Any merge requires further explicit operator authority under the separate decision below.
 - Related tasks:
   - `builds-on`: [Provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — existing submission settlement and native-completion folding.
   - `builds-on`: [Lifecycle-stop completion suppression](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/README.md) — existing owner-stop reporting boundary.
@@ -95,6 +95,22 @@ were restored byte-for-byte before implementation resumed.
 - Independent review: [Source adjudication](/.agents/tasks/mcp/enable-team-member-messaging/review.md).
 - Knowledge closeout: Complete; product, provider-runtime, dispatcher-orchestration, service-topology, current-architecture and glossary owners were reconciled with the final reviewed implementation, including F1's barrier removal. Existing root routing already discovers the owning task/domain; no routing change was needed.
 - State/config maintenance: N/A; no persisted shape, config/default or path change is selected.
+
+## Operator merge decision (2026-10-14)
+
+The merge card asked whether #475 could be squash-merged into next after final
+review passed. The operator answered:
+
+> 暂不合并
+
+English rendering: "Do not merge for now." This response grants no merge
+authority. An approving GitHub review does not replace the operator's separate
+merge decision; further explicit authorization is required before merging.
+
+The external final review is [recorded on GitHub](https://github.com/excitedjs/dreamux/pull/475#pullrequestreview-5514039424).
+Its nonblocking terminology comment is handled under the previously delegated
+quality/correction scope, without changing product behavior or inferring merge
+permission.
 
 ## Design evidence
 
