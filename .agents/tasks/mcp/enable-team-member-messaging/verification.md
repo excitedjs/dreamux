@@ -369,3 +369,23 @@ remain separately appended in their existing order.
   the superseded guidance and released artifacts remain historical evidence.
 - This verification does not certify new proactive model behavior. Earlier
   installed-alpha model results and failures retain their original targets.
+
+### Codex-style alpha publication
+
+- [Source CI](https://github.com/excitedjs/dreamux/actions/runs/38567570470)
+  passed all nine checks, including both operating-system Rush jobs.
+- [Feature-branch release](https://github.com/excitedjs/dreamux/actions/runs/38568229000)
+  succeeded and published `@excitedjs/dreamux@0.27.0-alpha.ga5efaeaf5867`.
+  Build, pack/audit and OIDC publication passed; no stable release, source
+  version commit or release tag was made.
+- The first fixed-version public registry lookup returned E404. The alpha
+  dist-tag subsequently resolved to the expected version, and one fresh
+  fixed-version lookup succeeded. The initial failure is retained; no release
+  rerun or authentication/configuration change was made.
+- Root downloaded the public tarball, verified its SHA-512 registry integrity,
+  and confirmed the compiled send/list and automatic-report guidance while
+  rejecting the superseded verbose text. Before/after tag snapshots confirmed
+  that latest and beta did not move.
+- This corrected alpha has not been installed, restarted or live-model
+  accepted. Earlier model evidence remains tied to its recorded artifact;
+  it does not prove model behavior under this shorter prompt.
