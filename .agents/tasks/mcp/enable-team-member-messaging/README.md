@@ -151,7 +151,7 @@ two records' closed state and runtimes. Reported inbound/push evidence and the
 large historical-roster discovery spill are retained separately in
 verification.md; they do not erase the isolated Codex/Dispatcher timeouts.
 
-## Authorized lightweight guidance follow-up (2026-10-14)
+## Earlier lightweight guidance follow-up (2026-10-14)
 
 After comparing local Codex and DeepSeek Harness model-facing guidance, the
 TeamLeader proposed replacing the ordinary member's tool-availability sentence
@@ -171,6 +171,26 @@ feature-branch alpha publication. It does not authorize another installation,
 restart, merge or Team dissolution. The prior merge hold remains in force.
 The current product wording is recorded in the ordinary-member communication
 catalog; release and verification evidence belongs to verification.md.
+
+## Authorized Codex-style capability follow-up (2026-10-14)
+
+After reviewing the complete member communication appendix against Codex and
+DeepSeek Harness, the operator instructed:
+
+> 照抄一下 codex 的协作能力就行了。
+
+English rendering: "Just copy Codex's collaboration capabilities."
+This supersedes the earlier proactive-guidance wording. The member appendix now
+follows Codex's capability-and-result-return pattern, naming only Dreamux's
+actual owner, collection-scoped send/list tools and automatic normal/failed
+turn-result reporting to an available owner. It does not import unavailable
+Codex tools or Codex-specific message/workspace conventions. Detailed receipt
+and lifecycle explanations remain in their owning tools and product entries.
+
+The follow-up uses the previously authorized prompt-update push and alpha
+delivery boundary. Installation, restart, merge and Team dissolution remain
+outside this follow-up. Verification and release evidence belongs to
+verification.md; the earlier alpha records retain their original provenance.
 
 ## Design evidence
 

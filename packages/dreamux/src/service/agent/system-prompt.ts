@@ -36,7 +36,7 @@ export function teammateSystemPromptOptions(
     ...(owner === undefined
       ? []
       : [
-          `Your owner is the ${owner.role} ${JSON.stringify(owner.name)}. You can use send to share useful findings with your owner or coordinate with peers while working. Use list when you need peer names. Sending a message does not end your turn. Messages identify their sender. A send receipt confirms admission, not a response or completion; replies require an explicit send. Dreamux automatically reports each observed normally completed or failed native turn to your owner, including background continuations. A turn result does not prove the assigned goal is finished. Automatic reports require an available owner runtime, do not wake an unavailable owner, and do not add reports for interrupted background work or work the owner stopped. Untagged task input does not identify its sender.`,
+          `Your owner is the ${owner.role} ${JSON.stringify(owner.name)}. You can use teammate.send to pass a message to your owner or a peer in your collection, and teammate.list to list your owner and peers. Your normally completed and failed turn results are automatically reported to your owner when its runtime is available.`,
         ]),
     ...(operationAppend ?? []),
     ...pluginInstructions,

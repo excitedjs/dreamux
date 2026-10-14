@@ -303,7 +303,7 @@ or discovery contract selected in this change. No configuration, credentials
 or repositories were changed by the reported smoke; normal member creation
 and close used Dreamux's existing server-owned lifecycle records.
 
-## Lightweight member guidance follow-up (2026-10-14)
+## Earlier lightweight member guidance follow-up (2026-10-14)
 
 The operator approved only the proposed three-sentence guidance and explicitly
 requested push plus a new alpha. The source diff replaces one sentence in the
@@ -344,3 +344,28 @@ Workflow construction remain unchanged.
   new live-model or proactive-send behavior proof is claimed for the new
   guidance. Earlier alpha acceptance and its recorded failures keep their
   original artifact provenance.
+
+## Codex-style capability follow-up (2026-10-14)
+
+The operator subsequently requested Codex's collaboration-capability wording.
+The source replaces the entire prior communication appendix with a brief
+capability overview: actual owner, teammate.send/list for that owner and
+collection peers, and automatic normal/failed turn-result reporting to an
+available owner. With an example owner name, that appendix is 49 English words
+instead of about 120. Membership, plugin instructions and operator identity
+remain separately appended in their existing order.
+
+- Rush build, lint, test and typecheck:tests passed with exit 0. No dependency
+  changed, so update was not repeated. Opt-in model gates were not enabled.
+- Built output contains the new capability text. Existing provider-launch,
+  owner-scope and Workflow tests were retained without weakening assertions;
+  no static copy-only test was added.
+- Independent read-only review approved the one-line source replacement and
+  generated Dreamux patch note. It checked the local Codex default subagent
+  capability paragraph, Dreamux's actual tools, owner scopes and Workflow
+  exclusion; it found no actual defect.
+- Tool schemas, receipts, routing, automatic-report eligibility and lifecycle
+  behavior did not change. Product wording describes the shorter guidance;
+  the superseded guidance and released artifacts remain historical evidence.
+- This verification does not certify new proactive model behavior. Earlier
+  installed-alpha model results and failures retain their original targets.
