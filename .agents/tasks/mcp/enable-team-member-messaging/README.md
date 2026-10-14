@@ -231,6 +231,12 @@ The [successful release](https://github.com/excitedjs/dreamux/actions/runs/38580
 published `@excitedjs/dreamux@0.27.0-alpha.gde98b8d8ca88`; public registry and
 tarball verification are recorded in verification.md.
 
+Publication-record CI exposed a lifecycle test reading Workflow state before
+Team child teardown had completed. The quality correction waits for the existing
+`TeamService.closed` fact and retains all stopped/no-push assertions. It changes
+only the test; runtime source and the published package remain unchanged.
+The original failure and correction evidence are retained in verification.md.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

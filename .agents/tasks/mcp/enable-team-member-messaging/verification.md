@@ -436,3 +436,27 @@ the final operator identity remain in their existing positions.
   restarted or live-model accepted by this Team. No new delegation-frequency
   or work-quality claim is made; earlier alpha acceptance retains its recorded
   artifact provenance. PR #475 remains subject to the existing merge hold.
+
+### Publication-record CI lifecycle observation correction
+
+- [Publication-record CI](https://github.com/excitedjs/dreamux/actions/runs/38581556422)
+  failed the Linux test `dissolves a Team with an active Workflow without
+  submitting its stopped terminal fact`: the Workflow record was still
+  `running` when the test expected `stopped`. The macOS Rush job passed.
+- Source confirms that `runDissolve` commits the Team's closed record before
+  stopping child resources. The test previously observed only that record
+  transition. `TeamService.closed` resolves after the child-destroy pass,
+  including Workflow finalization and its durable terminal write.
+- The correction adds `await leader.closed` before reading the Workflow record
+  and checking the absence of notifications. Receipt, closed-list, stopped
+  status and both no-push assertions remain intact. No sleep, retry, polling
+  mechanism, production interface or runtime behavior was added.
+- Independent DeepSeek source review confirmed that the wait covers the actual
+  completion boundary and makes no-push observations occur after convergence.
+  It would still fail the stopped assertion if Workflow finalization failed;
+  it does not mask such a product failure.
+- The alpha's package source is unchanged. The initial failed CI observation
+  is retained as evidence rather than replaced by a passing retry.
+- Rush build, lint, test and typecheck:tests passed after the correction, with
+  the default model exclusions unchanged. No dependency or published runtime
+  file changed, so no update or replacement alpha was needed.

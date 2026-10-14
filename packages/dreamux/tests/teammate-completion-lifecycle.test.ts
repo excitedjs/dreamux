@@ -219,6 +219,7 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
       expect(row?.status).toBe('closed');
     });
 
+    await leader.closed;
     const record = JSON.parse(
       await readFile(
         workflowRunRecordPath({
