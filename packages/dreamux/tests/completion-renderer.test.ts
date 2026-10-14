@@ -24,9 +24,9 @@ const NOTIFICATION =
 
 describe('buildCompletionTurnText', () => {
   it.each([
-    ['completed', 'TeamMate worker has finished its task.'],
-    ['failed', "TeamMate worker's task failed."],
-    ['stopped', "TeamMate worker's task was stopped."],
+    ['completed', 'TeamMate worker completed a turn.'],
+    ['failed', "TeamMate worker's turn failed."],
+    ['stopped', "TeamMate worker's turn was stopped."],
   ] as const)('preserves teammate %s wording', async (status, line) => {
     const text = await buildCompletionTurnText(
       teammateCompletion(status, 'result'),
@@ -37,8 +37,8 @@ describe('buildCompletionTurnText', () => {
   });
 
   it.each([
-    ['failed', "TeamMate worker's task failed."],
-    ['stopped', "TeamMate worker's task was stopped."],
+    ['failed', "TeamMate worker's turn failed."],
+    ['stopped', "TeamMate worker's turn was stopped."],
   ] as const)(
     'renders a %s completion with a null result (no native text) as an empty inline body',
     async (status, line) => {

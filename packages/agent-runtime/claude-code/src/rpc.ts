@@ -11,6 +11,7 @@ import {
 import { ClaudeCodeControlRpc } from './control-rpc.js';
 import type { ParsedLine, TurnOutcome } from './types.js';
 import type {
+  AgentRuntimeResultSink,
   DreamuxLogger,
   RuntimeAdmission,
   RuntimeCompletion,
@@ -27,6 +28,7 @@ interface PendingRequest {
 
 export interface ClaudeCodeStreamRpcOptions {
   sessionId: string | null;
+  results?: AgentRuntimeResultSink | undefined;
   outputSchemaEnabled?: boolean | undefined;
   turnTimeoutMs: number;
   logger?: DreamuxLogger | undefined;
@@ -304,14 +306,13 @@ export class ClaudeCodeStreamRpc {
           this.interruptRequested = false;
           this.control.settleInterrupt(undefined, interrupted);
         }
-        const completion =
-          interrupted || answered.length === 0
-            ? null
-            : completionFromTurnOutcome(
-                outcome,
-                this.options.sessionId,
-                this.options.outputSchemaEnabled === true,
-              );
+        const completion = interrupted
+          ? null
+          : completionFromTurnOutcome(
+              outcome,
+              this.options.sessionId,
+              this.options.outputSchemaEnabled === true,
+            );
         // Remove the answered requests before callbacks can admit or stop work.
         // Native end is still delivered before these submissions settle.
         this.options.onProtocolEvent?.(
@@ -319,6 +320,7 @@ export class ClaudeCodeStreamRpc {
             ? { kind: 'interrupted', uuid: line.uuid, outcome }
             : { kind: 'result', uuid: line.uuid, outcome },
         );
+        if (completion !== null) this.options.results?.(completion);
         for (const request of answered) {
           this.acceptRequest(request);
           request.settle(

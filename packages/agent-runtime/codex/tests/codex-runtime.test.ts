@@ -40,6 +40,7 @@ import type {
   AgentRuntimeMcpServer,
   RuntimeActivity,
   RuntimeAdmission,
+  RuntimeCompletion,
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
@@ -92,6 +93,7 @@ function makeDeps(
   const deps: CodexRuntimeDeps = {
     cwd: '/fake/cwd',
     state: noopStateSink(),
+    resultSink: () => undefined,
     activitySink: () => undefined,
     codec: null,
     paths: FAKE_PATHS,
@@ -232,6 +234,7 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     const deps: CodexRuntimeDeps = {
       cwd: '/fake/cwd',
       state,
+      resultSink: () => undefined,
       activitySink: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
@@ -1542,6 +1545,7 @@ describe('MCP server list passthrough encoding', () => {
       disabledFeatures: [],
       paths: FAKE_PATHS,
       state: noopStateSink(),
+      results: () => undefined,
       activity: () => undefined,
       logger,
     };
@@ -1611,6 +1615,7 @@ describe('AgentRuntimeProvider public surface', () => {
         disabledFeatures: [],
         paths: FAKE_PATHS,
         state: noopStateSink(),
+        results: () => undefined,
         activity: () => undefined,
         logger,
       });
@@ -1619,4 +1624,246 @@ describe('AgentRuntimeProvider public surface', () => {
     expect(typeof runtimeHandle.stop).toBe('function');
     expect(typeof runtimeHandle.interrupt).toBe('function');
   });
+});
+
+describe('CodexRuntime ordered native results', () => {
+  it.each(['stop', 'transport-close'] as const)(
+    'keeps a folded input on its selected C when its positive ack resumes after %s teardown begins',
+    async (fence) => {
+      const published: RuntimeCompletion[] = [];
+      const client = new FakeCodexWsClient({ autoComplete: false });
+      const state = new RecordingStateSink();
+      const { deps } = makeDeps({
+        client,
+        state,
+        resultSink: (completion) => published.push(completion),
+      });
+      const runtime = new CodexRuntime(identity(null), deps);
+      await runtime.start();
+      const first = requireSubmitted(
+        await runtime.submit({ text: 'first input' }),
+      );
+      client.block('turn/start');
+      const pending = runtime.submit({ text: 'folded late acknowledgement' });
+      await waitFor(() => client.hasBlocked('turn/start'));
+      client.emitCompleted(
+        'fresh-thread-1',
+        'turn-1',
+        'selected before teardown',
+      );
+      expect(published).toHaveLength(1);
+      const early = await first.settled;
+      if (early.kind !== 'completion') throw new Error('early C missing');
+      // A close cannot reject this response: the transport already received it.
+      client.release('turn/start', { turn: { id: 'turn-1' } });
+      if (fence === 'transport-close')
+        client.emitClose(new Error('socket closed after response'));
+      const stopping = runtime.stop();
+      const late = await requireSubmitted(await pending).settled;
+      if (late.kind !== 'completion')
+        throw new Error('known C lost during teardown');
+      expect(late.completion).toBe(early.completion);
+      expect(late.completion).toBe(published[0]);
+      await stopping;
+      expect(published).toHaveLength(1);
+      expect(state.updates.at(-1)).toMatchObject({
+        kind: 'status',
+        status: 'stopped',
+      });
+    },
+  );
+  it.each(['empty', 'invalid-schema'] as const)(
+    'preserves the selected bound interrupted %s value without publishing a native report',
+    async (mode) => {
+      const published: RuntimeCompletion[] = [];
+      const client = new FakeCodexWsClient({ autoComplete: false });
+      const codec =
+        mode === 'empty'
+          ? null
+          : compileCodexOutputSchema({
+              type: 'object',
+              properties: { answer: { type: 'string' } },
+              required: ['answer'],
+              additionalProperties: false,
+            });
+      const { deps } = makeDeps({
+        client,
+        codec,
+        resultSink: (completion) => published.push(completion),
+      });
+      const runtime = new CodexRuntime(identity(null), deps);
+      await runtime.start();
+      const input = requireSubmitted(await runtime.submit({ text: 'work' }));
+      if (mode === 'invalid-schema')
+        client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+          type: 'agentMessage',
+          id: 'invalid-partial',
+          text: 'not encoded JSON',
+        });
+      client.emitTurnInterrupted('fresh-thread-1', 'turn-1');
+      expect(await input.settled).toEqual({
+        kind: 'completion',
+        completion:
+          mode === 'empty'
+            ? { status: 'completed', resultText: null }
+            : { status: 'failed', error: expect.any(Error) },
+      });
+      client.emitTurnInterrupted('fresh-thread-1', 'unbound-interrupted');
+      expect(published).toEqual([]);
+      await runtime.stop();
+    },
+  );
+  it('publishes bound/folded and unbound normal/failed results, skips interruptions and connection loss', async () => {
+    const published: RuntimeCompletion[] = [];
+    const client = new FakeCodexWsClient({
+      autoComplete: false,
+      scriptedTurnIds: ['folded', 'folded'],
+    });
+    const { deps } = makeDeps({
+      client,
+      resultSink: (result) => published.push(result),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const first = requireSubmitted(await runtime.submit({ text: 'first' }));
+    const second = requireSubmitted(await runtime.submit({ text: 'folded' }));
+    client.emitCompleted(
+      'fresh-thread-1',
+      'background-first',
+      'background text',
+    );
+    client.emitCompleted('fresh-thread-1', 'folded', 'folded text');
+    client.emitTurnFailed(
+      'fresh-thread-1',
+      'background-failed',
+      'native failure',
+    );
+    expect(published).toEqual([
+      { status: 'completed', resultText: 'background text' },
+      { status: 'completed', resultText: 'folded text' },
+      { status: 'failed', error: expect.any(Error) },
+    ]);
+    for (const submission of [first, second]) {
+      const settlement = await submission.settled;
+      if (settlement.kind !== 'completion')
+        throw new Error('missing bound completion');
+      expect(settlement.completion).toBe(published[1]);
+    }
+    const failed = requireSubmitted(
+      await runtime.submit({ text: 'failed-bound' }),
+    );
+    client.emitTurnFailed('fresh-thread-1', 'turn-1', 'bound native failure');
+    const failure = await failed.settled;
+    if (failure.kind !== 'completion') throw new Error('missing bound failure');
+    expect(failure.completion).toBe(published[3]);
+    expect(published[3]?.status).toBe('failed');
+    const interrupted = requireSubmitted(
+      await runtime.submit({ text: 'interrupted-bound' }),
+    );
+    client.emitItem('fresh-thread-1', 'turn-2', 'completed', {
+      type: 'agentMessage',
+      id: 'partial',
+      text: 'partial output',
+    });
+    client.emitTurnInterrupted('fresh-thread-1', 'turn-2');
+    const partial = await interrupted.settled;
+    expect(partial).toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'partial output' },
+    });
+    client.emitTurnInterrupted('fresh-thread-1', 'background-interrupted');
+    client.emitClose(new Error('connection lost'));
+    expect(published).toHaveLength(4);
+    await runtime.stop();
+  });
+  it('publishes a bound terminal before a pending folded admission returns and gives the late input exactly C', async () => {
+    const published: RuntimeCompletion[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      resultSink: (completion) => published.push(completion),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const first = requireSubmitted(
+      await runtime.submit({ text: 'first bound input' }),
+    );
+    client.block('turn/start');
+    const pending = runtime.submit({ text: 'late folded input' });
+    await waitFor(() => client.hasBlocked('turn/start'));
+    client.emitCompleted(
+      'fresh-thread-1',
+      'turn-1',
+      'native result before second receipt',
+    );
+    expect(published).toHaveLength(1);
+    const early = await first.settled;
+    if (early.kind !== 'completion')
+      throw new Error('first input did not select C');
+    expect(early.completion).toBe(published[0]);
+    client.release('turn/start', { turn: { id: 'turn-1' } });
+    const second = requireSubmitted(await pending);
+    const late = await second.settled;
+    if (late.kind !== 'completion')
+      throw new Error('late input did not select C');
+    expect(late.completion).toBe(early.completion);
+    expect(published).toHaveLength(1);
+    await runtime.stop();
+  });
+  it('publishes unbound codec failures and scoped fatal terminals as failed results', async () => {
+    const published: RuntimeCompletion[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const codec = compileCodexOutputSchema({
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    });
+    const { deps } = makeDeps({
+      client,
+      codec,
+      resultSink: (result) => published.push(result),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const bound = requireSubmitted(await runtime.submit({ text: 'request' }));
+    client.emitCompleted('fresh-thread-1', 'unbound-schema', 'invalid JSON');
+    client.emitScopedError('fresh-thread-1', 'unbound-fatal', 'fatal');
+    expect(published.map((result) => result.status)).toEqual([
+      'failed',
+      'failed',
+    ]);
+    await runtime.stop();
+    expect(await bound.settled).toEqual({ kind: 'stopped' });
+    expect(published).toHaveLength(2);
+  });
+});
+
+it('keeps new-provider/old-host input values when the public context omits results', async () => {
+  makeDeps();
+  const provider = createCodexAgentRuntimeProvider();
+  const context: AgentRuntimeCreateContext<
+    ReturnType<typeof defaultDispatcherCodexConfig>
+  > = {
+    identity: identity(null),
+    config: defaultDispatcherCodexConfig(),
+    cwd: '/fake/cwd',
+    state: noopStateSink(),
+    activity: () => undefined,
+    paths: FAKE_PATHS,
+    mcpServers: [],
+    skillSources: [],
+    disabledFeatures: [],
+    logger,
+  };
+  const runtime = await provider.createRuntime(context);
+  await runtime.start();
+  const submission = requireSubmitted(
+    await runtime.submit({ text: 'legacy host input' }),
+  );
+  expect(await submission.settled).toMatchObject({
+    kind: 'completion',
+    completion: { status: 'completed', resultText: 'legacy host input' },
+  });
+  await runtime.stop();
 });

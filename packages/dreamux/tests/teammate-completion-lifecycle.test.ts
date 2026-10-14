@@ -562,7 +562,7 @@ async function startDispatcherRecipient(
   provider: ControlledRuntimeProvider,
 ): Promise<ControlledRuntime> {
   const index = provider.runtimes.length;
-  const submitting = dispatcher.submitToAgent({
+  const submitting = dispatcher.submitInput({
     source: CHANNEL_SOURCE,
     text: 'start dispatcher recipient',
   });

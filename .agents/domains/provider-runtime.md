@@ -461,8 +461,25 @@ native identifiers.
 - A provider fold or steer into the active logical turn settles with the exact
   same completion object; a queued input settles with a distinct completion in
   native order.
-- Native aliases folded into the logical input must converge before the shared
-  completion settles.
+- Result observation does not wait for complete input association. Each admitted
+  input resolves its provider-selected value; late inputs answering an already
+  observed result use that same C.
+- The optional `AgentRuntimeCreateContext.results` sink publishes each selected
+  normal/failed native terminal once, synchronously in terminal-finalization order,
+  with the same immutable completion object used by answered submissions. Current
+  Core always supplies it; emission is mandatory when supplied. Generation-revoked
+  writes drop and the callback never throws or applies backpressure. This is
+  delivery evidence, separate from durable `state` and presentation `activity`.
+- Interrupted ends do not publish new native results. Bound Codex interruptions
+  retain the selected completed/failed value (including null/partial output and
+  codec failure); Claude retains stopped. Transport/connection failure settles
+  accepted inputs without a selected answer, without fabricating native terminals
+  or ambiguous-input replies. A selected Codex C remains the late positive
+  admission's answer after failure or stop.
+- New provider/old host retains the request contract through an optional observer
+  call. Old provider/new host retains bound values but lacks unbound coverage and
+  mixed result-order assurance. Loading is not conformity; tests must assert
+  delivered results, object identity and actual native order.
 - Core owns the source-deduplication reservation, not the provider: the seam
   carries only text, so a provider has no source identity to deduplicate with,
   and one Dispatcher-wide `AdmissionLedger` reserves `[entity, source id]`
@@ -654,10 +671,13 @@ At each native result, RPC associates and settles the requests it answers:
   earlier background result.
 
 RPC removes answered requests before callbacks, creates one immutable completion
-using the pinned session/structured-output contract, and settles those requests
-with the same object. Core retains captured recipients and completion-object
-identity deduplication. A result with no related request still reports activity
-and its native end, creates no request completion, and leaves the process alive.
+using the pinned session/structured-output contract, publishes it through the
+leased native-result observer when supplied, and settles those requests with the
+same object. Core owns report eligibility and captured recipients and folds on
+completion identity. A result with no related request creates no request settlement,
+but still publishes the selected normal/failed native result and display activity,
+and leaves the process alive. Only ordinary Core members subscribe to the native
+result; managed TeamLeader replies remain request-scoped.
 
 Native cancelled is not proof of a user stop; it also follows hard failures.
 The Claude provider has no user cancellation entry point. Consumed commands retain
@@ -808,13 +828,19 @@ schema path; constraints are never silently dropped.
 The provider compiles the schema once into one private codec per runtime, and
 every `turn/start` on that runtime sends the same wire schema.
 
-Restoration runs once per native turn, when `TurnManager` settles the turn's
-submissions. A successful restoration replaces the turn's final assistant JSON
-text with the neutral restored JSON, and that text is the completion's
-`resultText`. A parse or shape restoration failure settles every submission of
-the turn with one ordinary failed completion and no assistant text. Stop and
-app-server teardown settle through the same turn record, so a turn is never
-restored or settled twice.
+Restoration runs once at native terminal observation, including turns without
+host submissions. A successful restoration replaces the turn's final assistant
+JSON text with the neutral restored JSON, used as the completion's resultText.
+A parse or shape failure selects one failed C with no assistant text. All answered
+submissions consume that same selected value.
+
+Codex publishes observed normal/failed results immediately in callback order.
+It has no membership-based publication gate, terminal queue or representative
+input. The native admissions in flight at observation retain C until their
+acknowledgements retire. Late positive acknowledgements consume C even after
+failure or stop; ambiguous acknowledgements expose no submission. Accepted inputs
+without an observed answer retain failed/stopped settlement. This separates result
+facts from input association rather than erasing completed work at teardown.
 
 Each collector owns and unregisters exactly one Codex notification handler. It
 stays subscribed across every native turn on its thread — normal completion
@@ -1081,7 +1107,7 @@ scheduler-owned race.
 
 Stopping is a fence plus a convergence, not a wait for quiet. Core's own stop
 paths converge what was already admitted — drain admissions, wait out ordinary
-mutations, and settle and deliver retained turns — so an accepted turn states
+mutations, select retained input values and join started reports — so an accepted turn states
 its facts while the subscriptions carrying them are still attached. Team
 dissolve is a stop-and-reclaim built on exactly that, never a drain: it refuses
 new work rather than queueing it.

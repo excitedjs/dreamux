@@ -147,6 +147,17 @@ publishes no routing event. Owner: [Channel](channel.md); access state:
 [Feishu pairing access](feishu-pairing-access.md); inbound gating:
 [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md).
 
+## Ordinary member communication
+
+The two member collections share the agent-module teammate MCP member scope,
+with host-bound send/list and an actual fenced owner inbox. Ordinary members
+subscribe to observed native results at their actual owner; managed TeamLeaders
+retain explicit request replies only. AgentService owns every notification and
+started-report drain, while input records retain values. Runtime-native grouping
+stays in providers and completion identity folds repeated observation. Current
+contracts and the management/reporting trap are owned by
+[dispatcher orchestration](dispatcher-orchestration.md#completion-routing).
+
 ## Dynamic Workflows
 
 Dynamic Workflow is a caller-scoped background orchestration capability on the

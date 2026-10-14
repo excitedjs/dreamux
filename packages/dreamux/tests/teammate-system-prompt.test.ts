@@ -22,12 +22,13 @@ describe('TeamMate prompts at the provider launch boundary', () => {
     });
     expect(fixture.provider.runtimes).toHaveLength(1);
     expect(fixture.provider.runtimes[0]!.context.systemPrompt?.append).toEqual([
-      `You are TeamMate "${spawned.teammate.name}" of Dreamux Team "${created.team_name}". Your TeamLeader receives what you output when your turn ends.`,
+      `You are TeamMate "${spawned.teammate.name}" of Dreamux Team "${created.team_name}".`,
+      expect.stringContaining(team.memberOwner().name),
       IDENTITY,
     ]);
   });
 
-  it('tells a dispatcher-scoped TeamMate only the operator identity', async () => {
+  it('tells a dispatcher-scoped member its identity and actual owner before operator identity', async () => {
     const fixture = await dispatcherFixture();
     await fixture.host.start();
     await fixture.host.teammates.spawn({
@@ -38,11 +39,13 @@ describe('TeamMate prompts at the provider launch boundary', () => {
       identity: IDENTITY,
     });
     expect(fixture.provider.runtimes[0]!.context.systemPrompt?.append).toEqual([
+      expect.stringContaining('TeamMate'),
+      expect.stringContaining('dispatcher'),
       IDENTITY,
     ]);
   });
 
-  it('gives a dispatcher-scoped TeamMate without an identity no system prompt', async () => {
+  it('gives a dispatcher-scoped member its owner and tool context without an operator identity', async () => {
     const fixture = await dispatcherFixture();
     await fixture.host.start();
     await fixture.host.teammates.spawn({
@@ -51,7 +54,10 @@ describe('TeamMate prompts at the provider launch boundary', () => {
       intent: 'Review',
       agentRuntime: 'controlled',
     });
-    expect(fixture.provider.runtimes[0]!.context.systemPrompt).toBeUndefined();
+    expect(fixture.provider.runtimes[0]!.context.systemPrompt?.append).toEqual([
+      expect.stringContaining('TeamMate'),
+      expect.stringContaining('dispatcher'),
+    ]);
   });
 
   it('orders Workflow membership, operation contract, plugin instruction, and identity without a leader completion claim', async () => {
@@ -125,6 +131,8 @@ describe('TeamMate prompts at the provider launch boundary', () => {
       identity: IDENTITY,
     });
     expect(fixture.provider.runtimes[0]!.context.systemPrompt?.append).toEqual([
+      expect.stringContaining('TeamMate'),
+      expect.stringContaining('dispatcher'),
       'from alpha',
       'from omega',
       IDENTITY,
@@ -160,6 +168,8 @@ describe('TeamMate prompts at the provider launch boundary', () => {
     expect(tap).toHaveBeenCalledTimes(2);
     expect(fixture.provider.runtimes).toHaveLength(2);
     expect(fixture.provider.runtimes[1]!.context.systemPrompt?.append).toEqual([
+      expect.stringContaining('TeamMate'),
+      expect.stringContaining('dispatcher'),
       IDENTITY,
     ]);
   });

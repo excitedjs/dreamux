@@ -277,6 +277,7 @@ export class CodexRuntime implements AgentRuntime {
       codec: this.deps.codec,
       logger: this.deps.logger,
       activitySink: this.deps.activitySink,
+      resultSink: this.deps.resultSink,
       reasoning: new CodexReasoningEffort(
         this.client,
         thread,

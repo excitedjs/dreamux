@@ -58,6 +58,7 @@ describe('resident session over real pipes', () => {
       stderrLogPath: join(dir, 'stderr.log'),
       sessionId: 'fake-sess-1',
       turnTimeoutMs: timeout,
+      results: () => undefined,
       remoteControl: onRemoteControlUrl !== undefined,
       onRemoteControlUrl,
       onProtocolEvent: (event) => events.push(event),
@@ -221,6 +222,7 @@ describe('resident session over real pipes', () => {
             }
           },
         },
+        results: () => undefined,
         activity: (event) => {
           if (event.kind === 'assistant.message')
             pidResolvers.shift()!(Number(event.text));

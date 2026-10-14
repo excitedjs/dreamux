@@ -3,6 +3,7 @@ import type {
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
   RuntimeAdmission,
+  RuntimeCompletion,
   RuntimeSubmission,
   TeammateInputNotice,
   TeammateRole,
@@ -60,7 +61,12 @@ import {
   type WorkflowTeammateSubmitInput,
 } from './service-types.js';
 import { renderSubmission, type TeammateSubmitInput } from './submission.js';
-import { asError, EntityTurn, type TurnAdmission } from './turn.js';
+import {
+  asError,
+  EntityTurn,
+  type TurnAdmission,
+  type TurnOutcome,
+} from './turn.js';
 import type { RunningLaunch } from './types.js';
 
 /** One canonical Agent entity and the sole owner of its live lifecycle. */
@@ -93,6 +99,11 @@ export class AgentService {
   private readonly ledgerKey: AgentEntityLedgerKey;
   private phase: EntityPhase = 'active';
   private readonly ordinaryMutations = new InFlightWork();
+  /** All reports outlive their input bindings and converge with this Agent. */
+  private readonly reports = new InFlightWork();
+  /** Retain the first unobserved report rejection until convergence, bounded to one. */
+  private reportFailure: Error | null = null;
+  private readonly nativeResultRecipient: CompletionInitiator | undefined;
   private lockToken: object | null = null;
   /**
    * The host stop converging what this entity already accepted.
@@ -134,6 +145,7 @@ export class AgentService {
       this.events.emit('state', identity),
     );
     this.role = options.role;
+    this.nativeResultRecipient = options.nativeResultRecipient;
     this.closed = new Promise<TeammateClosedFact>((resolve) => {
       this.resolveClosed = resolve;
     });
@@ -142,6 +154,7 @@ export class AgentService {
       dispatcherId,
       this.state,
       options,
+      this,
     );
   }
 
@@ -360,11 +373,7 @@ export class AgentService {
     } while (this.admissionContinuationTail !== tail);
   }
 
-  /**
-   * Prove every retained turn settled, then wait for whatever each one still
-   * delivers. Whether a turn delivers at all is the turn's own decision, made
-   * by querying its Agent owner when it settled.
-   */
+  /** Prove runtime stop selected every accepted input before releasing ownership. */
   private async convergeRetainedTurns(): Promise<void> {
     await Promise.resolve();
     const unsettled = [...this.retainedTurns].filter(
@@ -376,7 +385,13 @@ export class AgentService {
           `${this.current().name}: ${unsettled.map((turn) => turn.id).join(', ')}`,
       );
     }
-    for (const turn of [...this.retainedTurns]) await turn.ensureDelivery();
+  }
+
+  private async convergeReports(): Promise<void> {
+    await this.reports.drain();
+    const failure = this.reportFailure;
+    this.reportFailure = null;
+    if (failure !== null) throw failure;
   }
 
   private enqueueAdmissionContinuation<T>(task: () => Promise<T>): Promise<T> {
@@ -388,30 +403,87 @@ export class AgentService {
     return continuation;
   }
 
-  /** Read at settlement; owner teardown permanently suppresses an unstarted delivery. */
-  owesCompletion(): boolean {
+  /** Native publication and requested settlement each read their own eligibility. */
+  private owesCompletion(): boolean {
     return this.phase === 'active' && this.hostStop === null;
+  }
+
+  observeRuntimeResult(completion: RuntimeCompletion): void {
+    this.reportOutcome(
+      this.nativeResultRecipient ?? null,
+      completion,
+      completion,
+    );
+  }
+
+  /** The sole notification owner, shared by native observation and request replies. */
+  private reportOutcome(
+    recipient: CompletionInitiator | null,
+    completion: RuntimeCompletion | null,
+    outcome: TurnOutcome | RuntimeCompletion,
+  ): void {
+    if (recipient === null || !this.owesCompletion()) return;
+    let delivery: Promise<void>;
+    try {
+      delivery = this.deps.completionDelivery.deliverRuntime(
+        recipient,
+        completion,
+        {
+          kind: 'teammate',
+          source: this.name,
+          role: this.role,
+          status: outcome.status,
+          result: outcome.status === 'completed' ? outcome.resultText : null,
+        },
+      );
+    } catch (error) {
+      this.reportFailure ??= asError(error);
+      return;
+    }
+    // A report can reject after its accepted input has already retired. Keep
+    // that failure with the Agent, and record it before leaving the work set.
+    this.reports.track(
+      delivery.catch((error: unknown) => {
+        this.reportFailure ??= asError(error);
+      }),
+    );
   }
 
   private attachSubmission(
     submission: RuntimeSubmission,
     completionRecipient: CompletionInitiator | null,
   ): EntityTurn {
-    const turn = new EntityTurn(
-      submission,
-      this.current().name,
-      this.role,
-      completionRecipient,
-      this,
-      this.deps.completionDelivery,
-    );
+    const turn = new EntityTurn();
     this.retainedTurns.add(turn);
-    void turn
-      .ensureDelivery()
-      .finally(() => {
+    void submission.settled.then(
+      (settlement) => {
+        const completion =
+          settlement.kind === 'completion' ? settlement.completion : null;
+        const outcome: TurnOutcome =
+          settlement.kind === 'completion'
+            ? settlement.completion.status === 'completed'
+              ? {
+                  status: 'completed',
+                  resultText: settlement.completion.resultText,
+                }
+              : { status: 'failed', error: settlement.completion.error }
+            : settlement.kind === 'failed'
+              ? { status: 'failed', error: settlement.error }
+              : { status: 'stopped' };
+        turn.settle(outcome);
         this.retainedTurns.delete(turn);
-      })
-      .catch(() => undefined);
+        this.reportOutcome(completionRecipient, completion, outcome);
+      },
+      (error: unknown) => {
+        const outcome: TurnOutcome = {
+          status: 'failed',
+          error: asError(error),
+        };
+        turn.settle(outcome);
+        this.retainedTurns.delete(turn);
+        this.reportOutcome(completionRecipient, null, outcome);
+      },
+    );
     return turn;
   }
 
@@ -541,7 +613,7 @@ export class AgentService {
     if (this.phase !== 'active') return Promise.resolve();
     if (this.hostStop !== null) return this.hostStop;
     const task = Promise.resolve()
-      .then(() => this.releaseHostRuntime())
+      .then(() => this.convergeRuntimeWork())
       .finally(() => {
         this.hostStop = null;
       });
@@ -549,7 +621,7 @@ export class AgentService {
     return task;
   }
 
-  private async releaseHostRuntime(): Promise<void> {
+  private async convergeRuntimeWork(): Promise<void> {
     // A lock is not consulted: an entity a Workflow still holds would
     // otherwise keep a live native runtime past process exit, and the
     // Workflow owner has already been stopped by the same sweep.
@@ -565,9 +637,11 @@ export class AgentService {
     await this.drainAdmissions();
     await this.ordinaryMutations.drain();
     await collectShutdownFailure(failures, () => this.convergeRetainedTurns());
+    await collectShutdownFailure(failures, () => this.convergeReports());
     throwShutdownFailures(
       failures,
-      `${agentRoleNoun(this.role, this.name)} did not converge during host stop`,
+      `${agentRoleNoun(this.role, this.name)} did not converge during runtime release: ` +
+        failures.map((error) => asError(error).message).join('; '),
     );
   }
 
@@ -766,10 +840,7 @@ export class AgentService {
     closeNote: string,
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
-    await this.runtimeGeneration.stopRuntime();
-    await this.drainAdmissions();
-    await this.ordinaryMutations.drain();
-    await this.convergeRetainedTurns();
+    await this.convergeRuntimeWork();
 
     const identity = this.current();
     const shouldCleanup =

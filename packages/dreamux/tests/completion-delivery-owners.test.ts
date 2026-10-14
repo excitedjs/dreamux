@@ -12,7 +12,7 @@ describe('completion ownership at actual Command and MCP callers', () => {
     '%s states the waiting owner: both Command adapters omit pushback and MCP delivers it',
     async (operation) => {
       const harness = await createCommandHarness();
-      const ready = await harness.dispatcher.submitToAgent({
+      const ready = await harness.dispatcher.submitInput({
         source: 'channel',
         text: 'be ready for results',
       });
@@ -107,7 +107,7 @@ describe('completion ownership at actual Command and MCP callers', () => {
 
 it('real completion delivery uses the ordinary dispatcher input projection and task-notification envelope', async () => {
   const harness = await createCommandHarness();
-  const admission = await harness.dispatcher.submitToAgent({
+  const admission = await harness.dispatcher.submitInput({
     source: 'channel',
     text: 'ready',
   });

@@ -244,6 +244,8 @@ export class DispatcherService implements Dispatcher {
       // These TeamMates are the dispatcher's own, so their completions go to
       // the dispatcher's Agent. Ownership decides the recipient.
       completionOwner: this.dispatcherAgent,
+      messagingOwner: this,
+      mcp: { leases: opts.mcpLeases, adminSocketPath: adminSocket },
       fence: this.fence,
       teammateLaunch: this.hooks.teammateLaunch,
       log: opts.log,
@@ -350,12 +352,21 @@ export class DispatcherService implements Dispatcher {
   }
 
   /** Submit one turn to this dispatcher's own agent, as its caller stated it. */
-  submitToAgent(
+  submitInput(
     input: Omit<TeammateSubmitInput, 'completionRecipient'>,
   ): Promise<TurnAdmission> {
     return this.fence.admit(() =>
       this.dispatcherAgent.mustAgent().submitInput(input),
     );
+  }
+
+  memberOwner(): { name: string; role: string; status: string } {
+    const agent = this.dispatcherAgent.mustAgent();
+    return {
+      name: agent.name,
+      role: 'Dispatcher agent',
+      status: agent.status().status,
+    };
   }
 
   /** Interrupt this dispatcher's own agent. */

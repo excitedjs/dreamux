@@ -129,6 +129,7 @@ export async function liveCodexProvider() {
           updates.push(update);
         },
       },
+      results: () => undefined,
       activity: (activity) => {
         activities.push(activity);
       },

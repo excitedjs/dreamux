@@ -77,6 +77,7 @@ export function createClaudeCodeAgentRuntimeProvider(): AgentRuntimeProvider<Dis
         cwd: context.cwd,
         state: context.state,
         activitySink: context.activity,
+        resultSink: context.results,
         paths: context.paths,
         mcpServers: context.mcpServers,
         skillSources: context.skillSources,

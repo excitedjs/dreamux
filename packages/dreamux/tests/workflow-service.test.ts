@@ -127,7 +127,7 @@ async function workflowFixture(activate = true) {
     throw new Error('expected real WorkflowService');
   if (activate) {
     await f.host.start();
-    const ready = await f.host.submitToAgent({
+    const ready = await f.host.submitInput({
       source: 'channel',
       text: 'fixture-ready',
     });

@@ -122,6 +122,7 @@ class FakeSession implements ClaudeCodeSession {
       }),
       {
         sessionId: spec.sessionId,
+        results: spec.results,
         outputSchemaEnabled: spec.outputSchemaEnabled,
         turnTimeoutMs: spec.turnTimeoutMs,
         reapOnTimeout: (error) => this.fail(error),
@@ -276,6 +277,7 @@ class Harness {
       paths: this.paths,
       state: this.state,
       logger,
+      results: () => undefined,
       activity: (activity) => {
         if (activity.kind === 'turn.ended') this.nativeEnds.push(activity);
       },

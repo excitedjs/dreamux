@@ -50,6 +50,7 @@ export function teamRequest(id = 'request-one', prompt?: string) {
 export async function dispatcherFixture(
   options: {
     channel?: boolean;
+    provider?: ControlledRuntimeProvider;
     restartNotice?: string;
     channelOptions?: Parameters<typeof createFakeChannelProvider>[0];
   } = {},
@@ -59,7 +60,7 @@ export async function dispatcherFixture(
   await mkdir(cwd);
   vi.stubEnv('DREAMUX_ROOT', join(base, 'state'));
   const log = createLogger({ destination: { write() {} } });
-  const provider = new ControlledRuntimeProvider();
+  const provider = options.provider ?? new ControlledRuntimeProvider();
   const registry = new ProviderRegistry();
   registry.register(
     {
@@ -114,6 +115,7 @@ export async function dispatcherFixture(
   });
   const hosts: DispatcherService[] = [];
   const releases: Array<() => void> = [];
+  const mcpLeases = new McpLeaseRegistry(log);
   const build = () => {
     const host = new DispatcherService({
       id: dispatcher.id,
@@ -121,7 +123,7 @@ export async function dispatcherFixture(
       config: { current: () => config },
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
       channelProviders: new ChannelProviderCatalog({ registry }),
-      mcpLeases: new McpLeaseRegistry(log),
+      mcpLeases,
       restartIntent,
       commands: new CoreCommands([]),
       homePathPrefixes: [],
@@ -149,6 +151,7 @@ export async function dispatcherFixture(
     ...initial,
     log,
     provider,
+    mcpLeases,
     channel,
     build,
     releases,

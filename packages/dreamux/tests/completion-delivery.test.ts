@@ -65,7 +65,7 @@ describe('deliverCompletion is a Core-only callback, never part of the model env
       submit: async () => ({ status: 'accepted' as const }),
     }));
     const completionRecipient: CompletionInitiator = { prepareCompletion };
-    const body = 'TeamMate worker has finished its task. Output below:\n\ndone';
+    const body = 'TeamMate worker completed a turn. Output below:\n\ndone';
 
     const withCallback: TeammateSubmitInput = {
       source: COMPLETION_SOURCE,

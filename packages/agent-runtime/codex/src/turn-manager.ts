@@ -16,6 +16,7 @@ import { toolDisplay } from './tool-display.js';
 import type { ThreadItem, ThreadTokenUsage } from './types.js';
 import type {
   AgentRuntimeActivitySink,
+  AgentRuntimeResultSink,
   AgentRuntimeInterruptOutcome,
   AgentRuntimeSubmissionInput,
   DreamuxLogger,
@@ -33,10 +34,8 @@ interface SubmissionDeferred {
 }
 
 interface NativeTurnRecord {
-  representative: RuntimeSubmission | null;
   members: SubmissionDeferred[];
   completion: RuntimeCompletion | null;
-  terminal: CollectedTurn | Error | null;
   releaseAfterAdmissions: Set<number> | null;
 }
 
@@ -51,6 +50,7 @@ export interface TurnManagerOptions {
   codec: CodexOutputSchemaCodec | null;
   reasoning: CodexReasoningEffort;
   activitySink: AgentRuntimeActivitySink;
+  resultSink?: AgentRuntimeResultSink | undefined;
   logger: DreamuxLogger;
 }
 
@@ -59,8 +59,6 @@ export class TurnManager {
   private readonly inFlightNativeAdmissions = new Set<number>();
   private nextNativeAdmission = 0;
   private readonly nativeTurns = new Map<string, NativeTurnRecord>();
-  private readonly unboundObservedTurnIds = new Set<string>();
-  private readonly terminalOrder: string[] = [];
   private protocolFailure: Error | null = null;
   private collector: TurnCollector | null = null;
   private tokenUsage: ThreadTokenUsage | null = null;
@@ -83,10 +81,7 @@ export class TurnManager {
       if (this.stopped) return { status: 'idle' };
       const active = [...this.nativeTurns]
         .reverse()
-        .find(
-          ([, record]) =>
-            record.terminal === null && record.completion === null,
-        );
+        .find(([, record]) => record.completion === null);
       const threadId = this.opts.threadId;
       if (active === undefined) return { status: 'idle' };
       await interruptTurn(this.opts.client, threadId, active[0]);
@@ -105,7 +100,6 @@ export class TurnManager {
     // asking whether a turn was open. The manager keeps no such answer; a
     // consumer with nothing open ignores the end.
     this.endNativeTurn('interrupted', null);
-    this.drainTerminalOrder();
     for (const record of this.nativeTurns.values()) {
       if (record.completion !== null) continue;
       for (const member of record.members) member.settle({ kind: 'stopped' });
@@ -113,8 +107,6 @@ export class TurnManager {
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion === null) this.nativeTurns.delete(turnId);
     }
-    this.terminalOrder.length = 0;
-    this.unboundObservedTurnIds.clear();
   }
 
   private async submit(
@@ -155,21 +147,11 @@ export class TurnManager {
       );
       this.inFlightNativeAdmissions.delete(admissionId);
       this.releaseCompletedRecords(admissionId);
-      this.releaseOrphanTurnsIfIdle();
       return { status: 'ambiguous', error: normalized };
     }
-    const observed = this.nativeTurns.get(response.turn.id);
-    if (
-      this.stopped &&
-      (observed === undefined || observed.terminal === null)
-    ) {
-      deferred.settle({ kind: 'stopped' });
-    } else {
-      this.bindSubmission(response.turn.id, deferred);
-    }
+    this.bindSubmission(response.turn.id, deferred);
     this.inFlightNativeAdmissions.delete(admissionId);
     this.releaseCompletedRecords(admissionId);
-    this.releaseOrphanTurnsIfIdle();
     return { status: 'submitted', submission: deferred.submission };
   }
 
@@ -197,10 +179,10 @@ export class TurnManager {
         onTokenUsage: (usage) => {
           this.tokenUsage = usage ?? null;
         },
-        onItemStarted: (turnId, item) =>
-          this.observeItem(turnId, item, 'started', Date.now()),
-        onItemCompleted: (turnId, item, occurredAt) =>
-          this.observeItem(turnId, item, 'completed', occurredAt),
+        onItemStarted: (_turnId, item) =>
+          this.observeItem(item, 'started', Date.now()),
+        onItemCompleted: (_turnId, item, occurredAt) =>
+          this.observeItem(item, 'completed', occurredAt),
         onTerminal: (turnId, terminal) =>
           this.observeTerminal(turnId, terminal),
         onUnscopedFailure: (error) => this.failProtocol(error),
@@ -209,24 +191,28 @@ export class TurnManager {
   }
 
   private bindSubmission(turnId: string, deferred: SubmissionDeferred): void {
-    this.unboundObservedTurnIds.delete(turnId);
-    const record = this.nativeTurns.get(turnId) ?? {
-      representative: null,
-      members: [],
-      completion: null,
-      terminal: null,
-      releaseAfterAdmissions: null,
-    };
-    record.representative ??= deferred.submission;
-    if (record.completion === null) record.members.push(deferred);
-    this.nativeTurns.set(turnId, record);
-    if (this.protocolFailure !== null) {
-      this.failRecord(turnId, record, this.protocolFailure);
+    const selected = this.nativeTurns.get(turnId)?.completion;
+    // The native answer may precede admission, failure or stop. Its retained C
+    // remains the input's answer; later connection loss cannot erase it.
+    if (selected != null) {
+      deferred.settle({ kind: 'completion', completion: selected });
       return;
     }
-    if (record.completion !== null)
-      deferred.settle({ kind: 'completion', completion: record.completion });
-    this.drainTerminalOrder();
+    if (this.stopped) {
+      deferred.settle({ kind: 'stopped' });
+      return;
+    }
+    if (this.protocolFailure !== null) {
+      deferred.settle({ kind: 'failed', error: this.protocolFailure });
+      return;
+    }
+    const record = this.nativeTurns.get(turnId) ?? {
+      members: [],
+      completion: null,
+      releaseAfterAdmissions: null,
+    };
+    record.members.push(deferred);
+    this.nativeTurns.set(turnId, record);
   }
 
   private observeTerminal(
@@ -250,9 +236,8 @@ export class TurnManager {
     if (usage !== null) this.emitActivity(usage);
     // The display line ends here, on codex's own terminal. The collector
     // reports each turn's terminal once, so this is the one end the turn gets
-    // from its stream: nothing below it — the record's own bookkeeping, the
-    // terminal queue, the admissions gate, the completion the push-back line
-    // builds out of this terminal — may change it, delay it, or withhold it.
+    // from its stream: input association and result restoration below must not
+    // change it, delay it, or withhold it.
     this.endNativeTurn(
       terminal instanceof Error
         ? 'failed'
@@ -261,81 +246,23 @@ export class TurnManager {
           : 'completed',
       terminal instanceof Error ? terminal.message : null,
     );
-    this.unboundObservedTurnIds.delete(turnId);
     const record = this.nativeTurns.get(turnId) ?? {
-      representative: null,
       members: [],
       completion: null,
-      terminal: null,
       releaseAfterAdmissions: null,
     };
-    if (record.terminal !== null || record.completion !== null) return;
-    record.terminal = terminal;
+    if (record.completion !== null) return;
     record.releaseAfterAdmissions = new Set(this.inFlightNativeAdmissions);
     this.nativeTurns.set(turnId, record);
-    this.terminalOrder.push(turnId);
-    this.drainTerminalOrder();
-  }
-
-  private drainTerminalOrder(): void {
-    while (this.terminalOrder.length > 0) {
-      const turnId = this.terminalOrder[0]!;
-      const record = this.nativeTurns.get(turnId);
-      if (record === undefined || record.terminal === null) return;
-      if (record.representative === null) {
-        if (this.pendingAdmissions.size > 0) return;
-        // Nothing to settle and no completion to describe, so this queue head
-        // is only released. Its end went out when codex reported the terminal.
-        this.terminalOrder.shift();
-        this.nativeTurns.delete(turnId);
-        this.unboundObservedTurnIds.delete(turnId);
-        this.collector?.releaseTurn(turnId);
-        continue;
-      }
-      this.terminalOrder.shift();
-      this.finalize(turnId, record, record.terminal);
-    }
-  }
-
-  private finalize(
-    turnId: string,
-    record: NativeTurnRecord,
-    terminal: CollectedTurn | Error,
-  ): void {
-    if (record.completion !== null) return;
-    // Push-back only, and it decides nothing the card shows: an unbound turn
-    // has no submission to settle, so `drainTerminalOrder` releases it instead
-    // of routing it here.
-    if (record.representative === null) return;
-    let completion: RuntimeCompletion;
-    if (terminal instanceof Error) {
-      completion = Object.freeze({ status: 'failed', error: terminal });
-    } else {
-      const codec = this.opts.codec;
-      let completedTurn = terminal;
-      try {
-        if (codec !== null)
-          completedTurn = restoreCollectedTurn(terminal, codec);
-      } catch (error) {
-        completion = Object.freeze({ status: 'failed', error: asError(error) });
-        record.completion = completion;
-        for (const member of record.members)
-          member.settle({ kind: 'completion', completion });
-        record.members.length = 0;
-        record.terminal = null;
-        this.releaseRecordIfReady(turnId, record);
-        return;
-      }
-      completion = Object.freeze({
-        status: 'completed',
-        resultText: extractAssistantText(completedTurn),
-      });
-    }
+    const completion = completionFromTerminal(terminal, this.opts.codec);
     record.completion = completion;
+    // Interrupted terminals retain their existing partial-output settlements,
+    // but never publish a new native result (bound or unbound).
+    if (terminal instanceof Error || terminal.status !== 'interrupted')
+      this.opts.resultSink?.(completion);
     for (const member of record.members)
       member.settle({ kind: 'completion', completion });
     record.members.length = 0;
-    record.terminal = null;
     this.releaseRecordIfReady(turnId, record);
   }
 
@@ -348,7 +275,6 @@ export class TurnManager {
     // below to reach. The first failure reports that end; later ones repeat
     // the same dead connection.
     if (first) this.endNativeTurn('failed', this.protocolFailure.message);
-    this.terminalOrder.length = 0;
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion !== null) continue;
       this.failRecord(turnId, record, this.protocolFailure);
@@ -364,7 +290,6 @@ export class TurnManager {
       member.settle({ kind: 'failed', error });
     record.members.length = 0;
     this.nativeTurns.delete(turnId);
-    this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
   }
 
@@ -382,18 +307,7 @@ export class TurnManager {
     )
       return;
     this.nativeTurns.delete(turnId);
-    this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
-  }
-
-  /** Let the collector forget a native turn no Dreamux submission ever bound. */
-  private releaseOrphanTurnsIfIdle(): void {
-    if (this.inFlightNativeAdmissions.size !== 0) return;
-    for (const turnId of this.unboundObservedTurnIds) {
-      if (this.nativeTurns.has(turnId)) continue;
-      this.collector?.releaseTurn(turnId);
-    }
-    this.unboundObservedTurnIds.clear();
   }
 
   /**
@@ -406,18 +320,12 @@ export class TurnManager {
    * and it is known before any submission binds.
    */
   private observeItem(
-    turnId: string,
     item: ThreadItem,
     phase: 'started' | 'completed',
     occurredAt: number,
   ): void {
     const activity = itemActivity(item, phase, occurredAt);
     if (activity !== null) this.emitActivity(activity);
-    const record = this.nativeTurns.get(turnId);
-    if (record !== undefined && record.representative !== null) return;
-    this.unboundObservedTurnIds.add(turnId);
-    if (this.inFlightNativeAdmissions.size === 0)
-      this.releaseOrphanTurnsIfIdle();
   }
 
   /** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
@@ -461,10 +369,26 @@ export class TurnManager {
     void admission
       .finally(() => {
         this.pendingAdmissions.delete(admission);
-        this.drainTerminalOrder();
       })
       .catch(() => undefined);
     return admission;
+  }
+}
+
+function completionFromTerminal(
+  terminal: CollectedTurn | Error,
+  codec: CodexOutputSchemaCodec | null,
+): RuntimeCompletion {
+  try {
+    if (terminal instanceof Error) throw terminal;
+    const turn =
+      codec === null ? terminal : restoreCollectedTurn(terminal, codec);
+    return Object.freeze({
+      status: 'completed',
+      resultText: extractAssistantText(turn),
+    });
+  } catch (error) {
+    return Object.freeze({ status: 'failed', error: asError(error) });
   }
 }
 

@@ -55,7 +55,7 @@ the Team.
   (`ChannelService`), `readonly scheduler` (`SchedulerCommands`), and
   `readonly dispatcherAgent` (`DispatcherAgent`) are exposed directly, and
   every caller (Commands, MCP delegates) reaches the owning port itself
-  instead of a forwarding method per verb — `submitToAgent`/`interruptAgent`
+  instead of a forwarding method per verb — `submitInput`/`interruptAgent`
   compose the dispatcher's own admission around `dispatcherAgent.mustAgent()`
   rather than hiding it behind a private accessor, and the read-only
   `dispatcherAgent.status()` (`dispatchers/index.ts`'s `summarize`/`status`)
@@ -277,8 +277,9 @@ the Team.
   Each emitter belongs to that store/Agent graph; no global subscription retains
   retired instances or changes Channel event demand.
 
-  Submissions carry a recipient value. At settlement `EntityTurn` queries its
-  Agent owner's `owesCompletion` and calls the bound policy. Workflow holds a
+  Submissions carry a recipient value. `AgentService` observes their selected
+  settlements, reads eligibility and enters the completion policy in that reaction.
+  `EntityTurn` keeps only the receipt ID, selected outcome and settled Promise. Workflow holds a
   nullable recipient with its existing stop reservation rule. Dispatcher
   recipients are queried from the holder at the original call site, so a
   disabled dispatcher still fails before a child can run without a recipient. `channel-submission.ts` (the
@@ -297,6 +298,26 @@ the Team.
   schema and field meanings. `completion-router/` keeps no Turn registry or
   terminal cache; it reads the dispatcher fence before queueing delivery and
   never retracts a delivery already queued.
+
+  Ordinary-member communication is shared by both owner compositions:
+  `agent/mcp.ts` holds the member send/list catalog over a structural view of the
+  actual Team/Dispatcher service. Each owner lazily describes its contained
+  conversational agent and exposes its existing fenced `submitInput`; the
+  collection resolves peers and binds sender attributes. Ordinary construction
+  installs tools and a stable native-report recipient; locked Workflow
+  construction installs neither. `RuntimeGeneration` leases the neutral result
+  sink and invokes its Agent owner directly. `AgentService` queues observed
+  normal/failed native results immediately through the existing completion
+  policy. It owns both native and requested report mapping and one `InFlightWork`
+  set for all started reports, independent of retiring accepted-input records.
+  Close/host stop proves accepted inputs selected an outcome and joins reports,
+  surfacing an owned report rejection even after its input retired. Native
+  eligibility is selected at publication; requested eligibility and aggregate
+  policy queue entry at settlement reaction, removing the old extra Promise hop.
+  Bound settlement folds with that same completion object. Managed leaders have
+  only explicit request reply recipients; no member report recurses upstream. Activity remains
+  display-only, owner roles retain their existing reporting scope, and no state
+  or configuration schema changes.
 
 - **`worktree/`** — `WorktreeManager` (default work dir, reuse-cwd, and managed
   modes), workspace resolution, and the repository-request reader that says

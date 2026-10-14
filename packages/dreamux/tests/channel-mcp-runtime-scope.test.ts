@@ -17,7 +17,7 @@ it('injects Channel MCP only into actual Dispatcher and TeamLeader runtime conte
     },
   });
   await f.host.start();
-  await f.host.submitToAgent({ source: 'channel', text: 'dispatcher work' });
+  await f.host.submitInput({ source: 'channel', text: 'dispatcher work' });
   const created = await f.teams.createFromRequest(
     teamRequest('scoped-tools', 'leader work'),
   );

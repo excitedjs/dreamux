@@ -147,7 +147,7 @@ describe('the real conversation projection presents a dispatcher completion deli
       {
         source: COMPLETION_SOURCE,
         sourceId: null,
-        text: 'TeamMate worker has finished its task.',
+        text: 'TeamMate worker completed a turn.',
         notice: { kind: 'teammate_completion', producer: 'worker' },
         occurredAt: Date.now(),
       },
@@ -205,7 +205,7 @@ describe('the real conversation projection presents a dispatcher completion deli
       {
         source: COMPLETION_SOURCE,
         sourceId: null,
-        text: 'TeamMate worker has finished its task.',
+        text: 'TeamMate worker completed a turn.',
         notice: { kind: 'teammate_completion', producer: 'worker' },
         occurredAt: Date.now(),
       },
@@ -226,7 +226,7 @@ it('a turn still projects submitted/settled facts to a well-behaved sibling list
     throw new Error('hostile asynchronous listener');
   });
   try {
-    const result = await f.host.submitToAgent({
+    const result = await f.host.submitInput({
       source: 'channel',
       text: 'visible work',
       sourceId: 'hostile-listener-test',

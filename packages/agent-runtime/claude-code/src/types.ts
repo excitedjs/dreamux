@@ -3,7 +3,11 @@
  *
  * These are data contracts only: no IO, no process spawning, no timers.
  */
-import type { DreamuxLogger, RuntimeAdmission } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeResultSink,
+  DreamuxLogger,
+  RuntimeAdmission,
+} from '@excitedjs/dreamux-types';
 
 /** A parsed JSON object. */
 export type JsonObject = Record<string, unknown>;
@@ -153,6 +157,7 @@ export interface ClaudeCodeSessionSpec {
   stderrLogPath: string;
   /** Pinned native identity and result contract for requests sent to this session. */
   sessionId: string;
+  results?: AgentRuntimeResultSink | undefined;
   outputSchemaEnabled?: boolean;
   /**
    * Maximum idle interval (ms) while submitted requests await settlement. Every

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Enable scoped owner and peer messaging with ordered native result reports for ordinary members. Centralize Core reporting in AgentService, preserve request-only managed-leader replies, and make result observation optional for host compatibility.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -6,7 +6,7 @@ import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
 it('retains a late-attached Turn during actual Agent close until settlement, without reporting it', async () => {
   const f = await dispatcherFixture();
   await f.host.start();
-  const ready = await f.host.submitToAgent({
+  const ready = await f.host.submitInput({
     source: 'channel',
     text: 'fixture-ready',
   });

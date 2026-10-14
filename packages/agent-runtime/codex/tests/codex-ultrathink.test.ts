@@ -47,6 +47,7 @@ function createRuntime(
     {
       cwd: '/fake/cwd',
       state: noopStateSink(),
+      resultSink: () => undefined,
       activitySink: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
