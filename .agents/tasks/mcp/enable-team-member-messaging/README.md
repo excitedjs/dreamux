@@ -90,7 +90,7 @@ were restored byte-for-byte before implementation resumed.
 
 ## Delivery
 
-- Delivery target: A public GitHub pull request to next; GitHub owns its status.
+- Pull request: [#475](https://github.com/excitedjs/dreamux/pull/475), targeting next; GitHub owns its review, CI and merge status.
 - Verification: [Current evidence](/.agents/tasks/mcp/enable-team-member-messaging/verification.md).
 - Independent review: [Source adjudication](/.agents/tasks/mcp/enable-team-member-messaging/review.md).
 - Knowledge closeout: Complete; product, provider-runtime, dispatcher-orchestration, service-topology, current-architecture and glossary owners were reconciled with the final reviewed implementation, including F1's barrier removal. Existing root routing already discovers the owning task/domain; no routing change was needed.

@@ -174,4 +174,8 @@ cache and private exercise/recovery artifacts. GitHub owns PR CI and merge statu
 
 Final KB validation passed: 56 task records and 384 reachable knowledge files.
 Working and staged diff checks passed. Complete staged public-content and gitleaks
-preflight passed; the commit uses the current worktree's canonical mandatory hook.
+preflight passed; the reviewed implementation commit passed the current worktree's
+canonical mandatory staged-ESLint, author, gitleaks and internal-content hook.
+The committed-branch Rush change verification against origin/next passed and
+discovered all four ordinary minor notes. Delivery is linked from task README;
+GitHub records the exact PR heads, check runs and eventual merge disposition.
