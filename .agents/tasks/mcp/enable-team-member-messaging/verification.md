@@ -302,3 +302,27 @@ related peers. This is a recorded usability limit, with no new filtering, cap
 or discovery contract selected in this change. No configuration, credentials
 or repositories were changed by the reported smoke; normal member creation
 and close used Dreamux's existing server-owned lifecycle records.
+
+## Lightweight member guidance follow-up (2026-10-14)
+
+The operator approved only the proposed three-sentence guidance and explicitly
+requested push plus a new alpha. The source diff replaces one sentence in the
+ordinary member prompt with that exact text. It adds no mandatory reporting
+frequency or end-of-turn send requirement. Routing, tools, automatic results and
+Workflow construction remain unchanged.
+
+- Rush build, lint, test and typecheck:tests passed with exit 0. The first
+  typecheck invocation was refused by Rush's repository lock while test was
+  running; the sequential rerun passed. No dependency changed, so update was
+  not repeated.
+- Existing provider-launch prompt and lifecycle tests were retained. No static
+  copy-only test was added. Built output contains the approved guidance.
+- Independent read-only review approved the complete source follow-up and its
+  generated Dreamux patch change note, checking both ordinary owner scopes and
+  the unchanged Workflow exclusion. Earlier full implementation reviews retain
+  their original targets.
+- The change was inspected against the operator's exact approved text; source
+  diff is one replacement. Public task/product records capture the bounded
+  authorization. No new live-model claim is made for this prompt change.
+
+The subsequent feature-branch alpha release is recorded below after publication.

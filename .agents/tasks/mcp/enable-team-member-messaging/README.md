@@ -151,6 +151,27 @@ two records' closed state and runtimes. Reported inbound/push evidence and the
 large historical-roster discovery spill are retained separately in
 verification.md; they do not erase the isolated Codex/Dispatcher timeouts.
 
+## Authorized lightweight guidance follow-up (2026-10-14)
+
+After comparing local Codex and DeepSeek Harness model-facing guidance, the
+TeamLeader proposed replacing the ordinary member's tool-availability sentence
+with three short sentences about useful findings, peer coordination, optional
+name discovery and continuing work after sending. The operator replied:
+
+> 够了，就做这一点就可以了。、
+
+English rendering: "That is enough; just make this one change."
+The operator then explicitly instructed:
+
+> 做一下，push 上去，然后发新的 alpha 包。
+
+English rendering: "Make the change, push it, then publish a new alpha package."
+This authorizes the stated prompt-only follow-up, its verification/records and
+feature-branch alpha publication. It does not authorize another installation,
+restart, merge or Team dissolution. The prior merge hold remains in force.
+The current product wording is recorded in the ordinary-member communication
+catalog; release and verification evidence belongs to verification.md.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

@@ -377,6 +377,9 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 - **Members can address their actual owner and peers.** Ordinary members of a
   Team and a Dispatcher's root collection receive `teammate.send` and `list`.
   `list` gives the concrete owner address and peers, including closed peers.
+  Member guidance invites useful findings and peer coordination while working,
+  suggests `list` when peer names are needed, and states that sending a message
+  does not end the sender's turn.
   Sender identity is host-bound; the model cannot forge it or address peers in
   another collection. Explicit messages reach only the target. Replies require
   an explicit send; a send receipt confirms admission. Sending to a closed peer
