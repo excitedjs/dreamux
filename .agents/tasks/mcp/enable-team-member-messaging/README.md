@@ -145,6 +145,12 @@ in its initial run, bounded retry and configured-model follow-up. Full outcomes
 and cleanup are recorded in verification.md; they are not represented as
 universal busy-input or all-matrix acceptance.
 
+The Dispatcher subsequently reported a separate passing actual root-collection
+Codex/DeepSeek owner/peer smoke on the same installed alpha. Root confirmed the
+two records' closed state and runtimes. Reported inbound/push evidence and the
+large historical-roster discovery spill are retained separately in
+verification.md; they do not erase the isolated Codex/Dispatcher timeouts.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

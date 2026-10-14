@@ -274,3 +274,31 @@ smoke actors were closed. No credential acquisition, operator config change,
 production source change or new model-backed fault-interleaving claim was made.
 The acceptance verdict is PASS for publication/install/restart and the requested
 managed-Team exchanges, PARTIAL for the isolated installed-artifact matrix.
+
+### Supplementary managed-Dispatcher evidence
+
+After the same installed-alpha restart, the Dispatcher reported an additional
+actual managed-service smoke with its own ordinary Codex and configured
+DeepSeek members. It reported four passing checks: both members proactively
+sent host-attributed messages to their Dispatcher owner; the members explicitly
+exchanged PING/PONG messages; both receiving turns confirmed the peer content
+beyond the admission receipts; and the Dispatcher received four automatic
+turn-result reports, including a peer-triggered follow-up.
+
+Root independently queried the two named records through the installed admin
+Command surface and confirmed their configured runtimes and closed state. The
+Dispatcher's direct inbound-message and notification observations are reported
+supplementary evidence, not events Root independently witnessed. This actual
+root-collection test supplements Root's managed-Team and isolated-artifact
+smokes; it does not replace them or turn their failed deadlines into passes.
+The same natural-background, failed-background and Workflow-live limits remain.
+
+The Dispatcher also observed discovery spilling a large historical peer roster
+to a tool-result file, requiring the models to filter that file. Source inspection
+confirmed the cause of that output scope: member `list` takes no query and
+returns the owner's entire collection, including closed peers, with only the
+caller excluded. Discovery worked, but the output is not limited to running or
+related peers. This is a recorded usability limit, with no new filtering, cap
+or discovery contract selected in this change. No configuration, credentials
+or repositories were changed by the reported smoke; normal member creation
+and close used Dreamux's existing server-owned lifecycle records.
