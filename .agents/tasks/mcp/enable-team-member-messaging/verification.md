@@ -389,3 +389,30 @@ remain separately appended in their existing order.
 - This corrected alpha has not been installed, restarted or live-model
   accepted. Earlier model evidence remains tied to its recorded artifact;
   it does not prove model behavior under this shorter prompt.
+
+## TeamLeader delegation clarification (2026-10-14)
+
+The operator explicitly scoped the follow-up to TeamLeader guidance. The only
+source change replaces the existing delegation paragraph in `team/leader.ts`:
+Dreamux `teammate.spawn` is distinct from native subagent delegation restrictions;
+native subagents follow runtime guidance; useful TeamMate delegation is proactive
+and prefers different models for complementary perspectives. Skill routing and
+the final operator identity remain in their existing positions.
+
+- Rush build, lint, test and typecheck:tests passed with exit 0. Dependencies did
+  not change, so update was not repeated. The default test run retained its
+  opt-in model exclusions; this follow-up adds no live-model behavior evidence.
+- Built output contains the new TeamLeader guidance. Existing launch-prompt,
+  tool-visibility and lifecycle tests passed without assertion changes; no
+  copy-only test was added for this text adjustment.
+- Independent DeepSeek read-only review found no blocking defect. It checked
+  the source paragraph, generated Dreamux patch note, actual spawn capability,
+  existing heterogeneity guidance and prompt assembly. It confirmed that
+  Dispatcher prompts, ordinary member communication, runtime interfaces and
+  the canceled inbound reply reminder remain unchanged.
+- Product and model-facing-writing records were reconciled with the bounded
+  operator ruling. No runtime mode override, model configuration, delegation
+  quota, mandatory role assignment or new tool was introduced.
+- These checks establish the delivered text and its scope. They do not show
+  that model delegation frequency or work quality increased. Earlier alpha
+  releases and live acceptance retain their original artifact provenance.

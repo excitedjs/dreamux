@@ -266,11 +266,16 @@ the same change that touches it.
 
 - **TeamLeaders are guided to delegate useful independent work.** Their launch
   prompt encourages TeamMate collaboration when it can save time or improve
-  quality, and directs them to `teamwork` when needed collaboration guidance
+  quality, preferring different models for complementary perspectives. It
+  distinguishes Dreamux TeamMate collaboration from native subagent delegation:
+  native delegation restrictions do not apply to `teammate.spawn`, while native
+  subagents follow their runtime's guidance. This clarification is TeamLeader-only.
+  The prompt directs them to `teamwork` when needed collaboration guidance
   is missing from their current context. A new turn or handoff does not itself
   require rereading the skill. The skill explains that a member's standing
   identity survives close/reopen and cannot be changed through `send`.
   (Decision: [2026-10-10 follow-up](../tasks/builtin-skills/guide-proactive-teamwork/requirement.md).)
+  (Clarification: [2026-10-14 TeamLeader follow-up](../tasks/mcp/enable-team-member-messaging/README.md#teamleader-delegation-clarification-2026-10-14).)
 
 - **Workspace isolation defaults to off.** Omitted dispatcher workspace policy
   uses `enabled: false`; explicit true/false values retain their meaning.

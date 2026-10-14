@@ -192,6 +192,32 @@ delivery boundary. Installation, restart, merge and Team dissolution remain
 outside this follow-up. Verification and release evidence belongs to
 verification.md; the earlier alpha records retain their original provenance.
 
+## TeamLeader delegation clarification (2026-10-14)
+
+After comparing Dreamux's delegation guidance with Codex's separate multi-agent
+mode instructions, the operator instructed:
+
+> dispatcher 不需要有这个委派的引导，只需要给teamleader 增加就可以了。你可以增加引导，让模型不要把 teammate 和原生的 不得主动 spawn subagent 混同。告诉模型，teammate 是 dreamux 的协作机制，不受到其他原生类 subagent 委派约束的限制。委派原生 subagent 仍要遵守 runtime 的指引，但可以不受限制，且应该尽量委派异构 teammate 来提升效率和工作完成质量。
+
+English rendering: "Only add this delegation guidance to the TeamLeader, not
+the Dispatcher. Distinguish Dreamux TeamMates from native subagents: native
+subagent delegation restrictions do not apply to Dreamux TeamMate collaboration.
+Native delegation still follows runtime guidance. Encourage heterogeneous
+TeamMates to improve efficiency and work quality."
+
+The bounded change updates the existing TeamLeader launch-prompt paragraph.
+It names `teammate.spawn` as the Dreamux mechanism, preserves runtime guidance
+for native subagents, and prefers different models when delegation can save
+time or improve quality. It does not remove user or repository constraints.
+Dispatcher guidance, ordinary member communication prompts, tool contracts,
+runtime interfaces and message rendering remain unchanged. The canceled inbound
+reply reminder remains absent.
+
+This is an operator-authorized prompt follow-up within the existing PR delivery
+and final-quality scope. Local verification and independent review are recorded
+in verification.md. It does not authorize installation, restart, merge or Team
+dissolution; the existing merge hold remains in force.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

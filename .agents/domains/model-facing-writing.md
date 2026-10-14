@@ -23,8 +23,9 @@ Current source owners:
 ## Design Principles
 
 - An identity statement says who the model is and what it has. The TeamLeader
-  additionally carries one sentence encouraging useful delegation and routing
-  missing collaboration guidance to `teamwork` (see Prompt Shape).
+  additionally carries brief guidance separating Dreamux TeamMate delegation
+  from native subagent rules, encouraging useful collaboration across different
+  models, and routing missing guidance to `teamwork` (see Prompt Shape).
 - A reminder states a consequence the model cannot see, at the moment of the
   action, and does not generally order the model what to do. The
   dispatch-result reminders (`spawn`/`send`/`team.create`/`team.send`/
@@ -173,8 +174,11 @@ Append prompts layer onto an already-capable runtime prompt, so they should be
 short role deltas rather than a full reintroduction.
 
 The TeamLeader append prompt names its identity, MCP servers, and workspace
-facts, then encourages delegation when it can save time or improve quality and
-routes missing collaboration guidance to `teamwork`. Guidance already in context
+facts, then distinguishes Dreamux TeamMate delegation from native subagent
+restrictions, preserves runtime guidance for native subagents, encourages useful
+delegation across different models, and routes missing collaboration guidance to
+`teamwork`. This distinction is a TeamLeader role delta, not a Dispatcher prompt
+change or a runtime policy override. Guidance already in context
 is reused; a new turn or tool call is not a reload trigger. The skill owns task
 decomposition, briefs, shared-workspace coordination, standing identity
 consequences, tool usage, and integration. MCP descriptions retain schemas and
