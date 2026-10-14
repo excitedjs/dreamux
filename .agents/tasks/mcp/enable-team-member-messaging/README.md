@@ -218,6 +218,19 @@ and final-quality scope. Local verification and independent review are recorded
 in verification.md. It does not authorize installation, restart, merge or Team
 dissolution; the existing merge hold remains in force.
 
+### TeamLeader guidance alpha authorization
+
+The operator then requested:
+
+> ok，发一个新的 alpha 包出来
+
+English rendering: "OK, publish a new alpha package."
+This authorizes feature-branch alpha publication of the verified TeamLeader
+guidance. It adds no installation, restart, merge or Team-dissolution authority.
+The [successful release](https://github.com/excitedjs/dreamux/actions/runs/38580702941)
+published `@excitedjs/dreamux@0.27.0-alpha.gde98b8d8ca88`; public registry and
+tarball verification are recorded in verification.md.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

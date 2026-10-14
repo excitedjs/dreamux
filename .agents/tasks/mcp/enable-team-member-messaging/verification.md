@@ -416,3 +416,23 @@ the final operator identity remain in their existing positions.
 - These checks establish the delivered text and its scope. They do not show
   that model delegation frequency or work quality increased. Earlier alpha
   releases and live acceptance retain their original artifact provenance.
+
+### TeamLeader guidance alpha publication
+
+- [Source CI](https://github.com/excitedjs/dreamux/actions/runs/38579368695)
+  passed all nine checks, including the Linux and macOS Rush jobs.
+- The operator-authorized [feature-branch release](https://github.com/excitedjs/dreamux/actions/runs/38580702941)
+  succeeded and published `@excitedjs/dreamux@0.27.0-alpha.gde98b8d8ca88`.
+  Build, pack/manifest/public-content audit and OIDC publication passed. The
+  stable version and publish jobs were skipped; no source version commit or
+  release tag was made.
+- Root fetched fixed-version public npm metadata, downloaded its tarball and
+  verified SHA-512 integrity against the registry. The package name/version
+  and rewritten workspace dependencies were verified. Compiled TeamLeader
+  output contains the exact approved guidance and omits the replaced paragraph.
+- The alpha dist-tag points to this version. Before/after snapshots confirmed
+  that latest remained `0.26.0` and beta remained `0.27.0-beta.277`.
+- This follow-up publishes the package only. It has not been installed,
+  restarted or live-model accepted by this Team. No new delegation-frequency
+  or work-quality claim is made; earlier alpha acceptance retains its recorded
+  artifact provenance. PR #475 remains subject to the existing merge hold.
