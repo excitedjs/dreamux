@@ -112,6 +112,39 @@ Its nonblocking terminology comment is handled under the previously delegated
 quality/correction scope, without changing product behavior or inferring merge
 permission.
 
+## Operator pre-merge alpha acceptance (2026-10-14)
+
+In response to the merge-authorization card, the operator stated:
+
+> 先发一个 alpha 包出来，自己更新一下，然后重启测试一下
+
+English rendering: "First publish an alpha package, update the local installation,
+then restart and test it." The operator then said "开始吧" ("Start"). This
+authorizes the feature-branch alpha release, updating the managed installation,
+notification restart and live acceptance. It grants no merge or Team-dissolution
+authority; the preceding merge hold remains in force.
+
+The operator additionally requested:
+
+> 测一遍，拉 deepseek、codex ，让他们主动 send 你，然后互相 send 测试一下。
+
+English rendering: "Run a test: bring in DeepSeek and Codex, have them proactively
+send to you, then send to each other." This adds an actual managed-Team
+reciprocal-message acceptance check within the already authorized live testing.
+Both configured members completed owner-directed messages and both peer
+PING/explicit-ACK directions; the actual TeamLeader notification receipts are
+recorded in verification.md.
+
+The reviewed alpha source and release are recorded by the [successful release
+run](https://github.com/excitedjs/dreamux/actions/runs/38530361815). Published and
+installed artifact: `@excitedjs/dreamux@0.27.0-alpha.ga706555cedee`. Independent
+post-restart service/doctor checks and the requested actual Codex/DeepSeek owner
+and reciprocal-peer exchanges passed. The isolated installed-artifact matrix
+is partial: three combinations passed; Codex/Dispatcher confirmation timed out
+in its initial run, bounded retry and configured-model follow-up. Full outcomes
+and cleanup are recorded in verification.md; they are not represented as
+universal busy-input or all-matrix acceptance.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

@@ -187,3 +187,90 @@ with six opt-in model cases excluded. No test or change note was added, no
 dependencies changed, and no live-model evidence was rerun or reclassified.
 Root verified that the executable diff is unchanged. External approval and the
 operator's separate decision withholding merge authority are linked in the task.
+
+## Published alpha and managed restart acceptance (2026-10-14)
+
+The operator authorized an alpha publish, local upgrade, restart and testing
+through the merge-card response quoted in task README. This is acceptance
+authority, not merge authority. The [feature-branch release run](https://github.com/excitedjs/dreamux/actions/runs/38530361815)
+succeeded from the reviewed PR head and audited tarballs before OIDC upload.
+Registry metadata and the installed CLI both report
+`@excitedjs/dreamux@0.27.0-alpha.ga706555cedee`. The matching installed types,
+Codex and Claude-Code packages are respectively
+`0.12.0-alpha.ga706555cedee`, `0.8.0-alpha.ga706555cedee` and
+`0.9.0-alpha.ga706555cedee`; these are installed artifacts, not source-build
+substitutes.
+
+The existing managed installation was upgraded from `0.27.0-beta.276` using
+its same Node/npm prefix. Initial global-install attempts returned ETARGET
+because the global registry differed from the project's public registry. An
+explicit public-registry command succeeded; no global registry or operator
+config was changed. The target changelog was read: it records stable entries
+through `0.26.0` rather than an alpha entry. This feature selects no persisted
+state/config migration, and none was performed.
+
+Pre-restart and independently repeated post-restart doctor each returned
+`ok=true`, 33 checks and no failures. The notification restart injected its
+actual `Restart completed.` notice into the resumed Dispatcher, which handed
+acceptance back to the existing TeamLeader. Root independently confirmed a
+changed daemon PID, active/running and enabled user service, a ready Dispatcher
+and the installed target version. This is managed-service restart evidence;
+installation alone was not treated as restart success. The original config
+content hash remained unchanged.
+
+The resumed managed Team also ran a new ordinary Codex member using the actual
+installed daemon. It called member `list` and `send` to the discovered owner;
+the TeamLeader received both the member-addressed task with the host-bound
+sender and its automatic final turn-result notification. This evidence is the
+actual pushed input/notification, not an activity read. The smoke member was
+closed after its completion.
+
+The operator then explicitly requested Codex and DeepSeek owner/peer testing.
+Two new members in this same managed Team each discovered the owner with the
+member `list` tool and proactively sent it a uniquely marked message. Root
+received both host-attributed messages and both normal turn-result pushes.
+For Codex-to-DeepSeek and DeepSeek-to-Codex, the sender's completion, the
+recipient's PING-handler completion and the sender's ACK-seen completion each
+arrived through the actual notification path. Replies were explicitly addressed
+with `send`, and ACKs did not trigger reply loops. Both actors were closed only
+after those requested exchanges completed. No files, commands or Channel calls
+were delegated to these actors.
+
+Installed-artifact isolated real-model matrix (all modules and MCP launchers
+resolved from the installed alpha):
+
+| Adapter | Owner scope | Initial result | Model results | Actual member MCP calls | Cleanup |
+| --- | --- | --- | --- | --- | --- |
+| Codex | Dispatcher | FAIL: peer-exchange confirmation deadline | — | 3 | Complete |
+| Codex | Team | PASS | 11 | 5 | Complete |
+| Configured Claude-Code | Dispatcher | PASS | 14 | 5 | Complete |
+| Configured Claude-Code | Team | PASS | 15 | 5 | Complete |
+
+Passing rows asserted member `send/list`, host-bound sender envelopes, an
+explicit cross-turn peer reply, the owner's message and explicit reply, and
+automatic bound result delivery. The initial matrix exited nonzero because of
+its Codex/Dispatcher row; the failed record was retained. One bounded retry
+with the same helper configuration also failed at peer-exchange confirmation.
+The instrumentation observed accepted peer request/reply calls and the reply
+text in the sender runtime's submitted inputs, but did not observe the expected
+final confirmation marker by the deadline. Admission was not called execution.
+
+A separate Codex/Dispatcher exercise carried the existing named runtime's
+configured model parameters, which the initial generic Codex helper omitted.
+It retained the same assertions: peer exchange completed and all five member
+MCP calls succeeded, including the explicit owner reply. The reply reached the
+sender's submitted inputs, but its final confirmation still missed the deadline.
+That exercise also exited nonzero and cleaned up. Changing configuration is not
+proof of the earlier timeout's cause; no underlying cause is established here.
+These three failed exercise records remain failures, not an all-green matrix
+or a claim about universal busy-input scheduling.
+
+The operator-requested actual managed-Team Codex/DeepSeek owner and reciprocal
+peer exchanges above are separate passing evidence. They do not erase the
+isolated Codex/Dispatcher confirmation limit. Natural background chains,
+failed-background and Workflow live acceptance remain unclaimed. Every isolated
+exercise reported completed shutdown/temporary-state cleanup; all three managed
+smoke actors were closed. No credential acquisition, operator config change,
+production source change or new model-backed fault-interleaving claim was made.
+The acceptance verdict is PASS for publication/install/restart and the requested
+managed-Team exchanges, PARTIAL for the isolated installed-artifact matrix.
