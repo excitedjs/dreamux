@@ -544,3 +544,18 @@ the final operator identity remain in their existing positions.
   restart or run model acceptance on the released alpha. Native mode and effort
   remain user-selected; earlier live evidence retains its recorded provenance.
   The PR remains unmerged under the existing merge hold.
+
+### Explicit merge authorization and pre-merge verification
+
+On 2026-10-15 the operator explicitly authorized merging PR #475, superseding
+the historical hold. GitHub reported the current PR open, non-draft, based on
+next, approved, clean and mergeable. The
+[publication-record CI](https://github.com/excitedjs/dreamux/actions/runs/38714217952)
+passed all nine checks. The alpha's verified source and runtime behavior are
+unchanged; the documented model/live-coverage limits are not reclassified as
+acceptance by this merge decision.
+
+The additional authority record is documentation only. Its KB and canonical
+commit gates must pass, followed by required CI on the exact final head before
+squash merging. Installation, restart and Team dissolution remain unperformed
+and outside the instruction; GitHub owns actual merge and next-release status.

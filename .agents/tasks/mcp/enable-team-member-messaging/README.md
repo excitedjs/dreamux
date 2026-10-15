@@ -12,7 +12,7 @@
 - Solution workflow: Three independent proposals, then one cross-review round, confirmed by the operator on 2026-10-13; reuse the DeepSeek, MiMo, and Trae Seed consultation sessions.
 - Classification: Complex; the new member MCP surface and runtime-neutral completion contract cross Core and both in-tree runtime packages.
 - Blockers: None in the reviewed implementation scope; declared provider-contract and live-coverage limits are recorded in verification.md. The operator's delegated final-quality authority and requested rebase are preserved below.
-- Next action: GitHub owns review and CI status. Any merge requires further explicit operator authority under the separate decision below.
+- Delivery authority: The operator explicitly authorized squash-merging PR #475 into next on 2026-10-15. GitHub owns actual review, CI and merge status; installation, restart and Team dissolution remain outside this authorization.
 - Related tasks:
   - `builds-on`: [Provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — existing submission settlement and native-completion folding.
   - `builds-on`: [Lifecycle-stop completion suppression](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/README.md) — existing owner-stop reporting boundary.
@@ -98,6 +98,7 @@ were restored byte-for-byte before implementation resumed.
 
 ## Operator merge decision (2026-10-14)
 
+This historical hold is superseded by the explicit authorization below.
 The merge card asked whether #475 could be squash-merged into next after final
 review passed. The operator answered:
 
@@ -111,6 +112,26 @@ The external final review is [recorded on GitHub](https://github.com/excitedjs/d
 Its nonblocking terminology comment is handled under the previously delegated
 quality/correction scope, without changing product behavior or inferring merge
 permission.
+
+## Operator merge authorization (2026-10-15)
+
+After the corrected capability guidance, alpha publication and artifact checks,
+the operator explicitly instructed:
+
+> 先合入吧
+
+English rendering: "Go ahead and merge it first."
+This grants authority to squash-merge the reviewed PR #475 into next and
+supersedes the preceding temporary merge hold. Authority comes from this direct
+operator instruction, not from review approval, CI or alpha publication. No
+repeated confirmation is required for the same PR scope.
+
+The pre-merge checks found the PR open, targeting next, approved, mergeable
+without conflicts, and passing all nine checks on its current head. The
+authorization-record change is documentation only and must also pass required
+CI before the merge request. The merge is pinned to that exact checked head.
+GitHub owns the resulting merge and its automatic next-branch beta release;
+this instruction does not authorize installation, restart or Team dissolution.
 
 ## Operator pre-merge alpha acceptance (2026-10-14)
 
