@@ -5,7 +5,7 @@ description: "Guide TeamMate delegation and follow-up work. Consult when needed 
 
 # Teamwork
 
-TeamMates are a more capable, durable subagent system: independent agents with
+TeamMates are Dreamux's durable collaboration mechanism: independent agents with
 their own runtimes and context, resumable conversations, and standing identities.
 Members of this Team work in the same shared workspace.
 
@@ -18,9 +18,9 @@ remains in context; a new turn or handoff does not require rereading the skill.
 ## Delegate a Question or Outcome: Context, Not Control
 
 Choose a runtime using `get_capabilities` and what the work needs: a particular
-model's strengths, another perspective, or continuity with earlier work. Native
-subagents also have independent judgment; use their engine's context and
-lifetime controls when that delegation mechanism fits the task.
+model's strengths, another perspective, or continuity with earlier work. Use
+TeamMates rather than native subagents for delegated exploration, verification,
+and review.
 
 A TeamMate receives its brief and shared artifacts, not your conversation.
 Supply the missing context: the user's goal, their constraints verbatim,

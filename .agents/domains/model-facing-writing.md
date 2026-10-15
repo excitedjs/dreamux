@@ -23,9 +23,11 @@ Current source owners:
 ## Design Principles
 
 - An identity statement says who the model is and what it has. The TeamLeader
-  additionally carries brief guidance separating Dreamux TeamMate delegation
-  from native subagent rules, encouraging useful collaboration across different
-  models, and routing missing guidance to `teamwork` (see Prompt Shape).
+  additionally prefers Dreamux TeamMates for delegated exploration, verification,
+  and review, encourages useful collaboration across different models, and
+  routes missing guidance to `teamwork` (see Prompt Shape). Its spawn description
+  identifies the independent Dreamux runtime session. Neither surface changes
+  native collaboration mode or exempts a call from runtime instructions.
 - A reminder states a consequence the model cannot see, at the moment of the
   action, and does not generally order the model what to do. The
   dispatch-result reminders (`spawn`/`send`/`team.create`/`team.send`/
@@ -174,11 +176,12 @@ Append prompts layer onto an already-capable runtime prompt, so they should be
 short role deltas rather than a full reintroduction.
 
 The TeamLeader append prompt names its identity, MCP servers, and workspace
-facts, then distinguishes Dreamux TeamMate delegation from native subagent
-restrictions, preserves runtime guidance for native subagents, encourages useful
-delegation across different models, and routes missing collaboration guidance to
-`teamwork`. This distinction is a TeamLeader role delta, not a Dispatcher prompt
-change or a runtime policy override. Guidance already in context
+facts, prefers TeamMates for delegated exploration, verification and review,
+encourages useful delegation across different models, and routes missing
+collaboration guidance to `teamwork`. The TeamLeader spawn description identifies
+the independent Dreamux runtime-session mechanism. This is a TeamLeader role
+delta, not a Dispatcher prompt change or a runtime policy override. Ultra and
+native collaboration mode remain the user's choice. Guidance already in context
 is reused; a new turn or tool call is not a reload trigger. The skill owns task
 decomposition, briefs, shared-workspace coordination, standing identity
 consequences, tool usage, and integration. MCP descriptions retain schemas and

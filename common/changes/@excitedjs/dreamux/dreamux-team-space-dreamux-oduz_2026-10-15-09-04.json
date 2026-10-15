@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Prefer Dreamux TeamMates for TeamLeader exploration, verification and review while leaving native collaboration mode and reasoning effort to the user.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

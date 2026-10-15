@@ -460,3 +460,43 @@ the final operator identity remain in their existing positions.
 - Rush build, lint, test and typecheck:tests passed after the correction, with
   the default model exclusions unchanged. No dependency or published runtime
   file changed, so no update or replacement alpha was needed.
+
+## TeamLeader collaboration direction (2026-10-15)
+
+- Target: the three-file TeamLeader guidance follow-up in the task README.
+  Native provider arguments, interfaces, effort defaults, persisted config,
+  Dispatcher guidance and ordinary-member communication have no diff.
+- Actual rollout inspection found the earlier Dreamux guidance before the
+  native explicit-request-only mode. Both were recorded before the first model
+  response. The model's visible reply acknowledged applying that restriction
+  to TeamMates; a later explicit request produced actual spawn receipts.
+  This is failure evidence for the preceding prompt, not acceptance of the new
+  preference. No private rollout content or identifiers are included here.
+- [Devbox re-review](https://github.com/excitedjs/dreamux/pull/475#pullrequestreview-5530624640)
+  is a COMMENT on the preceding head. It rules out missing resume instructions,
+  audits the member-prompt trim and lifecycle wait, and recommends action-site
+  clarification. The final copy identifies the Dreamux mechanism without its
+  suggested exemption from native rules, following the later operator ruling.
+- Independent read-only follow-up review found no blocking defect in the three
+  changed prompt/tool/skill files. It verified TeamLeader-only scope, unchanged
+  Dispatcher text, no effort/config/interface changes, and retained receipt and
+  push wording. It ran no tests and claims no model-behavior acceptance.
+- Final local commands all exited 0: `node common/scripts/install-run-rush.js
+  build`, `lint`, `test`, and `typecheck:tests` (each invoked separately through
+  that same script). Dependency inputs are unchanged; update was not repeated.
+  The default authenticated-model exclusions remain unchanged. Built output
+  contains the final launch and spawn descriptions. No copy-only tests or
+  altered assertions were introduced.
+- Earlier candidate lint detected formatting, which was corrected. An earlier
+  tool-description candidate failed the existing pushed-completion sentence
+  assertion. The final text restores that sentence verbatim; the assertion was
+  not weakened. Two initially parallel Rush gate attempts were refused by the
+  repository lock and were subsequently run separately. These intermediate
+  attempts are not counted as passing checks.
+- KB validation passed: 56 task records and 384 reachable KB files. Diff
+  whitespace checks passed. A Dreamux patch change file was generated through
+  Rush. The local `.vite/` cache is excluded from submission.
+- No new real-model, installed-artifact or alpha evidence is claimed for this
+  follow-up. A user's non-Ultra explicit-request-only mode may still constrain
+  proactive delegation; this change deliberately does not override that mode.
+  Earlier releases and model evidence retain their original provenance.

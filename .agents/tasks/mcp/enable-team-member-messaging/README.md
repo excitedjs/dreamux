@@ -237,6 +237,48 @@ Team child teardown had completed. The quality correction waits for the existing
 only the test; runtime source and the published package remain unchanged.
 The original failure and correction evidence are retained in verification.md.
 
+## TeamLeader collaboration direction (2026-10-15)
+
+An actual Codex TeamLeader rollout contained the delivered Dreamux guidance,
+followed by native explicit-request-only multi-agent mode. Its user-facing
+reply said it had also applied that mode to Dreamux TeamMates. After a later
+explicit delegation request, actual TeamMate spawn receipts appeared. This
+establishes a delivered-text/observed-behavior gap, not an installation or
+resume omission. Native mode is selected from the step's effective reasoning
+effort and can be updated before later model requests.
+
+The operator requested a fix on the existing PR. After suggesting default Ultra,
+the operator immediately narrowed that instruction:
+
+> 你不需要默认调整成 ultra
+>
+> 开不开 Ultra 是用户自己的选择
+
+English rendering: "You do not need to change the default to Ultra. Whether to
+enable Ultra is the user's own choice."
+
+The retained direction is to prefer TeamMates for delegated exploration,
+verification, and review, without attempting to bypass native system guidance.
+This supersedes the earlier launch paragraph's exemption claim. The TeamLeader
+prompt and teamwork skill express the positive delegation preference; the
+TeamLeader-only spawn description identifies an independent Dreamux runtime
+session. Dispatcher guidance and ordinary member communication remain unchanged.
+
+No provider arguments, reasoning defaults, native-mode overrides, neutral
+interfaces, persisted configuration, installation or managed service state are
+changed. The transient default-Ultra and restriction-exemption candidates were
+withdrawn before submission. In particular, this follow-up does not promise
+proactive behavior under a user's explicit-request-only native mode.
+
+The [external re-review](https://github.com/excitedjs/dreamux/pull/475#pullrequestreview-5530624640)
+is a COMMENT on the preceding head, not a new approval or behavioral acceptance.
+It confirms that both thread start and resume carry the launch guidance and
+recommends action-site mechanism clarification. Its suggested exemption clause
+is not adopted because the later operator direction retains native guidance.
+Local checks and independent follow-up review are recorded in verification.md.
+The existing push/quality authority applies; merge, install, restart and Team
+dissolution remain unauthorized.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison
