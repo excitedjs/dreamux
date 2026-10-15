@@ -215,6 +215,8 @@ export class TeamService implements Team {
       names: deps.names,
       agentServiceFactory: deps.agentServiceFactory,
       completionOwner: this,
+      messagingOwner: this,
+      mcp: deps.mcp,
       fence: this,
       teammateLaunch: deps.dispatcherHooks.teammateLaunch,
       log: deps.log,
@@ -1055,6 +1057,15 @@ export class TeamService implements Team {
    */
   completionRecipient(): CompletionInitiator {
     return this;
+  }
+
+  /** Read lazily: collection construction precedes leader-name allocation. */
+  memberOwner(): { name: string; role: string; status: string } {
+    return {
+      name: this.mustRecord().leader_name,
+      role: 'TeamLeader',
+      status: this.mustLeader().status().status,
+    };
   }
 
   async prepareCompletion(

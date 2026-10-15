@@ -142,7 +142,7 @@ export function dispatcherCommands(
       return teamSubmitResult(
         await host
           .addressedDispatcher(context)
-          .submitToAgent(channelSubmitInput(input.command)),
+          .submitInput(channelSubmitInput(input.command)),
       );
     },
   };

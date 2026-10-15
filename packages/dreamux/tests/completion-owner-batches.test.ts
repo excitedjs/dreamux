@@ -3,7 +3,7 @@ import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 async function batch(count: number) {
   const f = await dispatcherFixture();
   await f.host.start();
-  const ready = await f.host.submitToAgent({
+  const ready = await f.host.submitInput({
     source: 'channel',
     text: 'ready',
   });

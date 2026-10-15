@@ -4,6 +4,7 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
+  AgentRuntimeResultSink,
   AgentRuntimeStartOutcome,
 } from '@excitedjs/dreamux-types';
 
@@ -80,6 +81,7 @@ export class RuntimeGeneration {
     private readonly dispatcherId: string,
     private readonly state: AgentRuntimeStateStore,
     private readonly options: TeammateServiceOptions,
+    private readonly owner: { observeRuntimeResult: AgentRuntimeResultSink },
   ) {}
 
   async ensureStarted(): Promise<void> {
@@ -226,7 +228,7 @@ export class RuntimeGeneration {
         lastError: null,
       });
     }
-    // One lease per attempt, covering both push-only sinks. Every failure path
+    // One lease per attempt, covering state, activity and result sinks. Every failure path
     // below revokes it, so a start that did not complete leaves no partial
     // write authority behind.
     const lease = this.state.leaseRuntimeGeneration();
@@ -324,6 +326,15 @@ export class RuntimeGeneration {
     };
   }
 
+  private generationResultSink(
+    lease: AgentRuntimeGenerationLease,
+  ): AgentRuntimeResultSink {
+    return (completion) => {
+      if (!lease.isCurrent()) return;
+      this.owner.observeRuntimeResult(completion);
+    };
+  }
+
   private resolveLaunch(lease: AgentRuntimeGenerationLease): RuntimeLaunchSpec {
     const identity = this.state.current();
     // Read fresh at the exact launch/resume moment, never carried from one
@@ -352,6 +363,7 @@ export class RuntimeGeneration {
           ? { outputSchema: this.options.outputSchema }
           : {}),
         activity: this.generationActivitySink(lease),
+        results: this.generationResultSink(lease),
         ...(this.options.systemPrompt !== undefined
           ? { systemPrompt: this.options.systemPrompt }
           : {}),

@@ -128,6 +128,7 @@ export function createCodexAgentRuntimeProvider(
         cwd: context.cwd,
         state: context.state,
         activitySink: context.activity,
+        resultSink: context.results,
         codec,
         paths,
         codexBinPath: resolveCodexBinPath(codexConfig.bin),

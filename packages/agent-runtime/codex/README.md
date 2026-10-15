@@ -101,19 +101,32 @@ structured with the same compiled wire schema and restoration plan, or both are
 unstructured. Structured/unstructured mixing and incompatible schemas fail
 before another `turn/start`.
 
-Each turn collector owns one notification subscription. It unsubscribes on
-normal completion, terminal failure, explicit disposal, or runtime stop. A
-rejected `turn/start` therefore cannot leave a stale collector observing or
-buffering notifications from a later turn.
+The resident turn collector keeps its notification subscription until disposal,
+connection failure or runtime stop. It retains native items until their terminal
+has been converted, including items for turns with no host submission, and then
+releases them. Each observed terminal selects its result synchronously, without
+waiting for input association. The result remains available until the native
+admissions in flight at observation have retired, so a positive acknowledgement
+can still bind the same result after a later connection failure or stop.
 
 The public runtime boundary returns one `RuntimeSubmission` handle per accepted
 send; submissions folded into the active native turn settle with the same
 immutable `RuntimeCompletion`, and queued submissions settle with distinct
-completions in native order. Codex
+completions in native order. Every normally completed or observed-failed native
+terminal also publishes once through `context.results`, including unbound turns.
+The sink and all bound settlements receive the same frozen object. The existing
+terminal callback order determines publication; codec restoration and assistant
+extraction apply equally to bound and unbound terminals. Scoped fatal errors and
+codec failures produce failed results. Interrupted terminals keep bound partial-output
+settlements but publish no new result. Connection-level protocol failure and
+teardown do not invent native results. Codex
 `turnId` values remain private correlation keys in this package; Dreamux core
-observes only the object's terminal outcome. Runtime stop resolves every
-unsettled public object as stopped after the supervised process group is proven
-absent.
+observes only the object's terminal outcome. Unscoped protocol failure fails
+accepted inputs without an observed answer; stop settles those inputs as stopped. An already
+selected result remains the answer for late positive admissions. A negative or
+ambiguous acknowledgement returns no submission and creates no requested reply.
+Runtime stop converges accepted inputs after the supervised process group is
+proven absent.
 
 ## Native transcripts
 
@@ -146,3 +159,13 @@ then drains all input admissions before resolving.
 See
 [Provider Runtime](../../../.agents/domains/provider-runtime.md#codex-portable-output-schema)
 for the complete current lifecycle and failure contract.
+
+
+The result observer is optional for old-host compatibility: native per-input
+values still resolve when `context.results` is absent. When present, this provider
+must publish each normal/failed terminal in finalization order with the same C
+returned to every answered input, including late admissions against an already
+finalized native record. Current Core always supplies it. Old provider/new Core
+keeps bound answers and requested replies, without certification of background
+report coverage or ordering; loading successfully is not conformity. There is no
+capability negotiation or fallback queue.

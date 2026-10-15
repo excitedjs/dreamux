@@ -394,58 +394,54 @@ Source:
 
 ### Completion Routing
 
-Completion delivery carries an actual recipient object, never a dispatcher-wide
-lookup key. A delivery-initiating action (`spawn`, `send`, or
-team-create-with-prompt) queries its owner before runtime admission and
-attaches the recipient to the entity-owned `Turn`. After the winning terminal
-outcome is selected, that Turn invokes the shared stateless
-`CompletionDeliveryPolicy`, which delivers at-most-once per completion token
-while preserving provider order — never keyed by native ids, completion text,
-or slot heuristics. Dedupe keys on the token alone: an entity's initiator is
-fixed for its whole life, so every submission whose native turn can fold into
-the same token already resolves to the same recipient — there is no separate
-per-producer or per-recipient dedupe axis to keep.
+AgentService is the sole notification owner. It observes native results and
+accepted submission values, selects eligibility at those boundaries, and hands
+facts to the existing CompletionDeliveryPolicy. EntityTurn holds a receipt and
+selected value; it has no recipient, delivery task or second delivery controller.
+One agent-owned in-flight set joins started reports at close and host stop; retained
+accepted inputs still prove runtime-stop convergence and are evicted after selection.
 
-- the initiating action retains the target directly; there is no Turn id lookup
-  map or terminal registry;
-- channel inbound and remote-control turns do not attach a completion recipient,
-  so they are not pushed;
-- one Turn starts at most one delivery task after outcome selection;
-- completion preparation and each submission attempt are deadline-bounded;
-- only an explicit provider-proven pre-admission failure may retry; a throw, a
-  timeout, or an `ambiguous` admission is terminal and never replayed;
-- completion delivery is process-local and is not replayed after restart;
-  durable recovery is through `last` and Workflow/TeamMate records.
+An ordinary member's native subscription binds its actual collection owner at
+construction; createLocked binds none. Team and root collections share this rule.
+A managed TeamLeader has no subscription: only explicitly requested Dispatcher
+team.create prompt/team.send answers carry a reply recipient. Do not derive
+notification routes by walking the management tree. Member reports stop at their
+TeamLeader, while management reads and Channel presentation remain separate.
 
-Whether a settled turn is reported at all is the recipient scope's decision,
-read at the moment delivery would start. The producer never learns that its
-owner is going away, and no teardown walks the producer population:
+The initiating action captures any requested reply recipient before admission.
+Native callbacks use the construction-bound recipient; request values use the
+captured recipient. Both are stable, equal actual objects for ordinary members.
+The policy folds repeated observation of one RuntimeCompletion on object identity,
+then queues by actual recipient. Several folded inputs yield one report; queued
+equal-text results have distinct identities. No input-id correspondence map, native
+turn registry or text-based deduplication is introduced. Tokenless stopped/input
+failures retain their input-scoped notices without a fabricated fold token.
 
-- an entity reports a turn only while it is `active` and not under host
-  release (`EntityTurn` queries its actual AgentService owner's
-  `owesCompletion()` once at the moment delivery would start). A turn its
-  own close, host stop, or dissolve ended is
-  settled for convergence and dropped for good, so a later `ensureDelivery()`
-  cannot revive it; a delivery already under way is never retracted. Both
-  fences are published before the native stop, so a turn admitted ahead of
-  the fence reads it when it settles, and host release still drains admissions
-  when the native stop fails;
-- `CompletionDeliveryPolicy` reads the dispatcher admission gate
-  (`WorkFence.isClosing()`) once per requested delivery, before
-  folding or queueing. `close()` — the one terminal close a failed `start()`
-  reuses instead of a separate rollback — raises that gate synchronously, so
-  nothing settling behind it, including a Team member's or leader's natural
-  completion during a long Workflow teardown, reaches a closing owner. There
-  is no in-process stop→start path: once `close()` has run, this dispatcher
-  never accepts work again (R11);
-- a Team-scope recipient runs its delivery inside `TeamService.admitTeam()`, so a
-  dissolving Team refuses it with `TeamClosedError`;
-- a Workflow run stops owing its terminal report the moment a stop reserves
-  the `stopped` intent (`WorkflowRun` clears its owed recipient when it
-  reserves a stop); a completed or failed intent that won first keeps its
-  report. A leader turn that completes naturally inside a
-  dissolve's Workflow-stop window is still real news and reaches the
-  dispatcher.
+- Native normal/failed results enqueue in finalization order. Input-only stopped/
+  transport notices can interleave through settlement continuations; do not claim
+  universal native ordering for them.
+- Requested reply rights are explicit. Channel and member-to-owner inputs do not
+  acquire a Dispatcher reply recipient merely because a Team is managed there.
+- Preparation and submission attempts retain existing bounded delivery. Only a
+  provider-proven pre-admission failure may retry; thrown, timed-out or ambiguous
+  admission is not replayed.
+- Automatic result input uses a live runtime (`wake: false`); an unavailable owner
+  can reject/drop it. Explicit member messages retain ordinary waking input.
+  Delivery is process-local, with no durable offline mailbox or restart replay.
+
+Native subscription eligibility is read at publication; requested/input-only
+eligibility is read when the accepted input settles. AgentService checks active
+phase and host release at the relevant boundary. Its close/host stop publishes the
+fence before runtime teardown. A suppressed observation is never revived and a
+started delivery is not retracted. Closing stops the runtime, drains admissions
+and accepted mutations, proves accepted inputs settled, then drains started reports;
+report errors and unproved runtime stop remain fail-loud.
+
+CompletionDeliveryPolicy still reads the dispatcher gate before folding/queueing.
+Team recipients retain TeamService admission, so dissolution can refuse delivery.
+Workflow run-level terminal reporting retains its own stopped-intent recipient
+boundary. A managed leader's answer to a pre-existing explicit Dispatcher request
+can still be real news during a dissolve window; autonomous results are not.
 
 The recipient query timing is part of this boundary. DispatcherAgent returns
 `mustAgent()` at the original initiating operation; a configured but disabled
@@ -487,14 +483,31 @@ Source:
 - `/packages/dreamux/src/service/worktree/`
 - `/packages/dreamux/src/config/config.ts`
 
+### Regression Trap: management ancestry is not conversational reporting
+
+Sharing ordinary member tools across Team and Dispatcher-root collections does
+not make a managed TeamLeader a root ordinary member. Many managed Teams can
+produce internal activity without waking the Dispatcher. Arm native subscriptions
+only at ordinary collection construction. Retain explicit team.create prompt/
+team.send reply recipients, and do not forward a Team member report recursively.
+Management reads/state projections and Channel display remain independent.
+
+Requirement: [ordinary-member communication and managed-Team boundary](/.agents/tasks/mcp/enable-team-member-messaging/requirement.md).
+Source: `/packages/dreamux/src/service/agent/index.ts`,
+`/packages/dreamux/src/service/team/leader.ts`,
+`/packages/dreamux/src/service/team/service.ts`.
+
 ### MCP Boundaries
 
 Dreamux-owned orchestration is exposed through MCP tools injected into runtime
 roles. Each surface is an in-server delegate owned by its own domain — Team,
 TeamMate, scheduler, workflow, and one per channel that publishes tools.
 
-The role owner assembles its delegates: DispatcherAgent during build, and
-`teamLeaderOptions` in `team/leader.ts` when TeamService builds its leader.
+The role owner assembles its delegates: DispatcherAgent during build,
+`teamLeaderOptions` in `team/leader.ts` when TeamService builds its leader, and
+TeammateCollection's ordinary construction for member send/list. The member
+scope binds the real sender and structural actual owner; Workflow construction
+omits it.
 Each holds the actual channel source and
 its own domain collaborators. Channel snapshots are taken after initialization.
 The different tool sets follow the callers' ownership, not a shared server's

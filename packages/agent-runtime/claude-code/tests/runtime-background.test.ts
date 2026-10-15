@@ -37,9 +37,13 @@ afterEach(async () => {
 const tick = (): Promise<void> =>
   new Promise((resolve) => setImmediate(resolve));
 
-async function harness(onActivity?: (activity: RuntimeActivity) => void) {
+async function harness(
+  onActivity?: (activity: RuntimeActivity) => void,
+  observe = true,
+) {
   const writes: Array<{ uuid: string }> = [];
   const activity: RuntimeActivity[] = [];
+  const published: RuntimeCompletion[] = [];
   const reap = vi.fn();
   const createSession = vi.fn();
   let rpc!: ClaudeCodeStreamRpc;
@@ -57,6 +61,7 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
       }),
       {
         sessionId: spec.sessionId,
+        results: spec.results,
         outputSchemaEnabled: spec.outputSchemaEnabled,
         turnTimeoutMs: 5_000,
         reapOnTimeout: reap,
@@ -101,6 +106,12 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
     },
     state: { publish: async () => undefined },
     logger,
+    ...(observe
+      ? {
+          results: (completion: RuntimeCompletion) =>
+            published.push(completion),
+        }
+      : {}),
     activity: (event) => {
       activity.push(event);
       onActivity?.(event);
@@ -151,6 +162,7 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
     runtime,
     writes,
     activity,
+    published,
     reap,
     createSession,
     emit,
@@ -735,4 +747,42 @@ describe('resident background turns and submitted commands', () => {
     ).toEqual(['failed', 'failed', 'completed']);
     expect(h.reap).not.toHaveBeenCalled();
   });
+});
+
+it('wires the provider result sink for both bound and unbound normal/failed native results', async () => {
+  const h = await harness();
+  expect(h.published[0]).toBe(h.initialCompletion);
+  h.result('background');
+  h.emit({
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    errors: ['background failed'],
+  });
+  expect(h.published.map((result) => result.status)).toEqual([
+    'completed',
+    'completed',
+    'failed',
+  ]);
+  h.emit({
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    terminal_reason: 'aborted_tools',
+  });
+  expect(h.published).toHaveLength(3);
+});
+
+it('retains per-input result values when an older host omits native observation', async () => {
+  const h = await harness(undefined, false);
+  expect(h.published).toEqual([]);
+  const submission = await h.submit('legacy host input');
+  h.lifecycle(h.writes.at(-1)!.uuid, 'started');
+  h.result('legacy input answer');
+  expect(await h.completion(submission)).toEqual({
+    status: 'completed',
+    resultText: 'legacy input answer',
+  });
+  h.result('unbound background with no observer');
+  expect(h.published).toEqual([]);
 });

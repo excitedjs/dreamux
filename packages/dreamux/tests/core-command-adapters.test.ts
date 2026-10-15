@@ -164,7 +164,7 @@ describe('adapter equivalence — one representative Command per namespace', () 
       status: 'submitted',
       turn: { id: 'harness-turn-1' },
     }));
-    const submitToAgent = vi.fn(async () => ({
+    const submitInput = vi.fn(async () => ({
       status: 'submitted',
       turn: { id: 'harness-turn-1' },
     }));
@@ -172,7 +172,7 @@ describe('adapter equivalence — one representative Command per namespace', () 
       dispatcherOverrides: {
         interruptTeamLeader,
         submitToTeamLeader,
-        submitToAgent,
+        submitInput,
       },
     });
     admin = await startHarnessAdminSocket(harness);
@@ -203,11 +203,11 @@ describe('adapter equivalence — one representative Command per namespace', () 
     expect(interruptTeamLeader).not.toHaveBeenCalled();
     expect(submitToTeamLeader).not.toHaveBeenCalled();
     // A missing Team name must never fall through to the Dispatcher Agent.
-    expect(submitToAgent).not.toHaveBeenCalled();
+    expect(submitInput).not.toHaveBeenCalled();
   });
 
   it('dispatcher.submit reaches the Dispatcher Agent through both adapters', async () => {
-    const submitToAgent = vi.fn(async () => ({
+    const submitInput = vi.fn(async () => ({
       status: 'submitted',
       turn: { id: 'agent-turn-1' },
     }));
@@ -216,7 +216,7 @@ describe('adapter equivalence — one representative Command per namespace', () 
       turn: { id: 'team-turn-1' },
     }));
     const harness = await createCommandHarness({
-      dispatcherOverrides: { submitToAgent, submitToTeamLeader },
+      dispatcherOverrides: { submitInput, submitToTeamLeader },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
@@ -237,7 +237,7 @@ describe('adapter equivalence — one representative Command per namespace', () 
       status: 'submitted',
       turn_id: 'agent-turn-1',
     });
-    expect(submitToAgent).toHaveBeenCalledTimes(2);
+    expect(submitInput).toHaveBeenCalledTimes(2);
     expect(submitToTeamLeader).not.toHaveBeenCalled();
   });
 
@@ -248,12 +248,12 @@ describe('adapter equivalence — one representative Command per namespace', () 
         turn: { id: 'team-turn-intent' },
       }),
     );
-    const submitToAgent = vi.fn(async (_input: unknown) => ({
+    const submitInput = vi.fn(async (_input: unknown) => ({
       status: 'submitted',
       turn: { id: 'agent-turn-1' },
     }));
     const harness = await createCommandHarness({
-      dispatcherOverrides: { submitToTeamLeader, submitToAgent },
+      dispatcherOverrides: { submitToTeamLeader, submitInput },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
@@ -291,7 +291,7 @@ describe('adapter equivalence — one representative Command per namespace', () 
       'alpha',
     ]);
     expect('intent' in withoutIntent).toBe(false);
-    expect(submitToAgent).not.toHaveBeenCalled();
+    expect(submitInput).not.toHaveBeenCalled();
   });
 
   it('teammate.list: identical result via both adapters', async () => {

@@ -319,6 +319,13 @@ export class FakeCodexWsClient {
     });
   }
 
+  emitScopedError(threadId: string, turnId: string, message: string): void {
+    this.emit({
+      method: 'error',
+      params: { threadId, turnId, willRetry: false, error: { message } },
+    });
+  }
+
   emitItem(
     threadId: string,
     turnId: string,

@@ -231,7 +231,7 @@ describe('real AgentService admission owner', () => {
       what: 'a TeamMate',
       fact: completion,
       notice: { kind: 'teammate_completion', producer: 'reporter-agent' },
-      says: 'TeamMate reporter-agent has finished its task.',
+      says: 'TeamMate reporter-agent completed a turn.',
     },
     {
       what: 'a Workflow',

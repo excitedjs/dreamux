@@ -103,6 +103,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     }
     const rpc = new ClaudeCodeStreamRpc(stdin, {
       sessionId: this.spec.sessionId,
+      results: this.spec.results,
       outputSchemaEnabled: this.spec.outputSchemaEnabled,
       turnTimeoutMs: this.spec.turnTimeoutMs,
       logger: this.spec.logger,

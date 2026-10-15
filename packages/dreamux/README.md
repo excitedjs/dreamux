@@ -381,6 +381,55 @@ filesystem paths.
 The same server also carries the Workflow tools `workflow_run`,
 `workflow_status`, `workflow_stop`, and `workflow_list`.
 
+Ordinary members of a Team and of a Dispatcher's root collection receive
+exactly `teammate.send` and `teammate.list`. The roster separates the actual
+owner `{ name, status }` from compact peer rows, excludes the caller, and includes
+closed peers. Send addresses that concrete owner name or a peer in the same
+collection. The host identifies the sender with `<task from="member-name">`;
+owner-issued task envelopes retain their existing form. Members cannot spawn,
+close, or reach another collection.
+
+A send returns `{ name, status, error? }` at admission, without waiting for a
+response. An idle target wakes; busy input follows the runtime's native
+admission behavior (Codex steering, Claude queuing). A closed peer reopens the
+same record and recorded native session. Replies require explicit sends across
+turns. Sending to the owner creates no automatic reply obligation to the member;
+a peer's results still go to that peer's actual owner.
+
+Each provider-observed normal or failed native result from an ordinary member
+reports once to its owner, including autonomous turns with no host submission.
+Folded inputs share one report; separate native turns keep separate reports.
+The notice says that a turn completed or failed, rather than asserting goal
+success. Reports use the live owner runtime and do not wake an unavailable
+owner, so unavailable owners can refuse or drop them. Explicit messages use
+ordinary wake behavior. Workflow-held members have neither these tools nor
+ordinary native reports; their results remain script-consumed.
+
+AgentService owns both native subscriptions and requested reply reporting, with
+one set of started deliveries to join during close/host stop. Its accepted-input
+records keep only receipt IDs, selected values and settled Promises; their reply
+bindings retire when the input selects an outcome. Native subscription eligibility
+is read synchronously at publication; requested and input-only notification
+eligibility is read in the settlement reaction. Requests enter the delivery policy
+in that same reaction, including its aggregate fence check and queue entry; the
+previous additional Promise hop is removed. A later dispatcher fence does not
+retract already-queued delivery, while a fence before queue entry drops it. This
+is a deliberate queue-entry timing change, not byte-identical scheduling. Recipient
+preparation/submission fences still apply.
+
+Managed TeamLeaders have requested replies only. An explicit Dispatcher
+`team.create` prompt or `team.send` receives its answer once per shared native
+result. Team member reports, Channel requests, autonomous leader turns and later
+continuations acquire no Dispatcher subscription. A create with no prompt has no
+artificial answer. This boundary preserves management reads and lifecycle state.
+
+Owner-ended inputs are suppressed before observation. Interrupted background work
+and connection loss create no new native completion. Bound Codex interruptions
+retain their selected partial/null/codec-failed values and requested notices;
+Claude retains stopped. Completion-less interruption/transport notices can
+interleave with native reports according to settlement continuations. Normal/failed
+native reports preserve terminal finalization order.
+
 Dispatcher-facing Team tools are `create`, `send`, `list`, `status`, `history`,
 and `dissolve`. A TeamLeader receives only `dissolve`, scoped to its own Team.
 `dissolve` answers with a submission receipt: the Team is stopped and closed

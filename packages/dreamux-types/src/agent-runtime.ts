@@ -184,6 +184,18 @@ export type RuntimeCompletion =
       readonly error: Error;
     };
 
+/**
+ * When the optional observer is supplied, publish each observed normal or failed
+ * native terminal once, synchronously in
+ * terminal-finalization order, including turns with no host submission. The
+ * immutable object is also used by every settlement for that result: its
+ * identity folds observation and settlement into one owner report.
+ *
+ * Interruptions and connection/transport failures do not manufacture results.
+ * Core's leased sink never throws or applies backpressure; revoked writes drop.
+ */
+export type AgentRuntimeResultSink = (completion: RuntimeCompletion) => void;
+
 export type RuntimeSubmissionSettlement =
   | { readonly kind: 'completion'; readonly completion: RuntimeCompletion }
   | { readonly kind: 'failed'; readonly error: Error }
@@ -301,6 +313,12 @@ export interface AgentRuntimeCreateContext<TConfig> {
   readonly state: AgentRuntimeStateSink;
   /** Leased, push-only sink for this runtime generation's live activity. */
   readonly activity: AgentRuntimeActivitySink;
+  /**
+   * Optional leased native observation, independent of submission attribution.
+   * Current Core supplies it. Absence retains per-input values for older hosts;
+   * an older provider ignoring it lacks background coverage and native ordering.
+   */
+  readonly results?: AgentRuntimeResultSink;
   readonly logger: AgentRuntimeLogger;
 }
 

@@ -23,8 +23,11 @@ Current source owners:
 ## Design Principles
 
 - An identity statement says who the model is and what it has. The TeamLeader
-  additionally carries one sentence encouraging useful delegation and routing
-  missing collaboration guidance to `teamwork` (see Prompt Shape).
+  additionally explains the team-collaboration benefits of Dreamux TeamMates,
+  including context continuity and complementary model perspectives, and
+  routes missing guidance to `teamwork` (see Prompt Shape). Its spawn description
+  identifies the independent Dreamux runtime session. Neither surface changes
+  native collaboration mode or exempts a call from runtime instructions.
 - A reminder states a consequence the model cannot see, at the moment of the
   action, and does not generally order the model what to do. The
   dispatch-result reminders (`spawn`/`send`/`team.create`/`team.send`/
@@ -173,8 +176,12 @@ Append prompts layer onto an already-capable runtime prompt, so they should be
 short role deltas rather than a full reintroduction.
 
 The TeamLeader append prompt names its identity, MCP servers, and workspace
-facts, then encourages delegation when it can save time or improve quality and
-routes missing collaboration guidance to `teamwork`. Guidance already in context
+facts, explains why TeamMates' workspace sharing, context continuity and model
+diversity make them better suited to team collaboration, and routes missing
+collaboration guidance to `teamwork`. The TeamLeader spawn description identifies
+the independent Dreamux runtime-session mechanism. This is a TeamLeader role
+delta, not a Dispatcher prompt change or a runtime policy override. Ultra and
+native collaboration mode remain the user's choice. Guidance already in context
 is reused; a new turn or tool call is not a reload trigger. The skill owns task
 decomposition, briefs, shared-workspace coordination, standing identity
 consequences, tool usage, and integration. MCP descriptions retain schemas and

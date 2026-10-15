@@ -162,7 +162,7 @@ describe('the whole hook tree through a real Server/DispatcherService', () => {
     await fixture.host.start();
     const dispatcher = fixture.host.dispatchers.get(HARNESS_DISPATCHER_ID);
     await expect(
-      dispatcher.submitToAgent({
+      dispatcher.submitInput({
         source: 'channel',
         text: 'start dispatcher recipient',
       }),

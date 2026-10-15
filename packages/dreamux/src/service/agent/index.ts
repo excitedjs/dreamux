@@ -34,6 +34,10 @@ import { toSubmissionResult } from './admission.js';
 import { teamMateNotFound } from './errors.js';
 import type { AgentServiceFactory } from './factory.js';
 import {
+  createTeamMateMcpDelegate,
+  type TeamMateMessagingOwner,
+} from './mcp.js';
+import {
   optionalLifecycleText,
   requireLifecycleText,
   validateAgentEntityName,
@@ -56,6 +60,7 @@ import type {
   CreateLockedTeammateOptions,
   LockedTeammate,
   TeammateServiceOptions,
+  TeammateAgentMcp,
 } from './service-types.js';
 import { AgentService } from './service.js';
 import { AgentEntityCollectionStore, type AgentNameRegistry } from './store.js';
@@ -95,6 +100,9 @@ export interface TeammateCollectionOptions {
   fence: WorkAdmission;
   /** The owner supplies the recipient at spawn/send's original query point. */
   completionOwner: CompletionOwner;
+  /** Actual conversational owner and MCP launch primitives, shared by both scopes. */
+  messagingOwner: TeamMateMessagingOwner;
+  mcp: Pick<TeammateAgentMcp, 'leases' | 'adminSocketPath'>;
   /**
    * The owning Dispatcher's `teammateLaunch` hook, run once per Agent
    * construction for every TeamMate this collection builds — spawn, reopen,
@@ -189,7 +197,7 @@ export class TeammateCollection implements TeammateOps {
   private async spawnAdmitted(
     input: SpawnTeamMateInput,
   ): Promise<AgentEntitySpawnResult> {
-    const entity = await this.createFreshEntity(input);
+    const entity = await this.createFreshEntity(input, true);
     try {
       const recipient = this.opts.completionOwner.completionRecipient();
       const submission = await entity.submitInput({
@@ -224,7 +232,7 @@ export class TeammateCollection implements TeammateOps {
       // find the published entity still locked ("is locked"). Ownership of the
       // lock passes to the caller only when the build succeeds.
       let handle: LockedTeammate | undefined;
-      await this.createFreshEntity(input, options, (entity) => {
+      await this.createFreshEntity(input, false, options, (entity) => {
         const locked = entity.lock();
         handle = locked;
         return () => locked.unlock();
@@ -315,6 +323,7 @@ export class TeammateCollection implements TeammateOps {
       source: AGENT_TASK_SOURCE,
       text: input.prompt,
       intent: input.intent,
+      ...(input.attrs !== undefined ? { attrs: input.attrs } : {}),
       completionRecipient: this.opts.completionOwner.completionRecipient(),
     });
     // Cached only now: a reopen that failed leaves nothing behind, so a
@@ -646,6 +655,7 @@ export class TeammateCollection implements TeammateOps {
 
   private async createFreshEntity(
     input: SpawnTeamMateInput,
+    ordinary: boolean,
     options: CreateLockedTeammateOptions = {},
     /**
      * Runs on the built entity before it is published, and returns what
@@ -728,7 +738,7 @@ export class TeammateCollection implements TeammateOps {
       });
       this.events.emit('state', unbuilt.identity);
       const entity = unbuilt.build(
-        await this.teammateOptions(unbuilt.identity, options),
+        await this.teammateOptions(unbuilt.identity, ordinary, options),
         this.store,
       );
       this.subscribeState(entity);
@@ -800,7 +810,7 @@ export class TeammateCollection implements TeammateOps {
     });
     if (unbuilt === null) return null;
     const entity = unbuilt.build(
-      await this.teammateOptions(unbuilt.identity, {}),
+      await this.teammateOptions(unbuilt.identity, true, {}),
       this.store,
     );
     this.subscribeState(entity);
@@ -822,6 +832,7 @@ export class TeammateCollection implements TeammateOps {
    */
   private async teammateOptions(
     identity: AgentEntityIdentity,
+    ordinary: boolean,
     options: CreateLockedTeammateOptions,
   ): Promise<Omit<TeammateServiceOptions, 'role'>> {
     const draft = await composeLaunchDraft(
@@ -833,6 +844,7 @@ export class TeammateCollection implements TeammateOps {
       identity,
       options.systemPromptAppend,
       draft.instructions,
+      ordinary ? this.opts.messagingOwner.memberOwner() : undefined,
     );
     return {
       runtimeId: childAgentRuntimeId(identity),
@@ -841,6 +853,22 @@ export class TeammateCollection implements TeammateOps {
       loggerFields: { teammate: identity.name },
       skillSources: [...identity.skill_sources, ...draft.skillSources],
       outputSchema: options.outputSchema,
+      ...(ordinary
+        ? {
+            nativeResultRecipient:
+              this.opts.completionOwner.completionRecipient(),
+            mcp: {
+              ...this.opts.mcp,
+              delegates: [
+                createTeamMateMcpDelegate({
+                  kind: 'member',
+                  name: identity.name,
+                  owner: this.opts.messagingOwner,
+                }),
+              ],
+            },
+          }
+        : {}),
       ...(systemPrompt ?? {}),
     };
   }

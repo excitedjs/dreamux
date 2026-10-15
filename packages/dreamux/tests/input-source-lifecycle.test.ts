@@ -234,7 +234,7 @@ it('rolls back a failed start in reverse-acquisition order, keeps Channel subscr
     await sweep();
   });
   vi.spyOn(f.host.channels, 'start').mockImplementation(async (fence) => {
-    await f.host.submitToAgent({
+    await f.host.submitInput({
       source: 'channel',
       text: 'work accepted during channel startup',
     });

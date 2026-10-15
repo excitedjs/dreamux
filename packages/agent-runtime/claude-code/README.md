@@ -51,14 +51,16 @@ write acknowledgement or positive native evidence. RPC holds one table of
 unanswered requests and settles them directly from native results or command
 cancellation/refusal. There is no enclosing request window or aggregate drainage.
 
-A native result answering requests creates one immutable `RuntimeCompletion`
-shared by those requests. Folded inputs share that object; queued inputs wait
+Every non-interrupted native result creates one immutable `RuntimeCompletion`,
+published synchronously through `context.results` and shared by its answered
+requests, including a result that answers no host request. Folded inputs share that object; queued inputs wait
 for their own result. Consumption lifecycle and a matching submitted result UUID
 are positive attribution evidence. A completed lifecycle frame may precede or
 follow its result and does not decide when another input can be submitted.
 
 Background native turns may run without a submission. Their activity and result
-boundaries remain observable, but they settle no unrelated request and do not
+boundaries publish normal/failed results to the host, but they settle no
+unrelated request and do not
 terminate the resident process. Explicit inputs steered into a background turn
 settle normally once they join it. Command-lifecycle admission is assumed
 always supported: there is no capability check, no version gate, and no
@@ -99,7 +101,8 @@ cursors. It is not a completion source.
 The native session implements `submit()` returning
 `RuntimeAdmission`; accepted submissions carry their own settlement promises.
 The old `submitTurn()`/`steerTurn()` window interface is removed. Session specs
-provide the pinned `sessionId` and optional `outputSchemaEnabled` result contract;
+provide the pinned `sessionId`, optional `results` sink and optional
+`outputSchemaEnabled` result contract;
 the exit handler receives its failure cause.
 
 Session implementations own result validation and settlement. Their
@@ -132,3 +135,20 @@ folds omit both result UUID echo fields. Claude Code 2.1.263 marks
 `command_lifecycle` as internal; it is not a documented stable SDK contract.
 Compatibility tests and real native captures are distinguished in the task's
 verification record.
+
+
+The result sink and every answered settlement receive the same frozen completion
+object. Session pinning, structured-output validation and failure mapping apply
+to unbound results too. All normal/failed results publish on the parser's result
+stack before settlement continuations, preserving order in multi-line batches.
+Interrupted terminals do not publish results; bound stopped/transport-failed
+settlements retain their existing behavior. A completion-less stopped notice can
+therefore arrive after a later unbound completion from the same batch. Child exit,
+refusal and teardown create no synthetic native result.
+
+
+The result observer is optional for old-host compatibility. This provider retains
+per-input admission/settled values with no callback and calls it optionally when
+present. Current Core always supplies it. An old provider loaded by new Core still
+returns bound values and requested replies, but does not certify unbound reporting
+or mixed native ordering. No runtime negotiation or fallback queue is introduced.

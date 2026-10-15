@@ -33,6 +33,8 @@ export interface SendTeamMateInput {
   name: string;
   prompt: string;
   intent?: string;
+  /** Host-bound message provenance; never supplied through model arguments. */
+  attrs?: Readonly<Record<string, string>>;
 }
 
 export interface CloseTeamMateInput {

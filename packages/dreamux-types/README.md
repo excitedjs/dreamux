@@ -59,6 +59,25 @@ started has settled and no such call can later return `submitted`. Providers
 must terminate or release their own pending native requests before satisfying
 that convergence contract.
 
+## Native result contract
+
+`AgentRuntimeCreateContext.results` is an optional `AgentRuntimeResultSink` beside
+state and activity. Current Core always supplies it. When supplied, publish every observed normal or failed native terminal once,
+synchronously in terminal-finalization order, including turns with no host
+submission. The immutable `RuntimeCompletion` passed to the sink must be the
+same object passed to every settlement that answers that result. Identity is the
+host's folding key; cloning can duplicate reports. The sink never throws or
+applies backpressure, and revoked generation writes drop.
+
+Interrupted terminals, refusal, transport/connection loss and teardown do not
+manufacture native results. Their existing bound settlements remain available.
+Live activity remains display-only. A new provider with an older host calls the
+observer optionally and retains per-input admission and settled values when it is
+absent. An older provider with new Core can ignore the added context property;
+bound values and requested replies remain, but unbound coverage and native report
+ordering are not certified. Loading is not feature conformity. There is no
+capability negotiation or fallback queue.
+
 ## Native transcript contract
 
 Every Agent Runtime provider implements `readTranscript(query, context)` as a

@@ -266,11 +266,20 @@ the same change that touches it.
 
 - **TeamLeaders are guided to delegate useful independent work.** Their launch
   prompt encourages TeamMate collaboration when it can save time or improve
-  quality, and directs them to `teamwork` when needed collaboration guidance
+  quality. It explains why TeamMates are better suited to team collaboration:
+  shared workspaces, context continuity, and different models for complementary
+  perspectives. It expresses a capability-based preference over native subagents,
+  not a prohibition on them. The TeamLeader's spawn description identifies
+  the separate Dreamux runtime-session mechanism. Native collaboration mode and
+  reasoning effort remain the user's choice; Dreamux does not enable Ultra or
+  override native delegation restrictions. This guidance is TeamLeader-only.
+  The prompt directs them to `teamwork` when needed collaboration guidance
   is missing from their current context. A new turn or handoff does not itself
   require rereading the skill. The skill explains that a member's standing
   identity survives close/reopen and cannot be changed through `send`.
   (Decision: [2026-10-10 follow-up](../tasks/builtin-skills/guide-proactive-teamwork/requirement.md).)
+  (Clarification: [2026-10-14 TeamLeader follow-up](../tasks/mcp/enable-team-member-messaging/README.md#teamleader-delegation-clarification-2026-10-14).)
+  (Superseding direction: [2026-10-15 collaboration follow-up](../tasks/mcp/enable-team-member-messaging/README.md#teamleader-collaboration-direction-2026-10-15).)
 
 - **Workspace isolation defaults to off.** Omitted dispatcher workspace policy
   uses `enabled: false`; explicit true/false values retain their meaning.
@@ -372,12 +381,48 @@ substring matching and silent submission were later aligned with Claude Code
 by [promote model and effort](/.agents/tasks/architecture/promote-runtime-model-and-effort/README.md).
 Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasoning-effort).
 
+## Ordinary member communication
+
+- **Members can address their actual owner and peers.** Ordinary members of a
+  Team and a Dispatcher's root collection receive `teammate.send` and `list`.
+  `list` gives the concrete owner address and peers, including closed peers.
+  Member guidance briefly names the actual owner, describes the send/list
+  capabilities and identifies the owner as the automatic turn-result recipient.
+  Sender identity is host-bound; the model cannot forge it or address peers in
+  another collection. Explicit messages reach only the target. Replies require
+  an explicit send; a send receipt confirms admission. Sending to a closed peer
+  reopens its recorded identity/session, without bypassing teardown or Workflow
+  locks. Active Workflow members retain script-controlled values and do not
+  receive these tools or the ordinary native-result subscription.
+- **Member results go to the actual owner.** Each provider-observed normally
+  completed or failed native result of an ordinary member reports to its
+  TeamLeader or Dispatcher agent, including autonomous/background turns.
+  Peer-triggered results have the same owner; peer messages themselves are not
+  copied. Folded inputs produce one result report; distinct results each report
+  even when their text is equal. A turn result does not prove the goal is done.
+  Existing bound interruption results remain; unbound interruptions are not
+  newly reported, and connection failure does not fabricate a native terminal.
+- **Managed Teams do not stream into the Dispatcher conversation.** TeamLeader
+  autonomous turns and internal member activity produce no unsolicited
+  Dispatcher input. Explicit Dispatcher `team.create` with a prompt and
+  `team.send` requests still receive their corresponding folded answer. Later
+  leader continuations do not extend that request's reply obligation. Inventory,
+  lifecycle state and Channel display remain separately observable.
+- **Explicit messages wake; automatic reports require a live owner.** Automatic
+  results do not start an unavailable owner runtime and may be rejected or
+  dropped. This adds no durable mailbox or guaranteed offline replay. A member
+  message addressed to its owner creates no automatic reply or new upstream
+  obligation; a turn may still answer an already pending explicit request.
+
+Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-member-messaging/requirement.md).
+
 ## Background work and completion delivery
 
 - **Background work survives the requested turn.** A Claude teammate may keep
   native background tasks running and process their completion in a later native
-  turn. A turn without a related Dreamux submission does not automatically push
-  a completion to a parent agent and does not cause process teardown.
+  turn. Ordinary-member observed normal/failed results now report to the actual
+  owner even without a Dreamux submission, as described above. This does not
+  create a request answer, a recursive parent push or process teardown.
 - **Steering into background work still receives an answer.** A submitted
   request that joins an ongoing background follow-up is answered by that turn's
   result. A request that remains queued waits for its own result. Folded requests

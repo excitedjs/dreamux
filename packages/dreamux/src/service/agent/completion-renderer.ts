@@ -50,11 +50,11 @@ function teammateStatusLine(
   const { subject, possessive } = roleSubject(role, source);
   switch (status) {
     case 'completed':
-      return `${subject} has finished its task.`;
+      return `${subject} completed a turn.`;
     case 'failed':
-      return `${possessive} task failed.`;
+      return `${possessive} turn failed.`;
     case 'stopped':
-      return `${possessive} task was stopped.`;
+      return `${possessive} turn was stopped.`;
   }
 }
 

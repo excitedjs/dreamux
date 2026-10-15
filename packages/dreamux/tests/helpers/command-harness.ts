@@ -84,7 +84,7 @@ afterEach(async () => {
 export interface FakeDispatcherOverrides {
   createTeam?: unknown;
   submitToTeamLeader?: unknown;
-  submitToAgent?: unknown;
+  submitInput?: unknown;
   interruptAgent?: unknown;
   interruptTeamLeader?: unknown;
   listTeams?: unknown;
@@ -228,7 +228,7 @@ export async function createCommandHarness(
   stub(host.dispatchers, 'status', options.dispatcherRuntimeStatus);
   const overrides = options.dispatcherOverrides ?? {};
   for (const [input, target, key] of [
-    ['submitToAgent', dispatcher, 'submitToAgent'],
+    ['submitInput', dispatcher, 'submitInput'],
     ['interruptAgent', dispatcher, 'interruptAgent'],
     ['listChannels', dispatcher.channels, 'list'],
     ['createTeam', dispatcher.teams, 'createFromRequest'],

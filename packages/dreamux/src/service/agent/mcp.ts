@@ -1,8 +1,8 @@
 /**
  * The TeamMate MCP server, implemented by the collection that owns the roster.
  *
- * One delegate serves both callers, and they are two genuinely different
- * objects rather than one object told who is asking: a Dispatcher Agent's
+ * Owner delegates serve two genuinely different
+ * objects: a Dispatcher Agent's
  * delegate holds the real `DispatcherService` itself, a TeamLeader's holds
  * that Team (each named here only through the narrow
  * structural interface declared below, so this collection-tier file need not
@@ -18,7 +18,7 @@
  *
  * The input codecs and the submission-receipt projection belong to the owning
  * domain and live with the types and records they read; what stays here is
- * this surface's: the two scopes, the advertised catalog, and the
+ * this surface's: the caller scopes, the advertised catalog, and the
  * model-facing text a tool chooses to say.
  *
  * Failures are thrown, not classified: each domain's failures state their own
@@ -27,8 +27,18 @@
  */
 import type { JsonSchema } from '@excitedjs/dreamux-types';
 
-import type { CommandPayload } from '../../command/payload.js';
-import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
+import {
+  mustNonEmptyString,
+  type CommandPayload,
+} from '../../command/payload.js';
+import { ValidationError } from '../../platform/errors.js';
+import {
+  OBJECT,
+  STRING,
+  arrayOf,
+  enumOf,
+  objectSchema,
+} from '../../command/schema.js';
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
@@ -53,6 +63,7 @@ import {
 } from '../worktree/repo-request.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { mapAgentActivityCommandError } from './activity.js';
+import { toSubmissionResult } from './admission.js';
 import type { AgentEntitySpawnResult } from './identity.js';
 import {
   agentCloseRequest,
@@ -62,7 +73,11 @@ import {
   agentSpawnRequest,
   historyQuery,
   teammateReceiptSchema,
+  SUBMISSION_STATUS_VALUES,
 } from './requests.js';
+import type { TeammateSubmitInput } from './submission.js';
+import type { TurnAdmission } from './turn.js';
+import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { TeammateOps } from './types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
@@ -89,6 +104,19 @@ interface TeamMateMcpTeamLeaderScope {
   admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
 }
 
+/** The actual conversational owner; no concrete Team/Dispatcher import. */
+export interface TeamMateMessagingOwner {
+  readonly teammates: Pick<TeammateOps, 'send' | 'list'>;
+  memberOwner(): {
+    name: string;
+    role: string;
+    status: string;
+  };
+  submitInput(
+    input: Omit<TeammateSubmitInput, 'completionRecipient'>,
+  ): Promise<TurnAdmission>;
+}
+
 /** The dispatcher or Team collections this caller operates on. */
 export type TeamMateMcpScope =
   | {
@@ -98,7 +126,14 @@ export type TeamMateMcpScope =
   | {
       readonly kind: 'team_leader';
       readonly team: TeamMateMcpTeamLeaderScope;
+    }
+  | {
+      readonly kind: 'member';
+      readonly name: string;
+      readonly owner: TeamMateMessagingOwner;
     };
+
+type OwnerMcpScope = Exclude<TeamMateMcpScope, { kind: 'member' }>;
 
 /** One tool this delegate advertises, paired with the handler that serves it. */
 interface TeammateMcpToolRecord {
@@ -109,7 +144,10 @@ interface TeammateMcpToolRecord {
 export function createTeamMateMcpDelegate(
   scope: TeamMateMcpScope,
 ): McpServerDelegate {
-  const records = teammateToolRecords(scope);
+  const records =
+    scope.kind === 'member'
+      ? memberToolRecords(scope)
+      : teammateToolRecords(scope);
   const tools = records.map((record) => record.descriptor);
   return {
     name: TEAMMATE_MCP_SERVER_NAME,
@@ -139,12 +177,12 @@ async function callTool(
  * dispatcher's `teammates` on exactly these verbs, so read and send paths need
  * no branch at all — only `spawn` differs, because only `spawn` differs.
  */
-async function teammates(scope: TeamMateMcpScope) {
+async function teammates(scope: OwnerMcpScope) {
   if (scope.kind === 'dispatcher') return scope.dispatcher.teammates;
   return scope.team.admitLeaderTools(async () => scope.team.teammates);
 }
 
-async function workflows(scope: TeamMateMcpScope) {
+async function workflows(scope: OwnerMcpScope) {
   if (scope.kind === 'dispatcher') return scope.dispatcher.workflows;
   return scope.team.admitLeaderTools(async () => scope.team.workflows);
 }
@@ -180,7 +218,7 @@ const AGENT_RUNTIME_CAPABILITY_SCHEMA: JsonSchema = objectSchema(
   ],
 );
 
-function teammateToolRecords(scope: TeamMateMcpScope): TeammateMcpToolRecord[] {
+function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
   const callerKind = scope.kind;
   // Dispatcher handoffs discover their guide at the tool. The TeamLeader's
   // launch prompt already routes missing collaboration guidance to teamwork.
@@ -234,7 +272,7 @@ function teammateToolRecords(scope: TeamMateMcpScope): TeammateMcpToolRecord[] {
   const spawnDescription =
     callerKind === 'dispatcher'
       ? `${handOffSkillPointer}Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate the work directory by the dispatcher's workspace policy (a fresh per-TeamMate directory, or the dispatcher's own directory when workspace isolation is disabled), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, cleanup? } to choose an existing path or create a managed git worktree. Returns a receipt at once; the completion is pushed later as a new message.`
-      : "Start a resumable TeamMate in this Team's shared workspace and submit its first turn; returns its concrete name for later calls. Returns a receipt at once; the completion is pushed later as a new message.";
+      : "Start a resumable Dreamux TeamMate in this Team's shared workspace and submit its first turn; returns its concrete name for later calls. This creates an independent runtime session through Dreamux; native subagent tools are a separate mechanism. Returns a receipt at once; the completion is pushed later as a new message.";
   const sendDescription =
     callerKind === 'dispatcher'
       ? `${handOffSkillPointer}Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn. Returns a receipt at once; the completion is pushed later as a new message.`
@@ -510,7 +548,7 @@ function teammateToolRecords(scope: TeamMateMcpScope): TeammateMcpToolRecord[] {
 }
 
 async function spawn(
-  scope: TeamMateMcpScope,
+  scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const request = agentSpawnRequest(args);
@@ -549,7 +587,7 @@ async function spawn(
 }
 
 async function send(
-  scope: TeamMateMcpScope,
+  scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const request = agentSendRequest(args);
@@ -573,7 +611,7 @@ function submissionReceipt(result: AgentEntitySpawnResult): McpToolSuccess {
 }
 
 async function close(
-  scope: TeamMateMcpScope,
+  scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const result = await (await teammates(scope)).close(agentCloseRequest(args));
@@ -581,7 +619,7 @@ async function close(
 }
 
 async function history(
-  scope: TeamMateMcpScope,
+  scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   return {
@@ -589,12 +627,12 @@ async function history(
   };
 }
 
-async function list(scope: TeamMateMcpScope): Promise<McpToolSuccess> {
+async function list(scope: OwnerMcpScope): Promise<McpToolSuccess> {
   return { structured: { teammates: await (await teammates(scope)).list() } };
 }
 
 async function status(
-  scope: TeamMateMcpScope,
+  scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   return {
@@ -607,7 +645,7 @@ async function status(
 }
 
 async function last(
-  scope: TeamMateMcpScope,
+  scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const name = agentEntityNameParam(args, 'name');
@@ -623,6 +661,111 @@ async function last(
   }
 }
 
-async function capabilities(scope: TeamMateMcpScope): Promise<McpToolSuccess> {
+async function capabilities(scope: OwnerMcpScope): Promise<McpToolSuccess> {
   return { structured: await (await teammates(scope)).getCapabilities() };
+}
+
+const MEMBER_RECEIPT_REMINDER =
+  "This is an admission receipt, not a response or completion. A reply arrives only if the recipient explicitly sends one. The recipient's applicable turn results are reported to its owner.";
+
+function memberToolRecords(
+  scope: Extract<TeamMateMcpScope, { kind: 'member' }>,
+): TeammateMcpToolRecord[] {
+  return [
+    {
+      descriptor: tool(
+        'send',
+        'Send a message to your owner or a same-collection peer by concrete name. A closed peer reopens its recorded session; idle input wakes the recipient and busy input follows its runtime admission. ' +
+          MEMBER_RECEIPT_REMINDER,
+        {
+          name: { type: 'string', minLength: 1, maxLength: 64 },
+          prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+        },
+        ['name', 'prompt'],
+        {
+          title: 'Message your owner or a peer',
+          output: objectSchema(
+            {
+              name: STRING,
+              status: enumOf(SUBMISSION_STATUS_VALUES),
+              error: STRING,
+            },
+            ['name', 'status'],
+          ),
+          annotations: MUTATING_ANNOTATIONS,
+        },
+      ),
+      execute: async (args) => {
+        const name = mustNonEmptyString(args, 'name');
+        const prompt = mustNonEmptyString(args, 'prompt');
+        if (name === scope.name)
+          throw new ValidationError('A member cannot send to itself');
+        const attrs = { from: scope.name };
+        const owner = scope.owner.memberOwner();
+        const result =
+          name === owner.name
+            ? toSubmissionResult(
+                await scope.owner.submitInput({
+                  source: AGENT_TASK_SOURCE,
+                  text: prompt,
+                  attrs,
+                }),
+              )
+            : await scope.owner.teammates.send({
+                name: agentEntityNameParam(args, 'name'),
+                prompt,
+                attrs,
+              });
+        return {
+          structured: {
+            name,
+            status: result.status,
+            ...(result.error !== undefined ? { error: result.error } : {}),
+          },
+          ...(result.status === 'submitted'
+            ? { text: MEMBER_RECEIPT_REMINDER }
+            : {}),
+        };
+      },
+    },
+    {
+      descriptor: tool(
+        'list',
+        'Discover your owner address and same-collection peers, including closed peers. You are excluded from the peer rows.',
+        {},
+        [],
+        {
+          title: 'List your owner and peers',
+          output: objectSchema(
+            {
+              owner: objectSchema({ name: STRING, status: STRING }, [
+                'name',
+                'status',
+              ]),
+              teammates: arrayOf(OBJECT),
+            },
+            ['owner', 'teammates'],
+          ),
+          annotations: READ_ONLY_ANNOTATIONS,
+        },
+      ),
+      execute: async () => {
+        const peers = await scope.owner.teammates.list();
+        const { name, status } = scope.owner.memberOwner();
+        return {
+          structured: {
+            owner: { name, status },
+            teammates: peers
+              .filter((peer) => peer.name !== scope.name)
+              .map(({ name, status, agent_runtime, intent }) => ({
+                name,
+                status,
+                agent_runtime,
+                intent,
+              })),
+          },
+        };
+      },
+    },
+  ];
 }

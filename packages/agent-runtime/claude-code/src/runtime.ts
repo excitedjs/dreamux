@@ -364,6 +364,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
             this.log('info', `claude-code remote control URL: ${url}`);
           }
         : undefined,
+      results: this.deps.resultSink,
       onProtocolEvent: (event) => this.onProtocolEvent(event, activity),
       logger: this.logger,
     });

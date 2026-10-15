@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeActivitySink,
+  AgentRuntimeResultSink,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
   AgentRuntimeStateSink,
@@ -37,4 +38,5 @@ export interface CodexRuntimeDeps {
   restartBackoffMaxMs?: number | undefined;
   logger: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
+  resultSink?: AgentRuntimeResultSink | undefined;
 }

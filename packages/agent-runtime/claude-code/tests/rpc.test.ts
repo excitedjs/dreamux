@@ -28,6 +28,7 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
   const writes: Input[] = [];
   const controls: ControlFrame[] = [];
   const events: ClaudeProtocolEvent[] = [];
+  const published: RuntimeCompletion[] = [];
   const reap = vi.fn();
   const stdin = {
     writable: true,
@@ -48,6 +49,7 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
   };
   const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
     sessionId: 'session',
+    results: (completion) => published.push(completion),
     turnTimeoutMs: 1_000,
     reapOnTimeout: reap,
     onProtocolEvent: (event) => events.push(event),
@@ -105,6 +107,7 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
     writes,
     controls,
     events,
+    published,
     reap,
     emit,
     lifecycle,
@@ -921,4 +924,48 @@ it('resets idle time on every native line and clears it as soon as requests are 
   h.result('background');
   vi.advanceTimersByTime(10_000);
   expect(h.reap).not.toHaveBeenCalled();
+});
+
+describe('ordered native result publication', () => {
+  it('publishes bound, folded and unbound results synchronously with identical settlement objects', async () => {
+    const h = harness();
+    const first = await h.send('first');
+    const folded = await h.send('folded');
+    h.lifecycle('first', 'started');
+    h.lifecycle('folded', 'started');
+    h.emit(
+      {
+        type: 'result',
+        subtype: 'success',
+        result: 'bound',
+        user_message_uuid: 'first',
+      },
+      { type: 'result', subtype: 'success', result: 'unbound' },
+      nativeFailure,
+    );
+    expect(h.published.map((result) => result.status)).toEqual([
+      'completed',
+      'completed',
+      'failed',
+    ]);
+    expect(await completion(first)).toBe(h.published[0]);
+    expect(await completion(folded)).toBe(h.published[0]);
+    const failed = await h.send('failed-bound');
+    h.emit({ ...nativeFailure, user_message_uuid: 'failed-bound' });
+    expect(await completion(failed)).toBe(h.published[3]);
+    expect(h.published[3]?.status).toBe('failed');
+    expect(h.published.every(Object.isFrozen)).toBe(true);
+  });
+  it('validates unbound session and structured output and excludes interruptions/transport loss', () => {
+    const h = harness({ sessionId: 'pinned', outputSchemaEnabled: true });
+    h.result('wrong session', undefined, { session_id: 'other' });
+    h.result('no structured output');
+    expect(h.published.map((result) => result.status)).toEqual([
+      'failed',
+      'failed',
+    ]);
+    h.emit(interruptArtifact('native-background'));
+    h.rpc.fail(new Error('connection lost'));
+    expect(h.published).toHaveLength(2);
+  });
 });

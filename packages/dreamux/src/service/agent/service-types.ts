@@ -9,6 +9,7 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
 import type { ConfigReader } from '../../config/service.js';
 import type { CompletionDeliveryPolicy } from '../completion-router/index.js';
+import type { CompletionInitiator } from '../completion-router/index.js';
 import type { ConversationProjection } from '../dispatcher-core-events/conversation-projection.js';
 import type { McpLeaseRegistry } from '../mcp/leases.js';
 import type { McpServerDelegate } from '../mcp/types.js';
@@ -103,8 +104,8 @@ export interface LockedTeammate {
  * minted into.
  *
  * They travel together because they are one decision: a role either publishes
- * tools to its model or it does not. Only the two conversational roles set it —
- * an ordinary TeamMate has no Agent-facing tool surface of its own.
+ * tools to its model or it does not. Ordinary members receive send/list; locked
+ * Workflow members receive neither those tools nor native owner reporting.
  *
  * Delegates are built once, with the entity, because a catalog is a property of
  * the caller. What is rebuilt per runtime generation is the lease each delegate
@@ -118,6 +119,8 @@ export interface TeammateAgentMcp {
 
 export interface TeammateServiceOptions {
   mcp?: TeammateAgentMcp;
+  /** Stable actual owner, armed only for ordinary collection members. */
+  nativeResultRecipient?: CompletionInitiator;
   skillSources?: readonly AgentRuntimeSkillSource[];
   disabledFeatures?: readonly string[];
   systemPrompt?: AgentRuntimeSystemPrompt | undefined;
